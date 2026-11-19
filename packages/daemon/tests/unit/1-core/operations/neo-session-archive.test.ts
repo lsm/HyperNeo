@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
-import { subscribeToStructuredLogs } from '../../../../src/lib/logger.ts';
+import {
+  configureLogger,
+  getLoggerConfig,
+  LogLevel,
+  subscribeToStructuredLogs,
+} from '../../../../src/lib/logger.ts';
 import { createNeoSessionArchiveOperation } from '../../../../src/lib/neo/session-archive-operation.ts';
 import {
   createOperationRegistry,
@@ -76,6 +81,8 @@ describe('neo.session.archive', () => {
     recordWorkerStarted(db.getDatabase(), ref);
     db.getDatabase().exec(`CREATE TRIGGER archive_record_fault BEFORE UPDATE OF archived_at ON work_started_sessions
       BEGIN SELECT RAISE(FAIL, 'synthetic provenance failure'); END`);
+    const priorLogging = getLoggerConfig();
+    configureLogger({ level: LogLevel.ERROR });
     const messages: string[] = [];
     const unsubscribe = subscribeToStructuredLogs((event) => messages.push(event.message));
     try {
@@ -83,9 +90,12 @@ describe('neo.session.archive', () => {
         value: { ok: true, value: { archived: true } },
       });
       expect(archive).toHaveBeenCalledTimes(1);
-      expect(messages).toContain('Archive provenance write failed');
+      expect(messages.some((message) => message.includes('Archive provenance write failed'))).toBe(
+        true
+      );
     } finally {
       unsubscribe();
+      configureLogger(priorLogging);
     }
   });
 

@@ -6,6 +6,7 @@ import { Client } from '../../../packages/daemon/node_modules/@modelcontextproto
 import { InMemoryTransport } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/inMemory.js';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logger.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 import { createOperationMcpServer } from '../../../packages/daemon/src/lib/operations/mcp-server.ts';
@@ -49,6 +50,28 @@ try {
     inputKind: 'human', message: { role: 'user', content: 'Conversation retained after archiving.' } });
   await sdk.instance.connect(b); await client.connect(a); await transport.initialize();
   const ref = { adapter: 'hyperneo', id: worker };
+  const faultId = crypto.randomUUID();
+  await app.db.createSession({ id: faultId, title: 'Archive fault proof', workspacePath: run,
+    createdAt: now, lastActiveAt: now, status: 'active', config: { model: 'synthetic', maxTokens: 8192, temperature: 1 },
+    metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
+  const faultRef = { adapter: 'hyperneo', id: faultId };
+  const raw = app.db.getDatabase();
+  recordWorkerStarted(raw, faultRef);
+  raw.exec(`CREATE TRIGGER synthetic_archive_failure BEFORE UPDATE OF archived_at ON work_started_sessions
+    WHEN NEW.id = '${faultId}' BEGIN SELECT RAISE(FAIL, 'synthetic archive record failure'); END`);
+  const logMessages: string[] = [];
+  const unsubscribe = subscribeToStructuredLogs((event) => logMessages.push(event.message));
+  let faultReply;
+  try { faultReply = await call('neo.session.archive', { ref: faultRef }); } finally { unsubscribe(); }
+  const faultStatus = (await app.db.getSession(faultId))?.status;
+  const faultRecord = raw.prepare('SELECT archived_at FROM work_started_sessions WHERE id = ?').get(faultId);
+  const errorLogged = logMessages.some((message) => message.includes('Archive provenance write failed'));
+  evidence.archiveRecordFailure = { faultReply, faultStatus, faultRecord, errorLogged };
+  assert.equal(faultReply.ok, true, JSON.stringify(faultReply));
+  assert.equal(faultStatus, 'archived');
+  assert.deepEqual(faultRecord, { archived_at: null });
+  assert.equal(errorLogged, true);
+  raw.exec('DROP TRIGGER synthetic_archive_failure');
   const refused = await call('neo.session.archive', { ref });
   assert.equal(refused.reason, 'not_started_by_us');
   assert.equal((await app.db.getSession(worker))?.status, 'active');
