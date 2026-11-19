@@ -59,6 +59,7 @@ import mdNeoSpeech from './neo/system/speech.md' with { type: 'text' };
 import mdneoSystemPackPreferences from './neo/system/pack-preferences.md' with { type: 'text' };
 import mdneoSystemStandingRules from './neo/system/standing-rules.md' with { type: 'text' };
 import mdneoSystemRootTurnEnd from './neo/system/root-turn-end.md' with { type: 'text' };
+import mdneoSystemResidentTool from './neo/system/resident-tool.md' with { type: 'text' };
 import mdneoPacksCodingSkill from './neo/packs/coding/SKILL.md' with { type: 'text' };
 import mdneoPacksCodingWorkerWorktreeBrief from './neo/packs/coding/worker-worktree-brief.md' with {
   type: 'text',
@@ -376,6 +377,7 @@ const registry: Record<string, string> = {
   'neo/system/quick-ack-listening.md': mdneoSystemQuickAckListening,
   'neo/system/root.md': mdneoSystemRoot,
   'neo/system/root-turn-end.md': mdneoSystemRootTurnEnd,
+  'neo/system/resident-tool.md': mdneoSystemResidentTool,
   'neo/system/speech.md': mdNeoSpeech,
   'neo/front.md': mdNeoFront,
   'neo/system/pack-preferences.md': mdneoSystemPackPreferences,
@@ -522,6 +524,7 @@ export const {
   WORKER_PROVENANCE_OPEN_PRS,
   NEO_ROOT_PROMPT,
   NEO_ROOT_TURN_END: NEO_ROOT_TURN_END_TEMPLATE,
+  NEO_RESIDENT_TOOL,
   NEO_FRONT: NEO_FRONT_TEMPLATE,
   NEO_STANDING_RULES,
   NEO_PACK_PREFERENCES,

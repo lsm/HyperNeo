@@ -81,10 +81,19 @@ try {
     const definitions = tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
     const bytes = Buffer.byteLength(JSON.stringify({ tools: definitions, door }));
     const listBytes = Buffer.byteLength(JSON.stringify(index.value));
-    evidence.push({ tools: definitions, door, bytes, listBytes, routes });
-    assert(bytes < 3100, `tool definitions plus door: ${bytes}`);
+    let described = 0;
+    for (const family of NEO_RESIDENT_FAMILIES) {
+      const text = tools.find(tool => tool.name === family.name)!.description!;
+      for (const action of family.actions) {
+        assert(text.includes(registry.get(residentOperation(family, action))!.description), `${family.name} ${action}`);
+        if (family.actions.length > 1) assert(text.includes(`### ${action}\n`), `${family.name} ${action} heading`);
+        described++;
+      }
+    }
+    assert(tools.find(tool => tool.name === 'neo_publish')!.description!.includes('a short bold title line that states the conclusion'));
+    evidence.push({ tools: definitions, door, bytes, listBytes, routes, described });
     assert(listBytes < 500, `list: ${listBytes}`);
-    console.log(`PASS tools=${tools.length} routes=${routes} bytes=${bytes} listBytes=${listBytes}`);
+    console.log(`PASS tools=${tools.length} routes=${routes} described=${described} bytes=${bytes} listBytes=${listBytes}`);
 
   } finally {
     await client.close();

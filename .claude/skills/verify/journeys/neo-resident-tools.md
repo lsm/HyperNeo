@@ -9,7 +9,10 @@ The real SDK client lists eight tools, calls all 28 resident routes and compares
 replies against invoke. It fetches full schemas through operations.describe,
 checks malformed inputs and invalid actions (including supplied actions on single-action tools), and proves a real ask mutation is
 readable through the canonical operation. A non-Neo SDK client still lists one
-tool. The evidence records actual tool definitions, door and list UTF-8 sizes.
+tool. Each resident tool's description carries the full registered description
+of every action, under a heading per action for multi-action tools, so
+neo_publish shows the reply format rules. The evidence records actual tool
+definitions, door and list UTF-8 sizes.
 Retain observed.json, proof.log and run-status.json. Browser layout and model
 turns are outside this transport journey.
 
