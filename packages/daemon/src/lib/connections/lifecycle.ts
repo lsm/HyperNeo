@@ -228,11 +228,86 @@ export function createConnectionLifecycle(deps: {
     }
     return trackConnection(account, client, login);
   };
+  const startConnectionPipeline = (superpipe({})('connections.google.connect') as PipelineAPI)
+    .input('input')
+    .pipe((_input: Partial<Client>) => deps.closed.aborted, 'input', 'closed')
+    .pipe(
+      (closed: boolean): { value: true } | { reason: View } =>
+        closed ? { reason: { state: 'failed', reason: 'cancelled' } } : { value: true },
+      'closed',
+      'result:outcome'
+    )
+    .pipe((_admitted: true) => deps.read(), 'outcome', 'records')
+    .pipe(
+      (
+        input: Partial<Client> & { connectionId?: string },
+        records: ConnectionStatus[]
+      ): { value: { account: ConnectionStatus | null } } | { reason: View } => {
+        const account = records.find((record) => record.id === input.connectionId) ?? null;
+        return input.connectionId && !account
+          ? { reason: { state: 'failed', reason: 'unknown_connection' } }
+          : { value: { account } };
+      },
+      ['input', 'records'],
+      'result:outcome'
+    )
+    .pipe(
+      (selected: { account: ConnectionStatus | null }) => selected.account,
+      'outcome',
+      'account'
+    )
+    .pipe(
+      async (input: Partial<Client>, account: ConnectionStatus | null) =>
+        input.clientId
+          ? { clientId: input.clientId, clientSecret: input.clientSecret }
+          : account
+            ? ((await deps.vault.read(account))?.client ?? null)
+            : null,
+      ['input', 'account'],
+      'candidate'
+    )
+    .pipe(
+      (client: Client | null): { value: Client } | { reason: View } =>
+        client
+          ? { value: client }
+          : { reason: { state: 'failed', reason: 'client_not_configured' } },
+      'candidate',
+      'result:outcome'
+    )
+    .pipe((client: Client) => client, 'outcome', 'client')
+    .pipe(
+      async (client: Client) => {
+        cancel();
+        const login = await deps.startLogin(client);
+        const closed = deps.closed.aborted;
+        if (closed) login.cancel();
+        return { login, closed };
+      },
+      'client',
+      'started'
+    )
+    .pipe(
+      (started: { login: Login; closed: boolean }): { value: Login } | { reason: View } =>
+        started.closed
+          ? { reason: { state: 'failed', reason: 'cancelled' } }
+          : { value: started.login },
+      'started',
+      'result:outcome'
+    )
+    .pipe(
+      (login: Login, account: ConnectionStatus | null, client: Client) =>
+        trackConnection(account ?? undefined, client, login),
+      ['outcome', 'account', 'client'],
+      'outcome'
+    )
+    .endAsync('outcome') as (input: Partial<Client> & { connectionId?: string }) => Promise<View>;
   return {
     token: access.token,
     http,
     connect: (input: Partial<Client> & { connectionId?: string }) =>
       serial(() => startConnection(input)),
+    connectPipeline: (input: Partial<Client> & { connectionId?: string }) =>
+      serial(() => startConnectionPipeline(input)),
     statusFacts,
     status: (loginId?: string): View => selectLoginStatus(statusFacts(), { loginId }),
     disconnect: async (connectionId: string) => {
