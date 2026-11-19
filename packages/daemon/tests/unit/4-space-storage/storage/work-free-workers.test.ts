@@ -7,6 +7,7 @@ import {
   markWorkUnusable,
   readFreeWorkers,
   readReusableWorkers,
+  readStartedWork,
   recordStartedWork,
   recordWorkerStarted,
 } from '../../../../src/storage/repositories/work-started-sessions-worker.ts';
@@ -58,6 +59,18 @@ describe('readFreeWorkers', () => {
     markWorkUnusable(db, { adapter: 'claude-desktop', id: 'w-bad' });
 
     expect([...readFreeWorkers(db, 'claude-desktop')].sort()).toEqual(['w-done', 'w-new']);
+  });
+
+  test('does not trust a legacy claim without a worker marker', () => {
+    db.prepare(`INSERT INTO work_started_sessions (adapter, id, started_at, claimed_by, kind)
+      VALUES ('claude-desktop', 'legacy-claim', 1, 'todo', NULL),
+             ('claude-desktop', 'legacy-worker', 1, NULL, 'worker')`).run();
+    const trusted = readStartedWork(db).map((worker) => worker.id);
+    expect(trusted).toContain('legacy-worker');
+    expect(trusted).not.toContain('legacy-claim');
+    expect(sessions.fenceWorkerRelease({ adapter: 'claude-desktop', id: 'legacy-claim' }, 3)).toBe(
+      'not_started_by_us'
+    );
   });
 
   test('an unusable mark expires after an hour', () => {
