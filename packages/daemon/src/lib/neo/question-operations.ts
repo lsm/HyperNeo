@@ -946,6 +946,23 @@ export function createNeoQuestionOperations(
     caller: OperationCaller
   ) => Promise<QuestionReceipt | Rejection>;
 
+  const readSnapshot = (input: z.infer<typeof Get>) =>
+    store.questionAnswers.snapshot(input.questionId, () => store.getQuestion(input.questionId));
+  const get = (superpipe({})('neo.question.get') as PipelineAPI)
+    .input('input')
+    .pipe(readSnapshot, 'input', 'snapshot')
+    .pipe(
+      ({ question, answerDelivery }: ReturnType<typeof readSnapshot>) => ({
+        ...readNeoQuestion(question),
+        ...(question ? { answerDelivery } : {}),
+      }),
+      'snapshot',
+      'result'
+    )
+    .endAsync('result') as (
+    input: z.infer<typeof Get>
+  ) => Promise<z.infer<typeof QuestionReadResult>>;
+
   const hold = (superpipe({})('neo.question.hold') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(requireLocalUser, 'caller', 'result:outcome')
@@ -1003,12 +1020,7 @@ export function createNeoQuestionOperations(
       inputSchema: Get,
       resultSchema: QuestionReadResult,
       policy: { safetyClass: 'read' },
-      execute: async (input) => {
-        const { question, answerDelivery } = store.questionAnswers.snapshot(input.questionId, () =>
-          store.getQuestion(input.questionId)
-        );
-        return { ...readNeoQuestion(question), ...(question ? { answerDelivery } : {}) };
-      },
+      execute: get,
     }),
     defineOperation({
       name: 'neo.question.answer',

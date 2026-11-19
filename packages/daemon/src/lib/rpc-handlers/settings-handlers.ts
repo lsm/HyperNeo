@@ -13,6 +13,7 @@ import { assertNoToolSelectionDefaults } from '../tools/session-tool-choice.ts';
 import type { NeoPack } from '../neo/pack-contract.ts';
 import { refuseSecondLineRanker } from '../neo/pack-selection.ts';
 import { voiceParts } from '../voice/voice-parts.ts';
+import { Logger } from '../logger.ts';
 
 export const VOICE_CREDENTIAL_PROVIDER_ID = 'voice-transcription';
 export { EXA_CREDENTIAL_PROVIDER_ID };
@@ -72,7 +73,8 @@ export function registerSettingsHandlers(
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
   db: Database,
   credentialManager?: ProviderCredentialManager,
-  installedPacks: () => readonly NeoPack[] = () => []
+  installedPacks: () => readonly NeoPack[] = () => [],
+  onVoiceKeySaved?: (host: string) => Promise<unknown>
 ) {
   configureWorkerSandbox(() => settingsManager.getGlobalSettings().workerSandbox ?? 'off');
   messageHub.onRequest(
@@ -180,6 +182,20 @@ export function registerSettingsHandlers(
           clearModelsCache();
         }
         publishGlobalSettings(internalEventBus, updated, credentialManager);
+        if (
+          voiceMutation.storeKey &&
+          (data.updates.voice?.hostKey?.apiKey || data.updates.voice?.apiKey)
+        ) {
+          const host =
+            data.updates.voice?.hostKey?.host ??
+            (updated.voice?.apiKeyEndpoint && URL.canParse(updated.voice.apiKeyEndpoint)
+              ? new URL(updated.voice.apiKeyEndpoint).host
+              : undefined);
+          if (host)
+            await onVoiceKeySaved?.(host).catch((error) =>
+              new Logger('Settings').warn('Voice key notification failed', error)
+            );
+        }
         if (touchesCustomEndpoints || data.updates.providerModelAllowlists !== undefined) {
           internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
         }

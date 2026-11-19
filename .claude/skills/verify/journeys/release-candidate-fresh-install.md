@@ -30,9 +30,12 @@ real downloaded SDK publishes the scripted visible reply, and work.start creatin
 a life-admin session which gets an assistant response. The model is scripted; this
 is transport/publication proof, not a test of generative model judgment.
 
-The actual candidate must also report Embeddings ready after fresh asset download.
-Some compiled background guards are build-folded despite explicit test startup;
-the proof checks the observed worker load rather than assuming an eager warmup.
+The test-mode candidate must not warm embeddings at startup. The proof seeds a
+synthetic vector in its isolated database and invokes semantic work search, then
+requires Embeddings ready after a fresh asset download. The separate
+`compiled-embedding-start-mode.ts` helper checks that a normally built candidate
+serves /neo in test mode without starting embeddings; pass the binary and a fresh
+run directory. This proof does not claim to exercise production-mode warmup.
 Numerical embedding inference is a separate sequential job. Run compiled-embedding-load.ts with a fresh path and the same
 Bun target (see compiled-embedding-load.md); require a normalized 384-dimensional
 vector on both architectures, using Rosetta for x64. It compiles a production
