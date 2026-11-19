@@ -623,7 +623,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test-daemon-shared-unit, test-daemon-online, test-web]
     if: ${{ !cancelled() && (contains(fromJSON('["success", "failure"]'), needs.test-daemon-shared-unit.result) || contains(fromJSON('["success", "failure"]'), needs.test-daemon-online.result) || contains(fromJSON('["success", "failure"]'), needs.test-web.result)) }}
-    timeout-minutes: 3
+    timeout-minutes: 6
 
     steps:
       - uses: actions/checkout@v6
@@ -635,6 +635,7 @@ jobs:
 
       - name: Download daemon unit junit
         continue-on-error: true
+        timeout-minutes: 1
         uses: actions/download-artifact@v8
         with:
           path: balance/unit
@@ -642,6 +643,7 @@ jobs:
 
       - name: Download daemon online junit
         continue-on-error: true
+        timeout-minutes: 1
         uses: actions/download-artifact@v8
         with:
           path: balance/online
@@ -649,6 +651,7 @@ jobs:
 
       - name: Download web junit
         continue-on-error: true
+        timeout-minutes: 1
         uses: actions/download-artifact@v8
         with:
           path: balance/web
