@@ -1,8 +1,11 @@
 import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const repositories = resolve(import.meta.dir, '../../../../src/storage/repositories');
+const repositories = fileURLToPath(
+  new URL('../../../../src/storage/repositories/', import.meta.url)
+);
 
 test('release and reviewed ownership queries use the started-session table boundary', () => {
   const read = (file: string) => readFileSync(resolve(repositories, file), 'utf8');
