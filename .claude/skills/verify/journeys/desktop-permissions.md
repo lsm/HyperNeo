@@ -22,8 +22,9 @@ It checks the embedded page and script at the window URL and rejects the extra
 On a test account with either permission absent, confirm no desktop permissions
 window appears at startup. Approve a todo with desktop control and invoke
 `desktop.call` as its worker; confirm the permissions window appears and the
-call is refused without dispatch. The Accessibility and Screen Recording buttons
-must request access and open their respective System Settings panes. After
+call is refused without dispatch. While the guide is visible, switch to another
+app and repeat the call; confirm the guide does not steal focus. The Accessibility
+and Screen Recording buttons must request access and open their respective System Settings panes. After
 granting Screen Recording, quit and reopen the app to finish the grant.
 
 With both permissions granted, retry `desktop.call` as the opted-in worker

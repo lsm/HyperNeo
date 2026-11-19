@@ -22,15 +22,23 @@ pub(crate) fn ready_or_show<R: Runtime>(app: &AppHandle<R>) -> bool {
 
 fn show<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window("permissions") {
-        window.show()?;
-        window.set_focus()?;
-        return Ok(());
+        return show_if_hidden(window.is_visible()?, || {
+            window.show()?;
+            window.set_focus()
+        });
     }
     WebviewWindowBuilder::new(app, "permissions", WebviewUrl::App(PERMISSIONS_PAGE.into()))
         .title("Desktop permissions")
         .inner_size(620.0, 560.0)
         .center()
         .build()?;
+    Ok(())
+}
+
+fn show_if_hidden<E>(visible: bool, show: impl FnOnce() -> Result<(), E>) -> Result<(), E> {
+    if !visible {
+        show()?;
+    }
     Ok(())
 }
 
