@@ -38,6 +38,60 @@ function sessionReuseFacts(db: Database, adapter: string, todoId: string, sessio
   return { ...row, scope, saved: !!saved, mode, sameAsk: workers.map(({ id }) => id) };
 }
 
+export function releaseReuseFacts(
+  db: Database,
+  todoId: string
+): {
+  mode: (typeof SESSION_REUSE_VALUES)[number];
+  askOpen: boolean;
+  hasFolder: boolean;
+  newerFree: boolean;
+} | null {
+  const row = db
+    .prepare(
+      `WITH uses AS (
+           SELECT json_extract(o.ref, '$.adapter') AS adapter, json_extract(o.ref, '$.id') AS id,
+             MAX(COALESCE(ot.finished_at, ot.updated_at)) AS usedAt,
+             MAX(json_extract(o.target, '$.place.folder')) AS folder,
+             MAX(ot.state IN ('todo', 'doing', 'blocked')) AS live
+           FROM neo_todo_sessions o JOIN neo_todos ot ON ot.id = o.todo_id
+           JOIN work_started_sessions w ON w.adapter = json_extract(o.ref, '$.adapter')
+             AND w.id = json_extract(o.ref, '$.id') AND w.role = 'worker' AND w.released_at IS NULL
+           WHERE o.ref IS NOT NULL AND json_extract(o.ref, '$.daemon') IS NULL
+           GROUP BY 1, 2
+         )
+         SELECT a.status = 'open' AS askOpen, a.project_id AS projectId,
+           (SELECT mine.folder FROM uses mine WHERE mine.adapter = json_extract(s.ref, '$.adapter')
+             AND mine.id = json_extract(s.ref, '$.id')) IS NOT NULL AS hasFolder,
+           EXISTS (SELECT 1 FROM uses mine JOIN uses other
+               ON other.adapter = mine.adapter AND other.id <> mine.id AND other.folder = mine.folder
+             WHERE mine.adapter = json_extract(s.ref, '$.adapter') AND mine.id = json_extract(s.ref, '$.id')
+               AND NOT other.live
+               AND (other.usedAt > mine.usedAt OR (other.usedAt = mine.usedAt AND other.id > mine.id))
+           ) AS newerFree
+         FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
+         JOIN neo_asks a ON a.id = t.ask_id
+         WHERE s.todo_id = ?`
+    )
+    .get(todoId) as {
+    askOpen: number;
+    projectId: string | null;
+    hasFolder: number;
+    newerFree: number;
+  } | null;
+  if (!row) return null;
+  const scope = row.projectId
+    ? { kind: 'project' as const, key: row.projectId }
+    : { kind: 'global' as const, key: '' };
+  const saved = getNeoPackPreference(db, 'core', scope, 'sessionReuse')?.value;
+  return {
+    mode: SESSION_REUSE_VALUES.find((value) => value === saved) ?? 'long_lived',
+    askOpen: row.askOpen === 1,
+    hasFolder: row.hasFolder === 1,
+    newerFree: row.newerFree === 1,
+  };
+}
+
 export type SessionReuseFacts = NonNullable<ReturnType<typeof sessionReuseFacts>>;
 
 class NeoAskInputs {

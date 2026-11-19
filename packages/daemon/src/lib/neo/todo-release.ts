@@ -29,8 +29,10 @@ type Kept = {
     | 'remote_worker'
     | 'worker_folder_unknown'
     | 'sent_to_existing'
-    | 'not_started_by_us';
+    | 'not_started_by_us'
+    | 'kept_for_reuse';
 };
+type ReuseFacts = Awaited<ReturnType<NeoTodoSessionRepository['reuseFacts']>>;
 type Folder = { ref: WorkRef; directory: string | null; dirty: boolean; unpushed: number };
 type Pending = {
   pending: string;
@@ -73,6 +75,19 @@ export function requireNeoWorkerSaved(
       },
     };
   return { value: folder.ref };
+}
+
+export function followSessionReuse(
+  facts: ReuseFacts,
+  ref: WorkRef
+): { value: WorkRef } | { reason: Kept } {
+  const keep =
+    facts?.mode === 'per_ask'
+      ? facts.hasFolder && facts.askOpen
+      : facts?.mode === 'long_lived'
+        ? facts.hasFolder && !facts.newerFree
+        : false;
+  return keep ? { reason: { kept: 'kept_for_reuse' } } : { value: ref };
 }
 
 async function readWorkerFolder(ref: WorkRef, invoke: Invoke): Promise<{ value: Folder }> {
@@ -141,6 +156,12 @@ const releaseWorker = (superpipe({})('neo.todo.release-worker') as PipelineAPI)
   .pipe(readWorkerFolder, ['release', 'invoke'], 'result:release')
   .pipe(requireNeoWorkerSaved, 'release', 'result:release')
   .pipe(
+    async (ref: WorkRef, row: FinishedWorker, sessions: NeoTodoSessionRepository) =>
+      followSessionReuse(await sessions.read('reuseFacts', row.todoId), ref),
+    ['release', 'row', 'sessions'],
+    'result:release'
+  )
+  .pipe(
     async (ref: WorkRef, sessions: NeoTodoSessionRepository) => {
       const fence = await sessions.write('fenceWorkerRelease', ref, Date.now());
       if (fence === 'not_started_by_us') {
@@ -193,7 +214,9 @@ export async function releaseNeoTodoWorkers(
           pending: error instanceof Error ? error.message : String(error),
         })
       );
-      if ('kept' in outcome && outcome.kept !== 'bound_to_live_todo') {
+      if ('kept' in outcome && outcome.kept === 'kept_for_reuse') {
+        await sessions.write('recordReleaseKept', row.todoId, outcome);
+      } else if ('kept' in outcome && outcome.kept !== 'bound_to_live_todo') {
         await sessions.write('recordReleased', row.todoId, outcome);
       } else if ('pending' in outcome) {
         const pending = {
