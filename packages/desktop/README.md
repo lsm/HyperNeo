@@ -143,12 +143,12 @@ workspace packages.
 Tauri's [sidecar](https://v2.tauri.app/develop/sidecar/) feature lets the
 desktop app ship and launch a precompiled child process. The Rust shell:
 
-- Attaches to a daemon advertised in `<data-dir>/runtime.json` when one is running;
-  otherwise spawns `hyperneo --port 9283 --workspace ~/.hyperneo/workspace`
-  (release mode only).
+- Attaches to a daemon advertised in the configured data directory when one is
+  running; otherwise spawns the sidecar with the configured settings (release
+  mode only).
 - Streams stdout/stderr into the Tauri log plugin.
-- Polls `http://localhost:9283/` for up to ~15 s and then navigates
-  the main window from `loading/index.html` to the live UI.
+- Polls the configured port for up to ~15 s and then navigates the main window
+  from `loading/index.html` to the live UI.
 - On failure (spawn error, early sidecar exit, or readiness timeout) renders the
   reason — including the daemon's own error line — inside the splash instead of
   spinning forever.

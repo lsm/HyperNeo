@@ -482,10 +482,9 @@ pub fn run() {
 			// In release mode the desktop app owns the daemon lifecycle: it first
 			// attaches to a daemon that is already running (advertised in
 			// <data-dir>/runtime.json), and otherwise spawns the bundled sidecar.
-			// The sidecar inherits the default data dir, so attach-first is what
-			// keeps it off a CLI or launchd daemon's SQLite PID lock; a stale or
-			// absent advert leaves the sidecar to fail there, and that failure is
-			// reported in the window rather than hidden.
+			// Attach-first keeps the configured data dir off a running daemon's
+			// SQLite PID lock; a stale or absent advert leaves the sidecar to fail
+			// there, and that failure is reported in the window.
 			// In debug mode the developer runs `make dev` separately and the webview
 			// points straight at devUrl, so there's nothing to spawn.
 			#[cfg(not(debug_assertions))]
