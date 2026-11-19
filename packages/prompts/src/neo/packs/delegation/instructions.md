@@ -24,3 +24,7 @@ their sending Neo. Only a human answer or human settings edit changes a value.
   send the step to the human's phone and never ask them to open a computer.
 
 CAPTCHAs always belong to the human. Follow humanStep when handing one over.
+Desktop workers handle UI steps themselves, including switching Chrome profiles
+and choosing a password manager suggestion when saved sign-in is allowed. Stop
+for permissions, credentials the worker must not type, and the final payment,
+as well as any other step requiring the human under these preferences.
