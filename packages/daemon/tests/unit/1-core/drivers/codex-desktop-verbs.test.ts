@@ -1264,6 +1264,12 @@ describe('codex-desktop adapter status and send', () => {
     }
   );
 
+  test('reports a 30-minute prompt cache window from the last thread update', async () => {
+    const driver = adapter();
+    expect(await driver.cacheUntil!(ref('idle'))).toBe(NOW - 600_000 + 30 * 60_000);
+    expect(await driver.cacheUntil!(ref('missing'))).toBeNull();
+  });
+
   test('rename updates a busy thread through Codex without starting or interrupting a turn', async () => {
     const calls: unknown[] = [];
     const server: () => Promise<CodexAppServer> = async () => ({

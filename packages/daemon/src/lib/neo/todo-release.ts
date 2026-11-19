@@ -21,23 +21,42 @@ type Invoke = (
   name: string,
   input: Record<string, unknown>
 ) => Promise<OperationOutcome>;
-export type WorkerCompact = (adapter: string) => WorkAdapter['compact'];
+export type WorkerCompact = (
+  adapter: string
+) => Pick<WorkAdapter, 'compact' | 'cacheUntil'> | undefined;
 type ReuseDecision = ReturnType<typeof followSessionReuse>;
+type KeptWorker = {
+  ref: WorkRef;
+  decision: ReuseDecision;
+  hasLookup: boolean;
+  compact: WorkAdapter['compact'];
+  lastUse: number;
+  compactedAt: number | null;
+  cacheUntil: number | null;
+};
 type ReuseRelease =
   | { value: WorkRef }
   | { reason: Kept }
   | { compact: NonNullable<WorkAdapter['compact']>; ref: WorkRef; kept: Kept; lastUse: number };
 const COMPACT_RETRY_MS = 5 * 60_000;
 const MAX_COMPACTION_ATTEMPTS = 3;
+const DEFAULT_CACHE_MS = 60 * 60_000;
 let compactionInFlight = false;
 
-function planKeptCompaction(
-  ref: WorkRef,
-  decision: ReuseDecision,
-  hasLookup: boolean,
-  compact: WorkAdapter['compact'],
-  lastUse: number
-): ReuseRelease {
+export function releaseColdWorker(kept: KeptWorker, now: number): KeptWorker {
+  if ('value' in kept.decision || !kept.compact) return kept;
+  if (kept.compactedAt !== null && kept.compactedAt >= kept.lastUse) return kept;
+  const until = kept.cacheUntil ?? kept.lastUse + DEFAULT_CACHE_MS;
+  return now > until ? { ...kept, decision: { value: kept.ref } } : kept;
+}
+
+function planKeptCompaction({
+  ref,
+  decision,
+  hasLookup,
+  compact,
+  lastUse,
+}: KeptWorker): ReuseRelease {
   if ('value' in decision || !hasLookup) return decision;
   return compact ? { compact, ref, kept: decision.reason, lastUse } : { value: ref };
 }
@@ -195,14 +214,21 @@ const releaseWorker = (superpipe({})('neo.todo.release-worker') as PipelineAPI)
       row: FinishedWorker,
       sessions: NeoTodoSessionRepository,
       lookup: WorkerCompact | undefined
-    ) => {
+    ): Promise<KeptWorker> => {
       const decision = followSessionReuse(await sessions.read('reuseFacts', row.todoId), ref);
-      const compact = 'reason' in decision ? lookup?.(ref.adapter) : undefined;
-      return planKeptCompaction(ref, decision, !!lookup, compact, row.lastUse);
+      const adapter = 'reason' in decision ? lookup?.(ref.adapter) : undefined;
+      const compact = adapter?.compact;
+      const facts = compact ? await sessions.read('workerCompactionFacts', ref) : null;
+      const cacheUntil = compact ? ((await adapter?.cacheUntil?.(ref)) ?? null) : null;
+      const hasLookup = !!lookup;
+      const compactedAt = facts?.compactedAt ?? null;
+      return { ref, decision, hasLookup, compact, lastUse: row.lastUse, compactedAt, cacheUntil };
     },
     ['release', 'row', 'sessions', 'workerCompact'],
-    'compaction'
+    'kept'
   )
+  .pipe(releaseColdWorker, ['kept', 'now'], 'kept')
+  .pipe(planKeptCompaction, 'kept', 'compaction')
   .pipe(
     async (
       plan: ReuseRelease,

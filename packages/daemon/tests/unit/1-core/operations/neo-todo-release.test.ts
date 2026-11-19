@@ -75,6 +75,7 @@ function setup() {
   });
   const archived: unknown[] = [];
   const compacted: string[] = [];
+  let cacheUntil: WorkAdapter['cacheUntil'];
   let compact: WorkAdapter['compact'] = async (ref) => {
     compacted.push(ref.id);
     return { ok: true, value: { compacted: true } };
@@ -129,7 +130,7 @@ function setup() {
     store,
     sessions,
     invoke,
-    workerCompact: () => compact,
+    workerCompact: () => ({ compact, cacheUntil }),
     packs: () => [],
     tell: async (_ask, _todo, note) => {
       notices.push(note);
@@ -174,6 +175,9 @@ function setup() {
     compacted,
     setCompact: (next: WorkAdapter['compact']) => {
       compact = next;
+    },
+    setCacheUntil: (next: WorkAdapter['cacheUntil']) => {
+      cacheUntil = next;
     },
     notices,
     setArchive: (next: (caller: OperationCaller) => unknown) => {
@@ -751,12 +755,14 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
           () => {},
           now,
           undefined,
-          () => async (target) => {
-            attempts.push(target.id);
-            return attempts.length > 1
-              ? { ok: true, value: { compacted: true } }
-              : { ok: false, reason: 'not_delivered', detail: 'Compaction was not confirmed.' };
-          }
+          () => ({
+            compact: async (target) => {
+              attempts.push(target.id);
+              return attempts.length > 1
+                ? { ok: true, value: { compacted: true } }
+                : { ok: false, reason: 'not_delivered', detail: 'Compaction was not confirmed.' };
+            },
+          })
         );
 
       await runRelease(Date.now());
@@ -793,12 +799,14 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
           (message) => warnings.push(message),
           Date.now(),
           undefined,
-          () => async () => {
-            const outcome = attempts[index++];
-            return typeof outcome === 'boolean'
-              ? { ok: true, value: { compacted: outcome } }
-              : { ok: false, reason: outcome, detail: 'Synthetic skip' };
-          }
+          () => ({
+            compact: async () => {
+              const outcome = attempts[index++];
+              return typeof outcome === 'boolean'
+                ? { ok: true, value: { compacted: outcome } }
+                : { ok: false, reason: outcome, detail: 'Synthetic skip' };
+            },
+          })
         );
       }
       expect(index).toBe(attempts.length);
@@ -829,10 +837,12 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
           },
           now,
           undefined,
-          () => async () => ({
-            ok: false,
-            reason: 'not_delivered',
-            detail: 'Synthetic compaction refusal',
+          () => ({
+            compact: async () => ({
+              ok: false,
+              reason: 'not_delivered',
+              detail: 'Synthetic compaction refusal',
+            }),
           })
         );
 
@@ -897,6 +907,96 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
       expect((await h.sessions.read('workerCompactionFacts', ref))?.compactedAt).toBeNull();
     } finally {
       pending.resolve({ ok: true, value: { compacted: false } });
+      h.db.close();
+    }
+  });
+
+  test('compacts a kept worker while its prompt cache is warm', async () => {
+    const h = setup();
+    try {
+      h.reuse('long_lived');
+      h.setCacheUntil(async () => Date.now() + 60_000);
+      await h.finishTodo(h.add(started));
+      await h.refresh();
+      expect(h.compacted).toEqual([worker.id]);
+      expect(h.archived).toEqual([]);
+      expect(kept(h)).toEqual([{ kept: 'kept_for_reuse' }]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('releases a kept worker whose prompt cache went cold before compaction', async () => {
+    const h = setup();
+    try {
+      h.reuse('long_lived');
+      h.setCacheUntil(async () => Date.now() - 60 * 60_000);
+      await h.finishTodo(h.add(started));
+      await h.refresh();
+      expect(h.compacted).toEqual([]);
+      expect(h.archived).toEqual([worker]);
+      expect(h.released()).toHaveLength(1);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('keeps an already compacted worker after its prompt cache goes cold', async () => {
+    const h = setup();
+    try {
+      h.reuse('long_lived');
+      h.setCacheUntil(async () => Date.now() + 60_000);
+      await h.finishTodo(h.add(started));
+      await h.refresh();
+      expect(h.compacted).toEqual([worker.id]);
+      for (let i = 0; i < 50; i++) {
+        if ((await h.sessions.read('workerCompactionFacts', worker))?.compactedAt) break;
+        await Bun.sleep(5);
+      }
+      expect((await h.sessions.read('workerCompactionFacts', worker))?.compactedAt).toBeGreaterThan(
+        0
+      );
+      h.setCacheUntil(async () => Date.now() - 60 * 60_000);
+      await h.refresh();
+      expect(h.compacted).toEqual([worker.id]);
+      expect(h.archived).toEqual([]);
+      expect(h.released()).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('uses a one-hour cache window when the adapter cannot report one', async () => {
+    const h = setup();
+    try {
+      h.reuse('long_lived');
+      h.setCacheUntil(async () => null);
+      await h.finishTodo(h.add(started));
+      await releaseNeoTodoWorkers(
+        h.sessions,
+        h.invoke,
+        () => {},
+        Date.now() + 59 * 60_000,
+        undefined,
+        () => ({
+          compact: async () => ({ ok: true, value: { compacted: false } }),
+          cacheUntil: async () => null,
+        })
+      );
+      expect(h.archived).toEqual([]);
+      await releaseNeoTodoWorkers(
+        h.sessions,
+        h.invoke,
+        () => {},
+        Date.now() + 61 * 60_000,
+        undefined,
+        () => ({
+          compact: async () => ({ ok: true, value: { compacted: false } }),
+          cacheUntil: async () => null,
+        })
+      );
+      expect(h.archived).toEqual([worker]);
+    } finally {
       h.db.close();
     }
   });

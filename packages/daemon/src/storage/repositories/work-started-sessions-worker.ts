@@ -2,6 +2,7 @@ import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { WorkerReuseFacts } from '../../lib/drivers/worker-reuse.ts';
 import { workerWorkKey } from '../../lib/work-locations.ts';
+import { sdkMessageBodyAt } from './sdk-message-body-read.ts';
 
 export interface StartedWork {
   adapter: string;
@@ -206,6 +207,23 @@ export function unclaimTodoWorker(
       ref.id
     );
   })();
+}
+
+export function readWorkerLastTurn(
+  db: BunDatabase,
+  sessionId: string
+): { at: number; oneHourCache: boolean } | null {
+  const row = db
+    .prepare(
+      `SELECT timestamp, COALESCE(json_extract(${sdkMessageBodyAt('sdk_messages.rowid')},
+         '$.message.usage.cache_creation.ephemeral_1h_input_tokens'), 0) AS oneHour
+       FROM sdk_messages WHERE session_id = ? AND message_type = 'assistant'
+         AND parent_tool_use_id IS NULL
+       ORDER BY timestamp DESC, rowid DESC LIMIT 1`
+    )
+    .get(sessionId) as { timestamp: string; oneHour: number } | null;
+  const at = row ? Date.parse(row.timestamp) : Number.NaN;
+  return Number.isFinite(at) ? { at, oneHourCache: Number(row?.oneHour) > 0 } : null;
 }
 
 export function forgetWorkGone(db: BunDatabase, root: string): void {
