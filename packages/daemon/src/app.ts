@@ -508,7 +508,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     await db.initialize(reactiveDb);
     const usageDb = db.getDatabase();
     setRateLimitEventReader(() => gatewayFor(usageDb).run(anthropicRateLimitEventsRead, 200));
-    if (process.env.NODE_ENV !== 'test') db.warmEmbedder();
+    if (process.env['NODE_ENV'] !== 'test') db.warmEmbedder();
     const cutOffSessionIds = db.listProcessingSessionIds();
     const interruptedTurns = await db.markRestartInterruptedTurns();
     const liveQueries = new LiveQueryEngine(db.getDatabase(), reactiveDb);
