@@ -1,14 +1,14 @@
 import { strict as assert } from 'node:assert';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import type { FindWorkResultSchema } from '../../../packages/daemon/src/lib/drivers/find-operation.ts';
 import type { Result, WorkDetail, WorkStarted, WorkTurnFact } from '../../../packages/daemon/src/lib/drivers/types.ts';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
-import { copilotSession, prepareCopilotFixture } from '../../../packages/daemon/tests/helpers/copilot-fixture.ts';
+import { copilotFolder, copilotSession, prepareCopilotFixture } from '../../../packages/daemon/tests/helpers/copilot-fixture.ts';
 import type { z } from 'zod';
 
 const [portText, mode, run] = process.argv.slice(2);
@@ -51,6 +51,7 @@ if (desktop) {
     db.close();
   }
   const events = [
+    { type: 'session.start', data: { context: { cwd: copilotFolder } } },
     { type: 'user.message', data: { messageId: 'one', interactionId: 'turn', content: 'MARKER\nInput' } },
     { type: 'assistant.message', data: { messageId: 'two', interactionId: 'turn', content: 'Reply' } },
     { type: 'session.idle', data: {} },
@@ -134,13 +135,18 @@ try {
       ]);
       assert.deepEqual(afterLock.unreachable, []);
       assert(afterLock.places.some((place) => place.work.some((work) => work.ref.id === copilotSession)));
-      db.exec('ALTER TABLE sessions RENAME TO changed_sessions');
+      db.exec('PRAGMA journal_mode = WAL');
     } finally {
       db.close();
     }
-    const drift = await rpc<z.infer<typeof FindWorkResultSchema>>('work.find', query);
-    assert.equal(drift.places.length, 0);
-    assert.match(drift.unreachable[0]?.reason ?? '', /^Unsupported Copilot Desktop state schema:/);
+    chmodSync(dirname(state), 0o555);
+    try {
+      const wal = await rpc<z.infer<typeof FindWorkResultSchema>>('work.find', query);
+      assert.deepEqual(wal.unreachable, []);
+      assert(wal.places.some((place) => place.work.some((work) => work.ref.id === copilotSession)));
+    } finally {
+      chmodSync(dirname(state), 0o700);
+    }
   }
   if (cli) {
     const folder = join(run, 'workspace');
@@ -161,6 +167,28 @@ try {
     const turns = await rpc<Result<{ turns: WorkTurnFact[] }>>('work.turns', { ref });
     assert(turns.ok && turns.value.turns.some((turn) => turn.ended === 'stopped'));
     if (desktop) assert.deepEqual(readFileSync(state), before);
+  }
+  if (desktop) {
+    const db = new Database(state);
+    try {
+      db.exec('ALTER TABLE sessions RENAME TO changed_sessions');
+    } finally {
+      db.close();
+    }
+    const drift = await rpc<z.infer<typeof FindWorkResultSchema>>('work.find', query);
+    if (cli) {
+      const visible = drift.places.flatMap((place) => place.work);
+      const external = visible.find((work) => work.ref.id === copilotSession);
+      assert.equal(external?.title, 'Synthetic sum task');
+      assert(visible.every((work) => work.watchHint?.includes('Copilot Desktop discovery unavailable')));
+      const missed = await rpc<z.infer<typeof FindWorkResultSchema>>('work.find', {
+        ...query, text: 'No matching session',
+      });
+      assert.match(missed.unreachable[0]?.reason ?? '', /^Unsupported Copilot Desktop state schema:/);
+    } else {
+      assert.equal(drift.places.length, 0);
+      assert.match(drift.unreachable[0]?.reason ?? '', /^Unsupported Copilot Desktop state schema:/);
+    }
   }
 } finally {
   socket?.close();

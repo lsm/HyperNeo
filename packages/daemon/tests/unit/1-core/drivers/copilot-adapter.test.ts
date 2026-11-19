@@ -713,6 +713,7 @@ describe('owned Copilot lifecycle', () => {
       'queue',
       'withdraw',
       'status',
+      'turns',
       'stop',
       'archive',
     ]);
