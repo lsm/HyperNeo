@@ -48,6 +48,12 @@ const NEO_STEP: Record<NeoStepReason, (detail: string) => string> = {
 
 export const NEO_ATTENTION_KINDS: readonly NeoAttentionKind[] = [
   {
+    id: 'voice.key.saved',
+    decide: always('wake'),
+    render: ({ subject }) =>
+      `A voice key was saved for ${subject.id}. Run the recorded, live and speech voice tests and report which parts work.`,
+  },
+  {
     id: 'turn.report',
     latestOnly: true,
     render: carried,
