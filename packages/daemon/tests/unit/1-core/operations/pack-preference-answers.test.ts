@@ -114,6 +114,21 @@ const saved = async () => {
 };
 
 describe('immutable human settings proposals', () => {
+  test('the retired coding session strategy cannot open a new settings card', async () => {
+    const choice = (value: string) => ({
+      pack: 'coding',
+      scope: { kind: 'repo', key: 'synthetic/repo' },
+      key: 'sessionStrategy',
+      value,
+    });
+    const reply = await invoke('pack.preferences.ask', {
+      askId: 'ask',
+      requestId: 'retired-strategy',
+      alternatives: [[choice('long_lived')], [choice('per_task')]],
+    });
+    expect(reply).not.toMatchObject({ kind: 'completed', value: { ok: true } });
+  });
+
   test('delegation choices do not repeat labels and explain the unsaved default', async () => {
     db.updateGlobalSettings({ language: 'en' });
     const choice = (value: string) => ({
