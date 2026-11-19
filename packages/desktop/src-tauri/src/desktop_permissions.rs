@@ -72,3 +72,39 @@ pub(crate) fn open_desktop_permission_settings(permission: &str) -> Result<(), S
         Err("Desktop permissions are only available on macOS".into())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    fn actions_for(permission: &str) -> Vec<String> {
+        let actions = RefCell::new(Vec::new());
+        open_desktop_permission_settings_with(
+            permission,
+            |value| actions.borrow_mut().push(format!("request:{value}")),
+            |value| {
+                actions.borrow_mut().push(format!("open:{value}"));
+                Ok(())
+            },
+        )
+        .unwrap();
+        actions.into_inner()
+    }
+
+    #[test]
+    fn accessibility_requests_access_before_opening_settings() {
+        assert_eq!(
+            actions_for("accessibility"),
+            ["request:accessibility", "open:Privacy_Accessibility"]
+        );
+    }
+
+    #[test]
+    fn screen_recording_requests_access_before_opening_settings() {
+        assert_eq!(
+            actions_for("screenRecording"),
+            ["request:screenRecording", "open:Privacy_ScreenCapture"]
+        );
+    }
+}

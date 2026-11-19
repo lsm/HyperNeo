@@ -21,6 +21,7 @@ describe('desktop permissions page', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(window.document.body.textContent).toContain('Accessibility');
     expect(window.document.body.textContent).toContain('Screen Recording');
+    expect(window.document.body.textContent).toContain('Quit and reopen to finish');
     window.document.querySelector<HTMLButtonElement>('#open-accessibility')?.click();
     window.document.querySelector<HTMLButtonElement>('#open-screen-recording')?.click();
     expect(invoke).toHaveBeenCalledWith('open_desktop_permission_settings', {
