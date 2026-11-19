@@ -243,6 +243,7 @@ test.each([
   { source: 'rpc', principal: 'local', sessionId: 'worker-a', role: 'universal_read' },
   { source: 'mcp', sessionId: 'worker-a' },
   { source: 'mcp', role: 'direct_task_worker' },
+  { source: 'mcp', sessionId: 'neo:coordinator', role: 'neo' },
 ] as OperationCaller[])(
   'refuses caller $source/$role/$principal before contacting the host',
   async (identity) => {

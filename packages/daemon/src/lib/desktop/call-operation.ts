@@ -61,6 +61,7 @@ export function createDesktopCallOperation(
         caller.source === 'mcp' &&
         !!caller.sessionId &&
         !!caller.role &&
+        caller.role !== 'neo' &&
         caller.principal === undefined
           ? { value: caller.sessionId! }
           : refuse('desktop_worker_only'),
