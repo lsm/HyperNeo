@@ -1,6 +1,6 @@
 # Build Bun parity for todo incident receipts
 
-Use the shared isolation/resource setup in ../SKILL.md with pinned Bun 1.4.2.
+Use the shared isolation/resource setup in ../SKILL.md with pinned Bun 1.4.4.
 
     VERIFY_PROOF_RUNTIME=bun bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence scripts/bun-todo-incident-probe.ts
 

@@ -1,6 +1,6 @@
 # Watch validation uses the DB reader
 
-Use the shared isolation and resource setup in ../SKILL.md with Bun 1.4.2.
+Use the shared isolation and resource setup in ../SKILL.md with Bun 1.4.4.
 
     bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence .claude/skills/verify/github-watch-validation-reader.ts
 

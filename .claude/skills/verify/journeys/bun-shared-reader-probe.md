@@ -1,7 +1,7 @@
 # Build Bun parity for the inline shared-reader probes
 
 Use shared resource/isolation/cleanup setup in ../SKILL.md. Run the standalone
-Bun probe through the existing wrapper, with pinned Bun 1.4.2 on PATH:
+Bun probe through the existing wrapper, with pinned Bun 1.4.4 on PATH:
 
     VERIFY_PROOF_RUNTIME=bun bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence scripts/bun-shared-reader-probe.ts
 

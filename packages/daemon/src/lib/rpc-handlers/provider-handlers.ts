@@ -32,12 +32,19 @@ const MAX_DISPLAY_NAME_LEN = 256;
 const MAX_BASE_URL_LEN = 2048;
 const MAX_JSON_FIELD_LEN = 64 * 1024;
 
+function isVoiceCredentialId(providerId: string): boolean {
+  return (
+    providerId === VOICE_CREDENTIAL_PROVIDER_ID ||
+    providerId.startsWith(`${VOICE_CREDENTIAL_PROVIDER_ID}:`)
+  );
+}
+
 function validateCreateParams(params: unknown): asserts params is CreateProviderParams {
   if (!params || typeof params !== 'object') throw new Error('Invalid provider params');
   const p = params as Record<string, unknown>;
   if (!p.providerId || typeof p.providerId !== 'string') throw new Error('providerId is required');
-  if (p.providerId === VOICE_CREDENTIAL_PROVIDER_ID)
-    throw new Error(`providerId '${VOICE_CREDENTIAL_PROVIDER_ID}' is reserved`);
+  if (isVoiceCredentialId(p.providerId))
+    throw new Error(`providerId '${p.providerId}' is reserved`);
   if (p.providerId.length > MAX_PROVIDER_ID_LEN)
     throw new Error(`providerId must be ≤ ${MAX_PROVIDER_ID_LEN} chars`);
   if (!p.displayName || typeof p.displayName !== 'string')

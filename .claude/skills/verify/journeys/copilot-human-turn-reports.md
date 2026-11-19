@@ -1,6 +1,6 @@
 # Direct human turns in an owned Copilot worker reach Neo
 
-Use shared SKILL.md isolation, pinned Bun 1.4.2 and the resource guard. The helper
+Use shared SKILL.md isolation, pinned Bun 1.4.4 and the resource guard. The helper
 owns ephemeral loopback model/daemon ports, a fresh home and database, a refusing
 gh stub and a synthetic framed-JSON-RPC Copilot CLI. External registry MCP servers
 are disabled; SDK sandbox disabling is only for the synthetic Neo transport.

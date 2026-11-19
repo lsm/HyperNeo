@@ -31,6 +31,6 @@ and must not be claimed as a complete off-main pass. Save SQL hashes, timing and
 Run the focused SQL/constructor contracts, strict checker, source/diff measurement and
 repository checks. Net prepare/run counts must be zero and receipt/save method bodies
 byte-identical. Close scratch DBs, socket, processors and app before data cleanup. Full
-capture/FS/ownership/source graph, successful snapshot publication, native Bun 1.4.2 when
+capture/FS/ownership/source graph, successful snapshot publication, native Bun 1.4.4 when
 another Bun is installed, browser and Neo-owned deployment smoke remain unverified by this
 helper extraction.

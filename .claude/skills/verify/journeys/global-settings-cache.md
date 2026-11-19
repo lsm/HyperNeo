@@ -1,6 +1,6 @@
 # Global settings cache visibility
 
-Run the focused regression on the build/test host with Bun 1.4.2. It boots a real
+Run the focused regression on the build/test host with Bun 1.4.4. It boots a real
 isolated daemon on an ephemeral port and calls the authenticated WebSocket
 settings update door. Use a fresh synthetic HOME and data directory, with no
 provider credentials in the environment. The daemon test owns its synthetic

@@ -145,7 +145,11 @@ async function startMirror() {
       }
       const meta = await (await fetch(`${NPM}${path}`)).json();
       const { port } = server.address() as AddressInfo;
-      meta.dist.tarball = `http://127.0.0.1:${port}/tarball/${encodeURIComponent(meta.dist.tarball)}`;
+      const versions = meta.versions ? Object.values(meta.versions) : [meta];
+      for (const version of versions as { dist?: { tarball?: string } }[]) {
+        if (version.dist?.tarball)
+          version.dist.tarball = `http://127.0.0.1:${port}/tarball/${encodeURIComponent(version.dist.tarball)}`;
+      }
       res.end(JSON.stringify(meta));
     };
     handle().catch(() => res.destroy());
@@ -170,20 +174,24 @@ async function checkSlowInterruptedDownload(compiledBinary: string, copilotVersi
   const mirror = await startMirror();
   try {
     const interrupted = await runBinary(binary, run, mirror.url);
-    if (interrupted.status === 0 || !interrupted.stderr.includes('cannot reach npm'))
+    const npmFailure = interrupted.stderr.includes('npm could not download the package');
+    const curlFailure = interrupted.stderr.toLowerCase().includes('cannot reach npm');
+    if (interrupted.status === 0 || (!npmFailure && !curlFailure))
       throw new Error(`Expected a named network failure:\n${interrupted.stderr}`);
+    if (mirror.ranges.length === 0) throw new Error('No tarball download was interrupted');
     const kept = partialBytes(run);
-    if (kept === 0) throw new Error('The interrupted download kept no partial file');
+    if (curlFailure && kept === 0) throw new Error('The interrupted download kept no partial file');
 
     const resumed = await runBinary(binary, run, mirror.url);
     expectRuntimes(observed(resumed), 'download', run, copilotVersion);
-    if (mirror.ranges.at(-1) !== kept)
-      throw new Error(`Expected a resume from ${kept}: ${mirror.ranges.join(', ')}`);
+    const expectedOffset = npmFailure ? 0 : kept;
+    if (mirror.ranges.at(-1) !== expectedOffset)
+      throw new Error(`Expected a download from ${expectedOffset}: ${mirror.ranges.join(', ')}`);
     if (resumed.elapsedMs <= OLD_DOWNLOAD_CAP_MS)
       throw new Error(`Throttled download finished too fast: ${resumed.elapsedMs}ms`);
     const mbps = (mirror.rate() * 8) / 1_000_000;
     console.log(
-      `PASS: resumed from ${kept} bytes at ${mbps.toFixed(1)} Mbps in ${resumed.elapsedMs}ms`
+      `PASS: downloaded from ${expectedOffset} bytes at ${mbps.toFixed(1)} Mbps in ${resumed.elapsedMs}ms`
     );
   } finally {
     mirror.close();

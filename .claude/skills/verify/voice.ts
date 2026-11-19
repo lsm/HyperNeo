@@ -1,10 +1,16 @@
+import assert from 'node:assert/strict';
+import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
+
 const port = process.env.VERIFY_PORT;
 const asrPort = process.argv[2];
 if (!port || !asrPort) {
   console.error('usage: VERIFY_PORT=<port> bun voice.ts <stub-asr-port>');
   process.exit(2);
 }
-const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+assert(process.env.HYPERNEO_DATA_DIR, 'set HYPERNEO_DATA_DIR to the isolated run');
+const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, {
+  headers: { authorization: `Bearer ${await readLocalCredential()}` },
+} as unknown as string[]);
 await new Promise((resolve, reject) => {
   ws.onopen = resolve;
   ws.onerror = reject;
@@ -48,10 +54,19 @@ await call('settings.global.update', {
 });
 const started = (await call('voice.stream.start', { encoding: 'pcm16', sampleRate: 16_000 })) as {
   streamId?: string;
+  via?: string;
 };
+assert.equal(started.via, 'streaming');
+assert(started.streamId);
 const chunk = Buffer.alloc(3200).toString('base64');
 for (let n = 0; n < 3; n++)
   await call('voice.stream.chunk', { streamId: started.streamId, audioBase64: chunk });
-const stopped = await call('voice.stream.stop', { streamId: started.streamId });
+const stopped = (await call('voice.stream.stop', { streamId: started.streamId })) as {
+  text?: string;
+  via?: string;
+};
+assert.equal(stopped.via, 'streaming');
+assert.equal(stopped.text, 'heard 9600 bytes');
+assert(texts.some((text) => (text as { isFinal?: boolean }).isFinal));
 console.log(JSON.stringify({ started, stopped, texts }, null, 1));
 ws.close();

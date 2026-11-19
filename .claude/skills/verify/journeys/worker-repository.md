@@ -1,6 +1,6 @@
 # Coding todos stay in their worker repository
 
-Use the shared metadata-only proof wrapper with Bun 1.4.2:
+Use the shared metadata-only proof wrapper with Bun 1.4.4:
 
 ```sh
 TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory .claude/skills/verify/worker-repository.ts

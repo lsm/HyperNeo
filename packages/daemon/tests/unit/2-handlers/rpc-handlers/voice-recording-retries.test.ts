@@ -311,7 +311,8 @@ describe('voice recording retries through registered RPC handlers', () => {
       releaseAsr = resolve;
     });
     const credentials = {
-      getCredentials: async () => {
+      getCredentials: async (providerId: string) => {
+        if (providerId !== 'voice-transcription') return null;
         if (++lookups === 1) {
           sawCredentials();
           await credentialGate;

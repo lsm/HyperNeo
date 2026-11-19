@@ -23,6 +23,8 @@ Observe failed status and the original error, one wake for repeated notification
 of the same episode, and the original error in Neo's stored incoming message.
 After a hard-reset-shaped episode replacement, the old terminal event must not
 create another wake. Baseline status says done and there is no wake.
+The mailbox delivery also asserts that its admission rowid is read on the gateway,
+with no matching SQL on the daemon's main connection.
 
 Retain observed.json, proof.log and the wrapper exit status. Cleanup closes the
 service, recipient and database; the wrapper removes the disposable home/data.

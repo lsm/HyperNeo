@@ -14,7 +14,7 @@ This file holds the rules for every change. Before you edit inside one of these 
 
 ## Setup and commands
 
-- Use Bun 1.4.2 for the daemon and native proof jobs ([runtimes](docs/supported-runtimes.md)).
+- Use Bun 1.4.4 for the daemon and native proof jobs ([runtimes](docs/supported-runtimes.md)).
 - Pin exact dependency versions; no `^` or `~`.
 - Run `bun install --frozen-lockfile` in fresh worktrees before committing.
 - Always pass a unique `DB_PATH` from a worktree; the DB has a PID lock.

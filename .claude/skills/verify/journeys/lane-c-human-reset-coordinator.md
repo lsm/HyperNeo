@@ -2,7 +2,7 @@
 
 The wrapper checks resources, scrubs credentials, uses a disposable HOME/data and
 ephemeral ports, saves evidence, then removes data. No provider/model turn or HTTP mock is
-needed. Record actual versions; local Bun 1.4.3 does not establish pinned native Bun 1.4.2
+needed. Record actual versions; local Bun 1.4.3 does not establish pinned native Bun 1.4.4
 coverage. Never touch the live daemon.
 
 Commit the failing construction proof first: the coordinator is absent while

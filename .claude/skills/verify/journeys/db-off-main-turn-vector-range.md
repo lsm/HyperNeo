@@ -1,6 +1,6 @@
 # Turn embedding reads pending ranges without blocking health
 
-Use SKILL.md's in-process setup, pinned Bun1.4.2, a fresh synthetic HOME/data/DB,
+Use SKILL.md's in-process setup, pinned Bun1.4.4, a fresh synthetic HOME/data/DB,
 and `PROOF=.claude/skills/verify/turn-vector-reader.ts`. No model/mock/GUI is needed.
 Pass `1200` after the run directory for a one-shot executing-thread MIN/MAX wait;
 repeat in a fresh run with `1200 bridge` for IPC, and `0` for ordinary data.
