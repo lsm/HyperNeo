@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { Window } from 'happy-dom';
+import { Window, type HTMLButtonElement } from 'happy-dom';
 import { describe, expect, it, vi } from 'vitest';
 
 const page = resolve('../desktop/src-tauri/loading/permissions.html');
