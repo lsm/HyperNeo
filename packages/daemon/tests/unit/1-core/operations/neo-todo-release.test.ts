@@ -76,13 +76,23 @@ function setup() {
   });
   let onStatus = () => {};
   let folder = pushedCheckout();
+  let next = worker;
+  const reuse = (mode: string) =>
+    db
+      .prepare(
+        `INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
+         VALUES ('core', 'global', '', 'sessionReuse', ?, 'human', 1)
+         ON CONFLICT (pack, scope_kind, scope_key, key) DO UPDATE SET value_json = excluded.value_json`
+      )
+      .run(JSON.stringify(mode));
+  reuse('per_todo');
   const invoke = recordedWorkInvoke(sessions.inputs, async (caller, name, input) => {
     if (name === 'work.start')
       return completed({
         ok: true,
         value: {
-          ref: worker,
-          receipt: { executionId: worker.id, inputId: 'i' },
+          ref: next,
+          receipt: { executionId: next.id, inputId: 'i' },
           lastActivityAt: 1,
         },
       });
@@ -99,7 +109,7 @@ function setup() {
     if (name === 'work.status')
       return completed({
         ok: true,
-        value: { ref: worker, execution: { directory: folder, machine: 'laptop' } },
+        value: { ref: input.ref, execution: { directory: folder, machine: 'laptop' } },
       });
     return completed(null);
   });
@@ -166,6 +176,12 @@ function setup() {
       db.prepare("SELECT todo_id FROM pack_facts WHERE pack = 'core' AND key = 'released'").all(),
     queueOn: (todoId: string) => sessions.queueOn(todoId, worker, 'Next step.'),
     folder: () => folder,
+    reuse,
+    startNext: (ref: typeof worker) => {
+      next = ref;
+      recordWorkerStarted(db, ref);
+    },
+    store,
   };
 }
 
@@ -630,6 +646,104 @@ describe('neo todo runner refresh keeps workers with unsaved work', () => {
       rmSync(h.folder(), { recursive: true, force: true });
       await h.refresh();
       expect(h.archived).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+});
+
+describe('neo todo runner refresh follows the session reuse setting', () => {
+  const kept = (h: ReturnType<typeof setup>) =>
+    h.db
+      .prepare("SELECT value_json FROM pack_facts WHERE pack = 'core' AND key = 'release_kept'")
+      .all()
+      .map((row) => JSON.parse((row as { value_json: string }).value_json));
+
+  test('archives the worker under per_todo', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      await h.refresh();
+      expect(h.archived).toEqual([worker]);
+      expect(kept(h)).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('keeps the worker under per_ask while its ask is open and releases it once settled', async () => {
+    const h = setup();
+    try {
+      h.reuse('per_ask');
+      await h.finishTodo(h.add(started));
+      await h.refresh();
+      expect(h.archived).toEqual([]);
+      expect(h.released()).toEqual([]);
+      expect(kept(h)).toEqual([{ kept: 'kept_for_reuse' }]);
+      h.store.settleAsk(h.store.getAsk('ask')!, 'done', 'Rows built.', Date.now());
+      await h.refresh();
+      expect(h.archived).toEqual([worker]);
+      expect(h.released()).toHaveLength(1);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('keeps only the most recently used free worker per folder under long_lived', async () => {
+    const h = setup();
+    const newer = { adapter: 'hyperneo', id: 'worker-2' };
+    try {
+      h.reuse('long_lived');
+      const first = h.add(started);
+      await h.finishTodo(first);
+      await h.refresh();
+      expect(h.archived).toEqual([]);
+      expect(kept(h)).toEqual([{ kept: 'kept_for_reuse' }]);
+      h.db
+        .prepare('UPDATE neo_todos SET finished_at = ? WHERE id = ?')
+        .run(Date.now() - 8 * 24 * 60 * 60 * 1000, first.id);
+      h.startNext(newer);
+      await h.finishTodo(h.add(started));
+      await h.refresh();
+      await h.refresh();
+      expect(h.archived).toEqual([worker]);
+      expect(h.released()).toHaveLength(1);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('still holds a dirty folder as pending under long_lived', async () => {
+    const h = setup();
+    try {
+      h.reuse('long_lived');
+      await h.finishTodo(h.add(started));
+      writeFileSync(join(h.folder(), 'draft.txt'), 'draft');
+      await h.refresh();
+      const pending = h.db
+        .prepare(
+          "SELECT value_json FROM pack_facts WHERE pack = 'core' AND key = 'release_pending'"
+        )
+        .get() as { value_json: string };
+      expect(JSON.parse(pending.value_json)).toMatchObject({ code: 'dirty' });
+      expect(kept(h)).toEqual([]);
+      expect(h.archived).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('still keeps a worker the human named under long_lived', async () => {
+    const h = setup();
+    try {
+      h.reuse('long_lived');
+      await h.finishTodo(h.add({ ...started, name: 'Jason' }, { session: 'Jason' }));
+      await h.refresh();
+      const fact = h.db
+        .prepare("SELECT value_json FROM pack_facts WHERE pack = 'core' AND key = 'released'")
+        .get() as { value_json: string };
+      expect(JSON.parse(fact.value_json)).toEqual({ kept: 'named_by_human' });
+      expect(kept(h)).toEqual([]);
     } finally {
       h.db.close();
     }

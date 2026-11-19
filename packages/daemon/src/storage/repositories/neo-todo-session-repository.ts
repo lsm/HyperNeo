@@ -20,6 +20,7 @@ import type { NeoDriverProgress } from '../../lib/neo/settle-driver-work.ts';
 import type { NeoWorkDriverReceipt } from '@hyperneo/shared/types/neo-snapshot';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
+import { releaseReuseFacts } from './neo-ask-input-worker.ts';
 import { WorkDeliveryInputRepository } from './work-delivery-input-repository.ts';
 import { NeoDriverSessionRows } from './neo-driver-session-rows.ts';
 
@@ -95,6 +96,10 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     method: 'finishedWorkers',
     since: number
   ): Promise<ReturnType<NeoTodoSessionRepository['finishedWorkers']>>;
+  read(
+    method: 'reuseFacts',
+    todoId: string
+  ): Promise<ReturnType<NeoTodoSessionRepository['reuseFacts']>>;
   read(
     method: (typeof neoTodoSessionReads.methods)[number],
     key?: string | number | WorkRef | Record<string, string | null>
@@ -745,7 +750,9 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
                 LIMIT 1) AS releasedBy
              FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
             WHERE t.state IN ('done', 'removed')
-              AND CASE t.state WHEN 'removed' THEN t.updated_at ELSE t.finished_at END > ?
+              AND (CASE t.state WHEN 'removed' THEN t.updated_at ELSE t.finished_at END > ?
+                OR EXISTS (SELECT 1 FROM pack_facts f
+                  WHERE f.todo_id = s.todo_id AND f.pack = 'core' AND f.key = 'release_kept'))
               AND s.ref IS NOT NULL
               AND NOT EXISTS (SELECT 1 FROM pack_facts f
                 WHERE f.todo_id = s.todo_id AND f.pack = 'core' AND f.key = 'released')`
@@ -818,6 +825,14 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     this.writeCoreFact(todoId, 'released', released);
   }
 
+  reuseFacts(todoId: string) {
+    return releaseReuseFacts(this.db, todoId);
+  }
+
+  recordReleaseKept(todoId: string, kept: unknown): void {
+    this.writeCoreFact(todoId, 'release_kept', kept);
+  }
+
   recordReleasePending(
     todoId: string,
     pending: { code: string; reason: string; since: number; notified: boolean }
@@ -854,6 +869,7 @@ export const neoTodoSessionReads = defineRepositoryOp(
     'syncedActivity',
     'syncedLive',
     'finishedWorkers',
+    'reuseFacts',
   ]
 );
 export const neoTodoSessionWrites = defineRepositoryOp(
@@ -878,6 +894,7 @@ export const neoTodoSessionWrites = defineRepositoryOp(
     'claimWorker',
     'unclaimWorker',
     'recordReleased',
+    'recordReleaseKept',
     'recordReleasePending',
   ]
 );
