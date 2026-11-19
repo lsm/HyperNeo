@@ -79,7 +79,7 @@ class MacRuntimePaths(unittest.TestCase):
     def test_links_system_swift_for_macos_binaries(self):
         build = (DESKTOP / 'src-tauri/build.rs').read_text()
         self.assertIn('CARGO_CFG_TARGET_OS', build)
-        self.assertIn('cargo:rustc-link-arg-bins=-Wl,-rpath,/usr/lib/swift', build)
+        self.assertIn('cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift', build)
 
 
 if __name__ == '__main__':
