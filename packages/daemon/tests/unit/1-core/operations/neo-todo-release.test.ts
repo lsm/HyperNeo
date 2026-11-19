@@ -762,14 +762,14 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
       await runRelease(Date.now());
       await runRelease(Date.now());
       expect(attempts).toEqual([ref.id]);
-      expect(await h.sessions.read('workerCompactedAt', ref)).toBeNull();
+      expect((await h.sessions.read('workerCompactionFacts', ref))?.compactedAt).toBeNull();
       expect(kept(h)).toEqual([{ kept: 'kept_for_reuse' }]);
 
       const later = Date.now() + 5 * 60_000;
       await runRelease(later);
       await runRelease(later);
       expect(attempts).toEqual([ref.id, ref.id]);
-      expect(await h.sessions.read('workerCompactedAt', ref)).toBeGreaterThan(0);
+      expect((await h.sessions.read('workerCompactionFacts', ref))?.compactedAt).toBeGreaterThan(0);
       expect(h.archived).toEqual([]);
     } finally {
       h.db.close();
@@ -803,7 +803,7 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
       }
       expect(index).toBe(attempts.length);
       expect(warnings).toEqual([]);
-      expect(await h.sessions.read('workerCompactedAt', ref)).toBeGreaterThan(0);
+      expect((await h.sessions.read('workerCompactionFacts', ref))?.compactedAt).toBeGreaterThan(0);
       expect(h.archived).toEqual([]);
     } finally {
       h.db.close();
@@ -814,6 +814,7 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
     const h = setup();
     const ref = { ...worker, id: crypto.randomUUID() };
     const warnings: string[] = [];
+    const errors: string[] = [];
     try {
       h.reuse('long_lived');
       h.startNext(ref);
@@ -822,7 +823,10 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
         releaseNeoTodoWorkers(
           h.sessions,
           h.invoke,
-          (message) => warnings.push(message),
+          (message, error) => {
+            warnings.push(message);
+            errors.push((error as Error).message);
+          },
           now,
           undefined,
           () => async () => ({ ok: false, reason: 'unreachable', detail: 'Synthetic disconnect' })
@@ -831,8 +835,10 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
       for (let sweep = 0; sweep < 5; sweep++) await runRelease(Date.now() + sweep * 6 * 60_000);
       expect(warnings).toHaveLength(3);
       expect(warnings[2]).toContain('3/3');
+      expect(errors[2]).toBe('unreachable: Synthetic disconnect');
+      expect((await h.sessions.read('workerCompactionFacts', ref))?.failure?.count).toBe(3);
       expect(kept(h)).toEqual([{ kept: 'kept_for_reuse' }]);
-      expect(await h.sessions.read('workerCompactedAt', ref)).toBeNull();
+      expect((await h.sessions.read('workerCompactionFacts', ref))?.compactedAt).toBeNull();
 
       const next = h.add(started);
       await h.finishTodo(next);
@@ -840,6 +846,28 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
       expect(warnings).toHaveLength(4);
       expect(warnings[3]).toContain('1/3');
       expect(h.archived).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('honors an exhausted retry budget already stored in the database', async () => {
+    const h = setup();
+    const ref = { ...worker, id: crypto.randomUUID() };
+    try {
+      h.reuse('long_lived');
+      h.startNext(ref);
+      const todo = h.add(started);
+      await h.finishTodo(todo);
+      const at = Date.now();
+      await h.sessions.write('recordCompactionFailure', todo.id, ref, {
+        count: 3,
+        attemptedAt: at,
+        retryAt: at,
+      });
+      await h.refresh();
+      expect(h.compacted).toEqual([]);
+      expect(kept(h)).toEqual([{ kept: 'kept_for_reuse' }]);
     } finally {
       h.db.close();
     }
@@ -862,7 +890,7 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
       await h.refresh();
       expect(startedCompaction).toEqual([ref.id]);
       expect(kept(h)).toEqual([{ kept: 'kept_for_reuse' }]);
-      expect(await h.sessions.read('workerCompactedAt', ref)).toBeNull();
+      expect((await h.sessions.read('workerCompactionFacts', ref))?.compactedAt).toBeNull();
     } finally {
       pending.resolve({ ok: true, value: { compacted: false } });
       h.db.close();

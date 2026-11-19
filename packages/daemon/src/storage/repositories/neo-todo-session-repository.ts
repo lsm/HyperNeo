@@ -13,7 +13,8 @@ import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import {
   markWorkUnusable,
   readStartedWork,
-  readWorkCompactedAt,
+  readWorkCompaction,
+  type WorkCompactionFailure,
   recordStartedWork,
   workStartedSessionWrites,
 } from './work-started-sessions-worker.ts';
@@ -102,7 +103,10 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     method: 'finishedWorkers',
     since: number
   ): Promise<ReturnType<NeoTodoSessionRepository['finishedWorkers']>>;
-  read(method: 'workerCompactedAt', ref: WorkRef): Promise<number | null | undefined>;
+  read(
+    method: 'workerCompactionFacts',
+    ref: WorkRef
+  ): Promise<ReturnType<NeoTodoSessionRepository['workerCompactionFacts']>>;
   read(
     method: 'reuseFacts',
     todoId: string
@@ -840,7 +844,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     return releaseReuseFacts(this.db, todoId);
   }
 
-  workerCompactedAt(ref: WorkRef): number | null | undefined {
+  workerCompactionFacts(ref: WorkRef) {
     const own = readStartedWork(this.db, null, undefined, ref)[0];
     if (
       !own ||
@@ -849,11 +853,15 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       this.doingTodoOn(ref, null, LIVE_TODO_STATES)
     )
       return undefined;
-    return readWorkCompactedAt(this.db, ref);
+    return readWorkCompaction(this.db, ref);
   }
 
   recordWorkerCompacted(ref: WorkRef, at: number): Promise<void> {
     return gatewayFor(this.db).call(workStartedSessionWrites, 'recordCompacted', ref, at);
+  }
+
+  recordCompactionFailure(todoId: string, worker: WorkRef, failure: WorkCompactionFailure): void {
+    this.writeCoreFact(todoId, 'compaction_failure', { worker, ...failure });
   }
 
   recordReleaseKept(todoId: string, kept: unknown): void {
@@ -897,7 +905,7 @@ export const neoTodoSessionReads = defineRepositoryOp(
     'syncedLive',
     'finishedWorkers',
     'reuseFacts',
-    'workerCompactedAt',
+    'workerCompactionFacts',
   ]
 );
 export const neoTodoSessionWrites = defineRepositoryOp(
@@ -923,6 +931,7 @@ export const neoTodoSessionWrites = defineRepositoryOp(
     'unclaimWorker',
     'recordReleased',
     'recordReleaseKept',
+    'recordCompactionFailure',
     'recordReleasePending',
   ]
 );

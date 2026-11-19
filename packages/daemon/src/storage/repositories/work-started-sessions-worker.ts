@@ -42,11 +42,23 @@ export function recordStartedWork(
   );
 }
 
-export function readWorkCompactedAt(db: BunDatabase, ref: StartedWork): number | null {
+export type WorkCompactionFailure = { count: number; attemptedAt: number; retryAt: number };
+
+export function readWorkCompaction(db: BunDatabase, ref: StartedWork) {
   const row = db
-    .prepare('SELECT compacted_at AS at FROM work_started_sessions WHERE adapter = ? AND id = ?')
-    .get(ref.adapter, ref.id) as { at: number | null } | null;
-  return row?.at ?? null;
+    .prepare(
+      `SELECT compacted_at AS at, (
+         SELECT value_json FROM pack_facts WHERE pack = 'core' AND key = 'compaction_failure'
+           AND json_extract(value_json, '$.worker.adapter') = ?1
+           AND json_extract(value_json, '$.worker.id') = ?2
+         ORDER BY json_extract(value_json, '$.attemptedAt') DESC, todo_id DESC LIMIT 1
+       ) AS failure FROM work_started_sessions WHERE adapter = ?1 AND id = ?2`
+    )
+    .get(ref.adapter, ref.id) as { at: number | null; failure: string | null } | null;
+  return {
+    compactedAt: row?.at ?? null,
+    failure: row?.failure ? (JSON.parse(row.failure) as WorkCompactionFailure) : null,
+  };
 }
 
 export function recordWorkerStarted(db: BunDatabase, ref: StartedWork): void {
