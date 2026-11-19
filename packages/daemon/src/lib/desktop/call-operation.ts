@@ -31,9 +31,15 @@ const refuse = (reason: string) => ({
   reason: { ok: false, decision: 'refused', reason, dispatched: false },
 });
 type Binding = { todo: string; worker: string; workDir: string };
-type Facts = { todo: DesktopTodoRow | null; worker: string; workDir: string | null };
+type Facts = {
+  todo: DesktopTodoRow | null;
+  worker: string;
+  workDir: string | null;
+  finished?: boolean;
+};
 
 export function decideDesktopCall(facts: Facts) {
+  if (!facts.todo && facts.finished) return refuse('todo_not_active');
   if (!facts.todo || !facts.workDir) return refuse('desktop_not_enabled');
   return { value: { todo: facts.todo.id, worker: facts.worker, workDir: facts.workDir } };
 }
@@ -62,8 +68,16 @@ export function createDesktopCallOperation(
     .pipe(
       (worker: string): Facts => {
         const session = options.getSession(worker);
+        const rows = readDesktopTodos(db, worker);
+        const todo = desktopOptIn(rows, worker);
         return {
-          todo: desktopOptIn(readDesktopTodos(db, worker), worker),
+          todo,
+          finished:
+            !todo &&
+            !rows.some((row) => row.active) &&
+            rows.some(
+              (row) => row.finished && JSON.parse(row.named ?? '{}').desktopControl === true
+            ),
           worker,
           workDir: session?.worktree?.worktreePath ?? session?.workspacePath ?? null,
         };
