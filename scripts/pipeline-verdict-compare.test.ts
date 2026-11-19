@@ -41,3 +41,22 @@ test('rejects a disappeared route and a duplicate identity', () => {
     'Invalid pipeline verdict'
   );
 });
+
+test('compares alternative definitions independently', () => {
+  const first = { ...route('task.get', 'named'), variant: 'by-id' };
+  const second = { ...route('task.get', 'unreadable'), variant: 'by-number' };
+  const head = [
+    { ...first, verdict: 'unreadable' },
+    { ...second, verdict: 'named' },
+  ];
+  expect(comparePipelineVerdicts([first, second], head).regressions).toEqual([
+    { file: first.file, name: first.name, variant: 'by-id', before: 'named', after: 'unreadable' },
+  ]);
+  expect(() => comparePipelineVerdicts([first, first], [])).toThrow('Duplicate pipeline verdict');
+  expect(() => comparePipelineVerdicts([route('task.get', 'named'), first], [])).toThrow(
+    'Ambiguous pipeline verdict variants'
+  );
+  expect(() => comparePipelineVerdicts([], [{ ...first, variant: '' }])).toThrow(
+    'Invalid pipeline verdict'
+  );
+});
