@@ -1822,7 +1822,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           ask,
           todo,
           `Finished todo "${todo.title}" (${todo.id}) has a worker (${row.ref.adapter}:${row.ref.id}) pending release for 24 hours: ${reason}.`,
-          neoDerivedId(JSON.stringify(['worker-release-pending', todo.id])),
+          neoDerivedId(JSON.stringify(['worker-release-pending', row.ref])),
           'event'
         );
       });
