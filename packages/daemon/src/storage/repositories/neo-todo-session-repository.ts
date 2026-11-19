@@ -15,7 +15,7 @@ import {
   readStartedWork,
   readWorkCompactedAt,
   recordStartedWork,
-  recordWorkCompaction,
+  workStartedSessionWrites,
 } from './work-started-sessions-worker.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -852,8 +852,8 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     return readWorkCompactedAt(this.db, ref);
   }
 
-  recordWorkerCompacted(ref: WorkRef, at: number): void {
-    recordWorkCompaction(this.db, ref, at);
+  recordWorkerCompacted(ref: WorkRef, at: number): Promise<void> {
+    return gatewayFor(this.db).call(workStartedSessionWrites, 'recordCompacted', ref, at);
   }
 
   recordReleaseKept(todoId: string, kept: unknown): void {
@@ -923,7 +923,6 @@ export const neoTodoSessionWrites = defineRepositoryOp(
     'unclaimWorker',
     'recordReleased',
     'recordReleaseKept',
-    'recordWorkerCompacted',
     'recordReleasePending',
   ]
 );

@@ -49,14 +49,6 @@ export function readWorkCompactedAt(db: BunDatabase, ref: StartedWork): number |
   return row?.at ?? null;
 }
 
-export function recordWorkCompaction(db: BunDatabase, ref: StartedWork, at: number): void {
-  db.prepare(
-    `UPDATE work_started_sessions SET compacted_at = ?1
-     WHERE adapter = ?2 AND id = ?3 AND role = 'worker'
-       AND (compacted_at IS NULL OR compacted_at < ?1)`
-  ).run(at, ref.adapter, ref.id);
-}
-
 export function recordWorkerStarted(db: BunDatabase, ref: StartedWork): void {
   recordStartedWork(db, ref, Date.now(), false, false, undefined, 'worker');
 }
@@ -183,6 +175,16 @@ class WorkStartedSessionWrites {
     if (directory) forgetWorkGone(this.db, directory);
   }
 
+  recordCompacted(ref: StartedWork, at: number): void {
+    this.db
+      .prepare(
+        `UPDATE work_started_sessions SET compacted_at = ?1
+       WHERE adapter = ?2 AND id = ?3 AND role = 'worker'
+         AND (compacted_at IS NULL OR compacted_at < ?1)`
+      )
+      .run(at, ref.adapter, ref.id);
+  }
+
   markUnusable(ref: StartedWork): void {
     markWorkUnusable(this.db, ref);
   }
@@ -199,5 +201,5 @@ export const workStartedSessionWrites = defineRepositoryOp(
   'work.startedSessionWrites',
   'write',
   WorkStartedSessionWrites,
-  ['recordStarted', 'markUnusable']
+  ['recordStarted', 'markUnusable', 'recordCompacted']
 );

@@ -212,7 +212,7 @@ const releaseWorker = (superpipe({})('neo.todo.release-worker') as PipelineAPI)
       try {
         const result = await plan.compact(plan.ref, { caller: daemon, from: 'neo' });
         if (result.ok && result.value.compacted) {
-          await sessions.write('recordWorkerCompacted', plan.ref, at);
+          await sessions.recordWorkerCompacted(plan.ref, at);
           nextCompaction.delete(key);
         }
       } finally {
