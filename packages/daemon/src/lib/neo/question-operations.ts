@@ -313,16 +313,13 @@ const AskKinds = z.discriminatedUnion('kind', [
     ...Asked,
     kind: z.literal('choice'),
     options: z.array(Text).min(1).max(6),
-    labels: z
-      .array(z.string().regex(/^[A-F]$/))
-      .max(6)
-      .refine((labels) => new Set(labels).size === labels.length, {
-        message: 'labels must be distinct uppercase letters A–F.',
-      })
+    details: z
+      .record(Text, Text)
       .optional()
-      .describe(
-        'One distinct uppercase letter A–F per option, when the text names approaches by letter. Defaults to A, B, C… in order.'
-      ),
+      .describe("One short line shown under an option, keyed by that option's exact text."),
+    recommended: Text.optional().describe(
+      'The exact text of the option you recommend; the card tags it without selecting it.'
+    ),
     multiple: z.boolean().default(false),
   }),
   z.object({ ...Asked, kind: z.literal('reply') }),
@@ -394,7 +391,8 @@ export const NeoQuestionSchema = z.object({
   text: z.string(),
   kind: z.enum(['yesno', 'choice', 'reply']),
   options: z.array(z.string()).nullable(),
-  labels: z.array(z.string()).nullable().optional(),
+  optionDetails: z.record(z.string(), z.string()).optional(),
+  recommended: z.string().optional(),
   multiple: z.boolean(),
   noLabel: z.string().nullable(),
   yesLabel: z.string().nullable(),
@@ -558,8 +556,15 @@ export function planNeoQuestion(
     if (!isVisibleHomeProposal(input.text, confirm))
       return fail('confirmation_body: show the exact home path and SHA-256 in the question text.');
   }
-  if (input.kind === 'choice' && input.labels && input.labels.length !== input.options.length)
-    return fail('labels_count: supply exactly one label per option.');
+  if (input.kind === 'choice') {
+    const unknown = [...Object.keys(input.details ?? {}), input.recommended ?? []]
+      .flat()
+      .filter((option) => !input.options.includes(option));
+    if (unknown.length)
+      return fail(
+        `option_unknown: details and recommended must name an option exactly; not options: ${unknown.join(', ')}.`
+      );
+  }
   const draft: NeoQuestionDraft = {
     ...(input.retireWhen ? { retireWhen: input.retireWhen } : {}),
     text: input.text,
@@ -570,7 +575,10 @@ export function planNeoQuestion(
     ...(input.replyTo ? { replyTo: input.replyTo } : {}),
     kind: input.kind,
     options: input.kind === 'choice' ? input.options : null,
-    labels: input.kind === 'choice' ? (input.labels ?? null) : null,
+    ...(input.kind === 'choice' && input.details && Object.keys(input.details).length
+      ? { optionDetails: input.details }
+      : {}),
+    ...(input.kind === 'choice' && input.recommended ? { recommended: input.recommended } : {}),
     multiple: input.kind === 'choice' && input.multiple,
     noLabel: null,
     yesLabel: null,
@@ -632,7 +640,7 @@ export function neoQuestionAnsweredNote(question: NeoQuestion): string {
   const said =
     question.kind === 'yesno'
       ? `${answer} (${answer === 'yes' ? question.yesLabel : question.noLabel})`
-      : neoLabelledOptions(question.options ?? [], [answer].flat(), question.labels) || 'none';
+      : neoLabelledOptions(question.options ?? [], [answer].flat()) || 'none';
   return isAgentResolvedQuestion(question)
     ? `Neo resolved "${question.text}": ${said}. ${question.retiredReason}`
     : `The human answered "${question.text}": ${said}.`;

@@ -488,11 +488,11 @@ describe('immutable human settings proposals', () => {
       expect(await saved()).toMatchObject({ value: { preferences: [] } });
     }
   );
-  test.each(['A', 'the apply option'])(
+  test.each(['1', 'the apply option'])(
     'a human chat %s applies the same immutable proposal',
     async (words) => {
       const questionId = await propose();
-      await chat(questionId, words === 'A' ? words : option(questionId, 0));
+      await chat(questionId, words === '1' ? words : option(questionId, 0));
       expect(await invoke('neo.question.get', { questionId })).toMatchObject({
         value: { answeredByHuman: true },
       });
@@ -703,7 +703,7 @@ describe('immutable human settings proposals', () => {
     });
   });
 
-  test('a choice keeps every option, including keep, within chat letter replies', async () => {
+  test('a choice keeps every option, including keep, within chat number replies', async () => {
     const choice = (count: number) =>
       invoke('pack.preferences.ask', {
         askId: 'ask',
@@ -719,7 +719,7 @@ describe('immutable human settings proposals', () => {
     expect(service.todos.getQuestion(questionId)!.options).toHaveLength(6);
     expect(service.todos.getQuestion(questionId)!.text).toContain('Choose one of these settings?');
     expect(service.todos.getQuestion(questionId)!.text).not.toContain('| --- |');
-    await chat(questionId, 'F');
+    await chat(questionId, '6');
     expect(service.todos.getQuestion(questionId)).toMatchObject({
       state: 'answered',
       answer: ['Use the default for now'],

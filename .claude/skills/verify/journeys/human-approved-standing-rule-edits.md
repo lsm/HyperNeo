@@ -9,7 +9,7 @@ env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test
 
 This helper starts a real isolated daemon and uses its MCP and WebSocket
 `operation.invoke` doors. A system-triggered direct `neo.rule.save` is refused.
-Direct agent saves require a consumed human reply that picked apply (`A` or the
+Direct agent saves require a consumed human reply that picked apply (`1` or the
 option's words) on an immutable `neo.rule.ask` proposal for the same add/remove arrays. A greeting cannot authorize
 an edit, and even a valid approval cannot authorize different rule content.
 The approving message need not quote the rule text. Re-saving an already-applied
@@ -19,7 +19,7 @@ Button and delayed applyAnswer approvals instead retain their real questionId,
 which links to the recorded apply answer and immutable proposal; they never invent
 a human message ID.
 A stale worker-permission Settings update cannot overwrite the saved consent
-reference. The helper also saves 25 additional rules and observes all of them in `neo.snapshot`.
+reference. The helper also saves 10 additional rules and observes all of them in `neo.snapshot`.
 
 The preferred `neo.rule.ask {askId,requestId,add?,remove?}` path generates a choice
 to apply or keep the current rules and atomically binds its immutable exact edit. Keep, a bare yes or no answer
@@ -37,9 +37,9 @@ Unit contracts also replace one of twenty rules while keeping the other nineteen
 refuse guessed/queued/nonhuman direct-save triggers, and roll back consent and
 all edits on infrastructure failure. A stale proposal (a missing removal) records the human answer without changing rules. Chat sends
 remain accepted and notify Neo; `neo.rule.applyAnswer` returns the typed refusal.
-The real helper exercises a stale chat `A` through `neo.message.send`, and the
+The real helper exercises a stale chat `1` through `neo.message.send`, and the
 unit journey checks notification and retry idempotency for stale removals.
-Only synthetic fixtures are used. This journey
+Synthetic pre-upgrade letter approvals authorize their exact unapplied edit or replay an applied receipt, and cannot authorize a different edit. Only synthetic fixtures are used. This journey
 proves the daemon operation and snapshot surfaces; GUI rendering, model choices,
 notification completion and deployment are not verified. Neo's default guidance
 asks for consent first; the existing direct human-message path remains available.

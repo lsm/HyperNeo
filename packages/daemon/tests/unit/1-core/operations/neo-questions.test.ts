@@ -579,54 +579,51 @@ describe('neo.question operations', () => {
     const reply = await asked({ kind: 'reply', text: 'What should it say?' });
     await call('neo.question.answer', { questionId: reply.id, answer: 'Say hi' }, human);
     expect(told).toEqual([
-      'The human answered "Use HyperNeo dev-1 instead?": A (Use HyperNeo dev-1).',
-      'The human answered "Which?": B (B).',
+      'The human answered "Use HyperNeo dev-1 instead?": 1 (Use HyperNeo dev-1).',
+      'The human answered "Which?": 2 (B).',
       'The human answered "Which ones?": none.',
       'The human answered "What should it say?": Say hi.',
     ]);
   });
 
-  test('choice labels map letters to options and persist; invalid labels are refused', async () => {
+  test('choice options are numbered 1, 2, 3 in order', async () => {
     const { call, asked, store, told } = setup();
     const card = await asked({
       kind: 'choice',
-      text: 'A keeps the list, B switches to cards. Which approach?',
-      options: ['Switch to cards', 'Keep the list'],
-      labels: ['B', 'A'],
+      text: 'Which layout?',
+      options: ['Keep the list', 'Switch to cards'],
     });
-    expect(store.getQuestion(card.id)?.labels).toEqual(['B', 'A']);
+    expect(store.getQuestion(card.id)).not.toHaveProperty('labels');
     await call('neo.question.answer', { questionId: card.id, answer: 'Switch to cards' }, human);
-    expect(told).toEqual([
-      'The human answered "A keeps the list, B switches to cards. Which approach?": B (Switch to cards).',
-    ]);
-    await expect(
-      call('neo.question.ask', {
-        askId: 'ask',
-        kind: 'choice',
-        text: 'Duplicate?',
-        options: ['One', 'Two'],
-        labels: ['A', 'A'],
-      })
-    ).rejects.toThrow('labels must be distinct uppercase letters A–F.');
-    await expect(
-      call('neo.question.ask', {
-        askId: 'ask',
-        kind: 'choice',
-        text: 'Beyond F?',
-        options: ['One', 'Two'],
-        labels: ['X', 'Y'],
-      })
-    ).rejects.toThrow();
-    expect(
-      await call('neo.question.ask', {
-        askId: 'ask',
-        kind: 'choice',
-        text: 'Wrong count?',
-        options: ['One', 'Two', 'Three'],
-        labels: ['A', 'B'],
-      })
-    ).toMatchObject({ ok: false, reason: 'labels_count: supply exactly one label per option.' });
-    expect(store.listQuestions('ask').filter((q) => q.state === 'open')).toHaveLength(0);
+    expect(told).toEqual(['The human answered "Which layout?": 2 (Switch to cards).']);
+  });
+
+  test('choice options carry their own detail and a recommended tag', async () => {
+    const { call, asked, store } = setup();
+    const card = await asked({
+      kind: 'choice',
+      text: 'Which hotel?',
+      options: ['Park Hyatt', 'Hotel Gracery'],
+      details: { 'Hotel Gracery': '12 minutes from the station, 1,600 a night' },
+      recommended: 'Hotel Gracery',
+    });
+    expect(store.getQuestion(card.id)).toMatchObject({
+      optionDetails: { 'Hotel Gracery': '12 minutes from the station, 1,600 a night' },
+      recommended: 'Hotel Gracery',
+      answer: null,
+    });
+    for (const extra of [{ details: { Gracery: 'cheap' } }, { recommended: 'Option B' }])
+      expect(
+        await call('neo.question.ask', {
+          askId: 'ask',
+          kind: 'choice',
+          text: 'Which hotel?',
+          options: ['Park Hyatt', 'Hotel Gracery'],
+          replaces: card.id,
+          ...extra,
+        })
+      ).toMatchObject({ ok: false, reason: expect.stringContaining('option_unknown') });
+    expect(store.getQuestion(card.id)?.state).toBe('open');
   });
 
   test('only the human answers', async () => {
@@ -739,7 +736,7 @@ describe('neoQuestionAnsweredNote', () => {
         replacedBy: null,
         createdAt: 1,
       })
-    ).toBe('The human answered "Which layout?": A (List), C (Table).');
+    ).toBe('The human answered "Which layout?": 1 (List), 3 (Table).');
   });
 });
 

@@ -74,7 +74,7 @@ db.exec(`INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at
   VALUES ('${neo}','Synthetic Neo','/tmp','2026-10-21T00:00:00Z','2026-10-21T00:00:00Z','active','{"queryMode":"manual"}','{}')`);
 new NeoRepository(db).reserveBinding({ sessionId: neo, kind: 'neo', projectId: null });
 const asks = new NeoAskTodoRepository(db);
-for (const id of ['synthetic-ask', 'synthetic-ask-many', 'synthetic-ask-labelled', 'synthetic-ask-bad', 'synthetic-ask-short'])
+for (const id of ['synthetic-ask', 'synthetic-ask-many', 'synthetic-ask-detailed', 'synthetic-ask-bad', 'synthetic-ask-raw', 'synthetic-ask-invalid', 'synthetic-ask-numeric', 'synthetic-ask-ambiguous'])
   asks.openAsk({
     id,
     projectId: null,
@@ -90,39 +90,37 @@ const options = [
   'Cards',
 ];
 const retireWhen = { pack: 'core', kind: 'evidence', params: { path: join(run, 'not-created') } };
-const ask = async (multiple: boolean) =>
-  (
-    await mcp('neo.question.ask', {
-      askId: multiple ? 'synthetic-ask-many' : 'synthetic-ask',
-      kind: 'choice',
-      text: multiple ? 'Which layouts should stay?' : 'Which layout?',
-      options,
-      multiple,
-      retireWhen,
-    })
-  ).question.id as string;
-const single = await ask(false);
-const many = await ask(true);
-const labelled = (
-  await mcp('neo.question.ask', {
-    askId: 'synthetic-ask-labelled',
-    kind: 'choice',
-    text: 'Approach B keeps the list, approach A switches to cards. Which approach?',
-    options: ['Switch every card to the compact table layout', 'Keep the current list layout'],
-    labels: ['B', 'A'],
-    multiple: false,
-    retireWhen,
-  })
-).question.id as string;
+const ask = async (askId: string, input: Record<string, unknown>) => {
+  const result = await mcp('neo.question.ask', { askId, kind: 'choice', multiple: false, retireWhen, ...input });
+  return result.question?.id as string;
+};
+const single = await ask('synthetic-ask', { text: 'Which layout?', options });
+const many = await ask('synthetic-ask-many', { text: 'Which layouts should stay?', options, multiple: true });
+const hotels = ['Park Hyatt', 'Hotel Gracery', 'Neither, keep looking'];
+const details = { 'Park Hyatt': '3 minutes from the station, 4,200 a night', 'Hotel Gracery': '12 minutes, 1,600 a night' };
+const detailed = await ask('synthetic-ask-detailed', {
+  text: 'Which hotel?',
+  options: hotels,
+  details,
+  recommended: 'Hotel Gracery',
+});
+const raw = await ask('synthetic-ask-raw', { text: 'Which hotel?', options: hotels });
+const invalid = await ask('synthetic-ask-invalid', { text: 'Which hotel?', options: hotels, multiple: true });
+const numeric = await ask('synthetic-ask-numeric', { text: 'How many days?', options: ['7', '30', '90'] });
+const ambiguous = await ask('synthetic-ask-ambiguous', { text: 'How many days?', options: ['30', '1', '90'] });
 const snapshot = (await rpc('neo.snapshot', {})).todoAsks;
 for (const entry of snapshot)
-  for (const question of entry.questions ?? [])
-    if (question.id === labelled)
-      assert.deepEqual(question.optionLabels, ['B', 'A'], 'snapshot carries stored optionLabels');
-    else if (question.id === single || question.id === many)
-      assert.deepEqual(question.optionLabels, ['A', 'B', 'C'], 'snapshot carries optionLabels');
+  for (const question of entry.questions ?? []) {
+    if ([single, many, detailed].includes(question.id))
+      assert.deepEqual(question.optionLabels, ['1', '2', '3'], 'snapshot numbers the options');
+    if (question.id === detailed) {
+      assert.deepEqual(question.optionDetails, details, 'snapshot carries option details');
+      assert.equal(question.recommended, 'Hotel Gracery', 'snapshot carries the recommended option');
+      assert.equal(question.answer, null, 'recommending does not answer');
+    }
+  }
 if (hold === 'hold') {
-  writeFileSync(join(run, 'evidence/neo-choice-letters.json'), JSON.stringify(evidence, null, 2));
+  writeFileSync(join(run, 'evidence/neo-choice-numbers.json'), JSON.stringify(evidence, null, 2));
   console.log(`HOLD: synthetic choice questions open on ${port}; stop the process when done.`);
   await new Promise(() => {});
 }
@@ -137,41 +135,30 @@ const reply = async (questionId: string, content: string) => {
   assert.equal(sent.ok, true);
   return requestId;
 };
-const requestId = await reply(single, 'B吧');
-await reply(many, '选A、C');
-const labelledRequestId = await reply(labelled, 'B');
-const badLabels = await mcp('neo.question.ask', {
+for (const words of ['7', '0', '七', 'seventh', '1 和 7', '第十个', '十二', '100']) {
+  await reply(invalid, words);
+  assert.equal(asks.getQuestion(invalid)?.state, 'open', `${words} must not close the card`);
+}
+assert.throws(() => db.prepare('UPDATE neo_questions SET option_details_json=? WHERE id=?').run('{', detailed), 'invalid details JSON must be refused');
+await reply(numeric, '30');
+assert.deepEqual(asks.getQuestion(numeric)?.answer, ['30'], 'exact numeric option text answers the card');
+await reply(ambiguous, '1');
+assert.deepEqual(asks.getQuestion(ambiguous)?.answer, ['30'], 'a visible option number takes precedence');
+const requestId = await reply(single, '第二个吧');
+await reply(many, '选1、3');
+await reply(detailed, '选二');
+await reply(raw, 'no one');
+const unknown = await mcp('neo.question.ask', {
   askId: 'synthetic-ask-bad',
   kind: 'choice',
-  text: 'Bad labels?',
-  options: ['One', 'Two'],
-  labels: ['A', 'A'],
+  text: 'Which hotel?',
+  options: hotels,
+  details: { Gracery: 'cheap' },
   multiple: false,
   retireWhen,
 });
-assert.equal(badLabels.code, 'invalid_input', 'duplicate labels refused');
-assert.match(badLabels.message ?? '', /labels must be distinct/);
-const wideLabels = await mcp('neo.question.ask', {
-  askId: 'synthetic-ask-bad',
-  kind: 'choice',
-  text: 'Wide labels?',
-  options: ['One', 'Two'],
-  labels: ['X', 'Y'],
-  multiple: false,
-  retireWhen,
-});
-assert.equal(wideLabels.code, 'invalid_input', 'labels beyond F refused');
-const shortLabels = await mcp('neo.question.ask', {
-  askId: 'synthetic-ask-short',
-  kind: 'choice',
-  text: 'Short labels?',
-  options: ['One', 'Two', 'Three'],
-  labels: ['A', 'B'],
-  multiple: false,
-  retireWhen,
-});
-assert.equal(shortLabels.ok, false, 'wrong label count refused');
-assert.match(shortLabels.reason, /labels_count/);
+assert.equal(unknown.ok, false, 'a detail for a missing option is refused');
+assert.match(unknown.reason, /option_unknown/);
 const read = async (questionId: string) =>
   db.prepare('SELECT answer, answered_by FROM neo_questions WHERE id = ?').get(questionId) as {
     answer: string;
@@ -180,12 +167,8 @@ const read = async (questionId: string) =>
 assert.deepEqual(JSON.parse((await read(single)).answer), [options[1]]);
 assert.equal((await read(single)).answered_by, 'chat');
 assert.deepEqual(JSON.parse((await read(many)).answer), [options[0], options[2]]);
-assert.deepEqual(
-  JSON.parse((await read(labelled)).answer),
-  ['Switch every card to the compact table layout'],
-  'letter B picks the option labelled B, not the second option'
-);
-assert.equal((await read(labelled)).answered_by, 'chat');
+assert.deepEqual(JSON.parse((await read(detailed)).answer), ['Hotel Gracery']);
+assert.equal(JSON.parse((await read(raw)).answer), 'no one', 'words that are not a number stay the human\'s own');
 const prompt = JSON.parse(
   (
     db.prepare('SELECT sdk_message FROM sdk_messages WHERE sdk_uuid = ?').get(requestId) as {
@@ -197,32 +180,17 @@ const fact = prompt.message.content.find((block: { text?: string }) =>
   block.text?.startsWith('<reference')
 ).text;
 assert.equal(fact, `<reference question="${single}" ask="synthetic-ask">\nWhich layout?\n</reference>\n\n`);
-const labelledPrompt = JSON.parse(
-  (
-    db.prepare('SELECT sdk_message FROM sdk_messages WHERE sdk_uuid = ?').get(labelledRequestId) as {
-      sdk_message: string;
-    }
-  ).sdk_message
-);
-const labelledFact = labelledPrompt.message.content.find((block: { text?: string }) =>
-  block.text?.startsWith('<reference')
-).text;
-assert.equal(
-  labelledFact,
-  `<reference question="${labelled}" ask="synthetic-ask-labelled">\nApproach B keeps the list, approach A switches to cards. Which approach?\n</reference>\n\n`
-);
 evidence.push({
   fact,
-  labelledFact,
   single: await read(single),
   many: await read(many),
-  labelled: await read(labelled),
-  badLabels: badLabels.message,
-  shortLabels: shortLabels.reason,
+  detailed: await read(detailed),
+  raw: await read(raw),
+  unknown: unknown.reason,
 });
-writeFileSync(join(run, 'evidence/neo-choice-letters.json'), JSON.stringify(evidence, null, 2));
+writeFileSync(join(run, 'evidence/neo-choice-numbers.json'), JSON.stringify(evidence, null, 2));
 console.log(
-  `PASS: optionLabels A-C on the snapshot, B/A on the labelled card; "B吧" answered ${options[1]}; labelled "B" answered its first option; duplicate and short labels refused; fact: ${fact}; labelled fact: ${labelledFact}`
+  `PASS: options numbered 1-3 on the snapshot; details and recommended carried; "第二个吧" answered ${options[1]}; "选1、3" answered two; "选二" answered Hotel Gracery; "no one" stayed raw; unknown detail refused`
 );
 ws.close();
 await app.cleanup();

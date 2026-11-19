@@ -171,6 +171,7 @@ export const en = {
   'todo.priority.low': 'Low',
   'todo.controlFailed': 'That change did not go through.',
   'question.open': 'Open',
+  'question.recommended': 'Recommended',
   'question.openSession': 'Open session',
   'question.openSessionTitle': 'Open session: {name}',
   'question.document': 'View full versions',

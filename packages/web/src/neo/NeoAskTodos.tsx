@@ -1,11 +1,7 @@
-import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
-import { ArtifactCards } from '../components/artifacts/ArtifactCards.tsx';
-import { FileReferenceCards } from '../components/artifacts/FileReferenceCards.tsx';
 import {
   previewLinkedReferenceCandidates,
   previewLinkedReferenceSpans,
 } from '@hyperneo/shared/types/artifact-reference';
-import { openArtifactPreview } from '../lib/artifact-preview-store.ts';
 import type {
   NeoAskEntry,
   NeoQuestionAnswer,
@@ -13,33 +9,37 @@ import type {
   NeoTodoEntry,
   NeoTodoPriority,
 } from '@hyperneo/shared/types/neo-ask';
+import { workerEngine } from '@hyperneo/shared/types/worker-identity';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { ArtifactCards } from '../components/artifacts/ArtifactCards.tsx';
+import { FileReferenceCards } from '../components/artifacts/FileReferenceCards.tsx';
+import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
+import { ConfirmModal } from '../components/ui/ConfirmModal.tsx';
+import { Dropdown } from '../components/ui/Dropdown.tsx';
+import { IconButton } from '../components/ui/IconButton.tsx';
+import { Modal } from '../components/ui/Modal.tsx';
+import { openArtifactPreview } from '../lib/artifact-preview-store.ts';
+import { locale, type MessageKey, t } from '../lib/i18n/index.ts';
+import { copyToClipboard } from '../lib/utils.ts';
+import {
+  NeoMoreIcon,
+  NeoSessionMark,
+  NeoSessionOpen,
+  neoCardClass,
+  neoFooterClass,
+  neoPlainClass,
+  neoPrimaryClass,
+  neoSecondaryClass,
+} from './NeoCardParts.tsx';
+import { NeoTime } from './NeoTime.tsx';
+import { type NeoDoneTodosPage, neoDonePageMerge } from './neo-asks.ts';
+import { neoNow, neoRelativeTime } from './neo-time.ts';
 import {
   NEO_TODO_PRIORITIES,
   type NeoTodoControl,
   neoTodoControllable,
   neoTodoHoldable,
 } from './todo-controls.ts';
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { Modal } from '../components/ui/Modal.tsx';
-import { ConfirmModal } from '../components/ui/ConfirmModal.tsx';
-import { Dropdown } from '../components/ui/Dropdown.tsx';
-import { IconButton } from '../components/ui/IconButton.tsx';
-import {
-  NeoMoreIcon,
-  neoCardClass,
-  neoFooterClass,
-  neoPlainClass,
-  neoPrimaryClass,
-  neoSecondaryClass,
-  NeoSessionMark,
-  NeoSessionOpen,
-} from './NeoCardParts.tsx';
-import { neoSessionKind } from './work-driver.ts';
-import { type NeoDoneTodosPage, neoDonePageMerge } from './neo-asks.ts';
-import { NeoTime } from './NeoTime.tsx';
-import { neoRelativeTime, neoNow } from './neo-time.ts';
-import { locale, t, type MessageKey } from '../lib/i18n/index.ts';
-import { copyToClipboard } from '../lib/utils.ts';
 import {
   neoQuestionOption,
   neoQuestionText,
@@ -49,7 +49,7 @@ import {
   neoTodoStatus,
 } from './todo-status.ts';
 import { neoTopicColor } from './topic-color.ts';
-import { workerEngine } from '@hyperneo/shared/types/worker-identity';
+import { neoSessionKind } from './work-driver.ts';
 
 const states = {
   waiting: ['ask.state.waiting', 'text-warning', 'font-semibold'],
@@ -69,6 +69,34 @@ const marks = {
 
 const choiceClass =
   'flex min-w-0 max-w-full items-start gap-2 rounded-lg border border-line px-2.5 py-1.5 text-left text-xs font-semibold text-fg [overflow-wrap:anywhere] hover:border-accent/40 hover:text-accent focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50';
+
+function ChoiceOptionText({
+  question,
+  option,
+  index,
+}: {
+  question: NeoQuestionEntry;
+  option: string;
+  index: number;
+}) {
+  const detail = question.optionDetails?.[option];
+  return (
+    <>
+      <span data-choice-number aria-hidden="true" class="shrink-0 tabular-nums text-fg-muted">
+        {question.optionLabels?.[index] ?? String(index + 1)}
+      </span>
+      <span class="min-w-0">
+        {neoQuestionOption(question, option)}
+        {question.recommended === option && (
+          <span class="ml-1.5 rounded border border-line px-1 py-px text-[11px] font-medium text-fg-muted">
+            {t('question.recommended')}
+          </span>
+        )}
+        {detail && <span class="block font-normal text-fg-muted">{detail}</span>}
+      </span>
+    </>
+  );
+}
 
 export function neoQuestionAnswerLabel(question: NeoQuestionEntry, todos: readonly NeoTodoEntry[]) {
   const answer = question.answer;
@@ -621,7 +649,7 @@ export function QuestionBox({
       />
       {question.kind === 'choice' && question.multiple && (
         <div class="mt-2 space-y-1">
-          {(question.options ?? []).map((option) => (
+          {(question.options ?? []).map((option, index) => (
             <label
               key={option}
               data-choice-option
@@ -633,14 +661,14 @@ export function QuestionBox({
                 checked={picked.includes(option)}
                 onChange={(event) => toggle(option, (event.target as HTMLInputElement).checked)}
               />
-              <span class="min-w-0">{neoQuestionOption(question, option)}</span>
+              <ChoiceOptionText question={question} option={option} index={index} />
             </label>
           ))}
         </div>
       )}
       {question.kind === 'choice' && !question.multiple && (
         <div class="mt-2 flex flex-col items-stretch gap-1.5">
-          {(question.options ?? []).map((option) => (
+          {(question.options ?? []).map((option, index) => (
             <button
               key={option}
               type="button"
@@ -649,7 +677,7 @@ export function QuestionBox({
               disabled={disabled}
               onClick={() => onAnswer([option])}
             >
-              <span class="min-w-0">{neoQuestionOption(question, option)}</span>
+              <ChoiceOptionText question={question} option={option} index={index} />
             </button>
           ))}
         </div>

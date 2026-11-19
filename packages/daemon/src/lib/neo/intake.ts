@@ -1,11 +1,9 @@
-import { neoToolDescription } from '@hyperneo/prompts';
-import { snapshotNeoCardQuote } from './card-quote.ts';
 import type { UUID } from 'node:crypto';
+import { neoToolDescription } from '@hyperneo/prompts';
 import type { Session } from '@hyperneo/shared';
-import { isHumanWorkDecision } from './proposal.ts';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { NeoAsk, NeoQuestion, NeoReplyTo, NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import { neoChoiceByLetter, neoReplyExcerpt } from '@hyperneo/shared/types/neo-ask';
+import { neoChoiceByNumber, neoReplyExcerpt } from '@hyperneo/shared/types/neo-ask';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
@@ -21,15 +19,17 @@ import {
 import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { toMailboxMessage } from '../mailbox/entry.ts';
-import { attribute, escapeSessionText } from '../messaging/session-envelope.ts';
 import { MessageSessionIdSchema, SessionContentSchema } from '../messaging/message-send.ts';
+import { attribute, escapeSessionText } from '../messaging/session-envelope.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { voiceDiagnostic } from '../voice/diagnostics.ts';
+import { snapshotNeoCardQuote } from './card-quote.ts';
 import { NeoReplyRefSchema } from './conversation-ask.ts';
 import { neoImageSize } from './image-size.ts';
 import { neoLocalTimeLine } from './local-time.ts';
 import { admitNeoPreviewContext } from './preview-context.ts';
 import { NeoPreviewContextSchema, NeoPreviewReferenceSchema } from './preview-context-schema.ts';
+import { isHumanWorkDecision } from './proposal.ts';
 import { planNeoRemovedPrerequisiteAnswer } from './todo-removal.ts';
 
 const Input = z
@@ -345,7 +345,9 @@ export function recordNeoReplyAnswer(
     !isHumanWorkDecision(reply.question) &&
     reply.ask?.sessionId === sessionId
   ) {
-    const answer = neoChoiceByLetter(words, reply.question) ?? words;
+    const picked = neoChoiceByNumber(words, reply.question);
+    if (picked === 'invalid') return receipt;
+    const answer = picked ?? words;
     const now = Date.now();
     store.answerQuestion(
       reply.question,

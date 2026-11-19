@@ -1,5 +1,5 @@
-import type { WorkerIdentity } from './worker-identity.ts';
 import type { ArtifactProjection, ArtifactRef, PublicHandoffReference } from './artifact-file.ts';
+import type { WorkerIdentity } from './worker-identity.ts';
 
 export type NeoAskStatus = 'open' | 'done' | 'dropped';
 
@@ -116,7 +116,8 @@ export interface NeoQuestion {
   text: string;
   kind: NeoQuestionKind;
   options: string[] | null;
-  labels?: string[] | null;
+  optionDetails?: Record<string, string>;
+  recommended?: string;
   multiple: boolean;
   noLabel: string | null;
   yesLabel: string | null;
@@ -131,51 +132,68 @@ export interface NeoQuestion {
   createdAt: number;
 }
 
-export function neoOptionLabels(
-  options: readonly string[],
-  labels?: readonly string[] | null
-): string[] {
-  return options.map((_, index) => labels?.[index] ?? String.fromCharCode(65 + index));
+export function neoOptionLabels(options: readonly string[]): string[] {
+  return options.map((_, index) => String(index + 1));
 }
 
-export function neoLabelledOptions(
-  options: readonly string[],
-  picked: readonly string[],
-  labels?: readonly string[] | null
-): string {
+export function neoLabelledOptions(options: readonly string[], picked: readonly string[]): string {
   return picked
     .map((option) => {
       const index = options.indexOf(option);
-      return index < 0 ? option : `${neoOptionLabels(options, labels)[index]} (${option})`;
+      return index < 0 ? option : `${index + 1} (${option})`;
     })
     .join(', ');
 }
 
-const LETTER_REPLY =
-  /^(?:我?选(?:择|项)?|option|choice|pick)?\s*([a-f](?:(?:\s*[,，、&和与]\s*|\s+and\s+)[a-f])*)\s*(?:吧|好了)?\s*[.。!！]?$/i;
+const ZH_DIGITS = '一二三四五六';
+const ZH_NUMBER = '[零〇一二三四五六七八九十百千万两]+';
+const EN_ORDINALS = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth'];
+const EN_WORDS = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+const EN_EXTRA_ORDINAL =
+  '(?:seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth)';
+const NUMBER = `(?:\\d+(?:st|nd|rd|th)?|${ZH_NUMBER}|${EN_ORDINALS.join('|')}|${EN_EXTRA_ORDINAL})`;
+const ONE_PICK = `(?:第\\s*)?${NUMBER}(?:\\s*(?:号|个|项|条))?`;
+const JOIN = '\\s*(?:[,，、&和与跟]|and)\\s*|\\s+';
+const NUMBER_REPLY = new RegExp(
+  `^(?:我?选(?:择|项)?|option|choice|pick|number|#|the)?\\s*(${ONE_PICK}(?:(?:${JOIN})${ONE_PICK})*)\\s*(?:吧|好了)?\\s*[.。!！]?$`,
+  'i'
+);
 
-export function neoChoiceByLetter(
+function optionNumber(word: string): number | undefined {
+  const bare = word
+    .replace(/^第\s*/, '')
+    .replace(/\s*(?:号|个|项|条)$/, '')
+    .toLowerCase();
+  if (/^\d+(?:st|nd|rd|th)?$/.test(bare)) return Number.parseInt(bare, 10);
+  const zh = bare.length === 1 ? ZH_DIGITS.indexOf(bare) : -1;
+  if (zh >= 0) return zh + 1;
+  const ordinal = EN_ORDINALS.indexOf(bare);
+  return ordinal >= 0 ? ordinal + 1 : 0;
+}
+
+export function neoChoiceByNumber(
   words: string,
-  question: Pick<NeoQuestion, 'kind' | 'options' | 'multiple' | 'labels'> | null
-): string[] | null {
-  const letters = words
+  question: Pick<NeoQuestion, 'kind' | 'options' | 'multiple'> | null
+): string[] | 'invalid' | null {
+  const said = words
     .trim()
-    .match(LETTER_REPLY)?.[1]
-    .split(/\s*[,，、&和与]\s*|\s+and\s+/i);
-  if (question?.kind !== 'choice' || !question.options || !letters) return null;
-  const labels = neoOptionLabels(question.options, question.labels);
-  const picked = [
-    ...new Set(
-      letters.map((letter) => {
-        const index = labels.indexOf(letter.toUpperCase());
-        return index < 0 ? undefined : question.options?.[index];
-      })
-    ),
-  ];
+    .replace(new RegExp(`\\b(${EN_ORDINALS.join('|')})\\s+one\\b`, 'gi'), '$1')
+    .replace(
+      new RegExp(`\\b(option|choice|number)\\s+(${EN_WORDS.join('|')})\\b`, 'gi'),
+      (_, lead, word) => `${lead} ${EN_WORDS.indexOf(word.toLowerCase()) + 1}`
+    );
+  const list = said.match(NUMBER_REPLY)?.[1];
+  if (question?.kind !== 'choice' || !question.options || !list) return null;
+  const parts = list.match(new RegExp(ONE_PICK, 'gi')) ?? [];
+  const numbers = parts.map(optionNumber);
+  if (numbers.some((n) => n === undefined)) return null;
+  const picked = [...new Set(numbers.map((n) => question.options?.[(n as number) - 1]))];
   return picked.every((option) => option !== undefined) &&
     (question.multiple || picked.length === 1)
     ? (picked as string[])
-    : null;
+    : question.options.includes(words.trim())
+      ? [words.trim()]
+      : 'invalid';
 }
 
 export interface NeoReplyTo {

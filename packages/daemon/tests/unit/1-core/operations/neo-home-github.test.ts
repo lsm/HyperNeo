@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { neoChoiceByLetter } from '@hyperneo/shared/types/neo-ask';
+import { neoChoiceByNumber } from '@hyperneo/shared/types/neo-ask';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -326,7 +326,7 @@ describe('Neo private GitHub home proposal', () => {
     } else if (state.startsWith('chat ')) {
       const words = state.slice(5);
       const q = todos.getQuestion(questionId)!;
-      todos.answerQuestion(q, neoChoiceByLetter(words, q) ?? words, 'chat', Date.now());
+      todos.answerQuestion(q, neoChoiceByNumber(words, q) ?? words, 'chat', Date.now());
     } else {
       await answer(questionId, state === 'keep' ? 'Keep local' : CREATE);
       if (state === 'foreign ask')
@@ -342,12 +342,12 @@ describe('Neo private GitHub home proposal', () => {
     if (state === 'keep')
       expect((await call({ askId: 'ask' })).questionId).toBe(proposed.questionId);
   });
-  test.each(['chat A', 'chat exact words'])('creates the bound repository on %s', async (how) => {
+  test.each(['chat 1', 'chat exact words'])('creates the bound repository on %s', async (how) => {
     const { questionId } = await call({ askId: 'ask' });
     const q = todos.getQuestion(questionId)!;
     todos.answerQuestion(
       q,
-      how === 'chat A' ? neoChoiceByLetter('A', q)! : CREATE,
+      how === 'chat 1' ? neoChoiceByNumber('1', q)! : CREATE,
       'chat',
       Date.now()
     );

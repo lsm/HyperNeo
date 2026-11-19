@@ -107,7 +107,7 @@ const proposal = async (value = input, state = 'button') => {
   );
   const questionId = asked.question.id;
   if (state === 'button') await call('neo.question.answer', { questionId, answer: ['Use new'] });
-  if (state === 'letter') chat(questionId, 'A');
+  if (state === 'number') chat(questionId, '1');
   if (state === 'other words') chat(questionId, 'later');
   if (state === 'retired')
     await call('neo.question.retire', { questionId, reason: 'Superseded' }, owner);
@@ -172,7 +172,7 @@ describe('Neo human-confirmed home saves', () => {
     expect(await git('rev-parse', 'HEAD')).toBe(changed.commit!);
     expect(await git('status', '--porcelain')).toBe('');
   });
-  test.each(['button', 'letter'])('saves on the confirmed option chosen by %s', async (state) => {
+  test.each(['button', 'number'])('saves on the confirmed option chosen by %s', async (state) => {
     const questionId = await proposal(input, state);
     expect(await call('neo.home.save', { ...input, questionId }, owner)).toMatchObject({
       ok: true,
