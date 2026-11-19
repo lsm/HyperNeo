@@ -28,6 +28,7 @@ let dispatched: boolean;
 let workspace: string | null;
 let worktree: string | undefined;
 let mismatchedReply: boolean;
+let hostBusy: boolean;
 let body: { content?: Record<string, unknown>[]; structuredContent?: unknown };
 const caller: OperationCaller = {
   source: 'mcp',
@@ -40,6 +41,7 @@ beforeEach(async () => {
   workspace = root;
   worktree = undefined;
   mismatchedReply = false;
+  hostBusy = false;
   body = {};
   await mkdir(join(root, 'desktop'));
   db = new Database(':memory:');
@@ -60,6 +62,10 @@ beforeEach(async () => {
       if (!line.includes('\n')) return;
       const request = JSON.parse(line);
       requests.push(request);
+      if (hostBusy) {
+        socket.end(JSON.stringify({ ok: false, error: 'desktop_busy' }) + '\n');
+        return;
+      }
       socket.end(
         JSON.stringify({
           ok: true,
@@ -115,6 +121,21 @@ const audit = () =>
     params_summary: string;
     timestamp: number;
   }>;
+
+test('desktop.call reports when the Desktop app is not connected', async () => {
+  await new Promise<void>((done) => server.close(() => done()));
+  const outcome = await call();
+  expect(outcome).toMatchObject({
+    value: { ok: false, reason: 'desktop_app_not_connected', dispatched: false },
+  });
+});
+
+test('desktop.call reports a saturated Desktop host as busy', async () => {
+  hostBusy = true;
+  expect(await call()).toMatchObject({
+    value: { ok: false, reason: 'desktop_busy', dispatched: false },
+  });
+});
 
 test.each(['universal_read', 'direct_task_worker'] as const)(
   'in-process MCP dispatch from a %s todo worker uses only its session and workspace',

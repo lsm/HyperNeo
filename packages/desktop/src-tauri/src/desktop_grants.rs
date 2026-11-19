@@ -9,13 +9,18 @@ use security_framework::{
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::Mutex,
+    sync::{Condvar, Mutex},
     time::{Duration, Instant},
 };
 
 pub(super) static ASKS: Mutex<(BTreeSet<String>, BTreeMap<String, Instant>)> =
     Mutex::new((BTreeSet::new(), BTreeMap::new()));
 const DECLINE_COOLDOWN: Duration = Duration::from_secs(10 * 60);
+static ANSWERED: Condvar = Condvar::new();
+#[cfg(not(test))]
+const OWNER_WAIT: Duration = Duration::from_secs(45);
+#[cfg(test)]
+const OWNER_WAIT: Duration = Duration::from_millis(200);
 #[cfg(test)]
 pub(super) static FIXTURE_DIALOG: Mutex<(&str, u64)> = Mutex::new(("deny", 0));
 #[cfg(test)]
@@ -28,9 +33,9 @@ const SERVICE: &str = "io.hyperneo.desktop.grant";
 const SERVICE: &str = "io.hyperneo.desktop.grant.fixture";
 const NOT_FOUND: i32 = -25300;
 
-fn options(requirement: &str, class: &str) -> PasswordOptions {
+fn options(requirement: &str, _class: &str) -> PasswordOptions {
     let mut options =
-        PasswordOptions::new_generic_password(SERVICE, &format!("{class}\n{requirement}"));
+        PasswordOptions::new_generic_password(SERVICE, &format!("all\n{requirement}"));
     options.use_protected_keychain();
     options.set_access_group(GROUP);
     options.set_access_synchronized(Some(false));
@@ -42,13 +47,17 @@ pub(super) fn check(bundle_id: &str, requirement: &str, class: &str) -> Result<(
     if let Some(stored) = FIXTURE_GRANTS
         .lock()
         .unwrap()
-        .get(&format!("{class}\n{requirement}"))
+        .get(&format!("all\n{requirement}"))
     {
         return if stored == bundle_id {
             Ok(())
         } else {
             Err("app_action_not_authorized")
         };
+    }
+    #[cfg(test)]
+    if FIXTURE_DIALOG.lock().unwrap().0.starts_with("mock-") {
+        return Err("app_action_not_authorized");
     }
     match generic_password(options(requirement, class)) {
         Ok(stored) if stored == bundle_id.as_bytes() => Ok(()),
@@ -65,11 +74,22 @@ pub(super) fn record(
     keep: bool,
 ) -> Result<(), String> {
     #[cfg(test)]
+    if FIXTURE_DIALOG.lock().unwrap().0.starts_with("mock-") {
+        let mut grants = FIXTURE_GRANTS.lock().unwrap();
+        let key = format!("all\n{requirement}");
+        if keep {
+            grants.insert(key, bundle_id.to_owned());
+        } else {
+            grants.remove(&key);
+        }
+        return Ok(());
+    }
+    #[cfg(test)]
     if !keep {
         FIXTURE_GRANTS
             .lock()
             .unwrap()
-            .remove(&format!("{class}\n{requirement}"));
+            .remove(&format!("all\n{requirement}"));
     }
     let result = if keep {
         let mut options = options(requirement, class);
@@ -86,24 +106,21 @@ pub(super) fn record(
 }
 
 pub(super) fn dialog_text(bundle_id: &str, class: &str) -> Option<String> {
-    let action = match class {
-        "observe" => "see its windows",
-        "launch" => "open it",
-        "pointer" => "click and scroll in it",
-        "keyboard" => "type into it",
+    match class {
+        "observe" | "launch" | "pointer" | "keyboard" => (),
         _ => return None,
-    };
+    }
     Some(format!(
-        "A HyperNeo worker asked to {action}.\n\nApp: {bundle_id}\n\nIf you allow it, HyperNeo workers can do this in this app without asking again."
+        "A HyperNeo worker asked to open this app, see its windows, click, scroll and type in it.\n\nApp: {bundle_id}\n\nIf you allow it, HyperNeo workers can do these actions in this app without asking again."
     ))
 }
 
 #[cfg(test)]
-pub(super) fn admit(bundle_id: &str, requirement: &str, class: &str) {
+pub(super) fn admit(bundle_id: &str, requirement: &str, _class: &str) {
     FIXTURE_GRANTS
         .lock()
         .unwrap()
-        .insert(format!("{class}\n{requirement}"), bundle_id.to_owned());
+        .insert(format!("all\n{requirement}"), bundle_id.to_owned());
 }
 
 fn prepare_alert(alert: &NSAlert, message: &str) {
@@ -146,10 +163,10 @@ fn owner_allows(bundle_id: &str, class: &str) -> Option<bool> {
         loop {
             let mode = FIXTURE_DIALOG.lock().unwrap().0;
             match mode {
-                "hold" => {}
+                "hold" | "mock-hold" => {}
                 "panic" => break true,
                 "real" => break false,
-                mode => return Some(mode == "allow"),
+                mode => return Some(mode == "allow" || mode == "mock-allow"),
             }
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -171,45 +188,72 @@ fn owner_allows(bundle_id: &str, class: &str) -> Option<bool> {
 }
 
 pub(super) fn ask_owner(bundle_id: &str, requirement: &str, class: &str) -> &'static str {
-    let key = format!("{class}\n{requirement}");
+    let key = requirement.to_owned();
     {
         let mut asks = ASKS.lock().unwrap();
         let (pending, declined) = &mut *asks;
-        #[cfg(test)]
-        if FIXTURE_DIALOG.lock().unwrap().0 == "hold" && pending.contains(&key) {
-            FIXTURE_DIALOG.lock().unwrap().0 = "deny";
-            std::thread::sleep(Duration::from_millis(200));
-        }
         if declined
             .get(&key)
             .is_some_and(|at| at.elapsed() < DECLINE_COOLDOWN)
         {
-            return "app_action_declined";
+            return "owner_declined";
         }
-        if !pending.insert(key.clone()) {
-            return "app_action_not_authorized";
+        if pending.insert(key.clone()) {
+            let (bundle_id, requirement, class, key) = (
+                bundle_id.to_owned(),
+                requirement.to_owned(),
+                class.to_owned(),
+                key.clone(),
+            );
+            std::thread::spawn(move || {
+                let answer = owner_allows(&bundle_id, &class);
+                if answer == Some(true) {
+                    if let Err(error) = record(&bundle_id, &requirement, &class, true) {
+                        log::warn!("Desktop grant was approved but not stored: {error}");
+                    }
+                }
+                let mut asks = ASKS.lock().unwrap();
+                let (pending, declined) = &mut *asks;
+                match answer {
+                    Some(true) => _ = declined.remove(&key),
+                    Some(false) => _ = declined.insert(key.clone(), Instant::now()),
+                    None => {}
+                }
+                pending.remove(&key);
+                ANSWERED.notify_all();
+            });
         }
     }
-    let (bundle_id, requirement, class) = (
-        bundle_id.to_owned(),
-        requirement.to_owned(),
-        class.to_owned(),
-    );
-    std::thread::spawn(move || {
-        let answer = owner_allows(&bundle_id, &class);
-        if answer == Some(true) {
-            if let Err(error) = record(&bundle_id, &requirement, &class, true) {
-                log::warn!("Desktop grant was approved but not stored: {error}");
-            }
-        }
-        let mut asks = ASKS.lock().unwrap();
-        let (pending, declined) = &mut *asks;
-        match answer {
-            Some(true) => _ = declined.remove(&key),
-            Some(false) => _ = declined.insert(key.clone(), Instant::now()),
-            None => {}
-        }
-        pending.remove(&key);
-    });
-    "app_action_not_authorized"
+    let asks = ASKS.lock().unwrap();
+    let (asks, _) = ANSWERED
+        .wait_timeout_while(asks, OWNER_WAIT, |asks| asks.0.contains(&key))
+        .unwrap();
+    if asks.0.contains(&key) {
+        return "waiting_for_owner";
+    }
+    if asks
+        .1
+        .get(&key)
+        .is_some_and(|at| at.elapsed() < DECLINE_COOLDOWN)
+    {
+        return "owner_declined";
+    }
+    drop(asks);
+    if check(bundle_id, requirement, class).is_ok() {
+        "allowed"
+    } else {
+        "guards_unavailable"
+    }
+}
+
+#[cfg(test)]
+mod approval_tests {
+    use super::*;
+
+    #[test]
+    fn declined_owner_answer_is_returned_to_the_waiting_caller() {
+        FIXTURE_DIALOG.lock().unwrap().0 = "deny";
+        let result = ask_owner("io.example.test", "fixture-requirement", "pointer");
+        assert_eq!(result, "owner_declined");
+    }
 }
