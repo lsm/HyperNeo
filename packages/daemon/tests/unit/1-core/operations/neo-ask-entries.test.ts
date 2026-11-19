@@ -103,6 +103,9 @@ describe('blocked todo cards', () => {
       status: 'Blocked: CI keeps failing',
       statusCodes: [{ code: 'todo.blocked', params: { reason: 'CI keeps failing' } }],
     });
+    const held = todo({ state: 'blocked', blockedBy: 'held' });
+    expect(neoAskEntryState(ask(), [held], [])).toBe('doing');
+    expect(neoWorkCounts([held], [], [])).toEqual({ needsYou: 0, neoUnhandled: 0 });
     expect(neoAskEntryState(ask(), [blocked, todo({ state: 'done' })], [])).toBe('doing');
     expect(neoAskEntryState(ask(), [blocked], [question('open')])).toBe('waiting');
   });
