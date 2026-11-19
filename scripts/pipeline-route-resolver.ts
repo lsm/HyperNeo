@@ -65,7 +65,10 @@ export function createLocalPipelineResolver(
     return expression;
   }
 
-  function pipeline(expression: ts.Expression): LocalPipelineResolution {
+  function pipeline(
+    expression: ts.Expression,
+    parameters = new Map<ts.Symbol, string>()
+  ): LocalPipelineResolution {
     let current = unwrap(expression);
     if (!ts.isCallExpression(current) || !ts.isPropertyAccessExpression(current.expression))
       return unknown;
@@ -79,19 +82,65 @@ export function createLocalPipelineResolver(
     const name = current.arguments[0];
     const factory = unwrap(current.expression);
     if (
-      !ts.isStringLiteral(name) ||
       !ts.isCallExpression(factory) ||
       !ts.isIdentifier(factory.expression) ||
       !importedSuperpipe(factory.expression)
     )
       return unknown;
-    return { kind: 'named', name: name.text };
+    const symbol = ts.isIdentifier(name) ? checker.getSymbolAtLocation(name) : undefined;
+    if (
+      symbol &&
+      parameters.has(symbol) &&
+      (factory.arguments.length !== 1 ||
+        !ts.isObjectLiteralExpression(factory.arguments[0]) ||
+        factory.arguments[0].properties.length !== 0)
+    )
+      return unknown;
+    const resolvedName = ts.isStringLiteral(name) ? name.text : symbol && parameters.get(symbol);
+    return resolvedName === undefined ? unknown : { kind: 'named', name: resolvedName };
+  }
+
+  function localFactory(expression: ts.Expression): LocalPipelineResolution {
+    if (!ts.isCallExpression(expression) || !ts.isIdentifier(expression.expression)) return unknown;
+    const declarations = checker.getSymbolAtLocation(expression.expression)?.declarations;
+    if (declarations?.length !== 1 || !ts.isVariableDeclaration(declarations[0])) return unknown;
+    const declaration = declarations[0];
+    if (
+      !ts.isVariableDeclarationList(declaration.parent) ||
+      !(declaration.parent.flags & ts.NodeFlags.Const) ||
+      !declaration.initializer
+    )
+      return unknown;
+    const initializer = unwrap(declaration.initializer);
+    if (
+      !ts.isArrowFunction(initializer) ||
+      initializer.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)
+    )
+      return unknown;
+    if (initializer.parameters.length !== expression.arguments.length) return unknown;
+    const parameters = new Map<ts.Symbol, string>();
+    for (let i = 0; i < initializer.parameters.length; i++) {
+      const parameter = initializer.parameters[i];
+      const argument = unwrap(expression.arguments[i]);
+      if (!ts.isIdentifier(parameter.name) || parameter.dotDotDotToken || parameter.initializer)
+        return unknown;
+      const symbol = checker.getSymbolAtLocation(parameter.name);
+      if (symbol && ts.isStringLiteral(argument)) parameters.set(symbol, argument.text);
+    }
+    if (!ts.isBlock(initializer.body)) return pipeline(initializer.body, parameters);
+    if (initializer.body.statements.length !== 1) return unknown;
+    const statement = initializer.body.statements[0];
+    return ts.isReturnStatement(statement) && statement.expression
+      ? pipeline(statement.expression, parameters)
+      : unknown;
   }
 
   function callable(expression: ts.Expression, seen: Set<ts.Node>): LocalPipelineResolution {
     expression = unwrap(expression);
     const direct = pipeline(expression);
     if (direct.kind === 'named') return direct;
+    const built = localFactory(expression);
+    if (built.kind === 'named') return built;
     if (ts.isArrowFunction(expression) || ts.isFunctionExpression(expression)) {
       if (ts.isBlock(expression.body)) {
         if (expression.body.statements.length !== 1) return unknown;
