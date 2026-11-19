@@ -426,6 +426,39 @@ describe('Settings RPC Handlers', () => {
       expect(credentialManager.storeApiKey).not.toHaveBeenCalled();
     });
 
+    it('removes a saved host key after its endpoint is removed', async () => {
+      const credentialManager = createMockCredentialManager();
+      credentialManager.getCredentials.mockImplementation(async (id: string) =>
+        id === 'voice-transcription:old.example' ? { type: 'api_key', apiKey: 'old-secret' } : null
+      );
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        credentialManager.manager
+      );
+      const handler = hubData.handlers.get('settings.global.update')!;
+      const result = await handler(
+        {
+          updates: {
+            voice: {
+              enabled: true,
+              endpoint: 'https://new.example/transcribe',
+              model: 'test',
+              hostKey: { host: 'old.example' },
+            },
+          },
+        },
+        {}
+      );
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith(
+        'voice-transcription:old.example'
+      );
+      expect(JSON.stringify(result)).not.toContain('old-secret');
+    });
+
     it('stores a host key without returning it in settings or events', async () => {
       const credentialManager = createMockCredentialManager();
       const hubData = createMockMessageHub();
