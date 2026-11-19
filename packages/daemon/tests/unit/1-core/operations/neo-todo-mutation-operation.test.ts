@@ -266,6 +266,16 @@ describe('Writer-backed todo operation activation', () => {
     });
   });
 
+  test('a passive hold refuses a worker that changed while stopping', async () => {
+    store.updateTodo(store.getTodo('first')!, { state: 'doing', startedAt: 3 }, 3);
+    duringStop = () => store.updateTodo(store.getTodo('first')!, { startedAt: 4 }, 4);
+    expect(await call('neo.todo.hold', { todoId: 'first', reason: 'Wait.' })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('todo_changed'),
+    });
+    expect(store.getTodo('first')).toMatchObject({ state: 'doing', startedAt: 4 });
+  });
+
   test('releasing a todo an older start answer held still runs through the atomic command', async () => {
     store.updateTodo(
       store.getTodo('peer')!,
