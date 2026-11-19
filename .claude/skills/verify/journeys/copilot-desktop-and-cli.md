@@ -20,7 +20,10 @@ database. CLI start is available only when the CLI is present. Use the Copilot
 owned lifecycle and input delivery journeys for CLI mutation proof.
 
 In `desktop` mode, discovery waits for a briefly locked App database, then
-reports an unsupported schema after the fixture renames the session table.
+reads a WAL database without writable sidecars and reports an unsupported
+schema after the fixture renames the session table. In `both` mode, schema
+drift preserves CLI matches with an unavailable note. A search with no
+fallback matches reports the Desktop error as unreachable.
 
 Desktop exposes find, status, read, and turns through the driver. The public
 launch link opens an App confirmation or draft and supplies no submitted-turn

@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { opendir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { errorMessage } from '../utils/error-message.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import { mergePlaceGroups } from './places.ts';
 import type { FindQuery, PlaceGroup, WorkAdapter, WorkSummary } from './types.ts';
@@ -73,16 +74,10 @@ export function createCopilotFind(
       !(app.status === 'fulfilled' && app.value.length)
     )
       throw external.reason;
-    if (
-      app.status === 'rejected' &&
-      !owned.value.length &&
-      external.status === 'fulfilled' &&
-      !external.value.length
-    )
-      throw app.reason;
     return {
       external: external.status === 'fulfilled' ? external.value : [],
       desktop: app.status === 'fulfilled' ? app.value : [],
+      desktopFailure: app.status === 'rejected' ? { reason: app.reason } : undefined,
       owned:
         external.status === 'fulfilled'
           ? owned.value
@@ -93,10 +88,7 @@ export function createCopilotFind(
             })),
     };
   };
-  const combine = (
-    loaded: { external: PlaceGroup[]; desktop: PlaceGroup[]; owned: OwnedSummary[] },
-    query: FindQuery
-  ) => {
+  const combine = (loaded: Awaited<ReturnType<typeof load>>, query: FindQuery) => {
     const desktopIds = new Set(
       loaded.desktop.flatMap((group) => group.work.map((work) => work.ref.id))
     );
@@ -120,19 +112,32 @@ export function createCopilotFind(
       work: [{ ...work, ...(archived ? { archived: true } : {}) }],
     }));
     const text = query.text?.toLowerCase();
-    return mergePlaceGroups([...external, ...groups], Number.MAX_SAFE_INTEGER).flatMap((group) => {
-      if (query.folder && group.place.folder !== query.folder) return [];
-      const placeMatches =
-        !text || `${group.place.name} ${group.place.folder ?? ''}`.toLowerCase().includes(text);
-      const work = group.work
-        .filter(
-          (item) =>
-            (query.includeClosed || (!item.archived && item.status !== 'stopped')) &&
-            (placeMatches || item.title.toLowerCase().includes(text!))
-        )
-        .slice(0, query.all ? undefined : 20);
-      return work.length || (placeMatches && !text) ? [{ ...group, work }] : [];
-    });
+    const merged = mergePlaceGroups([...external, ...groups], Number.MAX_SAFE_INTEGER).flatMap(
+      (group) => {
+        if (query.folder && group.place.folder !== query.folder) return [];
+        const placeMatches =
+          !text || `${group.place.name} ${group.place.folder ?? ''}`.toLowerCase().includes(text);
+        const work = group.work
+          .filter(
+            (item) =>
+              (query.includeClosed || (!item.archived && item.status !== 'stopped')) &&
+              (placeMatches || item.title.toLowerCase().includes(text!))
+          )
+          .slice(0, query.all ? undefined : 20);
+        return work.length || (placeMatches && !text) ? [{ ...group, work }] : [];
+      }
+    );
+    if (!loaded.desktopFailure) return merged;
+    const { reason } = loaded.desktopFailure;
+    if (!merged.some((group) => group.work.length)) throw reason;
+    const hint = `Copilot Desktop discovery unavailable: ${errorMessage(reason)}`;
+    return merged.map((group) => ({
+      ...group,
+      work: group.work.map((item) => ({
+        ...item,
+        watchHint: item.watchHint ? `${item.watchHint} ${hint}` : hint,
+      })),
+    }));
   };
   return (superpipe({})('copilot-find') as PipelineAPI)
     .input(['query'])
