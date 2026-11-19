@@ -13,9 +13,9 @@ const base = `http://127.0.0.1:${port}`;
 const contexts = [];
 let currentPage;
 try {
-  for (const [name, width, height, dark] of [['wide-light', 1280, 800, false], ['wide-dark', 1280, 800, true], ['phone-light', 390, 844, false], ['phone-dark', 390, 844, true]]) {
+  for (const [name, width, height, dark] of [['wide-light', 1280, 800, false], ['wide-dark', 1280, 800, true], ['phone-light', 390, 844, false], ['wide-zh', 1280, 800, false], ['phone-dark', 390, 844, true]]) {
     const touch = width === 390;
-    const context = await browser.newContext({ viewport: { width, height }, locale: 'en-US', colorScheme: dark ? 'dark' : 'light', reducedMotion: 'reduce', ...(touch ? { hasTouch: true, isMobile: true, deviceScaleFactor: 2 } : {}) });
+    const context = await browser.newContext({ viewport: { width, height }, locale: name === 'wide-zh' ? 'zh-CN' : 'en-US', colorScheme: dark ? 'dark' : 'light', reducedMotion: 'reduce', ...(touch ? { hasTouch: true, isMobile: true, deviceScaleFactor: 2 } : {}) });
     contexts.push(context);
     await context.route('**/*', (route) => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
     const page = await context.newPage();
@@ -36,6 +36,7 @@ try {
     await card.waitFor();
     assert.match(await card.innerText(), /Book the dentist on the clinic site/);
     assert.match(await card.innerText(), /Calendar/);
+    if (name === 'wide-zh') await card.getByRole('button', { name: '\u5141\u8bb8', exact: true }).waitFor({ timeout: 5000 });
     await page.screenshot({ path: join(out, `${name}.png`) });
     if (name === 'wide-light') {
       const questionId = JSON.parse(readFileSync(join(out, 'card.json'), 'utf8')).reply.question.id;

@@ -103,6 +103,19 @@ const toggleAll = (app: ReturnType<typeof render>) => {
 };
 
 describe('QuestionBox', () => {
+  it('shows the desktop control action in the selected language', () => {
+    const card = question('desktop', {
+      kind: 'desktop_control',
+      app: 'Calendar',
+      todoId: 't1',
+      todoTitle: 'Todo t1',
+    });
+    const view = render(
+      <QuestionBox question={card} onAnswer={vi.fn()} onDesktopAllow={vi.fn()} />
+    );
+    expect(view.getByRole('button', { name: '\u5141\u8bb8' })).toBeTruthy();
+  });
+
   it('offers desktop control for the named app and todo', async () => {
     locale.value = 'en';
     const allow = vi.fn();
