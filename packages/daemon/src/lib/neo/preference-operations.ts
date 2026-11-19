@@ -120,6 +120,16 @@ function isDeclaredPreference(packs: readonly NeoPack[], pack: string, key: stri
   return preferences !== undefined && Object.hasOwn(preferences, key);
 }
 
+export function listDeclaredPackPreferences(
+  db: Database,
+  packs: readonly NeoPack[],
+  pack?: string
+): NeoPackSetting[] {
+  return listPackPreferences(db, pack).filter((setting) =>
+    isDeclaredPreference(packs, setting.pack, setting.key)
+  );
+}
+
 export function validatePackPreference(input: Input, packs: readonly NeoPack[]) {
   const declarations = packs.find((pack) => pack.id === input.pack)?.preferences;
   const declaration =
@@ -200,9 +210,7 @@ export function createPackPreferenceOperations(
       (input: { pack?: string }) => {
         const currentPacks = packs();
         return {
-          preferences: listPackPreferences(db, input.pack).filter((setting) =>
-            isDeclaredPreference(currentPacks, setting.pack, setting.key)
-          ),
+          preferences: listDeclaredPackPreferences(db, currentPacks, input.pack),
           declarations: currentPacks.find((pack) => pack.id === input.pack)?.preferences ?? {},
         };
       },

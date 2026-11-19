@@ -153,10 +153,20 @@ describe('pack settings operations', () => {
         (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
         VALUES ('coding', 'global', '', 'sessionStrategy', '"per_pr"', 'human', 1)`)
       .run();
-    expect(service.packPreferences()).toEqual([watch]);
+    const live = createNeoService(
+      db,
+      {
+        updateSession: async (id: string, updates: object) => db.updateSession(id, updates),
+      } as unknown as SessionManager,
+      { event: mock(() => {}) } as unknown as MessageHub,
+      new InternalEventBus<DaemonInternalEventMap>()
+    );
+    await live.refreshPackPreferences();
+    expect(db.getSession('neo:root')!.config.systemPrompt).not.toContain('sessionStrategy');
     expect(await invoke('neo.snapshot', {})).toMatchObject({
       value: { packPreferences: [watch] },
     });
+    live.dispose();
   });
   test('the MCP snapshot has no packPreferences', async () => {
     expect(await invoke('pack.preferences.set', setting)).toMatchObject({ value: { ok: true } });
