@@ -50,16 +50,18 @@ function setup() {
   const assignments = new CodingAssignmentsRepository(db),
     ledger = new CodingPrLedgerRepository(db);
   ledger.stageFacts.observeHead(url, 'head-a', 1);
-  const registry = createOperationRegistry([createCodingResultOperation(assignments, ledger)]);
+  const operation = createCodingResultOperation(assignments, ledger);
+  const registry = createOperationRegistry([operation]);
   const result = (input: unknown, role = 'neo' as const) =>
     invokeOperation(registry, 'neo.coding.result', input, { source: 'internal', role });
-  return { db, assignments, ledger, result };
+  return { db, assignments, ledger, result, operation };
 }
 
 describe('linked coding assignment results', () => {
   test('assigned human Review results retain their explicit identity and ref', async () => {
-    const { db, assignments, ledger, result } = setup();
+    const { db, assignments, ledger, result, operation } = setup();
     try {
+      expect(operation.pipelineRunner.pipeline.name).toBe(operation.name);
       const human = { kind: 'human', id: 'person' } as const,
         humanRef = { adapter: 'human', id: 'person' };
       assignments.record('todo', 'review', { ...assignment, actor: human, ref: humanRef });

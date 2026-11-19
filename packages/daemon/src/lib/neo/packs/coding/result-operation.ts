@@ -1,8 +1,8 @@
 import { neoToolDescription } from '@hyperneo/prompts';
 import { isDeepStrictEqual } from 'node:util';
-import superpipe, { type PipelineAPI } from 'superpipe';
+import superpipe, { type DescribedRunner, type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { defineOperation } from '../../../operations/registry.ts';
+import { defineOperation, type OperationDefinition } from '../../../operations/registry.ts';
 import { WorkRefSchema } from '../../../drivers/types.ts';
 import { CodingStageFact } from './stage-facts.ts';
 import type { CodingPrLedgerRepository } from './pr-ledger.ts';
@@ -49,12 +49,15 @@ export function createCodingResultOperation(
       'fact'
     )
     .endAsync('fact') as (input: Input) => Promise<Result>;
-  return defineOperation({
-    name: 'neo.coding.result',
-    description: neoToolDescription('neo.coding.result'),
-    inputSchema: Input,
-    resultSchema: z.object({ ok: z.boolean(), reason: z.string().optional() }),
-    policy: { safetyClass: 'mutate', roles: ['neo'] },
-    execute: (input) => record(input),
-  });
+  return {
+    ...defineOperation({
+      name: 'neo.coding.result',
+      description: neoToolDescription('neo.coding.result'),
+      inputSchema: Input,
+      resultSchema: z.object({ ok: z.boolean(), reason: z.string().optional() }),
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: (input) => record(input),
+    }),
+    pipelineRunner: record as unknown as OperationDefinition['execute'] & DescribedRunner,
+  };
 }
