@@ -1,6 +1,5 @@
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { z } from 'zod';
 import { neoEvidencePathRefusal } from '../../lib/neo/core-todo-checks.ts';
 import { getDataDir } from '../../lib/data-dir.ts';
 import { neoTodoRepository } from '../../lib/neo/pack-contract.ts';
@@ -11,7 +10,7 @@ import {
   planNeoTodoDependencies,
 } from '../../lib/neo/todo-dependencies.ts';
 import {
-  type NeoTodoDraftSchema,
+  type ResolvedNeoTodoDraft,
   neoTodoBindRefusal,
   neoTodoPlaceRefusal,
   planNeoTodoDraft,
@@ -25,7 +24,7 @@ import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
 type Input = {
   askId: string;
   todoId: string;
-  draft: z.infer<typeof NeoTodoDraftSchema> & { workerRemotes?: readonly string[] };
+  draft: ResolvedNeoTodoDraft;
   now: number;
   userFolder?: string;
 };

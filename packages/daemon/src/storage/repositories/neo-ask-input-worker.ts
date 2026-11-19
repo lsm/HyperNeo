@@ -1,3 +1,4 @@
+import { DESKTOP_CONTROL_QUESTION_ID } from '../../lib/neo/desktop-control-preference.ts';
 import { readReleaseReuseRow, readSameAskWorkers } from './work-started-sessions-worker.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
@@ -74,6 +75,16 @@ class NeoAskInputs {
     );
   }
 
+  desktopControlQuestionState(): { id: string; state: string } | null {
+    const key = DESKTOP_CONTROL_QUESTION_ID;
+    return this.db
+      .prepare(`SELECT q.id, q.state FROM neo_pack_preference_proposals p
+        JOIN neo_questions q ON q.id = p.question_id
+        WHERE p.request_id = ? OR substr(p.request_id, 1, length(?)) = ?
+        ORDER BY p.rowid DESC LIMIT 1`)
+      .get(key, `${key}:`, `${key}:`) as { id: string; state: string } | null;
+  }
+
   latestHumanContent() {
     return (
       (
@@ -130,6 +141,7 @@ export const neoAskInputReads = defineRepositoryOp('neo.askInputs.read', 'read',
   'owner',
   'sessionReuseFacts',
   'sessionReuseQuestionState',
+  'desktopControlQuestionState',
   'latestHumanContent',
 ]);
 export const neoAskInputWrites = defineRepositoryOp('neo.askInputs.write', 'write', NeoAskInputs, [

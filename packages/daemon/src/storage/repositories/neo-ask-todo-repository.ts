@@ -1,3 +1,7 @@
+import {
+  desktopControlPreference,
+  planDesktopControl,
+} from '../../lib/neo/desktop-control-preference.ts';
 import { proposalQuestionId } from '../../lib/neo/proposal.ts';
 import { queueNeoRequestReply, queueNeoRequestSettledReply } from '../../lib/neo/request-todo.ts';
 import type {
@@ -49,7 +53,10 @@ import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
 import { applyPackPreferenceAnswer } from './pack-preference-answer.ts';
 
 export type NeoTodoDraft = Pick<NeoTodo, 'title' | 'doneWhen' | 'check' | 'instruction' | 'named'> &
-  Partial<Pick<NeoTodo, 'priority' | 'dependsOn' | 'approvedAt'>> & { producesFollowUp?: boolean };
+  Partial<Pick<NeoTodo, 'priority' | 'dependsOn' | 'approvedAt'>> & {
+    producesFollowUp?: boolean;
+    desktopControlApproved?: true;
+  };
 
 export type NeoTodoInsert = (
   id: string,
@@ -762,6 +769,14 @@ export class NeoAskTodoRepository {
     ).map((row) => toTodo(row));
   }
 
+  desktopControlPreference(): unknown {
+    return desktopControlPreference(this.db);
+  }
+
+  desktopControlQuestionState(): Promise<{ id: string; state: string } | null> {
+    return gatewayFor(this.db).call(neoAskInputReads, 'desktopControlQuestionState');
+  }
+
   addTodo(...args: Parameters<NeoTodoInsert>): NeoTodo {
     const storage = this.storage;
     const todo = this.inTransaction(() =>
@@ -778,6 +793,11 @@ export class NeoAskTodoRepository {
     now: number,
     notify = true
   ): NeoTodo {
+    const desktopControl =
+      draft.desktopControlApproved === true &&
+      planDesktopControl(draft.named?.desktopControl, this.desktopControlPreference()) === 'allow'
+        ? true
+        : undefined;
     this.db
       .prepare(
         `INSERT INTO neo_todos (id, ask_id, position, title, done_when, check_json, instruction, named,
@@ -794,7 +814,7 @@ export class NeoAskTodoRepository {
         draft.doneWhen,
         draft.check ? JSON.stringify(draft.check) : null,
         draft.instruction,
-        draft.named ? JSON.stringify({ ...draft.named, desktopControl: undefined }) : null,
+        draft.named ? JSON.stringify({ ...draft.named, desktopControl }) : null,
         askId,
         draft.priority ?? 'normal',
         JSON.stringify(draft.dependsOn ?? []),
@@ -1344,6 +1364,7 @@ export const neoTodoReads = defineRepositoryOp(
     'planContext',
     'doneTodoFacts',
     'askFacts',
+    'desktopControlPreference',
     'listCheckable',
     'listAwaitingNeoDecision',
     'listOpenAsks',

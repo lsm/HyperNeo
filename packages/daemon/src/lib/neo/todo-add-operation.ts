@@ -6,6 +6,7 @@ import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-to
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import type { OperationCaller, OperationDefinition } from '../operations/registry.ts';
 import { neoUserFolder } from './folder.ts';
+import { desktopControlQuestion, planDesktopControl } from './desktop-control-preference.ts';
 import { type NeoInputReads, resolveNeoInputAsk } from './input-ask.ts';
 import type { NeoPack } from './pack-contract.ts';
 import type {
@@ -20,15 +21,44 @@ type AddInput = z.infer<typeof NeoTodoDraftSchema> & {
 };
 type Result = { ok: false; reason: string } | { ok: true; todo?: NeoTodo; records?: string[] };
 
+export async function preflightTodoDesktopControl(
+  store: NeoAskTodoRepository,
+  askDesktopControl: NeoTodoControls['askDesktopControl'],
+  askId: string,
+  requested: boolean,
+  role: OperationCaller['role']
+): Promise<{ value: boolean } | { reason: { ok: false; reason: string } }> {
+  if (!requested) return { value: false };
+  const decision =
+    role === 'neo' ? planDesktopControl(true, await store.read('desktopControlPreference')) : 'off';
+  if (decision === 'allow') return { value: true };
+  if (decision === 'ask' && askDesktopControl) {
+    const question = desktopControlQuestion(askId, await store.desktopControlQuestionState());
+    if (question) await askDesktopControl(question);
+  }
+  return {
+    reason: {
+      ok: false,
+      reason:
+        'desktop_control_requires_permission: The human can turn desktop control on from the todo on the Neo page. Leave desktopControl out to add the todo with it off.',
+    },
+  };
+}
+
 export async function recordNeoTodoAdmission(
   store: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
   controls: Pick<NeoTodoControls, 'advance' | 'userFolder' | 'refreshIdentity'>,
   ask: NeoAsk,
   draft: ResolvedNeoTodoDraft,
-  packs: readonly NeoPack[]
+  packs: readonly NeoPack[],
+  desktopControlAllowed: boolean
 ): Promise<Result> {
-  const result = await admitNeoTodo(store, sessions, controls, ask, draft, packs);
+  const admitted =
+    desktopControlAllowed && draft.named?.desktopControl === true
+      ? { ...draft, desktopControlApproved: true as const }
+      : draft;
+  const result = await admitNeoTodo(store, sessions, controls, ask, admitted, packs);
   if (result.ok && result.todo && draft.target?.verb === 'bind')
     await controls.refreshIdentity?.(result.todo.id);
   return result;
@@ -134,8 +164,24 @@ export function wireNeoTodoAdd(
       'result:outcome'
     )
     .pipe(
-      (draft: ResolvedNeoTodoDraft, ask: NeoAsk) =>
-        recordNeoTodoAdmission(store, sessions, controls, ask, draft, packs()),
+      async (draft: ResolvedNeoTodoDraft, ask: NeoAsk, caller: OperationCaller) => {
+        const desktop = await preflightTodoDesktopControl(
+          store,
+          controls.askDesktopControl,
+          ask.id,
+          draft.named?.desktopControl === true,
+          caller.role
+        );
+        return 'reason' in desktop ? desktop : { value: { draft, desktopControl: desktop.value } };
+      },
+      ['outcome', 'ask', 'caller'],
+      'result:outcome'
+    )
+    .pipe(
+      (
+        { draft, desktopControl }: { draft: ResolvedNeoTodoDraft; desktopControl: boolean },
+        ask: NeoAsk
+      ) => recordNeoTodoAdmission(store, sessions, controls, ask, draft, packs(), desktopControl),
       ['outcome', 'ask'],
       'outcome'
     )

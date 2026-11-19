@@ -27,6 +27,7 @@ import {
   type NeoTodoPolicyScope,
   type NeoTodoRepositoryDraft,
 } from './pack-contract.ts';
+import type { desktopControlQuestion } from './desktop-control-preference.ts';
 import { wireNeoTodoAdd } from './todo-add-operation.ts';
 import {
   readNeoTodoCompletion,
@@ -62,6 +63,9 @@ type Ran = Promise<{ ok: true; todo: NeoTodo; records?: string[] } | Rejection>;
 
 export interface NeoTodoControls {
   userFolder?: string;
+  askDesktopControl?: (
+    question: NonNullable<ReturnType<typeof desktopControlQuestion>>
+  ) => Promise<void>;
   resolveTarget(
     ref: WorkRef
   ): Promise<
@@ -89,9 +93,8 @@ const TodoDraft = z.object({
   target: NeoTodoAddTargetSchema.optional(),
   named: z
     .record(z.string(), z.unknown())
-    .refine((named) => !('desktopControl' in named), {
-      message:
-        'Only the human can turn desktop control on, from the todo on the Neo page. Leave desktopControl out of named.',
+    .refine((named) => named.desktopControl === undefined || named.desktopControl === true, {
+      message: 'Use desktopControl: true only for a todo that needs the computer.',
     })
     .refine((named) => !('requestFrom' in named), {
       message:
@@ -183,6 +186,7 @@ export function planNeoTodoDraft<T extends Pick<NeoTodo, 'check' | 'instruction'
 
 export type ResolvedNeoTodoDraft = z.infer<typeof NeoTodoDraftSchema> & {
   workerRemotes?: readonly string[];
+  desktopControlApproved?: true;
 };
 
 export async function resolveNeoTodoDraft(

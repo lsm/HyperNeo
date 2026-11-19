@@ -718,6 +718,14 @@ export function createNeoOperations(
   };
   const todoControls: NeoTodoControls = {
     userFolder: service.userFolder,
+    askDesktopControl: async (question) => {
+      await invokeOperation(
+        service.sessions.getOperationRegistry(),
+        'pack.preferences.ask',
+        question,
+        { source: 'internal', role: 'neo' }
+      );
+    },
     resolveTarget: (ref) =>
       readWorker(ref, (target) =>
         resolveNeoTodoTarget(target, (name, input) =>
