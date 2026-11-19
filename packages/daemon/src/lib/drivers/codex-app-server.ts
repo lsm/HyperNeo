@@ -74,9 +74,11 @@ export async function compactCodexThread(
     complete = resolve;
   });
   const unsubscribe = server.onNotification((message) => {
+    const params = message.params as { threadId?: unknown; item?: { type?: unknown } } | undefined;
     if (
-      message.method === 'thread/compacted' &&
-      (message.params as { threadId?: unknown } | undefined)?.threadId === threadId
+      params?.threadId === threadId &&
+      (message.method === 'thread/compacted' ||
+        (message.method === 'item/completed' && params.item?.type === 'contextCompaction'))
     )
       complete(true);
   });

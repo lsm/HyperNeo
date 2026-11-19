@@ -26,9 +26,13 @@ type ReuseDecision = ReturnType<typeof followSessionReuse>;
 type ReuseRelease =
   | { value: WorkRef }
   | { reason: Kept }
-  | { compact: NonNullable<WorkAdapter['compact']>; ref: WorkRef; kept: Kept };
+  | { compact: NonNullable<WorkAdapter['compact']>; ref: WorkRef; kept: Kept; lastUse: number };
 const COMPACT_RETRY_MS = 5 * 60_000;
-const nextCompaction = new Map<string, number>();
+const MAX_COMPACTION_ATTEMPTS = 3;
+const failedCompactions = new Map<
+  string,
+  { count: number; attemptedAt: number; retryAt: number }
+>();
 let compactionInFlight = false;
 
 function planKeptCompaction({
@@ -50,7 +54,7 @@ function planKeptCompaction({
   if (!compact) return { value: ref };
   if (compactedAt === undefined || (compactedAt !== null && compactedAt >= lastUse))
     return decision;
-  return { compact, ref, kept: decision.reason };
+  return { compact, ref, kept: decision.reason, lastUse };
 }
 
 type Released = { released: unknown };
@@ -212,23 +216,39 @@ const releaseWorker = (superpipe({})('neo.todo.release-worker') as PipelineAPI)
     ) => {
       if (!('compact' in plan)) return plan;
       const key = neoWorkerKey(plan.ref)!;
-      if (compactionInFlight || (nextCompaction.get(key) ?? 0) > now) return { reason: plan.kept };
+      const failure = failedCompactions.get(key);
+      const previous = failure && failure.attemptedAt >= plan.lastUse ? failure : undefined;
+      const count = (previous?.count ?? 0) + 1;
+      if (
+        compactionInFlight ||
+        count > MAX_COMPACTION_ATTEMPTS ||
+        (previous && previous.retryAt > now)
+      )
+        return { reason: plan.kept };
       compactionInFlight = true;
       const at = Date.now();
       const run = async () => {
-        let confirmed = false;
         try {
           const result = await plan.compact(plan.ref, { caller: daemon, from: 'neo' });
-          if (result.ok && result.value.compacted) {
-            await sessions.recordWorkerCompacted(plan.ref, at);
-            confirmed = true;
-          }
+          if (!result.ok || !result.value.compacted)
+            throw new Error(result.ok ? 'Compaction was not confirmed' : result.reason);
+          await sessions.recordWorkerCompacted(plan.ref, at);
+          failedCompactions.delete(key);
+        } catch (error) {
+          failedCompactions.set(key, {
+            count,
+            attemptedAt: at,
+            retryAt: Date.now() + COMPACT_RETRY_MS,
+          });
+          warn(
+            `Worker ${key} compaction attempt ${count}/${MAX_COMPACTION_ATTEMPTS} failed`,
+            error
+          );
         } finally {
-          if (!confirmed) nextCompaction.set(key, Date.now() + COMPACT_RETRY_MS);
           compactionInFlight = false;
         }
       };
-      void run().catch((error) => warn(`Worker ${key} compaction failed`, error));
+      void run();
       return { reason: plan.kept };
     },
     ['compaction', 'sessions', 'now', 'warn'],
@@ -279,8 +299,9 @@ export async function releaseNeoTodoWorkers(
   wake?: (row: FinishedWorker, reason: string) => Promise<void>,
   workerCompact?: WorkerCompact
 ): Promise<void> {
-  for (const [key, until] of nextCompaction) if (until <= now) nextCompaction.delete(key);
   const rows = await sessions.read('finishedWorkers', now - RELEASE_WINDOW_MS);
+  const workers = new Set(rows.map((row) => neoWorkerKey(row.ref)));
+  for (const key of failedCompactions.keys()) if (!workers.has(key)) failedCompactions.delete(key);
   const notified = new Set(
     rows.filter((row) => row.pending?.notified).map((row) => neoWorkerKey(row.ref))
   );

@@ -774,6 +774,41 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
     }
   });
 
+  test('caps failed attempts until the worker finishes another todo', async () => {
+    const h = setup();
+    const ref = { ...worker, id: crypto.randomUUID() };
+    const warnings: string[] = [];
+    try {
+      h.reuse('long_lived');
+      h.startNext(ref);
+      await h.finishTodo(h.add(started));
+      const runRelease = (now: number) =>
+        releaseNeoTodoWorkers(
+          h.sessions,
+          h.invoke,
+          (message) => warnings.push(message),
+          now,
+          undefined,
+          () => async () => ({ ok: false, reason: 'unreachable', detail: 'Synthetic disconnect' })
+        );
+
+      for (let sweep = 0; sweep < 5; sweep++) await runRelease(Date.now() + sweep * 6 * 60_000);
+      expect(warnings).toHaveLength(3);
+      expect(warnings[2]).toContain('3/3');
+      expect(kept(h)).toEqual([{ kept: 'kept_for_reuse' }]);
+      expect(await h.sessions.read('workerCompactedAt', ref)).toBeNull();
+
+      const next = h.add(started);
+      await h.finishTodo(next);
+      await runRelease(Date.now());
+      expect(warnings).toHaveLength(4);
+      expect(warnings[3]).toContain('1/3');
+      expect(h.archived).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('returns from the release sweep while a kept worker is still compacting', async () => {
     const h = setup();
     const ref = { ...worker, id: crypto.randomUUID() };
