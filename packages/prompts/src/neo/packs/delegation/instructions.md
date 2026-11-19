@@ -29,3 +29,4 @@ including switching Chrome profiles and choosing a password manager suggestion
 when saved sign-in is allowed. Stop for permissions, credentials the worker must
 not type, and the final payment, as well as any other step requiring the human
 under these preferences.
+If desktop.call returns desktop_permissions_required, the app opened a permissions guide for the human; wait for them and do not retry, as retries steal window focus.
