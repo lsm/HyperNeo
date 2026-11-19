@@ -163,24 +163,11 @@ export function createConnectionLifecycle(deps: {
     current: current ? { id: current.id, view: current.view } : undefined,
     storage: deps.vault.storageStatus(),
   });
-  const startConnection = async (
-    input: Partial<Client> & { connectionId?: string }
-  ): Promise<View> => {
-    if (deps.closed.aborted) return { state: 'failed', reason: 'cancelled' };
-    const account = (await deps.read()).find((record) => record.id === input.connectionId);
-    if (input.connectionId && !account) return { state: 'failed', reason: 'unknown_connection' };
-    const client = input.clientId
-      ? { clientId: input.clientId, clientSecret: input.clientSecret }
-      : account
-        ? (await deps.vault.read(account))?.client
-        : undefined;
-    if (!client) return { state: 'failed', reason: 'client_not_configured' };
-    cancel();
-    const login = await deps.startLogin(client);
-    if (deps.closed.aborted) {
-      login.cancel();
-      return { state: 'failed', reason: 'cancelled' };
-    }
+  const trackConnection = (
+    account: ConnectionStatus | undefined,
+    client: Client,
+    login: Login
+  ): View => {
     const id = randomUUID();
     const flow: Flow = {
       id,
@@ -220,6 +207,26 @@ export function createConnectionLifecycle(deps: {
         }
       );
     return { ...flow.view, authorizeUrl: login.authorizeUrl };
+  };
+  const startConnection = async (
+    input: Partial<Client> & { connectionId?: string }
+  ): Promise<View> => {
+    if (deps.closed.aborted) return { state: 'failed', reason: 'cancelled' };
+    const account = (await deps.read()).find((record) => record.id === input.connectionId);
+    if (input.connectionId && !account) return { state: 'failed', reason: 'unknown_connection' };
+    const client = input.clientId
+      ? { clientId: input.clientId, clientSecret: input.clientSecret }
+      : account
+        ? (await deps.vault.read(account))?.client
+        : undefined;
+    if (!client) return { state: 'failed', reason: 'client_not_configured' };
+    cancel();
+    const login = await deps.startLogin(client);
+    if (deps.closed.aborted) {
+      login.cancel();
+      return { state: 'failed', reason: 'cancelled' };
+    }
+    return trackConnection(account, client, login);
   };
   return {
     token: access.token,
