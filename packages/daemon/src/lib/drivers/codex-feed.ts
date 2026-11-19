@@ -18,7 +18,7 @@ import {
   ownFeedFiles,
   pruneVanishedFeeds,
 } from './work-feed.ts';
-import type { StartedWork } from '../../storage/work-started-sessions.ts';
+import type { StartedWork } from '../../storage/repositories/work-started-sessions-worker.ts';
 
 export const WORK_FEED_CODEX = 'work.feed.codex';
 const FEED_INTERVAL_MS = 60_000;

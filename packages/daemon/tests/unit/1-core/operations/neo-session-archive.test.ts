@@ -8,7 +8,7 @@ import {
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import type { ArchiveAdmission, WorkRef } from '../../../../src/lib/drivers/types.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
-import { recordWorkerStarted } from '../../../../src/storage/work-started-sessions.ts';
+import { recordWorkerStarted } from '../../../../src/storage/repositories/work-started-sessions-worker.ts';
 import { NEO_WORK_CLOSED_DONE_PREFIX } from '@hyperneo/shared/types/neo-snapshot';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
@@ -123,6 +123,33 @@ describe('neo.session.archive', () => {
     });
     expect(archive).not.toHaveBeenCalled();
     expect(await invoke(ref, user)).toMatchObject({ value: { ok: true } });
+  });
+
+  test("checks Neo's started-session record through the database gateway", async () => {
+    const raw = db.getDatabase();
+    const prepare = raw.prepare.bind(raw);
+    const inGateway = () => {
+      const flags = raw as unknown as { isTransaction?: boolean; inTransaction?: boolean };
+      return flags.isTransaction ?? flags.inTransaction ?? false;
+    };
+    const direct: string[] = [];
+    const watched = async (call: () => Promise<unknown>) => {
+      raw.prepare = ((sql: string) => {
+        if (sql.includes('work_started_sessions') && !inGateway()) direct.push(sql);
+        return prepare(sql);
+      }) as typeof raw.prepare;
+      try {
+        return await call();
+      } finally {
+        raw.prepare = prepare;
+      }
+    };
+    expect(await watched(() => invoke(ref, caller))).toMatchObject({
+      value: { ok: false, reason: 'not_started_by_us' },
+    });
+    recordWorkerStarted(raw, ref);
+    expect(await watched(() => invoke(ref, caller))).toMatchObject({ value: { ok: true } });
+    expect(direct).toEqual([]);
   });
 
   test('forwards a remote Neo archive without a local ownership record', async () => {

@@ -1,4 +1,4 @@
-import { recordStartedWork } from '../../../packages/daemon/src/storage/work-started-sessions.ts';
+import { recordStartedWork } from '../../../packages/daemon/src/storage/repositories/work-started-sessions-worker.ts';
 import { mock } from 'bun:test';
 import { strict as assert } from 'node:assert';
 import fs from 'node:fs';

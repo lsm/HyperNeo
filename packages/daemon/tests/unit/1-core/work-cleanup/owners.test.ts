@@ -97,6 +97,21 @@ describe('owners', () => {
     }
   });
 
+  test('a worker kept for reuse keeps its folder until the worker is released', () => {
+    const { db, bind, owners } = setup();
+    try {
+      bind('owned', { verb: 'start', adapter: 'hyperneo' });
+      const sessions = new NeoTodoSessionRepository(db);
+      expect(owners()).toMatchObject([{ todoId: 'owned', owner: { boundToLiveTodo: false } }]);
+      sessions.recordReleaseKept('owned', { kept: 'kept_for_reuse' });
+      expect(owners()).toMatchObject([{ todoId: 'owned', owner: { boundToLiveTodo: true } }]);
+      sessions.recordReleased('owned', { ok: true, value: { archived: true } });
+      expect(owners()).toMatchObject([{ todoId: 'owned', owner: { boundToLiveTodo: false } }]);
+    } finally {
+      db.close();
+    }
+  });
+
   test('a focused owner refresh excludes unrelated workers and deduplicates the session row', () => {
     const { db, bind, owners } = setup();
     try {
