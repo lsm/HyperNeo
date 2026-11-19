@@ -387,6 +387,186 @@ describe('Settings RPC Handlers', () => {
       );
     });
 
+    it('refuses clearing an inline key while changing a host key', async () => {
+      const credentialManager = createMockCredentialManager();
+      settingsManagerData.mocks.getGlobalSettings.mockReturnValue({
+        ...defaultGlobalSettings,
+        voice: {
+          enabled: true,
+          endpoint: 'https://old.example/transcribe',
+          model: 'test',
+          apiKey: 'legacy-secret',
+        },
+      });
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        credentialManager.manager
+      );
+      const handler = hubData.handlers.get('settings.global.update')!;
+      await expect(
+        handler(
+          {
+            updates: {
+              voice: {
+                enabled: true,
+                endpoint: 'https://old.example/transcribe',
+                model: 'test',
+                hasApiKey: false,
+                live: { provider: 'deepgram', endpoint: 'wss://live.example/listen' },
+                hostKey: { host: 'live.example', apiKey: 'live-secret' },
+              },
+            },
+          },
+          {}
+        )
+      ).rejects.toThrow('Only one voice key');
+      expect(credentialManager.storeApiKey).not.toHaveBeenCalled();
+      expect(settingsManagerData.mocks.updateGlobalSettings).not.toHaveBeenCalled();
+    });
+
+    it('refuses changing the recorded host while preserving an inline legacy key', async () => {
+      const credentialManager = createMockCredentialManager();
+      settingsManagerData.mocks.getGlobalSettings.mockReturnValue({
+        ...defaultGlobalSettings,
+        voice: {
+          enabled: true,
+          endpoint: 'https://old.example/transcribe',
+          model: 'test',
+          apiKey: 'legacy-secret',
+        },
+      });
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        credentialManager.manager
+      );
+      const handler = hubData.handlers.get('settings.global.update')!;
+      await expect(
+        handler(
+          {
+            updates: {
+              voice: {
+                enabled: true,
+                endpoint: 'https://new.example/transcribe',
+                model: 'test',
+                live: { provider: 'deepgram', endpoint: 'wss://live.example/listen' },
+                hostKey: { host: 'live.example', apiKey: 'live-secret' },
+              },
+            },
+          },
+          {}
+        )
+      ).rejects.toThrow('legacy');
+      expect(credentialManager.storeApiKey).not.toHaveBeenCalled();
+    });
+
+    it.each(['', '   '])(
+      'refuses a blank host key without deleting credentials',
+      async (apiKey) => {
+        const credentialManager = createMockCredentialManager();
+        const hubData = createMockMessageHub();
+        registerSettingsHandlers(
+          hubData.hub,
+          settingsManagerData.settingsManager,
+          internalEventBusData.bus,
+          dbData.db,
+          credentialManager.manager
+        );
+        await expect(
+          hubData.handlers.get('settings.global.update')!(
+            {
+              updates: {
+                voice: {
+                  enabled: true,
+                  endpoint: 'https://api.example.com/transcribe',
+                  model: 'test',
+                  hostKey: { host: 'api.example.com', apiKey },
+                },
+              },
+            },
+            {}
+          )
+        ).rejects.toThrow('blank');
+        expect(credentialManager.removeCredentials).not.toHaveBeenCalled();
+        expect(settingsManagerData.mocks.updateGlobalSettings).not.toHaveBeenCalled();
+      }
+    );
+
+    it('removes a saved host key after its endpoint is removed', async () => {
+      const credentialManager = createMockCredentialManager();
+      credentialManager.getCredentials.mockImplementation(async (id: string) =>
+        id === 'voice-transcription:old.example' ? { type: 'api_key', apiKey: 'old-secret' } : null
+      );
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        credentialManager.manager
+      );
+      const handler = hubData.handlers.get('settings.global.update')!;
+      const result = await handler(
+        {
+          updates: {
+            voice: {
+              enabled: true,
+              endpoint: 'https://new.example/transcribe',
+              model: 'test',
+              hostKey: { host: 'old.example' },
+            },
+          },
+        },
+        {}
+      );
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith(
+        'voice-transcription:old.example'
+      );
+      expect(JSON.stringify(result)).not.toContain('old-secret');
+    });
+
+    it('stores a host key without returning it in settings or events', async () => {
+      const credentialManager = createMockCredentialManager();
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        credentialManager.manager
+      );
+      const handler = hubData.handlers.get('settings.global.update');
+      const result = await handler!(
+        {
+          updates: {
+            voice: {
+              enabled: true,
+              endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+              model: 'whisper-1',
+              live: { provider: 'deepgram', endpoint: 'wss://api.deepgram.com/v1/listen' },
+              hostKey: { host: 'api.deepgram.com', apiKey: 'test-secret' },
+            },
+          },
+        },
+        {}
+      );
+      expect(credentialManager.storeApiKey).toHaveBeenCalledWith(
+        'voice-transcription:api.deepgram.com',
+        'test-secret'
+      );
+      expect(JSON.stringify(result)).not.toContain('test-secret');
+      expect(JSON.stringify(internalEventBusData.publishAsyncMock.mock.calls)).not.toContain(
+        'test-secret'
+      );
+    });
+
     it('removes stored voice credentials when hasApiKey is cleared', async () => {
       const credentialManager = createMockCredentialManager();
       settingsManagerData.mocks.getGlobalSettings.mockReturnValue({
@@ -655,6 +835,28 @@ describe('Settings RPC Handlers', () => {
       expect(result.settings.voice?.apiKeyEndpoint).toBe(trustedScope);
       expect(result.settings.voice?.hasApiKey).toBe(true);
       expect(credentialManager.storeApiKey).not.toHaveBeenCalled();
+    });
+
+    it('preserves unrelated voice credentials when an exa write fails', async () => {
+      const credentials = createMockCredentialManager();
+      credentials.storeApiKey.mockImplementation(async () => {
+        throw new Error('store failed');
+      });
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        credentials.manager
+      );
+      await expect(
+        hubData.handlers.get('settings.global.update')!(
+          { updates: { exa: { enabled: true, apiKey: 'synthetic-key' } } },
+          {}
+        )
+      ).rejects.toThrow('store failed');
+      expect(credentials.removeCredentials).not.toHaveBeenCalledWith('voice-transcription');
     });
 
     it('restores the prior credential when a new key write partially fails', async () => {

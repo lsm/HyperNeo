@@ -236,15 +236,19 @@ describe('VoiceStream against a stub Deepgram server', () => {
     const { via, stream } = await VoiceStream.start('s1', {
       ...deps({ endpoint: 'https://api.example.com/v1/audio', ...key }),
       credentialManager: {
-        getCredentials: async () => ({ type: 'api_key' as const, apiKey: 'stored-key' }),
+        getCredentials: async (id: string) =>
+          id === 'voice-transcription' ? { type: 'api_key' as const, apiKey: 'stored-key' } : null,
       },
     }).then((started) => {
       if ('error' in started) throw new Error(started.error);
       return started;
     });
-    expect(via).toBe('streaming');
-    expect(authorizations).toEqual([undefined]);
-    stream.close();
+    try {
+      expect(via).toBe('streaming');
+      expect(authorizations).toEqual([undefined]);
+    } finally {
+      stream.close();
+    }
   });
 
   test.each([undefined, 'zh', 'en'] as const)(
@@ -363,10 +367,12 @@ describe('VoiceStream against a stub Deepgram server', () => {
       const starting = VoiceStream.start('s1', {
         ...deps({ apiKeyEndpoint: endpoint }),
         credentialManager: {
-          getCredentials: () =>
-            new Promise<null>((resolve) => {
-              release = resolve;
-            }),
+          getCredentials: (id: string) =>
+            id !== 'voice-transcription'
+              ? Promise.resolve(null)
+              : new Promise<null>((resolve) => {
+                  release = resolve;
+                }),
         },
       });
       await vi.advanceTimersByTimeAsync(8_001);
@@ -387,10 +393,12 @@ describe('VoiceStream against a stub Deepgram server', () => {
       const starting = VoiceStream.start('s1', {
         ...deps({ apiKeyEndpoint: `http://127.0.0.1:${port}/v1/audio/transcriptions` }),
         credentialManager: {
-          getCredentials: () =>
-            new Promise<null>((resolve) => {
-              release = resolve;
-            }),
+          getCredentials: (id: string) =>
+            id !== 'voice-transcription'
+              ? Promise.resolve(null)
+              : new Promise<null>((resolve) => {
+                  release = resolve;
+                }),
         },
       });
       await vi.advanceTimersByTimeAsync(8_001);

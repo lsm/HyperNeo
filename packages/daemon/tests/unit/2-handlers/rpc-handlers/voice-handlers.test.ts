@@ -69,7 +69,9 @@ function createCredentialManager(apiKey: string): {
   manager: ProviderCredentialManager;
   getCredentials: ReturnType<typeof mock>;
 } {
-  const getCredentials = mock(async () => ({ type: 'api_key' as const, apiKey }));
+  const getCredentials = mock(async (id: string) =>
+    id === 'voice-transcription' ? { type: 'api_key' as const, apiKey } : null
+  );
   return {
     manager: { getCredentials } as unknown as ProviderCredentialManager,
     getCredentials,
@@ -531,7 +533,10 @@ describe('voice RPC handlers', () => {
       mimeType: 'audio/wav',
     });
 
-    expect(credentialManager.getCredentials).not.toHaveBeenCalled();
+    expect(credentialManager.getCredentials).toHaveBeenCalledWith(
+      'voice-transcription:example.com'
+    );
+    expect(credentialManager.getCredentials).not.toHaveBeenCalledWith('voice-transcription');
     expect(init?.headers).toEqual({ 'X-Speech-Priority': 'interactive', Host: 'example.com' });
   });
 
