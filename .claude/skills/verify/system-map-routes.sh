@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+bun .claude/skills/verify/system-map-inline.ts
 run=$(mktemp -d)
 trap 'rm -rf "$run"' EXIT
 export HOME="$run" NODE_ENV=test

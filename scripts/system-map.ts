@@ -2,7 +2,10 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, normalize, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
-import { createLocalPipelineResolver } from './pipeline-route-resolver.ts';
+import {
+  createLocalPipelineResolver,
+  unwrapPipelineExpression,
+} from './pipeline-route-resolver.ts';
 
 export { createLocalPipelineResolver } from './pipeline-route-resolver.ts';
 
@@ -499,7 +502,7 @@ export function countPipelineRoutes(
     const tokens = pipelineTokens(source);
     let resolveLocal: ReturnType<typeof createLocalPipelineResolver> | undefined;
     let parsedCalls: ts.SourceFile | undefined;
-    const hasUnconditionalCall = (start: number, name: string): boolean => {
+    const hasUnconditionalCall = (start: number, name: string, inlineOffset?: number): boolean => {
       const parsed = (parsedCalls ??= ts.createSourceFile(
         file,
         source,
@@ -514,10 +517,57 @@ export function countPipelineRoutes(
       };
       find(parsed);
       if (!execute || !ts.isArrowFunction(execute)) return false;
+      const isInlineRunner = (expression: ts.Expression): boolean => {
+        const runner = unwrapPipelineExpression(expression);
+        if (
+          inlineOffset === undefined ||
+          !ts.isCallExpression(runner) ||
+          !!(runner.flags & ts.NodeFlags.OptionalChain) ||
+          !ts.isPropertyAccessExpression(runner.expression) ||
+          !['end', 'endAsync'].includes(runner.expression.name.text)
+        )
+          return false;
+        let current = unwrapPipelineExpression(runner.expression.expression);
+        while (ts.isCallExpression(current) && ts.isPropertyAccessExpression(current.expression)) {
+          if (
+            current.flags & ts.NodeFlags.OptionalChain ||
+            !['input', 'pipe'].includes(current.expression.name.text)
+          )
+            return false;
+          current = unwrapPipelineExpression(current.expression.expression);
+        }
+        if (!ts.isCallExpression(current) || current.flags & ts.NodeFlags.OptionalChain)
+          return false;
+        const factory = unwrapPipelineExpression(current.expression);
+        if (!ts.isCallExpression(factory) || factory.flags & ts.NodeFlags.OptionalChain)
+          return false;
+        const id = unwrapPipelineExpression(factory.expression);
+        return (
+          ts.isIdentifier(id) && id.text === 'superpipe' && id.getStart(parsed) === inlineOffset
+        );
+      };
       let body: ts.Node = execute.body;
       if (ts.isBlock(body)) {
-        if (body.statements.length !== 1) return false;
-        let statement = body.statements[0];
+        const statements = body.statements;
+        if (statements.length === 2 && inlineOffset !== undefined) {
+          const declaration = statements[0];
+          const binding =
+            ts.isVariableStatement(declaration) &&
+            declaration.declarationList.flags & ts.NodeFlags.Const &&
+            declaration.declarationList.declarations.length === 1
+              ? declaration.declarationList.declarations[0]
+              : undefined;
+          if (ts.isExpressionStatement(declaration)) name = '';
+          else if (
+            !binding ||
+            !ts.isIdentifier(binding.name) ||
+            binding.name.text !== name ||
+            !binding.initializer ||
+            !isInlineRunner(binding.initializer)
+          )
+            return false;
+        } else if (statements.length !== 1) return false;
+        let statement = statements[statements.length - 1];
         if (ts.isTryStatement(statement)) {
           if (statement.finallyBlock || statement.tryBlock.statements.length !== 1) return false;
           statement = statement.tryBlock.statements[0];
@@ -549,12 +599,10 @@ export function countPipelineRoutes(
           !!(node.flags & ts.NodeFlags.OptionalChain)
         )
           return;
-        if (
-          ts.isCallExpression(node) &&
-          ts.isIdentifier(node.expression) &&
-          node.expression.text === name
-        )
-          found = true;
+        if (ts.isCallExpression(node)) {
+          if (ts.isIdentifier(node.expression) && node.expression.text === name) found = true;
+          if (isInlineRunner(node.expression)) found = true;
+        }
         ts.forEachChild(node, visit);
       };
       visit(body);
@@ -742,7 +790,11 @@ export function countPipelineRoutes(
           (pipeline.index >= executeStart &&
             pipeline.index < executeEnd &&
             (!strictCalls ||
-              (!!pipeline.variable && hasUnconditionalCall(executeStart, pipeline.variable)))) ||
+              hasUnconditionalCall(
+                executeStart,
+                pipeline.variable ?? '',
+                tokens[pipeline.index].offset
+              ))) ||
           (pipeline.variable &&
             scopes[pipeline.index].every((part, index) => scopes[i][index] === part) &&
             ((body.length === 1 &&

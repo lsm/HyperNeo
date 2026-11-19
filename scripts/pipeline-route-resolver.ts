@@ -2,6 +2,18 @@ import ts from 'typescript';
 
 export type LocalPipelineResolution = { kind: 'named'; name: string } | { kind: 'unknown' };
 
+export function unwrapPipelineExpression(expression: ts.Expression): ts.Expression {
+  while (
+    ts.isParenthesizedExpression(expression) ||
+    ts.isAsExpression(expression) ||
+    ts.isTypeAssertionExpression(expression) ||
+    ts.isNonNullExpression(expression) ||
+    ts.isSatisfiesExpression(expression)
+  )
+    expression = expression.expression;
+  return expression;
+}
+
 const unknown: LocalPipelineResolution = { kind: 'unknown' };
 
 export function createLocalPipelineResolver(
@@ -9,6 +21,7 @@ export function createLocalPipelineResolver(
   fileName = 'route.ts',
   strictCalls = false
 ): (operationName: string) => LocalPipelineResolution {
+  const unwrap = unwrapPipelineExpression;
   const path = fileName.endsWith('.tsx') ? '/route.tsx' : '/route.ts';
   const options: ts.CompilerOptions = { noLib: true, noResolve: true, noEmit: true };
   const parsed = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
@@ -52,18 +65,6 @@ export function createLocalPipelineResolver(
       ts.isStringLiteral(imported.moduleSpecifier) &&
       imported.moduleSpecifier.text === 'superpipe'
     );
-  }
-
-  function unwrap(expression: ts.Expression): ts.Expression {
-    while (
-      ts.isParenthesizedExpression(expression) ||
-      ts.isAsExpression(expression) ||
-      ts.isTypeAssertionExpression(expression) ||
-      ts.isNonNullExpression(expression) ||
-      ts.isSatisfiesExpression(expression)
-    )
-      expression = expression.expression;
-    return expression;
   }
 
   function pipeline(

@@ -165,7 +165,10 @@ test.each([
 test.each([
   `() => { const inner = superpipe({})('demo.maybe').end(); return condition ? inner() : null; }`,
   `() => condition && superpipe({})('demo.maybe').end()()`,
+  `() => superpipe({})('demo.maybe').unknown().end()()`,
+  `() => (superpipe({})('demo.maybe').input?.(f) as Builder).end()()`,
   `() => { const inner = superpipe({})('demo.maybe').end(); return queue(() => inner()); }`,
+  `() => { if (condition) return null; return superpipe({})('demo.maybe').end()(); }`,
 ])('a conditional inline pipeline stays unreadable: %s', (execute) => {
   const source = `import superpipe from 'superpipe';
     import { defineOperation } from './registry.ts';
@@ -173,6 +176,23 @@ test.each([
   expect(
     countPipelineRoutes(new Map([['packages/demo/src/added.ts', source]]), true).unreadable
   ).toBe(1);
+});
+
+test.each([
+  `() => superpipe({})('demo.maybe').end()()`,
+  `() => superpipe({})('demo.maybe').input(f as G).end()()`,
+  `() => { log(); return superpipe({})('demo.maybe').end()(); }`,
+  `() => ((superpipe({})('demo.maybe') as Builder).input(f as G).end() as Runner)()`,
+  `() => { const inner = ((superpipe({})('demo.maybe') as Builder).input(f as G).end() as Runner); return inner(); }`,
+  `() => (superpipe({})('demo.maybe')!).end()()`,
+  `() => { const inner = superpipe({})('demo.maybe').end(); return inner(); }`,
+])('an unconditional inline pipeline is readable: %s', (execute) => {
+  const source = `import superpipe from 'superpipe';
+    import { defineOperation } from './registry.ts';
+    defineOperation({ name: 'demo.maybe', execute: ${execute} });`;
+  expect(
+    countPipelineRoutes(new Map([['packages/demo/src/added.ts', source]]), true).unreadable
+  ).toBe(0);
 });
 
 test('an optional pipeline call inside a helper stays unreadable', () => {
