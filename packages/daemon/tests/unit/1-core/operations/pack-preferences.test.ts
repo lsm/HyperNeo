@@ -168,6 +168,34 @@ describe('pack settings operations', () => {
     });
     live.dispose();
   });
+  test('core session reuse remains visible in preference reads, prompt and snapshot', async () => {
+    const core = {
+      pack: 'core',
+      scope: { kind: 'project', key: 'synthetic' },
+      key: 'sessionReuse',
+      value: 'per_todo',
+    };
+    expect(await invoke('pack.preferences.set', core)).toMatchObject({ value: { ok: true } });
+    expect(await invoke('pack.preferences.get', core)).toMatchObject({
+      value: { preference: core },
+    });
+    const live = createNeoService(
+      db,
+      {
+        updateSession: async (id: string, updates: object) => db.updateSession(id, updates),
+      } as unknown as SessionManager,
+      { event: mock(() => {}) } as unknown as MessageHub,
+      new InternalEventBus<DaemonInternalEventMap>()
+    );
+    await live.refreshPackPreferences();
+    expect(db.getSession('neo:root')!.config.systemPrompt).toContain(
+      '"key":"sessionReuse","value":"per_todo"'
+    );
+    expect(await invoke('neo.snapshot', {})).toMatchObject({
+      value: { packPreferences: [watch, core] },
+    });
+    live.dispose();
+  });
   test('the MCP snapshot has no packPreferences', async () => {
     expect(await invoke('pack.preferences.set', setting)).toMatchObject({ value: { ok: true } });
     const snapshot = await invoke(
