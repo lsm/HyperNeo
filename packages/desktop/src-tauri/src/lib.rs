@@ -155,6 +155,36 @@ fn runtime_descriptor_path() -> Option<PathBuf> {
 	Some(base.join("runtime.json"))
 }
 
+#[cfg(all(test, target_os = "macos"))]
+mod startup_config_tests {
+	use super::*;
+
+	#[test]
+	fn attach_uses_configured_data_directory() {
+		if std::env::var_os("HYPERNEO_CONFIG_TEST_CHILD").is_none() {
+			let result = std::process::Command::new(std::env::current_exe().unwrap())
+				.args(["--exact", "startup_config_tests::attach_uses_configured_data_directory"])
+				.env_clear()
+				.env("HYPERNEO_CONFIG_TEST_CHILD", "1")
+				.output()
+				.unwrap();
+			assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stdout));
+			return;
+		}
+		let home = tempfile::tempdir().unwrap();
+		let settings_dir = home.path().join("Library/Application Support/io.hyperneo.app");
+		std::fs::create_dir_all(&settings_dir).unwrap();
+		let data_dir = home.path().join("custom-data");
+		std::fs::write(
+			settings_dir.join("settings.json"),
+			serde_json::json!({"dataDir": data_dir}).to_string(),
+		)
+		.unwrap();
+		std::env::set_var("HOME", home.path());
+		assert_eq!(runtime_descriptor_path(), Some(data_dir.join("runtime.json")));
+	}
+}
+
 fn read_runtime_descriptor() -> Option<RuntimeDescriptor> {
 	let path = runtime_descriptor_path()?;
 	let raw = std::fs::read_to_string(path).ok()?;
