@@ -821,10 +821,17 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     },
     markUnusable: (ref: StartedWork, reason: string) =>
       gatewayFor(db()).call(workStartedSessionWrites, 'markUnusable', ref, reason),
-    claimWorker: (ref: WorkRef, todoId?: string) =>
-      new NeoTodoSessionRepository(db()).write('claimWorker', ref, todoId ?? null),
-    unclaimWorker: (todoId: string, ref: WorkRef) =>
-      new NeoTodoSessionRepository(db()).write('unclaimWorker', todoId, ref),
+    claimWorker: (ref: WorkRef, todoId?: string, role?: string, model?: string, effort?: string) =>
+      new NeoTodoSessionRepository(db()).write(
+        'claimWorker',
+        ref,
+        todoId ?? null,
+        role,
+        model,
+        effort
+      ),
+    unclaimWorker: (todoId: string, ref: WorkRef, role?: string) =>
+      new NeoTodoSessionRepository(db()).write('unclaimWorker', todoId, ref, role),
     reportUncertain: async (report: WorkSendUncertainty) => {
       const to = sessionSender(report.from) ?? new NeoRepository(db()).defaultBinding()?.sessionId;
       if (!to) throw new Error('No originating session or default Neo for the uncertainty report.');

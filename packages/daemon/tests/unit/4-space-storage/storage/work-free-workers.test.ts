@@ -167,6 +167,66 @@ describe('readFreeWorkers', () => {
       expect(sessions.fenceRelease(other, Date.now())).toBe(true);
     });
 
+    test('a todo can claim one worker per role and rolls back a refused round', () => {
+      bind('finished', 'w-done', 'done');
+      bind('finished-other', 'w-other', 'done');
+      bind('finished-third', 'w-third', 'done');
+      liveTodo('next');
+      const third = { adapter: 'claude-desktop', id: 'w-third' };
+      expect(sessions.claimWorker(ref, 'next', 'do', 'writer', 'high')).toBe(true);
+      expect(sessions.claimWorker(other, 'next', 'review', 'reviewer', 'medium')).toBe(true);
+      expect(sessions.claimWorker(third, 'next', 'review')).toBe(false);
+      expect(
+        db
+          .prepare(
+            'SELECT role, id, model, effort FROM neo_todo_roles WHERE todo_id = ? ORDER BY rowid'
+          )
+          .all('next')
+      ).toEqual([
+        { role: 'do', id: 'w-done', model: 'writer', effort: 'high' },
+        { role: 'review', id: 'w-other', model: 'reviewer', effort: 'medium' },
+      ]);
+      sessions.unclaimWorker('next', other, 'review');
+      expect(sessions.claimWorker(third, 'next', 'review')).toBe(true);
+      expect(
+        db
+          .prepare('SELECT role, id FROM neo_todo_roles WHERE todo_id = ? ORDER BY rowid')
+          .all('next')
+      ).toEqual([
+        { role: 'do', id: 'w-done' },
+        { role: 'review', id: 'w-third' },
+      ]);
+    });
+
+    test('one todo cannot reserve more than four idle workers with distinct roles', () => {
+      liveTodo('next');
+      const refs = Array.from({ length: 5 }, (_, i) => ({
+        adapter: 'claude-desktop',
+        id: `cap-${i}`,
+      }));
+      for (const [i, candidate] of refs.entries()) {
+        bind(`finished-cap-${i}`, candidate.id, 'done');
+      }
+      for (const [i, role] of ['do', 'review', 'verify', 'check'].entries()) {
+        expect(sessions.claimWorker(refs[i], 'next', role)).toBe(true);
+      }
+      expect(sessions.claimWorker(refs[4], 'next', 'custom')).toBe(false);
+      sessions.unclaimWorker('next', refs[3], 'check');
+      expect(sessions.claimWorker(refs[4], 'next', 'custom')).toBe(true);
+    });
+
+    test('one worker cannot hold two claims for one todo and a refused role cannot release it', () => {
+      bind('finished', 'w-done', 'done');
+      liveTodo('next');
+      expect(sessions.claimWorker(ref, 'next', 'do')).toBe(true);
+      expect(sessions.claimWorker(ref, 'next', 'review')).toBe(false);
+      sessions.unclaimWorker('next', ref, 'review');
+      expect(sessions.fenceRelease(ref, Date.now())).toBe(false);
+      expect(db.prepare('SELECT role FROM neo_todo_roles WHERE todo_id = ?').all('next')).toEqual([
+        { role: 'do' },
+      ]);
+    });
+
     test('a worker a failed or queued todo still holds cannot be claimed', () => {
       bind('failed-owner', 'w-done', 'done');
       store.updateTodo(

@@ -15,8 +15,9 @@ import {
   readStartedWork,
   readTrustedWorkers,
   readWorkCompaction,
-  recordStartedWork,
   recordWorkRelease,
+  claimTodoWorker,
+  unclaimTodoWorker,
   type WorkCompactionFailure,
   workStartedSessionWrites,
 } from './work-started-sessions-worker.ts';
@@ -815,23 +816,22 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     return true;
   }
 
-  claimWorker(ref: WorkRef, todoId: string | null): boolean {
-    const workers = readStartedWork(this.db);
-    const own = workers.find((worker) => worker.adapter === ref.adapter && worker.id === ref.id);
-    if (own?.releasedAt) return false;
-    if (own?.claimedBy !== todoId && this.liveTodo(own?.claimedBy ?? null)) return false;
-    const holders = todoId ? LIVE_TODO_STATES : [...LIVE_TODO_STATES, 'done', 'removed'];
-    if (this.doingTodoOn(ref, null, holders)) return false;
-    if (!todoId) return true;
-    if (!this.liveTodo(todoId)) return false;
-    if (workers.some((worker) => worker.claimedBy === todoId && worker !== own)) return false;
-    recordStartedWork(this.db, ref, Date.now(), false, false, { todoId });
-    return true;
+  claimWorker(
+    ref: WorkRef,
+    todoId: string | null,
+    role = 'do',
+    model?: string,
+    effort?: string
+  ): boolean {
+    return claimTodoWorker(this.db, ref, todoId, role, model, effort, {
+      liveTodo: (id) => this.liveTodo(id),
+      isBound: (states) => !!this.doingTodoOn(ref, null, states),
+      liveStates: LIVE_TODO_STATES,
+    });
   }
 
-  unclaimWorker(todoId: string, ref: WorkRef): void {
-    if (this.startedFacts(ref)?.claimedBy === todoId)
-      recordStartedWork(this.db, ref, Date.now(), false, false, { todoId: null });
+  unclaimWorker(todoId: string, ref: WorkRef, role = 'do'): void {
+    unclaimTodoWorker(this.db, todoId, ref, role);
   }
 
   private startedFacts(ref: WorkRef) {
