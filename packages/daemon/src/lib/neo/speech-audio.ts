@@ -5,6 +5,7 @@ import { Logger } from '../logger.ts';
 import { voiceDiagnostic } from '../voice/diagnostics.ts';
 import type { ClientEventData } from '../operations/client-event-schemas.ts';
 import { readLimitedResponseText } from '../voice/transcribe-fetch.ts';
+import { withVoiceCredentialLock } from '../rpc-handlers/voice-credential-lock.ts';
 type Target = { id: string; sessionId: string; clientId: string; text: string };
 type SpeechRetry = { retryInMs: number } | { giveUp: string };
 const SPEECH_DEADLINE_MS = 180_000;
@@ -184,14 +185,16 @@ export class NeoSpeechAudio {
     }
   }
 
-  async test(savedKeys: string[]): Promise<{ ok: true } | { ok: false; reason: string }> {
-    const redact = (text: string) => {
-      for (const key of [...savedKeys].filter(Boolean).sort((a, b) => b.length - a.length))
-        text = text.replaceAll(key, '[key]');
-      return text.slice(0, 500);
-    };
+  async test(
+    savedKeys: () => Promise<string[]>
+  ): Promise<{ ok: true } | { ok: false; reason: string }> {
+    const snapshot = await withVoiceCredentialLock(async () => ({
+      backend: await this.backend(),
+      keys: await savedKeys(),
+    }));
+    let result: { ok: true } | { ok: false; reason: string };
     try {
-      const backend = await this.backend();
+      const backend = snapshot.backend;
       const speech = this.speechRequest(backend, 'Hello, this is a voice test.', undefined);
       const response = await this.request(speech.url, {
         method: 'POST',
@@ -202,23 +205,35 @@ export class NeoSpeechAudio {
       });
       if (!response.ok) {
         const body = await readLimitedResponseText(response).catch(() => 'Response unavailable');
-        return { ok: false, reason: redact(`HTTP ${response.status}: ${body.trim()}`) };
-      }
-      const type = response.headers.get('content-type') ?? '';
-      if (!type.startsWith(isDeepgram(backend) ? 'audio/l16' : 'audio/pcm') || !response.body)
-        return { ok: false, reason: 'Speech service returned no PCM audio' };
-      const reader = response.body.getReader();
-      try {
-        const first = await reader.read();
-        return first.value?.byteLength
-          ? { ok: true }
-          : { ok: false, reason: 'Speech service returned no audio' };
-      } finally {
-        await reader.cancel();
+        result = { ok: false, reason: `HTTP ${response.status}: ${body.trim()}` };
+      } else {
+        const type = response.headers.get('content-type') ?? '';
+        if (!type.startsWith(isDeepgram(backend) ? 'audio/l16' : 'audio/pcm') || !response.body)
+          result = { ok: false, reason: 'Speech service returned no PCM audio' };
+        else {
+          const reader = response.body.getReader();
+          try {
+            const first = await reader.read();
+            result = first.value?.byteLength
+              ? { ok: true }
+              : { ok: false, reason: 'Speech service returned no audio' };
+          } finally {
+            await reader.cancel();
+          }
+        }
       }
     } catch (error) {
-      return { ok: false, reason: redact(error instanceof Error ? error.message : String(error)) };
+      result = { ok: false, reason: error instanceof Error ? error.message : String(error) };
     }
+    if (result.ok) return result;
+    return withVoiceCredentialLock(async () => {
+      let reason = result.reason;
+      for (const key of [...snapshot.keys, ...(await savedKeys())]
+        .filter(Boolean)
+        .sort((a, b) => b.length - a.length))
+        reason = reason.replaceAll(key, '[key]');
+      return { ok: false as const, reason: reason.slice(0, 500) };
+    });
   }
 
   start(target: Target, voice: string | undefined): void {

@@ -8,7 +8,6 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import { Logger } from '../logger.ts';
 import type { DeliveryLoadResult } from '../agent/message-delivery.ts';
 import { voiceDiagnostic } from '../voice/diagnostics.ts';
-import { withVoiceCredentialLock } from '../rpc-handlers/voice-credential-lock.ts';
 import { NeoSpeechAudio, type SpeechPart } from './speech-audio.ts';
 import { neoDerivedId } from './derived-id.ts';
 import type { ClientEventData } from '../operations/client-event-schemas.ts';
@@ -237,11 +236,7 @@ export class NeoSpeech {
         resultSchema: z.object({ ok: z.boolean(), reason: z.string().optional() }),
         policy: { safetyClass: 'mutate', roles: ['neo'] },
         execute: (superpipe({})('voice.testSpeech') as PipelineAPI)
-          .pipe(
-            () => withVoiceCredentialLock(async () => this.audio.test(await savedVoiceKeys())),
-            undefined,
-            'result'
-          )
+          .pipe(() => this.audio.test(savedVoiceKeys), undefined, 'result')
           .endAsync('result') as () => ReturnType<NeoSpeechAudio['test']>,
       }),
       defineOperation({
