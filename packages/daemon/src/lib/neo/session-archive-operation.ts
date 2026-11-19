@@ -3,7 +3,8 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import type { Database as RawDatabase } from '../../storage/sqlite-compat.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
-import { readStartedWork } from '../../storage/work-started-sessions.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { workStartedSessionReads } from '../../storage/repositories/work-started-sessions-worker.ts';
 import { isNeoConversationSession } from './publication-read-operation.ts';
 import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import {
@@ -51,20 +52,35 @@ function admitArchiveCaller(ref: WorkRef, caller: OperationCaller, db: RawDataba
   return null;
 }
 
-export function admitSessionArchive(ref: WorkRef, caller: OperationCaller, db: Database) {
-  const raw = db.getDatabase();
-  const refused = admitArchiveCaller(ref, caller, raw);
+export function admitSessionArchive(
+  ref: WorkRef,
+  caller: OperationCaller,
+  db: Database,
+  startedByUs: boolean
+) {
+  const refused = admitArchiveCaller(ref, caller, db.getDatabase());
   if (refused) return refused;
-  if (!isLocalUser(caller) && readStartedWork(raw, null, undefined, ref).length === 0)
+  if (!isLocalUser(caller) && !startedByUs)
     return reject('not_started_by_us', 'This session was not started by the daemon.');
   return null;
 }
+
+const readStartedByUs = (
+  route: ArchiveRoute,
+  ref: WorkRef,
+  caller: OperationCaller,
+  raw: RawDatabase
+) =>
+  'local' in route && !isLocalUser(caller)
+    ? gatewayFor(raw).call(workStartedSessionReads, 'startedByUs', ref)
+    : true;
 
 async function archiveSession(
   route: ArchiveRoute,
   ref: WorkRef,
   caller: OperationCaller,
-  deps: Deps
+  deps: Deps,
+  started: boolean
 ): Promise<Archived> {
   if ('daemon' in route)
     return forwardWork(
@@ -77,7 +93,7 @@ async function archiveSession(
       deps.remote
     );
   try {
-    return await route.local(ref, () => admitSessionArchive(ref, caller, deps.db));
+    return await route.local(ref, () => admitSessionArchive(ref, caller, deps.db, started));
   } catch (error) {
     return reject('unreachable', error instanceof Error ? error.message : String(error));
   }
@@ -85,12 +101,13 @@ async function archiveSession(
 
 const runArchive = (superpipe({})('neo.session.archive') as PipelineAPI)
   .input(['ref', 'caller', 'deps'])
+  .pipe((deps: Deps) => deps.db.getDatabase(), ['deps'], 'raw')
   .pipe(
-    (ref: WorkRef, caller: OperationCaller, deps: Deps) => {
-      const refused = admitArchiveCaller(ref, caller, deps.db.getDatabase());
+    (ref: WorkRef, caller: OperationCaller, raw: RawDatabase) => {
+      const refused = admitArchiveCaller(ref, caller, raw);
       return refused ? { reason: refused } : { value: ref };
     },
-    ['ref', 'caller', 'deps'],
+    ['ref', 'caller', 'raw'],
     'result:outcome'
   )
   .pipe(
@@ -98,15 +115,16 @@ const runArchive = (superpipe({})('neo.session.archive') as PipelineAPI)
     ['outcome', 'deps'],
     'result:outcome'
   )
+  .pipe(readStartedByUs, ['outcome', 'ref', 'caller', 'raw'], 'started')
   .pipe(
-    (route: ArchiveRoute, ref: WorkRef, caller: OperationCaller, deps: Deps) => {
-      const refused = 'local' in route ? admitSessionArchive(ref, caller, deps.db) : null;
+    (route: ArchiveRoute, ref: WorkRef, caller: OperationCaller, deps: Deps, started: boolean) => {
+      const refused = 'local' in route ? admitSessionArchive(ref, caller, deps.db, started) : null;
       return refused ? { reason: refused } : { value: route };
     },
-    ['outcome', 'ref', 'caller', 'deps'],
+    ['outcome', 'ref', 'caller', 'deps', 'started'],
     'result:outcome'
   )
-  .pipe(archiveSession, ['outcome', 'ref', 'caller', 'deps'], 'outcome')
+  .pipe(archiveSession, ['outcome', 'ref', 'caller', 'deps', 'started'], 'outcome')
   .endAsync('outcome') as (ref: WorkRef, caller: OperationCaller, deps: Deps) => Promise<Archived>;
 
 export function createNeoSessionArchiveOperation(deps: Deps) {

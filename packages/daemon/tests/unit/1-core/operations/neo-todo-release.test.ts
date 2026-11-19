@@ -23,10 +23,14 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
-import { recordWorkerStarted } from '../../../../src/storage/work-started-sessions.ts';
+import {
+  readStartedWork,
+  recordWorkerStarted,
+} from '../../../../src/storage/repositories/work-started-sessions-worker.ts';
 import { recordedWorkInvoke } from '../../helpers/recorded-work-invoke.ts';
 
 const worker = { adapter: 'hyperneo', id: 'worker-1' };
+const startedByUs = (db: Database) => readStartedWork(db, null, undefined, worker).length > 0;
 const completed = (value: unknown): OperationOutcome =>
   ({ kind: 'completed', value }) as OperationOutcome;
 const scratch = mkdtempSync(join(tmpdir(), 'todo-release-'));
@@ -221,7 +225,10 @@ describe('neo todo runner refresh releases finished workers', () => {
       const db = { getDatabase: () => h.db } as never;
       h.setArchive(
         (caller) =>
-          admitSessionArchive(worker, caller, db) ?? { ok: true, value: { archived: true } }
+          admitSessionArchive(worker, caller, db, startedByUs(h.db)) ?? {
+            ok: true,
+            value: { archived: true },
+          }
       );
       await h.finishTodo(h.add(started));
       h.db
@@ -251,7 +258,10 @@ describe('neo todo runner refresh releases finished workers', () => {
       const db = { getDatabase: () => h.db } as never;
       h.setArchive(
         (caller) =>
-          admitSessionArchive(worker, caller, db) ?? { ok: true, value: { archived: true } }
+          admitSessionArchive(worker, caller, db, startedByUs(h.db)) ?? {
+            ok: true,
+            value: { archived: true },
+          }
       );
       await h.finishTodo(h.add({ verb: 'send', ref: worker }));
       h.db
@@ -281,7 +291,10 @@ describe('neo todo runner refresh releases finished workers', () => {
       const db = { getDatabase: () => h.db } as never;
       h.setArchive(
         (caller) =>
-          admitSessionArchive(worker, caller, db) ?? { ok: true, value: { archived: true } }
+          admitSessionArchive(worker, caller, db, startedByUs(h.db)) ?? {
+            ok: true,
+            value: { archived: true },
+          }
       );
       await h.finishTodo(h.add({ verb: 'send', ref: worker }));
       await h.refresh();
@@ -891,7 +904,10 @@ describe('releaseNeoTodoWorkers', () => {
       h.setOnStatus(() => h.queueOn(next.id));
       h.setArchive(
         (caller) =>
-          admitSessionArchive(worker, caller, db) ?? { ok: true, value: { archived: true } }
+          admitSessionArchive(worker, caller, db, startedByUs(h.db)) ?? {
+            ok: true,
+            value: { archived: true },
+          }
       );
       await releaseNeoTodoWorkers(h.sessions, h.invoke, () => {});
       expect(h.archived).toEqual([]);
@@ -955,7 +971,8 @@ describe('neo todo runner refresh settles shared and local-only work', () => {
         admitSessionArchive(
           worker,
           { source: 'internal', role: 'neo', principal: NEO_TODO_RELEASE_PRINCIPAL },
-          db
+          db,
+          startedByUs(h.db)
         )
       ).toMatchObject({
         reason: 'live_todo',
@@ -1030,11 +1047,16 @@ describe('admitSessionArchive', () => {
         admitSessionArchive(
           worker,
           { source: 'internal', role: 'neo', principal: NEO_TODO_RELEASE_PRINCIPAL },
-          db
+          db,
+          startedByUs(h.db)
         )
       ).toBeNull();
-      expect(admitSessionArchive(worker, { source: 'mcp', role: 'neo' }, db)).not.toBeNull();
-      expect(admitSessionArchive(worker, { source: 'internal', role: 'neo' }, db)).not.toBeNull();
+      expect(
+        admitSessionArchive(worker, { source: 'mcp', role: 'neo' }, db, startedByUs(h.db))
+      ).not.toBeNull();
+      expect(
+        admitSessionArchive(worker, { source: 'internal', role: 'neo' }, db, startedByUs(h.db))
+      ).not.toBeNull();
     } finally {
       h.db.close();
     }
@@ -1049,7 +1071,8 @@ describe('admitSessionArchive', () => {
         admitSessionArchive(
           worker,
           { source: 'internal', role: 'neo', principal: NEO_TODO_RELEASE_PRINCIPAL },
-          db
+          db,
+          startedByUs(h.db)
         )
       ).toMatchObject({
         ok: false,

@@ -2,7 +2,7 @@ import type { WorkRef } from '../../lib/drivers/types.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 import type { ReactiveDatabase } from '../reactive-database.ts';
-import { markWorkUnusable } from '../work-started-sessions.ts';
+import { markWorkUnusable } from './work-started-sessions-worker.ts';
 import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository, neoWorkerKey } from './neo-todo-session-repository.ts';
 

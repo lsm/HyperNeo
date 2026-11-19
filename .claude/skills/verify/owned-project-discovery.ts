@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
-import { recordStartedWork } from '../../../packages/daemon/src/storage/work-started-sessions.ts';
+import { recordStartedWork } from '../../../packages/daemon/src/storage/repositories/work-started-sessions-worker.ts';
 
 const run = resolve(process.argv[2]);
 assert.equal(process.env.NODE_ENV, 'test');

@@ -1,6 +1,7 @@
-import type { Database as BunDatabase } from './sqlite-compat.ts';
-import type { WorkerReuseFacts } from '../lib/drivers/worker-reuse.ts';
-import { workerWorkKey } from '../lib/work-locations.ts';
+import { defineRepositoryOp } from '../db-gateway/db-op.ts';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
+import type { WorkerReuseFacts } from '../../lib/drivers/worker-reuse.ts';
+import { workerWorkKey } from '../../lib/work-locations.ts';
 
 export interface StartedWork {
   adapter: string;
@@ -20,19 +21,16 @@ export function recordStartedWork(
   unusable = false,
   released = false,
   claim?: { todoId: string | null },
-  role: 'worker' | null = null,
-  compactedAt: number | null = null
+  role: 'worker' | null = null
 ): void {
   db.prepare(
     `INSERT INTO work_started_sessions
-       (adapter, id, started_at, unusable_at, released_at, claimed_by, role, compacted_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?8, ?9) ON CONFLICT (adapter, id) DO UPDATE SET
+       (adapter, id, started_at, unusable_at, released_at, claimed_by, role)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?8) ON CONFLICT (adapter, id) DO UPDATE SET
        unusable_at = COALESCE(excluded.unusable_at, unusable_at),
        released_at = COALESCE(released_at, excluded.released_at),
        claimed_by = CASE WHEN ?7 THEN excluded.claimed_by ELSE claimed_by END,
-       role = COALESCE(excluded.role, role),
-       compacted_at = CASE WHEN excluded.compacted_at > COALESCE(compacted_at, -1)
-         THEN excluded.compacted_at ELSE compacted_at END`
+       role = COALESCE(excluded.role, role)`
   ).run(
     ref.adapter,
     ref.id,
@@ -41,9 +39,16 @@ export function recordStartedWork(
     released ? at : null,
     claim?.todoId ?? null,
     Number(!!claim),
-    role,
-    compactedAt
+    role
   );
+}
+
+export function recordWorkCompaction(db: BunDatabase, ref: StartedWork, at: number): void {
+  db.prepare(
+    `UPDATE work_started_sessions SET compacted_at = ?1
+     WHERE adapter = ?2 AND id = ?3 AND role = 'worker'
+       AND (compacted_at IS NULL OR compacted_at < ?1)`
+  ).run(at, ref.adapter, ref.id);
 }
 
 export function recordWorkerStarted(db: BunDatabase, ref: StartedWork): void {
@@ -145,3 +150,50 @@ export function readReusableWorkers(
     ])
   );
 }
+
+class WorkStartedSessionReads {
+  constructor(private readonly db: BunDatabase) {}
+
+  startedWork(): StartedWorkFacts[] {
+    return readStartedWork(this.db);
+  }
+
+  startedByUs(ref: StartedWork): boolean {
+    return readStartedWork(this.db, null, undefined, ref).length > 0;
+  }
+
+  reusableWorkers(
+    adapter: string,
+    todoId?: string,
+    sessionId?: string
+  ): [string, WorkerReuseFacts][] {
+    return [...readReusableWorkers(this.db, adapter, todoId, sessionId)];
+  }
+}
+
+class WorkStartedSessionWrites {
+  constructor(private readonly db: BunDatabase) {}
+
+  recordStarted(ref: StartedWork, directory?: string): void {
+    recordWorkerStarted(this.db, ref);
+    if (directory) forgetWorkGone(this.db, directory);
+  }
+
+  markUnusable(ref: StartedWork): void {
+    markWorkUnusable(this.db, ref);
+  }
+}
+
+export const workStartedSessionReads = defineRepositoryOp(
+  'work.startedSessionReads',
+  'read',
+  WorkStartedSessionReads,
+  ['startedWork', 'startedByUs', 'reusableWorkers']
+);
+
+export const workStartedSessionWrites = defineRepositoryOp(
+  'work.startedSessionWrites',
+  'write',
+  WorkStartedSessionWrites,
+  ['recordStarted', 'markUnusable']
+);

@@ -54,12 +54,10 @@ import { join } from 'node:path';
 import { simpleGit } from 'simple-git';
 import type { WorkChatKind, WorkChatMatch } from '../../../storage/work-chat-search.ts';
 import {
-  markWorkUnusable,
-  readReusableWorkers,
-  forgetWorkGone,
-  recordWorkerStarted,
+  workStartedSessionReads,
+  workStartedSessionWrites,
   type StartedWork,
-} from '../../../storage/work-started-sessions.ts';
+} from '../../../storage/repositories/work-started-sessions-worker.ts';
 import { resolveCopilotRuntime } from '../../providers/anthropic-copilot/copilot-cli-resolver.ts';
 import {
   COPILOT_CLIENT,
@@ -749,12 +747,18 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
           Date.now()
         ),
     } satisfies WorkVerbDeps['workInputs'],
-    recordStarted: (ref: StartedWork, directory?: string) => {
-      recordWorkerStarted(db(), ref);
-      if (directory) forgetWorkGone(db(), directory);
-    },
-    freeWorkers: (adapter: string, todoId?: string, sessionId?: string) =>
-      readReusableWorkers(db(), adapter, todoId, sessionId),
+    recordStarted: (ref: StartedWork, directory?: string) =>
+      gatewayFor(db()).call(workStartedSessionWrites, 'recordStarted', ref, directory),
+    freeWorkers: async (adapter: string, todoId?: string, sessionId?: string) =>
+      new Map(
+        await gatewayFor(db()).call(
+          workStartedSessionReads,
+          'reusableWorkers',
+          adapter,
+          todoId,
+          sessionId
+        )
+      ),
     reusePolicy: async (adapter: string, todoId: string | undefined, caller: OperationCaller) => {
       const facts =
         todoId && caller.sessionId
@@ -812,7 +816,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       }
       return { mode: facts.mode, sameAsk: facts.sameAsk };
     },
-    markUnusable: (ref: StartedWork) => markWorkUnusable(db(), ref),
+    markUnusable: (ref: StartedWork) =>
+      gatewayFor(db()).call(workStartedSessionWrites, 'markUnusable', ref),
     claimWorker: (ref: WorkRef, todoId?: string) =>
       new NeoTodoSessionRepository(db()).write('claimWorker', ref, todoId ?? null),
     unclaimWorker: (todoId: string, ref: WorkRef) =>

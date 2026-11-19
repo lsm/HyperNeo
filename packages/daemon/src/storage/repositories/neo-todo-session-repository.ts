@@ -10,7 +10,12 @@ import {
   type FollowThroughIncident,
 } from '../../lib/work-queue/follow-through.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
-import { markWorkUnusable, readStartedWork, recordStartedWork } from '../work-started-sessions.ts';
+import {
+  markWorkUnusable,
+  readStartedWork,
+  recordStartedWork,
+  recordWorkCompaction,
+} from './work-started-sessions-worker.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
@@ -847,7 +852,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
   }
 
   recordWorkerCompacted(ref: WorkRef, at: number): void {
-    recordStartedWork(this.db, ref, at, false, false, undefined, null, at);
+    recordWorkCompaction(this.db, ref, at);
   }
 
   recordReleaseKept(todoId: string, kept: unknown): void {

@@ -9,7 +9,7 @@ import {
   readReusableWorkers,
   recordStartedWork,
   recordWorkerStarted,
-} from '../../../../src/storage/work-started-sessions.ts';
+} from '../../../../src/storage/repositories/work-started-sessions-worker.ts';
 
 describe('readFreeWorkers', () => {
   let db: Database;

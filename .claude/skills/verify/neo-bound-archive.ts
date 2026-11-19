@@ -12,7 +12,7 @@ import { createOperationMcpServer } from '../../../packages/daemon/src/lib/opera
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
-import { recordWorkerStarted } from '../../../packages/daemon/src/storage/work-started-sessions.ts';
+import { recordWorkerStarted } from '../../../packages/daemon/src/storage/repositories/work-started-sessions-worker.ts';
 
 const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
