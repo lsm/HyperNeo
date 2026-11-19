@@ -116,6 +116,38 @@ test('a pipeline in another function cannot hide an unreadable route', () => {
   expect(result.output).toContain('unreadable');
 });
 
+test.each(['service.run()', 'service?.run()', '({...service.run()})'])(
+  'a member call %s cannot be mistaken for a local pipeline',
+  (call) => {
+    const f = fixture();
+    f.put(
+      'packages/demo/src/added.ts',
+      `
+      const run = superpipe({})('demo.member').end();
+      defineOperation({ name: 'demo.member', execute: () => ${call} });
+    `
+    );
+    const result = f.run();
+    expect(result.code).toBe(1);
+    expect(result.output).toContain('unreadable: 1 (baseline 0)');
+  }
+);
+
+test.each(['[...run()]', '({...run()})', 'collect(...run())'])(
+  'a direct pipeline call inside spread %s remains readable',
+  (expression) => {
+    const f = fixture();
+    f.put(
+      'packages/demo/src/added.ts',
+      `
+      const run = superpipe({})('demo.spread').end();
+      defineOperation({ name: 'demo.spread', execute: () => ${expression} });
+    `
+    );
+    expect(f.run().code).toBe(0);
+  }
+);
+
 test('a forwarded name is unreadable rather than a constructed name', () => {
   const f = fixture();
   f.put(
