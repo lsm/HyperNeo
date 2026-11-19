@@ -1,6 +1,6 @@
 # External event operation pipeline names
 
-Run each helper on base and change with Bun 1.4.2 and a fresh absolute evidence directory:
+Run each helper on base and change with Bun 1.4.4 and a fresh absolute evidence directory:
 
 ```sh
 HYPERNEO_SPACE=off TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh "$EVIDENCE_SESSION" .claude/skills/verify/external-event-operation-names.ts

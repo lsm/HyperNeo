@@ -1,6 +1,6 @@
 # Tool recovery events keep client RPCs responsive
 
-Follow SKILL.md's isolation, resource and cleanup setup with pinned Bun 1.4.2.
+Follow SKILL.md's isolation, resource and cleanup setup with pinned Bun 1.4.4.
 No provider, model, real data, GUI or simulator is involved.
 
 ```bash

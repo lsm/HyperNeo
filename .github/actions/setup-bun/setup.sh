@@ -45,17 +45,17 @@ has_avx2() {
     esac
 }
 
-# npm dist.integrity for the official Bun 1.4.2 archives, decoded to hex.
+# npm dist.integrity for the official Bun 1.4.4 archives, decoded to hex.
 bun_npm_sha512() {
     case "$1" in
-        bun-darwin-aarch64)     echo 31775990fd5f79ab6ac59fbf5535d61b50558cce0e1817a1558d90f3c11e523ffb2f450c782188b66c8f61337ec31be5189e85eba244b73b30f86bd059ec276a ;;
-        bun-darwin-x64)         echo 8194f166e2e39148405a34c44eededc345a1b0474d909eb875a8fad326e13dff37e5adb2a25955df24e42bd268cefcca3f1e13445ccb4a5f02f94e76e69c556f ;;
-        bun-darwin-x64-baseline) echo 9550db93f1e437e44ff1029705ed1aa2eec489f0363c2f7e67872fcb6543a6647538d7439bc7b687f1ec53b001abb9af56cffbea2ab91fcea732f021c090da75 ;;
-        bun-windows-x64)        echo f9b37a3ae56577ff5d893fd12d25d25bb244e82bcd13780bf57b0012350b8b59d4b1777a0cd3ba1ae03d8cd74d6f7afc3dd2459d81ebe5aca9355d4e8f745df6 ;;
-        bun-windows-x64-baseline) echo 96af362ea563497031f603547226c275f41db6b7a587ce85c50aa586939d895e1265000ff071d4c568677db8f1d9fab3fa3ce097006f8e6944b3bc45c8e34167 ;;
-        bun-linux-x64)          echo f7f13f517393a52a3762c57983e161b5377fa93a625a82aec52d7672ab6e600d6cb2ef5f440a0f4278a91601b2724ded58eeb7894771062ca0abe9042c56b09e ;;
-        bun-linux-x64-baseline) echo 38a2b35ff48e5485150110b34e0fb6af845c7387cfc969d0981b1ddcad3c6eec5ebbb0c0a1fe22c16f7349be8bb753614c2bb85218bc93d51e23a7fb18413866 ;;
-        bun-linux-aarch64)      echo dc104ff68bc9d91187147e807b5080b7136d1b5f9863a183eab9986ec528b28024f7e38497acde0d0fe4e1f06473a7583890ad5a7c7c854c733734004d29af61 ;;
+        bun-darwin-aarch64)     echo cd6fe1c7073cb090082c6c01e5e4c2e22e3ca2e1977f457896bc6610e93724813a2646155b54d9875136a487a6a6ab1ece05b5b1c9132080ee74538df1b27633 ;;
+        bun-darwin-x64)         echo a0a19cc4bb2f878a078c0a36f273e6f1cff1374a3f3a61b28f520761cf78be9ae45ac5b684d83691e119b797f8d1c2391efbb88c395245347450da6fd54200c7 ;;
+        bun-darwin-x64-baseline) echo bb34977244e734d4bb527d62862337d51ecfe622a7759eb9b7a663de223bd92adfa15dae23decc28cf33d6a7abda8447caa5c72d42094c8863faa4f951e123af ;;
+        bun-windows-x64)        echo 6b72cd72d0553bc3e378fb0565fc0395e17625761fd817d0d6efcf2d19c10cb9c2d918a697ee3e2e02692a3e31446841f762b0786c902393d769390ff6aca931 ;;
+        bun-windows-x64-baseline) echo 73ed7af55fa895edbdb24e46a45ba1e90e2e370443aaef6d5d901551822c75f1997a225e76e434df4064c478b73e63698fbc3f79cdbea0eda8911155142f62d6 ;;
+        bun-linux-x64)          echo 0876db9261d5336f13d4616afba18be00a38ba3c306308f50b1145c041732da9cf7cdb0877d0216c83f4438ade5ae5819068a6524a10ca0acaed1823b63defa2 ;;
+        bun-linux-x64-baseline) echo 14153a4f6d4d4fe8beac449b8b467c03c1b9c4de7573e599d2fea922323ab334b33a5a9536feb89dfec53e7c0d232c4a0f533b5a0e5c1286cb0bf41bcc278bb4 ;;
+        bun-linux-aarch64)      echo 65356da5ff7398748154f5f5b01c1ee5a8066ffacddf8c8f1a0fc76f2f1ed80c76b82500d944592a5647eea2e7b4aeea68524231787dbf4196358376cc8373d7 ;;
         *) return 1 ;;
     esac
 }
@@ -107,7 +107,7 @@ install_bun() {
     # Windows runners) and then to PowerShell's Expand-Archive with native paths.
     echo "Downloading from: $url"
     if ! curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 120 -o "$zipfile" "$url"; then
-        [[ "$version" == "1.4.2" ]] || return 1
+        [[ "$version" == "1.4.4" ]] || return 1
         local sha512
         sha512=$(bun_npm_sha512 "$package") || return 1
         local archive="${tmpdir}/bun.tgz"

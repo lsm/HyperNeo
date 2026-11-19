@@ -30,6 +30,6 @@ Measure the complete local command/save/receipt/constructor/read graph to <=200;
 record unchanged dependency hashes and honest limits. No filesystem, callback or
 network value crosses admission. The worker's operation shell owns the transaction.
 Record request/reply sizes, timing, event-loop lag, RSS/WAL. The deliberate lock
-wait is not a sub-250-ms latency pass. Native Bun 1.4.2 when unavailable, capture
+wait is not a sub-250-ms latency pass. Native Bun 1.4.4 when unavailable, capture
 bytes/ownership closure, browser and Neo deployment remain unverified. Close owned
 sockets, locks, processors and app before the wrapper removes temporary data.

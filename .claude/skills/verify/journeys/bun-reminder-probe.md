@@ -1,6 +1,6 @@
 # Bun reminder admission parity
 
-Use the isolation and resource setup in ../SKILL.md with Bun 1.4.2.
+Use the isolation and resource setup in ../SKILL.md with Bun 1.4.4.
 
     VERIFY_PROOF_RUNTIME=bun bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence scripts/bun-reminder-probe.ts
 

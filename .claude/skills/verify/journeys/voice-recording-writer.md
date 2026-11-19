@@ -1,7 +1,7 @@
 # Slow recording storage leaves phone voice RPCs responsive
 
 Follow SKILL.md's shared isolation, cleanup and resource check. Use pinned Bun
-1.4.2; no provider, model mock, real data, simulator or GUI is needed.
+1.4.4; no provider, model mock, real data, simulator or GUI is needed.
 
 ```bash
 TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory .claude/skills/verify/voice-recording-writer.ts
