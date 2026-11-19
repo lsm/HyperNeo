@@ -1,7 +1,8 @@
 # Voice providers: pick a service, give it a key
 
 Status: proposal, 2026-11-16; revised 2026-11-18 (cards instead of a settings page);
-revised 2026-11-19 (how a card answer reaches the voice settings).
+revised 2026-11-19 (how a card answer reaches the voice settings); revised again
+2026-11-19 (review fixes: atomic apply, same-second and stale-URL refusals).
 Design only.
 Scope: the daemon's speech-to-text (recorded and live) and text-to-speech, and how the
 human chooses them. Paths without a prefix are under `packages/daemon/src/lib/`.
@@ -79,15 +80,25 @@ voice up by answering Neo:
   cannot also write the voice settings, and the storage layer must not know voice. So
   applying the preset is a second, explicit step: after the answer commits, Neo invokes one
   daemon operation, `voice.applyProviderPreset`, which takes no arguments. It reads the
-  recorded preference rows — written only by a human answer (`set_by: 'human'`), never by
-  Neo — maps the provider through the preset table, and writes the three parts to the same
-  settings store the web form uses, preserving every other voice field (keys, `enabled`,
-  mode, TLS switches) and publishing the settings update so the form reflects it. Neo
-  cannot apply anything the human did not see and approve on a card.
+  recorded preference rows, maps the provider through the preset table, and writes the
+  three parts to the same settings store the web form uses, preserving every other voice
+  field (keys, `enabled`, mode, TLS switches) and publishing the settings update so the
+  form reflects it. Rows reach the table on two paths, both stamped `set_by: 'human'`: a
+  card answer, and the `pack.preferences.set` operation behind the web pack-settings
+  form. The stamp records the writer's claim of human authority, not which path wrote
+  it, so the apply trusts the checks below rather than the stamp. Neo writes neither the
+  rows nor the settings; every value it applies was shown to the human — literally on a
+  card, or as a field in the settings form — before it was recorded.
   For "My own server" the base URL is itself a pack preference (`baseUrl`, text), asked on
   its own proposal card that shows the literal URL the human typed in chat before it is
   saved; the apply reads that row like the provider row and refuses a URL that is not a
-  valid `https://` address. No URL travels as an operation argument.
+  valid `https://` address. No URL travels as an operation argument. The URL approval is
+  bound to the custom choice that asked for it: the apply refuses `base_url_stale` when
+  the `baseUrl` row's `set_at` is older than the `provider` row's. That is what happens
+  after the human switches to another provider and back — the provider row is
+  re-recorded by the new card, the old URL row is not — so the apply cannot reuse an
+  approval given to an earlier custom choice; it asks a fresh URL card, which re-displays
+  the literal URL.
   Two refusals guard what a blind write would break. A legacy inline key
   (`voice.apiKey`) is bound to whatever host the current recorded endpoint has
   (`resolveVoiceKey` checks that host, not the key's own `apiKeyEndpoint`), so when the
@@ -96,14 +107,29 @@ voice up by answering Neo:
   voice key before changing the recorded host"); the per-host key field that makes saving
   it possible arrives with slice 5. And when the three parts the apply would write differ
   from the parts currently saved, the apply refuses `settings_changed_since_answer` if the
-  global settings were written after the newest recorded row (`global_settings.updated_at`
-  versus the row's `set_at`). That timestamp is coarse on purpose: many non-voice writers
-  bump it (driver health, rule answers, model changes), and the operation cannot tell a
+  global settings were written at or after the second of the newest recorded row. The two
+  clocks are different sizes: `global_settings.updated_at` is a whole second
+  (`datetime('now')`), a preference row's `set_at` is milliseconds, so an edit at .800 in
+  the same second as an answer at .200 would compare as older than the answer and slip
+  past a strict "after" test. The comparison therefore floors the row's `set_at` to its
+  second and refuses when `updated_at` is on or after that second: the answer's own
+  second counts as already written. Beyond that mismatch, the timestamp is coarse on
+  purpose: many non-voice writers bump it (driver health, rule answers, model changes),
+  and the operation cannot tell a
   voice edit from any other write — every refusal points the safe way and costs one fresh
   card, whose answer re-records the row and applies over whatever changed. When the saved
   parts already equal the preset's output the apply is a no-op success and writes nothing,
   so unrelated settings writes after a successful apply never block anything.
-  The two commits are deliberately not atomic. The human's answer lands first and is never
+  The guards and the write are one step, not two. The operation re-reads the settings,
+  re-runs both refusals and the part-equality check against that read, merges the three
+  parts into the `voice` object it just read — the settings store merges at the
+  top-level key, replacing the whole `voice` object, so preserved fields must come from
+  that read — and writes, all inside one immediate transaction, publishing the update
+  only after the commit. A web edit that commits while the apply runs either lands
+  first, and the transaction sees it and refuses, or lands after, on top of the applied
+  parts; neither the edit nor a key saved in it can be lost.
+  The two commits — the card answer and the apply — are deliberately not atomic with
+  each other. The human's answer lands first and is never
   rolled back; the apply is re-runnable — after a failure it retries, after a success it is
   a no-op — and a failure leaves the previous settings working with the choice recorded.
   The preference rows never gate what the daemon dials — the settings are the only source
@@ -170,8 +196,15 @@ default and target branch), near the repository's 300-line budget, failing tests
    wakes Neo with an attention event naming the host (never the key).
 7. **The provider card, re-cut.** The choice is recorded by the existing card machinery and
    applied by the operation above; the Neo core outside `neo/packs/` is unchanged.
-   - **7a. The provider preference and its apply operation** — about 250 production lines,
-     160 test lines:
+   - **7a. The provider preference and its apply operation** — about 360 production lines,
+     280 test lines, measured against the code it copies: the delegation pack
+     (`neo/packs/delegation/pack.ts`, 89 lines) for the pack, the three test operations
+     (`voice/test-operations.ts`, 164 lines) as the floor for one operation with row
+     reads, five refusals and a transactional write, and the settings repository's merge
+     path (`storage/repositories/settings-repository.ts`, 146 lines) for the write. That
+     is over the 300-line budget; if it lands there in code, the slice splits in two —
+     the pack and its two cards first, the preset table and the operation second — with
+     no other change to this design.
      - `neo/packs/voice/pack.ts` (new): always-enabled pack with two global preferences —
        the enum `provider` (`openai`, `deepgram`, `custom`) and the text `baseUrl` for
        `custom` — and instructions telling Neo to ask once when voice first matters, apply
@@ -182,12 +215,15 @@ default and target branch), near the repository's 300-line budget, failing tests
        provider, `custom` composed from one base URL.
      - `voice/apply-preset-operation.ts` (new): `voice.applyProviderPreset` as one pipeline
        with no input — read the recorded rows (refuse `provider_not_chosen` without the
-       provider), map the preset (refuse `base_url_required` and `base_url_insecure` for
-       `custom`), guard the write (refuse `legacy_key_host_changed` and
-       `settings_changed_since_answer` as above), write the parts through the settings
-       manager, publish the update; registered in `rpc-handlers/index.ts` beside the test
+       provider, `base_url_stale` when the URL row is older than the provider row), map
+       the preset (refuse `base_url_required` and `base_url_insecure` for `custom`), then
+       one immediate transaction that re-reads the settings, re-runs the
+       `legacy_key_host_changed` and `settings_changed_since_answer` guards and the
+       part-equality check against that read, merges the parts and writes, publishing the
+       update after the commit; registered in `rpc-handlers/index.ts` beside the test
        operations, name added to `shared/src/types/operation-names/neo.ts`, tool
-       description in `packages/prompts/src/neo/tools/voice.applyProviderPreset.md`.
+       description in `packages/prompts/src/neo/tools/voice.applyProviderPreset.md` with
+       its import and registry entry in `packages/prompts/src/mod.ts`.
    - **7b. On-request part, model and voice changes:** `voice.setPart` on the same write
      path; the part cards from the "one part or one voice" paragraph above.
 
@@ -214,6 +250,9 @@ daemon integration cases for cards and Neo messages:
 | A recorded `baseUrl` that is not a valid `https://` URL | refused `base_url_insecure`; parts unchanged |
 | A legacy inline key, then a preset whose recorded host differs from the current one | refused `legacy_key_host_changed`; the inline key is never sent to the new host; after the key is saved per host or cleared, the apply fills the preset |
 | Parts edited on the web after the card was answered, then the apply | refused `settings_changed_since_answer`; parts unchanged; a fresh card answer applies over them |
+| A web voice edit in the same second as the card answer, parts differing from the preset | refused `settings_changed_since_answer` — the answer's own second counts as written; parts unchanged |
+| Custom chosen, URL approved, provider switched away and back to custom, apply before a new URL card | refused `base_url_stale`; parts unchanged; a fresh URL card answer applies |
+| A web edit committed while the apply transaction runs | the edit is either seen inside the transaction and the apply refuses, or commits after it and lands on the applied parts; no edit or saved key is lost |
 | A non-voice settings write (a rule answer, a model change) after the card was answered, then the apply | the parts still differ from the preset, so it is refused the same way; after parts equal the preset (a successful apply), the same write never blocks a re-run |
 | The apply run twice | the second run is a no-op success — the parts already equal the preset, so nothing is written and the settings timestamp is untouched |
 | Parts edited on the web after an apply | behavior follows the settings; the preference rows are not consulted |
