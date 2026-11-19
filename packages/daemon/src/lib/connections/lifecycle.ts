@@ -23,6 +23,19 @@ type Flow = {
 type Admitted = { flow: Flow; outcome: Extract<Outcome, { ok: true }> };
 type Read = () => Promise<ConnectionStatus[]>;
 type Save = (connection: ConnectionStatus) => Promise<void>;
+type LoginStatusFacts = {
+  current: { id: string; view: View } | undefined;
+  storage: ReturnType<ConnectionVault['storageStatus']>;
+};
+
+export function selectLoginStatus(facts: LoginStatusFacts, input: { loginId?: string }): View {
+  return {
+    ...(facts.current && (!input.loginId || facts.current.id === input.loginId)
+      ? facts.current.view
+      : { state: 'missing' }),
+    storage: facts.storage,
+  };
+}
 
 function admit(
   outcome: Outcome,
@@ -146,6 +159,10 @@ export function createConnectionLifecycle(deps: {
     }
   };
   deps.closed.addEventListener('abort', cancel, { once: true });
+  const statusFacts = (): LoginStatusFacts => ({
+    current: current ? { id: current.id, view: current.view } : undefined,
+    storage: deps.vault.storageStatus(),
+  });
   return {
     token: access.token,
     http,
@@ -207,10 +224,8 @@ export function createConnectionLifecycle(deps: {
           );
         return { ...flow.view, authorizeUrl: login.authorizeUrl };
       }),
-    status: (loginId?: string): View => ({
-      ...(current && (!loginId || current.id === loginId) ? current.view : { state: 'missing' }),
-      storage: deps.vault.storageStatus(),
-    }),
+    statusFacts,
+    status: (loginId?: string): View => selectLoginStatus(statusFacts(), { loginId }),
     disconnect: async (connectionId: string) => {
       if (!(await deps.read()).some((record) => record.id === connectionId))
         return { ok: false, reason: 'unknown_connection' };
