@@ -4,6 +4,24 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.60.0] - 2026-11-18
+
+- Connect Microsoft accounts and use Outlook mail drafts, search, calendars, and events (#10898, #11077, #11099, #11103, #11106).
+- Add Deepgram recorded voice and speech (#10885).
+- Require human approval for new work and show todo outcomes and the human inbox (#11071, #11056, #10795).
+- Let core choose coding work sessions and allow session reuse per project (#11092, #11055).
+- Show refused Neo inputs and Front handoffs with retry actions (#11097, #11100, #11090).
+- Improve Claude Code downloads, Desktop session routing, worker release decisions, and review notifications (#11116, #11109, #11111, #11120, #11114, #10958).
+- Prompt for Codex device sign-in, configure OXAP harnesses in the UI, and forward the chat model to supported harnesses (#11052, #11089, #11023).
+- Preview legacy worker ownership and allow forgetting empty sidebar projects (#11115, #11046).
+
+
+### API compatibility
+
+Compared with v0.59.0, the pinned phone source inventory reports 4 breaking, 0 risky, and 1 safe method. Across all schema changes, the report lists 13 breaking, 0 risky, and 41 safe changes.
+
+- Question results remove `labels` and add `optionDetails` and `recommended`; `neo.question.answer` removes `when` and `where` inputs.
+- The pinned phone source inventory describes source usage, not proof of the installed binary's compatibility.
 
 ## [0.59.0] - 2026-11-17
 
