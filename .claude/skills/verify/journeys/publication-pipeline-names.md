@@ -1,6 +1,6 @@
 # Publication operation pipeline names
 
-Run on the base and changed tree with Bun 1.4.2:
+Run on the base and changed tree with Bun 1.4.4:
 
 ```bash
 TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory .claude/skills/verify/publication-pipeline-names.ts
