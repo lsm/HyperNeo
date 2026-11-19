@@ -356,6 +356,13 @@ async function prepareGlobalSettingsUpdate(
   } else if (clearRequested && persistedVoice?.hasApiKey === true) {
     mutation.remove = true;
   } else if (hostKey && persistedVoice?.apiKey?.trim()) {
+    const oldEndpoint = voiceParts(persistedVoice).recorded?.endpoint ?? '';
+    const newEndpoint = voiceParts(voice).recorded?.endpoint ?? '';
+    const oldHost = URL.canParse(oldEndpoint) ? new URL(oldEndpoint).host : undefined;
+    const newHost = URL.canParse(newEndpoint) ? new URL(newEndpoint).host : undefined;
+    if (oldHost !== newHost) {
+      throw new Error('Save the legacy voice key before changing the recorded host');
+    }
     voice.apiKey = persistedVoice.apiKey;
     voice.hasApiKey = true;
     voice.apiKeyEndpoint = persistedVoice.apiKeyEndpoint;

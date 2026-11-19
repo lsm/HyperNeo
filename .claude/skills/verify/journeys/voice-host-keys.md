@@ -9,7 +9,22 @@ openssl req -x509 -newkey rsa:2048 -nodes -keyout "$RUN/server-key.pem" \
 RUN="$RUN" VERIFY_PORT=9311 bun .claude/skills/verify/voice-host-keys.ts
 ```
 
-The helper saves two synthetic credentials through the settings RPC, checks the
+The helper first verifies that provider creation rejects a voice credential id. It
+then saves two synthetic credentials through the settings RPC, checks the
 replies omit them, and sends recorded audio to two isolated TLS servers. It
 asserts each server receives only its own host's key. Keep its result in the
-run evidence, then stop the daemon and clean up as directed by the verify skill.
+run evidence, then stop the daemon before the legacy-key check below.
+
+To cover a pre-upgrade inline key, stop the isolated daemon, seed only its
+synthetic database as below, and relaunch the same run. Then run the helper with
+`VERIFY_LEGACY=1`; it must report `legacyHostChangeRefused: true`.
+
+```bash
+sqlite3 "$RUN/data/daemon.db" "UPDATE global_settings SET settings = json_set(settings, '$.voice', json('{"enabled":true,"endpoint":"https://old.example/transcribe","model":"test","apiKey":"synthetic-legacy-key"}')) WHERE id = 1;"
+VERIFY_LEGACY=1 RUN="$RUN" VERIFY_PORT=9311 bun .claude/skills/verify/voice-host-keys.ts
+```
+
+Seed only after stopping the daemon and before restarting it; never modify a
+running daemon database or a real settings database.
+
+After both checks, stop the daemon and clean up as directed by the verify skill.

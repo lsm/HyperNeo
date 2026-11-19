@@ -32,11 +32,18 @@ const MAX_DISPLAY_NAME_LEN = 256;
 const MAX_BASE_URL_LEN = 2048;
 const MAX_JSON_FIELD_LEN = 64 * 1024;
 
+function isVoiceCredentialId(providerId: string): boolean {
+  return (
+    providerId === VOICE_CREDENTIAL_PROVIDER_ID ||
+    providerId.startsWith(`${VOICE_CREDENTIAL_PROVIDER_ID}:`)
+  );
+}
+
 function validateCreateParams(params: unknown): asserts params is CreateProviderParams {
   if (!params || typeof params !== 'object') throw new Error('Invalid provider params');
   const p = params as Record<string, unknown>;
   if (!p.providerId || typeof p.providerId !== 'string') throw new Error('providerId is required');
-  if (p.providerId === VOICE_CREDENTIAL_PROVIDER_ID)
+  if (isVoiceCredentialId(p.providerId))
     throw new Error(`providerId '${VOICE_CREDENTIAL_PROVIDER_ID}' is reserved`);
   if (p.providerId.length > MAX_PROVIDER_ID_LEN)
     throw new Error(`providerId must be ≤ ${MAX_PROVIDER_ID_LEN} chars`);
@@ -316,7 +323,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         const updates = validateUpdateParams(data.params);
         const existing = providerRepo.getProvider(data.id);
         if (!existing) throw new Error(`Provider ${data.id} not found`);
-        if (existing.providerId === VOICE_CREDENTIAL_PROVIDER_ID)
+        if (isVoiceCredentialId(existing.providerId))
           throw new Error(`providerId '${VOICE_CREDENTIAL_PROVIDER_ID}' is reserved`);
         const lock =
           existing.kind === 'custom_endpoint'
@@ -411,7 +418,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
   messageHub.onRequest('providers.delete', async (data: { id: string }) => {
     const record = providerRepo.getProvider(data.id);
     if (!record) throw new Error(`Provider ${data.id} not found`);
-    if (record.providerId === VOICE_CREDENTIAL_PROVIDER_ID)
+    if (isVoiceCredentialId(record.providerId))
       throw new Error(`providerId '${VOICE_CREDENTIAL_PROVIDER_ID}' is reserved`);
     const lock = record.kind === 'custom_endpoint' ? withCustomEndpointsLock : withProviderLock;
     return lock(async () => {

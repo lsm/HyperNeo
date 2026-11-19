@@ -55,6 +55,18 @@ function call(method: string, data: unknown): Promise<unknown> {
   });
 }
 try {
+  if (process.env.VERIFY_LEGACY === '1') {
+    await assert.rejects(call('settings.global.update', { updates: { voice: {
+      enabled: true, endpoint: 'https://new.example/transcribe', model: 'test',
+      live: { provider: 'deepgram', endpoint: 'wss://live.example/listen' },
+      hostKey: { host: 'live.example', apiKey: 'synthetic-live-key' },
+    } } }), /legacy/);
+    console.log(JSON.stringify({ legacyHostChangeRefused: true }));
+  } else {
+  await assert.rejects(call('providers.create', {
+    params: { providerId: 'voice-transcription:127.0.0.1', displayName: 'Voice', kind: 'built_in', authType: 'api_key' },
+    credentials: { apiKey: 'synthetic-provider-key' },
+  }), /reserved/);
   const endpoints = servers.map((server) => `https://127.0.0.1:${server.port}/v1/audio/transcriptions`);
   const settings = {
     enabled: true, endpoint: endpoints[0], model: 'stub', allowPrivateNetwork: true,
@@ -76,7 +88,8 @@ try {
     assert.equal((response as { text: string }).text, 'host proof');
   }
   assert.deepEqual(received, ['Bearer synthetic-first', 'Bearer synthetic-second']);
-  console.log(JSON.stringify({ settingsRepliesRedacted: true, hostRequests: received.length, correctKeys: true }));
+  console.log(JSON.stringify({ providerNamespaceReserved: true, settingsRepliesRedacted: true, hostRequests: received.length, correctKeys: true }));
+  }
 } finally {
   socket.close();
   for (const server of servers) await server.stop(true);
