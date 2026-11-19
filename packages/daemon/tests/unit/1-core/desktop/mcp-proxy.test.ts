@@ -162,6 +162,21 @@ test('typed target refusals reach the caller and the audit under one call id', a
   expect(dispatch).not.toHaveBeenCalled();
 });
 
+test.each(['app_action_not_authorized', 'app_action_declined'] as const)(
+  '%s explains the app-wide grant',
+  async (reason) => {
+    const proxy = createDesktopProxy({
+      binding: async () => binding,
+      dispatch: vi.fn(),
+      audit: () => {},
+      authorize: async () => ({ reason }),
+    });
+    const result = await proxy.call('click', { pid: 42 });
+    expect(result.structuredContent?.explanation).not.toContain('action class');
+    expect(result.structuredContent?.explanation).toContain('app');
+  }
+);
+
 test('a verified target is audited with its app and instance', async () => {
   const audit = vi.fn();
   const proxy = createDesktopProxy({

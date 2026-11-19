@@ -965,6 +965,22 @@ open(sys.argv[2], 'w').write(reply.decode())
                 first.result(timeout=15)
         print('busy_worker=desktop_busy no_second_input=1')
 
+    def test_slow_start_reports_expired_request_without_input(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        slow = self.work / 'slow'
+        slow.mkdir()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(self.dispatch, 'click', {'pid': pid, 'fixture_deadline': True}, workDir=str(slow))
+            wait_until(lambda: bool(list(slow.glob('d-*/d.starting'))))
+            time.sleep(0.4)
+            next(slow.glob('d-*/d.starting')).with_suffix('.release').touch()
+            reply = pending.result(timeout=10)['result']
+        self.assertEqual(reply['reason'], 'desktop_timeout')
+        self.assertFalse(reply['dispatched'])
+        self.assertNotIn('call click', ''.join(p.read_text() for p in slow.glob('log-*')))
+        print('slow_start=desktop_timeout no_input=1')
+
     def test_saturated_host_refuses_instead_of_stalling(self):
         pid = finder()
         self.call('fixture-admit', tool='click', arguments={'pid': pid})
