@@ -1,7 +1,7 @@
 import { neoToolDescription } from '@hyperneo/prompts';
-import superpipe, { type DescribedRunner, type PipelineAPI } from 'superpipe';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { defineOperation, type OperationDefinition } from '../../../operations/registry.ts';
+import { defineOperation } from '../../../operations/registry.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { CodingSmoke, type CodingDeliveryFactsRepository } from './delivery-facts.ts';
 import type { CodingAssignmentsRepository } from './assignments.ts';
@@ -18,7 +18,6 @@ const Input = z.object({
 });
 export type CodingSmokeRequest = z.infer<typeof Input>;
 type Input = CodingSmokeRequest;
-type Result = { accepted: true } | { accepted: false; reason: string };
 
 export function createCodingSmokeOperation(
   repo: CodingDeliveryFactsRepository,
@@ -34,7 +33,7 @@ export function createCodingSmokeOperation(
       'input',
       'result'
     )
-    .endAsync('result') as (input: Input) => Promise<Result>;
+    .endAsync('result');
   return {
     ...defineOperation({
       name: 'neo.coding.smoke',
@@ -47,6 +46,6 @@ export function createCodingSmokeOperation(
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: (input) => record(input),
     }),
-    pipelineRunner: record as unknown as OperationDefinition['execute'] & DescribedRunner,
+    pipelineRunner: record,
   };
 }
