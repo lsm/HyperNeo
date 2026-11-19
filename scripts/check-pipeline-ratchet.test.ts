@@ -144,6 +144,32 @@ test('an unconditional pipeline call remains readable beside an optional access'
   ).toBe(0);
 });
 
+test.each(['run() ?? fallback()', 'run() || fallback()', 'run() && fallback()'])(
+  'a pipeline call on the left of a short-circuit expression is readable: %s',
+  (expression) => {
+    const source = `import superpipe from 'superpipe';
+      import { defineOperation } from './registry.ts';
+      const run = superpipe({})('demo.maybe').end();
+      defineOperation({ name: 'demo.maybe', execute: () => ${expression} });`;
+    expect(
+      countPipelineRoutes(new Map([['packages/demo/src/added.ts', source]]), true).unreadable
+    ).toBe(0);
+  }
+);
+
+test.each([
+  `() => { const inner = superpipe({})('demo.maybe').end(); return condition ? inner() : null; }`,
+  `() => condition && superpipe({})('demo.maybe').end()()`,
+  `() => { const inner = superpipe({})('demo.maybe').end(); return queue(() => inner()); }`,
+])('a conditional inline pipeline stays unreadable: %s', (execute) => {
+  const source = `import superpipe from 'superpipe';
+    import { defineOperation } from './registry.ts';
+    defineOperation({ name: 'demo.maybe', execute: ${execute} });`;
+  expect(
+    countPipelineRoutes(new Map([['packages/demo/src/added.ts', source]]), true).unreadable
+  ).toBe(1);
+});
+
 test('an optional pipeline call inside a helper stays unreadable', () => {
   const source = `import superpipe from 'superpipe';
     import { defineOperation } from './registry.ts';

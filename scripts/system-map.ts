@@ -530,14 +530,19 @@ export function countPipelineRoutes(
       let found = false;
       const visit = (node: ts.Node) => {
         if (
+          ts.isBinaryExpression(node) &&
+          [
+            ts.SyntaxKind.AmpersandAmpersandToken,
+            ts.SyntaxKind.BarBarToken,
+            ts.SyntaxKind.QuestionQuestionToken,
+          ].includes(node.operatorToken.kind)
+        ) {
+          visit(node.left);
+          return;
+        }
+        if (
           ts.isFunctionLike(node) ||
           ts.isConditionalExpression(node) ||
-          (ts.isBinaryExpression(node) &&
-            [
-              ts.SyntaxKind.AmpersandAmpersandToken,
-              ts.SyntaxKind.BarBarToken,
-              ts.SyntaxKind.QuestionQuestionToken,
-            ].includes(node.operatorToken.kind)) ||
           !!(node.flags & ts.NodeFlags.OptionalChain)
         )
           return;
@@ -731,7 +736,10 @@ export function countPipelineRoutes(
       const body = tokens.slice(executeStart, executeEnd).map((token) => token.text);
       const reached = pipelines.filter(
         (pipeline) =>
-          (pipeline.index >= executeStart && pipeline.index < executeEnd) ||
+          (pipeline.index >= executeStart &&
+            pipeline.index < executeEnd &&
+            (!strictCalls ||
+              (!!pipeline.variable && hasUnconditionalCall(executeStart, pipeline.variable)))) ||
           (pipeline.variable &&
             scopes[pipeline.index].every((part, index) => scopes[i][index] === part) &&
             ((body.length === 1 &&
