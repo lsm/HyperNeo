@@ -30,11 +30,15 @@ export async function recordNeoTodoAdmission(
   >,
   ask: NeoAsk,
   draft: ResolvedNeoTodoDraft,
-  packs: readonly NeoPack[]
+  packs: readonly NeoPack[],
+  role: OperationCaller['role']
 ): Promise<Result> {
   let admitted = draft;
   if (draft.named?.desktopControl === true) {
-    const decision = planDesktopControl(true, await store.read('desktopControlPreference'));
+    const decision =
+      role === 'neo'
+        ? planDesktopControl(true, await store.read('desktopControlPreference'))
+        : 'off';
     if (decision === 'ask') await controls.askDesktopControl?.(ask.id);
     if (decision !== 'allow')
       return {
@@ -150,9 +154,9 @@ export function wireNeoTodoAdd(
       'result:outcome'
     )
     .pipe(
-      (draft: ResolvedNeoTodoDraft, ask: NeoAsk) =>
-        recordNeoTodoAdmission(store, sessions, controls, ask, draft, packs()),
-      ['outcome', 'ask'],
+      (draft: ResolvedNeoTodoDraft, ask: NeoAsk, caller: OperationCaller) =>
+        recordNeoTodoAdmission(store, sessions, controls, ask, draft, packs(), caller.role),
+      ['outcome', 'ask', 'caller'],
       'outcome'
     )
     .pipe(

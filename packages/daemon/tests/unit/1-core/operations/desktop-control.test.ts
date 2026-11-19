@@ -220,6 +220,23 @@ test('a declined desktop preference keeps approval manual', async () => {
   expect(store.listQuestions('ask')).toHaveLength(1);
 });
 
+test('a worker cannot use Neo’s desktop preference to opt a todo in', async () => {
+  db.prepare(`INSERT INTO neo_pack_preferences
+    (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
+    VALUES ('core', 'global', '', 'desktopControl', 'true', 'human', 1)`).run();
+  const outcome = await invokeOperation(
+    neoOperations(),
+    'neo.ask.open',
+    { title: 'Errands', request: 'Errands', todos: [draft] },
+    { ...neo, role: 'workflow_worker' }
+  );
+  expect(outcome).toMatchObject({
+    kind: 'completed',
+    value: { ok: false, reason: expect.stringContaining('desktop_control_requires_permission') },
+  });
+  expect(storedOptIns()).toBe(0);
+});
+
 test('Neo cannot turn desktop control on by editing a todo', async () => {
   await invokeOperation(
     neoOperations(),

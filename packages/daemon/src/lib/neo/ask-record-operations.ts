@@ -237,7 +237,7 @@ export function createNeoAskRecordOperations(
           goalId,
         }: { sessionId: string; projectId: string | null; goalId: string | null },
         input: z.infer<typeof Open>,
-        _caller: OperationCaller
+        caller: OperationCaller
       ): Promise<AskReceipt | Rejection> => {
         const policies = packs();
         const origin = null;
@@ -404,7 +404,8 @@ export function createNeoAskRecordOperations(
                 controls,
                 store.getAsk(ask.id)!,
                 { ...todo, after },
-                policies
+                policies,
+                caller.role
               )
             : { ok: true as const };
           if (!added.ok) return added;
