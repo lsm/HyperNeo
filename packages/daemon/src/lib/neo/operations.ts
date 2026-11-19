@@ -86,11 +86,7 @@ import {
   projectNeoAskEntries,
   summarizeNeoAskEntry,
 } from './ask-entries.ts';
-import {
-  createPackPreferenceOperations,
-  listPackPreferences,
-  PackSettingSchema,
-} from './preference-operations.ts';
+import { createPackPreferenceOperations, PackSettingSchema } from './preference-operations.ts';
 import { createNeoPreferenceOperation } from './model-preference.ts';
 import { createNeoFrontModelOperation } from './front-model-preference.ts';
 import { readNeoRuleApproval } from '../../storage/repositories/neo-rule-answer.ts';
@@ -547,7 +543,7 @@ export function createNeoOperations(
         : {}),
       mutedSessions: service.db.getGlobalSettings?.().neo?.mutedSessions ?? [],
       preferences: service.modelPreference(),
-      ...(detailed ? { packPreferences: listPackPreferences(service.db.getDatabase()) } : {}),
+      ...(detailed ? { packPreferences: service.packPreferences() } : {}),
       todoAsks: entries.map(summarizeNeoAskEntry),
       ...(humanQueue ? { humanQueue } : {}),
       ...counts,
