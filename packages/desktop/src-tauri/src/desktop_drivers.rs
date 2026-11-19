@@ -597,7 +597,7 @@ impl Drivers {
                             bundle,
                             class,
                             "refused",
-                            json!("desktop_busy"),
+                            json!("desktop_timeout"),
                             false,
                         )));
                     }

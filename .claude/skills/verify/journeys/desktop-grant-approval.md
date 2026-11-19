@@ -65,8 +65,11 @@ busy refusal instead of reporting that the owner must answer:
 ```bash
 python3 packages/desktop/tests/worker-drivers.py \
   packages/desktop/tests/driver-host/target/debug/desktop-driver-fixture \
-  -k busy_worker_returns -k saturated_host_refuses
+  -k busy_worker_returns -k saturated_host_refuses -k slow_start_reports
 ```
+
+A slow driver start returns `desktop_timeout` without sending input. This
+is distinct from an unanswered owner request and from a busy worker.
 
 To see the real dialog, start the signed host directly, send
 `{"action":"fixture-dialog","worker":"w","tool":"real"}` and then a `resolve`
