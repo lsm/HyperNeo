@@ -109,7 +109,7 @@ async function archiveSession(
           caller.principal === NEO_TODO_RELEASE_PRINCIPAL ? 'todo release' : 'archive requested'
         );
       } catch (error) {
-        log.error('Archive provenance write failed', ref, error);
+        log.warn('Archive provenance write failed', ref, error);
       }
     }
     return result;

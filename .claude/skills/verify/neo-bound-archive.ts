@@ -59,18 +59,18 @@ try {
   recordWorkerStarted(raw, faultRef);
   raw.exec(`CREATE TRIGGER synthetic_archive_failure BEFORE UPDATE OF archived_at ON work_started_sessions
     WHEN NEW.id = '${faultId}' BEGIN SELECT RAISE(FAIL, 'synthetic archive record failure'); END`);
-  const logMessages: string[] = [];
-  const unsubscribe = subscribeToStructuredLogs((event) => logMessages.push(event.message));
+  const logs: { level: string; message: string }[] = [];
+  const unsubscribe = subscribeToStructuredLogs((event) => logs.push(event));
   let faultReply;
   try { faultReply = await call('neo.session.archive', { ref: faultRef }); } finally { unsubscribe(); }
   const faultStatus = (await app.db.getSession(faultId))?.status;
   const faultRecord = raw.prepare('SELECT archived_at FROM work_started_sessions WHERE id = ?').get(faultId);
-  const errorLogged = logMessages.some((message) => message.includes('Archive provenance write failed'));
-  evidence.archiveRecordFailure = { faultReply, faultStatus, faultRecord, errorLogged };
+  const warningLogged = logs.some((event) => event.level === 'warn' && event.message.includes('Archive provenance write failed'));
+  evidence.archiveRecordFailure = { faultReply, faultStatus, faultRecord, warningLogged };
   assert.equal(faultReply.ok, true, JSON.stringify(faultReply));
   assert.equal(faultStatus, 'archived');
   assert.deepEqual(faultRecord, { archived_at: null });
-  assert.equal(errorLogged, true);
+  assert.equal(warningLogged, true);
   raw.exec('DROP TRIGGER synthetic_archive_failure');
   const refused = await call('neo.session.archive', { ref });
   assert.equal(refused.reason, 'not_started_by_us');
