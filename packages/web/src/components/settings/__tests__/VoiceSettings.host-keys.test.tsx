@@ -77,8 +77,27 @@ describe('VoiceSettings host keys', () => {
     );
     await waitFor(() =>
       expect(
-        toastsSignal.value.some((toast) => toast.message === 'Key removed for api.deepgram.com')
+        toastsSignal.value.some(
+          (toast) => toast.message === 'No host-specific key saved for api.deepgram.com'
+        )
       ).toBe(true)
+    );
+  });
+
+  it('does not save a typed key when the remove button receives focus', async () => {
+    render(<VoiceSettings />);
+    const key = screen.getByLabelText('API key for api.deepgram.com');
+    const remove = screen.getByLabelText('Remove API key for api.deepgram.com');
+    fireEvent.input(key, { target: { value: 'synthetic-unsaved-key' } });
+    fireEvent.blur(key, { relatedTarget: remove });
+    fireEvent.click(remove);
+    await waitFor(() => expect(updateGlobalSettings).toHaveBeenCalledTimes(1));
+    expect(updateGlobalSettings).toHaveBeenCalledWith(
+      { voice: expect.objectContaining({ hostKey: { host: 'api.deepgram.com' } }) },
+      { timeout: 120_000 }
+    );
+    expect(JSON.stringify(vi.mocked(updateGlobalSettings).mock.calls)).not.toContain(
+      'synthetic-unsaved-key'
     );
   });
 
