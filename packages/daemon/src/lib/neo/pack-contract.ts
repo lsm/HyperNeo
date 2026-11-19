@@ -128,7 +128,7 @@ export interface NeoTrackerAdapter {
 }
 
 export type NeoPackOperation = OperationDefinition & {
-  readonly pipelineRunner?: OperationDefinition['execute'] & DescribedRunner;
+  readonly pipelineRunner?: DescribedRunner;
 };
 
 export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {

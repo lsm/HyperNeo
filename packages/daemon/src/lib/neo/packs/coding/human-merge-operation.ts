@@ -1,7 +1,7 @@
 import { neoToolDescription } from '@hyperneo/prompts';
 import { homedir } from 'node:os';
 import { z } from 'zod';
-import superpipe, { type PipelineAPI } from 'superpipe';
+import superpipe, { type DescribedRunner, type PipelineAPI } from 'superpipe';
 import { defineOperation, type OperationCaller } from '../../../operations/registry.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { buildGitHubLookupEnv } from '../../../github/gh-lookup-helpers.ts';
@@ -43,6 +43,7 @@ export const createCodingHumanMergeOperation = (
     .input(['input', 'caller'])
     .pipe(update, ['input', 'caller'], 'result')
     .endAsync('result');
+  const description: DescribedRunner = run;
   return {
     ...defineOperation({
       name: 'neo.coding.merge.human',
@@ -52,6 +53,6 @@ export const createCodingHumanMergeOperation = (
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: run,
     }),
-    pipelineRunner: run,
+    pipelineRunner: description,
   };
 };
