@@ -160,6 +160,11 @@ export function claimTodoWorker(
     if (!todoId) return true;
     if (!checks.liveTodo(todoId)) return false;
     const roles = readTodoRoles(db, todoId);
+    const held = workers.filter((worker) => worker.claimedBy === todoId);
+    const ownRole =
+      roles.find((entry) => entry.adapter === ref.adapter && entry.id === ref.id)?.role ?? 'do';
+    if (own?.claimedBy === todoId && ownRole !== role) return false;
+    if (own?.claimedBy !== todoId && held.length >= 4) return false;
     if (
       workers.some(
         (worker) =>
@@ -187,6 +192,11 @@ export function unclaimTodoWorker(
       (worker) => worker.adapter === ref.adapter && worker.id === ref.id
     );
     if (own?.claimedBy !== todoId) return;
+    const currentRole =
+      readTodoRoles(db, todoId).find(
+        (entry) => entry.adapter === ref.adapter && entry.id === ref.id
+      )?.role ?? 'do';
+    if (currentRole !== role) return;
     recordStartedWork(db, ref, Date.now(), false, false, { todoId: null });
     db.prepare(`DELETE FROM neo_todo_roles WHERE rowid = (SELECT rowid FROM neo_todo_roles
       WHERE todo_id = ? AND role = ? AND adapter = ? AND id = ? ORDER BY at DESC, rowid DESC LIMIT 1)`).run(

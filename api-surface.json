@@ -58522,6 +58522,16 @@
           "provenance": {
             "type": "boolean"
           },
+          "role": {
+            "description": "Role on the todo: do, review, verify or check. Defaults to do.",
+            "enum": [
+              "do",
+              "review",
+              "verify",
+              "check"
+            ],
+            "type": "string"
+          },
           "sessionTitle": {
             "description": "For a Codex start, set a generic sessionTitle, never the task title. When omitted, the driver assigns the next free generic project name.",
             "maxLength": 200,

@@ -172,7 +172,10 @@ export const StartWorkInputSchema = z.object({
     .min(1)
     .optional()
     .describe('Agents must provide an open todo on an accepted human request.'),
-  role: z.string().trim().min(1).max(100).optional(),
+  role: z
+    .enum(['do', 'review', 'verify', 'check'])
+    .optional()
+    .describe('Role on the todo: do, review, verify or check. Defaults to do.'),
   adapter: z.string().min(1),
   place: PlaceSchema.optional(),
   title: z.string().trim().min(1).max(200),

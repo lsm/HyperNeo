@@ -6,6 +6,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
+import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import type { Result, WorkStarted } from '../../../packages/daemon/src/lib/drivers/types.ts';
 
 const run = resolve(process.argv.at(-1)!);
@@ -59,7 +60,15 @@ try {
   ]);
   db.prepare(`UPDATE neo_pack_preferences SET value_json='"long_lived"' WHERE pack='core' AND key='sessionReuse'`).run();
   todo('roles');
+  const invalid = await invokeOperation(registry, 'work.start', { adapter: 'hyperneo', place, title: 'roles', message: 'Synthetic', todoId: 'roles', role: 'custom' }, caller);
+  assert.equal(invalid.kind, 'failed');
+  assert.equal(invalid.kind === 'failed' && invalid.code, 'invalid_input');
   const author = await start('roles', 'do', [refs[1]]);
+  const sessions = new NeoTodoSessionRepository(db);
+  assert.equal(await sessions.write('claimWorker', author.ref, 'roles', 'review'), false);
+  await sessions.write('unclaimWorker', 'roles', author.ref, 'review');
+  const owner = db.prepare('SELECT claimed_by AS todoId FROM work_started_sessions WHERE adapter = ? AND id = ?').get(author.ref.adapter, author.ref.id) as { todoId: string | null };
+  assert.equal(owner.todoId, 'roles');
   const reviewer = await start('roles', 'review', [refs[0]]);
   assert.equal(author.reused, true);
   assert.equal(reviewer.reused, true);
@@ -67,8 +76,8 @@ try {
   assert.equal(reviewer.ref.id, refs[1].id);
   const rows = db.prepare(`SELECT role, adapter, id FROM neo_todo_roles WHERE todo_id='roles' ORDER BY rowid`).all();
   assert.deepEqual(rows, [{ role: 'do', ...refs[0] }, { role: 'review', ...refs[1] }]);
-  writeFileSync(join(run, 'evidence/worker-role-claims.json'), JSON.stringify({ seeded, author: author.ref, reviewer: reviewer.ref, bothReused: true, rows }, null, 2));
-  console.log('PASS: work.start reused separate idle workers and recorded their todo roles; count=2');
+  writeFileSync(join(run, 'evidence/worker-role-claims.json'), JSON.stringify({ seeded, invalidRole: invalid.kind, refusedSecondRole: true, owner, author: author.ref, reviewer: reviewer.ref, bothReused: true, rows }, null, 2));
+  console.log('PASS: invalid roles are refused and two roles keep independent reservations; count=2');
 } finally {
   await app.cleanup();
 }
