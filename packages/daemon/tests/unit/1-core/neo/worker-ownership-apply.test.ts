@@ -21,8 +21,16 @@ describe('reviewedWorkerOwnership', () => {
         humanNamed: id === 'named',
       }));
     const reviewed = ids.map((id) => ({ adapter: 'hyperneo', id }));
-    expect(reviewedWorkerOwnership(rows, touches, reviewed)).toEqual([
-      { adapter: 'hyperneo', id: 'start' },
-    ]);
+    expect(reviewedWorkerOwnership(rows, touches, reviewed)).toEqual({
+      selected: [{ adapter: 'hyperneo', id: 'start' }],
+      skipped: [
+        { adapter: 'hyperneo', id: 'weak', reason: 'weak' },
+        { adapter: 'hyperneo', id: 'claimed', reason: 'claimed' },
+      ],
+      invalid: ['send', 'adopt', 'bind', 'named', 'released'].map((id) => ({
+        adapter: 'hyperneo',
+        id,
+      })),
+    });
   });
 });
