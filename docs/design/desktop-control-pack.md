@@ -15,40 +15,40 @@
 ## Design
 
 1. **A `desktop` pack holds the Neo guidance.**
-   - Core keeps the operations, the opt-in rule and the preference.
-   - The pack's `instructions()` read facts each turn, as delegation does:
-     - whether the desktop app is connected (see "App connected" below);
-     - the preference value;
-     - whether `work.adapters` lists a Codex Desktop or Claude Desktop adapter.
-   - When the desktop app is not connected and neither adapter is listed, the pack adds nothing. People who never use the computer see no extra prompt.
+   - Core keeps the operations, the opt-in rule, the preference and the admission gate.
+   - The pack's `instructions()` read cached facts each turn (see Readiness): native ready, fallback ready, and the preference.
+   - When neither route is ready, the pack adds nothing. People who never use the computer see no extra prompt.
    - The guidance:
-     - Only a worker can call `desktop.call`. Neo adds the todo with `named.desktopControl: true` on a local worker.
-     - When the preference is not "allow", Neo sends a `desktop_control` question and the human taps Allow.
-     - Use native desktop control for every computer step, browser steps included.
-     - Use a Codex or Claude Desktop worker's own computer use only when native control is unavailable.
-     - Say once to the human what they must tap.
-   - The pack is on by default. It costs nothing when the app is absent.
-2. **One switch on the Desktop control panel.**
-   - The panel shows whenever the desktop app is connected, not only while a worker runs.
-   - Its switch reads and writes `core.desktopControl`, the same fact the card asks for:
+     - Only a worker can call `desktop.call`.
+     - Preference "allow": add the todo on a local worker with `named.desktopControl: true`.
+     - Otherwise (manual or unset): add the todo with desktopControl omitted. The admission gate refuses true in that case. Then send the existing `desktop_control` card with that todoId and the app, and the human taps Allow. The app-wide grant dialog from #11165 still asks about each app.
+     - Use native desktop control for every computer step, browser steps included. Use a fallback worker's own computer use only when native is not ready.
+     - When neither is ready, ask the human with the step that fixes it: open HyperNeo Desktop and grant its permissions, or do the step themselves.
+2. **One switch on the Desktop control panel** (slice 2).
+   - The panel shows whenever the desktop app answers, with zero workers too.
+   - The switch reads and writes `core.desktopControl`:
      - on = allow for tasks that need it;
      - off = manual approval per task.
-   - Turning it on when the app reports `desktop_permissions_required` opens the macOS Accessibility and Screen Recording prompts through the desktop app.
+   - Inside the desktop app, turning it on calls the existing `desktop_permission_status` command. If a permission is missing, it opens the existing permissions window, whose button calls `open_desktop_permission_settings`.
+   - Outside the desktop app (browser or phone), the panel shows the cached permission status. It says to open HyperNeo Desktop on that Mac to grant what is missing.
 3. **Refusals say what to do.**
    - A non-worker caller gets `desktop_worker_only` (#11286).
-   - The `neo.todo.add` refusal names the panel switch and the todo's "Let it use this computer" menu item, not "the Neo page".
-
-4. **Life-admin drops its Chrome DevTools route.**
+   - In slice 1, the `neo.todo.add` refusal names the todo's "Let it use this computer" menu item and the Allow card. Slice 2 adds the panel switch to that text and to the pack guidance.
+4. **Life-admin drops its Chrome DevTools route** (slice 3).
    - Its instructions point to the desktop pack instead of `chrome-devtools-user`.
    - Chrome DevTools reaches page content only. It cannot click extension popups such as a password manager, or browser dialogs, so tasks stall there.
-   - One route means one set of grants and one way to stop and take over.
+   - It lands after slices 1 and 2, so readiness and the not-ready path already exist.
 
-## App connected
+## Readiness
 
-- No operation reports this today. `desktop.status` lists only opted-in workers, and it probes `desktop/control.sock` only for them.
-- The daemon probes `desktop/control.sock` with the existing `appListening` check every 30 seconds, and caches the result in memory.
-- `desktop.status` returns that value as a top-level `app` field, which the panel reads.
-- The pack's synchronous `instructions()` reads the cached value.
+- **Native ready** = the desktop app answers a new `status` action on `desktop/control.sock` with both Accessibility and Screen Recording granted.
+  - The answer comes from `desktop_permission_status`.
+  - Socket reachability alone does not count.
+- **Fallback ready** = `work.adapters` lists a Codex Desktop or Claude Desktop adapter with health ok and the start capability.
+  - Listed, health-only or degraded adapters do not count.
+- The daemon refreshes both facts every 30 seconds and caches them in memory.
+- `desktop.status` returns them as top-level `app: {reachable, accessibility, screenRecording}`, which the panel reads.
+- The pack's synchronous `instructions()` read the cache.
 
 ## Not in scope
 
@@ -56,6 +56,6 @@
 
 ## PRs
 
-1. The `desktop` pack: guidance moved out of core prompts, plus the refusal text. This absorbs #11286.
-2. The panel switch, plus the permission prompt.
+1. The `desktop` pack, the readiness cache and the `status` socket action. The refusal text names the todo menu and the Allow card. This absorbs #11286.
+2. The panel switch, plus the permission flow. It adds the switch to the refusal text and the pack guidance.
 3. Life-admin instructions switched to the desktop pack.
