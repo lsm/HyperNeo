@@ -945,6 +945,29 @@ describe('daemon merge sweep behavior', () => {
     expect(warnings.some((args) => JSON.stringify(args).includes('previous attempt'))).toBe(true);
   });
 });
+test('merge retry rejects non-Neo callers before reading or writing', async () => {
+  let effects = 0;
+  const operation = createCodingRetryMergeOperation(
+    () => {
+      effects++;
+      throw new Error('Unexpected database access');
+    },
+    {
+      write: async () => {
+        effects++;
+        throw new Error('Unexpected ledger access');
+      },
+    } as unknown as CodingPrLedgerRepository
+  );
+  expect(
+    await operation.execute({ url, head }, { source: 'mcp', role: 'direct_task_worker' })
+  ).toEqual({
+    accepted: false,
+    reason: 'Only Neo can accept a stopped daemon merge report.',
+  });
+  expect(effects).toBe(0);
+});
+
 test('human merge operation adds and removes the label on explicit intent', async () => {
   const operation = createCodingHumanMergeOperation(spawn);
   const caller = { role: 'neo' } as Parameters<typeof operation.execute>[1];
