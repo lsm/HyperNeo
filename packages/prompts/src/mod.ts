@@ -263,6 +263,8 @@ import mdToolSpeechListen from './neo/tools/neo.speech.listen.md' with { type: '
 import mdToolSpeechPreview from './neo/tools/neo.speech.preview.md' with { type: 'text' };
 import mdToolSpeechSay from './neo/tools/neo.speech.say.md' with { type: 'text' };
 import mdToolVoiceTestSpeech from './neo/tools/voice.testSpeech.md' with { type: 'text' };
+import mdToolVoiceTestConnection from './neo/tools/voice.testConnection.md' with { type: 'text' };
+import mdToolVoiceTestLive from './neo/tools/voice.testLive.md' with { type: 'text' };
 import { buildPromptRegistry, fillPrompt } from './loader.ts';
 import mdruntimePostApprovalCompletion from './runtime/post-approval-completion.md' with {
   type: 'text',
@@ -722,6 +724,8 @@ export const NEO_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = Object.fr
     'neo/tools/neo.speech.preview.md': mdToolSpeechPreview,
     'neo/tools/neo.speech.say.md': mdToolSpeechSay,
     'neo/tools/voice.testSpeech.md': mdToolVoiceTestSpeech,
+    'neo/tools/voice.testConnection.md': mdToolVoiceTestConnection,
+    'neo/tools/voice.testLive.md': mdToolVoiceTestLive,
   })
 );
 
