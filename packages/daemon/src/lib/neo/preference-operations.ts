@@ -115,6 +115,21 @@ export function listPackPreferences(db: Database, pack?: string): NeoPackSetting
   }));
 }
 
+function isDeclaredPreference(packs: readonly NeoPack[], pack: string, key: string): boolean {
+  const preferences = packs.find((item) => item.id === pack)?.preferences;
+  return preferences !== undefined && Object.hasOwn(preferences, key);
+}
+
+export function listDeclaredPackPreferences(
+  db: Database,
+  packs: readonly NeoPack[],
+  pack?: string
+): NeoPackSetting[] {
+  return listPackPreferences(db, pack).filter((setting) =>
+    isDeclaredPreference(packs, setting.pack, setting.key)
+  );
+}
+
 export function validatePackPreference(input: Input, packs: readonly NeoPack[]) {
   const declarations = packs.find((pack) => pack.id === input.pack)?.preferences;
   const declaration =
@@ -180,7 +195,9 @@ export function createPackPreferenceOperations(
     .input(['input'])
     .pipe(
       (input: z.infer<typeof Address>) => {
-        const saved = getNeoPackPreference(db, input.pack, input.scope, input.key);
+        const saved = isDeclaredPreference(packs(), input.pack, input.key)
+          ? getNeoPackPreference(db, input.pack, input.scope, input.key)
+          : null;
         return { preference: saved ? { ...saved, pack: input.pack, key: input.key } : null };
       },
       'input',
@@ -190,10 +207,13 @@ export function createPackPreferenceOperations(
   const list = (superpipe({})('pack.preferences.list') as PipelineAPI)
     .input(['input'])
     .pipe(
-      (input: { pack?: string }) => ({
-        preferences: listPackPreferences(db, input.pack),
-        declarations: packs().find((pack) => pack.id === input.pack)?.preferences ?? {},
-      }),
+      (input: { pack?: string }) => {
+        const currentPacks = packs();
+        return {
+          preferences: listDeclaredPackPreferences(db, currentPacks, input.pack),
+          declarations: currentPacks.find((pack) => pack.id === input.pack)?.preferences ?? {},
+        };
+      },
       'input',
       'output'
     )

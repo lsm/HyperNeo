@@ -1,3 +1,4 @@
+import { runMigration528 } from './m528-retire-session-strategy.ts';
 import { runMigration526 } from './m526-neo-front-failure-reason.ts';
 import { runMigration528 } from './m528-work-compacted.ts';
 import { runMigration527 } from './m527-neo-question-option-details.ts';

@@ -71,7 +71,7 @@ import { readNeoSessionSource } from './session-open-source.ts';
 import { presentNeoPublications } from './publication-presentation.ts';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import { fillPrompt, NEO_PREFERENCE_CHANGED, NEO_SESSION_TRACK } from '@hyperneo/prompts';
-import { listPackPreferences, type PackPreferenceChange } from './preference-operations.ts';
+import { listDeclaredPackPreferences, type PackPreferenceChange } from './preference-operations.ts';
 import type {
   GlobalSettings,
   MessageHub,
@@ -1216,7 +1216,7 @@ export class NeoService {
   }
 
   packPreferences() {
-    return listPackPreferences(this.db.getDatabase());
+    return listDeclaredPackPreferences(this.db.getDatabase(), this.installedPacks());
   }
 
   async refreshPackPreferences(): Promise<void> {
