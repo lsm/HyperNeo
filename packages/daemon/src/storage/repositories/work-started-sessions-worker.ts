@@ -137,6 +137,67 @@ export function readTodoRoles(db: BunDatabase, todoId: string) {
   }[];
 }
 
+export function claimTodoWorker(
+  db: BunDatabase,
+  ref: StartedWork,
+  todoId: string | null,
+  role: string,
+  model: string | undefined,
+  effort: string | undefined,
+  checks: {
+    liveTodo: (id: string | null) => boolean;
+    isBound: (states: readonly string[]) => boolean;
+    liveStates: readonly string[];
+  }
+): boolean {
+  return db.transaction(() => {
+    const workers = readStartedWork(db);
+    const own = workers.find((worker) => worker.adapter === ref.adapter && worker.id === ref.id);
+    if (own?.releasedAt) return false;
+    if (own?.claimedBy !== todoId && checks.liveTodo(own?.claimedBy ?? null)) return false;
+    const holders = todoId ? checks.liveStates : [...checks.liveStates, 'done', 'removed'];
+    if (checks.isBound(holders)) return false;
+    if (!todoId) return true;
+    if (!checks.liveTodo(todoId)) return false;
+    const roles = readTodoRoles(db, todoId);
+    if (
+      workers.some(
+        (worker) =>
+          worker.claimedBy === todoId &&
+          worker !== own &&
+          (roles.find((entry) => entry.adapter === worker.adapter && entry.id === worker.id)
+            ?.role ?? 'do') === role
+      )
+    )
+      return false;
+    recordStartedWork(db, ref, Date.now(), false, false, { todoId });
+    recordTodoRole(db, todoId, role, ref, model, effort);
+    return true;
+  })();
+}
+
+export function unclaimTodoWorker(
+  db: BunDatabase,
+  todoId: string,
+  ref: StartedWork,
+  role: string
+): void {
+  db.transaction(() => {
+    const own = readStartedWork(db).find(
+      (worker) => worker.adapter === ref.adapter && worker.id === ref.id
+    );
+    if (own?.claimedBy !== todoId) return;
+    recordStartedWork(db, ref, Date.now(), false, false, { todoId: null });
+    db.prepare(`DELETE FROM neo_todo_roles WHERE rowid = (SELECT rowid FROM neo_todo_roles
+      WHERE todo_id = ? AND role = ? AND adapter = ? AND id = ? ORDER BY at DESC, rowid DESC LIMIT 1)`).run(
+      todoId,
+      role,
+      ref.adapter,
+      ref.id
+    );
+  })();
+}
+
 export function forgetWorkGone(db: BunDatabase, root: string): void {
   db.run('DELETE FROM work_cleanup_gone WHERE key = ?', workerWorkKey(root));
 }
