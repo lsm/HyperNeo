@@ -93,6 +93,7 @@ import { readNeoRuleApproval } from '../../storage/repositories/neo-rule-answer.
 
 import { createRestartReservationOperation } from '../system/restart-reservation.ts';
 import { voiceStreamsBusy } from '../rpc-handlers/voice-handlers.ts';
+import { admitNeoCaller, type Rejection } from './admission.ts';
 
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
 
@@ -285,7 +286,6 @@ const PackReadResult = z.union([
     instructions: z.string(),
   }),
 ]);
-type Rejection = { ok: false; reason: string };
 
 export function neoSnapshotRevision<T extends { ok: boolean }>(
   snapshot: T,
@@ -303,20 +303,6 @@ export function neoSnapshotRevision<T extends { ok: boolean }>(
         note: `unchanged since rev ${rev}: nothing changed since your last read. ${NEO_SNAPSHOT_UNCHANGED_GUIDANCE}`,
       }
     : { ...snapshot, rev };
-}
-
-function admitNeoCaller(
-  service: NeoService,
-  caller: OperationCaller,
-  name: string
-): { value: OperationCaller } | { reason: Rejection } {
-  if (isLocalUser(caller)) return { value: caller };
-  const binding = caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null;
-  if (caller.source !== 'mcp' || binding?.kind !== 'neo')
-    return { reason: { ok: false, reason: 'This operation belongs to Neo.' } };
-  if (['neo.restart', 'neo.session.track', 'neo.front.set'].includes(name))
-    return { reason: { ok: false, reason: 'This action needs the user.' } };
-  return { value: caller };
 }
 
 export function neoReorganizeRuntime(
