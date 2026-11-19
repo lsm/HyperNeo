@@ -18,7 +18,7 @@ import { ConnectionVault } from './vault.ts';
 import { googleClient, googleConnectionAttempt, type ConnectionStatus } from './status.ts';
 import { startGoogleLogin } from './google-login.ts';
 import { startMicrosoftLogin } from './microsoft-login.ts';
-import { createConnectionLifecycle } from './lifecycle.ts';
+import { createConnectionLifecycle, selectLoginStatus } from './lifecycle.ts';
 
 const policy = { safetyClass: 'human_only' as const, caller: 'local_user' as const };
 
@@ -96,6 +96,11 @@ export function createGoogleConnectionOperations(
 ) {
   const service = () => getGoogleConnectionService(db(), deps);
   type Service = Awaited<ReturnType<typeof service>>;
+  const login = (superpipe({})('connections.google.login') as PipelineAPI)
+    .input('input')
+    .pipe(async (_input: { loginId?: string }) => (await service()).statusFacts(), 'input', 'facts')
+    .pipe(selectLoginStatus, ['facts', 'input'], 'result')
+    .endAsync('result') as (input: { loginId?: string }) => Promise<ReturnType<Service['status']>>;
   const disconnect = (superpipe({})('connections.google.disconnect') as PipelineAPI)
     .input('input')
     .pipe(
@@ -131,7 +136,7 @@ export function createGoogleConnectionOperations(
       policy,
       inputSchema: z.object({ loginId: z.string().min(1).max(200).optional() }).strict(),
       resultSchema: googleConnectionAttempt,
-      execute: async ({ loginId }) => (await service()).status(loginId),
+      execute: login,
     }),
     defineOperation({
       name: 'connections.google.disconnect',
