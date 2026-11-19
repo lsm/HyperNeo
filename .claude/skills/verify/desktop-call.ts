@@ -94,6 +94,17 @@ try {
   sql.prepare("UPDATE neo_todos SET approved_at=NULL WHERE id='todo'").run();
   await call({ name: 'desktop.call', input });
   assert.equal(requests.length, 2);
+  sql.prepare("UPDATE neo_todos SET state='blocked', approved_at=? WHERE id='todo'").run(now);
+  const blocked = JSON.parse((await call({ name: 'desktop.call', input })).content[0].text);
+  assert.equal(blocked.dispatched, true, JSON.stringify(blocked));
+  sql.prepare("UPDATE neo_todos SET state='todo' WHERE id='todo'").run();
+  const pending = JSON.parse((await call({ name: 'desktop.call', input })).content[0].text);
+  assert.equal(pending.dispatched, true, JSON.stringify(pending));
+  sql.prepare("UPDATE neo_todos SET state='done' WHERE id='todo'").run();
+  const finished = JSON.parse((await call({ name: 'desktop.call', input })).content[0].text);
+  assert.equal(finished.reason, 'todo_not_active');
+  assert.equal(finished.dispatched, false);
+  assert.equal(requests.length, 4);
   writeFileSync(join(run, 'evidence/desktop-call.json'), JSON.stringify({ passed: true, hostRequests: requests.length, auditRows: audited.length, driverErrorBody: true, rpcRefused: true, sessionDoorRefused: true, spoofRefused: true, unlistedRefused: true, unapprovedRefused: true, describedTools: listedTools.length }, null, 2));
   console.log(`desktop.call journey PASS host_requests=2 audit_rows=2 driver_error_body=1 refused_paths=5 described_tools=${listedTools.length}`);
 } finally {
