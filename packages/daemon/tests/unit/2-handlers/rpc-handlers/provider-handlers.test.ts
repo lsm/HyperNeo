@@ -345,6 +345,44 @@ describe('Provider RPC handlers', () => {
     });
   });
 
+  describe('voice credential namespace', () => {
+    it('rejects creating a provider with a voice host credential id', async () => {
+      await expect(
+        setup().get('providers.create')!(
+          {
+            params: {
+              providerId: 'voice-transcription:api.example.com',
+              displayName: 'Voice',
+              kind: 'built_in',
+              authType: 'api_key',
+            },
+            credentials: { apiKey: 'other-key' },
+          },
+          {}
+        )
+      ).rejects.toThrow('reserved');
+    });
+
+    it('rejects updates and deletion of existing voice host credential ids', async () => {
+      const record = repo.createProvider({
+        providerId: 'voice-transcription:api.example.com',
+        displayName: 'Voice',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      const handlers = setup();
+      await expect(
+        handlers.get('providers.update')!(
+          { id: record.id, params: {}, credentials: { apiKey: 'other-key' } },
+          {}
+        )
+      ).rejects.toThrow('reserved');
+      await expect(handlers.get('providers.delete')!({ id: record.id }, {})).rejects.toThrow(
+        'reserved'
+      );
+    });
+  });
+
   describe('providers.create', () => {
     it('creates a provider and stores credentials', async () => {
       const handlers = setup();

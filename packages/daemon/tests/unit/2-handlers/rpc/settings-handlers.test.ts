@@ -387,6 +387,45 @@ describe('Settings RPC Handlers', () => {
       );
     });
 
+    it('refuses changing the recorded host while preserving an inline legacy key', async () => {
+      const credentialManager = createMockCredentialManager();
+      settingsManagerData.mocks.getGlobalSettings.mockReturnValue({
+        ...defaultGlobalSettings,
+        voice: {
+          enabled: true,
+          endpoint: 'https://old.example/transcribe',
+          model: 'test',
+          apiKey: 'legacy-secret',
+        },
+      });
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        credentialManager.manager
+      );
+      const handler = hubData.handlers.get('settings.global.update')!;
+      await expect(
+        handler(
+          {
+            updates: {
+              voice: {
+                enabled: true,
+                endpoint: 'https://new.example/transcribe',
+                model: 'test',
+                live: { provider: 'deepgram', endpoint: 'wss://live.example/listen' },
+                hostKey: { host: 'live.example', apiKey: 'live-secret' },
+              },
+            },
+          },
+          {}
+        )
+      ).rejects.toThrow('legacy');
+      expect(credentialManager.storeApiKey).not.toHaveBeenCalled();
+    });
+
     it('stores a host key without returning it in settings or events', async () => {
       const credentialManager = createMockCredentialManager();
       const hubData = createMockMessageHub();
