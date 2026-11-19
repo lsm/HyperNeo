@@ -8,6 +8,31 @@ import type { ProviderCredentialManager } from '../credentials/provider-credenti
 
 const VOICE_CREDENTIAL_PROVIDER_ID = 'voice-transcription';
 
+export async function savedVoiceKeys(
+  voice: VoiceSettings | undefined,
+  manager?: Pick<ProviderCredentialManager, 'listCredentialProviderIds' | 'getCredentials'>
+): Promise<string[]> {
+  const ids = (await manager?.listCredentialProviderIds()) ?? [];
+  const credentials = await Promise.all(
+    ids
+      .filter(
+        (id) =>
+          id === VOICE_CREDENTIAL_PROVIDER_ID || id.startsWith(`${VOICE_CREDENTIAL_PROVIDER_ID}:`)
+      )
+      .map((id) => manager!.getCredentials(id))
+  );
+  return [
+    voice?.apiKey,
+    ...credentials.map((item) => (item?.type === 'api_key' ? item.apiKey : undefined)),
+  ].filter((key): key is string => !!key);
+}
+
+export function redactVoiceReason(reason: string, keys: readonly string[]): string {
+  for (const key of [...keys].filter(Boolean).sort((a, b) => b.length - a.length))
+    reason = reason.replaceAll(key, '[key]');
+  return reason.slice(0, 500);
+}
+
 export interface VoiceParts {
   recorded?: VoiceRecordedPart;
   live?: VoiceLivePart;

@@ -13,22 +13,10 @@ import {
   type VoiceStreamDeps,
 } from './stream-relay.ts';
 import { createVoiceTranscribeLimiters, runVoiceTranscribe } from './transcribe-pipeline.ts';
+import { redactVoiceReason, savedVoiceKeys } from './voice-parts.ts';
 
 const Result = z.object({ ok: z.boolean(), reason: z.string().optional() });
 type Result = { ok: true } | { ok: false; reason: string };
-
-async function savedKeys(settings: SettingsManager, credentials?: ProviderCredentialManager) {
-  const ids = (await credentials?.listCredentialProviderIds()) ?? [];
-  const values = await Promise.all(
-    ids
-      .filter((id) => id === 'voice-transcription' || id.startsWith('voice-transcription:'))
-      .map((id) => credentials!.getCredentials(id))
-  );
-  return [
-    settings.getGlobalSettings().voice?.apiKey,
-    ...values.map((value) => (value?.type === 'api_key' ? value.apiKey : undefined)),
-  ].filter((key): key is string => !!key);
-}
 
 async function checkLive(
   settings: SettingsManager,
@@ -117,7 +105,10 @@ export function createVoiceTestOperations(
   ) =>
     (pipeline as PipelineAPI)
       .pipe(
-        async () => withVoiceCredentialLock(() => savedKeys(settings, credentials)),
+        async () =>
+          withVoiceCredentialLock(() =>
+            savedVoiceKeys(settings.getGlobalSettings().voice, credentials)
+          ),
         undefined,
         'keys'
       )
@@ -144,12 +135,8 @@ export function createVoiceTestOperations(
         async (result: Result, keys: string[]) => {
           if (result.ok) return result;
           return withVoiceCredentialLock(async () => {
-            let reason = result.reason;
-            for (const key of [...keys, ...(await savedKeys(settings, credentials))].sort(
-              (a, b) => b.length - a.length
-            ))
-              reason = reason.replaceAll(key, '[key]');
-            return { ok: false, reason: reason.slice(0, 500) };
+            const current = await savedVoiceKeys(settings.getGlobalSettings().voice, credentials);
+            return { ok: false, reason: redactVoiceReason(result.reason, [...keys, ...current]) };
           });
         },
         ['result', 'keys'],

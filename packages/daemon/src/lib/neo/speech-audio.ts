@@ -5,6 +5,7 @@ import { Logger } from '../logger.ts';
 import { voiceDiagnostic } from '../voice/diagnostics.ts';
 import type { ClientEventData } from '../operations/client-event-schemas.ts';
 import { readLimitedResponseText } from '../voice/transcribe-fetch.ts';
+import { redactVoiceReason } from '../voice/voice-parts.ts';
 import { withVoiceCredentialLock } from '../rpc-handlers/voice-credential-lock.ts';
 type Target = { id: string; sessionId: string; clientId: string; text: string };
 type SpeechRetry = { retryInMs: number } | { giveUp: string };
@@ -228,12 +229,10 @@ export class NeoSpeechAudio {
     }
     if (result.ok) return result;
     return withVoiceCredentialLock(async () => {
-      let reason = result.reason;
-      for (const key of [...snapshot.keys, ...(await savedKeys())]
-        .filter(Boolean)
-        .sort((a, b) => b.length - a.length))
-        reason = reason.replaceAll(key, '[key]');
-      return { ok: false as const, reason: reason.slice(0, 500) };
+      return {
+        ok: false as const,
+        reason: redactVoiceReason(result.reason, [...snapshot.keys, ...(await savedKeys())]),
+      };
     });
   }
 
