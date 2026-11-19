@@ -26,9 +26,9 @@ describe('root Neo system prompt', () => {
       expect(text).not.toContain('[message id');
     expect(neoPrompt([])).toContain('<human-message');
   });
-  test('adds every ask step with after before starting the first', () => {
+  test('adds every ask step with after before the first starts', () => {
     expect(NEO_ROOT_PROMPT).toContain(
-      'Add all ask steps as todos, each with after, before starting the first.'
+      'Add all ask steps as todos, each with after, before the first starts.'
     );
   });
   test.each([false, true])(
