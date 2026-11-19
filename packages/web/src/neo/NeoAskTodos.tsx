@@ -101,6 +101,8 @@ function ChoiceOptionText({
 export function neoQuestionAnswerLabel(question: NeoQuestionEntry, todos: readonly NeoTodoEntry[]) {
   const answer = question.answer;
   if (answer === null) return '';
+  if (question.kind === 'desktop_control' && question.answeredBy === 'button' && answer === 'Allow')
+    return t('question.allow');
   if (question.kind === 'yesno' && question.answeredBy === 'button')
     return (answer === 'yes' ? question.yesLabel : question.noLabel) ?? String(answer);
   return Array.isArray(answer)
