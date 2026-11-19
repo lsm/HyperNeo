@@ -220,7 +220,7 @@ describe('todo automatic start', () => {
         todos: [step('X', []), { ...step('B', [0]), ...work }],
       });
       const [x, b] = opened.todos;
-      await invoke('neo.todo.hold', { todoId: b.id, reason: 'Human said wait.' });
+      await invoke('neo.todo.hold', { todoId: b.id, reason: 'Human said wait.', decision: true });
       const unrelated = reply(x.askId);
       store.updateTodo(store.getTodo(x.id)!, { state: 'done' }, Date.now());
       store.answerQuestion(unrelated, 'The next one', 'button', Date.now());
