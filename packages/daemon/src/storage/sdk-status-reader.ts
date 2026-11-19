@@ -2,6 +2,10 @@ import type { NeoCardSearchPage } from './neo-card-search.ts';
 import type { WorkDetail, WorkTurnFact } from '../lib/drivers/types.ts';
 import { runtimeWorkerUrl } from '../lib/runtime-worker-url.ts';
 import type { CodexSnapshot } from '../lib/drivers/codex-desktop-adapter.ts';
+import type {
+  CopilotDesktopRead,
+  CopilotDesktopSession,
+} from '../lib/drivers/copilot-desktop-adapter.ts';
 import type { ClaudeDesktopRecord } from './claude-desktop-read.ts';
 import type { PendingTurn } from './turn-vectors.ts';
 import type { Fact, NeoMessageStatusRef } from '../lib/neo/message-status.ts';
@@ -51,6 +55,7 @@ type SDKReadArgs =
   | MessageFeedArgs
   | { neoMessageStatus: NeoMessageStatusRef[] }
   | { claudeRecords: { sessionsDir: string } }
+  | { copilotDesktop: CopilotDesktopRead }
   | {
       codexSnapshot: {
         statePath: string;
@@ -73,6 +78,7 @@ export type SDKReadResult =
   | number
   | CodexSnapshot
   | ClaudeDesktopRecord[]
+  | CopilotDesktopSession[]
   | WorkTurnFact[];
 export type SDKStatusRequest = {
   id: number;
@@ -241,6 +247,10 @@ export class SDKStatusReader {
     return this.enqueue({ claudeRecords: { sessionsDir } }) as Promise<ClaudeDesktopRecord[]>;
   }
 
+  readCopilotDesktop(args: CopilotDesktopRead) {
+    return this.enqueue({ copilotDesktop: args }) as Promise<CopilotDesktopSession[]>;
+  }
+
   readCodexSnapshot(
     statePath: string,
     includeClosed: boolean,
@@ -309,7 +319,11 @@ export class SDKStatusReader {
   }
 
   private exchange(args: SDKReadArgs | null, queuedAt: number): Promise<SDKReadResult | null> {
-    if (this.dbPath === ':memory:' && args && !('codexSnapshot' in args || 'claudeRecords' in args))
+    if (
+      this.dbPath === ':memory:' &&
+      args &&
+      !('codexSnapshot' in args || 'claudeRecords' in args || 'copilotDesktop' in args)
+    )
       return Promise.reject(new Error('SDK reader needs a file-backed DB'));
     const worker = (this.worker ??= this.createWorker());
     const id = ++this.id,
@@ -347,15 +361,17 @@ export class SDKStatusReader {
                         ? 'claude-records'
                         : 'codexSnapshot' in args
                           ? 'codex-snapshot'
-                          : 'turnVectors' in args
-                            ? 'turn-vectors'
-                            : 'neoMessageStatus' in args
-                              ? 'neo-message-status'
-                              : 'feed' in args
-                                ? 'message-feed'
-                                : 'page' in args
-                                  ? 'sdk-page'
-                                  : 'sdk-status'
+                          : 'copilotDesktop' in args
+                            ? 'copilot-desktop'
+                            : 'turnVectors' in args
+                              ? 'turn-vectors'
+                              : 'neoMessageStatus' in args
+                                ? 'neo-message-status'
+                                : 'feed' in args
+                                  ? 'message-feed'
+                                  : 'page' in args
+                                    ? 'sdk-page'
+                                    : 'sdk-status'
               : 'close',
             id,
             epoch,
@@ -368,7 +384,7 @@ export class SDKStatusReader {
           },
         });
         if (error) {
-          if (!args || !('codexSnapshot' in args) || !timing?.error) {
+          if (!args || !('codexSnapshot' in args || 'copilotDesktop' in args) || !timing?.error) {
             this.worker = null;
             this.epoch++;
             worker.terminate();

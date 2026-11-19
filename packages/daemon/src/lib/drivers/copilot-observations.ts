@@ -2,16 +2,17 @@ import type { SessionEvent } from '@github/copilot-sdk';
 import { readCopilotHistory } from './copilot-history.ts';
 import { projectCopilotEvent } from './copilot-worker.ts';
 import { recentWorkInputs, workInput, TURN_REPLIES } from './work-messages.ts';
-import type { WorkInput, WorkDetail } from './types.ts';
+import { readTurnUrls } from '../../storage/hyperneo-turn-facts-read.ts';
+import { reject } from './work-operations.ts';
+import type { WorkInput, WorkDetail, WorkTurnFact, Result } from './types.ts';
 
 type State = Parameters<typeof projectCopilotEvent>[0];
 
-export function readCopilotObservations(
+function readCopilotInputs(
   file: string,
   id: string,
   inputs: State['inputs'],
-  known: (inputId: string) => boolean,
-  since?: number
+  known: (inputId: string) => boolean
 ) {
   let state: State = { status: 'queued', inputs: {} };
   readCopilotHistory(file, id, undefined, 10, 10, undefined, undefined, (event) => {
@@ -38,11 +39,61 @@ export function readCopilotObservations(
     const retained = Object.keys(state.inputs);
     if (retained.length > 64) delete state.inputs[retained[0]];
   });
-  const recentInputs: WorkInput[] = [];
-  const turnEnds: NonNullable<WorkDetail['turnEnds']> = [];
   const observations = { ...state.inputs };
   for (const [inputId, input] of Object.entries(inputs))
     observations[inputId] = { ...observations[inputId], ...input };
+  return observations;
+}
+
+export function readCopilotTurnFacts(
+  file: string,
+  id: string,
+  cursor?: string,
+  limit = 10,
+  inputs: State['inputs'] = {}
+): Result<{ turns: WorkTurnFact[] }> {
+  const turns: WorkTurnFact[] = [];
+  for (const [inputId, input] of Object.entries(readCopilotInputs(file, id, inputs, () => false))) {
+    const { at, endedAt, outcome } = input;
+    if (
+      input.state !== 'observed' ||
+      at === undefined ||
+      endedAt === undefined ||
+      !outcome ||
+      !Number.isFinite(at) ||
+      !Number.isFinite(endedAt)
+    )
+      continue;
+    const finalUrls = readTurnUrls([input.replyReport]);
+    turns.push({
+      id: inputId,
+      startedAt: at,
+      endedAt,
+      ended: outcome,
+      inputs: [inputId],
+      urls: finalUrls,
+      finalUrls,
+      complete: input.replyAvailability === 'complete',
+      cursor: JSON.stringify([id, endedAt, inputId]),
+    });
+  }
+  turns.sort((a, b) => a.endedAt - b.endedAt || a.id.localeCompare(b.id));
+  const offset = cursor ? turns.findIndex((turn) => turn.cursor === cursor) + 1 : 0;
+  if (cursor && !offset)
+    return reject('not_found', 'Copilot turn cursor is outside retained history.');
+  return { ok: true, value: { turns: turns.slice(offset, offset + limit) } };
+}
+
+export function readCopilotObservations(
+  file: string,
+  id: string,
+  inputs: State['inputs'],
+  known: (inputId: string) => boolean,
+  since?: number
+) {
+  const recentInputs: WorkInput[] = [];
+  const turnEnds: NonNullable<WorkDetail['turnEnds']> = [];
+  const observations = readCopilotInputs(file, id, inputs, known);
   for (const [inputId, input] of Object.entries(observations)) {
     if (input.state !== 'observed' || input.at === undefined || !Number.isFinite(input.at))
       continue;

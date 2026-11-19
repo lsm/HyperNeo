@@ -16,7 +16,8 @@ export function createCopilotFind(
   discovery: WorkAdapter,
   directory: string,
   owns: (id: string) => boolean,
-  summary: (id: string) => Promise<OwnedSummary | undefined>
+  summary: (id: string) => Promise<OwnedSummary | undefined>,
+  desktop?: WorkAdapter
 ) {
   let listing: Promise<string[]> | undefined;
   const list = () =>
@@ -56,14 +57,32 @@ export function createCopilotFind(
     return owned;
   };
   const load = async (query: FindQuery) => {
-    const [external, owned] = await Promise.allSettled([
+    const [external, owned, app] = await Promise.allSettled([
       Promise.resolve().then(() => discovery.find(query)),
       loadOwned(),
+      Promise.resolve().then(
+        () =>
+          desktop?.find({ includeClosed: true, all: true, limit: 0, idPrefix: query.idPrefix }) ??
+          []
+      ),
     ]);
     if (owned.status === 'rejected') throw owned.reason;
-    if (external.status === 'rejected' && !owned.value.length) throw external.reason;
+    if (
+      external.status === 'rejected' &&
+      !owned.value.length &&
+      !(app.status === 'fulfilled' && app.value.length)
+    )
+      throw external.reason;
+    if (
+      app.status === 'rejected' &&
+      !owned.value.length &&
+      external.status === 'fulfilled' &&
+      !external.value.length
+    )
+      throw app.reason;
     return {
       external: external.status === 'fulfilled' ? external.value : [],
+      desktop: app.status === 'fulfilled' ? app.value : [],
       owned:
         external.status === 'fulfilled'
           ? owned.value
@@ -74,22 +93,31 @@ export function createCopilotFind(
             })),
     };
   };
-  const combine = (loaded: { external: PlaceGroup[]; owned: OwnedSummary[] }, query: FindQuery) => {
+  const combine = (
+    loaded: { external: PlaceGroup[]; desktop: PlaceGroup[]; owned: OwnedSummary[] },
+    query: FindQuery
+  ) => {
+    const desktopIds = new Set(
+      loaded.desktop.flatMap((group) => group.work.map((work) => work.ref.id))
+    );
     const external = loaded.external.map((group) => {
-      const work = group.work.filter((item) => !owns(item.ref.id));
+      const work = group.work.filter((item) => !desktopIds.has(item.ref.id) && !owns(item.ref.id));
       return {
         ...group,
         work,
         openCount: Math.max(0, group.openCount - (group.work.length - work.length)),
       };
     });
-    const groups = loaded.owned.map(({ archived, ...work }) => ({
+    const desktopWork = loaded.desktop.flatMap((group) =>
+      group.work.filter((item) => !owns(item.ref.id))
+    );
+    const groups = [...desktopWork, ...loaded.owned].map(({ archived, ...work }) => ({
       place: work.place,
       lastActivityAt: work.lastActivityAt,
       openCount: archived ? 0 : 1,
       archivedCount: archived ? 1 : 0,
       adapters: [discovery.id],
-      work: [work],
+      work: [{ ...work, ...(archived ? { archived: true } : {}) }],
     }));
     const text = query.text?.toLowerCase();
     return mergePlaceGroups([...external, ...groups], Number.MAX_SAFE_INTEGER).flatMap((group) => {
@@ -99,7 +127,7 @@ export function createCopilotFind(
       const work = group.work
         .filter(
           (item) =>
-            (query.includeClosed || item.status !== 'stopped') &&
+            (query.includeClosed || (!item.archived && item.status !== 'stopped')) &&
             (placeMatches || item.title.toLowerCase().includes(text!))
         )
         .slice(0, query.all ? undefined : 20);

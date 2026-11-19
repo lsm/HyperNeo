@@ -28,6 +28,10 @@ import { createDriverHealthRuntime } from '../../drivers/driver-health-runtime.t
 import { createWorkCleanupRuntime } from '../../work-cleanup/runtime.ts';
 import { startCuChecker } from '../../drivers/codex-cu-reaper.ts';
 import { createCopilotAdapter } from '../../drivers/copilot-adapter.ts';
+import {
+  copilotDesktopStatePath,
+  createCopilotDesktopAdapter,
+} from '../../drivers/copilot-desktop-adapter.ts';
 import { codexWorkerHome, copilotWorkerDirectory } from '../../drivers/worker-directories.ts';
 import { ensureCodexDesktopProject } from '../../drivers/codex-desktop-project.ts';
 import { neoWorkerPermissionMode } from '@hyperneo/shared/types/settings';
@@ -439,7 +443,8 @@ function claudeDesktopAdapters(
 
 function copilotAdapters(
   ownSessions: () => ReadonlySet<string>,
-  context: FamilyOperationContext
+  context: FamilyOperationContext,
+  desktop: WorkAdapter
 ): WorkAdapter[] {
   if (!findExecutable(COPILOT_CLIENT.bin)) return [];
   const directory = copilotWorkerDirectory(context.deps.config.dbPath);
@@ -471,6 +476,7 @@ function copilotAdapters(
     homeDir: homedir(),
     folderExists: existsSync,
     makeFolder: (folder) => mkdirSync(folder),
+    desktop,
   });
   context.driverCleanup?.push(() => adapter.close());
   return [adapter];
@@ -599,6 +605,22 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       searchChats,
       prepareExecution
     );
+  const copilotDesktopPath = copilotDesktopStatePath(homedir());
+  const copilotDesktop = createCopilotDesktopAdapter(
+    (query, id) =>
+      existsSync(copilotDesktopPath)
+        ? context.deps.db.readCopilotDesktopAsync({ statePath: copilotDesktopPath, query, id })
+        : Promise.resolve([]),
+    machine,
+    homedir()
+  );
+  const copilotCli = copilotAdapters(
+    () => new Set(context.deps.db.listAcpSessionIds().map((session) => session.acpSessionId)),
+    context,
+    copilotDesktop
+  );
+  const copilot = () =>
+    copilotCli.length ? copilotCli : existsSync(copilotDesktopPath) ? [copilotDesktop] : [];
   const adapters = [
     createHyperneoAdapter({
       readTurnEnds: (sessionId, since) =>
@@ -638,10 +660,6 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       context.claudeInbox,
       desktop[0]
     ),
-    ...copilotAdapters(
-      () => new Set(context.deps.db.listAcpSessionIds().map((session) => session.acpSessionId)),
-      context
-    ),
   ];
   let selectedCodex = adapters.some((adapter) => adapter.id === 'codex-desktop')
     ? codexStatePath(homedir())
@@ -659,6 +677,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       adapters[0],
       ...(context.extensionAdapters?.({ searchChats: ownChats }) ?? []),
       ...adapters.slice(1),
+      ...copilot(),
     ];
   };
   const folder = neoUserFolder(context.deps.config.workspaceRoot);
@@ -925,15 +944,15 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       throw new Error('Worker input report was not accepted.');
   });
   registerWorkerInputDelivery(context.deps.jobProcessor, workerInputs);
-  const readTurns = (
+  const readTurns = async (
     sessionId: string,
     around: string | undefined,
     before: number,
     after: number,
     cursor?: WorkTurnPage['nextCursor']
   ) => {
-    for (const adapter of adapters) {
-      const page = adapter.readTurns?.(sessionId, around, before, after, cursor);
+    for (const adapter of [...adapters, ...copilot()]) {
+      const page = await adapter.readTurns?.(sessionId, around, before, after, cursor);
       if (page) return page;
     }
     return cursor?.copilot
@@ -955,7 +974,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
               adapter: input.adapter,
               marker: input.marker,
             })
-          : (adapters
+          : ([...adapters, ...copilot()]
               .find((adapter) => adapter.id === input.adapter)
               ?.readInput?.(sessionId, input.marker) ?? null),
       remote: remoteDaemons,

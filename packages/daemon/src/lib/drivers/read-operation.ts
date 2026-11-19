@@ -74,7 +74,7 @@ export interface ReadWorkDeps {
     before: number,
     after: number,
     cursor?: z.infer<typeof WorkReadCursor>
-  ): WorkTurn[] | WorkTurnPage | null;
+  ): WorkTurn[] | WorkTurnPage | null | Promise<WorkTurn[] | WorkTurnPage | null>;
   remote: RemoteDaemons;
   daemonName: string;
 }
@@ -118,7 +118,7 @@ export async function readLocalTurns(input: ReadInput, deps: ReadWorkDeps): Prom
         }
       : reject('not_found', 'No retained user input has that exact marker on this worker.');
   }
-  const turns = deps.readTurns(
+  const turns = await deps.readTurns(
     input.sessionId,
     input.around,
     input.before,
