@@ -15,7 +15,7 @@ Every completion sentence comes from the check. A missing file and missing
 artifact leave the todo blocked by its check; creating the file or registering the artifact lets
 the same completion door mark them done. The artifact branch seeds a historical
 check as a compatibility control; new artifact checks are refused without adding
-a row. New working-file evidence uses `core.evidence {path: absolute file path}`.
+a row. New working-file evidence uses `core.evidence {path: absolute path}`.
 Two synthetic cards answered through
 the human RPC door prove that both no and yes satisfy the recorded-answer check.
 For queued choice and text confirmations plus automatic successor dispatch,

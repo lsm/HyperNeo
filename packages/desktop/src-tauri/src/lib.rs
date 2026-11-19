@@ -1,4 +1,6 @@
 mod desktop_permissions;
+#[cfg(all(target_os = "macos", not(debug_assertions)))]
+mod permissions_page;
 #[cfg(target_os = "macos")]
 mod desktop_drivers;
 
@@ -362,7 +364,10 @@ fn fail_startup<R: Runtime>(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
 	let app = tauri::Builder::default()
-		.invoke_handler(tauri::generate_handler![desktop_permissions::desktop_permission_status])
+		.invoke_handler(tauri::generate_handler![
+			desktop_permissions::desktop_permission_status,
+			desktop_permissions::open_desktop_permission_settings
+		])
 		.plugin(tauri_plugin_shell::init())
 		.plugin(tauri_plugin_notification::init())
 		.plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -391,6 +396,15 @@ pub fn run() {
 					std::env::current_exe().map(|path| path.with_file_name("cua-driver")),
 					"/usr/bin:/bin:/usr/sbin:/sbin".into(),
 					app.state::<SidecarState>().child.clone(),
+					{
+						#[cfg(not(debug_assertions))]
+						{
+							let handle = app.handle().clone();
+							std::sync::Arc::new(move || permissions_page::ready_or_show(&handle))
+						}
+						#[cfg(debug_assertions)]
+						std::sync::Arc::new(|| true)
+					},
 				)) {
 					app.manage(control);
 				}

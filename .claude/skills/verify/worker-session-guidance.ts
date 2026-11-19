@@ -14,6 +14,10 @@ assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert(!existsSync(join(run, 'data/daemon.db')));
 mkdirSync(join(run, 'evidence'), { recursive: true });
 mkdirSync(join(run, 'workspace'), { recursive: true });
+const workspace = join(run, 'workspace');
+const checkout = resolve(import.meta.dir, '../../..');
+assert.equal(Bun.spawnSync(['git', 'clone', '-q', '--shared', '--no-checkout', checkout, workspace]).exitCode, 0);
+assert.equal(Bun.spawnSync(['git', '-C', workspace, 'remote', 'set-url', 'origin', 'https://github.com/example/synthetic.git']).exitCode, 0);
 writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
 const app = await createDaemonApp({
   config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }),
@@ -46,8 +50,12 @@ try {
       ? await rpc('operations.describe', { name })
       : JSON.parse((await mcp({ name: 'operations.describe', input: { name } })).content[0].text);
     descriptions[name] = response;
-    includes(JSON.stringify(response), 'for the matter', name);
-    includes(JSON.stringify(response), 'never a task title', name);
+    assert.equal(response.found, true, name);
+    for (const phrase of name === 'neo.todo.add'
+      ? ['project and a number', 'never for a task']
+      : ['for the matter', 'never a task title']) {
+      includes(response.description, phrase, name);
+    }
   }
   const sendDescription = JSON.parse((await mcp({ name: 'operations.describe', input: { name: 'message.send' } })).content[0].text);
   descriptions['message.send'] = sendDescription;
@@ -55,7 +63,7 @@ try {
   evidence.descriptions = descriptions;
   const prompt = String(app.sessionManager.getSessionFromDB(root)?.config.systemPrompt);
   evidence.neoSystemPrompt = prompt;
-  for (const phrase of ['for the matter', 'never a task title', 'work.rename', 'Coordination questions', 'never human cards']) includes(prompt, phrase, 'Neo system prompt');
+  for (const phrase of ['Keep workers in their own project', 'follow the naming rule in neo.todo.add', 'Coordination questions', 'never human cards']) includes(prompt, phrase, 'Neo system prompt');
   const db = app.db.getDatabase();
   db.prepare("INSERT INTO sessions(id,title,workspace_path,created_at,last_active_at,status,config,metadata,type) VALUES ('synthetic-worker','HyperNeo dev 1',?,'2026-10-25','2026-10-25','active','{}','{}','worker')").run(join(run, 'workspace'));
   const store = new NeoAskTodoRepository(db);
@@ -66,7 +74,9 @@ try {
     target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'synthetic-worker' } },
   });
   evidence.todoResult = result;
-  const messages = db.prepare("SELECT queue, payload FROM job_queue WHERE queue = 'mailbox'").all();
+  assert(result.ok, JSON.stringify(result));
+  const messages = db.prepare('SELECT target, message FROM work_delivery_inputs WHERE todo_id = ?').all(result.todo.id);
+  assert.equal(messages.length, 1, 'one durable input belongs to the todo');
   const brief = JSON.stringify(messages);
   evidence.workerMessages = messages;
   assert(brief.includes('SYNTHETIC_WORKER_GUIDANCE'), 'worker mailbox must receive the task through the real todo/send path');
