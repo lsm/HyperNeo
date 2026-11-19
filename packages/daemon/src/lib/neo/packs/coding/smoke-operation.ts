@@ -1,5 +1,5 @@
 import { neoToolDescription } from '@hyperneo/prompts';
-import superpipe, { type PipelineAPI } from 'superpipe';
+import superpipe, { type DescribedRunner, type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation } from '../../../operations/registry.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
@@ -34,6 +34,7 @@ export function createCodingSmokeOperation(
       'result'
     )
     .endAsync('result');
+  const description: DescribedRunner = record;
   return {
     ...defineOperation({
       name: 'neo.coding.smoke',
@@ -46,6 +47,6 @@ export function createCodingSmokeOperation(
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: (input) => record(input),
     }),
-    pipelineRunner: record,
+    pipelineRunner: description,
   };
 }
