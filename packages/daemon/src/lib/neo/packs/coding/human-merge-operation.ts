@@ -6,6 +6,7 @@ import { defineOperation, type OperationCaller } from '../../../operations/regis
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { buildGitHubLookupEnv } from '../../../github/gh-lookup-helpers.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
+import type { NeoPackOperation } from '../../pack-contract.ts';
 
 export const createCodingHumanMergeOperation = (
   spawn: SpawnFn = spawnProcess,
@@ -43,12 +44,15 @@ export const createCodingHumanMergeOperation = (
     .input(['input', 'caller'])
     .pipe(update, ['input', 'caller'], 'result')
     .endAsync('result') as typeof update;
-  return defineOperation({
-    name: 'neo.coding.merge.human',
-    description: neoToolDescription('neo.coding.merge.human'),
-    inputSchema: z.object({ url: z.string().url(), enabled: z.boolean() }).strict(),
-    resultSchema: z.object({ accepted: z.boolean(), reason: z.string().optional() }),
-    policy: { safetyClass: 'mutate', roles: ['neo'] },
-    execute: run,
-  });
+  return {
+    ...defineOperation({
+      name: 'neo.coding.merge.human',
+      description: neoToolDescription('neo.coding.merge.human'),
+      inputSchema: z.object({ url: z.string().url(), enabled: z.boolean() }).strict(),
+      resultSchema: z.object({ accepted: z.boolean(), reason: z.string().optional() }),
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: run,
+    }),
+    pipelineRunner: run as unknown as NonNullable<NeoPackOperation['pipelineRunner']>,
+  };
 };

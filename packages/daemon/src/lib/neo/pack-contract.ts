@@ -7,6 +7,7 @@ import type { WorkRef } from '../drivers/types.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import type { NeoStatusLine } from './status-codes.ts';
 import type { OperationDefinition } from '../operations/registry.ts';
+import type { DescribedRunner } from 'superpipe';
 import type { NeoAttentionEvent, NeoAttentionKind } from './attention/decide.ts';
 import type { z } from 'zod';
 import type { PackPreferenceInput } from './preference-operations.ts';
@@ -126,9 +127,13 @@ export interface NeoTrackerAdapter {
   close(ref: string, outcome: 'completed' | 'not_planned'): Promise<true | { reason: string }>;
 }
 
+export type NeoPackOperation = OperationDefinition & {
+  readonly pipelineRunner?: OperationDefinition['execute'] & DescribedRunner;
+};
+
 export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
   forgetRepositories?(repos: readonly string[]): void;
-  operations?: readonly OperationDefinition[];
+  operations?: readonly NeoPackOperation[];
   preferences?: Record<string, NeoPackPreferenceDeclaration>;
   workKinds?: readonly NeoWorkKind[];
   rankLines?(
