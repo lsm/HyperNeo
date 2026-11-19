@@ -538,7 +538,7 @@ export function countPipelineRoutes(
               ts.SyntaxKind.BarBarToken,
               ts.SyntaxKind.QuestionQuestionToken,
             ].includes(node.operatorToken.kind)) ||
-          (ts.isCallExpression(node) && !!(node.flags & ts.NodeFlags.OptionalChain))
+          !!(node.flags & ts.NodeFlags.OptionalChain)
         )
           return;
         if (

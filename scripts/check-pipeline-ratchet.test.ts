@@ -122,6 +122,8 @@ test.each([
   'condition ? run() : fallback()',
   'queue(() => run())',
   'run?.()',
+  'options?.[run()]',
+  'options?.method(run())',
 ])('a conditional or deferred pipeline call stays unreadable: %s', (expression) => {
   const source = `import superpipe from 'superpipe';
     import { defineOperation } from './registry.ts';
@@ -130,6 +132,16 @@ test.each([
   expect(
     countPipelineRoutes(new Map([['packages/demo/src/added.ts', source]]), true).unreadable
   ).toBe(1);
+});
+
+test('an unconditional pipeline call remains readable beside an optional access', () => {
+  const source = `import superpipe from 'superpipe';
+    import { defineOperation } from './registry.ts';
+    const run = superpipe({})('demo.maybe').end();
+    defineOperation({ name: 'demo.maybe', execute: () => [run(), options?.[run()]] });`;
+  expect(
+    countPipelineRoutes(new Map([['packages/demo/src/added.ts', source]]), true).unreadable
+  ).toBe(0);
 });
 
 test('an optional pipeline call inside a helper stays unreadable', () => {
