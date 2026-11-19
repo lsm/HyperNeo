@@ -128,7 +128,10 @@ describe('neo.session.archive', () => {
   test("checks Neo's started-session record through the database gateway", async () => {
     const raw = db.getDatabase();
     const prepare = raw.prepare.bind(raw);
-    const inGateway = () => (raw as unknown as { inTransaction: boolean }).inTransaction;
+    const inGateway = () => {
+      const flags = raw as unknown as { isTransaction?: boolean; inTransaction?: boolean };
+      return flags.isTransaction ?? flags.inTransaction ?? false;
+    };
     const direct: string[] = [];
     const watched = async (call: () => Promise<unknown>) => {
       raw.prepare = ((sql: string) => {
