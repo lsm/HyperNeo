@@ -166,6 +166,7 @@ test.each([
   `() => { const inner = superpipe({})('demo.maybe').end(); return condition ? inner() : null; }`,
   `() => condition && superpipe({})('demo.maybe').end()()`,
   `() => superpipe({})('demo.maybe').unknown().end()()`,
+  `() => (superpipe({})('demo.maybe').input?.(f) as Builder).end()()`,
   `() => { const inner = superpipe({})('demo.maybe').end(); return queue(() => inner()); }`,
 ])('a conditional inline pipeline stays unreadable: %s', (execute) => {
   const source = `import superpipe from 'superpipe';
@@ -178,6 +179,9 @@ test.each([
 
 test.each([
   `() => superpipe({})('demo.maybe').end()()`,
+  `() => ((superpipe({})('demo.maybe') as Builder).input(f as G).end() as Runner)()`,
+  `() => { const inner = ((superpipe({})('demo.maybe') as Builder).input(f as G).end() as Runner); return inner(); }`,
+  `() => (superpipe({})('demo.maybe')!).end()()`,
   `() => { const inner = superpipe({})('demo.maybe').end(); return inner(); }`,
 ])('an unconditional inline pipeline is readable: %s', (execute) => {
   const source = `import superpipe from 'superpipe';

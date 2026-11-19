@@ -2,7 +2,10 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, normalize, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
-import { createLocalPipelineResolver } from './pipeline-route-resolver.ts';
+import {
+  createLocalPipelineResolver,
+  unwrapPipelineExpression,
+} from './pipeline-route-resolver.ts';
 
 export { createLocalPipelineResolver } from './pipeline-route-resolver.ts';
 
@@ -515,24 +518,34 @@ export function countPipelineRoutes(
       find(parsed);
       if (!execute || !ts.isArrowFunction(execute)) return false;
       const isInlineRunner = (expression: ts.Expression): boolean => {
+        const runner = unwrapPipelineExpression(expression);
         if (
           inlineOffset === undefined ||
-          expression.getStart(parsed) !== inlineOffset ||
-          !ts.isCallExpression(expression) ||
-          !ts.isPropertyAccessExpression(expression.expression) ||
-          !['end', 'endAsync'].includes(expression.expression.name.text)
+          !ts.isCallExpression(runner) ||
+          !!(runner.flags & ts.NodeFlags.OptionalChain) ||
+          !ts.isPropertyAccessExpression(runner.expression) ||
+          !['end', 'endAsync'].includes(runner.expression.name.text)
         )
           return false;
-        let current = expression.expression.expression;
+        let current = unwrapPipelineExpression(runner.expression.expression);
         while (ts.isCallExpression(current) && ts.isPropertyAccessExpression(current.expression)) {
-          if (!['input', 'pipe'].includes(current.expression.name.text)) return false;
-          current = current.expression.expression;
+          if (
+            current.flags & ts.NodeFlags.OptionalChain ||
+            !['input', 'pipe'].includes(current.expression.name.text)
+          )
+            return false;
+          current = unwrapPipelineExpression(current.expression.expression);
         }
+        if (!ts.isCallExpression(current) || current.flags & ts.NodeFlags.OptionalChain)
+          return false;
+        const factory = unwrapPipelineExpression(current.expression);
+        if (!ts.isCallExpression(factory) || factory.flags & ts.NodeFlags.OptionalChain)
+          return false;
+        const identifier = unwrapPipelineExpression(factory.expression);
         return (
-          ts.isCallExpression(current) &&
-          ts.isCallExpression(current.expression) &&
-          ts.isIdentifier(current.expression.expression) &&
-          current.expression.expression.text === 'superpipe'
+          ts.isIdentifier(identifier) &&
+          identifier.text === 'superpipe' &&
+          identifier.getStart(parsed) === inlineOffset
         );
       };
       let body: ts.Node = execute.body;
