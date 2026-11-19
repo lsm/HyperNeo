@@ -83,7 +83,8 @@ async function archiveSession(
   ref: WorkRef,
   caller: OperationCaller,
   deps: Deps,
-  started: boolean
+  started: boolean,
+  raw: RawDatabase
 ): Promise<Archived> {
   if ('daemon' in route)
     return forwardWork(
@@ -98,7 +99,7 @@ async function archiveSession(
   try {
     const result = await route.local(ref, () => admitSessionArchive(ref, caller, deps.db, started));
     if (result.ok)
-      await gatewayFor(deps.db.getDatabase()).call(
+      await gatewayFor(raw).call(
         workStartedSessionWrites,
         'recordArchived',
         ref,
@@ -135,7 +136,7 @@ const runArchive = (superpipe({})('neo.session.archive') as PipelineAPI)
     ['outcome', 'ref', 'caller', 'deps', 'started'],
     'result:outcome'
   )
-  .pipe(archiveSession, ['outcome', 'ref', 'caller', 'deps', 'started'], 'outcome')
+  .pipe(archiveSession, ['outcome', 'ref', 'caller', 'deps', 'started', 'raw'], 'outcome')
   .endAsync('outcome') as (ref: WorkRef, caller: OperationCaller, deps: Deps) => Promise<Archived>;
 
 export function createNeoSessionArchiveOperation(deps: Deps) {
