@@ -713,6 +713,19 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
     }
   });
 
+  test('releases a per_ask worker whose target has no place', async () => {
+    const h = setup();
+    try {
+      h.reuse('per_ask');
+      await h.finishTodo(h.add({ verb: 'start', adapter: 'hyperneo' }));
+      await h.refresh();
+      expect(h.archived).toEqual([worker]);
+      expect(kept(h)).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('releases a long_lived worker whose target has no place', async () => {
     const h = setup();
     try {

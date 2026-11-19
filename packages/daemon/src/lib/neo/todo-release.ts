@@ -83,7 +83,7 @@ export function followSessionReuse(
 ): { value: WorkRef } | { reason: Kept } {
   const keep =
     facts?.mode === 'per_ask'
-      ? facts.askOpen
+      ? facts.hasFolder && facts.askOpen
       : facts?.mode === 'long_lived'
         ? facts.hasFolder && !facts.newerFree
         : false;
