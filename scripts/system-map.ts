@@ -535,6 +535,9 @@ export function countPipelineRoutes(
             ts.SyntaxKind.AmpersandAmpersandToken,
             ts.SyntaxKind.BarBarToken,
             ts.SyntaxKind.QuestionQuestionToken,
+            ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+            ts.SyntaxKind.BarBarEqualsToken,
+            ts.SyntaxKind.QuestionQuestionEqualsToken,
           ].includes(node.operatorToken.kind)
         ) {
           visit(node.left);

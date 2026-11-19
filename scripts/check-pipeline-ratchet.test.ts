@@ -119,6 +119,9 @@ test('a pipeline in another function cannot hide an unreadable route', () => {
 
 test.each([
   'condition && run()',
+  'memo &&= run()',
+  'memo ||= run()',
+  'memo ??= run()',
   'condition ? run() : fallback()',
   'queue(() => run())',
   'run?.()',
@@ -144,18 +147,20 @@ test('an unconditional pipeline call remains readable beside an optional access'
   ).toBe(0);
 });
 
-test.each(['run() ?? fallback()', 'run() || fallback()', 'run() && fallback()'])(
-  'a pipeline call on the left of a short-circuit expression is readable: %s',
-  (expression) => {
-    const source = `import superpipe from 'superpipe';
+test.each([
+  'run() ?? fallback()',
+  'run() || fallback()',
+  'run() && fallback()',
+  'run().value ??= fallback()',
+])('a pipeline call on the left of a short-circuit expression is readable: %s', (expression) => {
+  const source = `import superpipe from 'superpipe';
       import { defineOperation } from './registry.ts';
       const run = superpipe({})('demo.maybe').end();
       defineOperation({ name: 'demo.maybe', execute: () => ${expression} });`;
-    expect(
-      countPipelineRoutes(new Map([['packages/demo/src/added.ts', source]]), true).unreadable
-    ).toBe(0);
-  }
-);
+  expect(
+    countPipelineRoutes(new Map([['packages/demo/src/added.ts', source]]), true).unreadable
+  ).toBe(0);
+});
 
 test.each([
   `() => { const inner = superpipe({})('demo.maybe').end(); return condition ? inner() : null; }`,
