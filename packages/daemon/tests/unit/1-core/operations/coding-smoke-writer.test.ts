@@ -86,6 +86,7 @@ for (const readOnly of [false, true]) {
         return deploys;
       }
     );
+    expect(operation.pipelineRunner.pipeline.name).toBe(operation.name);
     const call = (value = smoke) =>
       operation.execute(
         { todoId: 'todo', url, head, smoke: value },
