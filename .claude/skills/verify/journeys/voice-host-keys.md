@@ -31,4 +31,17 @@ VERIFY_LEGACY=1 RUN="$RUN" VERIFY_PORT=9311 bun .claude/skills/verify/voice-host
 Seed only after stopping the daemon and before restarting it; never modify a
 running daemon database or a real settings database.
 
-After both checks, stop the daemon and clean up as directed by the verify skill.
+After these checks, stop the daemon before the provider check below.
+
+For a provider created before the reservation, stop the daemon and seed its
+synthetic database, then restart and check the real provider RPCs:
+
+```bash
+sqlite3 "$RUN/data/daemon.db" "INSERT INTO providers (id, provider_id, display_name, kind, auth_type, is_enabled, created_at, updated_at) VALUES ('synthetic-legacy-provider', 'voice-transcription:old.example', 'Old', 'built_in', 'none', 0, 0, 0);"
+VERIFY_PORT=9311 bun .claude/skills/verify/voice-provider-reservation.ts
+```
+
+New prefixed provider creation must be refused; the old provider must update
+and delete successfully. Seed only while the isolated daemon is stopped.
+
+After the provider check, stop the daemon and clean up as directed by the verify skill.

@@ -44,7 +44,7 @@ function validateCreateParams(params: unknown): asserts params is CreateProvider
   const p = params as Record<string, unknown>;
   if (!p.providerId || typeof p.providerId !== 'string') throw new Error('providerId is required');
   if (isVoiceCredentialId(p.providerId))
-    throw new Error(`providerId '${VOICE_CREDENTIAL_PROVIDER_ID}' is reserved`);
+    throw new Error(`providerId '${p.providerId}' is reserved`);
   if (p.providerId.length > MAX_PROVIDER_ID_LEN)
     throw new Error(`providerId must be ≤ ${MAX_PROVIDER_ID_LEN} chars`);
   if (!p.displayName || typeof p.displayName !== 'string')
@@ -323,7 +323,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         const updates = validateUpdateParams(data.params);
         const existing = providerRepo.getProvider(data.id);
         if (!existing) throw new Error(`Provider ${data.id} not found`);
-        if (isVoiceCredentialId(existing.providerId))
+        if (existing.providerId === VOICE_CREDENTIAL_PROVIDER_ID)
           throw new Error(`providerId '${VOICE_CREDENTIAL_PROVIDER_ID}' is reserved`);
         const lock =
           existing.kind === 'custom_endpoint'
@@ -418,7 +418,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
   messageHub.onRequest('providers.delete', async (data: { id: string }) => {
     const record = providerRepo.getProvider(data.id);
     if (!record) throw new Error(`Provider ${data.id} not found`);
-    if (isVoiceCredentialId(record.providerId))
+    if (record.providerId === VOICE_CREDENTIAL_PROVIDER_ID)
       throw new Error(`providerId '${VOICE_CREDENTIAL_PROVIDER_ID}' is reserved`);
     const lock = record.kind === 'custom_endpoint' ? withCustomEndpointsLock : withProviderLock;
     return lock(async () => {
