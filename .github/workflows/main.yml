@@ -158,9 +158,6 @@ jobs:
       - name: Test getDatabase ratchet CLI
         run: bun run test:get-database
 
-      - name: Test pipeline ratchet CLI
-        run: bun run test:pipeline-ratchet
-
       - name: Test CI ratchet base
         run: bun run test:ci-ratchet-base
 
@@ -174,6 +171,9 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      - name: Test pipeline ratchet CLI
+        run: bun run test:pipeline-ratchet
 
       - name: Validate daemon shard configuration
         run: |

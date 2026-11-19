@@ -2,6 +2,7 @@ import { afterEach, expect, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { countPipelineRoutes } from './system-map.ts';
 
 const roots: string[] = [];
 afterEach(() => {
@@ -114,6 +115,91 @@ test('a pipeline in another function cannot hide an unreadable route', () => {
   const result = f.run();
   expect(result.code).toBe(1);
   expect(result.output).toContain('unreadable');
+});
+
+test.each([
+  'condition && run()',
+  'memo &&= run()',
+  'memo ||= run()',
+  'memo ??= run()',
+  'condition ? run() : fallback()',
+  'queue(() => run())',
+  'run?.()',
+  'options?.[run()]',
+  'options?.method(run())',
+])('a conditional or deferred pipeline call stays unreadable: %s', (expression) => {
+  const source = `import superpipe from 'superpipe';
+    import { defineOperation } from './registry.ts';
+    const run = superpipe({})('demo.maybe').end();
+    defineOperation({ name: 'demo.maybe', execute: () => ${expression} });`;
+  expect(
+    countPipelineRoutes(new Map([['packages/demo/src/added.ts', source]]), true).unreadable
+  ).toBe(1);
+});
+
+test('an unconditional pipeline call remains readable beside an optional access', () => {
+  const source = `import superpipe from 'superpipe';
+    import { defineOperation } from './registry.ts';
+    const run = superpipe({})('demo.maybe').end();
+    defineOperation({ name: 'demo.maybe', execute: () => [run(), options?.[run()]] });`;
+  expect(
+    countPipelineRoutes(new Map([['packages/demo/src/added.ts', source]]), true).unreadable
+  ).toBe(0);
+});
+
+test.each([
+  'run() ?? fallback()',
+  'run() || fallback()',
+  'run() && fallback()',
+  'run().value ??= fallback()',
+])('a pipeline call on the left of a short-circuit expression is readable: %s', (expression) => {
+  const source = `import superpipe from 'superpipe';
+      import { defineOperation } from './registry.ts';
+      const run = superpipe({})('demo.maybe').end();
+      defineOperation({ name: 'demo.maybe', execute: () => ${expression} });`;
+  expect(
+    countPipelineRoutes(new Map([['packages/demo/src/added.ts', source]]), true).unreadable
+  ).toBe(0);
+});
+
+test.each([
+  `() => { const inner = superpipe({})('demo.maybe').end(); return condition ? inner() : null; }`,
+  `() => condition && superpipe({})('demo.maybe').end()()`,
+  `() => { const inner = superpipe({})('demo.maybe').end(); return queue(() => inner()); }`,
+])('a conditional inline pipeline stays unreadable: %s', (execute) => {
+  const source = `import superpipe from 'superpipe';
+    import { defineOperation } from './registry.ts';
+    defineOperation({ name: 'demo.maybe', execute: ${execute} });`;
+  expect(
+    countPipelineRoutes(new Map([['packages/demo/src/added.ts', source]]), true).unreadable
+  ).toBe(1);
+});
+
+test('an optional pipeline call inside a helper stays unreadable', () => {
+  const source = `import superpipe from 'superpipe';
+    import { defineOperation } from './registry.ts';
+    const run = superpipe({})('demo.maybe').end();
+    const helper = () => run?.();
+    defineOperation({ name: 'demo.maybe', execute: () => helper() });`;
+  expect(
+    countPipelineRoutes(new Map([['packages/demo/src/added.ts', source]]), true).unreadable
+  ).toBe(1);
+});
+
+test('an early return before a pipeline call stays unreadable', () => {
+  const source = `const run = superpipe({})('demo.maybe').end();
+    defineOperation({ name: 'demo.maybe', execute: () => { if (condition) return; return run(); } });`;
+  expect(
+    countPipelineRoutes(new Map([['packages/demo/src/added.ts', source]]), true).unreadable
+  ).toBe(1);
+});
+
+test('a direct pipeline call inside a try-return stays readable', () => {
+  const source = `const run = superpipe({})('demo.try').end();
+    defineOperation({ name: 'demo.try', execute: async () => { try { return await run(); } catch { return null; } } });`;
+  expect(
+    countPipelineRoutes(new Map([['packages/demo/src/added.ts', source]]), true).unreadable
+  ).toBe(0);
 });
 
 test.each(['service.run()', 'service?.run()', '({...service.run()})'])(
