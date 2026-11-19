@@ -1,3 +1,4 @@
+import { markReviewedWorkers } from './work-started-sessions-worker.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { WorkerOwnershipReader } from './worker-ownership-read-worker.ts';
@@ -17,10 +18,7 @@ class WorkerOwnershipWriter {
           invalid,
           skipped,
         };
-      const update = this.db.prepare(
-        "UPDATE work_started_sessions SET role = 'worker' WHERE adapter = ? AND id = ? AND (role IS NULL OR role = '') AND released_at IS NULL AND claimed_by IS NULL"
-      );
-      for (const ref of selected) update.run(ref.adapter, ref.id);
+      markReviewedWorkers(this.db, selected);
       return { accepted: true as const, applied: selected, skipped };
     })();
   }
