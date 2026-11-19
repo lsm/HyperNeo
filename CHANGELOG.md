@@ -17,7 +17,7 @@ All notable changes to HyperNeo will be documented in this file.
 
 ### API compatibility
 
-Compared with v0.59.0, the pinned phone source inventory reports 4 breaking, 0 risky, and 1 safe method. Across all schema changes, the report lists 13 breaking, 0 risky, and 44 safe changes.
+Compared with v0.59.0, the pinned phone source inventory reports 4 breaking, 0 risky, and 1 safe method. Across all schema changes, the report lists 13 breaking, 0 risky, and 46 safe changes.
 
 - Question results remove `labels` and add `optionDetails` and `recommended`; `neo.question.answer` removes `when` and `where` inputs.
 - Three safe operations were added: `voice.testConnection`, `voice.testLive`, and `voice.testSpeech`.
