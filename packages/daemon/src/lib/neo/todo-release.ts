@@ -85,7 +85,7 @@ export function followSessionReuse(
     facts?.mode === 'per_ask'
       ? facts.askOpen
       : facts?.mode === 'long_lived'
-        ? !facts.newerFree
+        ? facts.hasFolder && !facts.newerFree
         : false;
   return keep ? { reason: { kept: 'kept_for_reuse' } } : { value: ref };
 }

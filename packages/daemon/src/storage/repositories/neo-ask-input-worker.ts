@@ -44,6 +44,7 @@ export function releaseReuseFacts(
 ): {
   mode: (typeof SESSION_REUSE_VALUES)[number];
   askOpen: boolean;
+  hasFolder: boolean;
   newerFree: boolean;
 } | null {
   const row = db
@@ -60,6 +61,8 @@ export function releaseReuseFacts(
            GROUP BY 1, 2
          )
          SELECT a.status = 'open' AS askOpen, a.project_id AS projectId,
+           (SELECT mine.folder FROM uses mine WHERE mine.adapter = json_extract(s.ref, '$.adapter')
+             AND mine.id = json_extract(s.ref, '$.id')) IS NOT NULL AS hasFolder,
            EXISTS (SELECT 1 FROM uses mine JOIN uses other
                ON other.adapter = mine.adapter AND other.id <> mine.id AND other.folder = mine.folder
              WHERE mine.adapter = json_extract(s.ref, '$.adapter') AND mine.id = json_extract(s.ref, '$.id')
@@ -70,7 +73,12 @@ export function releaseReuseFacts(
          JOIN neo_asks a ON a.id = t.ask_id
          WHERE s.todo_id = ?`
     )
-    .get(todoId) as { askOpen: number; projectId: string | null; newerFree: number } | null;
+    .get(todoId) as {
+    askOpen: number;
+    projectId: string | null;
+    hasFolder: number;
+    newerFree: number;
+  } | null;
   if (!row) return null;
   const scope = row.projectId
     ? { kind: 'project' as const, key: row.projectId }
@@ -79,6 +87,7 @@ export function releaseReuseFacts(
   return {
     mode: SESSION_REUSE_VALUES.find((value) => value === saved) ?? 'long_lived',
     askOpen: row.askOpen === 1,
+    hasFolder: row.hasFolder === 1,
     newerFree: row.newerFree === 1,
   };
 }
