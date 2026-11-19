@@ -6,12 +6,14 @@ Releases go directly from the `dev` branch via version tags.
 
 ### 1) Bump version and update changelog
 
-Create a branch from `dev`, bump the version in all `package.json` files, update `CHANGELOG.md`, and run `bun install` to update `bun.lock`:
+Create a branch from `dev`, bump the version in all `package.json` files, bump `packages/desktop/src-tauri/tauri.conf.json`, `Cargo.toml`, and the
+`hyperneo-desktop` entry in `Cargo.lock`, update `CHANGELOG.md`, and run `bun install` to update `bun.lock`:
 
 ```bash
 git checkout -b release/vX.Y.Z origin/dev
 # Update version in all package.json files: root, packages/*, npm/hyperneo,
 # npm/hyperneod (including its optionalDependencies pins)
+# Update desktop Tauri, Cargo package, and Cargo.lock versions
 # Add CHANGELOG.md entry
 bun install
 git commit -m "chore(release): bump version to X.Y.Z"
