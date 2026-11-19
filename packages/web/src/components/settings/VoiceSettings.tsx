@@ -129,7 +129,10 @@ export function VoiceSettings() {
     setHostKeys((keys) => ({ ...keys, [host]: '' }));
     void save(
       { ...draft, apiKey: undefined, hostKey: { host, ...(apiKey ? { apiKey } : {}) } },
-      { silent: true, successMessage: `Key ${apiKey ? 'saved' : 'removed'} for ${host}` }
+      {
+        silent: true,
+        successMessage: apiKey ? `Key saved for ${host}` : `No host-specific key saved for ${host}`,
+      }
     );
   };
 
@@ -289,10 +292,16 @@ export function VoiceSettings() {
                 disabled={saving}
                 autoComplete="new-password"
                 class={FORM_CONTROL_CLASS}
-                onInput={(event) =>
-                  setHostKeys((keys) => ({ ...keys, [host]: event.currentTarget.value }))
-                }
+                onInput={(event) => {
+                  const value = event.currentTarget.value;
+                  setHostKeys((keys) => ({ ...keys, [host]: value }));
+                }}
                 onBlur={(event) => {
+                  if (
+                    event.relatedTarget instanceof HTMLElement &&
+                    event.relatedTarget.getAttribute('aria-label') === `Remove API key for ${host}`
+                  )
+                    return;
                   const key = event.currentTarget.value.trim();
                   if (key) saveHostKey(host, key);
                 }}
@@ -300,6 +309,7 @@ export function VoiceSettings() {
               <button
                 type="button"
                 aria-label={`Remove API key for ${host}`}
+                onPointerDown={(event) => event.preventDefault()}
                 disabled={saving}
                 onClick={() => saveHostKey(host)}
                 class="rounded-md border border-danger/40 px-2 py-1 text-xs text-danger-soft transition-colors hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50"

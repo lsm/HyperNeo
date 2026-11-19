@@ -45,6 +45,8 @@ try {
   }
   const context = await browser.newContext({ storageState });
   const page = await context.newPage();
+  const sent = [];
+  page.on('websocket', (socket) => socket.on('framesent', (frame) => sent.push(String(frame.payload))));
   await page.goto(`${base}/settings?tab=voice`);
   const key = page.getByLabel('API key for api.deepgram.com', { exact: true });
   await key.fill('synthetic-browser-key');
@@ -58,12 +60,22 @@ try {
   await page.reload();
   await page.getByLabel('API key for api.deepgram.com', { exact: true }).waitFor({ timeout: 30000 });
   assert.equal(await page.getByLabel('API key for api.deepgram.com', { exact: true }).inputValue(), '');
-  await page.getByLabel('Remove API key for api.deepgram.com').click();
+  const remove = page.getByLabel('Remove API key for api.deepgram.com');
+  await key.fill('synthetic-unsaved-pointer');
+  await remove.click();
   await expectCount(0);
-  await page.getByText('Key removed for api.deepgram.com').waitFor();
+  await page.getByText('No host-specific key saved for api.deepgram.com').waitFor();
+  assert(!sent.some((frame) => frame.includes('synthetic-unsaved-pointer')));
+  assert.equal(await key.inputValue(), '');
+  await key.fill('synthetic-unsaved-keyboard');
+  await key.press('Tab');
+  await remove.press('Enter');
+  await expectCount(0);
+  assert(!sent.some((frame) => frame.includes('synthetic-unsaved-keyboard')));
+  assert.equal(await key.inputValue(), '');
   database.close();
   await context.close();
-  console.log(JSON.stringify({ screenshots: 4, uniqueHostFields: 2, passwordInputs: true, savedAndRemoved: true, feedbackShown: true }));
+  console.log(JSON.stringify({ screenshots: 4, uniqueHostFields: 2, passwordInputs: true, savedAndRemoved: true, feedbackShown: true, discardedWithoutSave: true }));
 } finally {
   await browser.close();
 }
