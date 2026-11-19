@@ -342,6 +342,7 @@ export function recordNeoReplyAnswer(
     receipt.ok &&
     words &&
     reply?.question?.state === 'open' &&
+    reply.question.kind !== 'desktop_control' &&
     !isHumanWorkDecision(reply.question) &&
     reply.ask?.sessionId === sessionId
   ) {

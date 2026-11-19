@@ -46,6 +46,8 @@ try {
       await page.getByText('Yes, allow it', { exact: true }).first().waitFor();
       const response = JSON.parse(execSync(`env -i HOME="${run}/home" PATH="${process.env.PATH}" NODE_ENV=test HYPERNEO_DATA_DIR="${run}/data" VERIFY_PORT=${port} bun .claude/skills/verify/rpc.ts neo.question.get '{"questionId":"${questionId}"}'`, { encoding: 'utf8' })).reply;
       assert.equal(response.question.state, 'open', 'chat must not answer the desktop control card');
+      const status = JSON.parse(execSync(`env -i HOME="${run}/home" PATH="${process.env.PATH}" NODE_ENV=test HYPERNEO_DATA_DIR="${run}/data" VERIFY_PORT=${port} bun .claude/skills/verify/rpc.ts desktop.status '{}'`, { encoding: 'utf8' })).reply;
+      assert.equal(status.workers.find((worker) => worker.worker === 'worker-dentist')?.state, 'off');
       await card.waitFor();
     }
     if (name === 'phone-dark') {
