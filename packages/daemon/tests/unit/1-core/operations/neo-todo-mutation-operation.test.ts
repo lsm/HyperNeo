@@ -271,6 +271,37 @@ describe('Writer-backed todo operation activation', () => {
     });
   });
 
+  test.each([false, true])(
+    'passive hold refuses an open card, including one opened during stop: %s',
+    async (late) => {
+      store.updateTodo(store.getTodo('first')!, { state: 'doing', startedAt: 3 }, 3);
+      const open = () =>
+        store.askQuestion(
+          'decision',
+          'ask',
+          {
+            kind: 'reply',
+            text: 'Answer first',
+            todoId: 'first',
+            options: null,
+            multiple: false,
+            yesLabel: null,
+            noLabel: null,
+          },
+          4
+        );
+      if (late) duringStop = open;
+      else open();
+      expect(await call('neo.todo.hold', { todoId: 'first', reason: 'Wait.' })).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('already_waiting'),
+      });
+      expect(store.getTodo('first')?.state).toBe('doing');
+      expect(store.getQuestion('decision')?.state).toBe('open');
+      expect(order).toEqual(late ? ['stop'] : []);
+    }
+  );
+
   test('a passive hold refuses a worker started after planning', async () => {
     beforeWrite = () =>
       store.updateTodo(store.getTodo('peer')!, { state: 'doing', startedAt: 4 }, 4);
