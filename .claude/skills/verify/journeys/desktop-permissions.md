@@ -8,7 +8,16 @@ On a macOS test host with a display, build a fresh desktop bundle from this
 checkout after the resource check. Use Bun 1.4.4 and run one build at a time.
 Start the bundle with `NODE_ENV=test`, a fresh HOME, data directory and DB, and
 no provider keys. Confirm port 9283 is free first. Do not attach to a human's
-running daemon.
+running daemon. The release asset check can run without a display:
+
+```bash
+cargo test --release --manifest-path packages/desktop/src-tauri/Cargo.toml \
+  --lib --features tauri/custom-protocol \
+  permissions_page::tests::release_bundle_contains_the_permissions_page_at_its_window_url
+```
+
+It checks the embedded page and script at the window URL and rejects the extra
+`loading/` prefix. This does not prove that a webview renders.
 
 On a test account with either permission absent, confirm no desktop permissions
 window appears at startup. Approve a todo with desktop control and invoke
