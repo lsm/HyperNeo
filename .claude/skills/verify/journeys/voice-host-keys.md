@@ -12,7 +12,9 @@ RUN="$RUN" VERIFY_PORT=9311 bun .claude/skills/verify/voice-host-keys.ts
 The helper first verifies that provider creation rejects a voice credential id. It
 then saves two synthetic credentials through the settings RPC, checks the
 replies omit them, and sends recorded audio to two isolated TLS servers. It
-asserts each server receives only its own host's key. Keep its result in the
+asserts each server receives only its own host's key. It removes a key after its
+host is no longer configured, then checks that host receives no key when restored.
+Keep its result in the
 run evidence, then stop the daemon before the legacy-key check below.
 
 To cover a pre-upgrade inline key, stop the isolated daemon, seed only its

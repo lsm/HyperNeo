@@ -322,12 +322,16 @@ async function prepareGlobalSettingsUpdate(
         return false;
       }
     });
-    if (!validHost) throw new Error('Voice key host requires a configured secure endpoint');
+    const key = hostKey.apiKey?.trim();
+    if (key && !validHost) throw new Error('Voice key host requires a configured secure endpoint');
+    const hostUrl = `https://${hostKey.host}`;
+    if (!URL.canParse(hostUrl) || new URL(hostUrl).host !== hostKey.host) {
+      throw new Error('Voice key host must be a valid host');
+    }
     if (newApiKey || (clearRequested && persistedVoice?.hasApiKey)) {
       throw new Error('Only one voice key may be changed at once');
     }
     mutation.providerId = `${VOICE_CREDENTIAL_PROVIDER_ID}:${hostKey.host}`;
-    const key = hostKey.apiKey?.trim();
     if (key) mutation.storeKey = key;
     else mutation.remove = true;
   }

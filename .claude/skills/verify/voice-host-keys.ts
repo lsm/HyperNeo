@@ -88,7 +88,16 @@ try {
     assert.equal((response as { text: string }).text, 'host proof');
   }
   assert.deepEqual(received, ['Bearer synthetic-first', 'Bearer synthetic-second']);
-  console.log(JSON.stringify({ providerNamespaceReserved: true, settingsRepliesRedacted: true, hostRequests: received.length, correctKeys: true }));
+  await call('settings.global.update', { updates: { voice: {
+    ...settings, endpoint: endpoints[1], hostKey: { host: new URL(endpoints[0]).host },
+  } } });
+  await call('settings.global.update', { updates: { voice: { ...settings, endpoint: endpoints[0] } } });
+  await call('voice.transcribe', {
+    audioBase64: Buffer.from(pcm16Wav(new Uint8Array(3200))).toString('base64'),
+    mimeType: 'audio/wav',
+  });
+  assert.equal(received[2], null);
+  console.log(JSON.stringify({ providerNamespaceReserved: true, settingsRepliesRedacted: true, hostRequests: received.length, correctKeys: true, removedHostKeyAbsent: true }));
   }
 } finally {
   socket.close();
