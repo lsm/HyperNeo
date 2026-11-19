@@ -19,6 +19,7 @@ export type WorkerOwnershipTouch = {
   id: string;
   verb: string;
   humanNamed: boolean;
+  live?: boolean;
 };
 
 export function inferWorkerOwnership(
@@ -146,14 +147,22 @@ export function createWorkerOwnershipBackfillOperations(db: Database) {
           reason: z.string(),
           invalid: z.array(z.object({ adapter: z.string(), id: z.string() })),
           skipped: z.array(
-            z.object({ adapter: z.string(), id: z.string(), reason: z.enum(['weak', 'claimed']) })
+            z.object({
+              adapter: z.string(),
+              id: z.string(),
+              reason: z.enum(['weak', 'claimed', 'live']),
+            })
           ),
         }),
         z.object({
           accepted: z.literal(true),
           applied: z.array(z.object({ adapter: z.string(), id: z.string() })),
           skipped: z.array(
-            z.object({ adapter: z.string(), id: z.string(), reason: z.enum(['weak', 'claimed']) })
+            z.object({
+              adapter: z.string(),
+              id: z.string(),
+              reason: z.enum(['weak', 'claimed', 'live']),
+            })
           ),
         }),
       ]),

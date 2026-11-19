@@ -45253,7 +45253,8 @@
                     "reason": {
                       "enum": [
                         "weak",
-                        "claimed"
+                        "claimed",
+                        "live"
                       ],
                       "type": "string"
                     }
@@ -45315,7 +45316,8 @@
                     "reason": {
                       "enum": [
                         "weak",
-                        "claimed"
+                        "claimed",
+                        "live"
                       ],
                       "type": "string"
                     }

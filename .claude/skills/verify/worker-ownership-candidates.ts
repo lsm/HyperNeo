@@ -20,10 +20,11 @@ try {
   const todos = new NeoAskTodoRepository(raw);
   const sessions = new NeoTodoSessionRepository(raw);
   todos.openAsk({ id: 'ask', sessionId: 'synthetic-neo', projectId: null, originMessageId: null, title: 'Synthetic', request: 'Synthetic', createdAt: 1 });
-  for (const id of ['created', 'changed', 'sent', 'adopted', 'bound', 'named', 'claimed', 'released']) {
+  for (const id of ['created', 'changed', 'live', 'live-todo', 'live-doing', 'sent', 'adopted', 'bound', 'named', 'claimed', 'released']) {
     raw.prepare('INSERT INTO work_started_sessions (adapter,id,started_at,claimed_by,released_at) VALUES (?, ?, ?, ?, ?)').run('claude-code', id, 1, id === 'claimed' ? 'todo-claimed' : null, id === 'released' ? 2 : null);
     if (['claimed', 'released'].includes(id)) continue;
     const todo = todos.addTodo(`todo-${id}`, 'ask', { title: id, doneWhen: 'Done', instruction: null, named: id === 'named' ? { session: 'human' } : null, check: null }, 1);
+    todos.updateTodo(todo, { state: 'done' }, 2);
     const ref = { adapter: 'claude-code', id };
     const target = id === 'sent' ? { verb: 'send' as const, ref } : id === 'adopted' ? { verb: 'adopt' as const, ref } : { verb: 'start' as const, adapter: 'claude-code' };
     sessions.create(todo.id, target);
@@ -46,7 +47,7 @@ try {
   });
   const list = await invoke('neo.workerOwnership.candidates', {});
   const ref = (id: string) => ({ adapter: 'claude-code', id });
-  const reviewed = ['created', 'changed', 'claimed'].map(ref);
+  const reviewed = ['created', 'changed', 'claimed', 'live', 'live-todo', 'live-doing'].map(ref);
   const refused = await invoke('neo.workerOwnership.apply', {});
   const empty = await invoke('neo.workerOwnership.apply', { reviewed: [], confirmedCount: 0 });
   const mismatch = await invoke('neo.workerOwnership.apply', { reviewed, confirmedCount: 2 });
@@ -57,17 +58,20 @@ try {
   assert.deepEqual(invalid, { accepted: false, reason: 'Some refs are not current candidates.', invalid: [ref('sent')], skipped: [] });
   assert.deepEqual(raw.prepare('SELECT * FROM work_started_sessions ORDER BY id').all(), before);
   raw.prepare("UPDATE work_started_sessions SET claimed_by = 'later' WHERE id = 'changed'").run();
+  raw.prepare("UPDATE neo_todos SET state = 'blocked' WHERE id = 'todo-live'").run();
+  raw.prepare("UPDATE neo_todos SET state = 'todo' WHERE id = 'todo-live-todo'").run();
+  raw.prepare("UPDATE neo_todos SET state = 'doing' WHERE id = 'todo-live-doing'").run();
   const applied = await invoke('neo.workerOwnership.apply', { reviewed, confirmedCount: reviewed.length });
   const again = await invoke('neo.workerOwnership.apply', { reviewed, confirmedCount: reviewed.length });
   const value = list as { notice: string; candidates: {id: string; evidence: {strength: string}}[] };
   assert.match(value.notice, /inferred, not proven/);
-  assert.deepEqual(value.candidates.map((candidate) => candidate.id), ['changed', 'claimed', 'created']);
+  assert.deepEqual(value.candidates.map((candidate) => candidate.id), ['changed', 'claimed', 'created', 'live', 'live-doing', 'live-todo']);
   assert.equal(value.candidates[1].evidence.strength, 'inferred, weak');
-  assert.deepEqual(applied, { accepted: true, applied: [ref('created')], skipped: [{ ...ref('changed'), reason: 'claimed' }, { ...ref('claimed'), reason: 'claimed' }] });
+  assert.deepEqual(applied, { accepted: true, applied: [ref('created')], skipped: [{ ...ref('changed'), reason: 'claimed' }, { ...ref('claimed'), reason: 'claimed' }, { ...ref('live'), reason: 'live' }, { ...ref('live-todo'), reason: 'live' }, { ...ref('live-doing'), reason: 'live' }] });
   assert.equal((again as {accepted: boolean}).accepted, false);
   const after = raw.prepare('SELECT id, role FROM work_started_sessions ORDER BY id').all() as { id: string; role: string | null }[];
   assert.deepEqual(after.filter(row => row.role === 'worker').map(row => row.id), ['created']);
   assert.equal(before.length, after.length);
   writeFileSync(join(run, 'evidence/worker-ownership.json'), JSON.stringify({ list, refused, empty, mismatch, invalid, applied, again, after }, null, 2));
-  console.log(`PASS candidates=${value.candidates.length} applied=1 repeated=refused protected=7`);
+  console.log(`PASS candidates=${value.candidates.length} applied=1 repeated=refused protected=10`);
 } finally { socket?.close(); await app.cleanup(); }
