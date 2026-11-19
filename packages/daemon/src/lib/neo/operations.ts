@@ -93,6 +93,7 @@ import { readNeoRuleApproval } from '../../storage/repositories/neo-rule-answer.
 
 import { createRestartReservationOperation } from '../system/restart-reservation.ts';
 import { voiceStreamsBusy } from '../rpc-handlers/voice-handlers.ts';
+import { validatePackRunner } from './pack-runner.ts';
 import { admitNeoCaller, type Rejection } from './admission.ts';
 
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
@@ -983,11 +984,14 @@ export function createNeoOperations(
       execute: (input, caller) => trackSession(input, caller, Date.now()),
     }),
     ...service.installedPacks().flatMap((pack) =>
-      (pack.operations ?? []).map((operation) => ({
-        ...operation,
-        pack: { id: pack.id, enabledIds: service.enabledOperationPackIds },
-        execute: path(operation.name, operation.execute),
-      }))
+      (pack.operations ?? []).map((operation) => {
+        validatePackRunner(operation);
+        return {
+          ...operation,
+          pack: { id: pack.id, enabledIds: service.enabledOperationPackIds },
+          execute: path(operation.name, operation.execute),
+        };
+      })
     ),
     defineOperation({
       name: 'neo.pack.read',
