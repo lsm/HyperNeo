@@ -287,6 +287,40 @@ export function createCodingAssignmentOperation(deps: Deps) {
     return { value: { ...base, ref, actor, effort, fallback: plan.fallback } };
   }
 
+  function hasReviewHandoff(
+    input: Input
+  ): input is Input & { handoff: NonNullable<Input['handoff']> } {
+    return !!input.handoff;
+  }
+
+  async function acceptReviewHandoff(input: Input & { handoff: NonNullable<Input['handoff']> }) {
+    const assignment = assignments.read(input.todoId, input.url, input.head).review;
+    if (
+      input.stage !== 'review' ||
+      !assignment?.bot ||
+      assignment.acceptanceContract !== input.acceptanceContract ||
+      isDeepStrictEqual(assignment.write, input.handoff.ref)
+    )
+      return {
+        ok: false as const,
+        reason: 'A bot assignment and an independent reviewer are required.',
+      };
+    const recorded = await gatewayFor(deps.db).call(
+      codingHandoffWrites,
+      'record',
+      input.todoId,
+      githubUrlKey(input.url),
+      input.head,
+      input.handoff
+    );
+    return recorded
+      ? { ok: true as const, assignment, reviewHandoff: input.handoff }
+      : {
+          ok: false as const,
+          reason: 'The review handoff is unaccepted, stale or already retired.',
+        };
+  }
+
   const assign = (superpipe({})('neo.coding.assign') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe((input: Input) => admit(input, deps), 'input', 'result:assignment')
@@ -388,33 +422,7 @@ export function createCodingAssignmentOperation(deps: Deps) {
         };
       running.add(input.todoId);
       try {
-        if (input.handoff) {
-          const assignment = assignments.read(input.todoId, input.url, input.head).review;
-          if (
-            input.stage !== 'review' ||
-            !assignment?.bot ||
-            assignment.acceptanceContract !== input.acceptanceContract ||
-            isDeepStrictEqual(assignment.write, input.handoff.ref)
-          )
-            return {
-              ok: false as const,
-              reason: 'A bot assignment and an independent reviewer are required.',
-            };
-          const recorded = await gatewayFor(deps.db).call(
-            codingHandoffWrites,
-            'record',
-            input.todoId,
-            githubUrlKey(input.url),
-            input.head,
-            input.handoff
-          );
-          return recorded
-            ? { ok: true as const, assignment, reviewHandoff: input.handoff }
-            : {
-                ok: false as const,
-                reason: 'The review handoff is unaccepted, stale or already retired.',
-              };
-        }
+        if (hasReviewHandoff(input)) return await acceptReviewHandoff(input);
         return await assign(input, caller);
       } finally {
         running.delete(input.todoId);
