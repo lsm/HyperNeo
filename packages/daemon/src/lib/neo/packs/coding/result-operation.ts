@@ -1,8 +1,8 @@
 import { neoToolDescription } from '@hyperneo/prompts';
 import { isDeepStrictEqual } from 'node:util';
-import superpipe, { type DescribedRunner, type PipelineAPI } from 'superpipe';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { defineOperation, type OperationDefinition } from '../../../operations/registry.ts';
+import { defineOperation } from '../../../operations/registry.ts';
 import { WorkRefSchema } from '../../../drivers/types.ts';
 import { CodingStageFact } from './stage-facts.ts';
 import type { CodingPrLedgerRepository } from './pr-ledger.ts';
@@ -48,7 +48,7 @@ export function createCodingResultOperation(
       'fact',
       'fact'
     )
-    .endAsync('fact') as (input: Input) => Promise<Result>;
+    .endAsync('fact');
   return {
     ...defineOperation({
       name: 'neo.coding.result',
@@ -58,6 +58,6 @@ export function createCodingResultOperation(
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: (input) => record(input),
     }),
-    pipelineRunner: record as unknown as OperationDefinition['execute'] & DescribedRunner,
+    pipelineRunner: record,
   };
 }
