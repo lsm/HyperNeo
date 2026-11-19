@@ -1,4 +1,4 @@
-import { readReleaseReuseRow } from './work-started-sessions-worker.ts';
+import { readReleaseReuseRow, readSameAskWorkers } from './work-started-sessions-worker.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
@@ -25,17 +25,7 @@ function sessionReuseFacts(db: Database, adapter: string, todoId: string, sessio
     : { kind: 'global' as const, key: '' };
   const saved = getNeoPackPreference(db, 'core', scope, 'sessionReuse');
   const mode = SESSION_REUSE_VALUES.find((value) => value === saved?.value) ?? 'long_lived';
-  const workers = db
-    .prepare(`SELECT json_extract(s.ref, '$.id') AS id,
-      MAX(COALESCE(t.started_at, t.created_at)) AS usedAt
-    FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
-    JOIN work_started_sessions w ON w.adapter = json_extract(s.ref, '$.adapter')
-      AND w.id = json_extract(s.ref, '$.id') AND w.role = 'worker'
-    WHERE t.ask_id = ? AND t.id <> ? AND json_extract(s.ref, '$.adapter') = ?
-      AND json_extract(s.ref, '$.daemon') IS NULL AND w.released_at IS NULL
-      AND (w.unusable_at IS NULL OR w.unusable_at <= ?)
-    GROUP BY w.adapter, w.id ORDER BY usedAt DESC`)
-    .all(row.askId, todoId, adapter, Date.now() - 3_600_000) as { id: string }[];
+  const workers = readSameAskWorkers(db, row.askId, todoId, adapter);
   return { ...row, scope, saved: !!saved, mode, sameAsk: workers.map(({ id }) => id) };
 }
 

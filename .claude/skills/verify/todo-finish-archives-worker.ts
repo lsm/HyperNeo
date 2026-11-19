@@ -57,6 +57,10 @@ try {
   evidence.removedStatus = await status(workers.removed);
   evidence.existingStatus = await status(workers.existing);
   evidence.releasedWorkers = raw.prepare('SELECT id FROM work_started_sessions WHERE released_at IS NOT NULL ORDER BY id').all();
+  evidence.archiveRecords = raw.prepare(`SELECT id, release_reason AS releaseReason, archived_at AS archivedAt,
+    archive_reason AS archiveReason FROM work_started_sessions WHERE archived_at IS NOT NULL ORDER BY id`).all();
+  assert.deepEqual((evidence.archiveRecords as { id: string }[]).map((row) => row.id), [workers.released, workers.neoNamed, workers.removed].sort());
+  assert((evidence.archiveRecords as { releaseReason: string; archiveReason: string }[]).every((row) => row.releaseReason && row.archiveReason));
   raw.prepare('UPDATE work_started_sessions SET unusable_at = NULL').run();
   evidence.freeLaterThanAnHour = [...readFreeWorkers(raw, 'hyperneo')].sort();
   evidence.releasedFacts = raw.prepare("SELECT todo_id, value_json FROM pack_facts WHERE pack = 'core' AND key = 'released'").all();

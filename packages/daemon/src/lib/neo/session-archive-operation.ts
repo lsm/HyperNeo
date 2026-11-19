@@ -1,10 +1,14 @@
 import { neoToolDescription } from '@hyperneo/prompts';
+import { Logger } from '../logger.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import type { Database as RawDatabase } from '../../storage/sqlite-compat.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
-import { workStartedSessionReads } from '../../storage/repositories/work-started-sessions-worker.ts';
+import {
+  workStartedSessionReads,
+  workStartedSessionWrites,
+} from '../../storage/repositories/work-started-sessions-worker.ts';
 import { isNeoConversationSession } from './publication-read-operation.ts';
 import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import {
@@ -31,6 +35,7 @@ type Deps = WorkVerbDeps & { db: Database };
 type ArchiveRoute = { daemon: string } | { local: NonNullable<WorkAdapter['archive']> };
 
 export const NEO_TODO_RELEASE_PRINCIPAL = 'neo.todo.release';
+const log = new Logger('neo-session-archive');
 
 function admitArchiveCaller(ref: WorkRef, caller: OperationCaller, db: RawDatabase) {
   const release = caller.source === 'internal' && caller.principal === NEO_TODO_RELEASE_PRINCIPAL;
@@ -80,7 +85,8 @@ async function archiveSession(
   ref: WorkRef,
   caller: OperationCaller,
   deps: Deps,
-  started: boolean
+  started: boolean,
+  raw: RawDatabase
 ): Promise<Archived> {
   if ('daemon' in route)
     return forwardWork(
@@ -93,7 +99,20 @@ async function archiveSession(
       deps.remote
     );
   try {
-    return await route.local(ref, () => admitSessionArchive(ref, caller, deps.db, started));
+    const result = await route.local(ref, () => admitSessionArchive(ref, caller, deps.db, started));
+    if (result.ok) {
+      try {
+        await gatewayFor(raw).call(
+          workStartedSessionWrites,
+          'recordArchived',
+          ref,
+          caller.principal === NEO_TODO_RELEASE_PRINCIPAL ? 'todo release' : 'archive requested'
+        );
+      } catch (error) {
+        log.warn('Archive provenance write failed', ref, error);
+      }
+    }
+    return result;
   } catch (error) {
     return reject('unreachable', error instanceof Error ? error.message : String(error));
   }
@@ -124,7 +143,7 @@ const runArchive = (superpipe({})('neo.session.archive') as PipelineAPI)
     ['outcome', 'ref', 'caller', 'deps', 'started'],
     'result:outcome'
   )
-  .pipe(archiveSession, ['outcome', 'ref', 'caller', 'deps', 'started'], 'outcome')
+  .pipe(archiveSession, ['outcome', 'ref', 'caller', 'deps', 'started', 'raw'], 'outcome')
   .endAsync('outcome') as (ref: WorkRef, caller: OperationCaller, deps: Deps) => Promise<Archived>;
 
 export function createNeoSessionArchiveOperation(deps: Deps) {

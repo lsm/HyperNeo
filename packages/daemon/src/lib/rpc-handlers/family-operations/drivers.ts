@@ -747,8 +747,11 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
           Date.now()
         ),
     } satisfies WorkVerbDeps['workInputs'],
-    recordStarted: (ref: StartedWork, directory?: string) =>
-      gatewayFor(db()).call(workStartedSessionWrites, 'recordStarted', ref, directory),
+    recordStarted: (
+      ref: StartedWork,
+      directory?: string,
+      facts?: Parameters<NonNullable<WorkVerbDeps['recordStarted']>>[2]
+    ) => gatewayFor(db()).call(workStartedSessionWrites, 'recordStarted', ref, directory, facts),
     freeWorkers: async (adapter: string, todoId?: string, sessionId?: string) =>
       new Map(
         await gatewayFor(db()).call(
@@ -816,8 +819,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       }
       return { mode: facts.mode, sameAsk: facts.sameAsk };
     },
-    markUnusable: (ref: StartedWork) =>
-      gatewayFor(db()).call(workStartedSessionWrites, 'markUnusable', ref),
+    markUnusable: (ref: StartedWork, reason: string) =>
+      gatewayFor(db()).call(workStartedSessionWrites, 'markUnusable', ref, reason),
     claimWorker: (ref: WorkRef, todoId?: string) =>
       new NeoTodoSessionRepository(db()).write('claimWorker', ref, todoId ?? null),
     unclaimWorker: (todoId: string, ref: WorkRef) =>

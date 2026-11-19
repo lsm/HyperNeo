@@ -20,16 +20,16 @@ export function recordStartedWork(
   unusable = false,
   released = false,
   claim?: { todoId: string | null },
-  role: 'worker' | null = null
+  kind: 'worker' | null = null
 ): void {
   db.prepare(
     `INSERT INTO work_started_sessions
-       (adapter, id, started_at, unusable_at, released_at, claimed_by, role)
+       (adapter, id, started_at, unusable_at, released_at, claimed_by, kind)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?8) ON CONFLICT (adapter, id) DO UPDATE SET
        unusable_at = COALESCE(excluded.unusable_at, unusable_at),
        released_at = COALESCE(released_at, excluded.released_at),
        claimed_by = CASE WHEN ?7 THEN excluded.claimed_by ELSE claimed_by END,
-       role = COALESCE(excluded.role, role)`
+       kind = COALESCE(excluded.kind, kind)`
   ).run(
     ref.adapter,
     ref.id,
@@ -38,7 +38,7 @@ export function recordStartedWork(
     released ? at : null,
     claim?.todoId ?? null,
     Number(!!claim),
-    role
+    kind
   );
 }
 
@@ -61,16 +61,79 @@ export function readWorkCompaction(db: BunDatabase, ref: StartedWork) {
   };
 }
 
-export function recordWorkerStarted(db: BunDatabase, ref: StartedWork): void {
-  recordStartedWork(db, ref, Date.now(), false, false, undefined, 'worker');
+export function recordWorkerStarted(
+  db: BunDatabase,
+  ref: StartedWork,
+  facts?: {
+    startedBy: string;
+    todoId?: string;
+    machine: string;
+    folder?: string;
+    harness: string;
+    provider?: string;
+    model?: string;
+    effort?: string;
+    preparation?: unknown;
+  }
+): void {
+  if (!facts) {
+    recordStartedWork(db, ref, Date.now(), false, false, undefined, 'worker');
+    return;
+  }
+  db.transaction(() => {
+    recordStartedWork(db, ref, Date.now(), false, false, undefined, 'worker');
+    db.prepare(`UPDATE work_started_sessions SET started_by = ?, todo_id = ?,
+    ask_id = (SELECT ask_id FROM neo_todos WHERE id = ?), machine = ?, folder = ?, harness = ?,
+    provider = ?, model = ?, effort = ?, preparation = ? WHERE adapter = ? AND id = ?`).run(
+      facts.startedBy,
+      facts.todoId ?? null,
+      facts.todoId ?? null,
+      facts.machine,
+      facts.folder ?? null,
+      facts.harness,
+      facts.provider ?? null,
+      facts.model ?? null,
+      facts.effort ?? null,
+      facts.preparation ? JSON.stringify(facts.preparation) : null,
+      ref.adapter,
+      ref.id
+    );
+  })();
 }
 
 export function forgetWorkGone(db: BunDatabase, root: string): void {
   db.run('DELETE FROM work_cleanup_gone WHERE key = ?', workerWorkKey(root));
 }
 
-export function markWorkUnusable(db: BunDatabase, ref: StartedWork): void {
-  recordStartedWork(db, ref, Date.now(), true);
+export function markWorkUnusable(
+  db: BunDatabase,
+  ref: StartedWork,
+  reason = 'worker unavailable'
+): void {
+  db.transaction(() => {
+    recordStartedWork(db, ref, Date.now(), true);
+    db.prepare(
+      'UPDATE work_started_sessions SET unusable_reason = ? WHERE adapter = ? AND id = ?'
+    ).run(reason, ref.adapter, ref.id);
+  })();
+}
+
+export function recordWorkArchived(db: BunDatabase, ref: StartedWork, reason: string): void {
+  db.prepare(`UPDATE work_started_sessions SET archived_at = ?, archive_reason = ?
+    WHERE adapter = ? AND id = ? AND kind = 'worker'`).run(Date.now(), reason, ref.adapter, ref.id);
+}
+
+export function recordWorkRelease(
+  db: BunDatabase,
+  ref: StartedWork,
+  at: number,
+  reason: string
+): void {
+  db.transaction(() => {
+    recordStartedWork(db, ref, at, false, true);
+    db.prepare(`UPDATE work_started_sessions SET release_reason = ?
+      WHERE adapter = ? AND id = ? AND kind = 'worker'`).run(reason, ref.adapter, ref.id);
+  })();
 }
 
 const UNUSABLE_FOR_MS = 60 * 60_000;
@@ -113,8 +176,8 @@ export function readStartedWork(
            WHERE own.adapter = worker.adapter AND own.id = worker.id) AS claimedBy
        FROM (
          SELECT adapter, id FROM work_started_sessions
-         WHERE (?1 IS NULL OR role = 'worker')
-           AND (?5 IS NULL OR (adapter = ?5 AND id = ?6 AND role = 'worker'))
+         WHERE (?1 IS NULL OR kind = 'worker')
+           AND (?5 IS NULL OR (adapter = ?5 AND id = ?6 AND kind = 'worker'))
          UNION SELECT json_extract(ref, '$.adapter'), json_extract(ref, '$.id') FROM neo_todo_sessions
          WHERE ?1 IS NULL AND ?5 IS NULL AND ref IS NOT NULL AND json_extract(ref, '$.daemon') IS NULL
        ) worker
@@ -139,6 +202,17 @@ export function readStartedWork(
       worker?.adapter ?? null,
       worker?.id ?? null
     ) as (StartedWorkFacts & Partial<WorkerReuseFacts>)[];
+}
+
+export function readTrustedWorkers(db: BunDatabase, refs: readonly StartedWork[]): Set<string> {
+  const rows = db
+    .prepare(`SELECT DISTINCT own.adapter, own.id FROM json_each(?) AS requested
+    JOIN work_started_sessions AS own
+      ON own.adapter = json_extract(requested.value, '$.adapter')
+      AND own.id = json_extract(requested.value, '$.id')
+    WHERE own.kind = 'worker'`)
+    .all(JSON.stringify(refs)) as StartedWork[];
+  return new Set(rows.map((ref) => JSON.stringify([ref.adapter, ref.id])));
 }
 
 export function readFreeWorkers(db: BunDatabase, adapter: string): Set<string> {
@@ -182,8 +256,12 @@ class WorkStartedSessionReads {
 class WorkStartedSessionWrites {
   constructor(private readonly db: BunDatabase) {}
 
-  recordStarted(ref: StartedWork, directory?: string): void {
-    recordWorkerStarted(this.db, ref);
+  recordStarted(
+    ref: StartedWork,
+    directory?: string,
+    facts?: Parameters<typeof recordWorkerStarted>[2]
+  ): void {
+    recordWorkerStarted(this.db, ref, facts);
     if (directory) forgetWorkGone(this.db, directory);
   }
 
@@ -191,14 +269,18 @@ class WorkStartedSessionWrites {
     this.db
       .prepare(
         `UPDATE work_started_sessions SET compacted_at = ?1
-       WHERE adapter = ?2 AND id = ?3 AND role = 'worker'
+       WHERE adapter = ?2 AND id = ?3 AND kind = 'worker'
          AND (compacted_at IS NULL OR compacted_at < ?1)`
       )
       .run(at, ref.adapter, ref.id);
   }
 
-  markUnusable(ref: StartedWork): void {
-    markWorkUnusable(this.db, ref);
+  markUnusable(ref: StartedWork, reason?: string): void {
+    markWorkUnusable(this.db, ref, reason);
+  }
+
+  recordArchived(ref: StartedWork, reason: string): void {
+    recordWorkArchived(this.db, ref, reason);
   }
 }
 
@@ -213,7 +295,7 @@ export const workStartedSessionWrites = defineRepositoryOp(
   'work.startedSessionWrites',
   'write',
   WorkStartedSessionWrites,
-  ['recordStarted', 'markUnusable', 'recordCompacted']
+  ['recordStarted', 'markUnusable', 'recordArchived', 'recordCompacted']
 );
 
 export function readReleaseReuseRow(db: BunDatabase, todoId: string) {
@@ -226,7 +308,7 @@ export function readReleaseReuseRow(db: BunDatabase, todoId: string) {
              MAX(ot.state IN ('todo', 'doing', 'blocked')) AS live
            FROM neo_todo_sessions o JOIN neo_todos ot ON ot.id = o.todo_id
            JOIN work_started_sessions w ON w.adapter = json_extract(o.ref, '$.adapter')
-             AND w.id = json_extract(o.ref, '$.id') AND w.role = 'worker' AND w.released_at IS NULL
+             AND w.id = json_extract(o.ref, '$.id') AND w.kind = 'worker' AND w.released_at IS NULL
            WHERE o.ref IS NOT NULL AND json_extract(o.ref, '$.daemon') IS NULL
            GROUP BY 1, 2
          )
@@ -255,14 +337,33 @@ export function readReleaseReuseRow(db: BunDatabase, todoId: string) {
 export function readWorkerOwnershipRows(db: BunDatabase) {
   return db
     .prepare(
-      `SELECT adapter, id, started_at AS startedAt, claimed_by AS claimedBy, released_at AS releasedAt, role FROM work_started_sessions ORDER BY adapter, id`
+      `SELECT adapter, id, started_at AS startedAt, claimed_by AS claimedBy, released_at AS releasedAt, kind AS role FROM work_started_sessions ORDER BY adapter, id`
     )
     .all();
 }
 
 export function markReviewedWorkers(db: BunDatabase, refs: StartedWork[]): void {
   const update = db.prepare(
-    "UPDATE work_started_sessions SET role = 'worker' WHERE adapter = ? AND id = ? AND (role IS NULL OR role = '') AND released_at IS NULL AND claimed_by IS NULL"
+    "UPDATE work_started_sessions SET kind = 'worker' WHERE adapter = ? AND id = ? AND (kind IS NULL OR kind = '') AND released_at IS NULL AND claimed_by IS NULL"
   );
   for (const ref of refs) update.run(ref.adapter, ref.id);
+}
+
+export function readSameAskWorkers(
+  db: BunDatabase,
+  askId: string,
+  todoId: string,
+  adapter: string
+): { id: string }[] {
+  return db
+    .prepare(`SELECT json_extract(s.ref, '$.id') AS id,
+      MAX(COALESCE(t.started_at, t.created_at)) AS usedAt
+    FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
+    JOIN work_started_sessions w ON w.adapter = json_extract(s.ref, '$.adapter')
+      AND w.id = json_extract(s.ref, '$.id') AND w.kind = 'worker'
+    WHERE t.ask_id = ? AND t.id <> ? AND json_extract(s.ref, '$.adapter') = ?
+      AND json_extract(s.ref, '$.daemon') IS NULL AND w.released_at IS NULL
+      AND (w.unusable_at IS NULL OR w.unusable_at <= ?)
+    GROUP BY w.adapter, w.id ORDER BY usedAt DESC`)
+    .all(askId, todoId, adapter, Date.now() - 3_600_000) as { id: string }[];
 }
