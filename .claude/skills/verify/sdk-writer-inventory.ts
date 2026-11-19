@@ -18,6 +18,7 @@ const units: Record<string, string[] | true> = {
 };
 const sqlUnits: Record<string, string[] | true> = {
   'storage/repositories/sdk-message-repository.ts': true,
+  'storage/repositories/neo-front-refusal-worker.ts': ['markRefusedNeoInput'],
   'storage/repositories/job-queue-repository.ts': ['transitionDeliverySendStatusFencedSync'],
   'storage/repositories/sdk-message-body-write.ts': true,
   'storage/repositories/sdk-message-status-plan.ts': true,

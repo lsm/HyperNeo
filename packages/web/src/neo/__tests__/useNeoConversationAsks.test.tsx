@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   admitAskPage,
   appendAskWindow,
+  syncAskDelivery,
   useNeoConversationAsks,
   type NeoAskState,
 } from '../useNeoConversationAsks.ts';
@@ -585,4 +586,27 @@ describe('useNeo global ask consumer', () => {
     expect(screen.getByText('Ask status: ready')).toBeTruthy();
     expect(readCount()).toBe(1);
   });
+});
+
+it('refreshes a failed input when its retry supersedes it', () => {
+  const original = {
+    ...ask(),
+    messageStatus: 'failed' as const,
+    delivery: { state: 'failed' as const, reason: 'Provider refused' },
+  };
+  const current = {
+    ...original,
+    delivery: { ...original.delivery, supersededBy: '20000000-0000-4000-8000-000000000002' },
+  };
+  const state: NeoAskState = {
+    conversationId,
+    status: 'ready',
+    items: [original],
+    nextAfter: 1,
+    hasMore: false,
+    hasEarlier: false,
+  };
+  expect(
+    syncAskDelivery(state, { state: 'ready', items: [current], nextAfter: 1 }).items[0].delivery
+  ).toEqual(current.delivery);
 });

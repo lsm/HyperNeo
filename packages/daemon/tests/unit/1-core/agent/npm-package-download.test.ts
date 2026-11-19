@@ -129,7 +129,9 @@ describe('npm-package-download', () => {
     process.env.PATH = installFakeCurl(run, tarball, undefined, 18).path;
     const dest = join(run, 'out.tgz');
 
-    await expect(downloadVerifiedTarball('pkg', '1.0.0', dest)).rejects.toThrow('cannot reach npm');
+    await expect(downloadVerifiedTarball('pkg', '1.0.0', dest)).rejects.toThrow(
+      'Cannot reach npm registry at registry.test.'
+    );
 
     expect(existsSync(dest)).toBe(true);
   });
@@ -142,26 +144,24 @@ describe('npm-package-download', () => {
     );
   });
 
-  it('describeCurlFailure names network failures so the outage hold can probe them', () => {
+  it('describeCurlFailure reports the host without curl stderr', () => {
     for (const code of [6, 7, 18, 28, 35, 52, 56]) {
-      const text = describeCurlFailure({ code, stderr: 'curl: failed' }, 'registry.npmjs.org');
-      expect(text).toContain('cannot reach npm');
-      expect(text).toContain('curl: failed');
-      expect(isNetworkUnreachableError(text)).toBe(true);
-      expect(networkProbeHost(text)).toBe('registry.npmjs.org');
+      const text = describeCurlFailure(
+        { code, stderr: 'private-token-example' },
+        'mirror.example.test'
+      );
+      expect(text).toBe('Cannot reach npm registry at mirror.example.test.');
+      expect(isNetworkUnreachableError(text)).toBe(false);
     }
-  });
-
-  it('describeCurlFailure separates local failures from network failures', () => {
-    const host = 'registry.npmjs.org';
-    const disk = describeCurlFailure({ code: 23, stderr: 'curl: (23) write' }, host);
-    const http = describeCurlFailure({ code: 22, stderr: 'curl: (22) 403' }, host);
-    const missing = describeCurlFailure({ code: 'ENOENT', stderr: '' }, host);
-
-    expect(disk).toContain('disk full');
-    expect(http).toContain('npm request failed: curl: (22) 403');
-    expect(missing).toBe('curl is not installed or not on PATH');
-    for (const text of [disk, http, missing]) expect(isNetworkUnreachableError(text)).toBe(false);
+    expect(
+      describeCurlFailure({ code: 23, stderr: 'private-token-example' }, 'mirror.example.test')
+    ).toBe('Disk full or not writable.');
+    expect(
+      describeCurlFailure({ code: 22, stderr: 'private-token-example' }, 'mirror.example.test')
+    ).toBe('npm request failed (curl exit 22).');
+    expect(describeCurlFailure({ code: 'ENOENT', stderr: '' }, 'mirror.example.test')).toBe(
+      'curl is not installed or not on PATH'
+    );
   });
 
   it('describeWriteFailure names a full disk', () => {

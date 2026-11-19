@@ -6,6 +6,9 @@ import type {
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { parseProcessingState } from '../session/space-session-reads.ts';
+import { frontSessionId } from './front-mode.ts';
+import { neoDerivedId } from './derived-id.ts';
+import { readRefusedNeoInput } from '../../storage/repositories/neo-front-refusal-worker.ts';
 
 type Ask = NeoConversationAsk | NeoConversationAskPageItem;
 export type NeoMessageStatusRef = Pick<Ask, 'conversationId' | 'requestId' | 'askOrigin'>;
@@ -14,6 +17,8 @@ export type Fact = {
   processing: string | null;
   answered: boolean;
   messageDbId: string | null;
+  reason?: string;
+  supersededBy?: string;
 };
 export type NeoMessageStatusPresenter = <T extends Ask>(items: readonly T[]) => T[] | Promise<T[]>;
 
@@ -34,10 +39,14 @@ export function readMessageFacts(db: Database, items: readonly NeoMessageStatusR
   const refs = items.map((item) => ({
     sessionId: item.askOrigin.sessionId,
     messageId: item.askOrigin.messageId,
+    frontSessionId: frontSessionId(item.conversationId),
   }));
   const rows = db
-    .prepare(`SELECT CASE WHEN m.seq IS NULL THEN NULL
-      ELSE COALESCE(m.send_status, 'consumed') END AS sendStatus, m.id AS messageDbId,
+    .prepare(`SELECT CASE WHEN m.seq IS NULL THEN (SELECT send_status FROM sdk_messages
+      INDEXED BY idx_sdk_messages_session_uuid
+      WHERE session_id = json_extract(ref.value, '$.frontSessionId') AND message_type = 'user'
+      AND sdk_uuid = json_extract(ref.value, '$.messageId') AND send_status = 'failed'
+      ORDER BY timestamp ASC LIMIT 1) ELSE COALESCE(m.send_status, 'consumed') END AS sendStatus, m.id AS messageDbId,
       s.processing_state AS processing FROM json_each(?) ref
       LEFT JOIN sessions s ON s.id = json_extract(ref.value, '$.sessionId')
       LEFT JOIN sdk_messages m ON m.seq = (SELECT seq FROM sdk_messages
@@ -46,10 +55,19 @@ export function readMessageFacts(db: Database, items: readonly NeoMessageStatusR
       AND sdk_uuid = json_extract(ref.value, '$.messageId') ORDER BY timestamp ASC LIMIT 1)
       ORDER BY CAST(ref.key AS INTEGER)`)
     .all(JSON.stringify(refs)) as Omit<Fact, 'answered'>[];
-  return rows.map((row, i) => ({
-    ...row,
-    answered: answered.has(JSON.stringify([items[i].conversationId, items[i].requestId])),
-  }));
+  return rows.map((row, i) => {
+    const item = items[i];
+    const retryId = neoDerivedId(`neo-retry:${item.conversationId}:${item.requestId}`);
+    const refusal =
+      row.sendStatus === 'failed'
+        ? readRefusedNeoInput(db, item.conversationId, item.requestId, retryId)
+        : {};
+    return {
+      ...row,
+      answered: answered.has(JSON.stringify([item.conversationId, item.requestId])),
+      ...refusal,
+    };
+  });
 }
 
 function describeMessageStatus(item: Ask, fact: Fact): NeoConversationMessageStatus {
@@ -78,7 +96,15 @@ function presentMessageStatuses<T extends Ask>(items: readonly T[], facts: reado
       ...item,
       askOrigin: { ...item.askOrigin, messageDbId: facts[index].messageDbId },
       messageStatus,
-      ...(messageStatus === 'failed' ? { delivery: { state: 'failed' as const } } : {}),
+      ...(messageStatus === 'failed'
+        ? {
+            delivery: {
+              state: 'failed' as const,
+              ...(facts[index].reason ? { reason: facts[index].reason } : {}),
+              ...(facts[index].supersededBy ? { supersededBy: facts[index].supersededBy } : {}),
+            },
+          }
+        : {}),
     };
   });
 }

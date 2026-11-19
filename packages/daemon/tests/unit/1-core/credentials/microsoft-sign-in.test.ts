@@ -70,7 +70,8 @@ const fetchImpl = (async (url, init) => {
       refresh_token: 'synthetic-microsoft-refresh',
       expires_in: 3600,
       token_type: 'Bearer',
-      scope: 'Mail.ReadWrite Calendars.Read openid profile email',
+      scope:
+        'https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Calendars.Read openid profile email',
       id_token: idToken(nonces.get(form.get('code')!)!),
     });
   }
@@ -180,6 +181,7 @@ test('a completed sign-in stores a Microsoft connection keyed by tenant and obje
     accountId: `${tenant}.synthetic-object`,
     email: 'one@example.test',
     health: 'healthy',
+    scopes: ['Mail.ReadWrite', 'Calendars.Read', 'openid', 'profile', 'email'],
   });
   expect(await bundle(row)).toMatchObject({
     accessToken: 'synthetic-microsoft-access',

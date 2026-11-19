@@ -74,6 +74,16 @@ export async function cancelRateLimitRetry(sessionId: string): Promise<{ success
   return await hub.request<{ success: boolean }>('session.cancelRateLimitRetry', { sessionId });
 }
 
+export async function retryClaudeDownload(): Promise<
+  { accepted: true } | { accepted: false; reason: string }
+> {
+  return await getHubOrThrow().request(
+    'operation.invoke',
+    { name: 'daemon.retryClaudeDownload', input: {} },
+    { timeout: 180_000 }
+  );
+}
+
 export async function retryNowAfterRateLimit(sessionId: string): Promise<{ success: boolean }> {
   const hub = getHubOrThrow();
   return await hub.request<{ success: boolean }>('session.retryNowAfterRateLimit', { sessionId });
@@ -360,6 +370,9 @@ export interface SystemProject {
   name: string;
   folders: string[];
   updatedAt: number;
+  hasSessions: boolean;
+  unknownWork: boolean;
+  isProtected: boolean;
 }
 
 export async function listSystemProjects(): Promise<SystemProject[]> {
@@ -368,6 +381,39 @@ export async function listSystemProjects(): Promise<SystemProject[]> {
     { name: 'neo.projects.list', input: {} }
   );
   return projects;
+}
+
+export async function findProjectWork(folders: string[]): Promise<boolean> {
+  const hub = getHubOrThrow();
+  for (const folder of folders) {
+    const result = await hub.request<{
+      places: { work: unknown[] }[];
+      unreachable: unknown[];
+      more?: boolean;
+    }>('operation.invoke', {
+      name: 'work.find',
+      input: { folder, includeClosed: true, limit: 50 },
+    });
+    if (result.more || result.unreachable.length) throw new Error('Could not check all work');
+    if (result.places.some((place) => place.work.length > 0)) return true;
+  }
+  return false;
+}
+
+export async function forgetSystemProject(projectId: string): Promise<void> {
+  const result = await getHubOrThrow().request<{ ok: boolean; reason?: string }>(
+    'operation.invoke',
+    { name: 'neo.project.forget', input: { projectId, removeHistory: true } }
+  );
+  if (!result.ok) {
+    const messages: Record<string, string> = {
+      project_in_use: 'Project has chats, workers, or other linked work.',
+      project_missing: 'This project no longer exists.',
+      project_protected: 'This project cannot be forgotten.',
+      root_or_human_only: 'Only the local user can forget this project.',
+    };
+    throw new Error(messages[result.reason ?? ''] ?? 'Failed to forget project');
+  }
 }
 
 export async function addFolderToProject(projectPath: string, path: string): Promise<void> {

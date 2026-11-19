@@ -9,6 +9,7 @@ import { GOAL_OPERATION_NAMES } from './operation-names/goal.ts';
 import { GOOGLE_OPERATION_NAMES } from './operation-names/google.ts';
 import { INACTIVITY_OPERATION_NAMES } from './operation-names/inactivity.ts';
 import { MESSAGING_OPERATION_NAMES } from './operation-names/messaging.ts';
+import { MICROSOFT_OPERATION_NAMES } from './operation-names/microsoft.ts';
 import { NEO_OPERATION_NAMES } from './operation-names/neo.ts';
 import { SCHEDULE_OPERATION_NAMES } from './operation-names/schedule.ts';
 import { SESSION_OPERATION_NAMES } from './operation-names/session.ts';
@@ -30,6 +31,7 @@ export const OPERATION_NAME_FAMILIES = {
   google: GOOGLE_OPERATION_NAMES,
   inactivity: INACTIVITY_OPERATION_NAMES,
   messaging: MESSAGING_OPERATION_NAMES,
+  microsoft: MICROSOFT_OPERATION_NAMES,
   neo: NEO_OPERATION_NAMES,
   schedule: SCHEDULE_OPERATION_NAMES,
   session: SESSION_OPERATION_NAMES,
@@ -52,6 +54,7 @@ export const OPERATION_NAMES = [
   ...GOOGLE_OPERATION_NAMES,
   ...INACTIVITY_OPERATION_NAMES,
   ...MESSAGING_OPERATION_NAMES,
+  ...MICROSOFT_OPERATION_NAMES,
   ...NEO_OPERATION_NAMES,
   ...SCHEDULE_OPERATION_NAMES,
   ...SESSION_OPERATION_NAMES,

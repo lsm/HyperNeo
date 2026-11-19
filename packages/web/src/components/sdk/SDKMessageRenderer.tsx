@@ -79,6 +79,7 @@ interface Props {
   replacementStatus?: MessageReplacementStatus;
   isLiveTail?: boolean;
   stopped?: StoppedEpisode;
+  disableDeliveryRetry?: boolean;
 }
 
 function ReplacementStatusFrame({
@@ -243,6 +244,7 @@ function SDKMessageRendererImpl({
   replacementStatus,
   isLiveTail = false,
   stopped,
+  disableDeliveryRetry,
 }: Props) {
   const minimal = useChatDisplayMode() === 'minimal';
   if (isHyperNeoActionMessage(message)) {
@@ -307,6 +309,7 @@ function SDKMessageRendererImpl({
         isReplay={true}
         sessionId={sessionId}
         showToolResultMessages={showToolResultUserMessages}
+        disableDeliveryRetry={disableDeliveryRetry}
       />
     );
   } else if (isSDKUserMessage(sdkMessage)) {
@@ -318,6 +321,7 @@ function SDKMessageRendererImpl({
         onRewind={onRewind}
         rewindingMessageUuid={rewindingMessageUuid}
         showToolResultMessages={showToolResultUserMessages}
+        disableDeliveryRetry={disableDeliveryRetry}
       />
     );
   } else if (isSDKAssistantMessage(sdkMessage)) {
@@ -423,7 +427,8 @@ function areMessageRendererPropsEqual(prev: Props, next: Props): boolean {
     prev.runningToolUseIds === next.runningToolUseIds &&
     prev.replacementStatus === next.replacementStatus &&
     prev.isLiveTail === next.isLiveTail &&
-    prev.stopped === next.stopped
+    prev.stopped === next.stopped &&
+    prev.disableDeliveryRetry === next.disableDeliveryRetry
   );
 }
 

@@ -1,6 +1,6 @@
 import { CloseGlyph } from '../components/icons/common-glyphs.tsx';
 import { GOAL_CHILD_MESSAGE } from '../hooks/useSessionActions.ts';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type {
   CloneChildrenChoice,
   CloneSummary,
@@ -14,6 +14,8 @@ import { newChatProjectSignal, workspaceHistoryVersionSignal } from '../lib/sign
 import {
   getWorkspaceHistory,
   listSystemProjects,
+  findProjectWork,
+  forgetSystemProject,
   type SystemProject,
   addWorkspaceToHistory,
   removeWorkspaceFromHistory,
@@ -164,6 +166,10 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
   } | null>(null);
   const [removeProjectPath, setRemoveProjectPath] = useState<string | null>(null);
   const [removeProjectBusy, setRemoveProjectBusy] = useState(false);
+  const [systemWork, setSystemWork] = useState<Record<string, { key: string; reason: string }>>({});
+  const systemWorkRef = useRef<Record<string, { key: string; reason: string }>>({});
+  const failedWorkRef = useRef(new Set<string>());
+  const [workRefresh, setWorkRefresh] = useState(0);
   const [addProjectOpen, setAddProjectOpen] = useState(false);
   const [addProjectPath, setAddProjectPath] = useState('');
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
@@ -176,9 +182,60 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
       .then(setHistory)
       .catch(() => {});
     listSystemProjects()
-      .then(setSystemProjects)
+      .then((projects) => {
+        setSystemProjects(projects);
+        const ids = new Set(projects.map((project) => project.id));
+        for (const id of failedWorkRef.current) if (!ids.has(id)) failedWorkRef.current.delete(id);
+        if (failedWorkRef.current.size > 0) setWorkRefresh((version) => version + 1);
+      })
       .catch(() => {});
-  }, [historyVersion]);
+  }, [historyVersion, sessions.value]);
+
+  const workKey = (project: SystemProject) =>
+    JSON.stringify([
+      project.id,
+      [...project.folders].sort(),
+      project.hasSessions,
+      project.unknownWork,
+      project.isProtected,
+    ]);
+  const workSignature = JSON.stringify(systemProjects.map(workKey).sort());
+  useEffect(() => {
+    let current = true;
+    for (const project of systemProjects) {
+      const key = workKey(project);
+      if (project.hasSessions || project.unknownWork || project.isProtected) {
+        failedWorkRef.current.delete(project.id);
+        if (systemWorkRef.current[project.id]) {
+          delete systemWorkRef.current[project.id];
+          setSystemWork((previous) => {
+            const next = { ...previous };
+            delete next[project.id];
+            return next;
+          });
+        }
+        continue;
+      }
+      if (systemWorkRef.current[project.id]?.key === key) continue;
+      failedWorkRef.current.delete(project.id);
+      findProjectWork(project.folders)
+        .then((busy) => {
+          if (!current) return;
+          const entry = { key, reason: busy ? 'Project has chats or workers' : '' };
+          systemWorkRef.current[project.id] = entry;
+          setSystemWork((previous) => ({ ...previous, [project.id]: entry }));
+        })
+        .catch(() => {
+          if (!current) return;
+          const entry = { key, reason: 'Could not check project work' };
+          failedWorkRef.current.add(project.id);
+          setSystemWork((previous) => ({ ...previous, [project.id]: entry }));
+        });
+    }
+    return () => {
+      current = false;
+    };
+  }, [workSignature, workRefresh]);
 
   const sessionsList = sessions.value.filter(isUserSession);
   const { projects, ungrouped, childrenByParent } = buildView(
@@ -257,7 +314,9 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 
   const handleRemoveProject = async (folders: string[]) => {
     try {
-      for (const path of folders) await removeWorkspaceFromHistory(path);
+      for (const path of folders) {
+        if (!(await removeWorkspaceFromHistory(path))) throw new Error('Failed to remove project');
+      }
     } catch {
       toast.error('Failed to remove project');
     } finally {
@@ -268,6 +327,25 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
   const handleConfirmRemoveProject = async () => {
     if (!removeProjectTarget) return;
     setRemoveProjectBusy(true);
+    if (removeProjectTarget.system) {
+      try {
+        if (
+          await findProjectWork(
+            systemProjects.find((project) => `neo:${project.id}` === removeProjectTarget.path)
+              ?.folders ?? []
+          )
+        )
+          throw new Error('Project has chats or workers');
+        await forgetSystemProject(removeProjectTarget.path.slice(4));
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to forget project');
+      } finally {
+        setRemoveProjectBusy(false);
+        setRemoveProjectPath(null);
+        workspaceHistoryVersionSignal.value += 1;
+      }
+      return;
+    }
     let kept = 0;
     for (const session of unarchived(removeProjectTarget.sessions)) {
       try {
@@ -457,13 +535,29 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
                   onSessionClick={handleSessionClick}
                   onArchive={handleArchive}
                   childrenOf={childrenOf}
-                  onRemove={
+                  alwaysShowRemove={project.system}
+                  removeDisabledReason={
                     project.system
-                      ? undefined
-                      : () =>
-                          unarchived(project.sessions).length === 0
-                            ? handleRemoveProject(project.folders)
-                            : setRemoveProjectPath(project.path)
+                      ? (() => {
+                          const item = systemProjects.find(
+                            (entry) => `neo:${entry.id}` === project.path
+                          );
+                          if (!item) return 'Checking project work';
+                          if (item.isProtected) return 'This project cannot be forgotten.';
+                          if (project.sessions.length > 0 || item.hasSessions)
+                            return 'Project has chats, including archived chats';
+                          if (item.unknownWork) return 'Cannot check all work for this project';
+                          const checked = systemWork[item.id];
+                          return checked?.key === workKey(item)
+                            ? checked.reason || undefined
+                            : 'Checking project work';
+                        })()
+                      : undefined
+                  }
+                  onRemove={() =>
+                    project.system || unarchived(project.sessions).length > 0
+                      ? setRemoveProjectPath(project.path)
+                      : handleRemoveProject(project.folders)
                   }
                 />
               ))}
@@ -510,8 +604,12 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
           onClose={() => setRemoveProjectPath(null)}
           onConfirm={handleConfirmRemoveProject}
           title={`Remove ${removeProjectTarget.name}?`}
-          message={`This archives ${chatCount(unarchived(removeProjectTarget.sessions).length)} in this project, then removes it from the sidebar. Chats with unmerged worktree commits or child chats are kept for you to archive one by one.`}
-          confirmText="Archive chats and remove"
+          message={
+            removeProjectTarget.system
+              ? 'Your files and chats stay. The folder leaves the sidebar, and this project is permanently forgotten.'
+              : `This archives ${chatCount(unarchived(removeProjectTarget.sessions).length)} in this project, then removes it from the sidebar. Chats with unmerged worktree commits or child chats are kept for you to archive one by one.`
+          }
+          confirmText={removeProjectTarget.system ? 'Forget project' : 'Archive chats and remove'}
           confirmTestId="project-remove-confirm"
           isLoading={removeProjectBusy}
         />

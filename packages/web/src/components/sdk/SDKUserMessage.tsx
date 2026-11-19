@@ -189,6 +189,7 @@ interface Props {
   onRewind?: (uuid: string) => void;
   rewindingMessageUuid?: string | null;
   showToolResultMessages?: boolean;
+  disableDeliveryRetry?: boolean;
 }
 
 export function SDKUserMessage({
@@ -201,6 +202,7 @@ export function SDKUserMessage({
   onRewind,
   rewindingMessageUuid,
   showToolResultMessages = false,
+  disableDeliveryRetry = false,
 }: Props) {
   const { message: apiMessage } = message;
   const [copied, setCopied] = useState(false);
@@ -424,12 +426,14 @@ export function SDKUserMessage({
         <UserMessageDeliveryBadge status={message.deliveryStatus} />
       )}
 
-      <UserMessageRetryControl
-        sessionId={sessionId}
-        messageDbId={typeof message.id === 'string' ? message.id : undefined}
-        deliveryStatus={message.deliveryStatus}
-        deliveryRetry={message.deliveryRetry}
-      />
+      {(!disableDeliveryRetry || message.deliveryStatus !== 'failed') && (
+        <UserMessageRetryControl
+          sessionId={sessionId}
+          messageDbId={typeof message.id === 'string' ? message.id : undefined}
+          deliveryStatus={message.deliveryStatus}
+          deliveryRetry={message.deliveryRetry}
+        />
+      )}
 
       {!isReplay &&
         onRewind &&

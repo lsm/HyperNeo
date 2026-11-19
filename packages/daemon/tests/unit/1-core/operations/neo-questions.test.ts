@@ -806,6 +806,25 @@ describe('neo.question.retire and replaces', () => {
     ).toMatchObject({ ok: true, question: { state: 'retired' } });
   });
 
+  test('a card on a todo with no work and no check closes only with its todo', async () => {
+    const { store, call, asked } = setup();
+    const reply = store.addTodo(
+      't3',
+      'ask',
+      { doneWhen: 'Replied', check: null, instruction: null, named: null, title: 'Reply' },
+      1
+    );
+    const card = await asked({ kind: 'reply', text: 'Split it?', todoId: reply.id });
+    expect(await call('neo.question.retire', { questionId: card.id, reason: 'moot' })).toEqual({
+      ok: false,
+      reason: expect.stringContaining('todo_waiting'),
+    });
+    store.updateTodo(store.getTodo(reply.id)!, { state: 'removed' }, Date.now());
+    expect(
+      await call('neo.question.retire', { questionId: card.id, reason: 'moot' })
+    ).toMatchObject({ ok: true, question: { state: 'retired' } });
+  });
+
   test('Neo retires a moot open question with its reason, and the ask stops waiting', async () => {
     const { store, call, asked } = setup();
     const moot = await asked({ kind: 'reply', text: 'Allow a placeholder key?' });

@@ -25,10 +25,20 @@ type Kept = {
     | 'bound_to_live_todo'
     | 'remote_worker'
     | 'worker_folder_unknown'
+    | 'sent_to_existing'
     | 'not_started_by_us';
 };
 type Folder = { ref: WorkRef; directory: string | null; dirty: boolean; unpushed: number };
-type Pending = { pending: string };
+type Pending = {
+  pending: string;
+  code:
+    | 'dirty'
+    | 'unpushed'
+    | 'archive_refused'
+    | 'worktree_in_use'
+    | 'worktree_unverified'
+    | 'error';
+};
 
 const RELEASE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const daemon: OperationCaller = {
@@ -38,9 +48,11 @@ const daemon: OperationCaller = {
 };
 
 export function planNeoTodoRelease(row: FinishedWorker): { value: WorkRef } | { reason: Kept } {
+  if (row.target.verb === 'send' && !row.owned) return { reason: { kept: 'sent_to_existing' } };
   if (row.humanNamed) return { reason: { kept: 'named_by_human' } };
   if (row.shared) return { reason: { kept: 'bound_to_live_todo' } };
   if (row.ref.daemon) return { reason: { kept: 'remote_worker' } };
+  if (!row.owned) return { reason: { kept: 'not_started_by_us' } };
   return { value: row.ref };
 }
 
@@ -48,9 +60,15 @@ export function requireNeoWorkerSaved(
   folder: Folder
 ): { value: WorkRef } | { reason: Kept | Pending } {
   if (folder.directory === null) return { reason: { kept: 'worker_folder_unknown' } };
-  if (folder.dirty) return { reason: { pending: `uncommitted changes in ${folder.directory}` } };
+  if (folder.dirty)
+    return { reason: { code: 'dirty', pending: `uncommitted changes in ${folder.directory}` } };
   if (folder.unpushed > 0)
-    return { reason: { pending: `${folder.unpushed} unpushed commits in ${folder.directory}` } };
+    return {
+      reason: {
+        code: 'unpushed',
+        pending: `${folder.unpushed} unpushed commits in ${folder.directory}`,
+      },
+    };
   return { value: folder.ref };
 }
 
@@ -91,7 +109,17 @@ export function readNeoTodoArchive(
   const kept = result?.value?.worktree?.reason;
   return result?.ok && kept !== WORKTREE_IN_USE && !kept?.startsWith(WORKTREE_UNVERIFIED)
     ? { value: { released: result } }
-    : { reason: { pending: JSON.stringify(result ?? outcome).slice(0, 300) } };
+    : {
+        reason: {
+          code:
+            kept === WORKTREE_IN_USE
+              ? 'worktree_in_use'
+              : kept?.startsWith(WORKTREE_UNVERIFIED)
+                ? 'worktree_unverified'
+                : 'archive_refused',
+          pending: JSON.stringify(result ?? outcome).slice(0, 300),
+        },
+      };
 }
 
 const releaseWorker = (superpipe({})('neo.todo.release-worker') as PipelineAPI)
@@ -110,18 +138,17 @@ const releaseWorker = (superpipe({})('neo.todo.release-worker') as PipelineAPI)
   .pipe(readWorkerFolder, ['release', 'invoke'], 'result:release')
   .pipe(requireNeoWorkerSaved, 'release', 'result:release')
   .pipe(
-    async (ref: WorkRef, row: FinishedWorker, sessions: NeoTodoSessionRepository) => {
+    async (ref: WorkRef, sessions: NeoTodoSessionRepository) => {
       const fence = await sessions.write('fenceWorkerRelease', ref, Date.now());
       if (fence === 'not_started_by_us') {
         const kept: Kept = { kept: 'not_started_by_us' };
-        await sessions.write('recordReleased', row.todoId, kept);
         return { reason: kept };
       }
       return fence === 'fenced'
         ? { value: ref }
         : { reason: { kept: 'bound_to_live_todo' as const } };
     },
-    ['release', 'row', 'sessions'],
+    ['release', 'sessions'],
     'result:release'
   )
   .pipe(
@@ -148,13 +175,43 @@ export async function releaseNeoTodoWorkers(
   sessions: NeoTodoSessionRepository,
   invoke: Invoke,
   warn: (message: string, error: unknown) => void,
-  now = Date.now()
+  now = Date.now(),
+  wake?: (row: FinishedWorker, reason: string) => Promise<void>
 ): Promise<void> {
   for (const row of await sessions.read('finishedWorkers', now - RELEASE_WINDOW_MS)) {
-    const outcome = await releaseWorker(row, invoke, sessions).catch((error: unknown) => ({
-      pending: error instanceof Error ? error.message : String(error),
-    }));
-    if ('pending' in outcome)
-      warn(`Finished todo ${row.todoId} worker archive pending`, outcome.pending);
+    try {
+      const outcome = await releaseWorker(row, invoke, sessions).catch(
+        (error: unknown): Pending => ({
+          code: 'error',
+          pending: error instanceof Error ? error.message : String(error),
+        })
+      );
+      if ('kept' in outcome && outcome.kept !== 'bound_to_live_todo') {
+        await sessions.write('recordReleased', row.todoId, outcome);
+      } else if ('pending' in outcome) {
+        const pending = {
+          code: outcome.code,
+          reason: outcome.pending,
+          since: row.pending?.since ?? now,
+          notified: row.pending?.notified ?? false,
+        };
+        if (row.pending?.code !== pending.code)
+          warn(`Finished todo ${row.todoId} worker archive pending`, pending.reason);
+        await sessions.write('recordReleasePending', row.todoId, pending);
+        if (wake && !pending.notified && now - pending.since >= 24 * 60 * 60 * 1000) {
+          try {
+            await wake(row, pending.reason);
+            await sessions.write('recordReleasePending', row.todoId, {
+              ...pending,
+              notified: true,
+            });
+          } catch (error) {
+            warn(`Finished todo ${row.todoId} worker notification pending`, error);
+          }
+        }
+      }
+    } catch (error) {
+      warn(`Finished todo ${row.todoId} worker release failed`, error);
+    }
   }
 }

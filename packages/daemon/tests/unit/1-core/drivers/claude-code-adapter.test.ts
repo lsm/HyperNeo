@@ -139,6 +139,30 @@ describe('createClaudeCodeAdapter', () => {
     }
   });
 
+  test('a CLI ref whose session id Desktop owns reads status through Desktop', async () => {
+    const statusRefs: unknown[] = [];
+    let records = [{ sessionId: 'local_a', cliSessionId: 'session' }];
+    const adapter = createClaudeCodeAdapter({
+      machine: 'laptop',
+      searchChats: async () => [],
+      desktopSessions: async () => new Set(),
+      liveSessions: async () => [
+        { sessionId: 'session', pid: 456, owner: 'desktop', status: 'idle' },
+      ],
+      desktopRecords: async () => records as never,
+      desktopStatus: async (ref) => {
+        statusRefs.push(ref);
+        return { ok: true, value: { ref, status: 'done' } } as never;
+      },
+    });
+    const ref = { adapter: 'claude-code', id: 'session' };
+    expect(await adapter.status!(ref)).toMatchObject({ ok: true, value: { status: 'done' } });
+    expect(statusRefs).toEqual([{ adapter: 'claude-desktop', id: 'local_a' }]);
+    records = [...records, { sessionId: 'local_b', cliSessionId: 'session' }];
+    expect(await adapter.status!(ref)).toMatchObject({ ok: false, reason: 'unreachable' });
+    expect(statusRefs).toHaveLength(1);
+  });
+
   test('work.status reads the fresh listing, not the stale-while-revalidate one', async () => {
     let freshReads = 0;
     let listedReads = 0;

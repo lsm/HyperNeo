@@ -1,3 +1,9 @@
+import { useEffect, useRef, useState } from 'preact/hooks';
+import { retryClaudeDownload } from '../lib/api-helpers.ts';
+import { t } from '../lib/i18n/index.ts';
+
+const DOWNLOAD_STILL_RUNNING = 'Claude Code is still downloading. Try again shortly.';
+
 export interface ErrorBannerAction {
   label: string;
   onClick: () => void;
@@ -9,6 +15,7 @@ export interface ErrorBannerProps {
   onViewDetails?: () => void;
   onDismiss: () => void;
   actions?: ErrorBannerAction[];
+  downloadFailure?: boolean;
 }
 
 export function ErrorBanner({
@@ -17,15 +24,53 @@ export function ErrorBanner({
   onViewDetails,
   onDismiss,
   actions,
+  downloadFailure = false,
 }: ErrorBannerProps) {
+  const [downloadError, setDownloadError] = useState(error);
+  const [retrying, setRetrying] = useState(false);
+  const pending = useRef(false);
+  useEffect(() => setDownloadError(error), [error]);
+
+  async function retryDownload() {
+    if (pending.current) return;
+    pending.current = true;
+    setRetrying(true);
+    try {
+      const result = await retryClaudeDownload();
+      if (result.accepted) onDismiss();
+      else setDownloadError(result.reason);
+    } catch (error) {
+      setDownloadError(
+        error instanceof Error &&
+          /^Request timeout: operation\.invoke \(\d+ms\)$/.test(error.message)
+          ? DOWNLOAD_STILL_RUNNING
+          : t('download.retryFailed')
+      );
+    } finally {
+      pending.current = false;
+      setRetrying(false);
+    }
+  }
+
+  const message = downloadFailure ? downloadMessage(downloadError) : error;
   return (
     <div
       data-testid="error-banner"
       class="flex-shrink-0 bg-surface border-t border-danger/20 px-4 py-3"
     >
       <div class="max-w-4xl mx-auto w-full px-4 md:px-0 flex items-center justify-between gap-4">
-        <p class="text-sm text-danger flex-1">{error}</p>
+        <p class="text-sm text-danger flex-1">{message}</p>
         <div class="flex items-center gap-2">
+          {downloadFailure && (
+            <button
+              type="button"
+              disabled={retrying}
+              onClick={() => void retryDownload()}
+              class="text-xs px-3 py-1 rounded-md bg-danger/20 hover:bg-danger/30 text-danger-soft transition-colors border border-danger/30 disabled:opacity-50"
+            >
+              {retrying ? t('download.retrying') : t('chat.retry')}
+            </button>
+          )}
           {actions?.map((action) => (
             <button
               key={action.label}
@@ -60,4 +105,24 @@ export function ErrorBanner({
       </div>
     </div>
   );
+}
+
+function downloadMessage(message: string): string {
+  const registry = /^Can't download Claude Code: Cannot reach npm registry at (.+)\.$/.exec(
+    message
+  );
+  if (registry) return t('download.registryUnreachable', { host: registry[1] });
+  if (
+    message ===
+    "Can't download Claude Code: registry returned a web page, not package metadata (blocked by the network?)"
+  )
+    return t('download.registryMetadata');
+  if (
+    /^Can't download Claude Code: npm could not download the package(?: \(exit \d+\))?; check your npm registry and login$/.test(
+      message
+    )
+  )
+    return t('download.npmFailure');
+  if (message === DOWNLOAD_STILL_RUNNING) return t('download.stillDownloading');
+  return message;
 }

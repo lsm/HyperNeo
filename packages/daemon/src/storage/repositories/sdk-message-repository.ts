@@ -1,5 +1,6 @@
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { SessionRepository } from './session-repository.ts';
+import { markRefusedNeoInput } from './neo-front-refusal-worker.ts';
 import type { RunDbOp } from '../db-gateway/db-op.ts';
 import { sdkMessageWrites } from './sdk-message-writes.ts';
 import type { SdkMessageWriteMethod } from './sdk-message-writes.ts';
@@ -1015,6 +1016,23 @@ export class SDKMessageRepository {
             .prepare('UPDATE sdk_messages SET consumed_seq = ? WHERE id = ?')
             .run(resultSeq, dbId);
         }
+      }
+      if (
+        message.type === 'result' &&
+        message.subtype === 'success' &&
+        message.is_error &&
+        message.api_error_status === 400 &&
+        admission.parentToolUseId === null &&
+        !stampInternalCompactionTurn
+      ) {
+        const ids = [
+          ...new Set(
+            [message.user_message_uuid, ...(message.user_message_uuids ?? [])].filter(
+              (id): id is string => !!id
+            )
+          ),
+        ];
+        markRefusedNeoInput(this.db, sessionId, ids, message.result);
       }
       this.saveReplacementEdges(dbId, sessionId, taskId, admission.replacementEdges);
       this.scheduleMessageSearchIndex(dbId);

@@ -74,7 +74,10 @@ const Result = z.discriminatedUnion('ok', [
   }),
   z.object({ ok: z.literal(false), reason: z.string() }),
 ]);
-type IntakeInput = Omit<z.infer<typeof Input>, 'replyTo'> & { replyTo?: NeoReplyTo };
+type IntakeInput = Omit<z.infer<typeof Input>, 'replyTo'> & {
+  replyTo?: NeoReplyTo;
+  retryOf?: string;
+};
 type IntakeResult = z.infer<typeof Result>;
 type Gate<T> = { value: T } | { reason: Extract<IntakeResult, { ok: false }> };
 type Target = Pick<Session, 'id' | 'status' | 'config'>;
@@ -133,6 +136,7 @@ export function neoIntakeMessage(
 ): SDKUserMessage & {
   uuid: UUID;
   inputKind: 'human';
+  retryOf?: string;
   replyTo?: NeoReplyTo;
   previewContext?: NeoPreviewReference;
   humanContent?: SDKUserMessage['message']['content'];
@@ -184,6 +188,7 @@ export function neoIntakeMessage(
         ],
       },
       inputKind: 'human',
+      ...(input.retryOf ? { retryOf: input.retryOf } : {}),
       ...(input.replyTo ? { replyTo: input.replyTo } : {}),
       ...(previewContext ? { previewContext } : {}),
       ...(storedHumanContent !== undefined
@@ -240,6 +245,7 @@ export function neoIntakeMessage(
       ],
     },
     inputKind: 'human',
+    ...(input.retryOf ? { retryOf: input.retryOf } : {}),
     ...(input.replyTo ? { replyTo: input.replyTo } : {}),
     ...(previewContext ? { previewContext } : {}),
     humanContent: content,
@@ -654,6 +660,8 @@ const runIntake = (superpipe({})('neo.message.send') as PipelineAPI)
   notify: NeoIntakeNotifier,
   store: NeoAskTodoRepository
 ) => Promise<IntakeResult>;
+
+export const retryNeoIntake = runIntake;
 
 export function createNeoIntakeOperation(
   db: Database,

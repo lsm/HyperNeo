@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { connectionTokens, type ConnectionTokens } from './status.ts';
+import { connectionTokens, grantedScopes, type ConnectionTokens } from './status.ts';
 import { readGoogleTokenJson } from './google-token-exchange.ts';
 
 export type OfflineGrant = ConnectionTokens & {
@@ -63,7 +63,7 @@ function renewed(
       accessToken: value.access_token,
       refreshToken: value.refresh_token ?? old.refreshToken,
       expiresAt: now() + value.expires_in * 1000,
-      scopes: value.scope === undefined ? old.scopes : value.scope.split(/\s+/).filter(Boolean),
+      scopes: value.scope === undefined ? old.scopes : grantedScopes(value.scope),
     }),
   };
 }

@@ -8,6 +8,7 @@ export function runMigration496(db: Database): void {
     owner TEXT CHECK (owner IN ('front', 'neo')),
     catch_up_from INTEGER,
     catch_up_through INTEGER,
+    failure_reason TEXT,
     PRIMARY KEY (conversation_id, message_id)
   )`);
 }

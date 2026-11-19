@@ -1,4 +1,4 @@
-import { QueueTrashIcon } from './icons/panel-icons.tsx';
+import { CloseGlyph } from './icons/common-glyphs.tsx';
 import type { Session } from '@hyperneo/shared';
 import { SessionConversationGroup } from './SessionConversationGroup.tsx';
 
@@ -17,6 +17,8 @@ interface SessionProjectGroupProps {
   onArchive: (sessionId: string) => void | Promise<void>;
   childrenOf?: (sessionId: string) => Session[];
   onRemove?: () => void;
+  removeDisabledReason?: string;
+  alwaysShowRemove?: boolean;
 }
 
 export function SessionProjectGroup({
@@ -31,12 +33,14 @@ export function SessionProjectGroup({
   onArchive,
   childrenOf,
   onRemove,
+  removeDisabledReason,
+  alwaysShowRemove,
 }: SessionProjectGroupProps) {
   const isEmpty = sessions.length === 0;
 
   return (
     <div>
-      <div class="group/project flex items-center gap-0.5 rounded-lg pr-1 transition-colors hover:bg-fill-soft">
+      <div class="group/project relative flex items-center gap-0.5 rounded-lg pr-1 transition-colors hover:bg-fill-soft">
         <button
           type="button"
           data-testid="project-group-header"
@@ -95,12 +99,31 @@ export function SessionProjectGroup({
             type="button"
             data-testid="project-remove"
             onClick={onRemove}
-            title="Remove project"
+            disabled={!!removeDisabledReason}
+            title={removeDisabledReason ?? 'Remove from list'}
             aria-label={`Remove project ${name}`}
-            class={`${ROW_ICON_BUTTON} opacity-100 sm:opacity-0 sm:group-hover/project:opacity-100 group-focus-within/project:opacity-100 [@media(hover:none)]:opacity-100`}
+            class={`${ROW_ICON_BUTTON} disabled:cursor-not-allowed disabled:opacity-50 ${
+              isEmpty || alwaysShowRemove
+                ? ''
+                : 'sm:opacity-0 sm:group-hover/project:opacity-100 group-focus-within/project:opacity-100 [@media(hover:none)]:opacity-100'
+            }`}
           >
-            <QueueTrashIcon />
+            <CloseGlyph
+              class="h-3.5 w-3.5"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              aria-hidden="true"
+            />
           </button>
+        )}
+        {removeDisabledReason && (
+          <span
+            role="tooltip"
+            class="pointer-events-none absolute right-1 top-full z-50 hidden max-w-60 rounded-md border border-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg group-hover/project:block group-focus-within/project:block"
+          >
+            {removeDisabledReason}
+          </span>
         )}
       </div>
       {!collapsed && (

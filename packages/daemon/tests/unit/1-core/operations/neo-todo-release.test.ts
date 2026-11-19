@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, spyOn, test } from 'bun:test';
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -69,6 +69,7 @@ function setup() {
     createdAt: 1,
   });
   const archived: unknown[] = [];
+  const notices: string[] = [];
   let archive: (caller: OperationCaller) => unknown = () => ({
     ok: true,
     value: { archived: true },
@@ -109,7 +110,9 @@ function setup() {
     sessions,
     invoke,
     packs: () => [],
-    tell: async () => {},
+    tell: async (_ask, _todo, note) => {
+      notices.push(note);
+    },
     attend: async () => {},
     changed: () => {},
   });
@@ -139,13 +142,15 @@ function setup() {
       Date.now()
     );
   };
-  const refresh = () => runner.refresh(() => {});
+  const refresh = (warn: (message: string, error: unknown) => void = () => {}) =>
+    runner.refresh(warn);
   return {
     db,
     add,
     finishTodo,
     refresh,
     archived,
+    notices,
     setArchive: (next: (caller: OperationCaller) => unknown) => {
       archive = next;
     },
@@ -236,7 +241,7 @@ describe('neo todo runner refresh releases finished workers', () => {
       const fact = h.db
         .prepare("SELECT value_json FROM pack_facts WHERE pack = 'core' AND key = 'released'")
         .get() as { value_json: string };
-      expect(JSON.parse(fact.value_json)).toEqual({ kept: 'not_started_by_us' });
+      expect(JSON.parse(fact.value_json)).toEqual({ kept: 'sent_to_existing' });
     } finally {
       h.db.close();
     }
@@ -289,7 +294,7 @@ describe('neo todo runner refresh releases finished workers', () => {
       await h.finishTodo(h.add({ verb: 'send', ref: worker }, { session: 'dev-6' }));
       await h.refresh();
       expect(h.archived).toEqual([]);
-      expect(h.released()).toEqual([]);
+      expect(h.released()).toHaveLength(2);
     } finally {
       h.db.close();
     }
@@ -301,6 +306,7 @@ describe('neo todo runner refresh releases finished workers', () => {
       h.setArchive(() => ({ ok: false, reason: 'busy' }));
       await h.finishTodo(h.add({ verb: 'send', ref: worker }));
       await h.refresh();
+      expect(h.archived).toEqual([worker]);
       expect(h.released()).toEqual([]);
     } finally {
       h.db.close();
@@ -488,6 +494,88 @@ describe('neo todo runner refresh on Linux', () => {
 });
 
 describe('neo todo runner refresh keeps workers with unsaved work', () => {
+  test('records an unowned worker with a dirty folder on the first refresh', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      h.db
+        .prepare('DELETE FROM work_started_sessions WHERE adapter = ? AND id = ?')
+        .run(worker.adapter, worker.id);
+      writeFileSync(join(h.folder(), 'draft.txt'), 'draft');
+      await h.refresh();
+      const fact = h.db
+        .prepare("SELECT value_json FROM pack_facts WHERE pack = 'core' AND key = 'released'")
+        .get() as { value_json: string };
+      expect(JSON.parse(fact.value_json)).toEqual({ kept: 'not_started_by_us' });
+      expect(h.archived).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('logs an unchanged pending reason only once', async () => {
+    const h = setup();
+    const warnings: unknown[] = [];
+    try {
+      await h.finishTodo(h.add(started));
+      writeFileSync(join(h.folder(), 'draft.txt'), 'draft');
+      const warn = (message: string, error: unknown) => {
+        if (message.includes('worker archive pending')) warnings.push(error);
+      };
+      await h.refresh(warn);
+      await h.refresh(warn);
+      expect(warnings).toHaveLength(1);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('logs a pending archive reason once when its details change', async () => {
+    const h = setup();
+    const warnings: unknown[] = [];
+    let detail = 1;
+    try {
+      await h.finishTodo(h.add(started));
+      h.setArchive(() => ({ ok: false, reason: 'busy', detail }));
+      const warn = (message: string, error: unknown) => {
+        if (message.includes('worker archive pending')) warnings.push(error);
+      };
+      await h.refresh(warn);
+      detail = 2;
+      await h.refresh(warn);
+      expect(warnings).toHaveLength(1);
+      h.setArchive(() => {
+        throw new Error('archive unavailable');
+      });
+      await h.refresh(warn);
+      expect(warnings).toHaveLength(2);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('wakes Neo once after a worker remains pending for 24 hours', async () => {
+    const h = setup();
+    const now = Date.now();
+    const clock = spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      const todo = h.add(started);
+      await h.finishTodo(todo);
+      writeFileSync(join(h.folder(), 'draft.txt'), 'draft');
+      await h.refresh();
+      clock.mockReturnValue(now + 24 * 60 * 60 * 1000);
+      await h.refresh();
+      await h.refresh();
+      expect(h.notices).toHaveLength(1);
+      expect(h.notices[0]).toContain(todo.id);
+      expect(h.notices[0]).toContain(worker.id);
+      expect(h.notices[0]).toContain('uncommitted changes');
+    } finally {
+      clock.mockRestore();
+      h.db.close();
+    }
+  });
+
   test('keeps a worker with uncommitted changes until they are pushed', async () => {
     const h = setup();
     try {
@@ -549,6 +637,46 @@ describe('neo todo runner refresh keeps workers with unsaved work', () => {
 });
 
 describe('releaseNeoTodoWorkers', () => {
+  test('continues with other workers when recording one keep fails', async () => {
+    const h = setup();
+    try {
+      const first = h.add({ ...started, name: 'Jason' }, { session: 'Jason' });
+      const second = h.add({ ...started, name: 'Jason' }, { session: 'Jason' });
+      await h.finishTodo(first);
+      await h.finishTodo(second);
+      h.db.run(`CREATE TRIGGER fail_one_release BEFORE INSERT ON pack_facts
+        WHEN NEW.todo_id = '${first.id}' AND NEW.key = 'released'
+        BEGIN SELECT RAISE(FAIL, 'synthetic write failure'); END`);
+      const warnings: unknown[] = [];
+      await releaseNeoTodoWorkers(h.sessions, h.invoke, (_message, error) => warnings.push(error));
+      expect(h.released()).toEqual([{ todo_id: second.id }]);
+      expect(warnings).toHaveLength(1);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('continues with other workers when recording one pending reason fails', async () => {
+    const h = setup();
+    try {
+      const first = h.add(started);
+      const second = h.add(started);
+      await h.finishTodo(first);
+      await h.finishTodo(second);
+      writeFileSync(join(h.folder(), 'draft.txt'), 'draft');
+      h.db.run(`CREATE TRIGGER fail_one_pending BEFORE INSERT ON pack_facts
+        WHEN NEW.todo_id = '${first.id}' AND NEW.key = 'release_pending'
+        BEGIN SELECT RAISE(FAIL, 'synthetic write failure'); END`);
+      await releaseNeoTodoWorkers(h.sessions, h.invoke, () => {});
+      const rows = h.db
+        .prepare("SELECT todo_id FROM pack_facts WHERE pack = 'core' AND key = 'release_pending'")
+        .all();
+      expect(rows).toEqual([{ todo_id: second.id }]);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('keeps a worker another todo queues onto while the folder is checked', async () => {
     const h = setup();
     try {
@@ -561,7 +689,8 @@ describe('releaseNeoTodoWorkers', () => {
           admitSessionArchive(worker, caller, db) ?? { ok: true, value: { archived: true } }
       );
       await releaseNeoTodoWorkers(h.sessions, h.invoke, () => {});
-      expect(h.released()).toEqual([]);
+      expect(h.archived).toEqual([]);
+      expect(h.released()).toHaveLength(0);
     } finally {
       h.db.close();
     }
@@ -569,6 +698,24 @@ describe('releaseNeoTodoWorkers', () => {
 });
 
 describe('neo todo runner refresh settles shared and local-only work', () => {
+  test('releases a reused worker after its live follow-up finishes', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      const followUp = h.add({ verb: 'send', ref: worker });
+      h.queueOn(followUp.id);
+      await h.refresh();
+      expect(h.archived).toEqual([]);
+      expect(h.released()).toHaveLength(0);
+      await h.finishTodo(followUp);
+      await h.refresh();
+      expect(h.archived).toContainEqual(worker);
+      expect(h.released()).toHaveLength(2);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('records a second finished todo on a worker the first already released', async () => {
     const h = setup();
     try {
