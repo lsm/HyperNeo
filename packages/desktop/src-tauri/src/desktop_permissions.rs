@@ -20,16 +20,25 @@ pub(crate) fn desktop_permission_status() -> Option<DesktopPermissionStatus> {
 #[cfg(target_os = "macos")]
 mod macos {
     use super::DesktopPermissionStatus;
+    use core_foundation::{
+        base::TCFType,
+        boolean::CFBoolean,
+        dictionary::{CFDictionary, CFDictionaryRef},
+        string::{CFString, CFStringRef},
+    };
     use std::ffi::{c_char, c_void};
 
     #[link(name = "ApplicationServices", kind = "framework")]
     extern "C" {
         fn AXIsProcessTrusted() -> u8;
+        fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> u8;
+        static kAXTrustedCheckOptionPrompt: CFStringRef;
     }
 
     #[link(name = "CoreGraphics", kind = "framework")]
     extern "C" {
         fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+        fn CGRequestScreenCaptureAccess() -> bool;
     }
 
     fn screen_recording() -> bool {
@@ -43,6 +52,20 @@ mod macos {
         unsafe { preflight() }
     }
 
+    pub(super) fn request(permission: &str) {
+        match permission {
+            "accessibility" => unsafe {
+                let key = CFString::wrap_under_get_rule(kAXTrustedCheckOptionPrompt);
+                let options = CFDictionary::from_CFType_pairs(&[(key, CFBoolean::true_value())]);
+                AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef());
+            },
+            "screenRecording" => unsafe {
+                let _ = CGRequestScreenCaptureAccess();
+            },
+            _ => unreachable!(),
+        }
+    }
+
     pub(super) fn status() -> DesktopPermissionStatus {
         DesktopPermissionStatus {
             accessibility: unsafe { AXIsProcessTrusted() != 0 },
@@ -51,20 +74,34 @@ mod macos {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn open_desktop_permission_settings_with(
+    permission: &str,
+    request: impl FnOnce(&str),
+    open: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    let pane = match permission {
+        "accessibility" => "Privacy_Accessibility",
+        "screenRecording" => "Privacy_ScreenCapture",
+        _ => return Err("Unknown permission".into()),
+    };
+    request(permission);
+    open(pane)
+}
+
 #[tauri::command]
 pub(crate) fn open_desktop_permission_settings(permission: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        let pane = match permission {
-            "accessibility" => "Privacy_Accessibility",
-            "screenRecording" => "Privacy_ScreenCapture",
-            _ => return Err("Unknown permission".into()),
-        };
-        std::process::Command::new("/usr/bin/open")
-            .arg(format!("x-apple.systempreferences:com.apple.preference.security?{pane}"))
-            .spawn()
-            .map(|_| ())
-            .map_err(|error| error.to_string())
+        open_desktop_permission_settings_with(permission, macos::request, |pane| {
+            std::process::Command::new("/usr/bin/open")
+                .arg(format!(
+                    "x-apple.systempreferences:com.apple.preference.security?{pane}"
+                ))
+                .spawn()
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
     }
     #[cfg(not(target_os = "macos"))]
     {

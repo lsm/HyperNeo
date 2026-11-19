@@ -9,7 +9,10 @@
         : 'Not enabled';
       document.getElementById('screen-recording-status').textContent = status.screenRecording
         ? 'Enabled'
-        : 'Not enabled';
+        : 'Not enabled in this app session';
+      document.getElementById('restart-note').textContent = status.screenRecording
+        ? ''
+        : 'Quit and reopen to finish after enabling Screen Recording in System Settings.';
       message.textContent =
         status.accessibility && status.screenRecording
           ? 'All permissions are enabled. You can close this window.'

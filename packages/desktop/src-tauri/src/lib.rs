@@ -1,5 +1,5 @@
 mod desktop_permissions;
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(debug_assertions)))]
 mod permissions_page;
 #[cfg(target_os = "macos")]
 mod desktop_drivers;
@@ -389,7 +389,7 @@ pub fn run() {
 			)?;
 
 			let settings = DesktopSettings::load();
-			#[cfg(target_os = "macos")]
+			#[cfg(all(target_os = "macos", not(debug_assertions)))]
 			permissions_page::show_if_needed(app.handle())?;
 
 			#[cfg(target_os = "macos")]
