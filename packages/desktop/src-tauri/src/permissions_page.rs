@@ -37,6 +37,19 @@ fn show<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn visible_permission_window_is_not_raised_again() {
+        let raised = std::cell::Cell::new(0);
+        let raise = || {
+            raised.set(raised.get() + 1);
+            Ok::<(), ()>(())
+        };
+        super::show_if_hidden(true, raise).unwrap();
+        assert_eq!(raised.get(), 0);
+        super::show_if_hidden(false, raise).unwrap();
+        assert_eq!(raised.get(), 1);
+    }
+
+    #[test]
     fn release_bundle_contains_the_permissions_page_at_its_window_url() {
         let context: tauri::Context<tauri::Wry> = tauri::generate_context!();
         let assets = context.assets();
