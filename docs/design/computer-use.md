@@ -73,14 +73,14 @@ Two PRs:
 
 1. **The `computer-use` pack holds the Neo guidance.**
    - Core keeps the operations, the opt-in rule, the preference and the admission gate.
-   - The pack's `instructions()` read cached facts each turn (see Readiness): native ready, fallback ready, and the preference.
-   - When neither route is ready, the pack adds nothing. People who never use the computer see no extra prompt.
+   - The pack's `instructions()` read cached facts each turn (see Readiness): native ready, fallback eligible, and the preference.
+   - When neither route is usable, `instructions()` returns only the handoff instruction, never null. `neo.pack.read` therefore still serves it.
    - The guidance:
      - Only a worker can call `desktop.call`.
      - Preference "allow": add the todo on a local worker with `named.desktopControl: true`.
      - Otherwise (manual or unset): add the todo with desktopControl omitted. The admission gate refuses true in that case. Then send the existing `desktop_control` card with that todoId and the app, and the human taps Allow. The app-wide grant dialog from #11165 still asks about each app.
-     - Use native desktop control for every computer step, browser steps included. Use a fallback worker's own computer use only when native is not ready.
-     - When neither is ready, ask the human with the step that fixes it: open HyperNeo Desktop and grant its permissions, or do the step themselves.
+     - Use native desktop control for every computer step, browser steps included. Try a fallback worker's own computer use only when native is not ready.
+     - Handoff: ask the human with the step that fixes it (open HyperNeo Desktop and grant its permissions), or ask them to do the step themselves. This happens when neither route is usable, when a fallback start fails, or when the fallback worker reports it has no computer use.
 2. **One switch on the Desktop control panel** (slice 2).
    - The panel shows whenever the desktop app answers, with zero workers too.
    - The switch reads and writes `core.desktopControl`:
@@ -91,15 +91,16 @@ Two PRs:
 3. **Refusals say what to do.**
    - A non-worker caller gets `desktop_worker_only` (#11286).
    - In slice 1, the `neo.todo.add` refusal names the todo's "Let it use this computer" menu item and the Allow card. Slice 2 adds the panel switch to that text and to the pack guidance.
-4. **Life-admin uses desktop control, not Chrome DevTools.** #11146 does this. Chrome DevTools reaches page content only, so it cannot click extension popups such as a password manager, or browser dialogs.
+4. **Life-admin uses desktop control, not Chrome DevTools.** #11146 does this, and lands only after slice 1 ships the handoff. Chrome DevTools reaches page content only, so it cannot click extension popups such as a password manager, or browser dialogs.
 
 ### Readiness
 
 - **Native ready** = the desktop app answers a new `status` action on `desktop/control.sock` with both Accessibility and Screen Recording granted.
   - The answer comes from `desktop_permission_status`.
   - Socket reachability alone does not count.
-- **Fallback ready** = `work.adapters` lists a Codex Desktop or Claude Desktop adapter with health ok and the start capability.
+- **Fallback eligible** = `work.adapters` lists a Codex Desktop or Claude Desktop adapter with health ok and the start capability.
   - Listed, health-only or degraded adapters do not count.
+  - Eligible only means Neo may try. Health checks the client version and read-only discovery, not computer use. A failed start, or a worker that reports no computer use, goes to the handoff.
 - The daemon refreshes both facts every 30 seconds and caches them in memory.
 - `desktop.status` returns them as top-level `app: {reachable, accessibility, screenRecording}`, which the panel reads.
 - The pack's synchronous `instructions()` read the cache.
@@ -112,4 +113,4 @@ Two PRs:
 
 1. The `computer-use` pack, the readiness cache and the `status` socket action. The refusal text names the todo menu and the Allow card. This absorbs #11286.
 2. The panel switch, plus the permission flow. It adds the switch to the refusal text and the pack guidance.
-3. #11146, after slice 1, pointing life-admin at the pack.
+3. #11146, gated on slice 1's handoff, pointing life-admin at the pack.
