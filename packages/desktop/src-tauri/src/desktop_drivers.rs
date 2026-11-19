@@ -176,7 +176,7 @@ impl Control {
                 } else {
                     listener.accept().await
                 };
-                let (stream, _) = match accepted {
+                let (mut stream, _) = match accepted {
                     Ok(connection) => connection,
                     Err(error) => {
                         log::warn!("Desktop control accept failed: {error}");
@@ -184,8 +184,14 @@ impl Control {
                         continue;
                     }
                 };
+                while requests.try_join_next().is_some() {}
                 if requests.len() >= 16 {
-                    requests.join_next().await;
+                    let _ = timeout(
+                        Duration::from_secs(2),
+                        stream.write_all(b"{\"ok\": false, \"error\": \"desktop_busy\"}\n"),
+                    )
+                    .await;
+                    continue;
                 }
                 let state = state.clone();
                 requests.spawn(async move {
@@ -553,7 +559,7 @@ impl Drivers {
                         bundle,
                         class,
                         "refused",
-                        json!("waiting_for_owner"),
+                        json!("desktop_busy"),
                         false,
                     ))
                 }
@@ -591,7 +597,7 @@ impl Drivers {
                             bundle,
                             class,
                             "refused",
-                            json!("waiting_for_owner"),
+                            json!("desktop_busy"),
                             false,
                         )));
                     }

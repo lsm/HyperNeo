@@ -59,6 +59,15 @@ The fake-clock deadline tests run with:
 cargo test --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml deadline_tests
 ```
 
+The fake driver also checks that a busy worker and a saturated host return a
+busy refusal instead of reporting that the owner must answer:
+
+```bash
+python3 packages/desktop/tests/worker-drivers.py \
+  packages/desktop/tests/driver-host/target/debug/desktop-driver-fixture \
+  -k busy_worker_returns -k saturated_host_refuses
+```
+
 To see the real dialog, start the signed host directly, send
 `{"action":"fixture-dialog","worker":"w","tool":"real"}` and then a `resolve`
 for `click` on Finder's pid to `desktop/control.sock`. The dialog stays open

@@ -27,6 +27,7 @@ const app = await createDaemonApp({
 });
 assert(![8399, 8499].includes(app.server.port));
 const requests: Record<string, unknown>[] = [];
+let hostBusy = false;
 const driverError = {
   content: [{ type: 'text', text: 'No screenshot of window 7: call get_window_state first' }, { type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png' }],
   structuredContent: { code: 'no_screenshot' },
@@ -38,6 +39,10 @@ const host = createServer(socket => {
     if (!line.includes('\n')) return;
     const request = JSON.parse(line);
     requests.push(request);
+    if (hostBusy) {
+      socket.end(JSON.stringify({ ok: false, error: 'desktop_busy' }) + '\n');
+      return;
+    }
     const body = request.tool === 'get_window_state' ? { reason: 'driver_error', ...driverError } : { reason: null };
     socket.end(JSON.stringify({ ok: true, result: { call_id: request.callId, bundle_id: 'org.example.fixture', class: 'pointer', decision: 'allowed', dispatched: true, ...body } }) + '\n');
   });
@@ -121,8 +126,14 @@ try {
   assert.equal(finished.reason, 'todo_not_active');
   assert.equal(finished.dispatched, false);
   assert.equal(requests.length, 6);
-  writeFileSync(join(run, 'evidence/desktop-call.json'), JSON.stringify({ passed: true, hostRequests: requests.length, auditRows: audited.length, blockedAllowed: true, pendingAllowed: true, currentPreferred: true, ambiguousRefused: true, blockedWithQueuedAllowed: true, finishedRefused: true, driverErrorBody: true, rpcRefused: true, sessionDoorRefused: true, spoofRefused: true, unlistedRefused: true, unapprovedRefused: true, describedTools: listedTools.length }, null, 2));
-  console.log(`desktop.call journey PASS host_requests=6 initial_audit_rows=2 blocked_allowed=1 pending_allowed=1 current_preferred=1 ambiguous_refused=1 blocked_with_queued_allowed=1 finished_refused=1 driver_error_body=1 refused_paths=5 described_tools=${listedTools.length}`);
+  sql.prepare("UPDATE neo_todos SET state='doing' WHERE id='todo'").run();
+  hostBusy = true;
+  const busy = JSON.parse((await call({ name: 'desktop.call', input })).content[0].text);
+  assert.equal(busy.reason, 'desktop_busy');
+  assert.equal(busy.dispatched, false);
+  assert.equal(requests.length, 7);
+  writeFileSync(join(run, 'evidence/desktop-call.json'), JSON.stringify({ passed: true, hostRequests: requests.length, auditRows: audited.length, hostBusy: true, blockedAllowed: true, pendingAllowed: true, currentPreferred: true, ambiguousRefused: true, blockedWithQueuedAllowed: true, finishedRefused: true, driverErrorBody: true, rpcRefused: true, sessionDoorRefused: true, spoofRefused: true, unlistedRefused: true, unapprovedRefused: true, describedTools: listedTools.length }, null, 2));
+  console.log(`desktop.call journey PASS host_requests=7 host_busy=1 initial_audit_rows=2 blocked_allowed=1 pending_allowed=1 current_preferred=1 ambiguous_refused=1 blocked_with_queued_allowed=1 finished_refused=1 driver_error_body=1 refused_paths=5 described_tools=${listedTools.length}`);
 } finally {
   await new Promise<void>(done => host.close(() => done()));
   await app.cleanup();

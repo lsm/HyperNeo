@@ -74,6 +74,10 @@ export function createDesktopTargetBroker(dataDir: string) {
     } catch {
       return null;
     }
+    if (
+      z.object({ ok: z.literal(false), error: z.literal('desktop_busy') }).safeParse(reply).success
+    )
+      return { reason: 'desktop_busy' as const };
     const parsed = Reply.safeParse(reply);
     if (!parsed.success || parsed.data.result.call_id !== callId) return null;
     const result = parsed.data.result;

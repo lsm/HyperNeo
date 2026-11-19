@@ -60,7 +60,24 @@ export function dispatchDesktopCall(
         return fail(new Error('Desktop host reply too large.'));
       if (!text.includes('\n')) return;
       try {
-        const { result } = Envelope.parse(JSON.parse(text.slice(0, text.indexOf('\n'))));
+        const envelope: unknown = JSON.parse(text.slice(0, text.indexOf('\n')));
+        const busy = z
+          .object({ ok: z.literal(false), error: z.literal('desktop_busy') })
+          .safeParse(envelope);
+        if (busy.success) {
+          clearTimeout(timer);
+          client.destroy();
+          resolve({
+            call_id: request.callId,
+            bundle_id: null,
+            class: null,
+            decision: 'refused',
+            reason: 'desktop_busy',
+            dispatched: false,
+          });
+          return;
+        }
+        const { result } = Envelope.parse(envelope);
         if (result.call_id !== request.callId)
           throw new Error('Desktop host reply does not match this call.');
         clearTimeout(timer);
