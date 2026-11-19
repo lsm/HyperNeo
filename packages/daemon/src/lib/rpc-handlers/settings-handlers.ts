@@ -328,7 +328,10 @@ async function prepareGlobalSettingsUpdate(
     if (!URL.canParse(hostUrl) || new URL(hostUrl).host !== hostKey.host) {
       throw new Error('Voice key host must be a valid host');
     }
-    if (newApiKey || (clearRequested && persistedVoice?.hasApiKey)) {
+    if (
+      newApiKey ||
+      (clearRequested && (persistedVoice?.hasApiKey || persistedVoice?.apiKey?.trim()))
+    ) {
       throw new Error('Only one voice key may be changed at once');
     }
     mutation.providerId = `${VOICE_CREDENTIAL_PROVIDER_ID}:${hostKey.host}`;

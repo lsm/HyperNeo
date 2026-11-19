@@ -61,7 +61,12 @@ try {
       live: { provider: 'deepgram', endpoint: 'wss://live.example/listen' },
       hostKey: { host: 'live.example', apiKey: 'synthetic-live-key' },
     } } }), /legacy/);
-    console.log(JSON.stringify({ legacyHostChangeRefused: true }));
+    await assert.rejects(call('settings.global.update', { updates: { voice: {
+      enabled: true, endpoint: 'https://old.example/transcribe', model: 'test', hasApiKey: false,
+      live: { provider: 'deepgram', endpoint: 'wss://live.example/listen' },
+      hostKey: { host: 'live.example', apiKey: 'synthetic-live-key' },
+    } } }), /Only one voice key/);
+    console.log(JSON.stringify({ legacyHostChangeRefused: true, simultaneousClearRefused: true }));
   } else {
   await assert.rejects(call('providers.create', {
     params: { providerId: 'voice-transcription:127.0.0.1', displayName: 'Voice', kind: 'built_in', authType: 'api_key' },

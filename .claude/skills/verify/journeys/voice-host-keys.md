@@ -19,7 +19,8 @@ run evidence, then stop the daemon before the legacy-key check below.
 
 To cover a pre-upgrade inline key, stop the isolated daemon, seed only its
 synthetic database as below, and relaunch the same run. Then run the helper with
-`VERIFY_LEGACY=1`; it must report `legacyHostChangeRefused: true`.
+`VERIFY_LEGACY=1`; it must report `legacyHostChangeRefused: true` and
+`simultaneousClearRefused: true`.
 
 ```bash
 sqlite3 "$RUN/data/daemon.db" "UPDATE global_settings SET settings = json_set(settings, '$.voice', json('{"enabled":true,"endpoint":"https://old.example/transcribe","model":"test","apiKey":"synthetic-legacy-key"}')) WHERE id = 1;"
