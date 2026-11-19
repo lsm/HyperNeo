@@ -467,6 +467,38 @@ describe('Settings RPC Handlers', () => {
       expect(credentialManager.storeApiKey).not.toHaveBeenCalled();
     });
 
+    it.each(['', '   '])(
+      'refuses a blank host key without deleting credentials',
+      async (apiKey) => {
+        const credentialManager = createMockCredentialManager();
+        const hubData = createMockMessageHub();
+        registerSettingsHandlers(
+          hubData.hub,
+          settingsManagerData.settingsManager,
+          internalEventBusData.bus,
+          dbData.db,
+          credentialManager.manager
+        );
+        await expect(
+          hubData.handlers.get('settings.global.update')!(
+            {
+              updates: {
+                voice: {
+                  enabled: true,
+                  endpoint: 'https://api.example.com/transcribe',
+                  model: 'test',
+                  hostKey: { host: 'api.example.com', apiKey },
+                },
+              },
+            },
+            {}
+          )
+        ).rejects.toThrow('blank');
+        expect(credentialManager.removeCredentials).not.toHaveBeenCalled();
+        expect(settingsManagerData.mocks.updateGlobalSettings).not.toHaveBeenCalled();
+      }
+    );
+
     it('removes a saved host key after its endpoint is removed', async () => {
       const credentialManager = createMockCredentialManager();
       credentialManager.getCredentials.mockImplementation(async (id: string) =>
