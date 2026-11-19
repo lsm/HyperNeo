@@ -10,7 +10,7 @@ import { invokeOperation } from '../../../packages/daemon/src/lib/operations/inv
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { createWorkVerbOperations } from '../../../packages/daemon/src/lib/drivers/work-operations.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
-import { readReusableWorkers } from '../../../packages/daemon/src/storage/work-started-sessions.ts';
+import { readReusableWorkers } from '../../../packages/daemon/src/storage/repositories/work-started-sessions-worker.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 
@@ -27,8 +27,24 @@ const app = await createDaemonApp({
 });
 const place = { machine: hostname(), folder, name: 'Synthetic' };
 const input = (title: string, todoId?: string) => ({ adapter: 'hyperneo', place, title, message: `Synthetic task: ${title}`, ...(todoId ? { todoId } : {}) });
+const mainStartedSql: string[] = [];
+const startedSql = /work_started_sessions|work_cleanup_gone/;
 const start = async (title: string, caller: Parameters<typeof invokeOperation>[3], todoId = 'todo-plan') => {
-  const outcome = await invokeOperation(app.sessionManager.getOperationRegistry(), 'work.start', input(title, caller.role === 'neo' ? todoId : undefined), caller);
+  const main = app.db.getDatabase();
+  const prepare = main.prepare.bind(main);
+  const runSql = main.run.bind(main);
+  main.prepare = ((sql: string, ...rest: unknown[]) => {
+    if (startedSql.test(sql)) mainStartedSql.push(sql);
+    return (prepare as (...args: unknown[]) => unknown)(sql, ...rest);
+  }) as typeof main.prepare;
+  main.run = ((sql: string, ...rest: unknown[]) => {
+    if (startedSql.test(sql)) mainStartedSql.push(sql);
+    return (runSql as (...args: unknown[]) => unknown)(sql, ...rest);
+  }) as typeof main.run;
+  const outcome = await invokeOperation(app.sessionManager.getOperationRegistry(), 'work.start', input(title, caller.role === 'neo' ? todoId : undefined), caller).finally(() => {
+    main.prepare = prepare;
+    main.run = runSql;
+  });
   assert.equal(outcome.kind, 'completed', JSON.stringify(outcome));
   const result = (outcome as { value: Result<WorkStarted> }).value;
   assert(result.ok, JSON.stringify(result));
@@ -123,6 +139,7 @@ try {
     neoSecond: { reused: second.reused, sameRefAsEarlier: [first.id, byHuman.id].includes(second.id), sessionsBefore: before, sessionsAfter: afterReuse },
     neoThirdAllLeased: { reused: third.reused, newSession: ![first.id, byHuman.id].includes(third.id), sessionsAfter: afterThird },
     neoBuildBesideFreeHumanReviewer: { reused: build.reused, gotReviewer: build.id === reviewer, sessionsBefore: beforeBuild, sessionsAfter: sessions() },
+    mainThreadStartedSessionSql: mainStartedSql.length,
   };
   writeFileSync(join(run, 'evidence/work-start-reuse.json'), JSON.stringify(observed, null, 2));
   console.log(JSON.stringify(observed, null, 2));
@@ -138,6 +155,7 @@ try {
   assert.equal(build.reused, false);
   assert.equal(observed.neoBuildBesideFreeHumanReviewer.gotReviewer, false);
   assert.equal(observed.neoBuildBesideFreeHumanReviewer.sessionsAfter, beforeBuild + 1);
+  assert.equal(mainStartedSql.length, 0, 'work.start must record and pick workers through the gateway');
   lease(build.id, 'doing', true);
   db.prepare(`INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
     VALUES ('core', 'global', '', 'sessionReuse', '"per_todo"', 'human', 1)`).run();

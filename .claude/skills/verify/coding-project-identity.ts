@@ -12,7 +12,7 @@ import { createOperationRegistry } from '../../../packages/daemon/src/lib/operat
 import { mirrorNeoWorkspaceProjects } from '../../../packages/daemon/src/lib/neo/packs/coding/project-mirror.ts';
 import { mirrorNeoWorkspaceProjectsAsync } from '../../../packages/daemon/src/lib/neo/packs/coding/project-mirror-async.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
-import { recordStartedWork } from '../../../packages/daemon/src/storage/work-started-sessions.ts';
+import { recordStartedWork } from '../../../packages/daemon/src/storage/repositories/work-started-sessions-worker.ts';
 import { waitForSdkBodyCopy } from './wait-for-sdk-body-copy.ts';
 
 const run = resolve(process.argv[2]);

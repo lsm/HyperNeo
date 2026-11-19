@@ -9,7 +9,7 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import {
   forgetWorkGone,
   recordStartedWork,
-} from '../../../../src/storage/work-started-sessions.ts';
+} from '../../../../src/storage/repositories/work-started-sessions-worker.ts';
 
 test("a worker placed again at a folder clears that folder's old gone row and no other", async () => {
   const db = new Database(':memory:');
