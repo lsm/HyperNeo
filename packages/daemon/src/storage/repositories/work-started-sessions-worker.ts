@@ -11,7 +11,6 @@ export interface StartedWork {
 export interface StartedWorkFacts extends StartedWork {
   releasedAt: number | null;
   claimedBy: string | null;
-  compactedAt: number | null;
 }
 
 export function recordStartedWork(
@@ -41,6 +40,13 @@ export function recordStartedWork(
     Number(!!claim),
     role
   );
+}
+
+export function readWorkCompactedAt(db: BunDatabase, ref: StartedWork): number | null {
+  const row = db
+    .prepare('SELECT compacted_at AS at FROM work_started_sessions WHERE adapter = ? AND id = ?')
+    .get(ref.adapter, ref.id) as { at: number | null } | null;
+  return row?.at ?? null;
 }
 
 export function recordWorkCompaction(db: BunDatabase, ref: StartedWork, at: number): void {
@@ -100,9 +106,7 @@ export function readStartedWork(
          (SELECT released_at FROM work_started_sessions own
            WHERE own.adapter = worker.adapter AND own.id = worker.id) AS releasedAt,
          (SELECT claimed_by FROM work_started_sessions own
-           WHERE own.adapter = worker.adapter AND own.id = worker.id) AS claimedBy,
-         (SELECT compacted_at FROM work_started_sessions own
-           WHERE own.adapter = worker.adapter AND own.id = worker.id) AS compactedAt
+           WHERE own.adapter = worker.adapter AND own.id = worker.id) AS claimedBy
        FROM (
          SELECT adapter, id FROM work_started_sessions
          WHERE (?1 IS NULL OR role = 'worker')

@@ -27,7 +27,8 @@ type ReuseRelease =
   | { value: WorkRef }
   | { reason: Kept }
   | { compact: NonNullable<WorkAdapter['compact']>; ref: WorkRef; kept: Kept };
-const compacting = new Set<string>();
+const COMPACT_RETRY_MS = 5 * 60_000;
+const nextCompaction = new Map<string, number>();
 
 function planKeptCompaction({
   ref,
@@ -171,7 +172,7 @@ export function readNeoTodoArchive(
 }
 
 const releaseWorker = (superpipe({})('neo.todo.release-worker') as PipelineAPI)
-  .input(['row', 'invoke', 'sessions', 'workerCompact'])
+  .input(['row', 'invoke', 'sessions', 'workerCompact', 'now'])
   .pipe(
     async (row: FinishedWorker, sessions: NeoTodoSessionRepository) => {
       if (!row.releasedBy) return { value: row };
@@ -202,22 +203,24 @@ const releaseWorker = (superpipe({})('neo.todo.release-worker') as PipelineAPI)
   )
   .pipe(planKeptCompaction, 'reuse', 'compaction')
   .pipe(
-    async (plan: ReuseRelease, sessions: NeoTodoSessionRepository) => {
+    async (plan: ReuseRelease, sessions: NeoTodoSessionRepository, now: number) => {
       if (!('compact' in plan)) return plan;
       const key = neoWorkerKey(plan.ref)!;
-      if (compacting.has(key)) return { reason: plan.kept };
-      compacting.add(key);
+      if ((nextCompaction.get(key) ?? 0) > now) return { reason: plan.kept };
+      nextCompaction.set(key, Infinity);
       const at = Date.now();
       try {
         const result = await plan.compact(plan.ref, { caller: daemon, from: 'neo' });
-        if (result.ok && result.value.compacted)
+        if (result.ok && result.value.compacted) {
           await sessions.write('recordWorkerCompacted', plan.ref, at);
+          nextCompaction.delete(key);
+        }
       } finally {
-        compacting.delete(key);
+        if (nextCompaction.has(key)) nextCompaction.set(key, Date.now() + COMPACT_RETRY_MS);
       }
       return { reason: plan.kept };
     },
-    ['compaction', 'sessions'],
+    ['compaction', 'sessions', 'now'],
     'result:release'
   )
   .pipe(
@@ -252,7 +255,8 @@ const releaseWorker = (superpipe({})('neo.todo.release-worker') as PipelineAPI)
   row: FinishedWorker,
   invoke: Invoke,
   sessions: NeoTodoSessionRepository,
-  workerCompact?: WorkerCompact
+  workerCompact: WorkerCompact | undefined,
+  now: number
 ) => Promise<Released | Kept | Pending>;
 
 export async function releaseNeoTodoWorkers(
@@ -263,13 +267,14 @@ export async function releaseNeoTodoWorkers(
   wake?: (row: FinishedWorker, reason: string) => Promise<void>,
   workerCompact?: WorkerCompact
 ): Promise<void> {
+  for (const [key, until] of nextCompaction) if (until <= now) nextCompaction.delete(key);
   const rows = await sessions.read('finishedWorkers', now - RELEASE_WINDOW_MS);
   const notified = new Set(
     rows.filter((row) => row.pending?.notified).map((row) => neoWorkerKey(row.ref))
   );
   for (const row of rows) {
     try {
-      const outcome = await releaseWorker(row, invoke, sessions, workerCompact).catch(
+      const outcome = await releaseWorker(row, invoke, sessions, workerCompact, now).catch(
         (error: unknown): Pending => ({
           code: 'error',
           pending: error instanceof Error ? error.message : String(error),

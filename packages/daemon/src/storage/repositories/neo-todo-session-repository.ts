@@ -13,6 +13,7 @@ import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import {
   markWorkUnusable,
   readStartedWork,
+  readWorkCompactedAt,
   recordStartedWork,
   recordWorkCompaction,
 } from './work-started-sessions-worker.ts';
@@ -848,7 +849,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       this.doingTodoOn(ref, null, LIVE_TODO_STATES)
     )
       return undefined;
-    return own.compactedAt;
+    return readWorkCompactedAt(this.db, ref);
   }
 
   recordWorkerCompacted(ref: WorkRef, at: number): void {

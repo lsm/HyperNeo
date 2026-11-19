@@ -736,6 +736,44 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
     }
   });
 
+  test('backs off after an unconfirmed compaction and then retries the kept worker', async () => {
+    const h = setup();
+    const ref = { ...worker, id: crypto.randomUUID() };
+    const attempts: string[] = [];
+    try {
+      h.reuse('long_lived');
+      h.startNext(ref);
+      await h.finishTodo(h.add(started));
+      const runRelease = (now: number) =>
+        releaseNeoTodoWorkers(
+          h.sessions,
+          h.invoke,
+          () => {},
+          now,
+          undefined,
+          () => async (target) => {
+            attempts.push(target.id);
+            return { ok: true, value: { compacted: attempts.length > 1 } };
+          }
+        );
+
+      await runRelease(Date.now());
+      await runRelease(Date.now());
+      expect(attempts).toEqual([ref.id]);
+      expect(await h.sessions.read('workerCompactedAt', ref)).toBeNull();
+      expect(kept(h)).toEqual([{ kept: 'kept_for_reuse' }]);
+
+      const later = Date.now() + 5 * 60_000;
+      await runRelease(later);
+      await runRelease(later);
+      expect(attempts).toEqual([ref.id, ref.id]);
+      expect(await h.sessions.read('workerCompactedAt', ref)).toBeGreaterThan(0);
+      expect(h.archived).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('releases workers whose adapter cannot compact', async () => {
     const h = setup();
     try {
