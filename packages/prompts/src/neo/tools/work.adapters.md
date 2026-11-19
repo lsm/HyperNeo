@@ -1,0 +1,4 @@
+---
+id: work.adapters
+---
+List work adapters on this daemon, or the attached daemon named by daemon, with their available capabilities: find, start, rename, send, steer, queue, withdraw, status, turns, stop, archive. Local client health includes status, reason, installed and verified versions, and check time; unavailable unregistered clients appear with no capabilities. Use healthy clients for assignments, including ok clients whose versions are unverified. steer means work.send accepts mode steer on that adapter; it is listed only when declared and implemented. Optional unsupportedCapabilities maps unavailable capabilities to their limitation; explicit unsupported requests return that explanation. Archive uses neo.session.archive. Obtain a human request before archiving in a live turn.Use only capabilities listed for the chosen adapter.

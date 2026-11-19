@@ -182,6 +182,17 @@ import mdmessagingReplyProtocol from './messaging/reply-protocol.md' with { type
 import mdmessagingReplyToTarget from './messaging/reply-to-target.md' with { type: 'text' };
 import mdmessagingReplyToTask from './messaging/reply-to-task.md' with { type: 'text' };
 import mdspaceOperationsDoorListing from './space/operations-door-listing.md' with { type: 'text' };
+import mdToolWorkRename from './neo/tools/work.rename.md' with { type: 'text' };
+import mdToolWorkAdapters from './neo/tools/work.adapters.md' with { type: 'text' };
+import mdToolWorkStart from './neo/tools/work.start.md' with { type: 'text' };
+import mdToolWorkSend from './neo/tools/work.send.md' with { type: 'text' };
+import mdToolWorkQueue from './neo/tools/work.queue.md' with { type: 'text' };
+import mdToolWorkWithdraw from './neo/tools/work.withdraw.md' with { type: 'text' };
+import mdToolWorkStatus from './neo/tools/work.status.md' with { type: 'text' };
+import mdToolWorkTurns from './neo/tools/work.turns.md' with { type: 'text' };
+import mdToolWorkStop from './neo/tools/work.stop.md' with { type: 'text' };
+import mdToolWorkFind from './neo/tools/work.find.md' with { type: 'text' };
+import mdToolWorkRead from './neo/tools/work.read.md' with { type: 'text' };
 import mdToolOpen from './neo/tools/neo.open.md' with { type: 'text' };
 import mdToolRestart from './neo/tools/neo.restart.md' with { type: 'text' };
 import mdToolRuleSave from './neo/tools/neo.rule.save.md' with { type: 'text' };
@@ -648,6 +659,17 @@ export const NEO_PACK_SKILLS: Readonly<
 
 export const NEO_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze(
   buildPromptRegistry({
+    'neo/tools/work.rename.md': mdToolWorkRename,
+    'neo/tools/work.adapters.md': mdToolWorkAdapters,
+    'neo/tools/work.start.md': mdToolWorkStart,
+    'neo/tools/work.send.md': mdToolWorkSend,
+    'neo/tools/work.queue.md': mdToolWorkQueue,
+    'neo/tools/work.withdraw.md': mdToolWorkWithdraw,
+    'neo/tools/work.status.md': mdToolWorkStatus,
+    'neo/tools/work.turns.md': mdToolWorkTurns,
+    'neo/tools/work.stop.md': mdToolWorkStop,
+    'neo/tools/work.find.md': mdToolWorkFind,
+    'neo/tools/work.read.md': mdToolWorkRead,
     'neo/tools/neo.open.md': mdToolOpen,
     'neo/tools/neo.restart.md': mdToolRestart,
     'neo/tools/neo.rule.save.md': mdToolRuleSave,

@@ -1,0 +1,11 @@
+---
+id: work.send
+---
+Message existing work by the ref from work.find, work.start or work.status. Agents need a todo on an accepted human request. Neo may use notice:true only to reply to a session that messaged it. Only Neo or the human can send across daemons.
+
+- Ordinary local Neo input is stored with inputId and waits while the worker runs or is queued. A question ending the turn permits delivery. Explicit steer is immediate.
+- Use auto for adapter defaults and for HyperNeo or Space, which support neither explicit steer nor explicit queue. Explicit modes require the capabilities in work.adapters and refuse without sending if unsupported. Copilot auto and queue enqueue, and strict steer is unsupported.
+- While Codex Desktop runs, auto and steer route through Desktop ownership discovery without resuming an app-server writer. Explicit queue returns busy if Desktop owns the thread. With Desktop closed, auto queues for the next idle turn and steer uses the app-server. Native queue resumes saved, unloaded threads only and does not start a turn. Steer failure never falls back to queue. Never retry or queue an uncertain steer.
+- Registered Claude work uses its Desktop send path even when stopped. Plain CLI input requires a verified receiver permission mode. For claude_cli_login_expired, tell the human to run `claude auth login`; retrying cannot help.
+
+A receipt (executionId, inputId) belongs to the requested ref and daemon. Use it with work.status before retrying uncertain sends and to verify their replies. queuedSubmissionId with delivered:false indicates queue acceptance, not consumption. delivered:true requires matching input evidence for a queued submission. If unconfirmed:true, only the transport write is known and peer acceptance is unknown. A held receipt needs receive-side approval; do not resend on hold or expiry. Neither acceptance nor delivery proves completion or result origin. Claude Desktop remains ui-unconfirmed unless supported live acknowledgment exists; delivered, confirmedAt, links and Remote Control do not prove rendering or reading. ok:false means failure or uncertainty. Only notSent:true proves no input was accepted. not_open means archived or ended; other refusals include not_found, not_delivered, unsupported and unreachable.
