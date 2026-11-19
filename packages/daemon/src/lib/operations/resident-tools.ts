@@ -50,8 +50,6 @@ export function residentOperation(
 
 type ResidentFamily = (typeof NEO_RESIDENT_FAMILIES)[number];
 
-// The resident tools are what Neo reads every turn, so each carries the full
-// descriptions of its actions rather than a summary Neo would have to look up.
 export const residentToolDescription = (superpipe({})('neo.resident.description') as PipelineAPI)
   .input(['family', 'registry'])
   .pipe(
