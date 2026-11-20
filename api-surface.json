@@ -44369,6 +44369,49 @@
                 "const": true,
                 "type": "boolean"
               },
+              "startConfiguration": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "actualEffort": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "actualModel": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "requestedEffort": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "requestedModel": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "requestedModel",
+                      "requestedEffort",
+                      "actualModel",
+                      "actualEffort"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "todo": {
                 "additionalProperties": false,
                 "properties": {
@@ -44684,7 +44727,8 @@
             },
             "required": [
               "ok",
-              "todo"
+              "todo",
+              "startConfiguration"
             ],
             "type": "object"
           }
