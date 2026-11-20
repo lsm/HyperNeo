@@ -135,6 +135,27 @@ describe('Work search input and retry', () => {
       [...container.querySelectorAll('[data-ask]')].map((node) => node.getAttribute('data-ask'))
     ).toEqual(['protocol']);
   });
+  it('clears the work search when another tab is chosen', async () => {
+    locale.value = 'en';
+    const protocol = testAskEntry('protocol', 'to do protocol');
+    const { model, container } = mount();
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: { ...model.value.snapshot, todoAsks: [protocol] },
+      };
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Search work', exact: true }));
+    fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'to do' } });
+    await waitFor(() =>
+      expect(container.querySelector('[data-scene-group="search"]')).toBeTruthy()
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Goals' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Inbox' }));
+    expect(screen.queryByRole('searchbox')).toBeNull();
+    expect(container.querySelector('[data-scene-group="search"]')).toBeNull();
+    expect(container.querySelector('[data-ask="protocol"]')).toBeTruthy();
+  });
   it('shows the topic of a result with no loaded card as disabled', async () => {
     locale.value = 'en';
     const remote = testAskEntry('remote', 'remote protocol', { state: 'done' });
@@ -769,7 +790,7 @@ describe('Neo public work scenes', () => {
     expect(screen.getByRole('heading', { name: 'Needs your attention · 4' })).toBeTruthy();
     expect(screen.getByText('Waiting on Neo to check or unblock: 2')).toBeTruthy();
     set({ needsYou: 4, neoUnhandled: 0 });
-    expect(screen.queryByText(/still to handle/)).toBeNull();
+    expect(screen.queryByText(/Waiting on Neo/)).toBeNull();
   });
 
   it('keeps a blocked ask with no card out of the human list', () => {

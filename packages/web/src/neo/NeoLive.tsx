@@ -1171,7 +1171,15 @@ export function NeoLive() {
               {t('chat.cardUnavailable')}
             </p>
           )}
-          {publicConversation && <NeoWorkTabs selected={workTab} onSelect={setWorkTab} />}
+          {publicConversation && (
+            <NeoWorkTabs
+              selected={workTab}
+              onSelect={(tab) => {
+                setWorkTab(tab);
+                setWorkQuery('');
+              }}
+            />
+          )}
           {showTab('inbox') && neoUnhandled > 0 && (
             <p class="mt-3 text-xs text-fg-muted">
               {t('live.neoUnhandled', { count: neoUnhandled })}
