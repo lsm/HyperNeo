@@ -1,9 +1,17 @@
-import { posix } from 'node:path';
 import ts from 'typescript';
+import {
+  confinedWorkerRegistration,
+  dbGatewayFile,
+  registeredRepositoryMethod,
+  registeredDbOp,
+  valueImport,
+} from './pipeline-worker-registration.ts';
 import { createPipelineBuilderResolver } from './pipeline-builder-factory.ts';
 import { serializedPipelineCallback } from './pipeline-serial-callback.ts';
 
-export type LocalPipelineResolution = { kind: 'named'; name: string } | { kind: 'unknown' };
+export type LocalPipelineResolution =
+  | { kind: 'named'; name: string; terminal?: boolean }
+  | { kind: 'unknown' };
 
 export function unwrapPipelineExpression(expression: ts.Expression): ts.Expression {
   while (
@@ -49,10 +57,17 @@ export function createLocalPipelineResolver(
   source: string,
   fileName = 'route.ts',
   strictCalls = false,
-  sourceOf?: (file: string) => string | undefined
+  sources?: ReadonlyMap<string, string> | ((file: string) => string | undefined)
 ): ((operationName: string) => LocalPipelineResolution) & {
   exportedFactory(name: string, arity: number): LocalPipelineResolution;
+  repositoryMethod(
+    repository: string,
+    method: string,
+    registrationOffset: number
+  ): LocalPipelineResolution;
+  exportedRunner(name: string): LocalPipelineResolution;
 } {
+  const sourceOf = typeof sources === 'function' ? sources : sources?.get.bind(sources);
   const unwrap = unwrapPipelineExpression;
   const path = fileName.endsWith('.tsx') ? '/route.tsx' : '/route.ts';
   const options: ts.CompilerOptions = { noLib: true, noResolve: true, noEmit: true };
@@ -322,6 +337,58 @@ export function createLocalPipelineResolver(
     return callable(declaration.initializer, seen);
   }
 
+  function importedReference(identifier: ts.Identifier) {
+    const declarations = checker.getSymbolAtLocation(identifier)?.declarations;
+    const specifier = declarations?.length === 1 ? declarations[0] : undefined;
+    return specifier && ts.isImportSpecifier(specifier)
+      ? valueImport(fileName, specifier)
+      : undefined;
+  }
+
+  function gatewayCall(call: ts.CallExpression): LocalPipelineResolution {
+    const callee = unwrap(call.expression);
+    const [command, method] = call.arguments;
+    if (
+      !sourceOf ||
+      !strictCalls ||
+      !ts.isPropertyAccessExpression(callee) ||
+      !['call', 'run'].includes(callee.name.text) ||
+      (callee.name.text === 'run' && call.arguments.length !== 2) ||
+      !command ||
+      !ts.isIdentifier(command) ||
+      (callee.name.text === 'call' && (!method || !ts.isStringLiteral(method))) ||
+      call.arguments.some(ts.isSpreadElement)
+    )
+      return unknown;
+    const receiver = unwrap(callee.expression);
+    if (
+      !ts.isCallExpression(receiver) ||
+      !ts.isIdentifier(receiver.expression) ||
+      (receiver.flags & ts.NodeFlags.OptionalChain) !== 0 ||
+      receiver.arguments.length !== 1 ||
+      ts.isSpreadElement(receiver.arguments[0])
+    )
+      return unknown;
+    const helper = importedReference(receiver.expression);
+    if (helper?.file !== dbGatewayFile || helper.name !== 'gatewayFor') return unknown;
+    const target = importedReference(command);
+    if (!target || !sources || typeof sources === 'function') return unknown;
+    if (!confinedWorkerRegistration(sources, fileName, target)) return unknown;
+    if (callee.name.text === 'run') {
+      const name = registeredDbOp(target, sourceOf);
+      return name === undefined ? unknown : { kind: 'named', name, terminal: true };
+    }
+    if (!method || !ts.isStringLiteral(method)) return unknown;
+    const repository = registeredRepositoryMethod(target, method.text, sourceOf);
+    const source = repository ? sourceOf(target.file) : undefined;
+    if (!repository || source === undefined) return unknown;
+    return createLocalPipelineResolver(source, target.file, true, sourceOf).repositoryMethod(
+      repository.name,
+      method.text,
+      repository.registrationOffset
+    );
+  }
+
   function action(expression: ts.Expression, seen: Set<ts.Node>): LocalPipelineResolution {
     expression = unwrap(expression);
     if (ts.isAwaitExpression(expression)) return action(expression.expression, seen);
@@ -339,7 +406,9 @@ export function createLocalPipelineResolver(
     }
     const callee = strictCalls ? unwrap(expression.expression) : expression.expression;
     if (ts.isIdentifier(callee)) return callable(callee, seen);
-    return strictCalls ? pipeline(callee) : unknown;
+    if (!strictCalls) return unknown;
+    const inline = pipeline(callee);
+    return inline.kind === 'named' ? inline : gatewayCall(expression);
   }
 
   const matches = new Map<string, ts.Expression[]>();
@@ -355,22 +424,9 @@ export function createLocalPipelineResolver(
       !ts.isIdentifier(expression.expression)
     )
       return unknown;
-    const callee = expression.expression;
-    const declarations = checker.getSymbolAtLocation(callee)?.declarations;
-    const declaration = declarations?.length === 1 ? declarations[0] : undefined;
-    if (!declaration || !ts.isImportSpecifier(declaration) || declaration.isTypeOnly)
-      return unknown;
-    const imported = importDeclaration(callee);
-    if (
-      !imported ||
-      imported.importClause?.isTypeOnly ||
-      !ts.isStringLiteral(imported.moduleSpecifier)
-    )
-      return unknown;
-    const specifier = imported.moduleSpecifier.text;
-    if (!/^\.\.?\/[^\\?#]+\.tsx?$/.test(specifier)) return unknown;
-    const target = posix.normalize(posix.join(posix.dirname(fileName), specifier));
-    if (target.startsWith('../') || target.startsWith('/')) return unknown;
+    const ref = importedReference(expression.expression);
+    if (!ref || ref.file.startsWith('../') || ref.file.startsWith('/')) return unknown;
+    const target = ref.file;
     let resolver = importedFiles.get(target);
     if (!resolver) {
       const text = sourceOf(target);
@@ -378,10 +434,7 @@ export function createLocalPipelineResolver(
       resolver = createLocalPipelineResolver(text, target, true);
       importedFiles.set(target, resolver);
     }
-    return resolver.exportedFactory(
-      (declaration.propertyName ?? declaration.name).text,
-      expression.arguments.length
-    );
+    return resolver.exportedFactory(ref.name, expression.arguments.length);
   }
 
   const visit = (node: ts.Node) => {
@@ -472,11 +525,98 @@ export function createLocalPipelineResolver(
       : unknown;
   }
 
+  function repositoryMethod(
+    repository: string,
+    method: string,
+    registrationOffset: number
+  ): LocalPipelineResolution {
+    const classes = parsed.statements.filter(
+      (node): node is ts.ClassDeclaration =>
+        ts.isClassDeclaration(node) && node.name?.text === repository
+    );
+    if (classes.length !== 1) return unknown;
+    const [declaration] = classes;
+    if (
+      ts.getDecorators(declaration)?.length ||
+      declaration.heritageClauses?.length ||
+      declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)
+    )
+      return unknown;
+    function usesClass(node: ts.Node): boolean {
+      if (ts.isIdentifier(node) && node.text === repository)
+        return node !== declaration.name && node.getStart(parsed) !== registrationOffset;
+      return ts.forEachChild(node, (child) => usesClass(child) || undefined) === true;
+    }
+    if (usesClass(parsed)) return unknown;
+    if (
+      declaration.members.some(
+        (member) =>
+          !ts.isMethodDeclaration(member) &&
+          !(ts.isConstructorDeclaration(member) && member.body?.statements.length === 0)
+      )
+    )
+      return unknown;
+    if (declaration.members.some((member) => member.name && ts.isComputedPropertyName(member.name)))
+      return unknown;
+    const candidates = declaration.members.filter(
+      (member) =>
+        member.name &&
+        (ts.isIdentifier(member.name) || ts.isStringLiteral(member.name)) &&
+        member.name.text === method
+    );
+    if (candidates.length !== 1) return unknown;
+    const [candidate] = candidates;
+    if (
+      !ts.isMethodDeclaration(candidate) ||
+      candidate.asteriskToken ||
+      ts.getDecorators(candidate)?.length ||
+      candidate.parameters.some(
+        (parameter) =>
+          parameter.initializer ||
+          !ts.isIdentifier(parameter.name) ||
+          ts.getDecorators(parameter)?.length
+      ) ||
+      candidate.modifiers?.some(
+        (m) => m.kind === ts.SyntaxKind.StaticKeyword || m.kind === ts.SyntaxKind.AsyncKeyword
+      ) ||
+      candidate.body?.statements.length !== 1
+    )
+      return unknown;
+    const [statement] = candidate.body.statements;
+    if (!ts.isReturnStatement(statement) || !statement.expression) return unknown;
+    const returned = unwrap(statement.expression);
+    if (
+      !ts.isCallExpression(returned) ||
+      !ts.isIdentifier(returned.expression) ||
+      (returned.flags & ts.NodeFlags.OptionalChain) !== 0
+    )
+      return unknown;
+    const ref = importedReference(returned.expression);
+    const source = ref ? sourceOf?.(ref.file) : undefined;
+    if (!ref || source === undefined) return unknown;
+    return createLocalPipelineResolver(source, ref.file, true).exportedRunner(ref.name);
+  }
+
+  function exportedRunner(name: string): LocalPipelineResolution {
+    const statements = parsed.statements
+      .filter(ts.isVariableStatement)
+      .filter((statement) =>
+        statement.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
+      )
+      .flatMap((statement) => [...statement.declarationList.declarations])
+      .filter((declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === name);
+    if (statements.length !== 1) return unknown;
+    const [declaration] = statements;
+    return (declaration.parent.flags & ts.NodeFlags.Const) !== 0 && declaration.initializer
+      ? pipeline(declaration.initializer)
+      : unknown;
+  }
+
   return Object.assign(
     (operationName: string) => {
       const found = matches.get(operationName);
       return found?.length === 1 ? callable(found[0], new Set()) : unknown;
     },
-    { exportedFactory }
+    { exportedFactory, repositoryMethod, exportedRunner }
   );
 }
