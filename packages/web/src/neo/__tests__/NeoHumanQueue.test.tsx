@@ -520,7 +520,7 @@ describe('NeoHumanQueue', () => {
     await waitFor(() => expect(train.isConnected && train.checked).toBe(true));
   });
 
-  it('lets the human hand this computer to an eligible in-progress todo', () => {
+  it('lets the human take this computer back from an eligible in-progress todo', () => {
     const onDesktopControl = vi.fn();
     const car = {
       ...entry('car', 'Service the car'),
@@ -561,8 +561,10 @@ describe('NeoHumanQueue', () => {
     expect(view.queryByRole('button', { name: 'Show details: Remote step' })).toBeNull();
     const row = view.container.querySelector('[data-ask-todo="t4"]') as HTMLElement;
     fireEvent.click(within(row).getByRole('button', { name: 'Show details: Call the garage' }));
-    fireEvent.click(within(row).getByRole('checkbox', { name: label }));
-    expect(onDesktopControl).toHaveBeenCalledWith('t4', true);
+    const box = within(row).getByRole('checkbox', { name: label }) as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    fireEvent.click(box);
+    expect(onDesktopControl).toHaveBeenCalledWith('t4', false);
   });
 
   it('offers the desktop switch before the full read and enables it once loaded', async () => {
@@ -752,10 +754,10 @@ describe('NeoHumanQueue', () => {
       const pick = () => view.getByRole('checkbox', { name: 'iPad' }) as HTMLInputElement;
       const confirm = () => view.getByRole('button', { name: 'Confirm' }) as HTMLButtonElement;
       const desktop = () => {
-        if (!view.queryByRole('menuitem', { name: 'Let it use this computer' }))
+        if (!view.queryByRole('menuitem', { name: 'Stop letting it use this computer' }))
           fireEvent.click(view.getByRole('button', { name: 'Step actions: Call the garage' }));
         return view.getByRole('menuitem', {
-          name: 'Let it use this computer',
+          name: 'Stop letting it use this computer',
         }) as HTMLButtonElement;
       };
       fireEvent.click(pick());

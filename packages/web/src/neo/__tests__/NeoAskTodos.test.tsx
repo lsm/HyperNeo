@@ -742,15 +742,15 @@ describe('NeoAskTodos', () => {
       ),
     });
 
-  it('lights the computer only where the human allowed it and switches it from the menu', () => {
+  it('lights the computer unless the human turned it off and switches it from the menu', () => {
     locale.value = 'en';
     const onDesktopControl = vi.fn();
     const app = render(
       <NeoAskTodos
         entry={entry({
           todos: [
-            todo('a', { state: 'doing' }),
-            todo('b', { state: 'doing', named: { desktopControl: true } }),
+            todo('a', { state: 'doing', named: { desktopControl: false } }),
+            todo('b', { state: 'doing' }),
             todo('c', { state: 'done' }),
             todo('d', {
               state: 'doing',

@@ -1,7 +1,7 @@
 import { lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { getDataDir } from '../../daemon/src/lib/data-dir.ts';
-import { desktopOptIn, readDesktopTodos } from '../../daemon/src/lib/desktop/opt-in.ts';
+import { desktopAllowed, readDesktopTodos } from '../../daemon/src/lib/desktop/opt-in.ts';
 import { createDesktopProxy } from '../../daemon/src/lib/desktop/mcp-proxy.ts';
 import { serveDesktopMcp } from '../../daemon/src/lib/desktop/mcp-server.ts';
 import { createDesktopTargetBroker } from '../../daemon/src/lib/desktop/target-broker.ts';
@@ -16,7 +16,7 @@ export async function readDesktopBinding(worker: string) {
     readonly: true,
   });
   try {
-    const todo = desktopOptIn(readDesktopTodos(db, worker), worker);
+    const todo = desktopAllowed(readDesktopTodos(db, worker), worker);
     if (!todo) return null;
     try {
       const desktop = join(getDataDir(), 'desktop');

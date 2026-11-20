@@ -424,7 +424,7 @@ function QueueItem({
               type="checkbox"
               class={`${FORM_CHECKBOX_CLASS} accent-accent`}
               disabled={disabled || refreshing}
-              checked={desktop.named?.desktopControl === true}
+              checked={desktop.named?.desktopControl !== false}
               onChange={(event) =>
                 onDesktopControl?.(item.todoId, (event.target as HTMLInputElement).checked)
               }

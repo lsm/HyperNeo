@@ -7,7 +7,7 @@ import { getDataDir } from '../data-dir.ts';
 import { defineOperation } from '../operations/registry.ts';
 import { readProcessIdentity, type ProcessIdentity } from '../runtime-process-identity.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
-import { desktopOptIn, readDesktopTodos, type DesktopTodoRow } from './opt-in.ts';
+import { desktopAllowed, readDesktopTodos, type DesktopTodoRow } from './opt-in.ts';
 import { desktopPidGone, desktopRecordMissing, readDesktopDriverRecord } from './stop-operation.ts';
 
 const State = z.enum(['off', 'unavailable', 'running', 'stopped', 'stop_unconfirmed']);
@@ -76,7 +76,7 @@ export function createDesktopStatusOperation(db: Pick<Database, 'prepare'>, opti
             const own = rows.some((row) => row.worker === worker)
               ? rows
               : readDesktopTodos(db, worker);
-            const optIn = desktopOptIn(own, worker);
+            const optIn = desktopAllowed(own, worker);
             const todo = optIn?.title ?? own.find((row) => row.worker === worker)?.title ?? null;
             return { worker, todo, state: await driverState(dataDir, worker, !!optIn, options) };
           })
