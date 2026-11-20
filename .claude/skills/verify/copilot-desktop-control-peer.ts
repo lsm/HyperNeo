@@ -42,42 +42,57 @@ export async function startCopilotDesktopPeer(home: string, state: string) {
     journal('session.idle', {});
   }
   let active = false;
+  let kickoff = true;
+  let path: string;
+  let title: string;
   server.on('connection', (peer) => peer.on('message', (raw) => {
     const message = JSON.parse(raw.toString());
-    const reply = (type: string, fields: object = {}) => peer.send(JSON.stringify({ type, session_id: ref.id, ...fields }));
+    const reply = (type: string, fields: object = {}) => peer.send(JSON.stringify({ type, session_id: ref.id, request_id: message.request_id, ...fields }));
     messages.push(message.type);
     switch (message.type) {
-      case 'list_models':
-        return reply('models_list', { models: [{ id: 'desktop-model', supportedReasoningEfforts: ['high'] }] });
       case 'create_project_from_path':
-        db.prepare('INSERT INTO projects VALUES (?, ?, ?)').run(project, 'Disposable project', message.path);
+        path = message.path;
+        db.prepare('INSERT OR IGNORE INTO projects VALUES (?, ?, ?)').run(project, 'Disposable project', path);
         return reply('project_created', { project: { id: project } });
       case 'create_folder_workspace':
         assert.equal(message.project_id, project);
-        db.prepare("INSERT INTO sessions VALUES (?, ?, ?, 1, 0, NULL, 'local', 0, ?, ?)").run(
-          ref.id, message.name, new Date().toISOString(), message.kickoff_model, message.kickoff_reasoning_effort
-        );
-        db.prepare("INSERT INTO workspaces VALUES (?, ?, ?, NULL, ?, NULL, NULL, 'local', 'folder')").run(
-          workspace, ref.id, project, message.name
-        );
-        journal('user.message', { messageId: 'kickoff', interactionId: 'kickoff', content: message.kickoff_prompt });
-        active = true;
-        return reply('workspace_created', { request_id: message.request_id, workspace: { id: workspace, session_id: ref.id } });
+        assert.equal(message.kickoff_prompt, undefined);
+        title = message.name;
+        return reply('workspace_created', { workspace: { id: workspace, displayPath: path } });
+      case 'create_session':
+        assert.equal(message.workspace_id, workspace);
+        assert.equal(message.cwd, path);
+        if (message.reasoning_effort === 'high') {
+          db.prepare("INSERT INTO sessions VALUES (?, ?, ?, 0, 0, NULL, 'local', 0, ?, ?)").run(
+            ref.id, title, new Date().toISOString(), message.model, message.reasoning_effort
+          );
+          db.prepare("INSERT INTO workspaces VALUES (?, ?, ?, NULL, ?, NULL, NULL, 'local', 'folder')").run(
+            workspace, ref.id, project, title
+          );
+        }
+        return reply('session_created', { workspace_id: workspace, model: message.model, reasoning_effort: 'high' });
       case 'send_message': {
         assert.equal(message.session_id, ref.id);
         assert.equal(message.mode, 'enqueue');
+        if (kickoff) {
+          kickoff = false;
+          active = true;
+          db.prepare('UPDATE sessions SET is_running = 1 WHERE id = ?').run(ref.id);
+          journal('user.message', { messageId: 'kickoff', interactionId: 'kickoff', content: message.prompt });
+          return reply('session_message_sent', { message_id: 'kickoff' });
+        }
         const message_id = randomUUID();
         if (active) items.push({ id: randomUUID(), message_id });
         else observe(message.prompt, message_id);
         return reply('session_message_sent', { message_id });
       }
       case 'get_session_queue':
-        return reply('session_queue', { items });
+        return reply('command_result', { data: { items } });
       case 'remove_session_queue_item': {
-        const index = items.findIndex((item) => item.id === message.item_id);
+        const index = items.findIndex((item) => item.id === message.id);
         assert(index >= 0);
         items.splice(index, 1);
-        return reply('session_queue_item_removed', { item_id: message.item_id, removed: true });
+        return reply('command_result', { data: { outcome: { changed: true }, snapshot: { items } } });
       }
       case 'abort_session':
         active = false;
@@ -120,8 +135,8 @@ export async function verifyCopilotDesktopControl(
     title: 'Desktop work', model: 'desktop-model', effort: 'high', message: 'Initial prompt',
   };
   const bad = await rpc<Result<WorkStarted>>('work.start', { ...request, effort: 'low' });
-  assert(!bad.ok && bad.reason === 'unsupported_effort', JSON.stringify(bad));
-  assert.deepEqual(peer.messages, ['list_models']);
+  assert(!bad.ok && bad.reason === 'not_delivered', JSON.stringify(bad));
+  assert(!peer.messages.includes('send_message'));
   const started = await rpc<Result<WorkStarted>>('work.start', request);
   assert(started.ok, JSON.stringify(started));
   const { ref } = started.value;

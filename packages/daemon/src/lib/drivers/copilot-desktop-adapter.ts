@@ -118,9 +118,13 @@ export function createCopilotDesktopAdapter(
     makeFolder: (folder) => mkdirSync(folder),
     find: async (id) => (await read({ includeClosed: true, limit: 1 }, id))[0],
     summarize: (session) => summarize(session, machine),
-    readInput: async (id, text) => {
+    observedInput: async (id, inputId) => {
       const file = await readableHistory(id);
-      return file ? readInput(file, id, text) : null;
+      return (
+        file !== null &&
+        readCopilotInputs(file, id, {}, (observed) => observed === inputId)[inputId]?.state ===
+          'observed'
+      );
     },
   });
   return {

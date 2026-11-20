@@ -14,7 +14,6 @@ export function NeoWorkTabs({
   selected: NeoWorkTab;
   onSelect: (tab: NeoWorkTab) => void;
   trailing?: ComponentChildren;
-  /** Replaces the tabs in the same row while the inbox is being searched. */
   search?: ComponentChildren;
   sticky?: boolean;
 }) {

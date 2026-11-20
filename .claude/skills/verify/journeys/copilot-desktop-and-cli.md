@@ -39,19 +39,25 @@ mode, search for a Desktop session whose title and workspace name are missing.
 
 Use `control` and `both-control` with the same command to attach a synthetic
 authenticated Desktop peer. Start work through HyperNeo with a model and effort.
-Check a rejected effort makes no workspace, and the accepted settings come
-back from the stored session. Submit and withdraw one queued message, stop
+Check an App settings mismatch prevents the initial prompt, and the accepted
+settings come back from the stored session. Submit and withdraw one queued message, stop
 the initial turn, send a follow-up, read its reply with the receipt, then
 rename and archive the same work. In dual mode, the startup reference must
 come from the Desktop peer.
 
-The peer proves routing and receipt handling in an isolated daemon. For release
-verification, repeat the same operations against a disposable session in the
-signed-in macOS app over its authenticated local channel. Compare the actual
-model and effort in the saved session and require an abort event before
-accepting Stop. Preserve the App's worktree on archive. Record only results
-for the disposable session. The real App proof requires a separately approved
-attended setup and does not use the human's daemon.
+The peer proves routing and receipt handling in an isolated daemon. With
+separate approval to use the signed-in macOS App's local connection credential
+for this run, verify the driver directly:
+
+```bash
+bun .claude/skills/verify/copilot-desktop-live.ts --attended gpt-5.4 high
+```
+
+The proof creates a disposable local folder and one App session without a
+daemon. It checks the effective model and effort in the runtime's start
+event, stops a live turn, confirms that a withdrawn input did not run, reads
+the follow-up by its receipt, and archives the session with the folder retained.
+The script emits action results and the requested settings.
 
 The CLI also exposes start, send, queue, withdraw, stop, rename, and archive
 for daemon-owned sessions. Strict same-turn steering and driver compaction

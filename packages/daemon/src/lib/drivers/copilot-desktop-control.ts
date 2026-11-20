@@ -20,24 +20,23 @@ type Controls = Pick<
 >;
 const Id = z.string().regex(/^[\w-]{1,128}$/);
 const Queue = z.array(z.object({ id: Id, message_id: Id.optional() }));
-const Models = z.array(
-  z.object({
-    id: z.string().min(1),
-    name: z.string().optional(),
-    supportedReasoningEfforts: z.array(z.string()).optional(),
-    supported_reasoning_efforts: z.array(z.string()).optional(),
-  })
-);
 const Project = z.object({ id: Id });
-const Workspace = z.object({ id: Id, session_id: Id.optional() });
-const Removed = z.object({ item_id: Id, removed: z.boolean() });
+const Workspace = z.object({ id: Id, displayPath: z.string() });
+const CreatedSession = z.object({
+  session_id: Id,
+  workspace_id: Id,
+  model: z.string().nullish(),
+  reasoning_effort: z.string().nullish(),
+});
+const QueueSnapshot = z.object({ items: Queue });
+const Removal = z.object({ outcome: z.object({ changed: z.boolean() }), snapshot: QueueSnapshot });
 
 export function createCopilotDesktopControl(
   deps: StartFolderDeps & {
     machine: string;
     find: (id: string) => Promise<CopilotDesktopSession | undefined>;
     summarize: (session: CopilotDesktopSession) => WorkSummary;
-    readInput: (id: string, text: string) => Promise<{ messageId: string } | null>;
+    observedInput: (id: string, inputId: string) => Promise<boolean>;
   }
 ): Required<Controls> {
   const run = async <T>(
@@ -60,10 +59,19 @@ export function createCopilotDesktopControl(
   const submit: NonNullable<WorkAdapter['send']> = async (ref, message) => {
     const found = await target(ref);
     if ('reason' in found) return found.reason!;
+    const requestId = randomUUID();
     const sent = await run(
-      { type: 'send_message', session_id: ref.id, prompt: message, mode: 'enqueue' },
+      {
+        request_id: requestId,
+        type: 'send_message',
+        session_id: ref.id,
+        prompt: message,
+        mode: 'enqueue',
+      },
       (frame) =>
-        frame.type === 'session_message_sent' && frame.session_id === ref.id
+        frame.type === 'session_message_sent' &&
+        frame.session_id === ref.id &&
+        frame.request_id === requestId
           ? Id.safeParse(frame.message_id).data
           : undefined
     );
@@ -78,35 +86,23 @@ export function createCopilotDesktopControl(
     };
   };
   return {
-    async start(request) {
+    async start(request, context) {
       const prep = workStartPreparation.admit(request.preparation, false);
       if ('reason' in prep) return prep.reason;
-      let settings: { model?: string; effort?: string } = {};
-      if (request.model || request.effort) {
-        const models = await run({ type: 'list_models' }, (frame) =>
-          frame.type === 'models_list' ? Models.safeParse(frame.models).data : undefined
-        );
-        if (!models.ok) return { ...models, notSent: true };
-        const selected = workStartConfiguration.select(
-          request,
-          models.value.map((model) => ({
-            id: model.id,
-            aliases: model.name ? [model.name] : [],
-            efforts: model.supportedReasoningEfforts ?? model.supported_reasoning_efforts ?? [],
-          }))
-        );
-        if ('ok' in selected) return selected;
-        settings = selected;
-      }
+      const settings = { model: request.model, effort: request.effort };
       const path = selectLocalStartFolder(request, deps, 'Copilot Desktop needs a local folder.');
       if ('reason' in path) return path.reason;
       if (!statSync(path.value).isDirectory())
         return reject('invalid_place', 'Copilot Desktop needs a directory.', true);
       const canonical = realpathSync(path.value);
-      const project = await run({ type: 'create_project_from_path', path: canonical }, (frame) =>
-        frame.type === 'project_created' || frame.type === 'project_updated'
-          ? Project.safeParse(frame.project).data
-          : undefined
+      const projectRequest = randomUUID();
+      const project = await run(
+        { type: 'create_project_from_path', path: canonical, request_id: projectRequest },
+        (frame) =>
+          (frame.type === 'project_created' || frame.type === 'project_updated') &&
+          frame.request_id === projectRequest
+            ? Project.safeParse(frame.project).data
+            : undefined
       );
       if (!project.ok) return { ...project, notSent: true };
       const requestId = randomUUID();
@@ -119,9 +115,6 @@ export function createCopilotDesktopControl(
           project_id: project.value.id,
           name: request.sessionTitle ?? request.title,
           request_id: requestId,
-          kickoff_prompt: request.message,
-          kickoff_model: settings.model,
-          kickoff_reasoning_effort: settings.effort,
         },
         (frame) =>
           frame.type === 'workspace_created' && frame.request_id === requestId
@@ -129,12 +122,45 @@ export function createCopilotDesktopControl(
             : undefined
       );
       if (!created.ok) return created;
-      const id = created.value.session_id;
-      if (!id)
+      const workspace = created.value;
+      if (!isAbsolute(workspace.displayPath))
+        return reject('unreachable', 'Copilot Desktop did not confirm the workspace directory.');
+      const sessionRequest = randomUUID();
+      const started = await run(
+        {
+          type: 'create_session',
+          request_id: sessionRequest,
+          workspace_id: workspace.id,
+          cwd: workspace.displayPath,
+          model: settings.model,
+          reasoning_effort: settings.effort,
+        },
+        (frame) =>
+          frame.type === 'session_created' && frame.request_id === sessionRequest
+            ? CreatedSession.safeParse(frame).data
+            : undefined
+      );
+      if (!started.ok) return { ...started, notSent: undefined };
+      const id = started.value.session_id;
+      const confirmed = workStartConfiguration.confirm(settings, {
+        model: started.value.model ?? undefined,
+        effort: started.value.reasoning_effort ?? undefined,
+      });
+      if (!confirmed.ok || started.value.workspace_id !== workspace.id)
         return reject(
-          'unreachable',
-          'Desktop created a workspace but its session is unconfirmed. Do not replay.'
+          'not_delivered',
+          'Copilot Desktop did not apply the requested session settings.'
         );
+      const session = await deps.find(id);
+      if (
+        session?.id !== id ||
+        session.workspaceId !== workspace.id ||
+        session.folder !== canonical
+      )
+        return reject('unreachable', 'Copilot Desktop did not confirm the new session.');
+      const sent = await submit(deps.summarize(session).ref, request.message, context);
+      if (!sent.ok) return { ...sent, notSent: undefined };
+      const receipt = sent.value.receipt!;
       const deadline = Date.now() + 6000;
       do {
         const session = await deps.find(id);
@@ -147,13 +173,12 @@ export function createCopilotDesktopControl(
             model: session.model ?? undefined,
             effort: session.effort ?? undefined,
           });
-          const input = confirmed.ok && (await deps.readInput(id, request.message));
-          if (input && input.messageId.startsWith('user:')) {
+          if (confirmed.ok && (await deps.observedInput(id, receipt.inputId))) {
             return {
               ok: true,
               value: {
                 ...deps.summarize(session),
-                receipt: { executionId: id, inputId: input.messageId.slice(5) },
+                receipt,
               },
             };
           }
@@ -193,26 +218,30 @@ export function createCopilotDesktopControl(
     async withdraw(ref, queuedSubmissionId) {
       const found = await target(ref);
       if ('reason' in found) return found.reason!;
-      const queued = (frame: CopilotDesktopFrame) =>
-        frame.type === 'session_queue' && frame.session_id === ref.id
-          ? Queue.safeParse(frame.items).data
-          : undefined;
-      const pending = await run({ type: 'get_session_queue', session_id: ref.id }, queued);
+      const command = <T>(type: string, fields: object, schema: z.ZodType<T>) => {
+        const requestId = randomUUID();
+        return run({ type, session_id: ref.id, request_id: requestId, ...fields }, (frame) =>
+          frame.type === 'command_result' && frame.request_id === requestId
+            ? schema.safeParse(frame.data).data
+            : undefined
+        );
+      };
+      const pending = await command('get_session_queue', {}, QueueSnapshot);
       if (!pending.ok) return pending;
-      const item = pending.value.find((entry) => entry.message_id === queuedSubmissionId);
+      const item = pending.value.items.find((entry) => entry.message_id === queuedSubmissionId);
       if (!item)
         return { ok: true, value: { queuedSubmissionId, withdrawn: false, reason: 'not_queued' } };
-      return run(
-        { type: 'remove_session_queue_item', session_id: ref.id, item_id: item.id },
-        (frame) => {
-          if (frame.session_id !== ref.id) return undefined;
-          const result = Removed.safeParse(frame);
-          if (!result.success || result.data.item_id !== item.id) return undefined;
-          return result.data.removed
-            ? { queuedSubmissionId, withdrawn: true }
-            : { queuedSubmissionId, withdrawn: false, reason: 'not_queued' as const };
-        }
-      );
+      const removed = await command('remove_session_queue_item', { id: item.id }, Removal);
+      if (!removed.ok) return removed;
+      const withdrawn =
+        removed.value.outcome.changed &&
+        !removed.value.snapshot.items.some((entry) => entry.message_id === queuedSubmissionId);
+      return {
+        ok: true,
+        value: withdrawn
+          ? { queuedSubmissionId, withdrawn: true }
+          : { queuedSubmissionId, withdrawn: false, reason: 'not_queued' },
+      };
     },
     async archive(ref, admit) {
       const found = await target(ref, true);
@@ -220,14 +249,18 @@ export function createCopilotDesktopControl(
       const denied = admit();
       if (denied) return denied;
       if (found.value.archived) return { ok: true, value: { archived: true } };
+      const requestId = randomUUID();
       return run(
         {
           type: 'archive_workspace',
+          request_id: requestId,
           workspace_id: found.value.workspaceId,
           delete_worktree: false,
         },
         (frame) =>
-          frame.type === 'workspace_archived' && frame.workspace_id === found.value.workspaceId
+          frame.type === 'workspace_archived' &&
+          frame.workspace_id === found.value.workspaceId &&
+          frame.request_id === requestId
             ? { archived: true }
             : undefined
       );
