@@ -27,7 +27,6 @@ import {
   type NeoTodoPolicyScope,
   type NeoTodoRepositoryDraft,
 } from './pack-contract.ts';
-import type { desktopControlQuestion } from './desktop-control-preference.ts';
 import { wireNeoTodoAdd } from './todo-add-operation.ts';
 import {
   readNeoTodoCompletion,
@@ -63,9 +62,6 @@ type Ran = Promise<{ ok: true; todo: NeoTodo; records?: string[] } | Rejection>;
 
 export interface NeoTodoControls {
   userFolder?: string;
-  askDesktopControl?: (
-    question: NonNullable<ReturnType<typeof desktopControlQuestion>>
-  ) => Promise<void>;
   resolveTarget(
     ref: WorkRef
   ): Promise<
@@ -545,11 +541,11 @@ export function planNeoTodoRemove(
 
 const Continue = z.object({ todoId: Text, message: Text.optional() });
 
-const Done = z.object({ todoId: Text, reason: Text.optional() });
+export const NeoTodoDoneInput = z.object({ todoId: Text, reason: Text.optional() });
 
 export function planNeoTodoDone(
   todo: NeoTodo,
-  input: z.infer<typeof Done>,
+  input: z.infer<typeof NeoTodoDoneInput>,
   now = Date.now()
 ): Gate<TodoPlan> {
   if (!['todo', 'doing', 'blocked'].includes(todo.state))
@@ -900,16 +896,6 @@ export function createNeoTodoOperations(
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => present(await proceed(input, caller)),
-    }),
-    defineOperation({
-      name: 'neo.todo.done',
-      description: neoToolDescription('neo.todo.done'),
-      inputSchema: Done,
-      resultSchema: TodoResult,
-      policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async () => {
-        throw new Error('neo.todo.done runs through the todo writer');
-      },
     }),
   ];
   return wireNeoTodoAdd(definitions, todos, sessions, controls, packs, project, inputs);

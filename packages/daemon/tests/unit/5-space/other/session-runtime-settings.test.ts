@@ -327,6 +327,51 @@ describe('session.runtimeSettings.update', () => {
     expect(result.appliesFrom).toBe('next-turn');
   });
 
+  test('persists a thinking effort label as its thinking-level ID', async () => {
+    const h = harness();
+    h.sessions.set('plain', makeSession({ id: 'plain' }));
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'plain',
+      thinkingLevel: 'high',
+    });
+    expect(result).toMatchObject({ ok: true, settings: { thinkingLevel: 'think24k' } });
+    expect(h.persisted.get('plain')?.thinkingLevel).toBe('think24k');
+  });
+
+  test('resolves a unique display name across providers regardless of case', async () => {
+    const h = harness();
+    catalog.mockReturnValue([{ ...model('review-flash', 'openrouter'), name: 'Review Flash' }]);
+    h.sessions.set('plain', makeSession({ id: 'plain' }));
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'plain',
+      model: 'review FLASH',
+    });
+    expect(result).toMatchObject({ ok: true, settings: { model: 'review-flash' } });
+    expect(h.persisted.get('plain')).toMatchObject({
+      model: 'review-flash',
+      provider: 'openrouter',
+    });
+  });
+
+  test('keeps the current provider when an exact model ID is shared', async () => {
+    const h = harness();
+    catalog.mockReturnValue([model('shared-flash', 'openrouter'), model('shared-flash')]);
+    h.sessions.set('plain', makeSession({ id: 'plain' }));
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'plain',
+      model: 'shared-flash',
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      settings: { model: 'shared-flash', provider: 'anthropic' },
+      changes: { model: true, provider: false },
+    });
+    expect(h.persisted.get('plain')).toMatchObject({
+      model: 'shared-flash',
+      provider: 'anthropic',
+    });
+  });
+
   test('a running turn refuses settings without entering the native switch', async () => {
     const h = harness();
     h.sessions.set('plain', makeSession({ id: 'plain' }));
@@ -408,15 +453,35 @@ describe('session.runtimeSettings.update', () => {
     expect(h.liveConfigs).toHaveLength(0);
   });
 
-  test('thinking level normalizes unknown values to off', async () => {
+  test.each([
+    {
+      input: { thinkingLevel: 'maximum' },
+      refusal: { ok: false, reason: 'invalid_thinking_level' },
+    },
+    {
+      input: { model: 'Shared Name' },
+      refusal: {
+        ok: false,
+        reason: 'ambiguous_model',
+        availableModels: ['first-model', 'second-model'],
+      },
+    },
+  ])('returns a validated refusal for $input without writing', async ({ input, refusal }) => {
     const h = harness();
     h.sessions.set('plain', makeSession({ id: 'plain' }));
-    const result = await run(h, 'session.runtimeSettings.update', {
-      sessionId: 'plain',
-      thinkingLevel: 'maximum',
-    });
-    expect(result.ok).toBe(true);
-    expect((result.settings as Record<string, unknown>).thinkingLevel).toBe('off');
+    catalog.mockReturnValue([
+      { ...model('first-model'), name: 'Shared Name' },
+      { ...model('second-model'), name: 'Shared Name' },
+    ]);
+    const registry = createOperationRegistry([...h.operations.values()]);
+    const outcome = await invokeOperation(
+      registry,
+      'session.runtimeSettings.update',
+      { sessionId: 'plain', ...input },
+      { source: 'rpc' }
+    );
+    expect(outcome).toEqual({ kind: 'completed', value: refusal });
+    expect(h.persisted.size).toBe(0);
   });
 
   test('provider-only updates use the non-interrupting joint switch', async () => {

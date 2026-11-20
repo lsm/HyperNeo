@@ -1,6 +1,4 @@
-import { lockCodexSessionName } from './codex-session-name-lock.ts';
-import { withWorkerProvenance } from './worker-provenance.ts';
-import { workerWorkEnvironment, workerWorkLocationsBrief } from '../work-locations.ts';
+import { stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { CODEX_WORKER_INSTRUCTIONS } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -13,10 +11,13 @@ import {
 } from '../../storage/codex-desktop-read.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import { Logger } from '../logger.ts';
+import { workerWorkEnvironment, workerWorkLocationsBrief } from '../work-locations.ts';
 import { codexHeartbeatQuiet } from './codex-heartbeat.ts';
 import { codexUserInput, INJECTED_INPUT, messageText, parseLine } from './codex-rollout-lines.ts';
+import { lockCodexSessionName } from './codex-session-name-lock.ts';
 import { readCodexTurnFacts } from './codex-turn-reader.ts';
 import { type WorkExecutionPreparer, workStartPreparation } from './start-preparation.ts';
+import { withWorkerProvenance } from './worker-provenance.ts';
 import {
   codexWorkerSandbox,
   persistCodexWorkerProfile,
@@ -31,9 +32,13 @@ export { readCodexSnapshot, withCodexState } from '../../storage/codex-desktop-r
 
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
-import { gitWorktreeProject } from './worktree-project.ts';
-import { compactCodexThread, type CodexAppServer, CodexRequestError } from './codex-app-server.ts';
-import { type CodexSendGate, steerCodexDesktopTurn } from './codex-desktop-handoff.ts';
+import { type CodexAppServer, CodexRequestError, compactCodexThread } from './codex-app-server.ts';
+import {
+  type CodexSendGate,
+  codexDesktopIpcAbsent,
+  requestCodexDesktopCompaction,
+  steerCodexDesktopTurn,
+} from './codex-desktop-handoff.ts';
 import { selectCodexConfiguration } from './codex-start-configuration.ts';
 import { workExecutionLocation } from './execution-location.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
@@ -56,8 +61,8 @@ import type {
   WorkRef,
   WorkStarted,
   WorkStatus,
-  WorkTurnFact,
   WorkSummary,
+  WorkTurnFact,
   WorkWithdrawal,
 } from './types.ts';
 import {
@@ -74,7 +79,8 @@ import {
   workInput,
 } from './work-messages.ts';
 import { reject } from './work-operations.ts';
-import { type GitCheckout, prepareWorkerFolder, cleanupOwnedWorktree } from './work-placement.ts';
+import { cleanupOwnedWorktree, type GitCheckout, prepareWorkerFolder } from './work-placement.ts';
+import { gitWorktreeProject } from './worktree-project.ts';
 
 const THREADS_PER_PLACE = 20;
 const RECENT_MS = 2 * 60_000;
@@ -1306,8 +1312,8 @@ export async function startCodexThread(
           })
         : request.message;
       const message = `${brief}\n${CODEX_WORKER_INSTRUCTIONS}`;
-      await deps.startDesktopTurn(threadId, {
-        threadId,
+      const opening = {
+        threadId: createdThreadId,
         approvalPolicy: 'never',
         ...(sandbox
           ? { permissions: sandbox.permissions }
@@ -1315,6 +1321,18 @@ export async function startCodexThread(
         input: [{ type: 'text', text: message, text_elements: [] }],
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
+      };
+      await deps.startDesktopTurn(createdThreadId, opening).catch(async (error: unknown) => {
+        if (!codexDesktopIpcAbsent(error)) throw error;
+        const shared = await withCodexAppServer(deps, async (server) => {
+          await server.call('thread/resume', {
+            threadId: createdThreadId,
+            ...(sandbox ? { permissions: sandbox.permissions } : { sandbox: 'danger-full-access' }),
+          });
+          await server.call('turn/start', opening);
+          return { ok: true as const, value: null };
+        });
+        if (!shared.ok) throw new Error(shared.detail);
       });
       const receipt = await readCodexStartReceipt(
         startedRolloutPath(started),
@@ -1416,7 +1434,75 @@ const runCodexTurns = (superpipe({})('codex-turns') as PipelineAPI)
   deps: CodexDesktopAdapterDeps
 ) => Promise<Result<{ turns: WorkTurnFact[] }>>;
 
+function completedDesktopCompaction(lines: readonly string[]): boolean {
+  let turn: { id?: string; persisted: boolean } | undefined;
+  for (const line of lines) {
+    const entry = parseLine(line);
+    const { type, turn_id, error } = entry?.payload ?? {};
+    if (entry?.type === 'compacted' && turn) turn.persisted = true;
+    if (entry?.type !== 'event_msg') continue;
+    const id = typeof turn_id === 'string' && turn_id ? turn_id : undefined;
+    if (type === 'task_started') {
+      turn = { id, persisted: false };
+      continue;
+    }
+    if (!turn || (turn.id && id && turn.id !== id)) continue;
+    if (type === 'task_complete' && turn.persisted && !error) return true;
+    if (type === 'task_complete' || type === 'turn_aborted') turn = undefined;
+  }
+  return false;
+}
+
+async function compactCodexWorker(
+  ref: WorkRef,
+  deps: CodexDesktopAdapterDeps
+): Promise<Result<{ compacted: boolean }>> {
+  const found = requireCodexThread(ref, deps);
+  if ('reason' in found) return found.reason;
+  const open = requireOpenCodexThread(found.value);
+  if ('reason' in open) return open.reason;
+  const path = open.value.thread.rolloutPath;
+  const idle = async () => !(await readActiveCodexTurn(path));
+  const busy = () => reject('busy', 'The Codex thread still has a live turn.');
+  if (!(await idle())) return busy();
+  try {
+    const { size } = await stat(path);
+    const route = await requestCodexDesktopCompaction(deps.desktopSocketPath, ref.id, idle);
+    if (route === 'busy') return busy();
+    if (route === 'no_owner') {
+      if (!(await idle())) return busy();
+      return await withCodexAppServer(deps, async (server) =>
+        (await compactCodexThread(server, ref.id))
+          ? { ok: true, value: { compacted: true } }
+          : reject('not_delivered', 'The Codex app-server did not confirm compaction.')
+      );
+    }
+    const deadline = Date.now() + 60_000;
+    do {
+      const { lines } = await readTailLines(path, ROLLOUT_TAIL_BYTES, size);
+      if (completedDesktopCompaction(lines)) return { ok: true, value: { compacted: true } };
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    } while (Date.now() < deadline);
+    return reject('not_delivered', 'Codex Desktop did not confirm compaction.');
+  } catch (error) {
+    return reject('not_delivered', error instanceof Error ? error.message : String(error));
+  }
+}
+
 export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAdapter {
+  const compactions = new Map<string, Promise<Result<{ compacted: boolean }>>>();
+  const deliver = async (
+    ref: WorkRef,
+    message: string,
+    from: string,
+    mode: 'auto' | 'steer' | 'queue'
+  ) => {
+    await compactions.get(ref.id);
+    const input = from === 'chat' ? message : `${message}\n${WORK_AGENT_INPUT}`;
+    return mode === 'steer'
+      ? runCodexSend(ref, input, deps, mode)
+      : runCodexQueue(ref, input, deps, mode);
+  };
   return {
     id: 'codex-desktop',
     supportsStartPreparation: !!deps.prepareExecution,
@@ -1454,47 +1540,28 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
       ),
     start: (request) => runCodexStart(request, deps),
     rename: (ref, title) => runCodexRename(ref, title, deps),
-    send: (ref, message, context) =>
-      runCodexQueue(
-        ref,
-        context.from === 'chat' ? message : `${message}\n${WORK_AGENT_INPUT}`,
-        deps,
-        'auto'
-      ),
-    steer: (ref, message, context) =>
-      runCodexSend(
-        ref,
-        context.from === 'chat' ? message : `${message}\n${WORK_AGENT_INPUT}`,
-        deps,
-        'steer'
-      ),
-    queue: (ref, message, context) =>
-      runCodexQueue(
-        ref,
-        context.from === 'chat' ? message : `${message}\n${WORK_AGENT_INPUT}`,
-        deps,
-        'queue'
-      ),
+    send: (ref, message, context) => deliver(ref, message, context.from, 'auto'),
+    steer: (ref, message, context) => deliver(ref, message, context.from, 'steer'),
+    queue: (ref, message, context) => deliver(ref, message, context.from, 'queue'),
     withdraw: (ref, queuedSubmissionId) => runCodexWithdraw(ref, queuedSubmissionId, deps),
-    status: (ref, since, receipt) => runCodexStatus(ref, deps, since, receipt),
+    status: async (ref, since, receipt) => {
+      const result = await runCodexStatus(ref, deps, since, receipt);
+      if (result.ok && compactions.has(ref.id) && !result.value.archived)
+        return { ok: true, value: { ...result.value, status: 'running' } };
+      return result;
+    },
     turns: (ref, cursor, limit) => runCodexTurns(ref, cursor, limit, deps),
     stop: (ref) => runCodexStop(ref, deps),
     compact: async (ref) => {
-      const found = requireCodexThread(ref, deps);
-      if ('reason' in found) return found.reason;
-      const open = requireOpenCodexThread(found.value);
-      if ('reason' in open) return open.reason;
-      if (await readActiveCodexTurn(open.value.thread.rolloutPath))
-        return reject('busy', 'The Codex thread still has a live turn.');
-      return withCodexAppServer(deps, async (server) => {
-        try {
-          return (await compactCodexThread(server, ref.id))
-            ? { ok: true, value: { compacted: true } }
-            : reject('not_delivered', 'The Codex app-server did not confirm compaction.');
-        } catch (error) {
-          return reject('not_delivered', error instanceof Error ? error.message : String(error));
-        }
-      });
+      if (compactions.has(ref.id))
+        return reject('busy', 'Codex compaction is already in progress.');
+      const compaction = compactCodexWorker(ref, deps);
+      compactions.set(ref.id, compaction);
+      try {
+        return await compaction;
+      } finally {
+        compactions.delete(ref.id);
+      }
     },
     cacheUntil: async (ref) => {
       const found = requireCodexThread(ref, deps);

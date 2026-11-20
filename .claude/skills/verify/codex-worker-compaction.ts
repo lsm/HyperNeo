@@ -91,13 +91,34 @@ try {
   }));
   assert.equal(compacted, true, JSON.stringify({ requests: requests - baseline, compactEvents }));
   assert.ok(requests > baseline, 'The live app-server did not request compaction');
-  const confirmations = events.slice(turnEvents).filter((event) => {
-    const params = event.params as { threadId?: string; item?: { type?: string } };
-    return params.threadId === thread.id && (event.method === 'thread/compacted' ||
-      (event.method === 'item/completed' && params.item?.type === 'contextCompaction'));
+  const sameThread = events.slice(turnEvents).flatMap(({ method, params }) => {
+    const notice = params as {
+      threadId?: string;
+      turnId?: string;
+      turn?: { id?: string; status?: string };
+      item?: { type?: string };
+    };
+    return notice?.threadId === thread.id ? [{ method, ...notice }] : [];
   });
-  assert.ok(confirmations.length > 0);
-  console.log(`PASS: fresh app-server resumed the persisted thread and emitted ${confirmations.map((event) => event.method).join(', ')} after ${requests - baseline} compaction model request(s).`);
+  const compactNotice = sameThread.findIndex(
+    ({ method, item }) =>
+      method === 'thread/compacted' ||
+      (method === 'item/completed' && item?.type === 'contextCompaction')
+  );
+  assert.ok(compactNotice >= 0, 'Expected a compaction notification');
+  const start = sameThread
+    .slice(0, compactNotice)
+    .findLast(({ method }) => method === 'turn/started');
+  assert.ok(start?.turn?.id, 'Expected turn/started with params.turn.id');
+  const notice = sameThread[compactNotice];
+  assert.equal(notice.turnId ?? start.turn.id, start.turn.id);
+  const end = sameThread
+    .slice(compactNotice + 1)
+    .find(({ method, turn }) => method === 'turn/completed' && turn?.id === start.turn?.id);
+  assert.equal(end?.turn?.status, 'completed');
+  console.log(
+    `PASS: turn/started, ${notice.method}, and turn/completed (status=completed) matched; compaction model requests=${requests - baseline}.`
+  );
 } finally {
   clearTimeout(timer);
   await server?.close();

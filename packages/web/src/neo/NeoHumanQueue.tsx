@@ -62,7 +62,7 @@ export function NeoHumanQueue({
   reveal?: number;
   onStale?: () => Promise<unknown>;
   onDesktopControl?: (todoId: string, on: boolean) => void;
-  onDesktopAllow?: (question: NeoQuestionEntry) => void;
+  onDesktopAllow?: (question: NeoQuestionEntry, always: boolean) => void;
   renderAsk?: (entry: NeoAskEntry, refreshing?: boolean) => ComponentChildren;
 }) {
   const [state, setState] = useState<NeoHumanQueueState>('waiting');
@@ -379,7 +379,7 @@ function QueueItem({
   failed?: boolean;
   refreshing?: boolean;
   onDesktopControl?: (todoId: string, on: boolean) => void;
-  onDesktopAllow?: (question: NeoQuestionEntry) => void;
+  onDesktopAllow?: (question: NeoQuestionEntry, always: boolean) => void;
   onRetry: () => void;
   anchor: (todoId: string, askId?: string) => string | undefined;
   disabled?: boolean;

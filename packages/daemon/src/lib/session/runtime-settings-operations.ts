@@ -1,5 +1,5 @@
 import type { Provider, Session, ThinkingLevel } from '@hyperneo/shared';
-import { normalizeThinkingLevel, PROVIDER_THINKING_MODES } from '@hyperneo/shared';
+import { PROVIDER_THINKING_MODES } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type {
@@ -8,6 +8,8 @@ import type {
 } from '../../storage/repositories/session-runtime-settings-write.ts';
 import { snapshotProcessingStatus } from '../agent/model-switch-handler.ts';
 import { decideSwitch, thinkingRefusal, type SessionEngine } from '../agent/session-engine.ts';
+import { resolveHyperneoThinking } from '../drivers/start-configuration.ts';
+import { matchModelIdOrName, usableModels } from '../usable-models.ts';
 import { getAvailableModels, isCuratedOutModel } from '../model-service.ts';
 import { inferProviderForModel } from '../providers/registry.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
@@ -37,11 +39,17 @@ const InputSchema = z.object({
   thinkingLevel: z.string().min(1).optional(),
 });
 type Input = z.infer<typeof InputSchema>;
+type ResolvedInput = Omit<Input, 'provider' | 'thinkingLevel'> & {
+  provider?: string;
+  thinkingLevel?: ThinkingLevel;
+};
 type Failure = { ok: false; reason: string; availableModels?: string[] };
 type Target = {
   snapshot: SessionRuntimeSettingsSnapshot;
   live: ReturnType<RuntimeSettingsDependencies['getLiveSession']>;
 };
+
+type ResolvedTarget = Target & { input: ResolvedInput };
 
 function callerOwnsTarget(
   id: string,
@@ -72,7 +80,11 @@ function captureTarget(input: Input, caller: OperationCaller, deps: RuntimeSetti
     : { reason: { ok: false, reason: 'session_not_found' } as Failure };
 }
 
-function gateReady(target: Target, input: Input, deps: RuntimeSettingsDependencies) {
+function gateReady(
+  target: Target,
+  input: Pick<ResolvedInput, 'model' | 'provider'>,
+  deps: RuntimeSettingsDependencies
+) {
   const { snapshot, live } = target;
   const liveThinkingOnly =
     input.model === undefined && input.provider === undefined && !!live?.queryObject;
@@ -97,7 +109,41 @@ function gateReady(target: Target, input: Input, deps: RuntimeSettingsDependenci
     : { value: target };
 }
 
-function validatePair(target: Target, input: Input) {
+function resolveSettings(target: Target, input: Input) {
+  const thinkingLevel = resolveHyperneoThinking(input.thinkingLevel)?.value;
+  if (input.thinkingLevel !== undefined && thinkingLevel === undefined)
+    return { reason: { ok: false, reason: 'invalid_thinking_level' } as Failure };
+  const available =
+    input.model === undefined ? [] : usableModels(getAvailableModels('global'), input.provider);
+  const current = JSON.parse(target.snapshot.config) as Session['config'];
+  const currentProviderMatch = available.find(
+    (entry) => entry.id === input.model && entry.provider === current.provider
+  );
+  const models = currentProviderMatch
+    ? [currentProviderMatch]
+    : input.model === undefined
+      ? []
+      : matchModelIdOrName(available, input.model);
+  if (models.length > 1)
+    return {
+      reason: {
+        ok: false,
+        reason: 'ambiguous_model',
+        availableModels: models.map((model) => model.id),
+      } as Failure,
+    };
+  const match = models[0];
+  const resolved: ResolvedInput = {
+    ...input,
+    model: match?.id ?? input.model,
+    provider: input.provider ?? match?.provider,
+    thinkingLevel,
+  };
+  return { value: { ...target, input: resolved } };
+}
+
+function validatePair(target: ResolvedTarget) {
+  const { input } = target;
   const current = JSON.parse(target.snapshot.config) as { model?: string; provider?: Provider };
   const model = input.model ?? current.model;
   const provider =
@@ -132,7 +178,8 @@ function validatePair(target: Target, input: Input) {
   return { value: target };
 }
 
-function gateHarness(target: Target, input: Input, deps: RuntimeSettingsDependencies) {
+function gateHarness(target: ResolvedTarget, deps: RuntimeSettingsDependencies) {
+  const { input } = target;
   const current = JSON.parse(target.snapshot.config) as Session['config'];
   const provider =
     input.model !== undefined || input.provider !== undefined
@@ -145,17 +192,15 @@ function gateHarness(target: Target, input: Input, deps: RuntimeSettingsDependen
 }
 
 async function applySettings(
-  target: Target,
-  input: Input,
+  target: ResolvedTarget,
   caller: OperationCaller,
   deps: RuntimeSettingsDependencies
 ) {
-  const { snapshot, live } = target;
+  const { snapshot, live, input } = target;
   const current = JSON.parse(snapshot.config) as { model: string; provider?: Provider };
   const model = input.model ?? current.model;
   const provider = input.provider ?? current.provider ?? inferProviderForModel(model);
-  const thinkingLevel: ThinkingLevel | undefined =
-    input.thinkingLevel === undefined ? undefined : normalizeThinkingLevel(input.thinkingLevel);
+  const { thinkingLevel } = input;
   const currentOwner = () =>
     deps.getLiveSession(snapshot.id) === live &&
     !deps.isPreparing(snapshot.id) &&
@@ -210,7 +255,11 @@ function projectUpdate(target: Target, input: Input, deps: RuntimeSettingsDepend
     appliesFrom: 'next-turn' as const,
     changes: {
       model: input.model !== undefined,
-      provider: input.provider !== undefined,
+      provider:
+        input.provider !== undefined ||
+        (input.model !== undefined &&
+          after.settings.provider !==
+            (JSON.parse(target.snapshot.config) as Session['config']).provider),
       thinkingLevel: input.thinkingLevel !== undefined,
     },
     notes,
@@ -221,9 +270,10 @@ const updateSettings = (superpipe({})('session.runtimeSettings.update') as Pipel
   .input(['input', 'caller', 'deps'])
   .pipe(captureTarget, ['input', 'caller', 'deps'], 'result:update')
   .pipe(gateReady, ['update', 'input', 'deps'], 'result:update')
-  .pipe(gateHarness, ['update', 'input', 'deps'], 'result:update')
-  .pipe(validatePair, ['update', 'input'], 'result:update')
-  .pipe(applySettings, ['update', 'input', 'caller', 'deps'], 'result:update')
+  .pipe(resolveSettings, ['update', 'input'], 'result:update')
+  .pipe(gateHarness, ['update', 'deps'], 'result:update')
+  .pipe(validatePair, 'update', 'result:update')
+  .pipe(applySettings, ['update', 'caller', 'deps'], 'result:update')
   .pipe(projectUpdate, ['update', 'input', 'deps'], 'update')
   .endAsync('update') as (
   input: Input,

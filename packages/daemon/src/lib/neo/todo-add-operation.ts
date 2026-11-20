@@ -6,7 +6,7 @@ import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-to
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import type { OperationCaller, OperationDefinition } from '../operations/registry.ts';
 import { neoUserFolder } from './folder.ts';
-import { desktopControlQuestion, planDesktopControl } from './desktop-control-preference.ts';
+import { planDesktopControl } from './desktop-control-preference.ts';
 import { type NeoInputReads, resolveNeoInputAsk } from './input-ask.ts';
 import type { NeoPack } from './pack-contract.ts';
 import type {
@@ -23,8 +23,6 @@ type Result = { ok: false; reason: string } | { ok: true; todo?: NeoTodo; record
 
 export async function preflightTodoDesktopControl(
   store: NeoAskTodoRepository,
-  askDesktopControl: NeoTodoControls['askDesktopControl'],
-  askId: string,
   requested: boolean,
   role: OperationCaller['role']
 ): Promise<{ value: boolean } | { reason: { ok: false; reason: string } }> {
@@ -32,15 +30,11 @@ export async function preflightTodoDesktopControl(
   const decision =
     role === 'neo' ? planDesktopControl(true, await store.read('desktopControlPreference')) : 'off';
   if (decision === 'allow') return { value: true };
-  if (decision === 'ask' && askDesktopControl) {
-    const question = desktopControlQuestion(askId, await store.desktopControlQuestionState());
-    if (question) await askDesktopControl(question);
-  }
   return {
     reason: {
       ok: false,
       reason:
-        'desktop_control_requires_permission: The human has not allowed desktop control without asking. Add the todo with desktopControl left out, then send a desktop_control card for it.',
+        'desktop_control_requires_permission: Leave desktopControl out. Workers may use this Mac by default; call desktop.access.request {app} first so the Mac asks the human for that app.',
     },
   };
 }
@@ -167,8 +161,6 @@ export function wireNeoTodoAdd(
       async (draft: ResolvedNeoTodoDraft, ask: NeoAsk, caller: OperationCaller) => {
         const desktop = await preflightTodoDesktopControl(
           store,
-          controls.askDesktopControl,
-          ask.id,
           draft.named?.desktopControl === true,
           caller.role
         );

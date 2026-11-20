@@ -145,6 +145,7 @@ export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
   todos?: NeoTodoPack;
   matter?(ask: Pick<NeoAsk, 'title' | 'request' | 'projectId'>): string | null;
   tracker?: NeoTrackerAdapter;
+  linkExists?(url: string): Promise<boolean | null>;
   sweep?(now: number): Promise<void>;
   attention?: {
     kinds: readonly NeoAttentionKind[];

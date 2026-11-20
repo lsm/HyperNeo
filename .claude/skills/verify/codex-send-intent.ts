@@ -11,6 +11,7 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logger.ts';
 import { startCodexDesktopTurn, steerCodexDesktopTurn } from '../../../packages/daemon/src/lib/drivers/codex-desktop-handoff.ts';
 import { spawnProcess } from '../../../packages/daemon/src/lib/runtime-spawn/index.ts';
+import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { mock } from 'bun:test';
 const sandboxExports = { ...await import('../../../packages/daemon/src/lib/drivers/worker-sandbox.ts') };
 
@@ -175,7 +176,9 @@ let ws: WebSocket | undefined;
 const app = await createDaemonApp({ config: getConfig({ port, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
 try {
   await app.spaceRuntimeService.ready();
-  ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+  ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, {
+    headers: { authorization: `Bearer ${readLocalCredential(join(run, 'data/local-rpc.credential'))}` },
+  } as unknown as string[]);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('connection failed')); });
   const send = (mode?: string, describe = false, adapters = false, receipt?: { executionId: string; inputId: string }, message = 'synthetic marker') => new Promise<any>((done, fail) => {
     const workerSandbox = mode === 'sandbox-off' ? 'off' : mode === 'sandbox-always' ? 'always' : undefined;
@@ -303,6 +306,18 @@ try {
   assert.deepEqual(nextTurn.params.turnStart.request.sandboxPolicy, { type: 'dangerFullAccess' }, 'Current off preference must replace the old Desktop policy for the next turn');
   const opens = readFileSync(openLog, 'utf8').trim().split('\n').map(line => JSON.parse(line));
   assert.equal(opens.length, 2, 'Only new-thread creation and the first ownerless automatic send open Desktop');
+  const ipcPath = join(home, 'ipc/ipc.sock');
+  renameSync(ipcPath, `${ipcPath}.held`);
+  await new Promise<void>((done) => desktop.close(() => done()));
+  renameSync(`${ipcPath}.held`, ipcPath);
+  owner = 'missing'; refuse = false; loaded = true; active = false;
+  const absent = calls.length;
+  const routed = await send();
+  assert.equal(routed.ok, true, JSON.stringify(routed));
+  assert.equal(routed.value.queuedSubmissionId, 'synthetic-queue', 'Running Desktop without an IPC listener must queue on the shared app-server');
+  assert(!calls.slice(absent).some(call => (call as { desktop?: string }).desktop));
+  assert.equal(calls.slice(absent).filter(call => (call as { server?: string }).server === 'thread/queue/add').length, 1);
+  assert(JSON.stringify(logs).includes('desktop_ipc_absent'), 'The route log names the absent Desktop IPC endpoint');
   console.log(`${action} PASS: ${run}/evidence/observed.json`);
 } finally {
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ action, replies, calls, logs, timings, collisions }, null, 2));

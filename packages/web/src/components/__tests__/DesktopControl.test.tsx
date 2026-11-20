@@ -76,6 +76,27 @@ describe('DesktopControl', () => {
     expect(invoke).toHaveBeenCalledWith(hub, 'desktop.status', {});
   });
 
+  it('shows the ask-or-not switch with no workers and saves a change', async () => {
+    invoke.mockImplementation(async (_hub, name) =>
+      name === 'pack.preferences.get'
+        ? { preference: null }
+        : name === 'pack.preferences.set'
+          ? { ok: true }
+          : { workers: [] }
+    );
+    render(<DesktopControl />);
+    const toggle = await screen.findByRole('switch', { name: 'Use without asking' });
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toggle.getAttribute('aria-checked')).toBe('true'));
+    expect(invoke).toHaveBeenCalledWith(hub, 'pack.preferences.set', {
+      pack: 'core',
+      scope: { kind: 'global', key: '' },
+      key: 'desktopControl',
+      value: true,
+    });
+  });
+
   it('shows nothing when the status read is refused', async () => {
     invoke.mockResolvedValue({ accepted: false, reason: 'not_admitted' });
     const { container } = render(<DesktopControl />);

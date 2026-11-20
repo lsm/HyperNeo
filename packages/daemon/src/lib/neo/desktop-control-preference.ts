@@ -1,20 +1,20 @@
 import type { Database } from '../../storage/sqlite-compat.ts';
 import type { NeoPackPreferenceDeclaration } from './pack-contract.ts';
-import { getNeoPackPreference } from './preferences.ts';
+import { getNeoPackPreference, saveNeoPackPreference } from './preferences.ts';
 
 const address = {
   pack: 'core',
   scope: { kind: 'global' as const, key: '' },
   key: 'desktopControl',
 };
-const question = 'When a task needs your computer, may workers use it?';
+const question = 'When a task needs your computer, may workers use it without asking?';
 
 export const DESKTOP_CONTROL_PREFERENCE: NeoPackPreferenceDeclaration = {
   label: { en: 'Worker desktop control', 'zh-Hans': '工作者桌面控制' },
-  question: { en: question, 'zh-Hans': '任务需要使用你的电脑时，是否允许工作者使用？' },
+  question: { en: question, 'zh-Hans': '任务需要使用你的电脑时，是否不用问你就可以用？' },
   valueLabels: {
-    true: { en: 'Allow for tasks that need it', 'zh-Hans': '允许需要使用电脑的任务' },
-    false: { en: 'Keep manual approval per task', 'zh-Hans': '继续逐项手动批准' },
+    true: { en: 'Use it without asking', 'zh-Hans': '直接使用，不用再问' },
+    false: { en: 'Ask me for each task', 'zh-Hans': '每个任务都先问我' },
   },
   scope: 'global',
   type: { kind: 'boolean' },
@@ -22,17 +22,10 @@ export const DESKTOP_CONTROL_PREFERENCE: NeoPackPreferenceDeclaration = {
   ask: question,
 };
 
-export const DESKTOP_CONTROL_QUESTION_ID = 'core.desktopControl';
+export const DESKTOP_CONTROL_ANSWERS: readonly string[] = ['No', 'Allow', 'Always allow'];
 
-export function desktopControlQuestion(askId: string, prior: { id: string; state: string } | null) {
-  if (prior && prior.state !== 'retired') return null;
-
-  return {
-    askId,
-    requestId: prior ? `${DESKTOP_CONTROL_QUESTION_ID}:${prior.id}` : DESKTOP_CONTROL_QUESTION_ID,
-    hold: false as const,
-    alternatives: [true, false].map((value) => [{ ...address, value }]),
-  };
+export function desktopControlAnswerAllowed(answer: unknown, todo: { state: string } | null) {
+  return answer === 'No' || (todo !== null && ['todo', 'doing', 'blocked'].includes(todo.state));
 }
 
 export function desktopControlPreference(db: Database): unknown {
@@ -40,7 +33,9 @@ export function desktopControlPreference(db: Database): unknown {
 }
 
 export function planDesktopControl(request: unknown, preference: unknown) {
-  if (request !== true) return 'off';
-  if (preference === true) return 'allow';
-  return preference === undefined ? 'ask' : 'off';
+  return request === true && preference === true ? 'allow' : 'off';
+}
+
+export function saveDesktopControlPreference(db: Database, value: boolean, now: number) {
+  saveNeoPackPreference(db, address.pack, address.scope, address.key, value, now);
 }

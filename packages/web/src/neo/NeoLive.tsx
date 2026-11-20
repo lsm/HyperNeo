@@ -22,6 +22,7 @@ import { useInputDraft } from '../hooks/useInputDraft.ts';
 import ToastContainer from '../islands/ToastContainer.tsx';
 import { blurComposerOnTap } from '../lib/blur-composer-on-tap.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
+import { desktopPreferenceRead } from '../lib/desktop-preference.ts';
 import { connectionState, reconnectAttemptCount } from '../lib/state.ts';
 import { readNeoAskImages } from './conversation-ask-client.ts';
 import { NeoTopicChips } from './NeoTopicChips.tsx';
@@ -311,12 +312,10 @@ export function NeoLive() {
       entries: neoAskEntriesInOrder(workEntries.filter((entry) => neoAskEntryGroup(entry) === key)),
     };
   });
-  const allowDesktop = (question: NeoQuestionEntry) => {
-    if (question.todoId)
-      void neo.setDesktopControl(question.todoId, true).then((ok) => {
-        if (ok) void neo.answerQuestion(question.id, 'Allow');
-      });
-  };
+  const allowDesktop = (question: NeoQuestionEntry, always: boolean) =>
+    void neo.answerQuestion(question.id, always ? 'Always allow' : 'Allow').then(() => {
+      if (always) desktopPreferenceRead.value += 1;
+    });
   const askCard = (
     entry: NeoAskEntry,
     listed = false,

@@ -10,6 +10,7 @@ export const NEO_RARE_OPERATION_NAMES = [
   'calendar.list',
   'daemon.session.inspect',
   'daemon.snapshot',
+  'desktop.access.request',
   'desktop.call',
   'event.external.delivery.list',
   'event.external.get',

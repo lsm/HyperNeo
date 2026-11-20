@@ -66,7 +66,9 @@ function nextCompactionAttempt(
   lastUse: number,
   now: number
 ): number | null {
-  if (!facts || (facts.compactedAt !== null && facts.compactedAt >= lastUse)) return null;
+  if (!facts) return null;
+  const compactedAt = facts.lateCompactedAt ?? facts.compactedAt;
+  if (compactedAt !== null && compactedAt >= lastUse) return null;
   const { failure } = facts;
   if (!failure || failure.attemptedAt < lastUse) return 1;
   return failure.count < MAX_COMPACTION_ATTEMPTS && failure.retryAt <= now
@@ -221,7 +223,10 @@ const releaseWorker = (superpipe({})('neo.todo.release-worker') as PipelineAPI)
       const facts = compact ? await sessions.read('workerCompactionFacts', ref) : null;
       const cacheUntil = compact ? ((await adapter?.cacheUntil?.(ref)) ?? null) : null;
       const hasLookup = !!lookup;
-      const compactedAt = facts?.compactedAt ?? null;
+      const lateCompactedAt = facts?.lateCompactedAt;
+      if (lateCompactedAt != null && lateCompactedAt >= row.lastUse)
+        await sessions.recordWorkerCompacted(ref, lateCompactedAt);
+      const compactedAt = lateCompactedAt ?? facts?.compactedAt ?? null;
       return { ref, decision, hasLookup, compact, lastUse: row.lastUse, compactedAt, cacheUntil };
     },
     ['release', 'row', 'sessions', 'workerCompact'],

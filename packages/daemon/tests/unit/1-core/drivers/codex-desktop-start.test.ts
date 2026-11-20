@@ -62,6 +62,7 @@ function adapter(
     exit?: number;
     linked?: boolean;
     prepareExecution?: WorkExecutionPreparer;
+    shared?: CodexAppServer;
   } = {}
 ) {
   const calls: Array<[string, Record<string, unknown>]> = [];
@@ -90,6 +91,7 @@ function adapter(
       };
     },
     appServer: async () => {
+      if (git.shared) return git.shared;
       throw new Error('Shared daemon must not create desktop threads');
     },
     prepareDesktopProject: async (folder) => {
@@ -958,6 +960,47 @@ describe('codex-desktop start', () => {
     ]);
     expect(closed()).toBe(true);
   });
+
+  test.each(['ECONNREFUSED', 'ENOENT'])(
+    'opens the first turn on the shared app-server when Desktop IPC is absent: %s',
+    async (code) => {
+      const shared: Array<[string, Record<string, unknown>]> = [];
+      const { instance } = adapter(
+        {
+          call: async (method) => {
+            if (method === 'desktop/start-turn')
+              throw Object.assign(new Error(`connect ${code} ipc.sock`), { code });
+            return method === 'thread/start' ? { thread: { id: 'th1' } } : {};
+          },
+        },
+        ['/focus/dolmen'],
+        {
+          shared: {
+            call: async (method, params) => {
+              shared.push([method, params]);
+              return {};
+            },
+            close: async () => {},
+          },
+        }
+      );
+      expect(await instance.start?.(request, user)).toMatchObject({
+        ok: true,
+        value: { ref: { adapter: 'codex-desktop', id: 'th1' }, status: 'running' },
+      });
+      expect(shared).toEqual([
+        ['thread/resume', { threadId: 'th1', sandbox: 'danger-full-access' }],
+        [
+          'turn/start',
+          {
+            ...turnAccess,
+            threadId: 'th1',
+            input: [{ type: 'text', text: openingMessage, text_elements: [] }],
+          },
+        ],
+      ]);
+    }
+  );
 
   test('the opening text includes the spans Desktop needs to render its live turn', async () => {
     const { instance, calls } = adapter({

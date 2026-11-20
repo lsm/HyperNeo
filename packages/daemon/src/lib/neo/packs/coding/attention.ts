@@ -17,6 +17,7 @@ export const CODING_ATTENTION_KINDS: readonly NeoAttentionKind[] = [
   { id: 'coding.github_budget', ...told },
   { id: 'coding.pr_unowned', ...told },
   { id: 'coding.pr_sweep', ...told },
+  { id: 'coding.review_after_approval', ...told },
   {
     id: 'coding.idle_with_open_pr',
     decide: () => 'digest',

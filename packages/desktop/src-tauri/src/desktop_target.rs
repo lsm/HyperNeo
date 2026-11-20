@@ -15,7 +15,7 @@ use security_framework::os::macos::code_signing::{
 use serde_json::{json, Value};
 use std::{ffi::c_void, str::FromStr};
 
-const ANCHOR: &str = "anchor apple or (anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists)";
+const ANCHOR: &str = "anchor apple or (anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists) or (anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.9] exists)";
 
 #[link(name = "Security", kind = "framework")]
 extern "C" {
@@ -137,6 +137,19 @@ fn signer(code: *const c_void) -> Result<Signer, &'static str> {
             requirement: text,
         })
     }
+}
+
+pub(super) fn matches_app(path: &str, bundle_id: &str, requirement: &str) -> bool {
+    let Some(url) = CFURL::from_path(path, true) else {
+        return false;
+    };
+    let Ok(code) = SecStaticCode::from_path(&url, Flags::NONE) else {
+        return false;
+    };
+    let anchor = SecRequirement::from_str(ANCHOR).expect("valid anchor requirement");
+    code.check_validity(Flags::STRICT_VALIDATE, &anchor).is_ok()
+        && signer(code.as_concrete_TypeRef() as _)
+            .is_ok_and(|signer| signer.bundle_id == bundle_id && signer.requirement == requirement)
 }
 
 fn owner(window: u32) -> Option<i32> {
