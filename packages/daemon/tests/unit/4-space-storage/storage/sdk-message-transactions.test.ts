@@ -158,7 +158,10 @@ describe('SDK transaction ops', () => {
       sdkDeliveryFencedStatus,
     ];
     for (const op of operations) expect(DB_OPS.get(op.name)).toBe(op);
-    expect(operations).toHaveLength(11);
+    const registered = [...DB_OPS.values()].filter(
+      (op) => op.name.startsWith('sdk_messages.') && op.name !== sdkMessageWrites.name
+    );
+    expect(new Set(registered)).toEqual(new Set(operations));
   });
   test('ensures, activates and retries the same row with its job', async () => {
     const ensured = await gateway.run(sdkPromptEnsure, {
