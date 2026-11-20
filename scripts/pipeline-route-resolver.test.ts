@@ -10,6 +10,29 @@ const imports = `
 `;
 const runner = `const run = superpipe({})('demo.read').input('input').endAsync('input');`;
 
+const serialQueue = `
+ let pending = Promise.resolve();
+ const serialize = (action) => {
+   const result = pending.then(action);
+   pending = result.then(() => undefined, () => undefined);
+   return result;
+ };
+`;
+
+test.each([
+  ['canonical queue', serialQueue, 'named'],
+  ['skipped callback', serialQueue.replace('then(action)', 'then(() => null)'), 'unknown'],
+  ['cursor replaced', `${serialQueue} pending = neverSettles;`, 'unknown'],
+  ['shadowed Promise', `const Promise = customPromise; ${serialQueue}`, 'unknown'],
+  ['competing recovery', serialQueue.replace('() => undefined);', '() => otherRun());'), 'unknown'],
+])('strictly follows a queue with %s', (_title, queue, kind) => {
+  const source = `${imports} ${runner} ${queue}
+    defineOperation({ name: 'demo.read', execute: () => serialize(() => run()) });`;
+  expect(createLocalPipelineResolver(source, 'route.ts', true)('demo.read')).toEqual(
+    kind === 'named' ? { kind, name: 'demo.read' } : { kind }
+  );
+});
+
 test.each([
   [runner, 'run'],
   [runner, '() => run()'],

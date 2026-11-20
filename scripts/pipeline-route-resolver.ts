@@ -1,5 +1,6 @@
 import { posix } from 'node:path';
 import ts from 'typescript';
+import { serializedPipelineCallback } from './pipeline-serial-callback.ts';
 import { createPipelineBuilderResolver } from './pipeline-builder-factory.ts';
 
 export type LocalPipelineResolution = { kind: 'named'; name: string } | { kind: 'unknown' };
@@ -329,6 +330,12 @@ export function createLocalPipelineResolver(
       (strictCalls && (expression.flags & ts.NodeFlags.OptionalChain) !== 0)
     )
       return unknown;
+    const callback = strictCalls ? serializedPipelineCallback(expression, checker) : undefined;
+    if (callback) {
+      if (seen.has(callback)) return unknown;
+      seen.add(callback);
+      return callable(callback, seen);
+    }
     const callee = strictCalls ? unwrap(expression.expression) : expression.expression;
     if (ts.isIdentifier(callee)) return callable(callee, seen);
     return strictCalls ? pipeline(callee) : unknown;
