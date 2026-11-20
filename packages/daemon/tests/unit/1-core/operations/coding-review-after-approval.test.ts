@@ -2,45 +2,40 @@ import { describe, expect, test } from 'bun:test';
 import type { NeoAttentionEvent } from '../../../../src/lib/neo/attention/decide.ts';
 import { CODING_ATTENTION_KINDS } from '../../../../src/lib/neo/packs/coding/attention.ts';
 import {
-  CodingPrEventRepository,
-  deliverCodingPrEvents,
-} from '../../../../src/lib/neo/packs/coding/pr-events.ts';
-import {
   CodingPrLedgerRepository,
   reconcileCodingPrLedger,
 } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
+import { deliverCodingReviewAfterApproval } from '../../../../src/lib/neo/packs/coding/review-after-approval.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { CODING_REVIEW_AFTER_PREFERENCE } from '../../../../src/lib/neo/packs/coding/stage-preferences.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
-const pr = (ci: string) => ({
+const pr = (head: string, title = 'PR 1') => ({
   number: 1,
-  title: 'PR 1',
+  title,
   headRefName: 'b1',
-  headRefOid: 'head1abc',
+  headRefOid: head,
   state: 'OPEN',
   isDraft: false,
   mergeable: 'MERGEABLE',
   reviewDecision: null,
-  reviews: {
-    nodes: [{ state: 'APPROVED', commit: { oid: 'head1abc' }, author: { login: 'bot' } }],
-  },
+  reviews: { nodes: [{ state: 'APPROVED', commit: { oid: head }, author: { login: 'bot' } }] },
   closedAt: null,
-  commits: { nodes: [{ commit: { statusCheckRollup: { state: ci } } }] },
+  commits: { nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] },
 });
-const response = (ci: string) => ({
+const response = (node: unknown) => ({
   data: {
     rateLimit: { remaining: 4000 },
     repository: {
       nameWithOwner: 'lsm/a',
-      open: { pageInfo: { hasNextPage: false }, nodes: [pr(ci)] },
+      open: { pageInfo: { hasNextPage: false }, nodes: [node] },
       done: { nodes: [] },
     },
   },
 });
 
-async function run(preferences: Record<string, unknown>) {
+function setup(preferences: Record<string, unknown>) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
@@ -58,48 +53,73 @@ async function run(preferences: Record<string, unknown>) {
       JSON.stringify(value)
     );
   const ledger = new CodingPrLedgerRepository(db);
-  const events = new CodingPrEventRepository(db);
   const attended: NeoAttentionEvent[] = [];
-  const deps = { host: 'github.com', tell: async () => true, wake: async () => true };
-  const attend = async (event: NeoAttentionEvent) => {
-    attended.push(event);
-    return true;
+  let answer: () => Promise<boolean> = async () => true;
+  const sweep = async (node: unknown, now: number) => {
+    await reconcileCodingPrLedger(ledger, ['lsm/a'], async () => response(node), now);
+    await deliverCodingReviewAfterApproval(db, 'github.com', async (event) => {
+      attended.push(event);
+      return answer();
+    });
   };
-  for (const [ci, now] of [
-    ['PENDING', 100],
-    ['SUCCESS', 200],
-    ['SUCCESS', 300],
-  ] as const)
-    await deliverCodingPrEvents(
-      events,
-      await reconcileCodingPrLedger(ledger, ['lsm/a'], async () => response(ci), now),
-      deps as never,
-      attend
-    );
-  db.close();
-  return attended;
+  return { db, attended, sweep, fail: (next: () => Promise<boolean>) => (answer = next) };
 }
 
 describe('review after approval', () => {
-  test('an approved green head wakes Neo once to start a coding.review worker', async () => {
-    const attended = await run({ 'review.after': 'approved', mergeBy: 'daemon' });
-    expect(attended).toHaveLength(1);
-    expect(attended[0]).toMatchObject({
-      kind: 'coding.review_after_approval',
-      subject: { type: 'pr_head', id: 'https://github.com/lsm/a/pull/1@head1abc' },
-    });
-    expect(String(attended[0].facts.text)).toContain('named.workKind "coding.review"');
-    expect(
-      CODING_ATTENTION_KINDS.find((kind) => kind.id === attended[0].kind)?.decide(attended[0], {
-        covered: false,
-        latestReportAt: null,
-      })
-    ).toBe('wake');
+  test.each([false, true])(
+    'a first-seen approved head wakes Neo once per head (crossModelReview %p)',
+    async (crossModelReview) => {
+      const { db, attended, sweep } = setup({ 'review.after': 'approved', crossModelReview });
+      try {
+        await sweep(pr('heada'), 100);
+        await sweep(pr('heada', 'Renamed'), 200);
+        await sweep(pr('headb'), 300);
+        expect(attended.map((event) => event.subject.id)).toEqual([
+          'https://github.com/lsm/a/pull/1@heada',
+          'https://github.com/lsm/a/pull/1@headb',
+        ]);
+        expect(attended[0].kind).toBe('coding.review_after_approval');
+        expect(String(attended[0].facts.text)).toContain('named.workKind "coding.review"');
+        expect(
+          CODING_ATTENTION_KINDS.find((kind) => kind.id === attended[0].kind)?.decide(attended[0], {
+            covered: false,
+            latestReportAt: null,
+          })
+        ).toBe('wake');
+      } finally {
+        db.close();
+      }
+    }
+  );
+
+  test('a failed or thrown wake is retried on the next sweep', async () => {
+    const { db, attended, sweep, fail } = setup({ 'review.after': 'approved' });
+    try {
+      fail(async () => false);
+      await sweep(pr('heada'), 100);
+      fail(async () => {
+        throw new Error('queue failed');
+      });
+      await sweep(pr('heada'), 200);
+      fail(async () => true);
+      await sweep(pr('heada'), 300);
+      await sweep(pr('heada'), 400);
+      expect(attended).toHaveLength(3);
+    } finally {
+      db.close();
+    }
   });
 
   test('without the preference nothing is started', async () => {
-    expect(await run({})).toEqual([]);
-    expect(await run({ 'review.after': 'never' })).toEqual([]);
+    for (const preferences of [{}, { 'review.after': 'never' }]) {
+      const { db, attended, sweep } = setup(preferences);
+      try {
+        await sweep(pr('heada'), 100);
+        expect(attended).toEqual([]);
+      } finally {
+        db.close();
+      }
+    }
   });
 
   test('the preference is a repository enum that defaults to never', () => {

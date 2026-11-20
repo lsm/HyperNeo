@@ -7,6 +7,7 @@ import { createCodingRetryMergeOperation } from './retry-merge-operation.ts';
 import { createCodingDaemonMergeSweep } from './daemon-merge-sweep.ts';
 import { CODING_ATTENTION_KINDS, type CodingAttend, scanCodingIdleOpenPrs } from './attention.ts';
 import { checkCodingPrApproved } from './pr-approved.ts';
+import { deliverCodingReviewAfterApproval } from './review-after-approval.ts';
 import { checkCodingDeployed } from './deployed.ts';
 import { createCodingLinkExists } from './link-exists.ts';
 import { withCodingMergeContext } from './merge-context.ts';
@@ -369,7 +370,8 @@ export function createCodingPack(deps: {
           (host, until) => deps.prLedger.write('recordReviewCommentHold', host, until)
         );
       await mergeSweep(now);
-      await deliverCodingPrEvents(deps.prEvents, transitions, prSweepDeps, attend);
+      await deliverCodingPrEvents(deps.prEvents, transitions, prSweepDeps);
+      await deliverCodingReviewAfterApproval(deps.database(), prSweepDeps.host, attend);
       await deliverCodingHealth(
         deps.prLedger,
         codingWatchedRepos(deps.database()) ?? deps.projectRepos(),
