@@ -108,12 +108,13 @@ export function serializedPipelineCallback(call: ts.CallExpression, checker: ts.
   )
     return undefined;
   const cursorName = cursor.name;
+  const promise = cursor.initializer.expression.expression;
   const left = advance.expression.left;
   function hasOtherUse(node: ts.Node): boolean {
+    if (ts.isTypeNode(node)) return false;
     if (
-      ts.isCallExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      node.expression.text === 'eval'
+      ts.isIdentifier(node) &&
+      (node.text === 'eval' || (node.text === 'Promise' && node !== promise))
     )
       return true;
     if (ts.isIdentifier(node) && node !== cursorName && node !== left && node !== next?.receiver) {
@@ -124,5 +125,5 @@ export function serializedPipelineCallback(call: ts.CallExpression, checker: ts.
     }
     return ts.forEachChild(node, (child) => hasOtherUse(child) || undefined) === true;
   }
-  return hasOtherUse(declaration.parent.parent.parent) ? undefined : callback;
+  return hasOtherUse(declaration.getSourceFile()) ? undefined : callback;
 }

@@ -24,6 +24,8 @@ test.each([
   ['skipped callback', serialQueue.replace('then(action)', 'then(() => null)'), 'unknown'],
   ['cursor replaced', `${serialQueue} pending = neverSettles;`, 'unknown'],
   ['shadowed Promise', `const Promise = customPromise; ${serialQueue}`, 'unknown'],
+  ['patched Promise', `Promise.resolve = customResolve; ${serialQueue}`, 'unknown'],
+  ['dynamic evaluation', `${serialQueue} (eval)('pending = custom');`, 'unknown'],
   ['competing recovery', serialQueue.replace('() => undefined);', '() => otherRun());'), 'unknown'],
 ])('strictly follows a queue with %s', (_title, queue, kind) => {
   const source = `${imports} ${runner} ${queue}
