@@ -4,9 +4,13 @@ import { navigateToSettings } from '../lib/router.ts';
 export function ModelHoldLine({
   hold,
   class: className = '',
+  onSignIn = () => navigateToSettings('providers'),
+  signingIn = false,
 }: {
   hold: ModelHold;
   class?: string;
+  onSignIn?: () => void;
+  signingIn?: boolean;
 }) {
   const line = modelHoldLine(hold);
   return (
@@ -18,7 +22,8 @@ export function ModelHoldLine({
           <button
             type="button"
             class="font-medium underline underline-offset-2 hover:text-warning-soft"
-            onClick={() => navigateToSettings('providers')}
+            onClick={onSignIn}
+            disabled={signingIn}
           >
             Sign in
           </button>

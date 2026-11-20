@@ -12,6 +12,7 @@ import type { NeoAskHistoryPage, NeoResult } from '@hyperneo/shared/types/neo-sn
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { NeoWakeRow } from './NeoWakeRow.tsx';
 import { NeoGoals } from './NeoGoals.tsx';
+import { NeoWorkEmpty } from './NeoWorkEmpty.tsx';
 import { NeoWorkTabs, type NeoWorkTab } from './NeoWorkTabs.tsx';
 import { SessionSchedules } from '../components/SessionSchedules.tsx';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -29,10 +30,10 @@ import { readNeoAskImages } from './conversation-ask-client.ts';
 import { NeoTopicChips } from './NeoTopicChips.tsx';
 import { NeoAskTodos, QuestionBox } from './NeoAskTodos.tsx';
 import { NeoHumanQueue, neoHumanQueueHolds } from './NeoHumanQueue.tsx';
-import { NeoWorkSearch } from './NeoWorkSearch.tsx';
+import { NeoWorkSearch, NeoWorkSearchButton, WORK_SEARCH_TRIGGER } from './NeoWorkSearch.tsx';
 import { useNeoWorkSearch } from './useNeoWorkSearch.ts';
 import { NeoComposer } from './NeoComposer.tsx';
-import { ModelHoldLine } from '../components/ModelHoldLine.tsx';
+import { NeoModelHoldLine } from './NeoModelHoldLine.tsx';
 import { shownModelHold } from '@hyperneo/shared/types/model-hold';
 import { NeoConversation } from './NeoConversation.tsx';
 import { NeoDrawer } from './NeoDrawer.tsx';
@@ -232,6 +233,12 @@ export function NeoLive() {
     workEntries.push(referenced.entry);
   const [workQuery, setWorkQuery] = useState('');
   const [workTab, setWorkTab] = useState<NeoWorkTab>('inbox');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const closeSearch = () => {
+    setWorkQuery('');
+    setSearchOpen(false);
+    requestAnimationFrame(() => document.getElementById(WORK_SEARCH_TRIGGER)?.focus());
+  };
   const search = useNeoWorkSearch(workEntries, workQuery, loadNeoAskDetails, findNeoWork);
   useEffect(() => {
     setHistory(null);
@@ -239,6 +246,7 @@ export function NeoLive() {
     referenceRequest.current = null;
     setCardOpening(false);
     setWorkQuery('');
+    setSearchOpen(false);
     setWorkTab('inbox');
     setLoadingHistory(false);
     setChat(null);
@@ -808,6 +816,7 @@ export function NeoLive() {
     const ticket = {};
     referenceRequest.current = ticket;
     setWorkQuery('');
+    setSearchOpen(false);
     setWorkTab('inbox');
     setCardTarget(null);
     setCardUnavailable(false);
@@ -1143,7 +1152,7 @@ export function NeoLive() {
           aria-hidden={(sheet && !scenesOpen) || chat ? true : undefined}
           inert={(sheet && !scenesOpen) || !!chat}
         >
-          {sheet && (
+          {sheet && !publicConversation && (
             <div class="sticky top-0 z-10 -mx-5 mb-2 flex items-center justify-between bg-[var(--neo-background)] px-5 py-3">
               <h2 class="text-sm font-medium">{t('live.work')}</h2>
               <button
@@ -1174,10 +1183,34 @@ export function NeoLive() {
           {publicConversation && (
             <NeoWorkTabs
               selected={workTab}
+              sticky={sheet}
               onSelect={(tab) => {
                 setWorkTab(tab);
                 setWorkQuery('');
+                setSearchOpen(false);
               }}
+              search={
+                workTab === 'inbox' && searchOpen ? (
+                  <NeoWorkSearch query={workQuery} onQuery={setWorkQuery} onClose={closeSearch} />
+                ) : undefined
+              }
+              trailing={
+                <>
+                  {workTab === 'inbox' && !searchOpen && (
+                    <NeoWorkSearchButton onOpen={() => setSearchOpen(true)} />
+                  )}
+                  {sheet && !searchOpen && (
+                    <button
+                      type="button"
+                      aria-label={t('live.closeWork')}
+                      onClick={() => setScenesOpen(false)}
+                      class="flex h-9 w-9 items-center justify-center rounded-full text-fg-muted hover:text-fg active:bg-fill-strong"
+                    >
+                      <NeoIcon name="close" class="!h-4 !w-4" />
+                    </button>
+                  )}
+                </>
+              }
             />
           )}
           {showTab('inbox') && neoUnhandled > 0 && (
@@ -1185,7 +1218,7 @@ export function NeoLive() {
               {t('live.neoUnhandled', { count: neoUnhandled })}
             </p>
           )}
-          {showTab('scheduled') && <SessionSchedules sessionId={neo.sessionId} />}
+          {showTab('scheduled') && <SessionSchedules sessionId={neo.sessionId} inline />}
           {showTab('goals') && <NeoGoals sessionId={neo.sessionId} />}
           {showTab('inbox') && (
             <>
@@ -1200,7 +1233,6 @@ export function NeoLive() {
                   />
                 ) : null
               )}
-              {publicConversation && <NeoWorkSearch query={workQuery} onQuery={setWorkQuery} />}
               {!!workQuery.trim() &&
                 (search.pending || search.failed || !search.results.length) && (
                   <p role="status" class="mt-4 text-sm text-fg-muted">
@@ -1214,9 +1246,9 @@ export function NeoLive() {
                   </p>
                 )}
               {publicConversation && !workQuery.trim() && workCount === 0 && (
-                <p role="status" class="mt-6 text-sm text-fg-muted">
-                  {t('live.noWork')}
-                </p>
+                <div role="status">
+                  <NeoWorkEmpty icon="work" title={t('live.noWork')} hint={t('live.noWorkHint')} />
+                </div>
               )}
               {!workQuery.trim() && (
                 <NeoTopicChips entries={sceneEntries} selected={topic} onSelect={chooseTopic} />
@@ -1358,7 +1390,7 @@ export function NeoLive() {
             />
           )}
           {ready && modelHold && (
-            <ModelHoldLine hold={modelHold} class="pointer-events-auto mb-2 text-center" />
+            <NeoModelHoldLine hold={modelHold} class="pointer-events-auto mb-2 text-center" />
           )}
           {ready && neo.sessionId && (
             <NeoComposer

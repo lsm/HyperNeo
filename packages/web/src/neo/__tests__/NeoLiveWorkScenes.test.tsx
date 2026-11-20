@@ -135,7 +135,7 @@ describe('Work search input and retry', () => {
       [...container.querySelectorAll('[data-ask]')].map((node) => node.getAttribute('data-ask'))
     ).toEqual(['protocol']);
   });
-  it('clears the work search when another tab is chosen', async () => {
+  it('searches in the tab row and restores the tabs on close', async () => {
     locale.value = 'en';
     const protocol = testAskEntry('protocol', 'to do protocol');
     const { model, container } = mount();
@@ -150,9 +150,11 @@ describe('Work search input and retry', () => {
     await waitFor(() =>
       expect(container.querySelector('[data-scene-group="search"]')).toBeTruthy()
     );
+    expect(screen.queryByRole('button', { name: 'Goals' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Close work search' }));
+    expect(screen.queryByRole('searchbox')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Goals' }));
     fireEvent.click(screen.getByRole('button', { name: 'Inbox' }));
-    expect(screen.queryByRole('searchbox')).toBeNull();
     expect(container.querySelector('[data-scene-group="search"]')).toBeNull();
     expect(container.querySelector('[data-ask="protocol"]')).toBeTruthy();
   });
@@ -455,9 +457,17 @@ describe('Neo public work scenes', () => {
     const { container } = mount(true, true);
     expect(container.querySelector('.neo-shell')?.classList.contains('neo-has-scenes')).toBe(true);
     const work = screen.getByRole('region', { name: 'Work scenes' });
-    expect(within(work).getByRole('status').textContent).toBe('No work yet.');
+    expect(within(work).getByRole('status').textContent).toContain('Your inbox is empty');
     expect(work.querySelectorAll('[data-scene-group]')).toHaveLength(0);
     if (!desktop) {
+      expect(within(work).queryByRole('heading', { name: 'Your work' })).toBeNull();
+      const tabRow = work.querySelector('[data-work-tabs]')?.parentElement;
+      expect(
+        within(tabRow as HTMLElement).getByRole('button', { name: 'Close work list' })
+      ).toBeTruthy();
+      expect(
+        within(tabRow as HTMLElement).getByRole('button', { name: 'Search work' })
+      ).toBeTruthy();
       fireEvent.click(screen.getByRole('button', { name: 'Close work list' }));
       expect(screen.queryByRole('region', { name: 'Work scenes' })).toBeNull();
       fireEvent.click(screen.getByRole('button', { name: 'Your work' }));
@@ -760,7 +770,7 @@ describe('Neo public work scenes', () => {
 
   it('keeps the empty legacy scene list collapsed without a public Work placeholder', () => {
     const { container } = mount(false, true);
-    expect(screen.queryByText('No work yet.')).toBeNull();
+    expect(screen.queryByText('Your inbox is empty')).toBeNull();
     expect(container.querySelector('.neo-has-scenes')).toBeNull();
     expect(container.querySelector('.neo-scene-list')?.childElementCount).toBe(0);
   });
@@ -774,11 +784,11 @@ describe('Neo public work scenes', () => {
     expect(container.querySelector('.neo-shell')?.classList.contains('neo-has-scenes')).toBe(true);
     expect(
       within(screen.getByRole('region', { name: 'Work scenes' })).getByRole('status').textContent
-    ).toBe('No work yet.');
+    ).toContain('Your inbox is empty');
     act(() => {
       model.value = { ...model.value, snapshot: { ...model.value.snapshot, todoAsks: entries } };
     });
-    expect(screen.queryByText('No work yet.')).toBeNull();
+    expect(screen.queryByText('Your inbox is empty')).toBeNull();
     expect(screen.getByRole('region', { name: 'Needs your attention' })).toBeTruthy();
   });
 
@@ -904,7 +914,7 @@ describe('card reply notice navigation', () => {
     fireEvent.click(screen.getByRole('button', { name: /I replied · View card/ }));
     const dialog = await screen.findByRole('dialog', { name: 'Sign-off card' });
     expect(await within(dialog).findByText('Choose a sign-off')).toBeTruthy();
-    expect(screen.getByRole('searchbox')).toHaveProperty('value', '');
+    expect(screen.queryByRole('searchbox')).toBeNull();
   });
 
   it.each([true, false])('opens the exact paged done todo with owner loaded=%s', async (loaded) => {

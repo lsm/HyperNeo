@@ -61,13 +61,17 @@ function setup(repository: string | null, seedPeer = true) {
   } as unknown as NeoTodoControls;
   const gateway = gatewayFor(db);
   const operations = wireNeoTodoMutations(
-    createNeoTodoOperations(
-      store,
-      new NeoTodoSessionRepository(db),
-      controls,
-      () => packs,
-      () => null
-    ),
+    (writeHold) =>
+      createNeoTodoOperations(
+        store,
+        new NeoTodoSessionRepository(db),
+        controls,
+        () => packs,
+        () => null,
+        undefined,
+        undefined,
+        writeHold
+      ),
     {
       gateway,
       write: gateway.run.bind(gateway),

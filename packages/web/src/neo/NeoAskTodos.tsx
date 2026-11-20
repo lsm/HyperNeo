@@ -736,7 +736,7 @@ export function QuestionBox({
           <>
             <button
               type="button"
-              class={neoSecondaryClass}
+              class={neoPlainClass}
               disabled={disabled}
               onClick={() => onAnswer('no')}
             >

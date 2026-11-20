@@ -83,22 +83,26 @@ describe('Writer-backed todo operation activation', () => {
       return { ok: true as const, todo: store.getTodo(id)! };
     };
     advance = () => start('peer');
-    const legacy = createNeoTodoOperations(
-      store,
-      new NeoTodoSessionRepository(db),
-      {
-        resolveTarget: existingTodoTarget,
-        recompute: async () => {
-          throw new Error('Legacy mutation write was called');
+    const legacy = (writeHold: Parameters<typeof createNeoTodoOperations>[7]) =>
+      createNeoTodoOperations(
+        store,
+        new NeoTodoSessionRepository(db),
+        {
+          resolveTarget: existingTodoTarget,
+          recompute: async () => {
+            throw new Error('Legacy mutation write was called');
+          },
+          advance: async () => {},
+          stop,
+          proceed: async () => ({ ok: false as const, reason: 'unused' }),
+          retry: async () => ({ ok: false as const, reason: 'unused' }),
         },
-        advance: async () => {},
-        stop,
-        proceed: async () => ({ ok: false as const, reason: 'unused' }),
-        retry: async () => ({ ok: false as const, reason: 'unused' }),
-      },
-      () => packs,
-      () => null
-    );
+        () => packs,
+        () => null,
+        undefined,
+        undefined,
+        writeHold
+      );
     const registry = createOperationRegistry(
       wireNeoTodoMutations(legacy, {
         gateway,
@@ -208,7 +212,7 @@ describe('Writer-backed todo operation activation', () => {
     const result = await call('neo.todo.hold', { todoId: 'first', reason: 'Human said wait.' });
     expect(result).toMatchObject({
       ok: true,
-      todo: { id: 'first', state: 'blocked', blockedBy: 'held' },
+      todo: { id: 'first', state: 'blocked', blockedBy: 'held', worker: null },
     });
     expect(JSON.stringify(result)).not.toContain('Next task');
     expect('todos' in result).toBe(false);
