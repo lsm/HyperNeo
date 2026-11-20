@@ -99,6 +99,25 @@ function setup(
 }
 
 describe('neo.question operations', () => {
+  test('a relay returns its outcome without entering the manual question route', async () => {
+    const h = setup();
+    try {
+      const op = h.ops['neo.question.ask'];
+      const input = op.inputSchema.parse({
+        kind: 'relay',
+        todoId: h.fix.id,
+        text: 'Proceed with the worker plan?',
+        options: ['Proceed', 'Revise'],
+      });
+      expect(await op.execute(input, owner)).toEqual({
+        ok: false,
+        reason: 'no_worker_question: this todo has no worker question to relay.',
+      });
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('creates a desktop control card for a todo and named app', async () => {
     const h = setup();
     try {
