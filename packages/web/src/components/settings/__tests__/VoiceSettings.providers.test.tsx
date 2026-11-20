@@ -49,6 +49,15 @@ describe('VoiceSettings providers', () => {
     expect(screen.queryByLabelText('Live model')).toBeNull();
   });
 
+  it('places the recorded model between the batch endpoint and live provider', () => {
+    render(<VoiceSettings />);
+    const batch = screen.getByLabelText('Batch endpoint');
+    const model = screen.getByLabelText('Recorded model');
+    const live = screen.getByLabelText('Live provider');
+    expect(batch.compareDocumentPosition(model) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(model.compareDocumentPosition(live) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it('does not configure speech when an empty field is left unchanged', () => {
     globalSettings.value = { voice: { enabled: true, endpoint: '', model: '' } } as GlobalSettings;
     render(<VoiceSettings />);
