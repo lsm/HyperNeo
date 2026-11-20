@@ -35,7 +35,10 @@ import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-to
 import type { StagedWorkerQuestion } from '../work-queue/follow-through.ts';
 import { planNeoRemovedPrerequisiteAnswer } from './todo-removal.ts';
 import { isHumanWorkDecision } from './proposal.ts';
-import { DESKTOP_CONTROL_ANSWERS } from './desktop-control-preference.ts';
+import {
+  DESKTOP_CONTROL_ANSWERS,
+  desktopControlAnswerAllowed,
+} from './desktop-control-preference.ts';
 
 const ReportLine = z
   .string()
@@ -616,7 +619,8 @@ export function requireNeoQuestionReplaceable(
 
 export function planNeoQuestionAnswer(
   question: NeoQuestion | null,
-  answer: NeoQuestionAnswer
+  answer: NeoQuestionAnswer,
+  todo: { state: string } | null = null
 ): Gate<{ question: NeoQuestion; answer: NeoQuestionAnswer }> {
   if (!question) return fail('not_found: no such question.');
   if (question.state !== 'open')
@@ -633,6 +637,10 @@ export function planNeoQuestionAnswer(
             (question.kind !== 'choice' || question.multiple || picked.length === 1);
   if (!allowed)
     return fail(`answer_invalid: that is not an answer to this ${question.kind} question.`);
+  if (question.kind === 'desktop_control' && !desktopControlAnswerAllowed(answer, todo))
+    return fail(
+      'todo_finished: this todo is finished, so desktop control cannot be allowed for it.'
+    );
   return {
     value: {
       question,
@@ -905,8 +913,11 @@ export function createNeoQuestionOperations(
     .input(['input', 'caller'])
     .pipe((caller: OperationCaller) => requireLocalUser(caller), 'caller', 'result:outcome')
     .pipe(
-      (input: z.infer<typeof Answer>) =>
-        planNeoQuestionAnswer(store.getQuestion(input.questionId), input.answer),
+      (input: z.infer<typeof Answer>) => {
+        const question = store.getQuestion(input.questionId);
+        const todo = question?.todoId ? store.getTodo(question.todoId) : null;
+        return planNeoQuestionAnswer(question, input.answer, todo);
+      },
       'input',
       'result:outcome'
     )

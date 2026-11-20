@@ -24,6 +24,10 @@ export const DESKTOP_CONTROL_PREFERENCE: NeoPackPreferenceDeclaration = {
 
 export const DESKTOP_CONTROL_ANSWERS: readonly string[] = ['No', 'Allow', 'Always allow'];
 
+export function desktopControlAnswerAllowed(answer: unknown, todo: { state: string } | null) {
+  return answer === 'No' || (todo !== null && ['todo', 'doing', 'blocked'].includes(todo.state));
+}
+
 export function desktopControlPreference(db: Database): unknown {
   return getNeoPackPreference(db, address.pack, address.scope, address.key)?.value;
 }

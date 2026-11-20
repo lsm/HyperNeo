@@ -1,5 +1,6 @@
 import {
   DESKTOP_CONTROL_ANSWERS,
+  desktopControlAnswerAllowed,
   desktopControlPreference,
   planDesktopControl,
   saveDesktopControlPreference,
@@ -1165,6 +1166,9 @@ export class NeoAskTodoRepository {
   ): NeoQuestion | null {
     let settingsChanged: 'rules' | 'preferences' | undefined;
     const changed = this.db.transaction(() => {
+      const todo = question.todoId ? this.getTodo(question.todoId) : null;
+      if (question.kind === 'desktop_control' && !desktopControlAnswerAllowed(answer, todo))
+        return false;
       const answered = this.changeQuestion(
         question.id,
         {
@@ -1184,10 +1188,8 @@ export class NeoAskTodoRepository {
         }
         this.pruneQuestions(question.askId, now);
         for (const { todo, patch } of effects) this.writeTodo(todo, patch, now, false, false);
-        if (question.kind === 'desktop_control' && answer !== 'No') {
-          const todo = question.todoId ? this.getTodo(question.todoId) : null;
-          if (todo && ['todo', 'doing', 'blocked'].includes(todo.state))
-            this.updateTodo(todo, { named: { ...todo.named, desktopControl: true } }, now);
+        if (todo && question.kind === 'desktop_control' && answer !== 'No') {
+          this.updateTodo(todo, { named: { ...todo.named, desktopControl: true } }, now);
           if (answer === 'Always allow') {
             saveDesktopControlPreference(this.db, true, now);
             settingsChanged = 'preferences';

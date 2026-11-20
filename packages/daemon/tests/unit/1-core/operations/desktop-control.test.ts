@@ -212,11 +212,19 @@ test('Neo opts a todo in only after the human turns asking off, and sends no pre
 
 test('the per-todo desktop card takes no, this task only, or always', () => {
   const card = { state: 'open', kind: 'desktop_control', options: [...DESKTOP_CONTROL_ANSWERS] };
+  const live = { state: 'doing' };
   for (const answer of ['No', 'Allow', 'Always allow'])
-    expect(planNeoQuestionAnswer(card as NeoQuestion, answer)).toMatchObject({
+    expect(planNeoQuestionAnswer(card as NeoQuestion, answer, live)).toMatchObject({
       value: { answer },
     });
-  expect(planNeoQuestionAnswer(card as NeoQuestion, 'Maybe')).not.toHaveProperty('value');
+  expect(planNeoQuestionAnswer(card as NeoQuestion, 'Maybe', live)).not.toHaveProperty('value');
+  for (const answer of ['Allow', 'Always allow'])
+    expect(planNeoQuestionAnswer(card as NeoQuestion, answer, { state: 'done' })).toMatchObject({
+      reason: { reason: expect.stringMatching(/^todo_finished/) },
+    });
+  expect(planNeoQuestionAnswer(card as NeoQuestion, 'No', { state: 'done' })).toHaveProperty(
+    'value'
+  );
 });
 
 test('desktop refusal leaves the entire ask.open todo batch unwritten', async () => {
@@ -338,10 +346,15 @@ test('answering the desktop card applies the todo opt-in and the preference itse
   expect(preference()).toBe('true');
 });
 
-test('always allow still saves the preference when the todo already finished', () => {
+test('a card whose todo finished refuses both allow answers and saves nothing', () => {
   db.prepare("UPDATE neo_todos SET state = 'done' WHERE id = 'dentist'").run();
-  const { store, question } = desktopCard('dentist');
-  store.answerQuestion(question, 'Always allow', 'button', 2);
+  for (const answer of ['Allow', 'Always allow']) {
+    const { store, question } = desktopCard('dentist');
+    expect(store.answerQuestion(question, answer, 'button', 2)).toBeNull();
+    expect(store.getQuestion(question.id)?.state).toBe('open');
+  }
   expect(todoNamed('dentist').desktopControl).toBeUndefined();
-  expect(preference()).toBe('true');
+  expect(preference()).toBeUndefined();
+  const { store, question } = desktopCard('dentist');
+  expect(store.answerQuestion(question, 'No', 'button', 3)?.state).toBe('answered');
 });
