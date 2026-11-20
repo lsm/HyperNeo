@@ -136,11 +136,16 @@ voice up by answering Neo:
   provider row and the settings on the gateway's own connection, writes through
   `packages/daemon/src/storage/repositories/settings-repository.ts` (whose write
   notifies `global_settings` subscribers) and records the change with the change
-  recorder it is handed, so the gateway publishes the update after the commit
-  (`DbGateway.run` in `packages/daemon/src/storage/db-gateway/db-gateway.ts`; the write
-  lane does the same in `db-gateway-worker.ts` in that folder). The operation pipeline
-  is a thin call to that one op and
-  does nothing else around it: `SettingsManager.updateGlobalSettingsAsync` is a
+  recorder it is handed (`DbGateway.run` in
+  `packages/daemon/src/storage/db-gateway/db-gateway.ts`; the write
+  lane does the same in `db-gateway-worker.ts` in that folder). That replay only
+  refreshes the daemon's reactive tables — it is not how the web learns of settings.
+  The pipeline therefore does one more thing after the op returns: it publishes the
+  settings update explicitly, the same `publishSettings` step every existing Neo-side
+  settings write takes (`publishGlobalSettings` → `settings.updated`, the web settings
+  channel); without it the form would show stale parts until a page reload. Publishing
+  sits after the commit and is idempotent, so it cannot break the atomic step.
+  `SettingsManager.updateGlobalSettingsAsync` is a
   separate asynchronous gateway call and is not this atomic step.
   A web edit that commits while the apply runs either lands first, and the transaction
   sees it and refuses, or lands after. Landing after is safe only once the web save is
@@ -271,7 +276,8 @@ default and target branch), near the repository's 300-line budget, failing tests
        (refusing `provider_not_chosen` if the row is missing or holds neither enum),
        re-runs the `legacy_key_host_changed` and `settings_changed_since_answer` guards
        and the part-equality check against those reads, and writes through the settings
-       repository, the gateway publishing the update after the commit; the operation is
+       repository; the pipeline then publishes the settings update explicitly after the
+       op returns, the same publish every Neo-side settings write uses; the operation is
        registered in `rpc-handlers/index.ts` beside the test operations, name added to
        `shared/src/types/operation-names/neo.ts`, tool description in
        `packages/prompts/src/neo/tools/voice.applyProviderPreset.md` with its import and
