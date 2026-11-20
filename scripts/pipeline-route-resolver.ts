@@ -3,12 +3,15 @@ import {
   confinedWorkerRegistration,
   dbGatewayFile,
   registeredRepositoryMethod,
+  registeredDbOp,
   valueImport,
 } from './pipeline-worker-registration.ts';
 import { createPipelineBuilderResolver } from './pipeline-builder-factory.ts';
 import { serializedPipelineCallback } from './pipeline-serial-callback.ts';
 
-export type LocalPipelineResolution = { kind: 'named'; name: string } | { kind: 'unknown' };
+export type LocalPipelineResolution =
+  | { kind: 'named'; name: string; terminal?: boolean }
+  | { kind: 'unknown' };
 
 export function unwrapPipelineExpression(expression: ts.Expression): ts.Expression {
   while (
@@ -349,11 +352,11 @@ export function createLocalPipelineResolver(
       !sourceOf ||
       !strictCalls ||
       !ts.isPropertyAccessExpression(callee) ||
-      callee.name.text !== 'call' ||
+      !['call', 'run'].includes(callee.name.text) ||
+      (callee.name.text === 'run' && call.arguments.length !== 2) ||
       !command ||
       !ts.isIdentifier(command) ||
-      !method ||
-      !ts.isStringLiteral(method) ||
+      (callee.name.text === 'call' && (!method || !ts.isStringLiteral(method))) ||
       call.arguments.some(ts.isSpreadElement)
     )
       return unknown;
@@ -370,14 +373,15 @@ export function createLocalPipelineResolver(
     if (helper?.file !== dbGatewayFile || helper.name !== 'gatewayFor') return unknown;
     const target = importedReference(command);
     if (!target || !sources || typeof sources === 'function') return unknown;
+    if (!confinedWorkerRegistration(sources, fileName, target)) return unknown;
+    if (callee.name.text === 'run') {
+      const name = registeredDbOp(target, sourceOf);
+      return name === undefined ? unknown : { kind: 'named', name, terminal: true };
+    }
+    if (!method || !ts.isStringLiteral(method)) return unknown;
     const repository = registeredRepositoryMethod(target, method.text, sourceOf);
     const source = repository ? sourceOf(target.file) : undefined;
-    if (
-      !repository ||
-      source === undefined ||
-      !confinedWorkerRegistration(sources, fileName, target)
-    )
-      return unknown;
+    if (!repository || source === undefined) return unknown;
     return createLocalPipelineResolver(source, target.file, true, sourceOf).repositoryMethod(
       repository.name,
       method.text,

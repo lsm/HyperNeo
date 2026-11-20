@@ -415,3 +415,24 @@ test.each([
     kind === 'named' ? { kind, name: 'demo.read' } : { kind }
   );
 });
+
+test.each([
+  ['registered DB operation', '[other]', 'named'],
+  ['unregistered DB operation', '[]', 'unknown'],
+])('strictly resolves a %s', (_title, registrations, kind) => {
+  const path = `${dbDirectory}/route.ts`;
+  const source = `import { defineOperation } from './registry.ts';
+    import { gatewayFor as db } from './db-gateway.ts';
+    import { other } from './other.ts';
+    defineOperation({ name: 'demo.read', execute: (input) => db(database).run(other, input) });`;
+  const registry = `import { other } from './other.ts';
+    export const DB_OPS = new Map(${registrations}.map((op) => [op.name, op]));`;
+  const sources = new Map(workerSource).set(path, source).set(`${dbDirectory}/db-ops.ts`, registry);
+  const resolved = createLocalPipelineResolver(source, path, true, sources)('demo.read');
+  expect(resolved).toEqual(
+    kind === 'named' ? { kind, name: 'domain.query', terminal: true } : { kind }
+  );
+  expect(countPipelineRoutes(new Map([[path, source]]), true, sources)).toMatchObject(
+    kind === 'named' ? { unreadable: 0, misnamed: 0 } : { unreadable: 1 }
+  );
+});

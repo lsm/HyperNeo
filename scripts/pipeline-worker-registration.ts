@@ -140,22 +140,48 @@ export function confinedWorkerRegistration(
     );
     if (bindings.length !== 1) return false;
     const [[local]] = bindings;
-    const [imported, use, ...extras] = identifierUses(parsed, local);
+    const [imported, ...uses] = identifierUses(parsed, local);
     if (
       !imported ||
       !ts.isImportSpecifier(imported.parent) ||
       imported.parent.name !== imported ||
-      !use ||
-      extras.length
+      !uses.length
     )
       return false;
-    const call = use.parent;
-    return lookup
-      ? isRegistryLookup(parsed, use)
-      : ts.isCallExpression(call) &&
-          call.arguments[0] === use &&
-          ts.isPropertyAccessExpression(call.expression) &&
-          call.expression.name.text === 'call';
+    if (lookup) return uses.length === 1 && isRegistryLookup(parsed, uses[0]);
+    const gateways = namedImports(parsed.fileName, parsed).filter(
+      ([, ref]) => ref?.file === dbGatewayFile && ref.name === 'gatewayFor'
+    );
+    if (gateways.length !== 1) return false;
+    const gateway = gateways[0][0];
+    const gatewayUses = identifierUses(parsed, gateway);
+    if (
+      gatewayUses.some((id) => {
+        const parent = id.parent;
+        return (
+          !(ts.isImportSpecifier(parent) && parent.name === id) &&
+          !(ts.isCallExpression(parent) && parent.expression === id)
+        );
+      })
+    )
+      return false;
+    return uses.every((use) => {
+      const call = use.parent;
+      if (
+        !ts.isCallExpression(call) ||
+        call.arguments[0] !== use ||
+        !ts.isPropertyAccessExpression(call.expression) ||
+        !['call', 'run'].includes(call.expression.name.text)
+      )
+        return false;
+      const receiver = call.expression.expression;
+      return (
+        ts.isCallExpression(receiver) &&
+        ts.isIdentifier(receiver.expression) &&
+        receiver.expression.text === gateway &&
+        receiver.arguments.length === 1
+      );
+    });
   }
 
   if (!confinedImport(entry, command, false)) return false;
@@ -311,7 +337,7 @@ function importsMap(statement: ts.ImportDeclaration): boolean {
   );
 }
 
-export function registeredRepositoryMethod(command: ImportRef, method: string, sourceOf: SourceOf) {
+function verifiedRegistration(command: ImportRef, sourceOf: SourceOf) {
   const file = registryFile;
   const registry = parse(sourceOf, file);
   const source = parse(sourceOf, command.file);
@@ -341,7 +367,30 @@ export function registeredRepositoryMethod(command: ImportRef, method: string, s
   )
     return undefined;
   const registration = registeredCall(command, source);
-  if (registration?.maker !== 'defineRepositoryOp' || registration.args.length !== 4)
+  const name = registrationKey(command, sourceOf);
+  if (!registration || name === undefined) return undefined;
+  const later = registrations.slice(registrations.indexOf(registered[0][0]) + 1);
+  const references = new Map(imports);
+  if (
+    later.some((local) => {
+      const ref = references.get(local);
+      const key = ref && registrationKey(ref, sourceOf);
+      return key === undefined || key === name;
+    })
+  )
+    return undefined;
+  return { registration, name, source };
+}
+
+export function registeredDbOp(command: ImportRef, sourceOf: SourceOf) {
+  const found = verifiedRegistration(command, sourceOf);
+  return found?.registration.maker === 'defineDbOp' ? found.name : undefined;
+}
+
+export function registeredRepositoryMethod(command: ImportRef, method: string, sourceOf: SourceOf) {
+  const found = verifiedRegistration(command, sourceOf);
+  const registration = found?.registration;
+  if (!found || registration?.maker !== 'defineRepositoryOp' || registration.args.length !== 4)
     return undefined;
   const [name, mode, repository, methods] = registration.args;
   if (
@@ -352,19 +401,9 @@ export function registeredRepositoryMethod(command: ImportRef, method: string, s
     !ts.isArrayLiteralExpression(methods)
   )
     return undefined;
-  const later = registrations.slice(registrations.indexOf(registered[0][0]) + 1);
-  const references = new Map(imports);
-  if (
-    later.some((local) => {
-      const ref = references.get(local);
-      const key = ref && registrationKey(ref, sourceOf);
-      return key === undefined || key === name.text;
-    })
-  )
-    return undefined;
   const literals = methods.elements.filter(ts.isStringLiteral);
   return literals.length === methods.elements.length &&
     literals.filter((element) => element.text === method).length === 1
-    ? { name: repository.text, registrationOffset: repository.getStart(source) }
+    ? { name: repository.text, registrationOffset: repository.getStart(found.source) }
     : undefined;
 }

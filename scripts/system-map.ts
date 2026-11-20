@@ -512,7 +512,7 @@ export function countPipelineRoutes(
       ))(name);
       if (resolved.kind !== 'named' || (!strictCalls && resolved.name !== name))
         counts.unreadable++;
-      else if (resolved.name !== name) counts.misnamed++;
+      else if (resolved.name !== name && !resolved.terminal) counts.misnamed++;
     };
     let parsedCalls: ts.SourceFile | undefined;
     const hasUnconditionalCall = (start: number, name: string, inlineOffset?: number): boolean => {
