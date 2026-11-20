@@ -38,8 +38,32 @@ try {
     await card.waitFor();
     assert.match(await card.innerText(), /Book the dentist on the clinic site/);
     assert.match(await card.innerText(), /Calendar/);
-    if (name === 'wide-zh') await card.getByRole('button', { name: '\u5141\u8bb8', exact: true }).waitFor({ timeout: 5000 });
+    const zh = name === 'wide-zh';
+    for (const label of zh ? ['不行', '只这个任务', '可以，以后不用再问'] : ['No', 'Only this task', "Yes, don't ask again"])
+      await card.getByRole('button', { name: label, exact: true }).waitFor({ timeout: 5000 });
     await page.screenshot({ path: join(out, `${name}.png`) });
+    if (touch) await page.getByRole('button', { name: 'Close work list' }).tap();
+    await page.getByRole('button', { name: zh ? '设置和连接' : 'Settings and connection' }).first().click();
+    const toggle = page.getByRole('switch', { name: zh ? '直接使用，不用问' : 'Use without asking' });
+    await toggle.waitFor();
+    assert.equal(await toggle.getAttribute('aria-checked'), 'false');
+    await toggle.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(out, `${name}-switch.png`) });
+    if (name === 'wide-light') {
+      await toggle.click();
+      await page.waitForFunction(() => document.querySelector('[role="switch"]')?.getAttribute('aria-checked') === 'true');
+      await page.screenshot({ path: join(out, `${name}-switch-on.png`) });
+      const saved = JSON.parse(execSync(`env -i HOME="${run}/home" PATH="${process.env.PATH}" NODE_ENV=test HYPERNEO_DATA_DIR="${run}/data" VERIFY_PORT=${port} bun .claude/skills/verify/rpc.ts pack.preferences.get '{"pack":"core","scope":{"kind":"global","key":""},"key":"desktopControl"}'`, { encoding: 'utf8' })).reply;
+      assert.equal(saved.preference?.value, true, 'the switch must save core.desktopControl');
+      await toggle.click();
+      await page.waitForFunction(() => document.querySelector('[role="switch"]')?.getAttribute('aria-checked') === 'false');
+    }
+    await page.keyboard.press('Escape');
+    await toggle.waitFor({ state: 'hidden' });
+    if (touch) {
+      await page.getByRole('button', { name: /^Your work/ }).first().tap();
+      await card.waitFor();
+    }
     if (name === 'wide-light') {
       const questionId = JSON.parse(readFileSync(join(out, 'card.json'), 'utf8')).reply.question.id;
       await card.getByRole('button', { name: 'Reply in chat' }).click();
@@ -64,10 +88,10 @@ try {
       const answered = chinesePage.locator(`#neo-ref-question-${questionId} [data-question-answer]`).first();
       await answered.waitFor();
       await chinesePage.screenshot({ path: join(out, 'answered-zh.png') });
-      assert.match(await answered.innerText(), /\u5141\u8bb8/, 'the answered card action must use Chinese');
+      assert.match(await answered.innerText(), /只这个任务/, 'the answered card action must use Chinese');
     }
   }
-  console.log('PASS: four views named the todo and app; Only this task closed the card');
+  console.log('PASS: five views named the todo and app and showed the switch; the switch saved; Only this task closed the card');
 } catch (error) {
   if (currentPage) {
     await currentPage.screenshot({ path: join(out, 'failure.png') });
