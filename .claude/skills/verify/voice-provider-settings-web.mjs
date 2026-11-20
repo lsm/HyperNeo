@@ -23,6 +23,12 @@ try {
       await page.getByLabel('Speech provider').waitFor({ timeout: 30000 });
       assert.equal(await page.locator('html').getAttribute('data-theme'), theme);
       assert.equal(await page.getByLabel('Live model').count(), 0);
+      assert(await page.getByLabel('Batch endpoint').evaluate((batch) => {
+        const model = document.querySelector('[aria-label="Recorded model"]');
+        const live = document.querySelector('[aria-label="Live provider"]');
+        return model && live && (batch.compareDocumentPosition(model) & Node.DOCUMENT_POSITION_FOLLOWING) &&
+          (model.compareDocumentPosition(live) & Node.DOCUMENT_POSITION_FOLLOWING);
+      }));
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1));
       await page.screenshot({ path: `${evidence}/voice-provider-${theme}-${width}.png`, fullPage: true, animations: 'disabled' });
       await page.getByLabel('Speech voice').scrollIntoViewIfNeeded();

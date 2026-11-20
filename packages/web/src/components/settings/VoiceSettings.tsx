@@ -314,6 +314,23 @@ export function VoiceSettings() {
           />
         </SettingsRow>
 
+        <SettingsRow
+          label="Recorded model"
+          description="Model names vary by backend."
+          layout="stacked"
+        >
+          <input
+            type="text"
+            aria-label="Recorded model"
+            value={recorded.model}
+            disabled={saving}
+            onInput={(event) => patchPart('recorded', 'model', event.currentTarget.value)}
+            onBlur={(event) => savePartOnBlur('recorded', 'model', event.currentTarget.value)}
+            placeholder="whisper-1"
+            class={FORM_CONTROL_CLASS}
+          />
+        </SettingsRow>
+
         <SettingsRow label="Live provider" layout="stacked">
           <select
             aria-label="Live provider"
@@ -342,18 +359,6 @@ export function VoiceSettings() {
             onInput={(event) => patchPart('live', 'endpoint', event.currentTarget.value)}
             onBlur={(event) => savePartOnBlur('live', 'endpoint', event.currentTarget.value)}
             placeholder="wss://asr.example.com/v1/listen"
-            class={FORM_CONTROL_CLASS}
-          />
-        </SettingsRow>
-
-        <SettingsRow label="Model" description="Model names vary by backend." layout="stacked">
-          <input
-            type="text"
-            value={recorded.model}
-            disabled={saving}
-            onInput={(event) => patchPart('recorded', 'model', event.currentTarget.value)}
-            onBlur={(event) => savePartOnBlur('recorded', 'model', event.currentTarget.value)}
-            placeholder="whisper-1"
             class={FORM_CONTROL_CLASS}
           />
         </SettingsRow>
