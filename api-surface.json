@@ -31004,7 +31004,10 @@
                               ]
                             },
                             "state": {
-                              "const": "progress",
+                              "enum": [
+                                "progress",
+                                "waiting"
+                              ],
                               "type": "string"
                             },
                             "title": {
@@ -39515,7 +39518,10 @@
                               ]
                             },
                             "state": {
-                              "const": "progress",
+                              "enum": [
+                                "progress",
+                                "waiting"
+                              ],
                               "type": "string"
                             },
                             "title": {

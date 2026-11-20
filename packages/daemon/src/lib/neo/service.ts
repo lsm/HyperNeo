@@ -1521,6 +1521,7 @@ export class NeoService {
           questions: facts.cards,
           todos: steps.map((row) => row.todo),
           owners: neoStepOwners(steps),
+          now: Date.now(),
         })
       : null;
   }
