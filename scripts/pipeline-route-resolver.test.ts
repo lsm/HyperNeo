@@ -55,6 +55,44 @@ test('leaves duplicate operation definitions unknown', () => {
   expect(resolveLocalPipeline(source, 'demo.read')).toEqual({ kind: 'unknown' });
 });
 
+test.each([
+  ['', 'named'],
+  ['({ make } = other);', 'unknown'],
+  ['eval("make = other");', 'unknown'],
+])('strict follows a stable, directly exported pipeline factory with %s', (extra, kind) => {
+  const source = `
+    import { make as factory } from './factory.ts';
+    import { defineOperation } from './registry';
+    const run = factory(deps);
+    defineOperation({ name: 'demo.read', execute: () => run() });
+  `;
+  const target = `
+    import builder from 'superpipe';
+    export function make(deps) { return builder({ deps })('demo.read').endAsync(); }
+    ${extra}
+  `;
+  const resolve = createLocalPipelineResolver(
+    source,
+    'packages/demo/src/operations.ts',
+    true,
+    (file) => (file === 'packages/demo/src/factory.ts' ? target : undefined)
+  );
+  expect(resolve('demo.read')).toEqual(kind === 'named' ? { kind, name: 'demo.read' } : { kind });
+});
+
+test('strict does not trust a factory parameter that shadows the pipeline import', () => {
+  const resolve = createLocalPipelineResolver(
+    `import { make } from './factory.ts';
+     import { defineOperation } from './registry';
+     defineOperation({ name: 'demo.read', execute: make(deps) });`,
+    'packages/demo/src/operations.ts',
+    true,
+    () => `import builder from 'superpipe';
+           export function make(builder) { return builder({})('demo.read').end(); }`
+  );
+  expect(resolve('demo.read')).toEqual({ kind: 'unknown' });
+});
+
 test('returns the actual pipeline name for a mismatched operation', () => {
   const source = `${imports} ${runner} defineOperation({ name: 'demo.other', execute: run });`;
   expect(resolveLocalPipeline(source, 'demo.other')).toEqual({ kind: 'named', name: 'demo.read' });
