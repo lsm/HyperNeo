@@ -95,7 +95,7 @@ export async function resolveNeoInputAsk(
     return {
       reason: {
         ok: false,
-        reason: `unknown_input: ${request.input} is not a human message you received.`,
+        reason: `unknown_input: "${request.input.slice(0, 80)}" is not the id of a human message you received. Pass the id attribute of its <human-message id="..."> tag, not the message text.`,
       },
     };
   const { sessionId, messageId } = human.askOrigin;
