@@ -329,9 +329,10 @@ const AskKinds = z.discriminatedUnion('kind', [
   z.object({ ...Asked, kind: z.literal('reply') }),
   z.object({ ...Asked, kind: z.literal('desktop_control'), todoId: Text, app: Text }),
 ]);
-const Ask = AskKinds.refine((input) => input.askId || ('input' in input && input.input), {
-  message: 'Pass input for a human request, or askId for follow-up work.',
-}).refine((input) => ('todoId' in input && input.todoId) || input.retireWhen, {
+const Ask = AskKinds.refine(
+  (input) => input.askId || ('input' in input && input.input) || input.kind === 'desktop_control',
+  { message: 'Pass input for a human request, or askId for follow-up work.' }
+).refine((input) => ('todoId' in input && input.todoId) || input.retireWhen, {
   message: 'retireWhen is required without a linked todo; supply {pack, kind, params}.',
   path: ['retireWhen'],
 });
@@ -712,7 +713,15 @@ export function createNeoQuestionOperations(
     .pipe('!isRelay', 'input')
     .pipe(
       (input: z.infer<typeof Ask>, caller: OperationCaller) =>
-        resolveNeoInputAsk(store, inputs, caller, input, input.text),
+        resolveNeoInputAsk(
+          store,
+          inputs,
+          caller,
+          input.kind === 'desktop_control' && !input.askId && !input.input
+            ? { askId: store.getTodo(input.todoId)?.askId }
+            : input,
+          input.text
+        ),
       ['input', 'caller'],
       'binding'
     )

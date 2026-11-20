@@ -12,7 +12,8 @@ for its current value before adding such a todo:
 - true: add the todo on a local HyperNeo worker with named.desktopControl true.
   It runs without asking.
 - false or unset: add the todo with desktopControl left out, then
-  neo.question.ask kind desktop_control with that todoId and the app. The
+  neo.question.ask kind desktop_control with that todoId, the app and a short
+  text. The
   worker can use the computer once the human answers Allow or Always allow.
   Always allow also turns the preference on, so later todos need no card. No
   means take another route or hand the step to the human.

@@ -11,4 +11,4 @@ Ask one necessary question on an open ask you own. In the human's language, give
 
 For other kinds use replaces to replace an open same-ask card atomically. A closed same-ask replaces ID is ignored. Unknown or other-ask IDs are refused. Without replacement, an open card blocks a new one. A proposal, relayed-session work decision or card the human held cannot be replaced; wait for the human (who can also take back a held card).
 
-For a todo that needs desktop control, send kind desktop_control with todoId and app. Do not enable control yourself. The human answers Allow (this todo), Always allow (this todo, and later todos need no card) or No (take another route or hand the step to the human).
+For a todo that needs desktop control, send kind desktop_control with todoId, app and a short text in the human's language; the card goes on that todo's ask. Do not enable control yourself. The human answers Allow (this todo), Always allow (this todo, and later todos need no card) or No (take another route or hand the step to the human).
