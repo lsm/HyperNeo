@@ -866,7 +866,7 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertIsNone(texts['other'])
         for text in (texts[name] for name in ('observe', 'launch', 'pointer', 'keyboard')):
             self.assertIn('open Finder', text)
-            self.assertIn('com.apple.finder', text)
+            self.assertNotIn('com.apple.finder', text)
             for promise in ('focus', 'idle', 'revoke'):
                 self.assertNotIn(promise, text.lower())
         print('dialog_text=no_focus_idle_revoke unknown_class=refused')
