@@ -88,11 +88,14 @@ voice up by answering Neo:
   card answer, and the `pack.preferences.set` operation, which is authorized for the
   local human user only (`safetyClass: 'human_only'`, `preference-operations.ts`). The
   stamp records the writer's claim of human authority, not which path wrote it. The web
-  pack-settings form renders enum preferences only and exposes no voice fields
-  (`PackSettings.tsx` shows the delegation pack; this design adds no voice UI there),
-  so for the voice pack the card is the only surfaced source of rows: one enum value,
-  shown literally on the card before the human applies it. Neo writes neither the rows
-  nor the settings.
+  pack-settings form renders no voice fields — its sections are hardcoded to the
+  delegation pack (enum selects, `PackSettings.tsx`) and the coding pack (which edits
+  text and list preferences through `pack.preferences.set`, `CodingPackSettings.tsx`),
+  and this design adds no voice UI there — so for the voice pack the card is the only
+  surfaced source of rows: one enum value, shown literally on the card before the human
+  applies it. Neo authors nothing here: it cannot set a preference row or a voice field
+  itself — the apply's only input is the human-stamped row, and it writes exactly the
+  preset that row names.
   Two refusals guard what a blind write would break. A legacy inline key
   (`voice.apiKey`) is bound to whatever host the current recorded endpoint has
   (`resolveVoiceKey` checks that host, not the key's own `apiKeyEndpoint`), so when the
