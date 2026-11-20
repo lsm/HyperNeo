@@ -36,6 +36,7 @@ import { type CodexAppServer, CodexRequestError, compactCodexThread } from './co
 import {
   type CodexSendGate,
   codexDesktopIpcAbsent,
+  codexDesktopIpcListening,
   requestCodexDesktopCompaction,
   steerCodexDesktopTurn,
 } from './codex-desktop-handoff.ts';
@@ -1216,160 +1217,168 @@ export async function startCodexThread(
   request: StartRequest,
   deps: CodexDesktopAdapterDeps
 ): Promise<Result<WorkStarted>> {
-  return withCodexAppServer({ appServer: deps.bootstrapServer }, async (server) => {
-    let threadId: string | null = null;
-    let releaseTitle: (() => void) | undefined;
-    let workFolder: CodexWorkFolder | null = null;
-    try {
-      const configuration = await selectCodexConfiguration(
-        { model: request.model, effort: request.effort },
-        server
-      );
-      if (!configuration.ok) return configuration;
-      const folderReady = request.prepareFolder?.();
-      if (folderReady && 'reason' in folderReady) return folderReady.reason;
-      if (request.preparation) {
-        const prepared = await deps.prepareExecution!(request.preparation, {
-          directory: folder,
-          destination: join(deps.worktreesDir, deps.newId().slice(0, 8), basename(folder)),
-        });
-        if (!prepared.ok) return prepared;
-        workFolder = { cwd: prepared.value.directory, release: prepared.value.release };
-      } else {
-        const prepared = await prepareCodexWorkFolder(folder, deps, request.inPlace);
-        if (!prepared.ok) return prepared;
-        workFolder = prepared.value;
-      }
-      const sandbox =
-        request.preparation && workerSandboxOn(request.preparation.sandbox)
-          ? codexWorkerSandbox(workFolder.cwd)
-          : null;
-      if (sandbox) {
-        await prepareWorkerSandbox(workFolder.cwd);
-        await persistCodexWorkerProfile(workFolder.cwd);
-      }
-      const projectFolder = request.inPlace
-        ? folder
-        : ((await deps.gitCheckout(folder))?.repo ?? folder);
-      const projectId = await deps.prepareDesktopProject(projectFolder);
-      releaseTitle = await lockCodexSessionName(deps.statePath, projectFolder);
-      const sessionTitle = await genericCodexSessionTitle(
-        projectFolder,
-        deps,
-        request.sessionTitle
-      );
-      const config = {
-        shell_environment_policy: { set: workerWorkEnvironment(workFolder.cwd) },
-        ...sandbox?.config,
-        ...(configuration.value.effort
-          ? { model_reasoning_effort: configuration.value.effort }
-          : {}),
-      };
-      const started = await server.call('thread/start', {
-        projectId,
-        developerInstructions: workerWorkLocationsBrief(workFolder.cwd),
-        cwd: workFolder.cwd,
-        approvalPolicy: 'never',
-        ...(sandbox ? { permissions: sandbox.permissions } : { sandbox: 'danger-full-access' }),
-        config,
-        ...(configuration.value.model ? { model: configuration.value.model } : {}),
-      });
-      const createdThreadId = startedThreadId(started);
-      if (!createdThreadId) return reject('not_delivered', 'thread/start returned no thread id.');
-      if (
-        sandbox &&
-        (started as { activePermissionProfile?: { id?: string } })?.activePermissionProfile?.id !==
-          sandbox.permissions
-      )
-        return reject(
-          'not_delivered',
-          'Codex did not confirm the prepared worker permission profile.'
+  const shared =
+    deps.desktopSocketPath !== undefined &&
+    !(await codexDesktopIpcListening(deps.desktopSocketPath));
+  return withCodexAppServer(
+    { appServer: shared ? deps.appServer : deps.bootstrapServer },
+    async (server) => {
+      let threadId: string | null = null;
+      let releaseTitle: (() => void) | undefined;
+      let workFolder: CodexWorkFolder | null = null;
+      try {
+        const configuration = await selectCodexConfiguration(
+          { model: request.model, effort: request.effort },
+          server
         );
-      threadId = createdThreadId;
-      const model = startedThreadModel(started);
-      const reportedEffort = (started as { reasoningEffort?: unknown } | null)?.reasoningEffort;
-      const effort =
-        typeof reportedEffort === 'string' && reportedEffort.trim() ? reportedEffort : undefined;
-      const confirmed = workStartConfiguration.confirm(configuration.value, { model, effort });
-      if (!confirmed.ok) {
-        return reject(
-          confirmed.reason,
-          `${confirmed.detail} Thread ${threadId} was created without its first turn.`
-        );
-      }
-      await server.call('thread/name/set', {
-        threadId,
-        name: sessionTitle,
-      });
-      releaseTitle?.();
-      releaseTitle = undefined;
-      await server.close();
-      const brief = request.provenance
-        ? withWorkerProvenance(request.message, {
-            model: model ?? null,
-            effort: effort ?? null,
-            harness: 'codex-desktop',
-          })
-        : request.message;
-      const message = `${brief}\n${CODEX_WORKER_INSTRUCTIONS}`;
-      const opening = {
-        threadId: createdThreadId,
-        approvalPolicy: 'never',
-        ...(sandbox
-          ? { permissions: sandbox.permissions }
-          : { sandboxPolicy: { type: 'dangerFullAccess' } }),
-        input: [{ type: 'text', text: message, text_elements: [] }],
-        ...(model ? { model } : {}),
-        ...(effort ? { effort } : {}),
-      };
-      await deps.startDesktopTurn(createdThreadId, opening).catch(async (error: unknown) => {
-        if (!codexDesktopIpcAbsent(error)) throw error;
-        const shared = await withCodexAppServer(deps, async (server) => {
-          await server.call('thread/resume', {
-            threadId: createdThreadId,
-            ...(sandbox ? { permissions: sandbox.permissions } : { sandbox: 'danger-full-access' }),
+        if (!configuration.ok) return configuration;
+        const folderReady = request.prepareFolder?.();
+        if (folderReady && 'reason' in folderReady) return folderReady.reason;
+        if (request.preparation) {
+          const prepared = await deps.prepareExecution!(request.preparation, {
+            directory: folder,
+            destination: join(deps.worktreesDir, deps.newId().slice(0, 8), basename(folder)),
           });
-          await server.call('turn/start', opening);
-          return { ok: true as const, value: null };
+          if (!prepared.ok) return prepared;
+          workFolder = { cwd: prepared.value.directory, release: prepared.value.release };
+        } else {
+          const prepared = await prepareCodexWorkFolder(folder, deps, request.inPlace);
+          if (!prepared.ok) return prepared;
+          workFolder = prepared.value;
+        }
+        const sandbox =
+          request.preparation && workerSandboxOn(request.preparation.sandbox)
+            ? codexWorkerSandbox(workFolder.cwd)
+            : null;
+        if (sandbox) {
+          await prepareWorkerSandbox(workFolder.cwd);
+          await persistCodexWorkerProfile(workFolder.cwd);
+        }
+        const projectFolder = request.inPlace
+          ? folder
+          : ((await deps.gitCheckout(folder))?.repo ?? folder);
+        const projectId = await deps.prepareDesktopProject(projectFolder);
+        releaseTitle = await lockCodexSessionName(deps.statePath, projectFolder);
+        const sessionTitle = await genericCodexSessionTitle(
+          projectFolder,
+          deps,
+          request.sessionTitle
+        );
+        const config = {
+          shell_environment_policy: { set: workerWorkEnvironment(workFolder.cwd) },
+          ...sandbox?.config,
+          ...(configuration.value.effort
+            ? { model_reasoning_effort: configuration.value.effort }
+            : {}),
+        };
+        const started = await server.call('thread/start', {
+          projectId,
+          developerInstructions: workerWorkLocationsBrief(workFolder.cwd),
+          cwd: workFolder.cwd,
+          approvalPolicy: 'never',
+          ...(sandbox ? { permissions: sandbox.permissions } : { sandbox: 'danger-full-access' }),
+          config,
+          ...(configuration.value.model ? { model: configuration.value.model } : {}),
         });
-        if (!shared.ok) throw new Error(shared.detail);
-      });
-      const receipt = await readCodexStartReceipt(
-        startedRolloutPath(started),
-        message,
-        threadId,
-        deps.statePath
-      );
-      return {
-        ok: true,
-        value: {
-          ref: { adapter: 'codex-desktop', id: threadId },
-          title: sessionTitle,
-          place: { machine: deps.machine, folder, name: request.place.name },
-          status: 'running',
-          lastActivityAt: deps.now(),
-          link: `codex://threads/${threadId}`,
+        const createdThreadId = startedThreadId(started);
+        if (!createdThreadId) return reject('not_delivered', 'thread/start returned no thread id.');
+        if (
+          sandbox &&
+          (started as { activePermissionProfile?: { id?: string } })?.activePermissionProfile
+            ?.id !== sandbox.permissions
+        )
+          return reject(
+            'not_delivered',
+            'Codex did not confirm the prepared worker permission profile.'
+          );
+        threadId = createdThreadId;
+        const model = startedThreadModel(started);
+        const reportedEffort = (started as { reasoningEffort?: unknown } | null)?.reasoningEffort;
+        const effort =
+          typeof reportedEffort === 'string' && reportedEffort.trim() ? reportedEffort : undefined;
+        const confirmed = workStartConfiguration.confirm(configuration.value, { model, effort });
+        if (!confirmed.ok) {
+          return reject(
+            confirmed.reason,
+            `${confirmed.detail} Thread ${threadId} was created without its first turn.`
+          );
+        }
+        await server.call('thread/name/set', {
+          threadId,
+          name: sessionTitle,
+        });
+        releaseTitle?.();
+        releaseTitle = undefined;
+        await server.close();
+        const brief = request.provenance
+          ? withWorkerProvenance(request.message, {
+              model: model ?? null,
+              effort: effort ?? null,
+              harness: 'codex-desktop',
+            })
+          : request.message;
+        const message = `${brief}\n${CODEX_WORKER_INSTRUCTIONS}`;
+        const opening = {
+          threadId: createdThreadId,
+          approvalPolicy: 'never',
+          ...(sandbox
+            ? { permissions: sandbox.permissions }
+            : { sandboxPolicy: { type: 'dangerFullAccess' } }),
+          input: [{ type: 'text', text: message, text_elements: [] }],
           ...(model ? { model } : {}),
           ...(effort ? { effort } : {}),
-          ...(receipt ? { receipt } : {}),
-        },
-      };
-    } catch (error) {
-      const made = threadId
-        ? ` Thread ${threadId} was created, but its opening turn was not confirmed.`
-        : '';
-      return reject(
-        'not_delivered',
-        `${error instanceof Error ? error.message : String(error)}${made}`
-      );
-    } finally {
-      releaseTitle?.();
-      if (!threadId) {
-        await workFolder?.release();
-        if (request.preparation) await releaseWorkerSandbox(workFolder?.cwd);
+        };
+        await deps.startDesktopTurn(createdThreadId, opening).catch(async (error: unknown) => {
+          if (!codexDesktopIpcAbsent(error)) throw error;
+          const shared = await withCodexAppServer(deps, async (server) => {
+            await server.call('thread/resume', {
+              threadId: createdThreadId,
+              ...(sandbox
+                ? { permissions: sandbox.permissions }
+                : { sandbox: 'danger-full-access' }),
+            });
+            await server.call('turn/start', opening);
+            return { ok: true as const, value: null };
+          });
+          if (!shared.ok) throw new Error(shared.detail);
+        });
+        const receipt = await readCodexStartReceipt(
+          startedRolloutPath(started),
+          message,
+          threadId,
+          deps.statePath
+        );
+        return {
+          ok: true,
+          value: {
+            ref: { adapter: 'codex-desktop', id: threadId },
+            title: sessionTitle,
+            place: { machine: deps.machine, folder, name: request.place.name },
+            status: 'running',
+            lastActivityAt: deps.now(),
+            link: `codex://threads/${threadId}`,
+            ...(model ? { model } : {}),
+            ...(effort ? { effort } : {}),
+            ...(receipt ? { receipt } : {}),
+          },
+        };
+      } catch (error) {
+        const made = threadId
+          ? ` Thread ${threadId} was created, but its opening turn was not confirmed.`
+          : '';
+        return reject(
+          'not_delivered',
+          `${error instanceof Error ? error.message : String(error)}${made}`
+        );
+      } finally {
+        releaseTitle?.();
+        if (!threadId) {
+          await workFolder?.release();
+          if (request.preparation) await releaseWorkerSandbox(workFolder?.cwd);
+        }
       }
     }
-  });
+  );
 }
 
 const runCodexStart = (superpipe({})('codex-start-work') as PipelineAPI)

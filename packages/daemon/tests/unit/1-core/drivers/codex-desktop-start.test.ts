@@ -95,8 +95,15 @@ function adapter(
       };
     },
     appServer: async () => {
-      if (git.shared) return git.shared;
-      throw new Error('Shared daemon must not create desktop threads');
+      const shared = git.shared;
+      if (!shared) throw new Error('Shared daemon must not create desktop threads');
+      return {
+        ...shared,
+        close: async () => {
+          await shared.close();
+          closed = true;
+        },
+      };
     },
     prepareDesktopProject: async (folder) => {
       projectFolders.push(folder);

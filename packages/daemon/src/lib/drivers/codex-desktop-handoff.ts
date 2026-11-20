@@ -1,3 +1,4 @@
+import { createConnection } from 'node:net';
 import { Logger } from '../logger.ts';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
 import { type CodexDesktopIpc, withCodexDesktopIpc } from './codex-desktop-ipc.ts';
@@ -102,6 +103,17 @@ export async function requestCodexDesktopCompaction(
 export function codexDesktopIpcAbsent(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException | null)?.code;
   return code === 'ENOENT' || code === 'ECONNREFUSED';
+}
+
+export function codexDesktopIpcListening(socketPath: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection(socketPath);
+    socket.once('connect', () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once('error', (error) => resolve(!codexDesktopIpcAbsent(error)));
+  });
 }
 
 async function openCodexDesktopOwner(
