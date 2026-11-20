@@ -130,6 +130,43 @@ describe('runHumanSendRecovery', () => {
     expect(run.calls).toEqual(['probe', 'refresh', 'rebuild', 'wake']);
   });
 
+  test('a recorded login requirement leaves delivery to the held-prompt path', async () => {
+    const run = effects(false, false, { needsLoginAt: 1 });
+    expect(await runHumanSendRecovery(run.effects)).toBe('deliver');
+    expect(run.calls).toEqual([]);
+  });
+
+  test('a definitive refresh failure never rebuilds or wakes the session', async () => {
+    const run = effects(false, true);
+    expect(await runHumanSendRecovery({ ...run.effects, refresh: async () => 'definitive' })).toBe(
+      'deliver'
+    );
+    expect(run.calls).toEqual(['probe']);
+  });
+
+  test('a login requirement recorded during refresh prevents rebuilding', async () => {
+    const run = effects(false, true);
+    let needsLoginAt: number | null = null;
+    expect(
+      await runHumanSendRecovery({
+        ...run.effects,
+        facts: async () => facts({ held: true, needsLoginAt }),
+        refresh: async () => {
+          needsLoginAt = 1;
+        },
+      })
+    ).toBe('deliver');
+    expect(run.calls).toEqual(['probe']);
+  });
+
+  test('a transient refresh keeps the existing recovery path', async () => {
+    const run = effects(false, true);
+    expect(await runHumanSendRecovery({ ...run.effects, refresh: async () => 'transient' })).toBe(
+      'recovered'
+    );
+    expect(run.calls).toEqual(['probe', 'rebuild', 'wake']);
+  });
+
   test('an unreachable provider waits without rebuilding', async () => {
     const run = effects(false, false);
     expect(await runHumanSendRecovery(run.effects)).toBe('wait');

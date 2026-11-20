@@ -228,6 +228,29 @@ const askArticle = (id: string) =>
     item.getAttribute('data-public-entry')?.includes(`"ask","${id}"`)
   )! as HTMLElement;
 describe('NeoLive durable conversation activation', () => {
+  it('starts Claude login from the held Neo shell', async () => {
+    source.value = {
+      ...source.value,
+      working: [
+        {
+          sessionId: root,
+          projectId: null,
+          title: 'Neo',
+          status: 'rate_limit_cooldown',
+          role: 'neo',
+          modelHold: { provider: 'anthropic', reason: 'login', since: 1 },
+        },
+      ],
+    };
+    const previousUrl = window.location.href;
+    render(<NeoLive />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }));
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith('auth.login', { providerId: 'anthropic' })
+    );
+    expect(window.location.href).toBe(previousUrl);
+  });
+
   it('opens legacy settings from the Neo connection error', () => {
     error.value = 'Synthetic connection failure';
     render(<NeoLive />);
