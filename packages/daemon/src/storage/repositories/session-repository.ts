@@ -250,7 +250,11 @@ export class SessionRepository {
   }): Session[] | { workspace: string | null; main: string | null; execution: string | null }[] {
     let sql = options?.workspacePaths
       ? `SELECT workspace_path AS workspace, main_repo_path AS main,
-        CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.executionProjectPath') END AS execution FROM sessions WHERE status != 'archived'`
+        CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.executionProjectPath') END AS execution
+        FROM sessions
+        WHERE status != 'archived'
+          AND (status != 'ended' OR (COALESCE(type, 'worker') = 'worker'
+            AND room_id IS NULL AND space_id IS NULL))`
       : `SELECT * FROM sessions
 				WHERE type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat')
 				AND room_id IS NULL`;

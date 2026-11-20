@@ -135,24 +135,37 @@ describe('neo.project.forget', () => {
     expect(repo.getProject(atlas)).not.toBeNull();
   });
 
-  test('sidebar forget leaves archived chats available', async () => {
-    alias(`folder:${hostname()}\0/code/archived`, atlas);
-    await db.createSession({
-      ...createTestSession('session:archived'),
-      workspacePath: '/code/archived',
-      status: 'archived',
-    });
-    const registry = createOperationRegistry([createNeoProjectForgetOperation(repo)]);
-    const result = await invokeOperation(
-      registry,
-      'neo.project.forget',
-      { projectId: atlas, removeHistory: true },
-      human
-    );
-    expect(result).toMatchObject({ kind: 'completed', value: { ok: true } });
-    expect(repo.getProject(atlas)).toBeNull();
-    expect(db.getSession('session:archived')?.status).toBe('archived');
-  });
+  test.each([
+    { status: 'archived', type: 'worker', canForget: true },
+    { status: 'ended', type: 'space_task_agent', canForget: true },
+    { status: 'ended', type: 'worker', canForget: false },
+  ] as const)(
+    'sidebar forget keeps $status $type sessions in history',
+    async ({ status, type, canForget }) => {
+      alias(`folder:${hostname()}\0/code/history`, atlas);
+      await db.createSession({
+        ...createTestSession('session:history'),
+        workspacePath: '/code/history',
+        status,
+      });
+      db.getDatabase()
+        .prepare('UPDATE sessions SET type = ? WHERE id = ?')
+        .run(type, 'session:history');
+      const registry = createOperationRegistry([createNeoProjectForgetOperation(repo)]);
+      const result = await invokeOperation(
+        registry,
+        'neo.project.forget',
+        { projectId: atlas, removeHistory: true },
+        human
+      );
+      expect(result).toMatchObject({
+        kind: 'completed',
+        value: canForget ? { ok: true } : { ok: false, reason: 'project_in_use' },
+      });
+      expect(repo.getProject(atlas)?.id ?? null).toBe(canForget ? null : atlas);
+      expect(db.getSession('session:history')?.status).toBe(status);
+    }
+  );
 
   test('sidebar forget refuses a project with work on another machine', async () => {
     alias('folder:remote-machine\0/code/project', atlas);
