@@ -23,7 +23,7 @@ The control socket has no answer or approve action, and requests with unknown fi
 
 ## Limits of this slice
 
-- The dialog is English only. If the host cannot verify the display metadata, the bundle ID also serves as the app name.
+- The dialog follows the Mac's first preferred language: Chinese for `zh`, English otherwise. If the host cannot verify the display metadata, the bundle ID also serves as the app name.
 - The exception list matches known bundle IDs and vendor prefixes. Other apps with shells or password access can inherit the global grant if their bundle IDs are outside that list.
 - A grant lasts until its keychain item (service `io.hyperneo.desktop.grant`) is removed. There is no revoke control in the app yet, so the dialog does not promise one.
 - The dialog promises only the checks that exist today: the verified app and the supported actions. Focus and idle checks at input time come in a later slice.

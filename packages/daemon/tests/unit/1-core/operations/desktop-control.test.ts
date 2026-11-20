@@ -6,9 +6,6 @@ import {
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
-import { DESKTOP_CONTROL_ANSWERS } from '../../../../src/lib/neo/desktop-control-preference.ts';
-import { planNeoQuestionAnswer } from '../../../../src/lib/neo/question-operations.ts';
-import type { NeoQuestion } from '@hyperneo/shared/types/neo-ask';
 import type { NeoTodoControls } from '../../../../src/lib/neo/todo-operations.ts';
 import { createPackPreferenceQuestions } from '../../../../src/lib/neo/preference-questions.ts';
 import { createNeoAskRecordOperations } from '../../../../src/lib/neo/ask-record-operations.ts';
@@ -188,46 +185,6 @@ test('Neo cannot turn desktop control on when it adds or opens a todo', async ()
   expect(storedOptIns()).toBe(0);
 });
 
-const savePreference = (value: boolean) =>
-  db
-    .prepare(`INSERT OR REPLACE INTO neo_pack_preferences
-    (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
-    VALUES ('core', 'global', '', 'desktopControl', ?, 'human', 1)`)
-    .run(JSON.stringify(value));
-
-test('Neo opts a todo in only after the human turns asking off, and sends no preference card', async () => {
-  const registry = neoOperations();
-  const add = () => invokeOperation(registry, 'neo.todo.add', { askId: 'ask', ...draft }, neo);
-  expect(await add()).toMatchObject({ kind: 'completed', value: { ok: false } });
-  savePreference(false);
-  expect(await add()).toMatchObject({ kind: 'completed', value: { ok: false } });
-  expect(storedOptIns()).toBe(0);
-  expect(new NeoAskTodoRepository(db).listQuestions('ask')).toEqual([]);
-  savePreference(true);
-  expect(await add()).toMatchObject({
-    kind: 'completed',
-    value: { ok: true, todo: { named: { desktopControl: true } } },
-  });
-  expect(storedOptIns()).toBe(1);
-});
-
-test('the per-todo desktop card takes no, this task only, or always', () => {
-  const card = { state: 'open', kind: 'desktop_control', options: [...DESKTOP_CONTROL_ANSWERS] };
-  const live = { state: 'doing' };
-  for (const answer of ['No', 'Allow', 'Always allow'])
-    expect(planNeoQuestionAnswer(card as NeoQuestion, answer, live)).toMatchObject({
-      value: { answer },
-    });
-  expect(planNeoQuestionAnswer(card as NeoQuestion, 'Maybe', live)).not.toHaveProperty('value');
-  for (const answer of ['Allow', 'Always allow'])
-    expect(planNeoQuestionAnswer(card as NeoQuestion, answer, { state: 'done' })).toMatchObject({
-      reason: { reason: expect.stringMatching(/^todo_finished/) },
-    });
-  expect(planNeoQuestionAnswer(card as NeoQuestion, 'No', { state: 'done' })).toHaveProperty(
-    'value'
-  );
-});
-
 test('desktop refusal leaves the entire ask.open todo batch unwritten', async () => {
   const store = new NeoAskTodoRepository(db);
   const before = store.listTodos('ask');
@@ -251,10 +208,7 @@ test('desktop refusal leaves the entire ask.open todo batch unwritten', async ()
   expect(store.listQuestions('ask')).toEqual([]);
 });
 
-test('a worker cannot use Neo’s desktop preference to opt a todo in', async () => {
-  db.prepare(`INSERT INTO neo_pack_preferences
-    (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
-    VALUES ('core', 'global', '', 'desktopControl', 'true', 'human', 1)`).run();
+test('a worker cannot opt a todo in to desktop control', async () => {
   const outcome = await invokeOperation(
     neoOperations(),
     'neo.ask.propose',
@@ -298,65 +252,4 @@ test('a todo stored with desktop control in its draft keeps it off', () => {
         .named
     )
   ).toEqual({ folder: 'docs' });
-});
-
-let cards = 0;
-function desktopCard(todoId: string) {
-  const store = new NeoAskTodoRepository(db);
-  const question = store.askQuestion(
-    `card-${(cards += 1)}`,
-    'ask',
-    {
-      text: 'May a worker use Calendar?',
-      kind: 'desktop_control',
-      options: null,
-      multiple: false,
-      noLabel: null,
-      yesLabel: null,
-      todoId,
-      app: 'Calendar',
-    },
-    1
-  );
-  return { store, question };
-}
-const preference = () =>
-  (
-    db.prepare("SELECT value_json FROM neo_pack_preferences WHERE key = 'desktopControl'").get() as
-      | { value_json: string }
-      | undefined
-  )?.value_json;
-const todoNamed = (id: string) =>
-  JSON.parse(
-    (db.prepare('SELECT named FROM neo_todos WHERE id = ?').get(id) as { named: string | null })
-      .named ?? '{}'
-  );
-
-test('answering the desktop card applies the todo opt-in and the preference itself', () => {
-  for (const [todo, answer, on, saved] of [
-    ['dentist', 'No', undefined, undefined],
-    ['taxes', 'Allow', true, undefined],
-  ] as const) {
-    const { store, question } = desktopCard(todo);
-    expect(store.answerQuestion(question, answer, 'button', 2)?.state).toBe('answered');
-    expect(todoNamed(todo).desktopControl).toBe(on);
-    expect(preference()).toBe(saved);
-  }
-  const { store, question } = desktopCard('dentist');
-  store.answerQuestion(question, 'Always allow', 'button', 3);
-  expect(todoNamed('dentist').desktopControl).toBe(true);
-  expect(preference()).toBe('true');
-});
-
-test('a card whose todo finished refuses both allow answers and saves nothing', () => {
-  db.prepare("UPDATE neo_todos SET state = 'done' WHERE id = 'dentist'").run();
-  for (const answer of ['Allow', 'Always allow']) {
-    const { store, question } = desktopCard('dentist');
-    expect(store.answerQuestion(question, answer, 'button', 2)).toBeNull();
-    expect(store.getQuestion(question.id)?.state).toBe('open');
-  }
-  expect(todoNamed('dentist').desktopControl).toBeUndefined();
-  expect(preference()).toBeUndefined();
-  const { store, question } = desktopCard('dentist');
-  expect(store.answerQuestion(question, 'No', 'button', 3)?.state).toBe('answered');
 });

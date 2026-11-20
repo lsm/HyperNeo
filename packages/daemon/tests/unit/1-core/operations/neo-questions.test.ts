@@ -118,27 +118,20 @@ describe('neo.question operations', () => {
     }
   });
 
-  test('creates a desktop control card for a todo and named app', async () => {
+  test('refuses a desktop control card; the Mac asks per app instead', async () => {
     const h = setup();
     try {
-      const receipt = await h.call('neo.question.ask', {
-        askId: 'ask',
-        todoId: h.fix.id,
-        kind: 'desktop_control',
-        app: 'Calendar',
-        text: 'Allow desktop control for Calendar?',
-      });
-      expect(receipt).toMatchObject({
-        ok: true,
-        question: { kind: 'desktop_control', todoId: h.fix.id, app: 'Calendar' },
-      });
-      if (!receipt.ok) throw new Error(receipt.reason);
-      expect(h.store.getQuestion(receipt.question.id)).toMatchObject({
-        kind: 'desktop_control',
-        todoId: h.fix.id,
-        app: 'Calendar',
-      });
-      expect(h.store.getTodo(h.fix.id)?.named?.desktopControl).not.toBe(true);
+      const receipt = await h
+        .call('neo.question.ask', {
+          askId: 'ask',
+          todoId: h.fix.id,
+          kind: 'desktop_control',
+          app: 'Calendar',
+          text: 'Allow desktop control for Calendar?',
+        })
+        .catch((error: unknown) => ({ ok: false, reason: String(error) }));
+      expect(receipt).toMatchObject({ ok: false });
+      expect(h.store.listQuestions('ask')).toEqual([]);
     } finally {
       h.db.close();
     }

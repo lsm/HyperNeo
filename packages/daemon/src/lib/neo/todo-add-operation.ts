@@ -6,7 +6,6 @@ import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-to
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import type { OperationCaller, OperationDefinition } from '../operations/registry.ts';
 import { neoUserFolder } from './folder.ts';
-import { planDesktopControl } from './desktop-control-preference.ts';
 import { type NeoInputReads, resolveNeoInputAsk } from './input-ask.ts';
 import type { NeoPack } from './pack-contract.ts';
 import type {
@@ -21,23 +20,11 @@ type AddInput = z.infer<typeof NeoTodoDraftSchema> & {
 };
 type Result = { ok: false; reason: string } | { ok: true; todo?: NeoTodo; records?: string[] };
 
-export async function preflightTodoDesktopControl(
-  store: NeoAskTodoRepository,
-  requested: boolean,
-  role: OperationCaller['role']
-): Promise<{ value: boolean } | { reason: { ok: false; reason: string } }> {
-  if (!requested) return { value: false };
-  const decision =
-    role === 'neo' ? planDesktopControl(true, await store.read('desktopControlPreference')) : 'off';
-  if (decision === 'allow') return { value: true };
-  return {
-    reason: {
-      ok: false,
-      reason:
-        'desktop_control_requires_permission: Leave desktopControl out. Workers may use this Mac by default; call desktop.access.request {app} first so the Mac asks the human for that app.',
-    },
-  };
-}
+export const DESKTOP_CONTROL_REFUSAL = {
+  ok: false as const,
+  reason:
+    'desktop_control_requires_permission: Leave desktopControl out. Workers may use this Mac by default; call desktop.access.request {app} first so the Mac asks the human for that app.',
+};
 
 export async function recordNeoTodoAdmission(
   store: NeoAskTodoRepository,
@@ -45,14 +32,9 @@ export async function recordNeoTodoAdmission(
   controls: Pick<NeoTodoControls, 'advance' | 'userFolder' | 'refreshIdentity'>,
   ask: NeoAsk,
   draft: ResolvedNeoTodoDraft,
-  packs: readonly NeoPack[],
-  desktopControlAllowed: boolean
+  packs: readonly NeoPack[]
 ): Promise<Result> {
-  const admitted =
-    desktopControlAllowed && draft.named?.desktopControl === true
-      ? { ...draft, desktopControlApproved: true as const }
-      : draft;
-  const result = await admitNeoTodo(store, sessions, controls, ask, admitted, packs);
+  const result = await admitNeoTodo(store, sessions, controls, ask, draft, packs);
   if (result.ok && result.todo && draft.target?.verb === 'bind')
     await controls.refreshIdentity?.(result.todo.id);
   return result;
@@ -158,22 +140,16 @@ export function wireNeoTodoAdd(
       'result:outcome'
     )
     .pipe(
-      async (draft: ResolvedNeoTodoDraft, ask: NeoAsk, caller: OperationCaller) => {
-        const desktop = await preflightTodoDesktopControl(
-          store,
-          draft.named?.desktopControl === true,
-          caller.role
-        );
-        return 'reason' in desktop ? desktop : { value: { draft, desktopControl: desktop.value } };
-      },
-      ['outcome', 'ask', 'caller'],
+      (draft: ResolvedNeoTodoDraft) =>
+        draft.named?.desktopControl === true
+          ? { reason: DESKTOP_CONTROL_REFUSAL }
+          : { value: draft },
+      'outcome',
       'result:outcome'
     )
     .pipe(
-      (
-        { draft, desktopControl }: { draft: ResolvedNeoTodoDraft; desktopControl: boolean },
-        ask: NeoAsk
-      ) => recordNeoTodoAdmission(store, sessions, controls, ask, draft, packs(), desktopControl),
+      (draft: ResolvedNeoTodoDraft, ask: NeoAsk) =>
+        recordNeoTodoAdmission(store, sessions, controls, ask, draft, packs()),
       ['outcome', 'ask'],
       'outcome'
     )

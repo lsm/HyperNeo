@@ -4,6 +4,7 @@ import { runMigration526 } from './m526-neo-front-failure-reason.ts';
 import { runMigration530 } from './m530-work-compacted.ts';
 import { runMigration532 } from './m532-neo-question-desktop-app.ts';
 import { runMigration533 } from './m533-neo-todo-deployed-coding.ts';
+import { runMigration534 } from './m534-retire-desktop-control-cards.ts';
 import { runMigration527 } from './m527-neo-question-option-details.ts';
 import { runMigration500 } from './m500-paired-device-owner.ts';
 import { runMigration509 } from './m509-sdk-message-consumed-index.ts';
@@ -1101,6 +1102,7 @@ export function runMigrations(
   run(migrationMarkerKey(531), () => runMigration531(db));
   run(migrationMarkerKey(532), () => runMigration532(db));
   run(migrationMarkerKey(533), () => runMigration533(db));
+  run(migrationMarkerKey(534), () => runMigration534(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
