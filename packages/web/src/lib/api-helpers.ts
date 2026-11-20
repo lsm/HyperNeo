@@ -359,9 +359,11 @@ export async function setAppMcpServerEnabled(
   });
 }
 
-export async function getWorkspaceHistory(): Promise<WorkspaceHistoryEntry[]> {
+export async function getWorkspaceHistory(
+  options: { includeRepositoryProjects?: boolean } = {}
+): Promise<WorkspaceHistoryEntry[]> {
   const hub = getHubOrThrow();
-  const { entries } = await hub.request<WorkspaceHistoryResponse>('workspace.history', {});
+  const { entries } = await hub.request<WorkspaceHistoryResponse>('workspace.history', options);
   return entries;
 }
 

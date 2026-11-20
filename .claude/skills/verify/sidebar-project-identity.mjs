@@ -21,6 +21,16 @@ try {
   console.log(`Visible rows for three checkouts of two repositories: ${count}`);
   await page.screenshot({ path: `${out}/sidebar-project-identity.png` });
   assert.equal(count, 2);
+  const codeRows = page.getByTestId('project-group-header').filter({ hasText: 'code-fixture' });
+  const codeCount = await codeRows.count();
+  console.log(`Visible rows for two checkouts sharing Git history without a remote: ${codeCount}`);
+  assert.equal(codeCount, 1);
+  await page.getByRole('button', { name: 'Remove project code-fixture', exact: true }).click();
+  await codeRows.waitFor({ state: 'detached' });
+  await page.reload();
+  await rows.nth(1).waitFor();
+  console.log(`Visible rows for the removed project after reload: ${await codeRows.count()}`);
+  assert.equal(await codeRows.count(), 0);
 } finally {
   await browser.close();
 }

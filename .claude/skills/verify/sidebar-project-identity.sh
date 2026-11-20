@@ -19,6 +19,17 @@ for checkout in primary secondary unrelated; do
   git -C "$folder" remote add origin "https://example.test/$team/fixture-repo.git"
   bun .claude/skills/verify/rpc.ts rpc:workspace.add "{\"path\":\"$folder\"}" > /dev/null
 done
+for checkout in code-primary code-secondary; do
+  folder="$RUN/projects/$checkout/code-fixture"
+  mkdir -p "$folder"
+  git -C "$folder" init -q
+  env -i PATH="$PATH" HOME="$RUN/home" GIT_AUTHOR_NAME=Synthetic \
+    GIT_AUTHOR_EMAIL=fixture@example.test GIT_COMMITTER_NAME=Synthetic \
+    GIT_COMMITTER_EMAIL=fixture@example.test GIT_AUTHOR_DATE=2026-01-01T00:00:00+00:00 \
+    GIT_COMMITTER_DATE=2026-01-01T00:00:00+00:00 git -C "$folder" \
+    -c init.defaultBranch=main -c commit.gpgsign=false commit --allow-empty -qm Fixture
+  bun .claude/skills/verify/rpc.ts rpc:workspace.add "{\"path\":\"$folder\"}" > /dev/null
+done
 CODE=$(env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin" TMPDIR="$TMPDIR" \
   NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" HYPERNEO_SESSION_DOOR="$RUN/data/session-door.sock" \
   bun run packages/cli/main.ts pair --kind human |

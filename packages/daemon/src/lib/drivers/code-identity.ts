@@ -37,12 +37,14 @@ export async function readCodeIdentity(folder: string): Promise<CodeIdentity> {
     const repoName = repoNameFromRemote(remotes[0]) ?? repoNameFromCommonDir(commonDir);
     const named = repoName ? { repoName } : {};
     if (shallow) return remotes.length ? { remotes, ...named } : named;
-    const roots = (await git.raw(['--no-replace-objects', 'rev-list', '--max-parents=0', 'HEAD']))
+    const roots = (
+      await git.raw(['--no-replace-objects', 'rev-list', '--max-parents=0', 'HEAD']).catch(() => '')
+    )
       .trim()
       .split(/\s+/)
       .filter((root) => /^[a-f0-9]{40,64}$/.test(root))
       .sort();
-    if (!roots.length) return named;
+    if (!roots.length) return { remotes, ...named };
     return { codeIdentity: `git:${roots.join(':')}`, remotes, ...named };
   } catch {
     return {};

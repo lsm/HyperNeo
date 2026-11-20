@@ -63,6 +63,7 @@ export interface WorkspaceHistoryEntry {
   lastUsedAt: number;
   useCount: number;
   project?: { id: string; name: string; folders: string[] };
+  repositoryProject?: { id: string; name: string };
 }
 
 export interface WorkspaceHistoryResponse {

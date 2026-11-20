@@ -39,13 +39,17 @@ function workspaceLocations(places: readonly Place[]): Place[] {
   return [...locations.values()];
 }
 
-export function mergePlaceGroups(groups: readonly PlaceGroup[], limit: number): PlaceGroup[] {
+export function mergePlaceGroups(
+  groups: readonly PlaceGroup[],
+  limit: number,
+  identityKeys: (place: Place) => string[] = projectKeys
+): PlaceGroup[] {
   const byPlace = new Map<string, PlaceGroup>();
   const aliases = new Map<string, string>();
   for (const group of groups) {
     const keys = (group.workspaces ?? [group.place]).flatMap((place) => [
       `folder:${placeKey(place)}`,
-      ...projectKeys(place),
+      ...identityKeys(place),
     ]);
     const matches = new Set(keys.flatMap((key) => aliases.get(key) ?? []));
     const key = [...matches][0] ?? keys[0];
@@ -63,7 +67,7 @@ export function mergePlaceGroups(groups: readonly PlaceGroup[], limit: number): 
     .map((group) => ({
       ...group,
       projectId:
-        (group.workspaces ?? [group.place]).flatMap(projectKeys).sort()[0] ??
+        (group.workspaces ?? [group.place]).flatMap(identityKeys).sort()[0] ??
         `folder:${placeKey(group.place)}`,
       workspaces: workspaceLocations(group.workspaces ?? [group.place]),
       work: [...group.work].sort(
