@@ -6,16 +6,15 @@ import { setupFocusTrap } from '../components/ui/Modal.tsx';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { invokeOperation } from '../lib/operations.ts';
 import { setTheme, themeSetting, type ThemeSetting } from '../lib/theme.ts';
-import { t } from '../lib/i18n/index.ts';
+import type { LanguageSetting } from '@hyperneo/shared/types/settings';
+import { updateGlobalSettings } from '../lib/api-helpers.ts';
+import { languageSetting, t } from '../lib/i18n/index.ts';
 
-const CONNECTION_TEXT: Record<ConnectionState, string> = {
-  connected: 'Connected',
-  connecting: 'Connecting…',
-  reconnecting: 'Reconnecting…',
-  disconnected: 'Disconnected',
-  error: 'Connection error',
-  failed: 'Could not connect',
-};
+const LANGUAGES: { value: LanguageSetting; label: () => string }[] = [
+  { value: 'en', label: () => 'English' },
+  { value: 'zh-Hans', label: () => '简体中文' },
+  { value: 'system', label: () => t('drawer.language.system') },
+];
 
 export function NeoDrawer({
   open,
@@ -33,6 +32,7 @@ export function NeoDrawer({
   onOpenSession?: (sessionId: string, label?: string) => void;
 }) {
   const dragFrom = useRef<number | null>(null);
+  const [languageFailed, setLanguageFailed] = useState(false);
   const panel = useRef<HTMLElement>(null);
   useEffect(() => {
     if (!open || !panel.current) return;
@@ -64,7 +64,7 @@ export function NeoDrawer({
         ref={panel}
         role="dialog"
         aria-modal="true"
-        aria-label="Settings and connection"
+        aria-label={t('drawer.title')}
         tabIndex={-1}
         class="neo-drawer"
         onPointerDown={(event) => {
@@ -84,9 +84,9 @@ export function NeoDrawer({
           if (panel.current) panel.current.style.transform = '';
         }}
       >
-        <h2 class="mb-5 text-base font-medium">Settings and connection</h2>
-        <section aria-label="Connection" class="mb-6">
-          <h3 class="mb-2 text-sm font-medium text-fg-muted">Connection</h3>
+        <h2 class="mb-5 text-base font-medium">{t('drawer.title')}</h2>
+        <section aria-label={t('drawer.connection')} class="mb-6">
+          <h3 class="mb-2 text-sm font-medium text-fg-muted">{t('drawer.connection')}</h3>
           <p class="mb-3 flex items-center gap-2 text-sm">
             <span
               aria-hidden="true"
@@ -98,11 +98,11 @@ export function NeoDrawer({
                     : 'bg-danger'
               }`}
             />
-            {CONNECTION_TEXT[connection]}
+            {t(`drawer.status.${connection}`)}
           </p>
           <div class="flex gap-2">
             <button type="button" class="neo-drawer-action" onClick={onReconnect}>
-              Reconnect
+              {t('drawer.reconnect')}
             </button>
             <button
               type="button"
@@ -112,9 +112,37 @@ export function NeoDrawer({
                 onClose();
               }}
             >
-              Refresh Neo
+              {t('drawer.refresh')}
             </button>
           </div>
+        </section>
+        <section aria-label={t('drawer.language')} class="mb-6">
+          <h3 class="mb-2 text-sm font-medium text-fg-muted">{t('drawer.language')}</h3>
+          <select
+            aria-label={t('drawer.language')}
+            value={languageSetting.value}
+            disabled={connection !== 'connected'}
+            onChange={(event) => {
+              const language = event.currentTarget.value as LanguageSetting;
+              setLanguageFailed(false);
+              updateGlobalSettings({ language })
+                .then((result) => setLanguageFailed(!result.success))
+                .catch(() => setLanguageFailed(true));
+            }}
+            class="neo-drawer-action h-11 w-full appearance-auto bg-surface text-fg"
+          >
+            {LANGUAGES.map((language) => (
+              <option key={language.value} value={language.value}>
+                {language.label()}
+              </option>
+            ))}
+          </select>
+          {languageFailed && (
+            <p role="alert" class="mt-2 text-sm text-danger">
+              {t('drawer.language.failed')}
+            </p>
+          )}
+          <p class="mt-2 text-xs text-fg-muted">{t('drawer.language.hint')}</p>
         </section>
         <section aria-label={t('drawer.appearance')} class="mb-6">
           <h3 class="mb-2 text-sm font-medium text-fg-muted">{t('drawer.appearance')}</h3>

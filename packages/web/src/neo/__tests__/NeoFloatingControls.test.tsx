@@ -123,14 +123,14 @@ describe('Neo floating controls', () => {
     expect(within(banner()).queryByRole('button', { name: 'Projects' })).toBeNull();
     const logo = within(banner()).getByRole('button', { name: '设置和连接' });
     fireEvent.click(logo);
-    const drawer = screen.getByRole('dialog', { name: 'Settings and connection' });
-    expect(within(drawer).getByText('Connected')).toBeTruthy();
+    const drawer = screen.getByRole('dialog', { name: '设置' });
+    expect(within(drawer).getByText('已连接')).toBeTruthy();
     expect(within(drawer).queryByText('Projects')).toBeNull();
     expect(within(drawer).getByRole('combobox', { name: '主题' })).toBeTruthy();
     expect(within(drawer).queryByRole('combobox', { name: /Move under/ })).toBeNull();
-    expect(within(drawer).getByRole('button', { name: 'Reconnect' })).toBeTruthy();
+    expect(within(drawer).getByRole('button', { name: '重新连接' })).toBeTruthy();
     expect(logo.getAttribute('aria-expanded')).toBe('true');
-    fireEvent.click(within(drawer).getByRole('button', { name: 'Refresh Neo' }));
+    fireEvent.click(within(drawer).getByRole('button', { name: '刷新 Neo' }));
     expect(open).toHaveBeenCalledWith();
     expect(screen.queryByRole('dialog')).toBeNull();
   });
@@ -140,9 +140,7 @@ describe('Neo floating controls', () => {
     const logo = within(banner()).getByRole('button', { name: '设置和连接' });
     logo.focus();
     fireEvent.click(logo);
-    expect(document.activeElement).toBe(
-      screen.getByRole('dialog', { name: 'Settings and connection' })
-    );
+    expect(document.activeElement).toBe(screen.getByRole('dialog', { name: '设置' }));
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).toBeNull();
     await waitFor(() => expect(document.activeElement).toBe(logo));
@@ -150,7 +148,7 @@ describe('Neo floating controls', () => {
     fireEvent.click(screen.getByTestId('neo-drawer-backdrop'));
     expect(screen.queryByRole('dialog')).toBeNull();
     fireEvent.click(logo);
-    const drawer = screen.getByRole('dialog', { name: 'Settings and connection' });
+    const drawer = screen.getByRole('dialog', { name: '设置' });
     fireEvent.pointerDown(drawer, { clientX: 300 });
     fireEvent.pointerMove(drawer, { clientX: 260 });
     fireEvent.pointerUp(drawer, { clientX: 290 });

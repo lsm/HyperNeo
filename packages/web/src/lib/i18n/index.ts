@@ -16,8 +16,10 @@ const browserLocale = () =>
   systemLocale(typeof navigator === 'undefined' ? [] : navigator.languages);
 
 export const locale = signal<Locale>(browserLocale());
+export const languageSetting = signal<LanguageSetting>('system');
 
 export function applyLanguage(language: LanguageSetting | undefined): void {
+  languageSetting.value = language ?? 'system';
   locale.value = language === 'en' || language === 'zh-Hans' ? language : browserLocale();
 }
 
