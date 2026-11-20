@@ -109,12 +109,13 @@ test('installed builtins keep identity and settings select without rebuilding th
     'coding',
     'life-admin',
     'delegation',
+    'computer-use',
     'model-routing',
     'core',
   ]);
-  expect(service.packs()).toEqual([installed[0], installed[2]]);
+  expect(service.packs()).toEqual([installed[0], installed[2], installed[3]]);
   db.updateGlobalSettings({ neo: { packs: ['life-admin'] } });
-  expect(service.packs()).toEqual([installed[1], installed[2]]);
+  expect(service.packs()).toEqual([installed[1], installed[2], installed[3]]);
   expect(service.installedPacks()[0]).toBe(installed[0]);
   expect(service.installedPacks()[1]).toBe(installed[1]);
   expect(
