@@ -140,3 +140,34 @@ test.each([
   const source = `${imports} ${declarations} defineOperation({ name: 'demo.read', execute: ${execute} });`;
   expect(resolveLocalPipeline(source, 'demo.read')).toEqual({ kind: 'unknown' });
 });
+
+test('strict resolution follows a local function that returns a named runner', () => {
+  const source = `${imports}
+    function setup() {
+      function path<T>(name: string, action: (input: T) => T) {
+        return (superpipe({})(name) as PipelineAPI).input('input').pipe(action, 'input', 'output').endAsync('output');
+      }
+      return defineOperation({ name: 'demo.read', execute: path('demo.read', run) });
+    }
+  `;
+  expect(createLocalPipelineResolver(source, 'route.ts', true)('demo.read')).toEqual({
+    kind: 'named',
+    name: 'demo.read',
+  });
+});
+
+test.each(['path = other;', '({ path } = handlers);', 'eval("path = other");'])(
+  'strict resolution rejects a local factory that can be replaced through %s',
+  (replace) => {
+    const source = `${imports}
+      function setup() {
+        function path(name) { return superpipe({})(name).end(); }
+        ${replace}
+        return defineOperation({ name: 'demo.read', execute: path('demo.read') });
+      }
+    `;
+    expect(createLocalPipelineResolver(source, 'route.ts', true)('demo.read')).toEqual({
+      kind: 'unknown',
+    });
+  }
+);
