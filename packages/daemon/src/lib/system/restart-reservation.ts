@@ -1,6 +1,6 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { defineOperation } from '../operations/registry.ts';
+import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { SESSION_DOOR_PRINCIPAL } from '../pairing/pairing-operations.ts';
 
 type RestartFacts = { neo: string; streams: boolean; speech: boolean };
@@ -40,9 +40,19 @@ export function createRestartReservationOperation(
   reservation = restartReservation
 ) {
   const reserve = (superpipe({})('system.restart.reserve') as PipelineAPI)
-    .input(['read'])
-    .pipe((read: () => RestartFacts) => reservation.reserve(read), 'read', 'reservation')
-    .end('reservation') as (read: () => RestartFacts) => Reservation;
+    .input(['input', 'caller'])
+    .pipe(
+      (caller: OperationCaller) =>
+        caller.source === 'mcp' &&
+        caller.principal === SESSION_DOOR_PRINCIPAL &&
+        caller.device?.kind === 'human'
+          ? { value: caller }
+          : { reason: { ok: false as const, reason: 'local_session_socket_required' } },
+      'caller',
+      'result:reservation'
+    )
+    .pipe(() => reservation.reserve(read), 'reservation', 'reservation')
+    .end('reservation') as (_input: unknown, caller: OperationCaller) => Reservation;
   return defineOperation({
     name: 'system.restart.reserve',
     description:
@@ -57,11 +67,6 @@ export function createRestartReservationOperation(
       z.object({ ok: z.literal(false), reason: z.string() }),
     ]),
     policy: { safetyClass: 'human_only' },
-    execute: async (_input, caller) =>
-      caller.source === 'mcp' &&
-      caller.principal === SESSION_DOOR_PRINCIPAL &&
-      caller.device?.kind === 'human'
-        ? reserve(read)
-        : { ok: false as const, reason: 'local_session_socket_required' },
+    execute: async (input, caller) => reserve(input, caller),
   });
 }
