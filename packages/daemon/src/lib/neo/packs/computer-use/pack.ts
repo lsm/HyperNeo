@@ -1,5 +1,8 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { NEO_PACK_COMPUTER_USE_INSTRUCTIONS } from '@hyperneo/prompts';
+import {
+  NEO_PACK_COMPUTER_USE_INSTRUCTIONS,
+  NEO_PACK_COMPUTER_USE_WORKER,
+} from '@hyperneo/prompts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import type { NeoPack, NeoPackBrief } from '../../pack-contract.ts';
 import { desktopControlPreference } from '../../desktop-control-preference.ts';
@@ -25,5 +28,6 @@ export function createComputerUsePack(database: () => Database): NeoPack {
   return {
     ...COMPUTER_USE_PACK_BRIEF,
     instructions: () => briefing(desktopControlPreference(database())),
+    workerContext: () => NEO_PACK_COMPUTER_USE_WORKER,
   };
 }
