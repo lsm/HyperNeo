@@ -8,7 +8,7 @@ import { useVisibleTick } from '../hooks/useVisibleTick.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { invokeOperation, requireAccepted, type OperationRejection } from '../lib/operations.ts';
 import { locale, t } from '../lib/i18n/index.ts';
-import { Button } from '../components/ui/Button.tsx';
+import { NeoWorkEmpty } from './NeoWorkEmpty.tsx';
 
 type GoalRow = { goal: SessionGoal; effect: string | null; nextWake: number | null };
 const types = {
@@ -76,37 +76,29 @@ function GoalList({ sessionId }: { sessionId: string }) {
     };
   }, [sessionId, version]);
   return (
-    <section aria-label={t('goals.title')} class="mt-6 space-y-3" data-neo-goals={sessionId}>
-      <div class="flex items-center justify-between gap-2">
-        <h2 class="text-sm font-medium">{t('goals.title')}</h2>
-        <Button
-          variant="ghost"
-          size="xs"
-          disabled={loading}
-          onClick={() => setVersion((value) => value + 1)}
-        >
-          {t('goals.refresh')}
-        </Button>
-      </div>
-      {loading && (
-        <p role="status" class="text-sm text-fg-muted">
+    <section aria-label={t('goals.title')} class="mt-2 text-sm" data-neo-goals={sessionId}>
+      {loading && !rows.length && (
+        <p role="status" class="py-3 text-fg-muted">
           {t('goals.loading')}
         </p>
       )}
       {error && (
-        <p role="alert" class="text-sm text-danger">
-          {error}
+        <p role="alert" class="py-3 text-danger">
+          {error}{' '}
+          <button
+            type="button"
+            class="text-accent hover:underline"
+            onClick={() => setVersion((value) => value + 1)}
+          >
+            {t('goals.refresh')}
+          </button>
         </p>
       )}
       {!loading && !error && !rows.length && (
-        <p class="text-sm text-fg-muted">{t('goals.empty')}</p>
+        <NeoWorkEmpty icon="spark" title={t('goals.empty')} hint={t('goals.emptyHint')} />
       )}
       {rows.map(({ goal, effect, nextWake }) => (
-        <article
-          key={goal.id}
-          data-neo-goal={goal.id}
-          class="space-y-2 rounded-lg border border-line p-3 text-sm"
-        >
+        <article key={goal.id} data-neo-goal={goal.id} class="space-y-2 border-b border-line py-3">
           <h3 class="break-words font-medium">{goal.title}</h3>
           <p class="text-xs text-fg-muted">
             <span>{t(types[goal.type])}</span>

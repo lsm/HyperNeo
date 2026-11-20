@@ -11,6 +11,7 @@ import { invokeOperation } from '../lib/operations.ts';
 import { isMessageKey, locale, t } from '../lib/i18n/index.ts';
 import { useVisibleTick } from '../hooks/useVisibleTick.ts';
 import { Button } from './ui/Button.tsx';
+import { NeoWorkEmpty } from '../neo/NeoWorkEmpty.tsx';
 
 async function call<T>(name: OperationName, input: unknown): Promise<T> {
   return invokeOperation<T>(await connectionManager.getHub(), name, input);
@@ -143,7 +144,40 @@ export function GoalDefinition({
     </div>
   );
 }
-function ScheduleStrip({ sessionId, readonly }: { sessionId: string; readonly?: boolean }) {
+function everyText(ms: number) {
+  const minutes = Math.round(ms / 60000);
+  if (minutes % 10080 === 0)
+    return minutes === 10080
+      ? t('schedules.weekly')
+      : t('schedules.everyWeeks', { n: minutes / 10080 });
+  if (minutes % 1440 === 0)
+    return minutes === 1440
+      ? t('schedules.daily')
+      : t('schedules.everyDays', { n: minutes / 1440 });
+  if (minutes % 60 === 0)
+    return minutes === 60 ? t('schedules.hourly') : t('schedules.everyHours', { n: minutes / 60 });
+  return t('schedules.every', { minutes });
+}
+function cadenceText(row: SessionScheduleView) {
+  return row.cadence.kind === 'every' ? (
+    everyText(row.cadence.everyMs)
+  ) : row.cadence.kind === 'once' ? (
+    <>
+      {t('schedules.once')}: <RunTime at={row.cadence.at} />
+    </>
+  ) : (
+    `${row.cadence.cron} · ${row.cadence.timezone}`
+  );
+}
+function ScheduleStrip({
+  sessionId,
+  readonly,
+  inline,
+}: {
+  sessionId: string;
+  readonly?: boolean;
+  inline?: boolean;
+}) {
   const [rows, setRows] = useState<SessionScheduleView[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -192,6 +226,91 @@ function ScheduleStrip({ sessionId, readonly }: { sessionId: string; readonly?: 
       setBusy('');
     }
   }
+  if (inline)
+    return (
+      <section
+        aria-label={t('schedules.title')}
+        class="mt-2 text-sm"
+        data-session-schedules={sessionId}
+      >
+        {error && (
+          <p role="alert" class="py-3 text-danger">
+            {error}{' '}
+            <button
+              type="button"
+              class="text-accent hover:underline"
+              onClick={() => setVersion((value) => value + 1)}
+            >
+              {t('schedules.refresh')}
+            </button>
+          </p>
+        )}
+        {loading && !rows.length && (
+          <p role="status" class="py-3 text-fg-muted">
+            {t('schedules.loading')}
+          </p>
+        )}
+        {!loading && !error && !rows.length && (
+          <NeoWorkEmpty icon="clock" title={t('schedules.empty')} hint={t('schedules.emptyHint')} />
+        )}
+        <ul>
+          {rows.map((row) => (
+            <li key={row.id} data-schedule={row.id} class="border-b border-line py-3">
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0 break-words font-medium text-fg">
+                  {row.sourceKind === 'goal' && row.sourceLabel ? (
+                    <button
+                      type="button"
+                      class="text-left hover:underline"
+                      aria-expanded={goal === row.id}
+                      onClick={() => setGoal(goal === row.id ? null : row.id)}
+                    >
+                      {row.sourceLabel}
+                    </button>
+                  ) : (
+                    (row.sourceLabel ?? t('schedules.unavailable'))
+                  )}
+                </div>
+                {row.status !== 'done' && (
+                  <button
+                    type="button"
+                    class="shrink-0 text-xs text-accent hover:underline disabled:opacity-50"
+                    disabled={readonly || loading || !!busy}
+                    onClick={() => void change(row)}
+                  >
+                    {row.status === 'active' ? t('schedules.pause') : t('schedules.resume')}
+                  </button>
+                )}
+              </div>
+              <p class="mt-1 text-xs text-fg-muted">
+                {isMessageKey(`schedules.kind.${row.sourceKind}`) && (
+                  <>{factLabel('kind', row.sourceKind)} · </>
+                )}
+                {cadenceText(row)}
+                {row.status !== 'active' && <> · {factLabel('status', row.status)}</>}
+              </p>
+              <p class="text-xs text-fg-muted">
+                {t('schedules.next')} <RunTime at={row.nextRunAt} /> · {t('schedules.last')}{' '}
+                <RunTime at={row.lastRunAt} />
+                {row.lastOutcome && (
+                  <>
+                    {' '}
+                    ·{' '}
+                    {row.lastOutcome.startsWith('skipped_')
+                      ? t('schedules.skipped')
+                      : factLabel('outcome', row.lastOutcome)}
+                    {row.lastSkipReason && <> · {factLabel('reason', row.lastSkipReason)}</>}
+                  </>
+                )}
+              </p>
+              {goal === row.id && (
+                <GoalDefinition ownerSessionId={sessionId} goalId={row.sourceId} />
+              )}
+            </li>
+          ))}
+        </ul>
+      </section>
+    );
   return (
     <details
       class="mx-4 my-2 shrink-0 rounded-lg border border-line text-xs text-fg-muted"
@@ -245,17 +364,7 @@ function ScheduleStrip({ sessionId, readonly }: { sessionId: string; readonly?: 
                 </Button>
               )}
             </div>
-            <p>
-              {row.cadence.kind === 'every' ? (
-                t('schedules.every', { minutes: row.cadence.everyMs / 60000 })
-              ) : row.cadence.kind === 'once' ? (
-                <>
-                  {t('schedules.once')}: <RunTime at={row.cadence.at} />
-                </>
-              ) : (
-                `${row.cadence.cron} · ${row.cadence.timezone}`
-              )}
-            </p>
+            <p>{cadenceText(row)}</p>
             <p>{factLabel('status', row.status)}</p>
             <p>
               {t('schedules.next')}: <RunTime at={row.nextRunAt} />
@@ -283,11 +392,13 @@ function ScheduleStrip({ sessionId, readonly }: { sessionId: string; readonly?: 
 export function SessionSchedules({
   sessionId,
   readonly,
+  inline,
 }: {
   sessionId: string | null;
   readonly?: boolean;
+  inline?: boolean;
 }) {
   return sessionId ? (
-    <ScheduleStrip key={sessionId} sessionId={sessionId} readonly={readonly} />
+    <ScheduleStrip key={sessionId} sessionId={sessionId} readonly={readonly} inline={inline} />
   ) : null;
 }
