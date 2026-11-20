@@ -25,6 +25,10 @@ schema after the fixture renames the session table. In `both` mode, schema
 drift preserves CLI matches with an unavailable note. A search with no
 fallback matches reports the Desktop error as unreachable.
 
+In `cli-failure` mode, the CLI listing fails while Desktop is readable.
+Discovery still returns the Desktop session and warns that CLI results are
+unavailable. A query with no fallback matches reports the CLI error.
+
 Replay the cursor from the first completed turn to read the next turn, even
 when both ended at the same time. With schema drift, unknown transcript and
 input-marker lookups return `not_found` in both Desktop modes.
@@ -35,8 +39,15 @@ mode, search for a Desktop session whose title and workspace name are missing.
 
 Desktop exposes find, status, read, and turns through the driver. The public
 launch link opens an App confirmation or draft and supplies no submitted-turn
-receipt. Desktop mutations are unsupported, and an attended App run is still
-required to verify a live session and its deep-link target.
+receipt. The driver does not yet send Desktop mutations.
+
+For an attended control check, open the signed-in GitHub Copilot app and choose
+New session, then Add local folder or repository. Select a disposable empty
+folder. Send a prompt requesting an exact short reply without tools. Check that
+the session appears under that folder, then send a different exact-reply prompt
+in the same session. Send a longer prompt without tools and click Stop while its
+button is visible. The session should return to Idle. On v1.4.3 the local test
+transcript retained both replies and an abort event for the interrupted turn.
 
 The CLI also exposes start, send, queue, withdraw, stop, rename, and archive
 for daemon-owned sessions. Strict same-turn steering and driver compaction

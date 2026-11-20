@@ -135,6 +135,25 @@ describe('neo.project.forget', () => {
     expect(repo.getProject(atlas)).not.toBeNull();
   });
 
+  test('sidebar forget leaves archived chats available', async () => {
+    alias(`folder:${hostname()}\0/code/archived`, atlas);
+    await db.createSession({
+      ...createTestSession('session:archived'),
+      workspacePath: '/code/archived',
+      status: 'archived',
+    });
+    const registry = createOperationRegistry([createNeoProjectForgetOperation(repo)]);
+    const result = await invokeOperation(
+      registry,
+      'neo.project.forget',
+      { projectId: atlas, removeHistory: true },
+      human
+    );
+    expect(result).toMatchObject({ kind: 'completed', value: { ok: true } });
+    expect(repo.getProject(atlas)).toBeNull();
+    expect(db.getSession('session:archived')?.status).toBe('archived');
+  });
+
   test('sidebar forget refuses a project with work on another machine', async () => {
     alias('folder:remote-machine\0/code/project', atlas);
     const registry = createOperationRegistry([createNeoProjectForgetOperation(repo)]);

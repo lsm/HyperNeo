@@ -387,9 +387,7 @@ describe('SessionsSidebar', () => {
     await waitFor(() => expect(remove.hasAttribute('disabled')).toBe(false));
     hasSessions = true;
     mockSessionsSignal.value = [createMockSession('one', 'Other', '/code/other')];
-    await waitFor(() =>
-      expect(remove.getAttribute('title')).toBe('Project has chats, including archived chats')
-    );
+    await waitFor(() => expect(remove.getAttribute('title')).toBe('Project has chats or workers'));
     hasSessions = false;
     mockSessionsSignal.value = [createMockSession('two', 'Other', '/code/other')];
     await waitFor(() => expect(mockFindProjectWork).toHaveBeenCalledTimes(2));
