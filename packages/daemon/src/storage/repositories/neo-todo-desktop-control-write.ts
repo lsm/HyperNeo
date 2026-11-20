@@ -9,7 +9,7 @@ export type DesktopControlResult =
   | { accepted: true; desktopControl: boolean }
   | { accepted: false; reason: 'todo_not_found' | 'todo_finished' };
 
-const set = (superpipe({})('desktop.control.set') as PipelineAPI)
+const set = (superpipe({})('desktop.control.commit') as PipelineAPI)
   .input(['db', 'input', 'changes'])
   .pipe(
     (db: Database, changes: ChangeRecorder) =>
