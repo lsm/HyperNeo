@@ -665,7 +665,10 @@ describe('an idle worker with an open pull request is timed from when it went id
     const scan = scanCodingIdleOpenPrs(prs);
     packs.push({
       id: 'coding',
-      todos: { waiting: (todos: NeoTodo[]) => prs.readWaiting(todos.map((todo) => todo.id)) },
+      todos: {
+        waiting: (todos: NeoTodo[]) => prs.readWaiting(todos.map((todo) => todo.id)),
+        parked: (todos: NeoTodo[]) => prs.readParked(todos.map((todo) => todo.id)),
+      },
       attention: { kinds: CODING_ATTENTION_KINDS, scan },
     } as never as NeoPack);
     const notes = neoAttentionNotes(w.db, w.store, () => {}, CODING_ATTENTION_KINDS);
