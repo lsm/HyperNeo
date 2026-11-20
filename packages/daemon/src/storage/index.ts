@@ -524,6 +524,10 @@ export class Database {
     return this.getSDKReader().readHyperneoTurnFacts(sessionId, cursor, limit);
   }
 
+  readCopilotDesktopAsync(args: Parameters<SDKStatusReader['readCopilotDesktop']>[0]) {
+    return this.getSDKReader().readCopilotDesktop(args);
+  }
+
   readClaudeRecordsAsync(sessionsDir: string) {
     return this.getSDKReader().readClaudeRecords(sessionsDir);
   }
@@ -552,7 +556,7 @@ export class Database {
       undefined,
       this.options?.queryObservability,
       (args) =>
-        'codexSnapshot' in args || 'claudeRecords' in args
+        'codexSnapshot' in args || 'claudeRecords' in args || 'copilotDesktop' in args
           ? Promise.resolve()
           : this.core.waitForSdkMessageColumns(
               'sessionId' in args

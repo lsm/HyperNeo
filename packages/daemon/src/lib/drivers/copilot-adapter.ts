@@ -14,7 +14,7 @@ import { workStartPreparation } from './start-preparation.ts';
 import { reject } from './work-operations.ts';
 import { errorMessage } from '../utils/error-message.ts';
 import { copilotOwnsSession, createCopilotFind } from './copilot-find.ts';
-import { readCopilotObservations } from './copilot-observations.ts';
+import { readCopilotObservations, readCopilotTurnFacts } from './copilot-observations.ts';
 import { readCopilotHistory, createCopilotInputReader } from './copilot-history.ts';
 import type * as W from './types.ts';
 
@@ -40,6 +40,7 @@ interface Deps extends StartFolderDeps {
   gitCheckout?: (folder: string) => Promise<GitCheckout | null>;
   spawn?: SpawnFn;
   projectFolder?: (folder: string) => string | Promise<string>;
+  desktop?: W.WorkAdapter;
 }
 
 export function createCopilotAdapter(
@@ -547,8 +548,16 @@ export function createCopilotAdapter(
         };
       }, id);
       return result.ok ? result.value : undefined;
-    }
+    },
+    deps.desktop
   );
+  const owns = (id: string) => copilotOwnsSession(deps.directory, id);
+  const mutate = <T>(ref: W.WorkRef, effect: () => Promise<W.Result<T>>) =>
+    guard(async () => {
+      if (!owns(ref.id) && (await deps.desktop?.status?.(ref))?.ok)
+        return reject('unsupported', 'Use the Copilot app to control this Desktop-owned session.');
+      return effect();
+    }, ref.id);
   return {
     ...discovery,
     resolveStartConfiguration: async (request) => {
@@ -559,11 +568,11 @@ export function createCopilotAdapter(
     },
     find,
     readInput: async (id, marker) =>
-      copilotOwnsSession(deps.directory, id)
+      owns(id)
         ? readInput(join(deps.directory, id, 'session-state', id, 'events.jsonl'), id, marker)
-        : null,
+        : (deps.desktop?.readInput?.(id, marker) ?? null),
     readTurns: (id, around, before, after, cursor) => {
-      if (!copilotOwnsSession(deps.directory, id)) return null;
+      if (!owns(id)) return deps.desktop?.readTurns?.(id, around, before, after, cursor) ?? null;
       return readCopilotHistory(
         join(deps.directory, id, 'session-state', id, 'events.jsonl'),
         id,
@@ -581,6 +590,7 @@ export function createCopilotAdapter(
       'queue',
       'withdraw',
       'status',
+      'turns',
       'stop',
       'archive',
     ] as const,
@@ -594,13 +604,33 @@ export function createCopilotAdapter(
       void pending.finally(() => starts.delete(pending));
       return pending;
     },
-    rename: (ref, title) => guard(() => rename(ref, title), ref.id),
-    send: (ref, message) => guard(() => send(ref, message), ref.id),
-    queue: (ref, message) => guard(() => send(ref, message), ref.id),
-    withdraw: (ref, inputId) => guard(() => withdraw(ref, inputId), ref.id),
-    status: (ref, since, receipt) => guard(() => status(ref, receipt, since), ref.id),
-    stop: (ref) => guard(() => stop(ref), ref.id),
-    archive: (ref, admit) => guard(() => archive(ref, admit), ref.id),
+    rename: (ref, title) => mutate(ref, () => rename(ref, title)),
+    send: (ref, message) => mutate(ref, () => send(ref, message)),
+    queue: (ref, message) => mutate(ref, () => send(ref, message)),
+    withdraw: (ref, inputId) => mutate(ref, () => withdraw(ref, inputId)),
+    status: (ref, since, receipt) =>
+      guard(async () => {
+        if (!owns(ref.id)) {
+          const app = await deps.desktop?.status?.(ref, since, receipt);
+          if (app && (app.ok || app.reason !== 'not_found')) return app;
+        }
+        return status(ref, receipt, since);
+      }, ref.id),
+    stop: (ref) => mutate(ref, () => stop(ref)),
+    turns: (ref, cursor, limit) =>
+      guard(async () => {
+        const record = lookup(ref);
+        if ('reason' in record)
+          return (await deps.desktop?.turns?.(ref, cursor, limit)) ?? record.reason;
+        return readCopilotTurnFacts(
+          join(deps.directory, ref.id, 'session-state', ref.id, 'events.jsonl'),
+          ref.id,
+          cursor,
+          limit,
+          record.value.snapshot.inputs
+        );
+      }, ref.id),
+    archive: (ref, admit) => mutate(ref, () => archive(ref, admit)),
     async close() {
       closed = true;
       await Promise.allSettled([...starts, ...transactions.values()]);

@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { opendir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { errorMessage } from '../utils/error-message.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import { mergePlaceGroups } from './places.ts';
 import type { FindQuery, PlaceGroup, WorkAdapter, WorkSummary } from './types.ts';
@@ -16,7 +17,8 @@ export function createCopilotFind(
   discovery: WorkAdapter,
   directory: string,
   owns: (id: string) => boolean,
-  summary: (id: string) => Promise<OwnedSummary | undefined>
+  summary: (id: string) => Promise<OwnedSummary | undefined>,
+  desktop?: WorkAdapter
 ) {
   let listing: Promise<string[]> | undefined;
   const list = () =>
@@ -56,14 +58,26 @@ export function createCopilotFind(
     return owned;
   };
   const load = async (query: FindQuery) => {
-    const [external, owned] = await Promise.allSettled([
+    const [external, owned, app] = await Promise.allSettled([
       Promise.resolve().then(() => discovery.find(query)),
       loadOwned(),
+      Promise.resolve().then(
+        () =>
+          desktop?.find({ includeClosed: true, all: true, limit: 0, idPrefix: query.idPrefix }) ??
+          []
+      ),
     ]);
     if (owned.status === 'rejected') throw owned.reason;
-    if (external.status === 'rejected' && !owned.value.length) throw external.reason;
+    if (
+      external.status === 'rejected' &&
+      !owned.value.length &&
+      !(app.status === 'fulfilled' && app.value.length)
+    )
+      throw external.reason;
     return {
       external: external.status === 'fulfilled' ? external.value : [],
+      desktop: app.status === 'fulfilled' ? app.value : [],
+      desktopFailure: app.status === 'rejected' ? { reason: app.reason } : undefined,
       owned:
         external.status === 'fulfilled'
           ? owned.value
@@ -74,37 +88,56 @@ export function createCopilotFind(
             })),
     };
   };
-  const combine = (loaded: { external: PlaceGroup[]; owned: OwnedSummary[] }, query: FindQuery) => {
+  const combine = (loaded: Awaited<ReturnType<typeof load>>, query: FindQuery) => {
+    const desktopIds = new Set(
+      loaded.desktop.flatMap((group) => group.work.map((work) => work.ref.id))
+    );
     const external = loaded.external.map((group) => {
-      const work = group.work.filter((item) => !owns(item.ref.id));
+      const work = group.work.filter((item) => !desktopIds.has(item.ref.id) && !owns(item.ref.id));
       return {
         ...group,
         work,
         openCount: Math.max(0, group.openCount - (group.work.length - work.length)),
       };
     });
-    const groups = loaded.owned.map(({ archived, ...work }) => ({
+    const desktopWork = loaded.desktop.flatMap((group) =>
+      group.work.filter((item) => !owns(item.ref.id))
+    );
+    const groups = [...desktopWork, ...loaded.owned].map(({ archived, ...work }) => ({
       place: work.place,
       lastActivityAt: work.lastActivityAt,
       openCount: archived ? 0 : 1,
       archivedCount: archived ? 1 : 0,
       adapters: [discovery.id],
-      work: [work],
+      work: [{ ...work, ...(archived ? { archived: true } : {}) }],
     }));
     const text = query.text?.toLowerCase();
-    return mergePlaceGroups([...external, ...groups], Number.MAX_SAFE_INTEGER).flatMap((group) => {
-      if (query.folder && group.place.folder !== query.folder) return [];
-      const placeMatches =
-        !text || `${group.place.name} ${group.place.folder ?? ''}`.toLowerCase().includes(text);
-      const work = group.work
-        .filter(
-          (item) =>
-            (query.includeClosed || item.status !== 'stopped') &&
-            (placeMatches || item.title.toLowerCase().includes(text!))
-        )
-        .slice(0, query.all ? undefined : 20);
-      return work.length || (placeMatches && !text) ? [{ ...group, work }] : [];
-    });
+    const merged = mergePlaceGroups([...external, ...groups], Number.MAX_SAFE_INTEGER).flatMap(
+      (group) => {
+        if (query.folder && group.place.folder !== query.folder) return [];
+        const placeMatches =
+          !text || `${group.place.name} ${group.place.folder ?? ''}`.toLowerCase().includes(text);
+        const work = group.work
+          .filter(
+            (item) =>
+              (query.includeClosed || (!item.archived && item.status !== 'stopped')) &&
+              (placeMatches || item.title.toLowerCase().includes(text!))
+          )
+          .slice(0, query.all ? undefined : 20);
+        return work.length || (placeMatches && !text) ? [{ ...group, work }] : [];
+      }
+    );
+    if (!loaded.desktopFailure) return merged;
+    const { reason } = loaded.desktopFailure;
+    if (!merged.some((group) => group.work.length)) throw reason;
+    const hint = `Copilot Desktop discovery unavailable: ${errorMessage(reason)}`;
+    return merged.map((group) => ({
+      ...group,
+      work: group.work.map((item) => ({
+        ...item,
+        watchHint: item.watchHint ? `${item.watchHint} ${hint}` : hint,
+      })),
+    }));
   };
   return (superpipe({})('copilot-find') as PipelineAPI)
     .input(['query'])

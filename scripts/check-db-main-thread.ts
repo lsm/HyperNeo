@@ -35,6 +35,7 @@ const workers = new Set([
   'storage/sdk-message-body-admission-worker.ts',
   'storage/sdk-message-body-backup-worker.ts',
   'storage/sdk-status-worker.ts',
+  'storage/copilot-desktop-read.ts',
 ]);
 const patterns = {
   prepare: /\.prepare\s*\(/g,

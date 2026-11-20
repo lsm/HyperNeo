@@ -377,7 +377,7 @@ export interface WorkAdapter {
     before: number,
     after: number,
     cursor?: WorkTurnPage['nextCursor']
-  ) => WorkTurnPage | null;
+  ) => WorkTurnPage | null | Promise<WorkTurnPage | null>;
   readonly start?: (
     request: StartRequest,
     context: WorkCallContext

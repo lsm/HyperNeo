@@ -7,6 +7,7 @@ import { countPendingTurns, readPendingTurns } from './turn-vectors.ts';
 import { readMessageFacts } from '../lib/neo/message-status.ts';
 import { readMessageFeed } from './sdk-message-feed-read.ts';
 import { Database } from './sqlite-compat.ts';
+import { readCopilotDesktop } from './copilot-desktop-read.ts';
 import { SDKMessageRepository } from './repositories/sdk-message-repository.ts';
 import { subscribeToStructuredLogs } from '../lib/logger.ts';
 import {
@@ -50,15 +51,17 @@ worker.onmessage = ({ data }) => {
               ? 'claude-records'
               : 'codexSnapshot' in args
                 ? 'codex-snapshot'
-                : 'turnVectors' in args
-                  ? 'turn-vectors'
-                  : 'neoMessageStatus' in args
-                    ? 'neo-message-status'
-                    : 'feed' in args
-                      ? 'message-feed'
-                      : 'page' in args
-                        ? 'sdk-page'
-                        : 'sdk-status'
+                : 'copilotDesktop' in args
+                  ? 'copilot-desktop'
+                  : 'turnVectors' in args
+                    ? 'turn-vectors'
+                    : 'neoMessageStatus' in args
+                      ? 'neo-message-status'
+                      : 'feed' in args
+                        ? 'message-feed'
+                        : 'page' in args
+                          ? 'sdk-page'
+                          : 'sdk-status'
     : 'close';
   try {
     let result: SDKReadResult | null = null;
@@ -68,6 +71,8 @@ worker.onmessage = ({ data }) => {
       repository = null;
     } else if ('claudeRecords' in args) {
       result = readClaudeDesktopRecordFiles(args.claudeRecords.sessionsDir);
+    } else if ('copilotDesktop' in args) {
+      result = readCopilotDesktop(args.copilotDesktop);
     } else if ('codexSnapshot' in args) {
       result = readCodexSnapshot(
         args.codexSnapshot.statePath,
