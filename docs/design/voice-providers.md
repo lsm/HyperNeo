@@ -166,7 +166,7 @@ voice up by answering Neo:
   of truth for behavior; a row only stops the question being asked again and labels the
   choice on later cards.
   Layering: the preset table and the operation live with the other voice mechanics in
-  `lib/voice/`, registered beside the three test operations; a minimal always-enabled
+  `lib/voice/`, registered beside the test operations; a minimal always-enabled
   `voice` pack (one brief, the provider preference declaration, instructions — the shape
   of the delegation pack) owns the human-facing questions, because only a pack can
   declare a preference. The Neo core outside `neo/packs/` is unchanged; the pack is
@@ -246,9 +246,10 @@ default and target branch), near the repository's 300-line budget, failing tests
    applied by the operation above; the Neo core outside `neo/packs/` is unchanged.
    - **7a. The provider preference and its apply operation** — about 300 production
      lines, 220 test lines, measured against the code it copies: the delegation pack
-     (`neo/packs/delegation/pack.ts`, 89 lines) for the pack, the three test operations
-     (`voice/test-operations.ts`, 164 lines) as the floor for one operation with row
-     reads, three refusals and a transactional write, and the settings repository's
+     (`neo/packs/delegation/pack.ts`, 89 lines) for the pack, the test operations
+     (`voice.testConnection` and `voice.testLive` in `voice/test-operations.ts`, 164
+     lines; `voice.testSpeech` in `neo/speech.ts`) as the floor for one operation with
+     row reads, three refusals and a transactional write, and the settings repository's
      merge path (`packages/daemon/src/storage/repositories/settings-repository.ts`,
      146 lines) for the write. Built-in presets only: no custom URL, no second card.
      The numbers are a plan, not a measurement: the implemented slice diff is checked
