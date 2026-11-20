@@ -508,7 +508,7 @@ export function countPipelineRoutes(
         source,
         file,
         strictCalls,
-        (file) => sourceContext.get(file)
+        sourceContext
       ))(name);
       if (resolved.kind !== 'named' || (!strictCalls && resolved.name !== name))
         counts.unreadable++;

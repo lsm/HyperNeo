@@ -23,6 +23,162 @@ export function valueImport(file: string, specifier: ts.ImportSpecifier): Import
 const gatewayDirectory = 'packages/daemon/src/storage/db-gateway';
 export const dbGatewayFile = `${gatewayDirectory}/db-gateway.ts`;
 
+const registryFile = `${gatewayDirectory}/db-ops.ts`;
+const workerFile = `${gatewayDirectory}/db-gateway-worker.ts`;
+
+function importsModule(file: string, specifier: string, target: string): boolean {
+  const daemon = 'packages/daemon/src/';
+  const path = specifier.startsWith('.')
+    ? posix.normalize(posix.join(posix.dirname(file), specifier))
+    : specifier.startsWith('@hyperneo/daemon/')
+      ? daemon + specifier.slice('@hyperneo/daemon/'.length)
+      : file.startsWith(daemon) && specifier.startsWith('@/')
+        ? daemon + specifier.slice(2)
+        : undefined;
+  if (!path) return false;
+  return (
+    path === target ||
+    path === target.replace(/\.tsx?$/, '') ||
+    path.replace(/\.jsx?$/, '.ts') === target
+  );
+}
+
+function identifierUses(parsed: ts.SourceFile, name: string): ts.Identifier[] {
+  const uses: ts.Identifier[] = [];
+  function visit(node: ts.Node): void {
+    if (ts.isIdentifier(node) && node.text === name) uses.push(node);
+    ts.forEachChild(node, visit);
+  }
+  visit(parsed);
+  return uses;
+}
+
+function isRegistryLookup(parsed: ts.SourceFile, node: ts.Identifier): boolean {
+  const access = node.parent;
+  const call = access.parent;
+  const binding = call.parent;
+  if (
+    !ts.isPropertyAccessExpression(access) ||
+    access.expression !== node ||
+    access.name.text !== 'get' ||
+    !ts.isCallExpression(call) ||
+    call.expression !== access ||
+    !ts.isVariableDeclaration(binding) ||
+    binding.initializer !== call ||
+    !ts.isIdentifier(binding.name) ||
+    (binding.parent.flags & ts.NodeFlags.Const) === 0
+  )
+    return false;
+  let ran = false;
+  const readsOnly = identifierUses(parsed, binding.name.text).every((use) => {
+    const parent = use.parent;
+    if (use === binding.name || (ts.isBindingElement(parent) && parent.propertyName === use))
+      return true;
+    if (ts.isPrefixUnaryExpression(parent) && parent.operator === ts.SyntaxKind.ExclamationToken)
+      return true;
+    if (!ts.isPropertyAccessExpression(parent) || parent.expression !== use) return false;
+    const consumer = parent.parent;
+    if (
+      parent.name.text === 'run' &&
+      ts.isCallExpression(consumer) &&
+      consumer.expression === parent
+    ) {
+      ran = true;
+      return true;
+    }
+    return (
+      parent.name.text === 'mode' &&
+      ts.isBinaryExpression(consumer) &&
+      consumer.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken
+    );
+  });
+  return readsOnly && ran;
+}
+
+function ignoredImport(node: ts.Statement, file: string, target: ImportRef): boolean {
+  if (
+    !ts.isImportDeclaration(node) ||
+    !ts.isStringLiteral(node.moduleSpecifier) ||
+    !importsModule(file, node.moduleSpecifier.text, target.file)
+  )
+    return false;
+  const clause = node.importClause;
+  if (clause?.isTypeOnly) return true;
+  const bindings = clause?.namedBindings;
+  return (
+    !!bindings &&
+    ts.isNamedImports(bindings) &&
+    bindings.elements.every(
+      (specifier) =>
+        specifier.isTypeOnly || (specifier.propertyName ?? specifier.name).text !== target.name
+    )
+  );
+}
+
+export function confinedWorkerRegistration(
+  sources: ReadonlyMap<string, string>,
+  route: string,
+  command: ImportRef
+): boolean {
+  const sourceOf = (file: string) => sources.get(file);
+  const entry = parse(sourceOf, route);
+  const definition = parse(sourceOf, command.file);
+  if (!entry || !definition) return false;
+  const [binding, ...otherUses] = identifierUses(definition, command.name);
+  if (
+    !binding ||
+    otherUses.length ||
+    !ts.isVariableDeclaration(binding.parent) ||
+    binding.parent.name !== binding
+  )
+    return false;
+
+  function confinedImport(parsed: ts.SourceFile, target: ImportRef, lookup: boolean): boolean {
+    const bindings = namedImports(parsed.fileName, parsed).filter(
+      ([, ref]) => ref?.file === target.file && ref.name === target.name
+    );
+    if (bindings.length !== 1) return false;
+    const [[local]] = bindings;
+    const [imported, use, ...extras] = identifierUses(parsed, local);
+    if (
+      !imported ||
+      !ts.isImportSpecifier(imported.parent) ||
+      imported.parent.name !== imported ||
+      !use ||
+      extras.length
+    )
+      return false;
+    const call = use.parent;
+    return lookup
+      ? isRegistryLookup(parsed, use)
+      : ts.isCallExpression(call) &&
+          call.arguments[0] === use &&
+          ts.isPropertyAccessExpression(call.expression) &&
+          call.expression.name.text === 'call';
+  }
+
+  if (!confinedImport(entry, command, false)) return false;
+  const registry = { file: registryFile, name: 'DB_OPS' };
+  const worker = parse(sourceOf, workerFile);
+  if (!worker || !confinedImport(worker, registry, true)) return false;
+  for (const [file, source] of sources) {
+    const { importedFiles } = ts.preProcessFile(source, true, true);
+    for (const [target, allowed] of [
+      [registry, file === workerFile],
+      [command, file === route || file === registryFile],
+    ] as const) {
+      const count = importedFiles.filter(({ fileName }) =>
+        importsModule(file, fileName, target.file)
+      ).length;
+      if (count <= Number(allowed)) continue;
+      const parsed = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+      const ignored = parsed.statements.filter((node) => ignoredImport(node, file, target)).length;
+      if (count - ignored > Number(allowed)) return false;
+    }
+  }
+  return true;
+}
+
 function namedConstant(source: ts.SourceFile, name: string) {
   const found = source.statements
     .filter(ts.isVariableStatement)
@@ -155,7 +311,7 @@ function importsMap(statement: ts.ImportDeclaration): boolean {
 }
 
 export function registeredRepositoryMethod(command: ImportRef, method: string, sourceOf: SourceOf) {
-  const file = `${gatewayDirectory}/db-ops.ts`;
+  const file = registryFile;
   const registry = parse(sourceOf, file);
   const source = parse(sourceOf, command.file);
   if (!registry || !source) return undefined;

@@ -1,5 +1,6 @@
 import ts from 'typescript';
 import {
+  confinedWorkerRegistration,
   dbGatewayFile,
   registeredRepositoryMethod,
   valueImport,
@@ -52,7 +53,7 @@ export function createLocalPipelineResolver(
   source: string,
   fileName = 'route.ts',
   strictCalls = false,
-  sourceOf?: (file: string) => string | undefined
+  sources?: ReadonlyMap<string, string> | ((file: string) => string | undefined)
 ): ((operationName: string) => LocalPipelineResolution) & {
   exportedFactory(name: string, arity: number): LocalPipelineResolution;
   repositoryMethod(
@@ -62,6 +63,7 @@ export function createLocalPipelineResolver(
   ): LocalPipelineResolution;
   exportedRunner(name: string): LocalPipelineResolution;
 } {
+  const sourceOf = typeof sources === 'function' ? sources : sources?.get.bind(sources);
   const unwrap = unwrapPipelineExpression;
   const path = fileName.endsWith('.tsx') ? '/route.tsx' : '/route.ts';
   const options: ts.CompilerOptions = { noLib: true, noResolve: true, noEmit: true };
@@ -366,10 +368,15 @@ export function createLocalPipelineResolver(
     const helper = importedReference(receiver.expression);
     if (helper?.file !== dbGatewayFile || helper.name !== 'gatewayFor') return unknown;
     const target = importedReference(command);
-    if (!target) return unknown;
+    if (!target || !sources || typeof sources === 'function') return unknown;
     const repository = registeredRepositoryMethod(target, method.text, sourceOf);
     const source = repository ? sourceOf(target.file) : undefined;
-    if (!repository || source === undefined) return unknown;
+    if (
+      !repository ||
+      source === undefined ||
+      !confinedWorkerRegistration(sources, fileName, target)
+    )
+      return unknown;
     return createLocalPipelineResolver(source, target.file, true, sourceOf).repositoryMethod(
       repository.name,
       method.text,
@@ -517,7 +524,11 @@ export function createLocalPipelineResolver(
     );
     if (classes.length !== 1) return unknown;
     const [declaration] = classes;
-    if (ts.getDecorators(declaration)?.length || declaration.heritageClauses?.length)
+    if (
+      ts.getDecorators(declaration)?.length ||
+      declaration.heritageClauses?.length ||
+      declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)
+    )
       return unknown;
     function usesClass(node: ts.Node): boolean {
       if (ts.isIdentifier(node) && node.text === repository)

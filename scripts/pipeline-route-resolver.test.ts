@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import { createLocalPipelineResolver } from './pipeline-route-resolver.ts';
+import { countPipelineRoutes } from './system-map.ts';
 
 const resolveLocalPipeline = (source: string, name: string) =>
   createLocalPipelineResolver(source)(name);
@@ -235,6 +236,13 @@ test.each(['path = other;', '({ path } = handlers);', 'eval("path = other");'])(
 const dbDirectory = 'packages/daemon/src/storage/db-gateway';
 const workerSource = new Map([
   [
+    `${dbDirectory}/db-gateway-worker.ts`,
+    `import { DB_OPS } from './db-ops.ts';
+    const command = DB_OPS.get(name);
+    if (!command) throw new Error('unknown operation');
+    command.run(db, args, changes);`,
+  ],
+  [
     `${dbDirectory}/db-ops.ts`,
     `import { query } from './read.ts';
     export const DB_OPS = new Map([query].map((op) => [op.name, op]));`,
@@ -321,8 +329,39 @@ test.each([
     import { gatewayFor as db } from './db-gateway.ts';
     import { query } from './read.ts';
     defineOperation({ name: 'demo.read', execute: (input) => ${execute} });`;
-  const resolve = createLocalPipelineResolver(source, `${dbDirectory}/route.ts`, true, (file) =>
-    sources.get(file)
-  );
+  const path = `${dbDirectory}/route.ts`;
+  sources.set(path, source);
+  const resolve = createLocalPipelineResolver(source, path, true, sources);
   expect(resolve('demo.read')).toEqual(kind === 'named' ? { kind, name: 'demo.read' } : { kind });
+});
+
+test.each([
+  ['registry replacement', "import { DB_OPS as registry } from './db-ops.ts'; registry.clear();"],
+  [
+    'command replacement',
+    "import { query as command } from './read.ts'; command.Repository.prototype.read = () => null;",
+  ],
+  ['daemon alias', "import { DB_OPS } from '@/storage/db-gateway/db-ops'; DB_OPS.clear();"],
+  ['namespace import', "import * as ops from './db-ops.ts'; ops.DB_OPS.clear();"],
+  ['dynamic import', "void import('./db-ops').then((ops) => ops.DB_OPS.clear());"],
+  ['re-export', "export { DB_OPS as registry } from './db-ops.ts';"],
+])('leaves worker dispatch unknown after a cross-file %s', (_title, mutation) => {
+  const path = `${dbDirectory}/route.ts`;
+  const source = `import { defineOperation } from './registry.ts';
+    import { gatewayFor as db } from './db-gateway.ts';
+    import { query } from './read.ts';
+    import './override.ts';
+    defineOperation({ name: 'demo.read', execute: (input) => db(database).call(query, 'read', input) });`;
+  const sources = new Map(workerSource)
+    .set(path, source)
+    .set(`${dbDirectory}/override.ts`, mutation);
+  const input = new Map([[path, source]]);
+  expect(countPipelineRoutes(input, true, sources)).toMatchObject({ unreadable: 1 });
+  sources.set(
+    `${dbDirectory}/override.ts`,
+    "import type { DB_OPS } from './db-ops.ts'; import { anotherCommand } from './read.ts';"
+  );
+  expect(countPipelineRoutes(input, true, sources)).toMatchObject({ unreadable: 0 });
+  sources.delete(`${dbDirectory}/db-gateway-worker.ts`);
+  expect(countPipelineRoutes(input, true, sources)).toMatchObject({ unreadable: 1 });
 });
