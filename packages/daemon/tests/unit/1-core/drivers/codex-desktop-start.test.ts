@@ -2,7 +2,9 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
 import { CODEX_WORKER_INSTRUCTIONS } from '@hyperneo/prompts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { once } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
@@ -63,6 +65,7 @@ function adapter(
     linked?: boolean;
     prepareExecution?: WorkExecutionPreparer;
     shared?: CodexAppServer;
+    desktopSocketPath?: string;
   } = {}
 ) {
   const calls: Array<[string, Record<string, unknown>]> = [];
@@ -76,6 +79,7 @@ function adapter(
       ? undefined
       : async () => ({ roots: [], folders: [], threads: git.threads ?? [] }),
     prepareExecution: git.prepareExecution,
+    desktopSocketPath: git.desktopSocketPath,
     worktreesDir: '/codex/worktrees',
     machine: 'laptop',
     now: () => NOW,
@@ -1001,6 +1005,53 @@ describe('codex-desktop start', () => {
       ]);
     }
   );
+
+  test('creates the thread on the shared app-server, which the app lists, when Desktop IPC is missing', async () => {
+    const shared: string[] = [];
+    const { instance, calls } = adapter(
+      {
+        call: async (method) => {
+          if (method === 'desktop/start-turn')
+            throw Object.assign(new Error('connect ENOENT ipc.sock'), { code: 'ENOENT' });
+          return {};
+        },
+      },
+      ['/focus/dolmen'],
+      {
+        desktopSocketPath: join(namingDir, 'missing-ipc.sock'),
+        shared: {
+          call: async (method) => {
+            shared.push(method);
+            return method === 'thread/start' ? { thread: { id: 'th1' } } : {};
+          },
+          close: async () => {},
+        },
+      }
+    );
+    expect(await instance.start?.(request, user)).toMatchObject({
+      ok: true,
+      value: { ref: { adapter: 'codex-desktop', id: 'th1' }, status: 'running' },
+    });
+    expect(shared).toContain('thread/start');
+    expect(calls.map(([method]) => method)).not.toContain('thread/start');
+  });
+
+  test('keeps creating through the bootstrap server while Desktop IPC listens', async () => {
+    const socketPath = join(namingDir, 'ipc.sock');
+    const listener = createServer().listen(socketPath);
+    await once(listener, 'listening');
+    try {
+      const { instance, calls } = adapter(
+        { call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}) },
+        ['/focus/dolmen'],
+        { desktopSocketPath: socketPath }
+      );
+      expect(await instance.start?.(request, user)).toMatchObject({ ok: true });
+      expect(calls.map(([method]) => method)).toContain('thread/start');
+    } finally {
+      listener.close();
+    }
+  });
 
   test('the opening text includes the spans Desktop needs to render its live turn', async () => {
     const { instance, calls } = adapter({
