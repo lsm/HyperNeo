@@ -37,17 +37,21 @@ In `desktop` mode, append enough history to move a saved cursor out of the
 read window and confirm the next completed turn is still returned. In `both`
 mode, search for a Desktop session whose title and workspace name are missing.
 
-Desktop exposes find, status, read, and turns through the driver. The public
-launch link opens an App confirmation or draft and supplies no submitted-turn
-receipt. The driver does not yet send Desktop mutations.
+Use `control` and `both-control` with the same command to attach a synthetic
+authenticated Desktop peer. Start work through HyperNeo with a model and effort.
+Check a rejected effort makes no workspace, and the accepted settings come
+back from the stored session. Submit and withdraw one queued message, stop
+the initial turn, send a follow-up, read its reply with the receipt, then
+rename and archive the same work. In dual mode, the startup reference must
+come from the Desktop peer.
 
-For an attended control check, open the signed-in GitHub Copilot app and choose
-New session, then Add local folder or repository. Select a disposable empty
-folder. Send a prompt requesting an exact short reply without tools. Check that
-the session appears under that folder, then send a different exact-reply prompt
-in the same session. Send a longer prompt without tools and click Stop while its
-button is visible. The session should return to Idle. On v1.4.3 the local test
-transcript retained both replies and an abort event for the interrupted turn.
+The peer proves routing and receipt handling in an isolated daemon. For release
+verification, repeat the same operations against a disposable session in the
+signed-in macOS app over its authenticated local channel. Compare the actual
+model and effort in the saved session and require an abort event before
+accepting Stop. Preserve the App's worktree on archive. Record only results
+for the disposable session. The real App proof requires a separately approved
+attended setup and does not use the human's daemon.
 
 The CLI also exposes start, send, queue, withdraw, stop, rename, and archive
 for daemon-owned sessions. Strict same-turn steering and driver compaction
