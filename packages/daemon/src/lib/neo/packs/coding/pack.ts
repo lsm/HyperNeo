@@ -7,6 +7,8 @@ import { createCodingRetryMergeOperation } from './retry-merge-operation.ts';
 import { createCodingDaemonMergeSweep } from './daemon-merge-sweep.ts';
 import { CODING_ATTENTION_KINDS, type CodingAttend, scanCodingIdleOpenPrs } from './attention.ts';
 import { checkCodingPrApproved } from './pr-approved.ts';
+import { checkCodingDeployed } from './deployed.ts';
+import { createCodingLinkExists } from './link-exists.ts';
 import { withCodingMergeContext } from './merge-context.ts';
 import { codingWatchedRepos, initializeCodingWatches } from './watched-repos.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
@@ -115,7 +117,8 @@ export function createCodingPack(deps: {
     deps.readPrs,
     (url) => deps.prLedger.stateOf(url),
     deps.readRefStates ?? createCodingRefReader(() => deps.prLedger.refFacts),
-    (url) => checkCodingPrApproved(url, (repo) => deps.prLedger.policy(repo))
+    (url) => checkCodingPrApproved(url, (repo) => deps.prLedger.policy(repo)),
+    (repo, sha) => checkCodingDeployed(repo, sha, deps.prLedger.ancestryFacts)
   );
   const trackerOwners = () => new NeoAskTodoRepository(deps.database());
   return {
@@ -134,6 +137,7 @@ export function createCodingPack(deps: {
       ),
       createCodingPrFileOperation(deps.database),
     ],
+    linkExists: createCodingLinkExists(),
     tracker: createCodingIssueTracker({
       repositories: (askId, todoId) => deps.todoPrs.trackerRepositories(askId, todoId),
       createdAt: (marker) => {

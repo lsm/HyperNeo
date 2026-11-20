@@ -26,6 +26,7 @@ writeFileSync(
 printf '%s\\n' "$*" >> '${ghLog}'
 case "$*" in
   'api repos/lsm/hyperneo/compare/'*) cat '${compare}' ;;
+  'api repos/o/r/issues/comments/5') printf '{"issue_url":"https://api.github.com/repos/o/r/issues/7"}' ;;
   *) exit 1 ;;
 esac
 `,
@@ -110,12 +111,12 @@ try {
     ws!.onopen = () => done();
     ws!.onerror = () => fail(new Error('WebSocket open failed'));
   });
-  const add = async (kind: string, params: Record<string, unknown>) => {
+  const add = async (kind: string, params: Record<string, unknown>, pack = 'core') => {
     const result = await rpc('neo.todo.add', { after: [],
       askId: 'ask',
       title: `Verify ${kind}`,
       doneWhen: 'This sentence must be replaced',
-      check: { pack: 'core', kind, params },
+      check: { pack, kind, params },
     });
     assert(result.ok && result.todo, JSON.stringify(result));
     assert.notEqual(result.todo.doneWhen, 'This sentence must be replaced');
@@ -211,13 +212,17 @@ try {
   }
   const build = await rpc('system.build', {});
   assert.match(build.commit!, /^[0-9a-f]{40}$/);
-  await close(await add('deployed', { repo: 'lsm/HyperNeo', sha: build.commit }), 'done');
-  await close(await add('deployed', { repo: 'lsm/HyperNeo', sha: 'a'.repeat(40) }), 'done');
+  app.db.updateGlobalSettings({ neo: { packs: ['life-admin', 'coding'] } });
+  await close(await add('evidence', { url: 'https://github.com/o/r/pull/7#issuecomment-5' }), 'done');
+  await close(await add('evidence', { url: 'https://github.com/o/r/pull/8#issuecomment-5' }), 'blocked');
+  await close(await add('deployed', { repo: 'lsm/HyperNeo', sha: build.commit }, 'coding'), 'done');
+  await close(await add('deployed', { repo: 'lsm/HyperNeo', sha: 'a'.repeat(40) }, 'coding'), 'done');
   writeFileSync(compare, JSON.stringify({ status: 'diverged' }));
   await close(
-    await add('deployed', { repo: 'lsm/HyperNeo', sha: 'b'.repeat(40) }),
+    await add('deployed', { repo: 'lsm/HyperNeo', sha: 'b'.repeat(40) }, 'coding'),
     'blocked'
   );
+  app.db.updateGlobalSettings({ neo: { packs: ['life-admin'] } });
   const readCurrent=()=>rpc('file.reference.read',{sourceMessageOrCard:{kind:'todo',id:fileTodo.id},reference:path});
   const first=await readCurrent();
   assert.equal(first.accepted,true,JSON.stringify(first));
@@ -235,7 +240,7 @@ try {
     enabledPacks: ['life-admin'],
   });
   console.log(
-    'PASS: real RPC derives completion text and checks recorded human answers, file, artifact and daemon build ancestry with life-admin enabled; repository admission uses the coding policy.'
+    'PASS: real RPC derives completion text and checks recorded human answers, file, artifact, GitHub comment links and coding daemon build ancestry with life-admin enabled; repository admission uses the coding policy.'
   );
 } finally {
   ws?.close();
