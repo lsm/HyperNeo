@@ -36,6 +36,7 @@ import { type CodexAppServer, CodexRequestError, compactCodexThread } from './co
 import {
   type CodexSendGate,
   codexDesktopIpcAbsent,
+  codexDesktopIpcListening,
   requestCodexDesktopCompaction,
   steerCodexDesktopTurn,
 } from './codex-desktop-handoff.ts';
@@ -1216,7 +1217,12 @@ export async function startCodexThread(
   request: StartRequest,
   deps: CodexDesktopAdapterDeps
 ): Promise<Result<WorkStarted>> {
-  return withCodexAppServer({ appServer: deps.bootstrapServer }, async (server) => {
+  const creator =
+    deps.desktopSocketPath !== undefined &&
+    !(await codexDesktopIpcListening(deps.desktopSocketPath))
+      ? deps.appServer
+      : deps.bootstrapServer;
+  return withCodexAppServer({ appServer: creator }, async (server) => {
     let threadId: string | null = null;
     let releaseTitle: (() => void) | undefined;
     let workFolder: CodexWorkFolder | null = null;
