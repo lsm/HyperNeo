@@ -56,10 +56,23 @@ export function readWorkCompaction(db: BunDatabase, ref: StartedWork) {
        ) AS failure FROM work_started_sessions WHERE adapter = ?1 AND id = ?2`
     )
     .get(ref.adapter, ref.id) as { at: number | null; failure: string | null } | null;
-  return {
-    compactedAt: row?.at ?? null,
-    failure: row?.failure ? (JSON.parse(row.failure) as WorkCompactionFailure) : null,
-  };
+  const compactedAt = row?.at ?? null;
+  const failure = row?.failure ? (JSON.parse(row.failure) as WorkCompactionFailure) : null;
+  const lateCompactedAt =
+    ref.adapter === 'hyperneo' &&
+    failure &&
+    (compactedAt === null || failure.attemptedAt > compactedAt) &&
+    db
+      .prepare(
+        `SELECT 1 FROM sdk_messages
+         WHERE session_id = ? AND timestamp >= ? AND message_type = 'result'
+           AND message_subtype = 'success' AND parent_tool_use_id IS NULL
+           AND internal_compaction_turn = 1 LIMIT 1`
+      )
+      .get(ref.id, new Date(failure.attemptedAt).toISOString())
+      ? failure.attemptedAt
+      : null;
+  return { compactedAt, failure, lateCompactedAt };
 }
 
 export function recordWorkerStarted(
