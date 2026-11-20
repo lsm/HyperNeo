@@ -152,8 +152,8 @@ function fixture(
       },
     }),
   ]);
-  const assign = async (patch: Record<string, unknown> = {}) => {
-    const outcome = await invokeOperation(
+  const invokeAssignment = (patch: Record<string, unknown> = {}) =>
+    invokeOperation(
       registry,
       'neo.coding.assign',
       {
@@ -167,6 +167,8 @@ function fixture(
       },
       { source: 'internal', role: 'neo' }
     );
+  const assign = async (patch: Record<string, unknown> = {}) => {
+    const outcome = await invokeAssignment(patch);
     expect(outcome.kind).toBe('completed');
     if (outcome.kind !== 'completed') throw new Error(outcome.message);
     return outcome.value as {
@@ -186,6 +188,7 @@ function fixture(
     ledger,
     assignments,
     sessions,
+    invokeAssignment,
     assign,
     starts,
     stops,
@@ -660,16 +663,32 @@ describe('coding actor assignments', () => {
     expect(f.stops).toEqual([{ ref: { adapter: reviewer.adapter, id: 'fresh-1' } }]);
     expect(f.assignments.read('todo', url, head)).toEqual({});
   });
-  test('denied competitors do not release a pending human assignment', async () => {
+  test('assignment retries after a rejected write and keeps its lock under contention', async () => {
     const f = fixture();
-    const input = { human: 'explicit-reviewer', candidates: [] };
-    const results = await Promise.all([f.assign(input), f.assign(input), f.assign(input)]);
-    expect(results.filter((result) => result.ok)).toHaveLength(1);
-    expect(results.filter((result) => result.reason?.includes('already in progress'))).toHaveLength(
-      2
-    );
-    expect(await f.assign(input)).toMatchObject({ ok: true });
-    expect(f.starts).toHaveLength(0);
+    const gateway = new DbGateway(':memory:', f.db);
+    const run = gateway.run.bind(gateway);
+    gateway.run = (op, args) => {
+      if (op.name !== 'coding.assignmentWrites') return run(op, args);
+      gateway.run = run;
+      return Promise.reject(new Error('Assignment write failed'));
+    };
+    bindGateway(f.db, gateway);
+    try {
+      const input = { human: 'explicit-reviewer', candidates: [] };
+      expect(await f.invokeAssignment(input)).toMatchObject({
+        kind: 'failed',
+        code: 'execution_failed',
+        message: 'Assignment write failed',
+      });
+      const results = await Promise.all([f.assign(input), f.assign(input), f.assign(input)]);
+      const denied = results.filter(({ reason }) => reason?.includes('already in progress'));
+      expect(results.filter(({ ok }) => ok)).toHaveLength(1);
+      expect(denied).toHaveLength(2);
+      expect(await f.assign(input)).toMatchObject({ ok: true });
+      expect(f.starts).toHaveLength(0);
+    } finally {
+      await gateway.close();
+    }
   });
 
   test('simultaneous assignment requests do not duplicate session starts', async () => {
