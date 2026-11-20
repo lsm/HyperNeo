@@ -1,5 +1,5 @@
 import type { Session, SpaceTask } from '@hyperneo/shared';
-import superpipe, { type PipelineAPI } from 'superpipe';
+import superpipe, { type PipelineAPI, type SuperPipeFactory } from 'superpipe';
 import { z } from 'zod';
 import { Logger } from '../logger.ts';
 import {
@@ -235,60 +235,62 @@ async function notifyOwnedCompletion(
 export function createOwnedPendingCompletionOperations(
   dependencies: OwnedPendingCompletionDependencies
 ): OperationDefinition[] {
-  const resolve = (
-    superpipe({
-      ...dependencies,
-      policyContext: dependencies.policyContext ?? {
-        longHorizonAgentRepo: FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
-      },
-    })('resolve-owned-pending-completion') as PipelineAPI
-  )
-    .input(['input', 'caller', 'operationName'])
-    .pipe(resolveCompletionActor, ['caller', 'getSession', 'policyContext'], 'result:task')
-    .pipe((actor: CompletionActor) => actor, 'task', 'actor')
-    .pipe(
-      requireCompletionAutonomy,
-      ['actor', 'operationName', 'policyContext', 'getSpaceAutonomyLevel'],
-      'result:task'
-    )
-    .pipe((actor: CompletionActor) => actor, 'task', 'actor')
-    .pipe(loadCompletionTarget, ['input', 'actor', 'getTask'], 'result:task')
-    .pipe(restageOrphanedCheckpoint, ['task', 'getTaskManager'], 'previous')
-    .pipe(
-      bindOwnedCompletion,
-      ['operationName', 'previous', 'actor', 'getTaskManager', 'dispatchApproval', 'warn'],
-      [
-        'getTask:readOwnedTask',
-        'dispatchApproval:dispatchOwnedApproval',
-        'reopenTask',
+  const config = {
+    ...dependencies,
+    policyContext: dependencies.policyContext ?? {
+      longHorizonAgentRepo: FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
+    },
+  };
+  const build = (builder: ReturnType<SuperPipeFactory>) =>
+    (builder as PipelineAPI)
+      .input(['input', 'caller', 'operationName'])
+      .pipe(resolveCompletionActor, ['caller', 'getSession', 'policyContext'], 'result:task')
+      .pipe((actor: CompletionActor) => actor, 'task', 'actor')
+      .pipe(
+        requireCompletionAutonomy,
+        ['actor', 'operationName', 'policyContext', 'getSpaceAutonomyLevel'],
+        'result:task'
+      )
+      .pipe((actor: CompletionActor) => actor, 'task', 'actor')
+      .pipe(loadCompletionTarget, ['input', 'actor', 'getTask'], 'result:task')
+      .pipe(restageOrphanedCheckpoint, ['task', 'getTaskManager'], 'previous')
+      .pipe(
+        bindOwnedCompletion,
+        ['operationName', 'previous', 'actor', 'getTaskManager', 'dispatchApproval', 'warn'],
+        [
+          'getTask:readOwnedTask',
+          'dispatchApproval:dispatchOwnedApproval',
+          'reopenTask',
+          'updateTask',
+          'warn:warnOwnedCompletion',
+        ]
+      )
+      .pipe(normalizePendingCompletion, 'input', 'decision')
+      .pipe(rejectPendingCompletion, ['decision', 'reopenTask', 'updateTask'], 'rejection')
+      .pipe(dispatchPendingCompletion, [
+        'decision',
+        'dispatchOwnedApproval',
+        'readOwnedTask',
         'updateTask',
-        'warn:warnOwnedCompletion',
-      ]
-    )
-    .pipe(normalizePendingCompletion, 'input', 'decision')
-    .pipe(rejectPendingCompletion, ['decision', 'reopenTask', 'updateTask'], 'rejection')
-    .pipe(dispatchPendingCompletion, [
-      'decision',
-      'dispatchOwnedApproval',
-      'readOwnedTask',
-      'updateTask',
-      'warnOwnedCompletion',
-    ])
-    .pipe(readPendingCompletionResult, ['readOwnedTask', 'decision', 'rejection'], 'result:task')
-    .pipe(notifyOwnedCompletion, [
-      'operationName',
-      'actor',
-      'previous',
-      'input',
-      'task',
-      'emitTaskUpdated',
-      'audit',
-    ])
-    .endAsync('task') as (
-    input: PendingCompletionInput,
-    caller: OperationCaller,
-    operationName: string
-  ) => Promise<SpaceTask | DecisionRejection>;
+        'warnOwnedCompletion',
+      ])
+      .pipe(readPendingCompletionResult, ['readOwnedTask', 'decision', 'rejection'], 'result:task')
+      .pipe(notifyOwnedCompletion, [
+        'operationName',
+        'actor',
+        'previous',
+        'input',
+        'task',
+        'emitTaskUpdated',
+        'audit',
+      ])
+      .endAsync('task') as (
+      input: PendingCompletionInput,
+      caller: OperationCaller,
+      operationName: string
+    ) => Promise<SpaceTask | DecisionRejection>;
+  const approve = build(superpipe(config)('task.approve'));
+  const rejectCompletion = build(superpipe(config)('task.reject'));
   const PendingCompletionResultSchema = TaskWithSpaceFieldsSchema.extend({
     pendingCheckpointType: z.literal('task_completion').nullable(),
     approvalSource: z.enum(['human', 'agent', 'auto_policy']).nullable(),
@@ -316,18 +318,9 @@ export function createOwnedPendingCompletionOperations(
   const DECISION_ADMISSION_DOC =
     'MCP requires a Space agent session in the owning space, and the caller needs the human-only autonomy level; otherwise it rejects { accepted: false, reason: "pending_completion_denied", detail }. It also rejects task_not_found, pending_completion_unavailable for a standalone task, task_not_in_review, and pending_completion_superseded when the checkpoint was refreshed or decided by someone else first.';
 
-  const decide = async (
-    input: { taskId: string; reason?: string | null },
-    caller: OperationCaller,
-    approved: boolean,
-    operationName: string
-  ) => {
-    try {
-      return await resolve({ ...input, approved }, caller, operationName);
-    } catch (error) {
-      if (!(error instanceof PendingCompletionSupersededError)) throw error;
-      return reject('pending_completion_superseded', error.message).reason;
-    }
+  const completionFailure = (error: unknown) => {
+    if (!(error instanceof PendingCompletionSupersededError)) throw error;
+    return reject('pending_completion_superseded', error.message).reason;
   };
 
   return [
@@ -336,14 +329,26 @@ export function createOwnedPendingCompletionOperations(
       description: `Approve a Space task awaiting completion review, moving it out of review and dispatching the post-approval work. ${DECISION_ADMISSION_DOC} The approval records who made it: approvalSource is agent for an MCP caller and human for an RPC or internal one. May return postApprovalBlockedReason when the approval committed but the post-approval work could not dispatch.`,
       inputSchema: DecisionInputSchema,
       resultSchema: z.union([PendingCompletionResultSchema, DecisionRejectionSchema]),
-      execute: async (input, caller) => decide(input, caller, true, 'task.approve'),
+      execute: async (input, caller) => {
+        try {
+          return await approve({ ...input, approved: true }, caller, 'task.approve');
+        } catch (error) {
+          return completionFailure(error);
+        }
+      },
     }),
     defineOperation({
       name: 'task.reject',
       description: `Send a Space task awaiting completion review back to in_progress with an optional reason, so the worker can continue. ${DECISION_ADMISSION_DOC} A rejection records no provenance: approvalSource stays null.`,
       inputSchema: DecisionInputSchema,
       resultSchema: z.union([PendingCompletionResultSchema, DecisionRejectionSchema]),
-      execute: async (input, caller) => decide(input, caller, false, 'task.reject'),
+      execute: async (input, caller) => {
+        try {
+          return await rejectCompletion({ ...input, approved: false }, caller, 'task.reject');
+        } catch (error) {
+          return completionFailure(error);
+        }
+      },
     }),
   ];
 }
