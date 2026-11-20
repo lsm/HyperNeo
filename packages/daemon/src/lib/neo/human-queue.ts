@@ -4,6 +4,10 @@ import type { NeoStepOwner } from './attention/owner.ts';
 import { neoTodoCovered } from './todo-state.ts';
 
 const UNFINISHED: readonly NeoTodo['state'][] = ['todo', 'doing', 'blocked'];
+const DAY = 24 * 60 * 60 * 1000;
+
+const neoStalled = (owner: NeoStepOwner | undefined, now: number | undefined) =>
+  owner?.owner === 'neo' && now !== undefined && now - owner.since >= DAY;
 
 export function neoHumanQueue(input: {
   questions: readonly Pick<
@@ -12,6 +16,7 @@ export function neoHumanQueue(input: {
   >[];
   todos: readonly Pick<NeoTodo, 'id' | 'askId' | 'title' | 'state' | 'named'>[];
   owners: ReadonlyMap<string, NeoStepOwner>;
+  now?: number;
 }): NeoHumanQueue {
   const cards = input.questions.filter((card) => card.state === 'open');
   const items: NeoHumanQueueItem[] = [
@@ -39,7 +44,9 @@ export function neoHumanQueue(input: {
           !neoTodoCovered(todo, cards)
       )
       .map((todo) => ({
-        state: 'progress' as const,
+        state: neoStalled(input.owners.get(todo.id), input.now)
+          ? ('waiting' as const)
+          : ('progress' as const),
         askId: todo.askId,
         todoId: todo.id,
         title: todo.title,

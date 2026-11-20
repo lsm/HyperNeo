@@ -307,6 +307,27 @@ test('routes prints an exported pipeline and rejects a missing runner', () => {
   expect(missing.stderr.toString()).toContain('not describable:');
 });
 
+test('operation route delimiters ignore object prototype method names', () => {
+  const source = `
+    import superpipe from 'superpipe';
+    import { defineOperation } from './registry';
+    const read = superpipe({})('demo.read').end();
+    defineOperation({
+      name: 'demo.read',
+      execute: (input) => read(input.toString()),
+    });
+  `;
+  const input = new Map([['packages/demo/src/operations.ts', source]]);
+  for (const strict of [false, true]) {
+    expect(countPipelineRoutes(input, strict)).toEqual({
+      missing: 0,
+      misnamed: 0,
+      dynamic: 0,
+      unreadable: 0,
+    });
+  }
+});
+
 test('routes list reports coverage and a real exported runner', () => {
   const list = Bun.spawnSync(['bun', 'scripts/system-map.ts', 'routes', 'list']);
   expect(list.exitCode).toBe(0);

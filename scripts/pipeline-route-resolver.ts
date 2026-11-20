@@ -1,4 +1,5 @@
 import ts from 'typescript';
+import { createPipelineBuilderResolver } from './pipeline-builder-factory.ts';
 
 export type LocalPipelineResolution = { kind: 'named'; name: string } | { kind: 'unknown' };
 
@@ -102,20 +103,75 @@ export function createLocalPipelineResolver(
     return resolvedName === undefined ? unknown : { kind: 'named', name: resolvedName };
   }
 
-  function localFactory(expression: ts.Expression): LocalPipelineResolution {
-    if (!ts.isCallExpression(expression) || !ts.isIdentifier(expression.expression)) return unknown;
-    const declarations = checker.getSymbolAtLocation(expression.expression)?.declarations;
-    if (declarations?.length !== 1 || !ts.isVariableDeclaration(declarations[0])) return unknown;
+  const stableDeclarations = new Map<ts.FunctionDeclaration, boolean>();
+  function stableLocalFactory(declaration: ts.FunctionDeclaration, symbol: ts.Symbol): boolean {
+    const scope = declaration.parent;
+    if (!ts.isBlock(scope) || !ts.isFunctionLike(scope.parent)) return false;
+    const cached = stableDeclarations.get(declaration);
+    if (cached !== undefined) return cached;
+
+    function hasOtherUse(node: ts.Node): boolean {
+      if (ts.isCallExpression(node)) {
+        const callee = unwrap(node.expression);
+        if (ts.isIdentifier(callee) && callee.text === 'eval') return true;
+      }
+      if (
+        ts.isIdentifier(node) &&
+        node !== declaration.name &&
+        node.text === declaration.name?.text
+      ) {
+        const parent = node.parent;
+        const binding = ts.isShorthandPropertyAssignment(parent)
+          ? checker.getShorthandAssignmentValueSymbol(parent)
+          : checker.getSymbolAtLocation(node);
+        if (binding === symbol && !(ts.isCallExpression(parent) && parent.expression === node))
+          return true;
+      }
+      return ts.forEachChild(node, (child) => (hasOtherUse(child) ? true : undefined)) === true;
+    }
+
+    const stable = !hasOtherUse(scope);
+    stableDeclarations.set(declaration, stable);
+    return stable;
+  }
+
+  function factoryFunction(
+    symbol: ts.Symbol
+  ): ts.ArrowFunction | ts.FunctionDeclaration | undefined {
+    const declarations = symbol.declarations;
+    if (declarations?.length !== 1) return undefined;
     const declaration = declarations[0];
+    if (ts.isFunctionDeclaration(declaration)) {
+      return strictCalls &&
+        declaration.body &&
+        !declaration.asteriskToken &&
+        stableLocalFactory(declaration, symbol)
+        ? declaration
+        : undefined;
+    }
     if (
+      !ts.isVariableDeclaration(declaration) ||
       !ts.isVariableDeclarationList(declaration.parent) ||
       !(declaration.parent.flags & ts.NodeFlags.Const) ||
       !declaration.initializer
     )
-      return unknown;
+      return undefined;
     const initializer = unwrap(declaration.initializer);
+    return ts.isArrowFunction(initializer) ? initializer : undefined;
+  }
+
+  function localFactory(expression: ts.Expression): LocalPipelineResolution {
     if (
-      !ts.isArrowFunction(initializer) ||
+      !ts.isCallExpression(expression) ||
+      !ts.isIdentifier(expression.expression) ||
+      (expression.flags & ts.NodeFlags.OptionalChain) !== 0 ||
+      expression.arguments.some(ts.isSpreadElement)
+    )
+      return unknown;
+    const symbol = checker.getSymbolAtLocation(expression.expression);
+    const initializer = symbol && factoryFunction(symbol);
+    if (
+      !initializer?.body ||
       initializer.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)
     )
       return unknown;
@@ -137,12 +193,18 @@ export function createLocalPipelineResolver(
       : unknown;
   }
 
+  const resolveBuilder = createPipelineBuilderResolver(checker, unwrap, importedSuperpipe);
+
   function callable(expression: ts.Expression, seen: Set<ts.Node>): LocalPipelineResolution {
     expression = unwrap(expression);
     const direct = pipeline(expression);
     if (direct.kind === 'named') return direct;
     const built = localFactory(expression);
     if (built.kind === 'named') return built;
+    if (strictCalls) {
+      const name = resolveBuilder(expression);
+      if (name !== undefined) return { kind: 'named', name };
+    }
     if (ts.isArrowFunction(expression) || ts.isFunctionExpression(expression)) {
       if (ts.isBlock(expression.body)) {
         const body = expression.body.statements;
@@ -199,11 +261,11 @@ export function createLocalPipelineResolver(
     if (ts.isAwaitExpression(expression)) return action(expression.expression, seen);
     if (
       !ts.isCallExpression(expression) ||
-      (strictCalls && (expression.flags & ts.NodeFlags.OptionalChain) !== 0) ||
-      !ts.isIdentifier(expression.expression)
+      (strictCalls && (expression.flags & ts.NodeFlags.OptionalChain) !== 0)
     )
       return unknown;
-    return callable(expression.expression, seen);
+    const callee = strictCalls ? unwrap(expression.expression) : expression.expression;
+    return ts.isIdentifier(callee) ? callable(callee, seen) : unknown;
   }
 
   const matches = new Map<string, ts.Expression[]>();

@@ -133,8 +133,17 @@ export function reportPipelineVerdicts(
 
 if (import.meta.main) {
   try {
+    const args = process.argv.slice(2);
+    if (args.length > 1 || (args.length === 1 && args[0] !== '--strict'))
+      throw new Error('Expected no arguments or --strict');
+    const strict = args[0] === '--strict';
+    const sources = readRepositorySources(process.cwd(), true);
     console.log(
-      JSON.stringify(reportPipelineVerdicts(readRepositorySources(process.cwd(), true)), null, 2)
+      JSON.stringify(
+        reportPipelineVerdicts(sources, (input) => countPipelineRoutes(input, strict)),
+        null,
+        2
+      )
     );
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
