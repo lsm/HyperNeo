@@ -44,7 +44,6 @@ import { createNeoReorganizeOperation, type NeoReorganizeRuntime } from './reorg
 import { createNeoProjectListOperation } from './project-list-operation.ts';
 import { readNeoProjectIdentities } from './project-merge.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
-import { createNeoPublicationOperation } from './publication-operation.ts';
 import { createNeoConversationReadOperation } from './conversation-read-operation.ts';
 import { NeoConversationReader } from '../../storage/repositories/neo-conversation-reader.ts';
 import { createNeoPublicationReadOperation } from './publication-read-operation.ts';
@@ -156,7 +155,7 @@ const SnapshotOk = z.object({
             todos: z.array(z.object({ id: z.string(), title: z.string() })),
           }),
           z.object({
-            state: z.literal('progress'),
+            state: z.enum(['progress', 'waiting']),
             askId: z.string(),
             todoId: z.string(),
             title: z.string(),
@@ -771,7 +770,7 @@ export function createNeoOperations(
     ),
     createNeoReorganizeOperation(neoReorganizeRuntime(service, identity)),
     createNeoProjectListOperation(service.repo, hostname),
-    createNeoPublicationOperation(service.publish, (items) => service.presentPublications(items)),
+    service.publicationOperation,
     createNeoPublicationReadOperation(service.publications, (items) =>
       service.presentPublications(items)
     ),
