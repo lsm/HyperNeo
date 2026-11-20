@@ -8,4 +8,5 @@ same basename and a different repository appears separately. The script records
 the visible row count and screenshots of the collapsed rows in light and dark
 mode. Two checkouts with the same Git history
 and no remote also appear together. Removing that row clears both workspace
-history entries, and the row stays gone after reload.
+history entries, and the row stays gone after reload. If the grouped history
+request times out, all three remaining saved folders appear individually.

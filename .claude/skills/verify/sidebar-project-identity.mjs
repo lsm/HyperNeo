@@ -44,6 +44,19 @@ try {
   await rows.nth(1).waitFor();
   console.log(`Visible rows for the removed project after reload: ${await codeRows.count()}`);
   assert.equal(await codeRows.count(), 0);
+
+  await page.routeWebSocket('**/ws', (route) => {
+    const server = route.connectToServer();
+    route.onMessage((raw) => {
+      const request = JSON.parse(String(raw));
+      if (request.method === 'workspace.history' && request.data?.includeRepositoryProjects) return;
+      server.send(raw);
+    });
+  });
+  await page.reload();
+  await rows.nth(2).waitFor();
+  console.log(`Visible saved rows after the grouped history request times out: ${await rows.count()}`);
+  assert.equal(await rows.count(), 3);
 } finally {
   await browser.close();
 }

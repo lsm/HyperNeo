@@ -208,14 +208,29 @@ describe('SessionsSidebar', () => {
     expect(screen.getByText(first)).toBeTruthy();
     expect(screen.getAllByTestId('project-group-header')).toHaveLength(2);
     expect(mockGetWorkspaceHistory).toHaveBeenCalledWith({ includeRepositoryProjects: true });
+    fireEvent.click(screen.getByRole('button', { name: 'New session in Project', exact: true }));
+    expect(newChatProjectSignal.value).toBe(first);
 
     mockGetWorkspaceHistory.mockResolvedValue([unrelated]);
     fireEvent.click(screen.getByRole('button', { name: 'Remove project Project', exact: true }));
     await waitFor(() => expect(screen.getAllByTestId('project-group-header')).toHaveLength(1));
     expect(mockRemoveWorkspaceFromHistory.mock.calls).toEqual([[first], [second]]);
     expect(
+      screen.queryByRole('button', { name: 'New session in Project', exact: true })
+    ).toBeNull();
+    expect(
       screen.getByRole('button', { name: 'New session in project', exact: true })
     ).toBeTruthy();
+  });
+
+  it('shows saved folders when the repository grouping request times out', async () => {
+    mockGetWorkspaceHistory
+      .mockRejectedValueOnce(new Error('Request timed out'))
+      .mockResolvedValueOnce([createHistory('/primary/project')]);
+    render(<SessionsSidebar />);
+
+    expect(await screen.findByRole('button', { name: 'New session in project' })).toBeTruthy();
+    expect(mockGetWorkspaceHistory.mock.calls).toEqual([[{ includeRepositoryProjects: true }], []]);
   });
 
   it('refreshes the sidebar after a partial project removal failure and retries only remaining folders', async () => {

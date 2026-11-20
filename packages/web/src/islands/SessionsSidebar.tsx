@@ -192,8 +192,12 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 
   const historyVersion = workspaceHistoryVersionSignal.value;
   useEffect(() => {
+    let current = true;
     getWorkspaceHistory({ includeRepositoryProjects: true })
-      .then(setHistory)
+      .catch(() => (current ? getWorkspaceHistory() : undefined))
+      .then((entries) => {
+        if (current && entries) setHistory(entries);
+      })
       .catch(() => {});
     listSystemProjects()
       .then((projects) => {
@@ -203,6 +207,9 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
         if (failedWorkRef.current.size > 0) setWorkRefresh((version) => version + 1);
       })
       .catch(() => {});
+    return () => {
+      current = false;
+    };
   }, [historyVersion, sessions.value]);
 
   const workKey = (project: SystemProject) =>

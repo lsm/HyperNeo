@@ -44,7 +44,7 @@ export async function readCodeIdentity(folder: string): Promise<CodeIdentity> {
       .split(/\s+/)
       .filter((root) => /^[a-f0-9]{40,64}$/.test(root))
       .sort();
-    if (!roots.length) return { remotes, ...named };
+    if (!roots.length) return remotes.length ? { remotes, ...named } : {};
     return { codeIdentity: `git:${roots.join(':')}`, remotes, ...named };
   } catch {
     return {};
