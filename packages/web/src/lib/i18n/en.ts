@@ -229,7 +229,6 @@ export const en = {
   'queue.loadFailed': 'Couldn’t load the full card.',
   'queue.stepFailed': 'Couldn’t load this step.',
   'queue.refreshFailed': 'Couldn’t refresh the queue.',
-  'queue.openAsk': 'Open the ask',
   'queue.takeBack': 'Take back',
   'queue.onHold': 'On hold',
   'queue.owner.human': 'Your step',
