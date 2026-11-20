@@ -1,9 +1,9 @@
-import WebSocket from 'ws';
-import type { JsonRpcNotification } from '@hyperneo/shared';
-import { Logger } from '../logger.ts';
 import { existsSync, readlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { JsonRpcNotification } from '@hyperneo/shared';
+import WebSocket from 'ws';
+import { Logger } from '../logger.ts';
 import { ProcessJsonRpcTransport } from '../process-json-rpc.ts';
 import { selectCodexConfiguration } from './codex-start-configuration.ts';
 
@@ -74,14 +74,30 @@ export async function compactCodexThread(
   const completed = new Promise<boolean>((resolve) => {
     complete = resolve;
   });
+  let startedTurn: unknown;
+  let compactedTurn: unknown;
   const unsubscribe = server.onNotification((message) => {
-    const params = message.params as { threadId?: unknown; item?: { type?: unknown } } | undefined;
+    const params = message.params as
+      | {
+          threadId?: unknown;
+          turnId?: unknown;
+          turn?: { id?: unknown; status?: unknown };
+          item?: { type?: unknown };
+        }
+      | undefined;
+    if (params?.threadId !== threadId) return;
+    if (message.method === 'turn/started') startedTurn = params.turn?.id;
     if (
-      params?.threadId === threadId &&
-      (message.method === 'thread/compacted' ||
-        (message.method === 'item/completed' && params.item?.type === 'contextCompaction'))
+      message.method === 'thread/compacted' ||
+      (message.method === 'item/completed' && params.item?.type === 'contextCompaction')
     )
-      complete(true);
+      compactedTurn = params.turnId ?? startedTurn;
+    if (
+      message.method === 'turn/completed' &&
+      typeof compactedTurn === 'string' &&
+      params.turn?.id === compactedTurn
+    )
+      complete(params.turn.status === 'completed');
   });
   const timeout = setTimeout(() => complete(false), 60_000);
   try {
