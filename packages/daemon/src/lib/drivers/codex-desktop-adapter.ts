@@ -807,18 +807,6 @@ async function withCodexMessageServer<Value>(
   }
 }
 
-function codexActiveWriterRefusal(error: unknown, threadId: string): error is CodexRequestError {
-  return (
-    error instanceof CodexRequestError &&
-    z
-      .object({
-        code: z.literal(-32600),
-        message: z.string().includes(`thread ${threadId} already has an active writer`),
-      })
-      .safeParse(error.rejection).success
-  );
-}
-
 export async function queueCodexMessage(
   detail: CodexThreadDetail,
   message: string,
@@ -872,24 +860,16 @@ export async function queueCodexMessage(
       } while (!loaded && cursor);
       if (!loaded) {
         step = 'thread/resume';
-        loaded = await server
-          .call(step, {
-            threadId: detail.thread.id,
-            ...(sandbox
-              ? { permissions: sandbox.permissions }
-              : !sandboxEnabled
-                ? { sandbox: 'danger-full-access' }
-                : {}),
-          })
-          .then(
-            () => true,
-            (error: unknown) => {
-              if (sandbox || !codexActiveWriterRefusal(error, detail.thread.id)) throw error;
-              return false;
-            }
-          );
+        await server.call(step, {
+          threadId: detail.thread.id,
+          ...(sandbox
+            ? { permissions: sandbox.permissions }
+            : !sandboxEnabled
+              ? { sandbox: 'danger-full-access' }
+              : {}),
+        });
       }
-      if (loaded && (sandbox || !sandboxEnabled)) {
+      if (sandbox || !sandboxEnabled) {
         step = 'thread/settings/update';
         await server.call(step, {
           threadId: detail.thread.id,
@@ -919,7 +899,15 @@ export async function queueCodexMessage(
         )
       )
         return queueCodexCliMessage(detail, message, deps);
-      if (codexActiveWriterRefusal(error, detail.thread.id))
+      if (
+        error instanceof CodexRequestError &&
+        z
+          .object({
+            code: z.literal(-32600),
+            message: z.string().includes(`thread ${detail.thread.id} already has an active writer`),
+          })
+          .safeParse(error.rejection).success
+      )
         return reject('not_delivered', error.message, true);
       return reject('not_delivered', `thread/queue/add: ${String(error)}`);
     }
