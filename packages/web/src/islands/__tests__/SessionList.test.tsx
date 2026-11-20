@@ -140,7 +140,11 @@ describe('SessionsSidebar', () => {
     mockListSystemProjects.mockResolvedValue([]);
     mockFindProjectWork.mockResolvedValue(false);
     mockForgetSystemProject.mockResolvedValue(undefined);
-    mockAddWorkspaceToHistory.mockImplementation(async (path: string) => createHistory(path, 2));
+    mockAddWorkspaceToHistory.mockImplementation(async (path: string) => {
+      const entry = createHistory(path, 2);
+      mockGetWorkspaceHistory.mockResolvedValue([entry]);
+      return entry;
+    });
     mockRemoveWorkspaceFromHistory.mockResolvedValue(true);
     mockArchiveSession.mockResolvedValue({ success: true });
     mockHubRequest.mockResolvedValue({ path: '/workspace/new-project' });
