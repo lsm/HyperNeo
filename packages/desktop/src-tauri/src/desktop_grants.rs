@@ -1,7 +1,9 @@
+use objc2::MainThreadMarker;
 use objc2_app_kit::{
-    NSAlert, NSAlertFirstButtonReturn, NSAlertSecondButtonReturn, NSApplication, NSWorkspace,
+    NSAlert, NSAlertFirstButtonReturn, NSAlertSecondButtonReturn, NSApplication, NSImage,
+    NSImageView, NSStackView, NSView, NSWorkspace,
 };
-use objc2_foundation::{NSBundle, NSString};
+use objc2_foundation::{NSArray, NSBundle, NSPoint, NSRect, NSSize, NSString};
 use security_framework::{
     access_control::{ProtectionMode, SecAccessControl},
     passwords::{
@@ -162,7 +164,10 @@ pub(super) fn record(
     write_grant(&format!("all\n{requirement}"), bundle_id, keep)
 }
 
-fn app_presentation(alert: Option<&NSAlert>, bundle_id: &str, requirement: &str) -> Option<String> {
+fn app_presentation(
+    bundle_id: &str,
+    requirement: &str,
+) -> Option<(String, objc2::rc::Retained<NSImage>)> {
     let workspace = NSWorkspace::sharedWorkspace();
     let url = workspace.URLForApplicationWithBundleIdentifier(&NSString::from_str(bundle_id))?;
     let path = url.path()?;
@@ -170,16 +175,13 @@ fn app_presentation(alert: Option<&NSAlert>, bundle_id: &str, requirement: &str)
         return None;
     }
     let bundle = NSBundle::bundleWithURL(&url)?;
-    if let Some(alert) = alert {
-        let icon = workspace.iconForFile(&path);
-        unsafe { alert.setIcon(Some(&icon)) };
-    }
-    ["CFBundleDisplayName", "CFBundleName"]
+    let name = ["CFBundleDisplayName", "CFBundleName"]
         .iter()
         .filter_map(|key| bundle.objectForInfoDictionaryKey(&NSString::from_str(key)))
         .filter_map(|value| value.downcast::<NSString>().ok())
         .map(|name| name.to_string())
-        .find(|name| !name.trim().is_empty())
+        .find(|name| !name.trim().is_empty())?;
+    Some((name, workspace.iconForFile(&path)))
 }
 
 fn dialog_text(app_name: &str, bundle_id: &str, class: &str, wildcard: bool) -> Option<String> {
@@ -188,10 +190,10 @@ fn dialog_text(app_name: &str, bundle_id: &str, class: &str, wildcard: bool) -> 
         _ => return None,
     }
     let mut text = format!(
-        "A HyperNeo worker asked to open this app, see its windows, click, scroll and type in it.\n\nBundle ID: {bundle_id}\nApp: {app_name}\n\nIf you allow it, HyperNeo workers can do these actions in this app without asking again."
+        "A HyperNeo worker wants to open {app_name}, see it, click and type in it. HyperNeo will not ask again for this app.\n\n{bundle_id}"
     );
     if wildcard {
-        text.push_str("\n\nAllow all apps extends this permission to other apps. Apps on the built-in exception list, including Terminal, VS Code, Keychain Access, System Settings and Passwords, still ask separately.");
+        text.push_str("\n\nAllow all apps also covers other apps. Sensitive apps, including terminals, code editors, password managers, Keychain Access and System Settings, always ask.");
     }
     Some(text)
 }
@@ -204,8 +206,40 @@ pub(super) fn admit(bundle_id: &str, requirement: &str, _class: &str) {
         .insert(format!("all\n{requirement}"), bundle_id.to_owned());
 }
 
+fn icon_view(image: &NSImage, side: f64, mtm: MainThreadMarker) -> objc2::rc::Retained<NSView> {
+    image.setSize(NSSize::new(side, side));
+    let view = NSImageView::imageViewWithImage(image, mtm);
+    view.setFrameSize(NSSize::new(side, side));
+    objc2::rc::Retained::into_super(objc2::rc::Retained::into_super(view))
+}
+
+fn who_controls_whom(
+    app_icon: &NSImage,
+    mtm: MainThreadMarker,
+) -> Option<objc2::rc::Retained<NSView>> {
+    let hyperneo = NSApplication::sharedApplication(mtm).applicationIconImage()?;
+    let arrow = NSImage::imageWithSystemSymbolName_accessibilityDescription(
+        &NSString::from_str("arrow.right"),
+        Some(&NSString::from_str("controls")),
+    )?;
+    let views = [
+        icon_view(&hyperneo, 48.0, mtm),
+        icon_view(&arrow, 20.0, mtm),
+        icon_view(app_icon, 48.0, mtm),
+    ];
+    let stack = NSStackView::stackViewWithViews(&NSArray::from_retained_slice(&views), mtm);
+    stack.setSpacing(12.0);
+    stack.setFrame(NSRect::new(
+        NSPoint::new(0.0, 0.0),
+        NSSize::new(160.0, 52.0),
+    ));
+    Some(objc2::rc::Retained::into_super(stack))
+}
+
 fn prepare_alert(alert: &NSAlert, app_name: &str, message: &str, wildcard: bool) {
-    alert.setMessageText(&NSString::from_str("Allow HyperNeo to control an app?"));
+    alert.setMessageText(&NSString::from_str(&format!(
+        "Let HyperNeo control {app_name}?"
+    )));
     alert.setInformativeText(&NSString::from_str(message));
     alert.addButtonWithTitle(&NSString::from_str(&format!("Allow {app_name}")));
     if wildcard {
@@ -260,8 +294,8 @@ fn fixture_app_name(bundle_id: &str) -> String {
     );
     resolved["value"]["requirement"]
         .as_str()
-        .and_then(|requirement| app_presentation(None, bundle_id, requirement))
-        .unwrap_or_else(|| bundle_id.to_owned())
+        .and_then(|requirement| app_presentation(bundle_id, requirement))
+        .map_or_else(|| bundle_id.to_owned(), |(name, _)| name)
 }
 
 enum OwnerAnswer {
@@ -298,10 +332,18 @@ fn owner_allows(bundle_id: &str, requirement: &str, class: &str) -> Option<Owner
                 return None;
             }
             let alert = NSAlert::new(mtm);
-            let name = app_presentation(Some(&alert), bundle_id, requirement)
-                .unwrap_or_else(|| bundle_id.to_owned());
+            let presented = app_presentation(bundle_id, requirement);
+            let name = presented
+                .as_ref()
+                .map_or_else(|| bundle_id.to_owned(), |(name, _)| name.clone());
             let message = dialog_text(&name, bundle_id, class, wildcard)?;
             prepare_alert(&alert, &name, &message, wildcard);
+            if let Some(accessory) = presented
+                .as_ref()
+                .and_then(|(_, icon)| who_controls_whom(icon, mtm))
+            {
+                alert.setAccessoryView(Some(&accessory));
+            }
             #[allow(deprecated)]
             NSApplication::sharedApplication(mtm).activateIgnoringOtherApps(true);
             let response = alert.runModal();

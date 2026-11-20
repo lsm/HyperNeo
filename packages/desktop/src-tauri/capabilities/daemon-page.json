@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "daemon-page",
+  "description": "Lets the daemon page served on localhost move and zoom the main window",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://localhost:*/*", "http://127.0.0.1:*/*"]
+  },
+  "permissions": ["core:window:allow-start-dragging", "core:window:allow-internal-toggle-maximize"]
+}

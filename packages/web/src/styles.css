@@ -1235,6 +1235,11 @@ html.tauri-desktop body {
   padding-top: 52px;
 }
 
+html.tauri-desktop body:has(.neo-shell) {
+  --bg: var(--neo-shell-bg);
+  background: var(--bg);
+}
+
 html.tauri-desktop .desktop-drag-strip {
   position: fixed;
   inset: 0 0 auto;
@@ -1256,6 +1261,53 @@ html.tauri-desktop
 
 html.tauri-desktop .fixed.top-4 {
   top: 68px;
+}
+
+html.tauri-desktop body:has(.neo-shell) {
+  --safe-height: 100dvh;
+  padding-top: 0;
+}
+
+html.tauri-desktop body:has(.neo-shell) .desktop-drag-strip {
+  height: 40px;
+  background: none;
+}
+
+html.tauri-desktop body:has(.neo-shell) .desktop-drag-strip::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  -webkit-mask-image: linear-gradient(#000 40%, transparent);
+  mask-image: linear-gradient(#000 40%, transparent);
+}
+
+html.tauri-desktop
+  body:has(.neo-shell)
+  :is(
+    .neo-session-pane,
+    .neo-scene-list.neo-scene-sheet,
+    .fixed.inset-0,
+    .fixed.top-0.left-0.right-0
+  ) {
+  top: 40px;
+}
+
+html.tauri-desktop body:has(.neo-shell) .neo-drawer-layer {
+  top: 0;
+}
+
+html.tauri-desktop .neo-drawer {
+  padding-top: 56px;
+}
+
+html.tauri-desktop .neo-shell .neo-float-dock {
+  top: 44px;
+}
+
+html.tauri-desktop .neo-shell :is(.neo-chat-rail, .neo-scene-list:not(.neo-scene-sheet)) {
+  padding-top: 100px;
 }
 
 html.tauri-desktop #root > main {

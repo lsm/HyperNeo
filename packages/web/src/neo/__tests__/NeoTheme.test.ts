@@ -17,8 +17,8 @@ function luminance(token: string, theme: number): number {
 
 describe.each(['light', 'dark'])('Neo %s palette contrast', (theme) => {
   it.each([
-    ['--fg-muted', '--bg'],
-    ['--fg-faint', '--bg'],
+    ['--fg-muted', '--neo-shell-bg'],
+    ['--fg-faint', '--neo-shell-bg'],
     ['--fg-muted', '--surface'],
     ['--fg-faint', '--surface'],
     ['--fg-muted', '--surface-overlay'],
