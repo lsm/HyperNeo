@@ -9,6 +9,16 @@ function readOnce({ statePath, id, query }: CopilotDesktopRead) {
   const app = new Database(statePath, { readonly: true });
   try {
     app.exec('PRAGMA busy_timeout = 2000');
+    const columns = new Set(
+      (app.prepare('PRAGMA table_info(sessions)').all() as { name: string }[]).map(
+        (column) => column.name
+      )
+    );
+    const settings = [
+      ...(columns.has('model') ? ['s.model AS model'] : []),
+      ...(columns.has('reasoning_effort') ? ['s.reasoning_effort AS effort'] : []),
+    ];
+    const settingsSql = settings.length ? `, ${settings.join(', ')}` : '';
     const rows = app.prepare(`
       WITH candidates AS (
         SELECT s.id, w.id AS workspaceId,
@@ -17,7 +27,7 @@ function readOnce({ statePath, id, query }: CopilotDesktopRead) {
                COALESCE(t.path, w.source_path, p.main_repo_path) AS directory,
                s.updated_at AS updatedAt, s.is_running AS running,
                s.was_interrupted AS interrupted,
-               (w.archived_at IS NOT NULL OR s.archived_at IS NOT NULL) AS archived
+               (w.archived_at IS NOT NULL OR s.archived_at IS NOT NULL) AS archived${settingsSql}
           FROM sessions s
           JOIN workspaces w ON w.session_id = s.id
           JOIN projects p ON p.id = w.project_id
@@ -27,7 +37,7 @@ function readOnce({ statePath, id, query }: CopilotDesktopRead) {
            AND s.id = coalesce(?, s.id)
            AND instr(s.id, ?) = 1
       )
-      SELECT id, workspaceId, title, project, folder, directory, updatedAt, running, interrupted, archived
+      SELECT *
         FROM candidates
        WHERE (? OR NOT archived)
          AND folder = coalesce(?, folder)

@@ -347,6 +347,11 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
       requireOpen();
       await bounded(session.rpc.name.set({ name }), timeoutMs);
     },
+    async compact() {
+      requireOpen();
+      const result = await bounded(session.rpc.history.compact(), Math.max(timeoutMs, 60_000));
+      return result.success === true;
+    },
     async withdraw(inputId: string) {
       requireOpen();
       const { items } = await bounded(session.rpc.queue.pendingItems(), timeoutMs);

@@ -17,17 +17,18 @@ import {
   NeoConversationAskRepository,
 } from '../../../../src/storage/repositories/neo-conversation-ask-repository';
 import {
-  SDK_MESSAGE_TRANSACTIONS,
-  sdkTransactionArgs,
+  sdkPendingRemoval,
   sdkPromptEnsure,
   sdkPromptActivate,
   sdkPromptRetry,
   sdkNeoIntake,
+  sdkNeoWakeQueue,
   sdkDeliveryTeardown,
   sdkMailboxFailure,
   sdkColumnBackfillChunk,
   sdkColumnBackfillComplete,
   sdkDeliveryFencedStatus,
+  sdkTransactionArgs,
 } from '../../../../src/storage/repositories/sdk-message-transactions';
 import { selectSdkBodyWriteMode } from '../../../../src/storage/sdk-message-body-admission';
 import { enqueueMailboxEntry, MAILBOX_LANE } from '../../../../src/lib/mailbox/enqueue';
@@ -143,8 +144,24 @@ describe('SDK transaction ops', () => {
   });
 
   test('registers every transaction without routing a caller', () => {
-    for (const op of SDK_MESSAGE_TRANSACTIONS) expect(DB_OPS.get(op.name)).toBe(op);
-    expect(SDK_MESSAGE_TRANSACTIONS).toHaveLength(11);
+    const operations = [
+      sdkPendingRemoval,
+      sdkPromptEnsure,
+      sdkPromptActivate,
+      sdkPromptRetry,
+      sdkNeoIntake,
+      sdkNeoWakeQueue,
+      sdkDeliveryTeardown,
+      sdkMailboxFailure,
+      sdkColumnBackfillChunk,
+      sdkColumnBackfillComplete,
+      sdkDeliveryFencedStatus,
+    ];
+    for (const op of operations) expect(DB_OPS.get(op.name)).toBe(op);
+    const registered = [...DB_OPS.values()].filter(
+      (op) => op.name.startsWith('sdk_messages.') && op.name !== sdkMessageWrites.name
+    );
+    expect(new Set(registered)).toEqual(new Set(operations));
   });
   test('ensures, activates and retries the same row with its job', async () => {
     const ensured = await gateway.run(sdkPromptEnsure, {

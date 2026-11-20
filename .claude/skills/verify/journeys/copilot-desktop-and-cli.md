@@ -37,18 +37,31 @@ In `desktop` mode, append enough history to move a saved cursor out of the
 read window and confirm the next completed turn is still returned. In `both`
 mode, search for a Desktop session whose title and workspace name are missing.
 
-Desktop exposes find, status, read, and turns through the driver. The public
-launch link opens an App confirmation or draft and supplies no submitted-turn
-receipt. The driver does not yet send Desktop mutations.
+Use `control` and `both-control` with the same command to attach a synthetic
+authenticated Desktop peer. Start work through HyperNeo with a model and effort.
+Check an App settings mismatch prevents the initial prompt, and the accepted
+settings come back from the stored session. Submit and withdraw one queued message, stop
+the initial turn, send a follow-up, read its reply with the receipt, then
+rename and archive the same work. In dual mode, the startup reference must
+come from the Desktop peer. The local channel also requires the OS listener
+to belong to the advertised PID before authenticating. The focused daemon
+tests cover stale advertisements, uncorrelated errors, uncertain sends and
+the pre-dispatch-only CLI fallback.
 
-For an attended control check, open the signed-in GitHub Copilot app and choose
-New session, then Add local folder or repository. Select a disposable empty
-folder. Send a prompt requesting an exact short reply without tools. Check that
-the session appears under that folder, then send a different exact-reply prompt
-in the same session. Send a longer prompt without tools and click Stop while its
-button is visible. The session should return to Idle. On v1.4.3 the local test
-transcript retained both replies and an abort event for the interrupted turn.
+The peer proves routing and receipt handling in an isolated daemon. With
+separate approval to use the signed-in macOS App's local connection credential
+for this run, verify the driver directly:
+
+```bash
+bun .claude/skills/verify/copilot-desktop-live.ts --attended gpt-5.4 high
+```
+
+The proof creates a disposable local folder and one App session without a
+daemon. It checks the effective model and effort in the runtime's start
+event, stops a live turn, confirms that a withdrawn input did not run, reads
+the follow-up by its receipt, and archives the session with the folder retained.
+The script emits action results and the requested settings.
 
 The CLI also exposes start, send, queue, withdraw, stop, rename, and archive
-for daemon-owned sessions. Strict same-turn steering and driver compaction
-are unsupported.
+for daemon-owned sessions. Neo can compact an idle owned CLI worker kept for
+reuse. Strict same-turn steering remains unsupported.

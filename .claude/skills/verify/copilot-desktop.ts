@@ -10,6 +10,7 @@ import type { Result, WorkDetail, WorkStarted, WorkTurnFact } from '../../../pac
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { copilotFolder, copilotSession, prepareCopilotFixture } from '../../../packages/daemon/tests/helpers/copilot-fixture.ts';
 import type { z } from 'zod';
+import { startCopilotDesktopPeer, verifyCopilotDesktopControl } from './copilot-desktop-control-peer.ts';
 
 const [portText, mode, run] = process.argv.slice(2);
 const port = Number(portText);
@@ -17,9 +18,9 @@ assert(run && Number.isInteger(port) && port > 0 && port !== 8399);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
-assert(['desktop', 'cli', 'both', 'cli-failure'].includes(mode));
+assert(['desktop', 'cli', 'both', 'cli-failure', 'control', 'both-control'].includes(mode));
 const home = join(run, 'home');
-const cli = mode !== 'desktop';
+const cli = mode !== 'desktop' && mode !== 'control';
 const desktop = mode !== 'cli';
 writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
 if (cli) {
@@ -63,6 +64,7 @@ if (desktop) {
     JSON.stringify({ ...event, timestamp: `2026-11-19T15:00:0${i}Z` })).join('\n') + '\n');
 }
 const before = desktop ? readFileSync(state) : null;
+const peer = mode === 'control' || mode === 'both-control' ? await startCopilotDesktopPeer(home, state) : undefined;
 globalThis.fetch = (() => { throw new Error('External HTTP disabled'); }) as typeof fetch;
 process.chdir(run);
 const app = await createDaemonApp({
@@ -102,7 +104,10 @@ try {
   const listed = registered.value.filter((entry) => entry.id.startsWith('copilot-'));
   assert.equal(listed.length, 1);
   assert.equal(listed[0].id, adapter);
-  assert.equal(listed[0].capabilities.includes('start'), cli);
+  assert.equal(listed[0].capabilities.includes('start'), cli || !!peer);
+  if (peer) {
+    await verifyCopilotDesktopControl(rpc, run, peer);
+  } else {
   const query = { adapters: [adapter], localOnly: true };
   const found = await rpc<z.infer<typeof FindWorkResultSchema>>('work.find', query);
   assert.deepEqual(found.unreachable, []);
@@ -247,8 +252,10 @@ try {
       assert.match(drift.unreachable[0]?.reason ?? '', /^Unsupported Copilot Desktop state schema:/);
     }
   }
+  }
 } finally {
   socket?.close();
   await app.cleanup();
+  await peer?.close();
 }
 console.log(`PASS Copilot ${mode}: ${calls} RPC calls`);

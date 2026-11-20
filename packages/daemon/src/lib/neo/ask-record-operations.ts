@@ -23,7 +23,7 @@ import {
   neoTodoPlaceRefusal,
   requireNeoOpenAsk,
 } from './todo-operations.ts';
-import { preflightTodoDesktopControl, recordNeoTodoAdmission } from './todo-add-operation.ts';
+import { DESKTOP_CONTROL_REFUSAL, recordNeoTodoAdmission } from './todo-add-operation.ts';
 import type { NeoPack, NeoTodoPolicyScope } from './pack-contract.ts';
 import { neoTodoRepository } from './pack-contract.ts';
 import { neoTodoFollowUpRefusal } from './todo-follow-up.ts';
@@ -236,8 +236,7 @@ export function createNeoAskRecordOperations(
           projectId,
           goalId,
         }: { sessionId: string; projectId: string | null; goalId: string | null },
-        input: z.infer<typeof Open>,
-        caller: OperationCaller
+        input: z.infer<typeof Open>
       ): Promise<AskReceipt | Rejection> => {
         const policies = packs();
         const origin = null;
@@ -392,12 +391,8 @@ export function createNeoAskRecordOperations(
         const ids: (string | undefined)[] = [];
         const currentScope = priorAsk?.id === ask.id ? readScope : { ask };
         const rows = drafts.map((todo) => recordedRow(todo, currentScope));
-        const desktop = await preflightTodoDesktopControl(
-          store,
-          drafts.some((todo, index) => !rows[index] && todo.named?.desktopControl === true),
-          caller.role
-        );
-        if ('reason' in desktop) return desktop.reason;
+        if (drafts.some((todo, index) => !rows[index] && todo.named?.desktopControl === true))
+          return DESKTOP_CONTROL_REFUSAL;
         for (const [index, todo] of drafts.entries()) {
           const row = rows[index];
           const after = todo.after.map((ref) =>
@@ -410,8 +405,7 @@ export function createNeoAskRecordOperations(
                 controls,
                 store.getAsk(ask.id)!,
                 { ...todo, after },
-                policies,
-                desktop.value
+                policies
               )
             : { ok: true as const };
           if (!added.ok) return added;
@@ -431,7 +425,7 @@ export function createNeoAskRecordOperations(
           ...(records.length ? { records } : {}),
         };
       },
-      ['outcome', 'input', 'caller'],
+      ['outcome', 'input'],
       'outcome'
     )
     .endAsync('outcome') as (

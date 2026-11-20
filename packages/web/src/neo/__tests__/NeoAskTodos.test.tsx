@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/pr
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { locale } from '../../lib/i18n/index.ts';
 import * as clipboard from '../../lib/utils.ts';
-import { NeoAskTodos, QuestionBox, neoQuestionAnswerLabel } from '../NeoAskTodos.tsx';
+import { NeoAskTodos, neoQuestionAnswerLabel } from '../NeoAskTodos.tsx';
 import { neoAskEntriesInOrder, neoAskEntryGroup, neoDonePageMerge } from '../neo-asks.ts';
 import { neoRelativeTime } from '../neo-time.ts';
 import guidanceQuestions from './fixtures/question-guidance.json';
@@ -101,49 +101,6 @@ const toggleAll = (app: ReturnType<typeof render>) => {
       : app.getByRole('button', { name: /^(All|全部) ·/ })
   );
 };
-
-describe('QuestionBox', () => {
-  it('shows the desktop control action in the selected language', () => {
-    const card = question('desktop', {
-      kind: 'desktop_control',
-      app: 'Calendar',
-      todoId: 't1',
-      todoTitle: 'Todo t1',
-    });
-    const view = render(
-      <QuestionBox question={card} onAnswer={vi.fn()} onDesktopAllow={vi.fn()} />
-    );
-    for (const name of ['不行', '只这个任务', '可以，以后不用再问'])
-      expect(view.getByRole('button', { name })).toBeTruthy();
-  });
-
-  it('offers desktop control for the named app and todo', async () => {
-    locale.value = 'en';
-    const allow = vi.fn();
-    const card = question('desktop', {
-      kind: 'desktop_control',
-      app: 'Calendar',
-      todoId: 't1',
-      todoTitle: 'Todo t1',
-      text: 'Allow desktop control?',
-    });
-    const view = render(<QuestionBox question={card} onAnswer={vi.fn()} onDesktopAllow={allow} />);
-    await waitFor(() => expect(view.getByText('Todo t1 — Calendar')).toBeTruthy());
-    fireEvent.click(view.getByRole('button', { name: 'Only this task' }));
-    expect(allow).toHaveBeenCalledWith(card, false);
-    fireEvent.click(view.getByRole('button', { name: "Yes, don't ask again" }));
-    expect(allow).toHaveBeenCalledWith(card, true);
-  });
-
-  it('declines desktop control as a plain answer', () => {
-    locale.value = 'en';
-    const answer = vi.fn();
-    const card = question('desktop', { kind: 'desktop_control', app: 'Calendar', todoId: 't1' });
-    const view = render(<QuestionBox question={card} onAnswer={answer} onDesktopAllow={vi.fn()} />);
-    fireEvent.click(view.getByRole('button', { name: 'No' }));
-    expect(answer).toHaveBeenCalledWith('No');
-  });
-});
 
 describe('NeoAskTodos', () => {
   it('uses creation facts, hides row times, and shows lifecycle time only in expanded details', () => {
@@ -1400,32 +1357,6 @@ describe('NeoAskTodos', () => {
 });
 
 describe('neoQuestionAnswerLabel', () => {
-  it('localizes the desktop control button answer', () => {
-    expect(
-      neoQuestionAnswerLabel(
-        question('desktop', { kind: 'desktop_control', answer: 'Allow', answeredBy: 'button' }),
-        []
-      )
-    ).toBe('只这个任务');
-    locale.value = 'en';
-    expect(
-      neoQuestionAnswerLabel(
-        question('desktop', { kind: 'desktop_control', answer: 'Allow', answeredBy: 'button' }),
-        []
-      )
-    ).toBe('Only this task');
-    expect(
-      neoQuestionAnswerLabel(
-        question('desktop', {
-          kind: 'desktop_control',
-          answer: 'Always allow',
-          answeredBy: 'button',
-        }),
-        []
-      )
-    ).toBe("Yes, don't ask again");
-  });
-
   it('says chat answers in the human words and an empty multiple choice as none', () => {
     expect(
       neoQuestionAnswerLabel(

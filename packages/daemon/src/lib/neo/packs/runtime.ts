@@ -171,7 +171,7 @@ export function createNeoService(...args: NeoServiceArgs) {
         coding,
         lifeAdmin,
         delegation,
-        createComputerUsePack(database),
+        createComputerUsePack(),
         createModelRoutingPack({
           database: () => db.getDatabase(),
           provider: (id) => getProviderRegistry().get(id),

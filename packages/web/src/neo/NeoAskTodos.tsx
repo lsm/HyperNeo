@@ -101,14 +101,6 @@ function ChoiceOptionText({
 export function neoQuestionAnswerLabel(question: NeoQuestionEntry, todos: readonly NeoTodoEntry[]) {
   const answer = question.answer;
   if (answer === null) return '';
-  if (question.kind === 'desktop_control' && question.answeredBy === 'button')
-    return answer === 'Allow'
-      ? t('question.allow')
-      : answer === 'Always allow'
-        ? t('question.allowAlways')
-        : answer === 'No'
-          ? t('question.deny')
-          : String(answer);
   if (question.kind === 'yesno' && question.answeredBy === 'button')
     return (answer === 'yes' ? question.yesLabel : question.noLabel) ?? String(answer);
   return Array.isArray(answer)
@@ -597,14 +589,12 @@ export function QuestionBox({
   question,
   disabled,
   onAnswer,
-  onDesktopAllow,
   onReply,
   onOpen,
   hold,
 }: {
   question: NeoQuestionEntry;
   disabled?: boolean;
-  onDesktopAllow?: (question: NeoQuestionEntry, always: boolean) => void;
   onAnswer: (answer: NeoQuestionAnswer) => void;
   onReply?: () => void;
   onOpen?: (link: string, title: string) => void;
@@ -645,11 +635,6 @@ export function QuestionBox({
             {t('question.open')}
           </button>
         </div>
-      )}
-      {question.kind === 'desktop_control' && (
-        <p class="mb-2 text-sm font-medium">
-          {question.todoTitle} — {question.app}
-        </p>
       )}
       <QuestionMarkdown question={question} content={neoQuestionText(question)} />
       <QuestionDocument question={question} />
@@ -704,34 +689,6 @@ export function QuestionBox({
           </button>
         )}
         {reply}
-        {question.kind === 'desktop_control' && (
-          <>
-            <button
-              type="button"
-              class={neoSecondaryClass}
-              disabled={disabled}
-              onClick={() => onAnswer('No')}
-            >
-              {t('question.deny')}
-            </button>
-            <button
-              type="button"
-              class={neoSecondaryClass}
-              disabled={disabled || !onDesktopAllow}
-              onClick={() => onDesktopAllow?.(question, false)}
-            >
-              {t('question.allow')}
-            </button>
-            <button
-              type="button"
-              class={neoPrimaryClass}
-              disabled={disabled || !onDesktopAllow}
-              onClick={() => onDesktopAllow?.(question, true)}
-            >
-              {t('question.allowAlways')}
-            </button>
-          </>
-        )}
         {question.kind === 'yesno' && (
           <>
             <button
@@ -782,7 +739,6 @@ export function NeoAskTodos({
   onTopic,
   onControl,
   onDesktopControl,
-  onDesktopAllow,
   hideOpenCards,
   onDetails,
 }: {
@@ -791,7 +747,6 @@ export function NeoAskTodos({
   onDetails?: (entry: NeoAskEntry) => void;
   onControl?: (todo: NeoTodoEntry, control: NeoTodoControl) => Promise<void>;
   onDesktopControl?: (todoId: string, on: boolean) => void;
-  onDesktopAllow?: (question: NeoQuestionEntry, always: boolean) => void;
   focusedItem?: { questionId?: string; todoId?: string };
   disabled?: boolean;
   onAnswer: (questionId: string, answer: NeoQuestionAnswer) => void;
@@ -1133,7 +1088,6 @@ export function NeoAskTodos({
           onOpen={onOpen}
           disabled={disabled}
           onAnswer={(answer) => onAnswer(question.id, answer)}
-          onDesktopAllow={onDesktopAllow}
           onReply={onReply ? () => onReply(question) : undefined}
           hold={
             onHold && {

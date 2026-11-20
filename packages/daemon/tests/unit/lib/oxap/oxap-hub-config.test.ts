@@ -10,6 +10,18 @@ const codex = (providerId: string, settings: Record<string, string> = {}) => ({
   }),
 });
 
+describe('OXAP DeepSeek', () => {
+  test('keeps the exact session id from the hub work status link', () => {
+    const harnesses: Readonly<Record<string, OxapHarness>> = OXAP_HARNESSES;
+    const row = harnesses['oxap-deepseek'];
+    expect(row?.providers).toContain('deepseek');
+    expect(row.nativeId('deepseek://sessions/literal%2Fsegment/next?x=1#end')).toBe(
+      'literal%2Fsegment/next?x=1#end'
+    );
+    expect(row.nativeId('codex://threads/literal%2Fsegment')).toBeUndefined();
+  });
+});
+
 describe('buildHubConfig', () => {
   test('gives each OXAP provider its own adapter entry and lists environment names only', () => {
     const result = buildHubConfig(
