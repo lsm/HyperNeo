@@ -93,6 +93,7 @@ import { readNeoRuleApproval } from '../../storage/repositories/neo-rule-answer.
 
 import { createRestartReservationOperation } from '../system/restart-reservation.ts';
 import { voiceStreamsBusy } from '../rpc-handlers/voice-handlers.ts';
+import { guardRetainedPackPipeline } from './pack-pipeline.ts';
 import { validatePackRunner } from './pack-runner.ts';
 import { admitNeoCaller, type Rejection } from './admission.ts';
 
@@ -997,7 +998,10 @@ export function createNeoOperations(
         return {
           ...operation,
           pack: { id: pack.id, enabledIds: service.enabledOperationPackIds },
-          execute: path(operation.name, operation.execute),
+          execute:
+            guardRetainedPackPipeline(operation, (caller, name) =>
+              admitNeoCaller(service, caller, name)
+            ) ?? path(operation.name, operation.execute),
         };
       })
     ),
