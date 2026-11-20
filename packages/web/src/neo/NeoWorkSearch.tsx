@@ -31,7 +31,7 @@ export function NeoWorkSearch({
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => input.current?.focus(), []);
   return (
-    <div class="mt-3 flex items-center gap-2 rounded-full bg-fill-soft px-3">
+    <div class="flex min-w-0 flex-1 items-center gap-2">
       <NeoIcon name="search" class="!h-4 !w-4 shrink-0 text-fg-muted" />
       <input
         ref={input}
@@ -52,7 +52,7 @@ export function NeoWorkSearch({
       />
       <button
         type="button"
-        class="-mr-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-fg-muted hover:text-fg"
+        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-fg-muted hover:text-fg"
         aria-label={t('live.closeSearch')}
         onClick={onClose}
       >

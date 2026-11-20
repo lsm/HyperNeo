@@ -1189,12 +1189,17 @@ export function NeoLive() {
                 setWorkQuery('');
                 setSearchOpen(false);
               }}
+              search={
+                workTab === 'inbox' && searchOpen ? (
+                  <NeoWorkSearch query={workQuery} onQuery={setWorkQuery} onClose={closeSearch} />
+                ) : undefined
+              }
               trailing={
                 <>
                   {workTab === 'inbox' && !searchOpen && (
                     <NeoWorkSearchButton onOpen={() => setSearchOpen(true)} />
                   )}
-                  {sheet && (
+                  {sheet && !searchOpen && (
                     <button
                       type="button"
                       aria-label={t('live.closeWork')}
@@ -1227,9 +1232,6 @@ export function NeoLive() {
                     onOpenWork={openWork}
                   />
                 ) : null
-              )}
-              {publicConversation && searchOpen && (
-                <NeoWorkSearch query={workQuery} onQuery={setWorkQuery} onClose={closeSearch} />
               )}
               {!!workQuery.trim() &&
                 (search.pending || search.failed || !search.results.length) && (

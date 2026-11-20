@@ -135,7 +135,7 @@ describe('Work search input and retry', () => {
       [...container.querySelectorAll('[data-ask]')].map((node) => node.getAttribute('data-ask'))
     ).toEqual(['protocol']);
   });
-  it('clears the work search when another tab is chosen', async () => {
+  it('searches in the tab row and restores the tabs on close', async () => {
     locale.value = 'en';
     const protocol = testAskEntry('protocol', 'to do protocol');
     const { model, container } = mount();
@@ -150,9 +150,11 @@ describe('Work search input and retry', () => {
     await waitFor(() =>
       expect(container.querySelector('[data-scene-group="search"]')).toBeTruthy()
     );
+    expect(screen.queryByRole('button', { name: 'Goals' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Close work search' }));
+    expect(screen.queryByRole('searchbox')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Goals' }));
     fireEvent.click(screen.getByRole('button', { name: 'Inbox' }));
-    expect(screen.queryByRole('searchbox')).toBeNull();
     expect(container.querySelector('[data-scene-group="search"]')).toBeNull();
     expect(container.querySelector('[data-ask="protocol"]')).toBeTruthy();
   });
