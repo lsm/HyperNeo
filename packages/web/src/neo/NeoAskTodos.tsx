@@ -273,7 +273,7 @@ function TodoRow({
     !!onDesktopControl &&
     !todo.worker?.daemon &&
     ['todo', 'doing', 'blocked'].includes(todo.state);
-  const desktopOn = desktopEditable && todo.named?.desktopControl === true;
+  const desktopOn = desktopEditable && todo.named?.desktopControl !== false;
   const setDesktop = (on: boolean) => onDesktopControl?.(todo.id, on);
   const menu = [
     ...(desktopEditable

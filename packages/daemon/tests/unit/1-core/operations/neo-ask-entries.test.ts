@@ -448,7 +448,7 @@ describe('projectNeoAskEntries todo order and done todos', () => {
     expect(neoSnapshotAskEntries(settled).pinned).toEqual([]);
   });
 
-  test('the snapshot summary keeps only the request marker and a granted computer', () => {
+  test('the snapshot summary keeps only the request marker and the computer switch', () => {
     const { store, sessions, opened } = seed(['todo']);
     const draft = { doneWhen: 'Answered', check: null, instruction: null };
     store.addTodo('req', 'ask', { ...draft, title: 'Q', named: { requestFrom: 'worker-1' } }, 1);
@@ -475,7 +475,7 @@ describe('projectNeoAskEntries todo order and done todos', () => {
       flag: null,
       obj: null,
       pc: { desktopControl: true },
-      off: null,
+      off: { desktopControl: false },
       both: { requestFrom: 'worker-2', desktopControl: true },
     });
   });

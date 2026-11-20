@@ -150,12 +150,15 @@ export function summarizeNeoAskEntry(entry: NeoAskEntry): NeoAskEntry {
       blockedReason: null,
       nextAction: null,
       named:
-        typeof todo.named?.requestFrom === 'string' || todo.named?.desktopControl === true
+        typeof todo.named?.requestFrom === 'string' ||
+        typeof todo.named?.desktopControl === 'boolean'
           ? {
               ...(typeof todo.named?.requestFrom === 'string'
                 ? { requestFrom: todo.named.requestFrom }
                 : {}),
-              ...(todo.named?.desktopControl === true ? { desktopControl: true } : {}),
+              ...(typeof todo.named?.desktopControl === 'boolean'
+                ? { desktopControl: todo.named.desktopControl }
+                : {}),
             }
           : null,
       check: null,
