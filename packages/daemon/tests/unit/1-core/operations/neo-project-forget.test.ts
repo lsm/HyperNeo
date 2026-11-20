@@ -138,15 +138,18 @@ describe('neo.project.forget', () => {
   test.each([
     { status: 'archived', type: 'worker', canForget: true },
     { status: 'ended', type: 'space_task_agent', canForget: true },
+    { status: 'ended', type: 'worker', spaceId: 'space:fixture', canForget: true },
     { status: 'ended', type: 'worker', canForget: false },
   ] as const)(
-    'sidebar forget keeps $status $type sessions in history',
-    async ({ status, type, canForget }) => {
+    'sidebar forget keeps $status $type sessions in history (canForget: $canForget)',
+    async (scenario) => {
+      const { status, type, canForget } = scenario;
       alias(`folder:${hostname()}\0/code/history`, atlas);
       await db.createSession({
         ...createTestSession('session:history'),
         workspacePath: '/code/history',
         status,
+        context: 'spaceId' in scenario ? { spaceId: scenario.spaceId } : undefined,
       });
       db.getDatabase()
         .prepare('UPDATE sessions SET type = ? WHERE id = ?')
