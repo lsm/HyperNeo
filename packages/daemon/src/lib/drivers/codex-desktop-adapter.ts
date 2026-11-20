@@ -915,16 +915,8 @@ export async function queueCodexMessage(
         )
       )
         return queueCodexCliMessage(detail, message, deps);
-      if (
-        error instanceof CodexRequestError &&
-        z
-          .object({
-            code: z.literal(-32600),
-            message: z.string().includes(`thread ${detail.thread.id} already has an active writer`),
-          })
-          .safeParse(error.rejection).success
-      )
-        return reject('not_delivered', error.message, true);
+      if (codexAppHoldsThread(error, detail.thread.id))
+        return reject('not_delivered', CODEX_APP_HOLDS_THREAD, true);
       return reject('not_delivered', `thread/queue/add: ${String(error)}`);
     }
     const parsed = z
@@ -1609,7 +1601,6 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
         return reject('busy', 'The Codex thread still has a live turn.');
       const refused = admit();
       if (refused) return refused;
-      await releaseWorkerSandbox(found.value.thread.folder);
       return withCodexAppServer({ appServer: deps.bootstrapServer }, async (server) => {
         try {
           await server.call('thread/archive', { threadId: ref.id });
@@ -1617,6 +1608,7 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
           if (codexAppHoldsThread(error, ref.id)) return reject('busy', CODEX_APP_HOLDS_THREAD);
           throw error;
         }
+        await releaseWorkerSandbox(found.value.thread.folder);
         const worktree = await cleanupOwnedWorktree(found.value.thread.folder, [deps.worktreesDir]);
         return { ok: true, value: { archived: true, ...(worktree ? { worktree } : {}) } };
       });

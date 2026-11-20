@@ -516,7 +516,7 @@ describe('codex-desktop adapter status and send', () => {
     }
   );
 
-  test('does not archive a Codex thread when runtime removal fails', async () => {
+  test('raises a runtime removal failure after archiving so the release retries it', async () => {
     const calls: string[] = [];
     const driver = adapter(0, '', undefined, '/codex/worktrees', '', {
       bootstrapServer: async () => ({
@@ -534,7 +534,7 @@ describe('codex-desktop adapter status and send', () => {
       await expect(driver.archive!({ adapter: driver.id, id: 'idle' }, () => null)).rejects.toThrow(
         'synthetic EBUSY'
       );
-      expect(calls).toEqual([]);
+      expect(calls).toEqual(['thread/archive']);
     } finally {
       failure.mockRestore();
     }
@@ -2138,7 +2138,13 @@ describe('codex-desktop adapter status and send', () => {
     expect(await driver.steer!(ref('idle'), 'answer the worker', user)).toEqual(appHeldRefusal);
   });
 
-  test('archiving an idle thread the Codex app holds waits as busy', async () => {
+  test('archiving an idle thread the Codex app holds waits as busy and keeps its scratch', async () => {
+    const root = join(dir, 'prepared');
+    mkdirSync(join(root, '.git'), { recursive: true });
+    const env = await prepareWorkerSandbox(root);
+    const db = new Database(statePath);
+    db.prepare('UPDATE threads SET cwd=? WHERE id=?').run(root, 'idle');
+    db.close();
     const calls: string[] = [];
     const driver = adapter(0, '', undefined, '/codex/worktrees', '', {
       bootstrapServer: async () => ({
@@ -2155,6 +2161,8 @@ describe('codex-desktop adapter status and send', () => {
       detail: expect.stringContaining('The Codex app has this thread open'),
     });
     expect(calls).toEqual(['thread/archive']);
+    expect(existsSync(env.TMPDIR)).toBe(true);
+    await releaseWorkerSandbox(root);
   });
 
   test('compacting an idle thread the Codex app holds waits as busy', async () => {
@@ -2270,6 +2278,7 @@ describe('codex-desktop adapter status and send', () => {
         expect(await driver.send!(ref('idle'), 'answer', user)).toMatchObject({
           ok: false,
           reason: 'not_delivered',
+          detail: expect.stringContaining('The Codex app has this thread open'),
           notSent: true,
         });
         expect(accepted).toBe(0);
