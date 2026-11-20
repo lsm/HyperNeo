@@ -48,16 +48,14 @@ const kinds = new Map<string, Input['kind']>([
   ['neo.todo.remove', 'remove'],
 ]);
 
-function mutationReceipt(result: Result): Result {
-  if (!result.ok) return result;
-  const { todo, records } = result;
-  return { ok: true, todo, ...(records ? { records } : {}) };
-}
-
 async function presentMutation(deps: Dependencies, result: Result): Promise<Result> {
   if (!result.ok) return result;
   const [todo] = await deps.project([result.todo]);
-  return mutationReceipt({ ...result, todo });
+  return {
+    ok: true,
+    todo,
+    ...(result.records ? { records: result.records } : {}),
+  };
 }
 
 function buildTodoMutation(deps: Dependencies, pipeline: ReturnType<SuperPipeFactory>) {
@@ -201,7 +199,7 @@ export function wireNeoTodoMutations(
   const mutate = buildTodoMutation(deps, superpipe({})('neo.todo.mutate-through-writer'));
   const done = buildTodoMutation(deps, superpipe({})('neo.todo.done'));
   const definitions = createDefinitions(async ({ todoId, reason }, caller) =>
-    mutationReceipt(await mutate({ todoId, hold: reason, kind: 'edit' }, caller))
+    presentMutation(deps, await mutate({ todoId, hold: reason, kind: 'edit' }, caller))
   );
   const operations = definitions.map<OperationDefinition>((entry) => {
     const kind = kinds.get(entry.name);

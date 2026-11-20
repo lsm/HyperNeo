@@ -212,7 +212,7 @@ describe('Writer-backed todo operation activation', () => {
     const result = await call('neo.todo.hold', { todoId: 'first', reason: 'Human said wait.' });
     expect(result).toMatchObject({
       ok: true,
-      todo: { id: 'first', state: 'blocked', blockedBy: 'held' },
+      todo: { id: 'first', state: 'blocked', blockedBy: 'held', worker: null },
     });
     expect(JSON.stringify(result)).not.toContain('Next task');
     expect('todos' in result).toBe(false);

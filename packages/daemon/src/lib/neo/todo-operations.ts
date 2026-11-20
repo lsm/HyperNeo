@@ -821,13 +821,13 @@ export function createNeoTodoOperations(
   const hold = (superpipe({})('neo.todo.hold') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
-      (input: z.infer<typeof Hold>) => {
+      async (input: z.infer<typeof Hold>) => {
         if (input.reason === null || input.decision !== true)
           return { value: { kind: 'edit' as const, request: input } };
         const todo = todos.getTodo(input.todoId);
-        const ask = todo ? todos.getAsk(todo.askId) : null;
-        const admitted = todo ? admit(ask, todo) : requireNeoOpenTodo(todo, ask);
-        if (!todo || 'reason' in admitted) return admitted;
+        if (!todo) return requireNeoOpenTodo(todo, null);
+        const admitted = admit(todos.getAsk(todo.askId), todo);
+        if ('reason' in admitted) return { reason: await present(admitted.reason) };
         const plan = planNeoHoldCard(todo, todos.todoCards(todo), input.reason);
         return 'reason' in plan
           ? fail(plan.reason)
@@ -846,7 +846,9 @@ export function createNeoTodoOperations(
         if (plan.kind === 'edit')
           return writeHold
             ? writeHold(plan.request, caller)
-            : edit({ todoId: plan.request.todoId, hold: plan.request.reason }, caller);
+            : present(
+                await edit({ todoId: plan.request.todoId, hold: plan.request.reason }, caller)
+              );
         const { todo, draft } = plan;
         const failed = todo.startedAt === null ? null : await controls.stop(todo);
         if (failed)
@@ -856,11 +858,11 @@ export function createNeoTodoOperations(
           };
         const card = openHumanCard(todos, crypto.randomUUID(), todo.askId, draft, Date.now());
         await controls.advance();
-        return {
+        return present({
           ok: true as const,
           todo: todos.getTodo(todo.id) ?? todo,
           records: [`held: card ${card.id} holds it until the human answers.`],
-        };
+        });
       },
       ['outcome', 'caller'],
       'outcome'
@@ -893,7 +895,7 @@ export function createNeoTodoOperations(
       inputSchema: Hold,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => present(await hold(input, caller)),
+      execute: hold,
     }),
     defineOperation({
       name: 'neo.todo.remove',
