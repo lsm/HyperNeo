@@ -221,7 +221,7 @@ export type NeoHumanQueueItem =
       todos: { id: string; title: string }[];
     }
   | {
-      state: 'progress';
+      state: 'progress' | 'waiting';
       askId: string;
       todoId: string;
       title: string;

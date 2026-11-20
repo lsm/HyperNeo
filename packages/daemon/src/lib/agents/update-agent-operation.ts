@@ -180,19 +180,6 @@ export async function applyAgentUpdate(
   return { agent };
 }
 
-function buildUpdatePipeline(deps: UpdateAgentDependencies) {
-  const access = 'mutate' as const;
-  return (superpipe({ deps, access })('agent.update') as PipelineAPI)
-    .input(['input', 'caller'])
-    .pipe(admitAgentCaller, ['input', 'caller', 'deps', 'access'], 'result:outcome')
-    .pipe(gateUpdateTarget, ['outcome', 'input', 'deps'], 'result:outcome')
-    .pipe(gateUpdateIdentity, ['outcome', 'input', 'deps'], 'result:outcome')
-    .pipe(gateUpdateTools, ['outcome', 'input'], 'result:outcome')
-    .pipe(gateUpdateModel, ['outcome', 'input'], 'result:outcome')
-    .pipe(applyAgentUpdate, ['outcome', 'input', 'caller', 'deps'], 'outcome')
-    .endAsync('outcome') as (input: Input, caller: OperationCaller) => Promise<Result>;
-}
-
 const resultSchema = z.union([
   z.object({ agent: AgentRecordSchema }).strict(),
   AgentRejectionSchema,
@@ -204,7 +191,16 @@ const REJECTION_DOC =
 const UPDATE_AGENT_DESCRIPTION = `Update a long-horizon agent: name, lifecycle status, description, operator prompt, model, provider, thinking level, setting sources, or tool allowlist. Setting status is how an agent is paused, archived, and revived; see the status field for what each one leaves behind. Fields left out are untouched; null clears a clearable override, and tools set to null clears the allowlist. Clearing the provider also clears it from the agent's live session. Archiving retires the agent's chat session and archives its clones, and is rejected with session_unavailable when one of them still has unpushed commits (confirm from the Agents page instead). Reviving an archived agent re-checks its name against live peers and starts a fresh session on next use. ${REJECTION_DOC}`;
 
 export function createUpdateAgentOperation(deps: UpdateAgentDependencies) {
-  const update = buildUpdatePipeline(deps);
+  const access = 'mutate' as const;
+  const update = (superpipe({ deps, access })('agent.update') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(admitAgentCaller, ['input', 'caller', 'deps', 'access'], 'result:outcome')
+    .pipe(gateUpdateTarget, ['outcome', 'input', 'deps'], 'result:outcome')
+    .pipe(gateUpdateIdentity, ['outcome', 'input', 'deps'], 'result:outcome')
+    .pipe(gateUpdateTools, ['outcome', 'input'], 'result:outcome')
+    .pipe(gateUpdateModel, ['outcome', 'input'], 'result:outcome')
+    .pipe(applyAgentUpdate, ['outcome', 'input', 'caller', 'deps'], 'outcome')
+    .endAsync('outcome') as (input: Input, caller: OperationCaller) => Promise<Result>;
   return defineOperation({
     name: 'agent.update',
     policy: AGENT_MUTATE_POLICY,

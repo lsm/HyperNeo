@@ -137,6 +137,11 @@ describe('pack-owned Neo operation registration', () => {
           { source: 'mcp', sessionId: 'unbound-worker', role: 'neo' }
         )
       ).toEqual({ ok: false, reason: 'This operation belongs to Neo.' });
+      const retry = registry.get('neo.coding.merge.retry');
+      if (!retry) throw new Error('Expected coding merge retry operation');
+      expect(
+        await retry.execute({}, { source: 'mcp', sessionId: 'unbound-worker', role: 'neo' })
+      ).toEqual({ ok: false, reason: 'This operation belongs to Neo.' });
       expect(registry.get('verify.pack.echo')).toBeDefined();
       const direct = registry.get('verify.pack.echo');
       if (!direct) throw new Error('Expected synthetic pack operation');

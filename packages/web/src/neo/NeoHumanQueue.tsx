@@ -389,7 +389,7 @@ function QueueItem({
   onOpen?: (link: string, title: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  if (item.state === 'progress') {
+  if ('todoId' in item) {
     const todo = [...(entry?.todos ?? []), ...(listed?.todos ?? [])].find(
       (candidate) => candidate.id === item.todoId
     );

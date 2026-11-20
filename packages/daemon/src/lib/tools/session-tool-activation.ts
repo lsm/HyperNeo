@@ -42,8 +42,15 @@ async function apply(input: Input, saved: Saved, deps: Dependencies): Promise<Re
 }
 const activate = (superpipe({})('session.tools.setChoice') as PipelineAPI)
   .input(['input', 'deps'])
-  .pipe(persist, ['input', 'deps'], 'result:activation')
-  .pipe(apply, ['input', 'activation', 'deps'], 'activation')
+  .pipe(
+    (input: Input, deps: Dependencies) =>
+      deps.exclusive(input.sessionId, async () => {
+        const saved = await persist(input, deps);
+        return 'reason' in saved ? saved : { value: await apply(input, saved.value, deps) };
+      }),
+    ['input', 'deps'],
+    'result:activation'
+  )
   .endAsync('activation') as (input: Input, deps: Dependencies) => Promise<Result>;
 export function createSessionToolActivationOperation(deps: Dependencies) {
   return defineOperation({
@@ -61,6 +68,6 @@ export function createSessionToolActivationOperation(deps: Dependencies) {
         reason: z.string().optional(),
       }),
     ]),
-    execute: (input) => deps.exclusive(input.sessionId, () => activate(input, deps)),
+    execute: (input) => activate(input, deps),
   });
 }
