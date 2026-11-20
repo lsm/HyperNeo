@@ -139,12 +139,18 @@ describe('pack-owned Neo operation registration', () => {
       ).toEqual({ ok: false, reason: 'This operation belongs to Neo.' });
       const retry = registry.get('neo.coding.merge.retry');
       if (!retry) throw new Error('Expected coding merge retry operation');
+      expect(Reflect.has(retry.execute, 'pipeline')).toBe(false);
       expect(
         await retry.execute({}, { source: 'mcp', sessionId: 'unbound-worker', role: 'neo' })
       ).toEqual({ ok: false, reason: 'This operation belongs to Neo.' });
+      expect(await retry.execute({}, { source: 'rpc', principal: 'local' })).toEqual({
+        accepted: false,
+        reason: 'Only Neo can accept a stopped daemon merge report.',
+      });
       expect(registry.get('verify.pack.echo')).toBeDefined();
       const direct = registry.get('verify.pack.echo');
       if (!direct) throw new Error('Expected synthetic pack operation');
+      expect(Reflect.has(direct.execute, 'pipeline')).toBe(true);
       expect(
         await direct.execute(
           { text: 'Synthetic bytes' },
