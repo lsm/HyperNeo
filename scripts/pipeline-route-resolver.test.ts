@@ -256,24 +256,24 @@ const workerSource = new Map([
 ]);
 
 test.each([
-  ['registered method', 'db().call(query, "read", input)', undefined, 'named'],
-  ['dynamic method', 'db().call(query, method, input)', undefined, 'unknown'],
-  ['dynamic command', 'db().call(command, "read", input)', undefined, 'unknown'],
+  ['registered method', 'db(database).call(query, "read", input)', undefined, 'named'],
+  ['dynamic method', 'db(database).call(query, method, input)', undefined, 'unknown'],
+  ['dynamic command', 'db(database).call(command, "read", input)', undefined, 'unknown'],
   [
     'unregistered command',
-    'db().call(query, "read", input)',
+    'db(database).call(query, "read", input)',
     ['db-ops.ts', '[query]', '[]'],
     'unknown',
   ],
   [
     'unlisted method',
-    'db().call(query, "read", input)',
+    'db(database).call(query, "read", input)',
     ['read.ts', "['read']", "['write']"],
     'unknown',
   ],
   [
     'shadowed registration key',
-    'db().call(query, "read", input)',
+    'db(database).call(query, "read", input)',
     [
       'db-ops.ts',
       'export const DB_OPS = new Map([query]',
@@ -283,7 +283,7 @@ test.each([
   ],
   [
     'opaque handler',
-    'db().call(query, "read", input)',
+    'db(database).call(query, "read", input)',
     ['read.ts', 'return runQuery(input)', 'return fn(input)'],
     'unknown',
   ],
