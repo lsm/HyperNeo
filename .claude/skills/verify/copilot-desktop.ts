@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
@@ -131,6 +131,19 @@ try {
       assert(next.ok, JSON.stringify(next));
       assert.equal(next.value.turns[0]?.id, 'zero');
       assert.equal(next.value.turns[0].endedAt, older.endedAt);
+      const events = [
+        { type: 'user.message', data: { messageId: 'new', interactionId: 'next', content: 'New input' } },
+        { type: 'assistant.message', data: { messageId: 'new-reply', interactionId: 'next', content: 'New reply' } },
+        { type: 'session.idle', data: {} },
+      ];
+      appendFileSync(join(home, '.copilot/session-state', copilotSession, 'events.jsonl'),
+        ' '.repeat(270_000) + '\n' + events.map((event, i) =>
+          JSON.stringify({ ...event, timestamp: `2026-11-19T15:01:0${i}Z` })).join('\n') + '\n');
+      const resumed = await rpc<Result<{ turns: WorkTurnFact[] }>>('work.turns', {
+        ref: session.ref, cursor: next.value.turns[0].cursor,
+      });
+      assert(resumed.ok, JSON.stringify(resumed));
+      assert.deepEqual(resumed.value.turns.map((turn) => turn.id), ['new']);
     }
     const refused = await rpc<Result<unknown>>('work.send', { ref: session.ref, message: 'No delivery' });
     assert(!refused.ok && refused.reason === 'unsupported');
@@ -182,6 +195,19 @@ try {
   if (desktop) {
     const db = new Database(state);
     try {
+      if (cli) {
+        db.exec(`
+          INSERT INTO sessions VALUES ('untitled', '', '2026-11-19T15:00:02Z', 0, 0, NULL, 'local', 0);
+          INSERT INTO workspaces VALUES ('untitled-workspace', 'untitled', 'p', NULL, NULL,
+            NULL, NULL, 'local', 'folder');
+        `);
+        const untitled = await rpc<z.infer<typeof FindWorkResultSchema>>('work.find', {
+          ...query, text: 'Untitled session',
+        });
+        assert.deepEqual(untitled.unreachable, []);
+        assert(untitled.places.some((place) =>
+          place.work.some((work) => work.ref.id === 'untitled' && work.title === 'Untitled session')));
+      }
       db.exec('ALTER TABLE sessions RENAME TO changed_sessions');
     } finally {
       db.close();
