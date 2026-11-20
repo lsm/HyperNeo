@@ -6831,6 +6831,66 @@
     {
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "app"
+        ],
+        "type": "object"
+      },
+      "name": "desktop.access.request",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bundleId": {
+                "type": "string"
+              },
+              "ok": {
+                "const": true,
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok",
+              "bundleId"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bundleId": {
+                "type": "string"
+              },
+              "ok": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ok",
+              "reason"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
         "oneOf": [
           {
             "additionalProperties": false,
@@ -6838,9 +6898,6 @@
               "args": {
                 "additionalProperties": false,
                 "properties": {
-                  "app": {
-                    "type": "string"
-                  },
                   "pid": {
                     "maximum": 9007199254740991,
                     "minimum": -9007199254740991,
@@ -6854,7 +6911,7 @@
               },
               "tool": {
                 "const": "list_windows",
-                "description": "List windows for an authorized target app. With no app or pid, list windows across apps, including their titles, without an app grant.",
+                "description": "List one app's windows by its pid. With no pid, list windows across apps, including their titles and pids, without an app grant.",
                 "type": "string"
               }
             },
