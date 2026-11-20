@@ -1,6 +1,10 @@
+:root {
+  --neo-shell-bg: light-dark(#f6f7f8, #171a20);
+}
+
 .neo-shell {
   height: var(--safe-height, 100dvh);
-  --bg: light-dark(#f6f7f8, #171a20);
+  --bg: var(--neo-shell-bg);
   --surface: light-dark(#ffffff, #20242b);
   --surface-overlay: light-dark(#faf9f7, #24262b);
   --surface-raised: light-dark(#ffffff, #24262b);

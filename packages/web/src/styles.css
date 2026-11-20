@@ -1236,7 +1236,7 @@ html.tauri-desktop body {
 }
 
 html.tauri-desktop body:has(.neo-shell) {
-  --bg: light-dark(#f6f7f8, #171a20);
+  --bg: var(--neo-shell-bg);
   background: var(--bg);
 }
 

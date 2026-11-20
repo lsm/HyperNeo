@@ -193,7 +193,7 @@ fn dialog_text(app_name: &str, bundle_id: &str, class: &str, wildcard: bool) -> 
         "A HyperNeo worker wants to open {app_name}, see it, click and type in it. HyperNeo will not ask again for this app.\n\n{bundle_id}"
     );
     if wildcard {
-        text.push_str("\n\nAllow all apps also covers other apps, except Terminal, code editors, Keychain Access, System Settings and Passwords, which always ask.");
+        text.push_str("\n\nAllow all apps also covers other apps. Sensitive apps, including terminals, code editors, password managers, Keychain Access and System Settings, always ask.");
     }
     Some(text)
 }

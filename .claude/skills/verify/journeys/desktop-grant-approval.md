@@ -1,7 +1,7 @@
 # Desktop grant approval
 
 The signed Desktop host refuses a verified app without a
-grant, opens its own "Allow HyperNeo to control an app?" dialog, and records the
+grant, opens its own "Let HyperNeo control {app}?" dialog, and records the
 grant in its private keychain group only after a click on Allow. See
 `docs/design/desktop-grant-approval.md`.
 
