@@ -4,7 +4,7 @@
   "description": "enables the default permissions",
   "windows": ["main"],
   "remote": {
-    "urls": ["http://localhost:9283/*"]
+    "urls": ["http://localhost:*/*", "http://127.0.0.1:*/*"]
   },
   "permissions": [
     "core:default",

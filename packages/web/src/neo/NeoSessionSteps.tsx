@@ -10,7 +10,7 @@ import {
   sessionStepCounts,
 } from './session-transcript.ts';
 
-const rowClass = 'rounded-xl border border-line bg-surface';
+const rowClass = 'rounded-md hover:bg-[var(--neo-action-hover)]';
 
 function Chevron({ open, small }: { open: boolean; small?: boolean }) {
   return (
@@ -44,7 +44,7 @@ export function NeoToolRow({
         aria-expanded={result ? open : undefined}
         aria-label={`${name} ${summary}`}
         onClick={() => setOpen(!open)}
-        class="flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left"
+        class="flex w-full min-w-0 items-center gap-2 px-1 py-1 text-left"
       >
         <span class={`inline-flex w-4 shrink-0 justify-center ${tone}`} aria-hidden="true">
           <NeoIcon
@@ -57,7 +57,7 @@ export function NeoToolRow({
         {!!result && <Chevron open={open} small />}
       </button>
       {open && !!result && (
-        <pre class="mx-3 mb-2.5 max-h-[220px] overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] text-fg-muted">
+        <pre class="mb-1.5 ml-7 mr-1 max-h-[220px] overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] text-fg-muted">
           {result}
         </pre>
       )}
@@ -74,7 +74,7 @@ export function NeoThinkingRow({ text }: { text: string }) {
       disabled={!text}
       aria-expanded={open}
       onClick={() => setOpen(!open)}
-      class={`${rowClass} flex w-full min-w-0 items-baseline gap-2 px-3 py-2 text-left`}
+      class={`${rowClass} flex w-full min-w-0 items-baseline gap-2 px-1 py-1 text-left`}
     >
       <span
         class="inline-flex w-4 shrink-0 justify-center self-center text-fg-muted"
@@ -136,7 +136,7 @@ export function NeoSessionStepsLine({
         aria-expanded={open}
         title={open ? t('session.hideSteps') : t('session.showSteps')}
         onClick={() => setOpen(!open)}
-        class="flex w-full min-w-0 items-center gap-2.5 rounded-[14px] border border-line bg-surface px-3.5 py-[11px] text-left"
+        class="flex w-full min-w-0 items-center gap-2.5 rounded-md px-1 py-1 text-left hover:bg-[var(--neo-action-hover)]"
       >
         {steps.running ? (
           <span
@@ -167,7 +167,7 @@ export function NeoSessionStepsLine({
         <Chevron open={open} />
       </button>
       {open && (
-        <div class="ml-2 flex flex-col gap-1.5 border-l-2 border-line pl-3">
+        <div class="flex flex-col gap-0.5 pl-5">
           {steps.items.map((item) => (
             <div key={item.id}>{renderStep(item)}</div>
           ))}

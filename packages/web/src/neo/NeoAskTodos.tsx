@@ -623,7 +623,7 @@ export function QuestionBox({
       id={`neo-ref-question-${question.id}`}
       data-ask-question={question.id}
       data-question-kind={question.kind}
-      class="mt-3 rounded-lg bg-warning/10 px-3 py-2"
+      class="mt-3 border-t border-line pt-3"
     >
       <div class="neo-time-line neo-question-time">
         <span>{t((hold ? hold.held : question.heldAt) ? 'queue.onHold' : 'time.waiting')}</span>
