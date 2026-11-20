@@ -22432,9 +22432,6 @@
                               }
                             ]
                           },
-                          "app": {
-                            "type": "string"
-                          },
                           "artifacts": {
                             "items": {
                               "anyOf": [
@@ -22594,8 +22591,7 @@
                             "enum": [
                               "yesno",
                               "choice",
-                              "reply",
-                              "desktop_control"
+                              "reply"
                             ],
                             "type": "string"
                           },
@@ -22793,9 +22789,6 @@
                               "string",
                               "null"
                             ]
-                          },
-                          "todoTitle": {
-                            "type": "string"
                           },
                           "todos": {
                             "items": {
@@ -24971,9 +24964,6 @@
                             }
                           ]
                         },
-                        "app": {
-                          "type": "string"
-                        },
                         "artifacts": {
                           "items": {
                             "anyOf": [
@@ -25133,8 +25123,7 @@
                           "enum": [
                             "yesno",
                             "choice",
-                            "reply",
-                            "desktop_control"
+                            "reply"
                           ],
                           "type": "string"
                         },
@@ -25332,9 +25321,6 @@
                             "string",
                             "null"
                           ]
-                        },
-                        "todoTitle": {
-                          "type": "string"
                         },
                         "todos": {
                           "items": {
@@ -32043,9 +32029,6 @@
                               }
                             ]
                           },
-                          "app": {
-                            "type": "string"
-                          },
                           "artifacts": {
                             "items": {
                               "anyOf": [
@@ -32205,8 +32188,7 @@
                             "enum": [
                               "yesno",
                               "choice",
-                              "reply",
-                              "desktop_control"
+                              "reply"
                             ],
                             "type": "string"
                           },
@@ -32404,9 +32386,6 @@
                               "string",
                               "null"
                             ]
-                          },
-                          "todoTitle": {
-                            "type": "string"
                           },
                           "todos": {
                             "items": {
@@ -35703,9 +35682,6 @@
                       }
                     ]
                   },
-                  "app": {
-                    "type": "string"
-                  },
                   "artifacts": {
                     "items": {
                       "anyOf": [
@@ -35865,8 +35841,7 @@
                     "enum": [
                       "yesno",
                       "choice",
-                      "reply",
-                      "desktop_control"
+                      "reply"
                     ],
                     "type": "string"
                   },
@@ -36008,9 +35983,6 @@
                       "string",
                       "null"
                     ]
-                  },
-                  "todoTitle": {
-                    "type": "string"
                   },
                   "todos": {
                     "items": {
@@ -36578,231 +36550,6 @@
                   "kind"
                 ],
                 "type": "object"
-              },
-              {
-                "properties": {
-                  "app": {
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "artifacts": {
-                    "items": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "artifactId": {
-                              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                              "type": "string"
-                            },
-                            "byteLength": {
-                              "maximum": 9007199254740991,
-                              "minimum": 0,
-                              "type": "integer"
-                            },
-                            "daemonId": {
-                              "format": "uuid",
-                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                              "type": "string"
-                            },
-                            "kind": {
-                              "enum": [
-                                "markdown",
-                                "html",
-                                "image",
-                                "json",
-                                "log",
-                                "text",
-                                "video"
-                              ],
-                              "type": "string"
-                            },
-                            "title": {
-                              "maxLength": 200,
-                              "minLength": 1,
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "daemonId",
-                            "artifactId",
-                            "title",
-                            "kind",
-                            "byteLength"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "artifactId": {
-                              "pattern": "^[a-f0-9]{64}$",
-                              "type": "string"
-                            },
-                            "byteLength": {
-                              "maximum": 9007199254740991,
-                              "minimum": 0,
-                              "type": "integer"
-                            },
-                            "daemonId": {
-                              "format": "uuid",
-                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                              "type": "string"
-                            },
-                            "name": {
-                              "maxLength": 128,
-                              "minLength": 1,
-                              "pattern": "^[\\w][\\w .-]*$",
-                              "type": "string"
-                            },
-                            "sessionId": {
-                              "maxLength": 200,
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "sha256": {
-                              "pattern": "^[a-f0-9]{64}$",
-                              "type": "string"
-                            },
-                            "type": {
-                              "const": "handoff",
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "artifactId",
-                            "daemonId",
-                            "sessionId",
-                            "name",
-                            "byteLength",
-                            "sha256",
-                            "type"
-                          ],
-                          "type": "object"
-                        }
-                      ]
-                    },
-                    "maxItems": 16,
-                    "readOnly": true,
-                    "type": "array"
-                  },
-                  "askId": {
-                    "description": "For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask. For a request from another session, pass the ask on its `<session-message>` tag.",
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "confirm": {
-                    "properties": {
-                      "path": {
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "sha256": {
-                        "maxLength": 64,
-                        "minLength": 64,
-                        "pattern": "^[a-f0-9]+$",
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "path",
-                      "sha256"
-                    ],
-                    "type": "object"
-                  },
-                  "document": {
-                    "description": "Full detail shown apart from the short card text.",
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "focused": {
-                    "type": "boolean"
-                  },
-                  "input": {
-                    "description": "The id on the `<human-message>` tag of the human message this question serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else its recorded follow-up binding, else a new one.",
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "kind": {
-                    "const": "desktop_control",
-                    "type": "string"
-                  },
-                  "replaces": {
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "replyTo": {
-                    "items": {
-                      "format": "uuid",
-                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                      "type": "string"
-                    },
-                    "maxItems": 100,
-                    "type": "array"
-                  },
-                  "retireWhen": {
-                    "description": "Pack check that retires this card when satisfied. Defaults to the linked todo check; required without a linked todo check.",
-                    "properties": {
-                      "kind": {
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "pack": {
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "params": {
-                        "additionalProperties": {},
-                        "default": {},
-                        "propertyNames": {
-                          "type": "string"
-                        },
-                        "type": "object"
-                      }
-                    },
-                    "required": [
-                      "pack",
-                      "kind"
-                    ],
-                    "type": "object"
-                  },
-                  "sourceSession": {
-                    "properties": {
-                      "adapter": {
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "daemon": {
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "id": {
-                        "minLength": 1,
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "adapter",
-                      "id"
-                    ],
-                    "type": "object"
-                  },
-                  "text": {
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "todoId": {
-                    "minLength": 1,
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "todoId",
-                  "text",
-                  "kind",
-                  "app"
-                ],
-                "type": "object"
               }
             ]
           }
@@ -36910,9 +36657,6 @@
                         "type": "null"
                       }
                     ]
-                  },
-                  "app": {
-                    "type": "string"
                   },
                   "artifacts": {
                     "items": {
@@ -37073,8 +36817,7 @@
                     "enum": [
                       "yesno",
                       "choice",
-                      "reply",
-                      "desktop_control"
+                      "reply"
                     ],
                     "type": "string"
                   },
@@ -37216,9 +36959,6 @@
                       "string",
                       "null"
                     ]
-                  },
-                  "todoTitle": {
-                    "type": "string"
                   },
                   "todos": {
                     "items": {
@@ -37510,9 +37250,6 @@
                       "null"
                     ]
                   },
-                  "app": {
-                    "type": "string"
-                  },
                   "artifacts": {
                     "items": {
                       "anyOf": [
@@ -37660,8 +37397,7 @@
                     "enum": [
                       "yesno",
                       "choice",
-                      "reply",
-                      "desktop_control"
+                      "reply"
                     ],
                     "type": "string"
                   },
@@ -37763,9 +37499,6 @@
                       "string",
                       "null"
                     ]
-                  },
-                  "todoTitle": {
-                    "type": "string"
                   }
                 },
                 "required": [
@@ -37920,9 +37653,6 @@
                         "type": "null"
                       }
                     ]
-                  },
-                  "app": {
-                    "type": "string"
                   },
                   "artifacts": {
                     "items": {
@@ -38083,8 +37813,7 @@
                     "enum": [
                       "yesno",
                       "choice",
-                      "reply",
-                      "desktop_control"
+                      "reply"
                     ],
                     "type": "string"
                   },
@@ -38226,9 +37955,6 @@
                       "string",
                       "null"
                     ]
-                  },
-                  "todoTitle": {
-                    "type": "string"
                   },
                   "todos": {
                     "items": {
@@ -38401,9 +38127,6 @@
                       }
                     ]
                   },
-                  "app": {
-                    "type": "string"
-                  },
                   "artifacts": {
                     "items": {
                       "anyOf": [
@@ -38563,8 +38286,7 @@
                     "enum": [
                       "yesno",
                       "choice",
-                      "reply",
-                      "desktop_control"
+                      "reply"
                     ],
                     "type": "string"
                   },
@@ -38706,9 +38428,6 @@
                       "string",
                       "null"
                     ]
-                  },
-                  "todoTitle": {
-                    "type": "string"
                   },
                   "todos": {
                     "items": {
@@ -40557,9 +40276,6 @@
                               }
                             ]
                           },
-                          "app": {
-                            "type": "string"
-                          },
                           "artifacts": {
                             "items": {
                               "anyOf": [
@@ -40719,8 +40435,7 @@
                             "enum": [
                               "yesno",
                               "choice",
-                              "reply",
-                              "desktop_control"
+                              "reply"
                             ],
                             "type": "string"
                           },
@@ -40918,9 +40633,6 @@
                               "string",
                               "null"
                             ]
-                          },
-                          "todoTitle": {
-                            "type": "string"
                           },
                           "todos": {
                             "items": {

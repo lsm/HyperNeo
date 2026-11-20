@@ -1,10 +1,3 @@
-import {
-  DESKTOP_CONTROL_ANSWERS,
-  desktopControlAnswerAllowed,
-  desktopControlPreference,
-  planDesktopControl,
-  saveDesktopControlPreference,
-} from '../../lib/neo/desktop-control-preference.ts';
 import { proposalQuestionId } from '../../lib/neo/proposal.ts';
 import { queueNeoRequestReply, queueNeoRequestSettledReply } from '../../lib/neo/request-todo.ts';
 import type {
@@ -58,7 +51,6 @@ import { applyPackPreferenceAnswer } from './pack-preference-answer.ts';
 export type NeoTodoDraft = Pick<NeoTodo, 'title' | 'doneWhen' | 'check' | 'instruction' | 'named'> &
   Partial<Pick<NeoTodo, 'priority' | 'dependsOn' | 'approvedAt'>> & {
     producesFollowUp?: boolean;
-    desktopControlApproved?: true;
   };
 
 export type NeoTodoInsert = (
@@ -158,7 +150,6 @@ const TODO_SELECT = `SELECT id, ask_id AS askId, position, title, done_when AS d
 export type NeoQuestionDraft = Pick<
   NeoQuestion,
   | 'text'
-  | 'app'
   | 'retireWhen'
   | 'kind'
   | 'options'
@@ -180,7 +171,7 @@ export const NEO_ADVISORY_QUESTION = (question: string) =>
   `EXISTS (SELECT 1 FROM neo_pack_preference_proposals p WHERE p.question_id = ${question}.id
     AND json_extract(p.values_json, '$.hold') = 0)`;
 
-const QUESTION_SELECT = `SELECT id, ask_id AS askId, todo_id AS todoId, desktop_app AS app, (SELECT title FROM neo_todos WHERE id = neo_questions.todo_id) AS todoTitle, text, kind, options, option_details_json AS optionDetailsJson, recommended, multiple, no_label AS noLabel,
+const QUESTION_SELECT = `SELECT id, ask_id AS askId, todo_id AS todoId, text, kind, options, option_details_json AS optionDetailsJson, recommended, multiple, no_label AS noLabel,
   yes_label AS yesLabel, todos, state, answer, answered_by AS answeredBy,
   answer_provenance_json AS answerProvenanceJson, answered_at AS answeredAt, retired_reason AS retiredReason, replaced_by AS replacedBy,
   retire_when_json AS retireWhenJson, confirm_json AS confirmJson, reply_to_json AS replyToJson, artifacts_json AS artifactsJson, source_session_json AS sourceSessionJson, document, cause, actions_applied_at AS actionsAppliedAt, held_at AS heldAt, hold_requests AS holdRequests, created_at AS createdAt FROM neo_questions`;
@@ -220,8 +211,6 @@ const parsed = <T>(json: string | null): T | null => (json ? (JSON.parse(json) a
 
 const toQuestion = ({
   answerProvenanceJson,
-  app,
-  todoTitle,
   retireWhenJson,
   confirmJson,
   replyToJson,
@@ -236,7 +225,6 @@ const toQuestion = ({
   recommended,
   ...row
 }: QuestionRow): NeoQuestion => ({
-  ...(app ? { app, ...(todoTitle ? { todoTitle } : {}) } : {}),
   ...(optionDetailsJson
     ? { optionDetails: JSON.parse(optionDetailsJson) as Record<string, string> }
     : {}),
@@ -256,11 +244,9 @@ const toQuestion = ({
   ...(todoId ? { todoId } : {}),
   ...(replyToJson ? { replyTo: JSON.parse(replyToJson) as string[] } : {}),
   confirm: parsed<NonNullable<NeoQuestion['confirm']>>(confirmJson),
-  ...(app
-    ? { kind: 'desktop_control' as const, options: [...DESKTOP_CONTROL_ANSWERS], multiple: false }
-    : row.kind === 'start'
-      ? { kind: 'choice' as const, options: JSON.parse(row.todos) as string[], multiple: true }
-      : { kind: row.kind, options: parsed<string[]>(row.options), multiple: row.multiple === 1 }),
+  ...(row.kind === 'start'
+    ? { kind: 'choice' as const, options: JSON.parse(row.todos) as string[], multiple: true }
+    : { kind: row.kind, options: parsed<string[]>(row.options), multiple: row.multiple === 1 }),
   todos: JSON.parse(row.todos) as string[],
   answer: parsed<NeoQuestionAnswer>(row.answer),
 });
@@ -778,10 +764,6 @@ export class NeoAskTodoRepository {
     ).map((row) => toTodo(row));
   }
 
-  desktopControlPreference(): unknown {
-    return desktopControlPreference(this.db);
-  }
-
   addTodo(...args: Parameters<NeoTodoInsert>): NeoTodo {
     const storage = this.storage;
     const todo = this.inTransaction(() =>
@@ -798,11 +780,6 @@ export class NeoAskTodoRepository {
     now: number,
     notify = true
   ): NeoTodo {
-    const desktopControl =
-      draft.desktopControlApproved === true &&
-      planDesktopControl(draft.named?.desktopControl, this.desktopControlPreference()) === 'allow'
-        ? true
-        : undefined;
     this.db
       .prepare(
         `INSERT INTO neo_todos (id, ask_id, position, title, done_when, check_json, instruction, named,
@@ -819,7 +796,7 @@ export class NeoAskTodoRepository {
         draft.doneWhen,
         draft.check ? JSON.stringify(draft.check) : null,
         draft.instruction,
-        draft.named ? JSON.stringify({ ...draft.named, desktopControl }) : null,
+        draft.named ? JSON.stringify({ ...draft.named, desktopControl: undefined }) : null,
         askId,
         draft.priority ?? 'normal',
         JSON.stringify(draft.dependsOn ?? []),
@@ -1116,13 +1093,13 @@ export class NeoAskTodoRepository {
     this.db
       .prepare(
         `INSERT INTO neo_questions (id, ask_id, text, kind, options, option_details_json, recommended, multiple, no_label, yes_label,
-           todos, confirm_json, document, reply_to_json, todo_id, artifacts_json, source_session_json, retire_when_json, cause, created_at, desktop_app) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           todos, confirm_json, document, reply_to_json, todo_id, artifacts_json, source_session_json, retire_when_json, cause, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
         askId,
         draft.text,
-        draft.kind === 'desktop_control' ? 'choice' : draft.kind,
+        draft.kind,
         draft.options ? JSON.stringify(draft.options) : null,
         draft.optionDetails ? JSON.stringify(draft.optionDetails) : null,
         draft.recommended ?? null,
@@ -1148,8 +1125,7 @@ export class NeoAskTodoRepository {
         draft.sourceSession ? JSON.stringify(draft.sourceSession) : null,
         draft.retireWhen ? JSON.stringify(draft.retireWhen) : null,
         draft.cause ?? null,
-        now,
-        draft.app ?? null
+        now
       );
     this.touchAsk(askId, now, true, draft.cause === 'relay-session-proposal');
     return this.getQuestion(id)!;
@@ -1166,9 +1142,6 @@ export class NeoAskTodoRepository {
   ): NeoQuestion | null {
     let settingsChanged: 'rules' | 'preferences' | undefined;
     const changed = this.db.transaction(() => {
-      const todo = question.todoId ? this.getTodo(question.todoId) : null;
-      if (question.kind === 'desktop_control' && !desktopControlAnswerAllowed(answer, todo))
-        return false;
       const answered = this.changeQuestion(
         question.id,
         {
@@ -1188,13 +1161,6 @@ export class NeoAskTodoRepository {
         }
         this.pruneQuestions(question.askId, now);
         for (const { todo, patch } of effects) this.writeTodo(todo, patch, now, false, false);
-        if (todo && question.kind === 'desktop_control' && answer !== 'No') {
-          this.updateTodo(todo, { named: { ...todo.named, desktopControl: true } }, now);
-          if (answer === 'Always allow') {
-            saveDesktopControlPreference(this.db, true, now);
-            settingsChanged = 'preferences';
-          }
-        }
         const preferences = applyPackPreferenceAnswer(this.db, question.id);
         if (preferences.ok && preferences.applied) settingsChanged = 'preferences';
         const rules = applyNeoRuleAnswer(this.db, question.id, approval);
@@ -1380,7 +1346,6 @@ export const neoTodoReads = defineRepositoryOp(
     'planContext',
     'doneTodoFacts',
     'askFacts',
-    'desktopControlPreference',
     'listCheckable',
     'listAwaitingNeoDecision',
     'listOpenAsks',

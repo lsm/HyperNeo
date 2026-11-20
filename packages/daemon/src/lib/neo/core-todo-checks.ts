@@ -6,7 +6,6 @@ import { z } from 'zod';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { ArtifactFileReadRepository } from '../../storage/repositories/artifact-file-read-repository.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
-import { DESKTOP_CONTROL_PREFERENCE } from './desktop-control-preference.ts';
 import { SESSION_REUSE_PREFERENCE } from './session-reuse.ts';
 import type { NeoPack, NeoTodoCheckResult, NeoTodoJudgement } from './pack-contract.ts';
 
@@ -168,7 +167,6 @@ export function createCoreTodoPack(db: Database, linkExists: NeoLinkExists): Neo
     describe: 'Shared completion checks',
     preferences: {
       sessionReuse: SESSION_REUSE_PREFERENCE,
-      desktopControl: DESKTOP_CONTROL_PREFERENCE,
     },
     instructions: () => null,
     readFacts: check,

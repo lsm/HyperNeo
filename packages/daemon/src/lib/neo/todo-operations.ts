@@ -182,7 +182,6 @@ export function planNeoTodoDraft<T extends Pick<NeoTodo, 'check' | 'instruction'
 
 export type ResolvedNeoTodoDraft = z.infer<typeof NeoTodoDraftSchema> & {
   workerRemotes?: readonly string[];
-  desktopControlApproved?: true;
 };
 
 export async function resolveNeoTodoDraft(
