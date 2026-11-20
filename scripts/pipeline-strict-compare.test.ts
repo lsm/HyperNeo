@@ -23,6 +23,23 @@ test('compareStrictPipelineSources uses strict verdicts on both sides', () => {
   );
 });
 
+test('strict comparison resolves imports using each side of the comparison', () => {
+  const entry = `
+    import { make } from './factory.ts';
+    import { defineOperation } from './registry.ts';
+    defineOperation({ name: 'demo.read', execute: make() });
+  `;
+  const head = sources(entry);
+  const base = new Map(head).set(
+    'packages/demo/src/factory.ts',
+    `import pipeline from 'superpipe';
+     export function make() { return pipeline({})('demo.read').end(); }`
+  );
+  expect(compareStrictPipelineSources(base, head).regressions).toEqual([
+    { file, name: 'demo.read', before: 'named', after: 'unreadable' },
+  ]);
+});
+
 test('strict comparison CLI reports regressions for two repositories', () => {
   const root = mkdtempSync(join(tmpdir(), 'pipeline-compare-'));
   try {
