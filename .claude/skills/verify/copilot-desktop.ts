@@ -138,12 +138,17 @@ try {
       ];
       appendFileSync(join(home, '.copilot/session-state', copilotSession, 'events.jsonl'),
         ' '.repeat(270_000) + '\n' + events.map((event, i) =>
-          JSON.stringify({ ...event, timestamp: `2026-11-19T15:01:0${i}Z` })).join('\n') + '\n');
+          JSON.stringify({ ...event, timestamp: `2026-11-19T15:00:0${i + 3}Z` })).join('\n') + '\n');
       const resumed = await rpc<Result<{ turns: WorkTurnFact[] }>>('work.turns', {
         ref: session.ref, cursor: next.value.turns[0].cursor,
       });
       assert(resumed.ok, JSON.stringify(resumed));
       assert.deepEqual(resumed.value.turns.map((turn) => turn.id), ['new']);
+      assert.equal(resumed.value.turns[0].endedAt, older.endedAt);
+      const caughtUp = await rpc<Result<{ turns: WorkTurnFact[] }>>('work.turns', {
+        ref: session.ref, cursor: resumed.value.turns[0].cursor,
+      });
+      assert(caughtUp.ok && caughtUp.value.turns.length === 0);
     }
     const refused = await rpc<Result<unknown>>('work.send', { ref: session.ref, message: 'No delivery' });
     assert(!refused.ok && refused.reason === 'unsupported');

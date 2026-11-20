@@ -11,7 +11,8 @@ function readOnce({ statePath, id, query }: CopilotDesktopRead) {
     app.exec('PRAGMA busy_timeout = 2000');
     const rows = app.prepare(`
       WITH candidates AS (
-        SELECT s.id, w.id AS workspaceId, COALESCE(NULLIF(s.title, ''), w.name) AS title,
+        SELECT s.id, w.id AS workspaceId,
+               COALESCE(NULLIF(s.title, ''), NULLIF(w.name, ''), 'Untitled session') AS title,
                p.name AS project, COALESCE(NULLIF(p.main_repo_path, ''), w.source_path, t.path) AS folder,
                COALESCE(t.path, w.source_path, p.main_repo_path) AS directory,
                s.updated_at AS updatedAt, s.is_running AS running,

@@ -1,4 +1,6 @@
+import { createHash } from 'node:crypto';
 import type { SessionEvent } from '@github/copilot-sdk';
+import { z } from 'zod';
 import { readCopilotHistory } from './copilot-history.ts';
 import { projectCopilotEvent } from './copilot-worker.ts';
 import { recentWorkInputs, workInput, TURN_REPLIES } from './work-messages.ts';
@@ -7,6 +9,20 @@ import { reject } from './work-operations.ts';
 import type { WorkInput, WorkDetail, WorkTurnFact, Result } from './types.ts';
 
 type State = Parameters<typeof projectCopilotEvent>[0];
+const TurnPosition = z.object({
+  seq: z.number().int().nonnegative(),
+  consumed: z.number().int().nonnegative(),
+  anchor: z.string().optional(),
+});
+
+function readTurnPosition(cursor: string) {
+  try {
+    const parsed = TurnPosition.safeParse(JSON.parse(cursor));
+    return parsed.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function readCopilotInputs(
   file: string,
@@ -52,6 +68,8 @@ export function readCopilotTurnFacts(
   limit = 10,
   inputs: State['inputs'] = {}
 ): Result<{ turns: WorkTurnFact[] }> {
+  const previous = cursor ? readTurnPosition(cursor) : undefined;
+  if (cursor && !previous) return reject('not_found', 'Invalid Copilot turn cursor.');
   const turns: Omit<WorkTurnFact, 'cursor'>[] = [];
   for (const [inputId, input] of Object.entries(readCopilotInputs(file, id, inputs, () => false))) {
     const { at, endedAt, outcome } = input;
@@ -78,16 +96,24 @@ export function readCopilotTurnFacts(
     });
   }
   turns.sort((a, b) => a.endedAt - b.endedAt || a.id.localeCompare(b.id));
-  let consumed = 0;
-  const indexed = turns.map((turn, index) => {
-    const seq = turn.endedAt;
-    consumed = turns[index - 1]?.endedAt === seq ? consumed + 1 : 0;
-    return { ...turn, cursor: JSON.stringify({ seq, consumed }) };
+  const candidates = turns
+    .filter((turn) => turn.endedAt >= (previous?.seq ?? 0))
+    .map((turn) => ({
+      turn,
+      anchor: createHash('sha256').update(turn.id).digest('base64url'),
+    }));
+  const offset =
+    candidates.findIndex(
+      ({ turn, anchor }) => turn.endedAt === previous?.seq && anchor === previous.anchor
+    ) + 1;
+  let seq = previous?.seq ?? -1;
+  let consumed = previous?.consumed ?? 0;
+  const page = candidates.slice(offset, offset + limit).map(({ turn, anchor }) => {
+    consumed = turn.endedAt === seq ? consumed + 1 : 0;
+    seq = turn.endedAt;
+    return { ...turn, cursor: JSON.stringify({ seq, consumed, anchor }) };
   });
-  const offset = cursor ? indexed.findIndex((turn) => turn.cursor === cursor) + 1 : 0;
-  if (cursor && !offset)
-    return reject('not_found', 'Copilot turn cursor is outside retained history.');
-  return { ok: true, value: { turns: indexed.slice(offset, offset + limit) } };
+  return { ok: true, value: { turns: page } };
 }
 
 export function readCopilotObservations(
