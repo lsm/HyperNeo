@@ -32,7 +32,7 @@ import { NeoHumanQueue, neoHumanQueueHolds } from './NeoHumanQueue.tsx';
 import { NeoWorkSearch } from './NeoWorkSearch.tsx';
 import { useNeoWorkSearch } from './useNeoWorkSearch.ts';
 import { NeoComposer } from './NeoComposer.tsx';
-import { ModelHoldLine } from '../components/ModelHoldLine.tsx';
+import { NeoModelHoldLine } from './NeoModelHoldLine.tsx';
 import { shownModelHold } from '@hyperneo/shared/types/model-hold';
 import { NeoConversation } from './NeoConversation.tsx';
 import { NeoDrawer } from './NeoDrawer.tsx';
@@ -1358,7 +1358,7 @@ export function NeoLive() {
             />
           )}
           {ready && modelHold && (
-            <ModelHoldLine hold={modelHold} class="pointer-events-auto mb-2 text-center" />
+            <NeoModelHoldLine hold={modelHold} class="pointer-events-auto mb-2 text-center" />
           )}
           {ready && neo.sessionId && (
             <NeoComposer

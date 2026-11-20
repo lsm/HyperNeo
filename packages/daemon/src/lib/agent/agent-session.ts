@@ -1391,6 +1391,7 @@ export class AgentSession
       .catch(() => null);
     return {
       status: this.stateManager.getState().status,
+      needsLoginAt: this.loginNeedsLoginAt(),
       held:
         latched ||
         this.authRejected ||
@@ -3382,8 +3383,10 @@ export class AgentSession
 
           if (this.networkPause.isActive()) await this.resumeNetworkPauseFor(messageUuid);
 
-          if (this.isLoginHeld())
+          if (this.isLoginHeld()) {
+            await this.loginRecovery?.hold(this.providerId(), { uuid: messageUuid, content });
             return { outcome: 'blocked', retryAt: Date.now() + LOGIN_HOLD_PARK_MS };
+          }
 
           if (this.loginNeedsLoginAt() !== null) {
             const plan = await this.enterLoginHoldForWaitingMessage(messageUuid);
