@@ -660,6 +660,18 @@ describe('coding actor assignments', () => {
     expect(f.stops).toEqual([{ ref: { adapter: reviewer.adapter, id: 'fresh-1' } }]);
     expect(f.assignments.read('todo', url, head)).toEqual({});
   });
+  test('denied competitors do not release a pending human assignment', async () => {
+    const f = fixture();
+    const input = { human: 'explicit-reviewer', candidates: [] };
+    const results = await Promise.all([f.assign(input), f.assign(input), f.assign(input)]);
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    expect(results.filter((result) => result.reason?.includes('already in progress'))).toHaveLength(
+      2
+    );
+    expect(await f.assign(input)).toMatchObject({ ok: true });
+    expect(f.starts).toHaveLength(0);
+  });
+
   test('simultaneous assignment requests do not duplicate session starts', async () => {
     let release!: () => void, reached!: () => void;
     const waiting = new Promise<void>((done) => {
