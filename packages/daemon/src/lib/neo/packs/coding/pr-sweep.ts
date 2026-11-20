@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { codingRepoWatched } from './watched-repos.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
-import { planNudge } from '../../nudge.ts';
+import { NUDGE_STEPS, planNudge } from '../../nudge.ts';
 import type { WorkRef } from '../../../drivers/types.ts';
 import { Logger } from '../../../logger.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
@@ -13,7 +13,7 @@ import { CodingStageFactsRepository, codingCrossModelFindings } from './stage-fa
 import { readCodingReviewThreads } from './connector-review-thread-reader.ts';
 
 export const CODING_PR_FRESH_MS = 15 * 60_000;
-export const CODING_PR_REMINDERS = 2;
+export const CODING_PR_REMINDERS = NUDGE_STEPS - 1;
 export const CODING_MANUAL_MERGE_NEXT_STEP =
   'Complete all required merge gates, re-read the head, then squash-merge manually with --match-head-commit and the full approved head SHA.';
 
@@ -56,6 +56,9 @@ export const STATE_TEXT: Partial<Record<CodingPrState, string>> = {
   waiting_ci: 'waiting for CI',
   waiting_cross_review: 'waiting for a cross-model review',
 };
+
+export const codingPrStillChased = (state: CodingPrState | null, nudges: number) =>
+  state !== null && !!STATE_TEXT[state] && nudges < NUDGE_STEPS;
 
 const NEXT_STEP: Partial<Record<CodingPrState, string>> = {
   approved_green: CODING_MANUAL_MERGE_NEXT_STEP,
