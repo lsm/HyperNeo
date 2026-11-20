@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { NEO_PACK_COMPUTER_USE_INSTRUCTIONS } from '@hyperneo/prompts';
+import {
+  NEO_PACK_COMPUTER_USE_INSTRUCTIONS,
+  NEO_PACK_COMPUTER_USE_WORKER,
+} from '@hyperneo/prompts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { createComputerUsePack } from '../../../../src/lib/neo/packs/computer-use/pack.ts';
@@ -28,4 +31,9 @@ test('serves the guidance with the current desktop control preference', () => {
     (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
     VALUES ('core', 'global', '', 'desktopControl', 'false', 'human', 1)`).run();
   expect(preference()).toEqual({ desktopControl: false });
+});
+
+test('gives workers the desktop permission wait rule', () => {
+  expect(createComputerUsePack(() => db).workerContext?.()).toBe(NEO_PACK_COMPUTER_USE_WORKER);
+  expect(NEO_PACK_COMPUTER_USE_WORKER).toContain('desktop_permissions_required');
 });

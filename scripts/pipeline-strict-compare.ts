@@ -5,7 +5,7 @@ import { countPipelineRoutes, readRepositorySources } from './system-map.ts';
 
 export function compareStrictPipelineSources(base: Map<string, string>, head: Map<string, string>) {
   const report = (sources: Map<string, string>) =>
-    reportPipelineVerdicts(sources, (input) => countPipelineRoutes(input, true));
+    reportPipelineVerdicts(sources, (input) => countPipelineRoutes(input, true, sources));
   return comparePipelineVerdicts(report(base), report(head));
 }
 
