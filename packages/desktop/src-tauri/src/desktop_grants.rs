@@ -62,9 +62,23 @@ fn allows_wildcard(bundle_id: &str) -> bool {
             | "com.bitwarden.desktop"
             | "org.keepassxc.keepassxc"
             | "com.lastpass.lastpass"
-    ) && !["dev.warp.", "com.1password.", "com.agilebits."]
-        .iter()
-        .any(|prefix| id.starts_with(prefix))
+            | "com.apple.dt.xcode"
+            | "com.microsoft.vscode"
+            | "com.microsoft.vscodeinsiders"
+            | "com.microsoft.vscodeexploration"
+            | "com.visualstudio.code.oss"
+            | "com.todesktop.230313mzl4w4u92"
+    ) && ![
+        "dev.warp.",
+        "com.1password.",
+        "com.agilebits.",
+        "com.jetbrains.",
+        "me.proton.pass",
+        "com.dashlane.",
+        "in.sinew.enpass",
+    ]
+    .iter()
+    .any(|prefix| id.starts_with(prefix))
 }
 
 fn options(account: &str) -> PasswordOptions {
@@ -172,7 +186,7 @@ fn dialog_text(app_name: &str, class: &str, wildcard: bool) -> Option<String> {
         "A HyperNeo worker asked to open this app, see its windows, click, scroll and type in it.\n\nApp: {app_name}\n\nIf you allow it, HyperNeo workers can do these actions in this app without asking again."
     );
     if wildcard {
-        text.push_str("\n\nAllow all apps extends this permission to other apps. Sensitive apps such as Terminal, Keychain Access, System Settings and Passwords still ask separately.");
+        text.push_str("\n\nAllow all apps extends this permission to other apps. Apps on the built-in exception list, including Terminal, VS Code, Keychain Access, System Settings and Passwords, still ask separately.");
     }
     Some(text)
 }

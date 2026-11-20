@@ -877,6 +877,23 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertEqual(guarded, [['Allow Terminal', '\r'], ["Don't Allow", '\x1b']])
         print('dialog_buttons=allow_rightmost_return deny_left_escape')
 
+    def test_terminal_capable_editors_and_password_managers_require_individual_approval(self):
+        for bundle in (
+            'com.microsoft.VSCode',
+            'com.microsoft.VSCodeInsiders',
+            'com.visualstudio.code.oss',
+            'com.todesktop.230313mzl4w4u92',
+            'com.jetbrains.intellij',
+            'com.apple.dt.Xcode',
+            'me.proton.pass.catalyst',
+            'com.dashlane.dashlanephonefinal',
+            'in.sinew.Enpass-Desktop.App',
+        ):
+            with self.subTest(bundle=bundle):
+                buttons = self.call('fixture-dialog-buttons', tool=bundle)['result']['buttons']
+                self.assertEqual(len(buttons), 2)
+                self.assertEqual(buttons[-1], ["Don't Allow", '\x1b'])
+
     def test_owner_yes_grants_the_app(self):
         pid = finder()
         self.call('fixture-revoke', tool='click', arguments={'pid': pid})
