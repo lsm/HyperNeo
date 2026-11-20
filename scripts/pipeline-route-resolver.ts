@@ -145,8 +145,18 @@ export function createLocalPipelineResolver(
     if (built.kind === 'named') return built;
     if (ts.isArrowFunction(expression) || ts.isFunctionExpression(expression)) {
       if (ts.isBlock(expression.body)) {
-        if (expression.body.statements.length !== 1) return unknown;
         const statement = expression.body.statements[0];
+        if (
+          strictCalls &&
+          statement &&
+          ts.isVariableStatement(statement) &&
+          (statement.declarationList.flags & ts.NodeFlags.Const) !== 0 &&
+          statement.declarationList.declarations.length === 1
+        ) {
+          const { name, initializer } = statement.declarationList.declarations[0];
+          return ts.isIdentifier(name) && initializer ? action(initializer, seen) : unknown;
+        }
+        if (expression.body.statements.length !== 1) return unknown;
         return ts.isReturnStatement(statement) && statement.expression
           ? action(statement.expression, seen)
           : unknown;
@@ -154,7 +164,11 @@ export function createLocalPipelineResolver(
       return action(expression.body, seen);
     }
     if (!ts.isIdentifier(expression)) return unknown;
-    const declarations = checker.getSymbolAtLocation(expression)?.declarations;
+    const binding =
+      ts.isShorthandPropertyAssignment(expression.parent) && expression.parent.name === expression
+        ? checker.getShorthandAssignmentValueSymbol(expression.parent)
+        : checker.getSymbolAtLocation(expression);
+    const declarations = binding?.declarations;
     if (declarations?.length !== 1) return unknown;
     const declaration = declarations[0];
     if (
@@ -194,19 +208,36 @@ export function createLocalPipelineResolver(
       const name = properties.find(
         (property) => ts.isPropertyAssignment(property) && property.name.getText(parsed) === 'name'
       );
-      const execute = properties.find(
-        (property) =>
-          ts.isPropertyAssignment(property) && property.name.getText(parsed) === 'execute'
+      const handlers = properties.filter(
+        ({ name }) =>
+          name && (ts.isIdentifier(name) || ts.isStringLiteral(name)) && name.text === 'execute'
       );
+      const [execute] = handlers;
+      const shorthand =
+        strictCalls &&
+        execute &&
+        ts.isShorthandPropertyAssignment(execute) &&
+        !properties.some(
+          (property) =>
+            ts.isSpreadAssignment(property) ||
+            (property.name && ts.isComputedPropertyName(property.name))
+        );
       if (
         name &&
         ts.isPropertyAssignment(name) &&
         ts.isStringLiteral(name.initializer) &&
         execute &&
-        ts.isPropertyAssignment(execute)
+        handlers.length === 1 &&
+        (ts.isPropertyAssignment(execute) || shorthand)
       ) {
+        const handler = ts.isPropertyAssignment(execute)
+          ? execute.initializer
+          : ts.isShorthandPropertyAssignment(execute)
+            ? execute.name
+            : null;
+        if (!handler) return;
         const nameMatches = matches.get(name.initializer.text) ?? [];
-        nameMatches.push(execute.initializer);
+        nameMatches.push(handler);
         matches.set(name.initializer.text, nameMatches);
       }
     }

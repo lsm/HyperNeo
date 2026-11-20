@@ -780,7 +780,11 @@ export function countPipelineRoutes(
         }
       }
       if (!name || executeStart < 0 || executeEnd < 0) {
-        counts.unreadable++;
+        const resolved =
+          strictCalls && name
+            ? (resolveLocal ??= createLocalPipelineResolver(source, file, strictCalls))(name)
+            : null;
+        if (resolved?.kind !== 'named' || resolved.name !== name) counts.unreadable++;
         i = end;
         continue;
       }

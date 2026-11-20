@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   buildSystemMap,
+  countPipelineRoutes,
   formatImpact,
   formatWhere,
   impact,
@@ -311,4 +312,21 @@ test('routes list reports coverage and a real exported runner', () => {
   expect(list.exitCode).toBe(0);
   expect(list.stdout.toString()).toContain('neoFileQuestionText  neo-file-question-text');
   expect(list.stdout.toString()).toMatch(/\d+ describable, \d+ not describable/);
+});
+
+test.each([
+  ['execute', 0],
+  ['execute, ...overrides', 1],
+  ['execute, execute() { return noPipeline(); }', 1],
+  ['execute: async () => { const result = await execute(); return project(result); }', 0],
+  ['execute: async () => { const result = ready && await execute(); return project(result); }', 1],
+])('strict counts the guaranteed executor for %s', (property, unreadable) => {
+  const source = `
+    import superpipe from 'superpipe';
+    import { defineOperation } from './registry';
+    const execute = superpipe({})('demo.read').endAsync();
+    defineOperation({ name: 'demo.read', ${property} });
+  `;
+  const counts = countPipelineRoutes(new Map([['packages/demo/src/operations.ts', source]]), true);
+  expect(counts).toEqual({ missing: 0, misnamed: 0, dynamic: 0, unreadable });
 });
