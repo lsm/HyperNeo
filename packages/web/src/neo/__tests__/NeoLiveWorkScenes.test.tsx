@@ -135,6 +135,27 @@ describe('Work search input and retry', () => {
       [...container.querySelectorAll('[data-ask]')].map((node) => node.getAttribute('data-ask'))
     ).toEqual(['protocol']);
   });
+  it('clears the work search when another tab is chosen', async () => {
+    locale.value = 'en';
+    const protocol = testAskEntry('protocol', 'to do protocol');
+    const { model, container } = mount();
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: { ...model.value.snapshot, todoAsks: [protocol] },
+      };
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Search work', exact: true }));
+    fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'to do' } });
+    await waitFor(() =>
+      expect(container.querySelector('[data-scene-group="search"]')).toBeTruthy()
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Goals' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Inbox' }));
+    expect(screen.queryByRole('searchbox')).toBeNull();
+    expect(container.querySelector('[data-scene-group="search"]')).toBeNull();
+    expect(container.querySelector('[data-ask="protocol"]')).toBeTruthy();
+  });
   it('shows the topic of a result with no loaded card as disabled', async () => {
     locale.value = 'en';
     const remote = testAskEntry('remote', 'remote protocol', { state: 'done' });
@@ -771,9 +792,9 @@ describe('Neo public work scenes', () => {
     set({ needsYou: 4, neoUnhandled: 2 });
     expect(screen.getByRole('button', { name: /^Your work, 4 need/, hidden: true })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Needs your attention · 4' })).toBeTruthy();
-    expect(screen.getByText('Neo has 2 still to handle')).toBeTruthy();
+    expect(screen.getByText('Waiting on Neo to check or unblock: 2')).toBeTruthy();
     set({ needsYou: 4, neoUnhandled: 0 });
-    expect(screen.queryByText(/still to handle/)).toBeNull();
+    expect(screen.queryByText(/Waiting on Neo/)).toBeNull();
   });
 
   it('keeps a blocked ask with no card out of the human list', () => {
@@ -797,7 +818,7 @@ describe('Neo public work scenes', () => {
     });
     expect(screen.queryByRole('region', { name: 'Needs your attention' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Your work', hidden: true })).toBeTruthy();
-    expect(screen.getByText('Neo has 1 still to handle')).toBeTruthy();
+    expect(screen.getByText('Waiting on Neo to check or unblock: 1')).toBeTruthy();
   });
 
   it('shows no pending check banner and only work scene groups in legacy mode', () => {
@@ -1099,7 +1120,7 @@ describe('card reply notice navigation', () => {
     expect(group.querySelector('h2')?.textContent).toBe('Needs your attention · 1');
   });
 
-  it('drops a topic that hides an opened reference', async () => {
+  it.each(['topic', 'tab'] as const)('drops a %s that hides an opened reference', async (hider) => {
     const { model } = mount();
     const trip = testAskEntry('trip', 'Fictional trip', { state: 'doing' });
     trip.ask.topic = 'Travel';
@@ -1151,12 +1172,11 @@ describe('card reply notice navigation', () => {
         },
       };
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Travel 1' }));
+    const hide = hider === 'topic' ? 'Travel 1' : 'Goals';
+    fireEvent.click(screen.getByRole('button', { name: hide }));
     fireEvent.click(screen.getByRole('button', { name: /Quoted tax target/ }));
     await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-todo-tax-step'));
-    expect(screen.getByRole('button', { name: 'Travel 1' }).getAttribute('aria-pressed')).toBe(
-      'false'
-    );
+    expect(screen.getByRole('button', { name: hide }).getAttribute('aria-pressed')).toBe('false');
   });
 
   it.each([
