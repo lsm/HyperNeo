@@ -100,7 +100,7 @@ export function createPipelineBuilderResolver(
     if (
       !fn?.body ||
       fn.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ||
-      fn.parameters.length !== node.arguments.length
+      fn.parameters.length < node.arguments.length
     )
       return undefined;
     const body = fn.body;
@@ -112,10 +112,20 @@ export function createPipelineBuilderResolver(
     const next = new Map<ts.Symbol, Route>();
     const visiting = new Set(seen).add(symbol);
     for (const [i, param] of fn.parameters.entries()) {
-      if (!ts.isIdentifier(param.name) || param.initializer || param.dotDotDotToken)
+      if (!ts.isIdentifier(param.name) || param.dotDotDotToken) return undefined;
+      const fallback = param.initializer;
+      if (
+        fallback &&
+        !ts.isStringLiteral(fallback) &&
+        !ts.isNumericLiteral(fallback) &&
+        fallback.kind !== ts.SyntaxKind.TrueKeyword &&
+        fallback.kind !== ts.SyntaxKind.FalseKeyword
+      )
         return undefined;
+      const argument = node.arguments[i];
+      if (!argument && !fallback && !param.questionToken) return undefined;
       const binding = checker.getSymbolAtLocation(param.name);
-      const route = resolve(node.arguments[i], args, visiting);
+      const route = argument && resolve(argument, args, visiting);
       if (binding && route?.kind === 'builder') next.set(binding, route);
     }
     if (next.size === 0) return undefined;

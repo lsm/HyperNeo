@@ -69,6 +69,18 @@ test.each([
     'unknown',
   ],
   [
+    'literal default',
+    'const finish = (builder, enabled = true) => builder.end();',
+    "finish(superpipe({})('demo.read'))",
+    'named',
+  ],
+  [
+    'default with an effect',
+    'const finish = (builder, enabled = reconfigure()) => builder.end();',
+    "finish(superpipe({})('demo.read'))",
+    'unknown',
+  ],
+  [
     'conditional helper',
     'const finish = (builder) => ready ? builder.end() : other;',
     "finish(superpipe({})('demo.read'))",
