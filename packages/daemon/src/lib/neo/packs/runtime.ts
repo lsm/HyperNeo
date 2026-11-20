@@ -35,6 +35,7 @@ import { createCodingConnectorPrReader } from './coding/connector-pr-reader.ts';
 import { createCodingPrStateReader } from './coding/pr-state-reader.ts';
 import { createLifeAdminPack } from './life-admin/pack.ts';
 import { createDelegationPack } from './delegation/pack.ts';
+import { createComputerUsePack } from './computer-use/pack.ts';
 import { createModelRoutingPack } from './model-routing/pack.ts';
 import { getProviderRegistry } from '../../providers/registry.ts';
 import { createCoreTodoPack } from '../core-todo-checks.ts';
@@ -91,7 +92,8 @@ type NeoServiceArgs =
 
 export function createNeoService(...args: NeoServiceArgs) {
   const [db] = args;
-  const readers = createNeoCodingReaders(() => db.getDatabase());
+  const database = () => db.getDatabase();
+  const readers = createNeoCodingReaders(database);
   const todoPrs = new CodingTodoPrRepository(db.getDatabase());
   const service = new NeoService(
     (core) => {
@@ -169,6 +171,7 @@ export function createNeoService(...args: NeoServiceArgs) {
           coding,
           lifeAdmin,
           delegation,
+          createComputerUsePack(database),
           createModelRoutingPack({
             database: () => db.getDatabase(),
             provider: (id) => getProviderRegistry().get(id),
