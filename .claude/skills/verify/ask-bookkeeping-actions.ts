@@ -56,7 +56,7 @@ for (const phase of ['initial', 'reopen']) {
       ...createNeoTodoOperations(store, sessions, controls, () => packs, () => null),
       createNeoAskReadOperation(store, () => [], admit, project),
       createNeoDoneTodosOperation(store, sessions, () => [], admit, project),
-      createNeoTodoReadOperation(store, admit, project),
+      createNeoTodoReadOperation(store, sessions, admit, project),
     ]);
     const handler = createOperationMcpHandler(registry, () => ({ sessionId: 'neo', role: 'neo' }), (refusal) => gatewayFor(db).run(recordOperationRefusal, { refusal, sessionId: 'neo', at: Date.now() }));
     const call = async (name: string, input: unknown, expected = true) => {
