@@ -782,6 +782,55 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
     }
   });
 
+  test('keeps a worker after its timed-out compaction succeeds and the cache goes cold', async () => {
+    const h = setup();
+    try {
+      h.reuse('long_lived');
+      const todo = h.add(started);
+      await h.finishTodo(todo);
+      const attemptedAt = Date.now();
+      const retryAt = attemptedAt + 5 * 60_000;
+      await h.sessions.write('recordCompactionFailure', todo.id, worker, {
+        count: 1,
+        attemptedAt,
+        retryAt,
+      });
+      h.db
+        .prepare(
+          `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata)
+           VALUES (?, 'Worker', '/synthetic', ?, ?, 'active', '{}', '{}')`
+        )
+        .run(worker.id, attemptedAt, attemptedAt);
+      h.db
+        .prepare(
+          `INSERT INTO sdk_messages
+           (id, session_id, message_type, message_subtype, sdk_message, timestamp, internal_compaction_turn)
+           VALUES (?, ?, 'result', 'success', '{}', ?, 1)`
+        )
+        .run(crypto.randomUUID(), worker.id, new Date(attemptedAt + 76_000).toISOString());
+      await releaseNeoTodoWorkers(
+        h.sessions,
+        h.invoke,
+        () => {},
+        retryAt,
+        undefined,
+        () => ({
+          compact: async () => {
+            throw new Error('Late success must not dispatch another compaction.');
+          },
+          cacheUntil: async () => retryAt - 1,
+        })
+      );
+      expect((await h.sessions.read('workerCompactionFacts', worker))?.compactedAt).toBe(
+        attemptedAt
+      );
+      expect(h.archived).toEqual([]);
+      expect(kept(h)).toEqual([{ kept: 'kept_for_reuse' }]);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('skips busy and unavailable workers without using the compaction attempt budget', async () => {
     const h = setup();
     const ref = { ...worker, id: crypto.randomUUID() };
