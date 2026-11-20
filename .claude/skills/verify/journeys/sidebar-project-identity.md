@@ -1,0 +1,8 @@
+# Group sidebar checkouts by repository
+
+Build the web bundle at the current head, then run
+`.claude/skills/verify/sidebar-project-identity.sh <evidence-dir>`. It owns an isolated
+daemon and browser, uses synthetic workspace history, and stops the daemon on exit.
+Two checkouts of one repository appear in a single row. A third checkout with the
+same basename and a different repository appears separately. The script records
+the visible row count and a screenshot.
