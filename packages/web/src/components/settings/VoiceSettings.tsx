@@ -53,6 +53,7 @@ export function VoiceSettings() {
   const liveRoute = hasLiveRoute(settings);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [hostKeys, setHostKeys] = useState<Record<string, string>>({});
   const pendingSaveRef = useRef<Promise<void>>(Promise.resolve());
   const lastSaveFailedRef = useRef(false);
 
@@ -60,17 +61,23 @@ export function VoiceSettings() {
     setDraft(globalSettings.value?.voice ?? DEFAULT_VOICE);
   }, [settings]);
 
-  const save = async (next: VoiceSettingsConfig, options?: { silent?: boolean }) => {
+  const save = async (
+    next: VoiceSettingsConfig,
+    options?: { silent?: boolean; successMessage?: string }
+  ) => {
     const { hasApiKey: _omitHasApiKey, ...payload } = next;
-    setDraft(next);
+    const { hostKey: _omitHostKey, ...display } = next;
+    setDraft(display);
     if (next.apiKey?.trim()) {
       setDraft((d) => ({ ...d, apiKey: '' }));
     }
     if (!options?.silent) setSaving(true);
     const run = async () => {
       try {
-        await updateGlobalSettings({ voice: payload }, { timeout: 120_000 });
+        const result = await updateGlobalSettings({ voice: payload }, { timeout: 120_000 });
+        if (!result.success) throw new Error('Failed to save voice settings');
         lastSaveFailedRef.current = false;
+        if (options?.successMessage) toast.success(options.successMessage);
       } catch (error) {
         setDraft(globalSettings.value?.voice ?? DEFAULT_VOICE);
         toast.error(error instanceof Error ? error.message : 'Failed to save voice settings');
@@ -100,6 +107,33 @@ export function VoiceSettings() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const hosts = [
+    ...new Set(
+      [
+        draft.recorded?.endpoint ?? draft.endpoint,
+        draft.live?.endpoint ?? draft.streamEndpoint,
+        draft.speech?.endpoint,
+      ].flatMap((endpoint) => {
+        try {
+          const url = new URL(endpoint?.trim() ?? '');
+          return url.protocol === 'https:' || url.protocol === 'wss:' ? [url.host] : [];
+        } catch {
+          return [];
+        }
+      })
+    ),
+  ];
+  const saveHostKey = (host: string, apiKey?: string) => {
+    setHostKeys((keys) => ({ ...keys, [host]: '' }));
+    void save(
+      { ...draft, apiKey: undefined, hostKey: { host, ...(apiKey ? { apiKey } : {}) } },
+      {
+        silent: true,
+        successMessage: apiKey ? `Key saved for ${host}` : `No host-specific key saved for ${host}`,
+      }
+    );
   };
 
   const patchOnBlur = (field: 'endpoint' | 'streamEndpoint' | 'model') => {
@@ -243,63 +277,107 @@ export function VoiceSettings() {
           />
         </SettingsRow>
 
-        <SettingsRow
-          label="API key"
-          description="Optional. Leave blank for local backends that do not require Authorization. A saved key is bound to the batch endpoint it was saved for."
-          layout="stacked"
-        >
-          <div class="space-y-2">
-            <input
-              type="password"
-              value={draft.apiKey ?? ''}
-              disabled={saving}
-              onInput={(event) => setDraft({ ...draft, apiKey: event.currentTarget.value })}
-              onBlur={() => {
-                const apiKey = draft.apiKey?.trim();
-                if (apiKey) void save({ ...draft, apiKey }, { silent: true });
-              }}
-              placeholder="sk-..."
-              class={FORM_CONTROL_CLASS}
-            />
-            {draft.hasApiKey &&
-              !draft.apiKey &&
-              (() => {
-                const hostOf = (url: string) => {
-                  try {
-                    return new URL(url.trim()).host;
-                  } catch {
-                    return url.trim();
-                  }
-                };
-                const keyScopedElsewhere =
-                  draft.apiKeyEndpoint &&
-                  draft.endpoint.trim() &&
-                  hostOf(draft.apiKeyEndpoint) !== hostOf(draft.endpoint);
-                return (
-                  <div class="flex items-center justify-between gap-3">
-                    <div
-                      class={keyScopedElsewhere ? 'text-xs text-warning' : 'text-xs text-success'}
-                    >
-                      {keyScopedElsewhere
-                        ? 'Saved key is scoped to a different host. Re-enter it for this endpoint.'
-                        : 'Key saved. Enter a new key to replace it.'}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void removeKey();
-                      }}
-                      disabled={saving}
-                      class="rounded-md border border-danger/40 px-2 py-1 text-xs text-danger-soft transition-colors hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Remove key
-                    </button>
-                  </div>
-                );
-              })()}
-          </div>
-        </SettingsRow>
+        {hosts.map((host) => (
+          <SettingsRow
+            key={host}
+            label={`API key for ${host}`}
+            layout="stacked"
+            description="Optional. Saved securely for this host."
+          >
+            <div class="space-y-2">
+              <input
+                type="password"
+                aria-label={`API key for ${host}`}
+                value={hostKeys[host] ?? ''}
+                disabled={saving}
+                autoComplete="new-password"
+                class={FORM_CONTROL_CLASS}
+                onInput={(event) => {
+                  const value = event.currentTarget.value;
+                  setHostKeys((keys) => ({ ...keys, [host]: value }));
+                }}
+                onBlur={(event) => {
+                  if (
+                    event.relatedTarget instanceof HTMLElement &&
+                    event.relatedTarget.getAttribute('aria-label') === `Remove API key for ${host}`
+                  )
+                    return;
+                  const key = event.currentTarget.value.trim();
+                  if (key) saveHostKey(host, key);
+                }}
+              />
+              <button
+                type="button"
+                aria-label={`Remove API key for ${host}`}
+                onPointerDown={(event) => event.preventDefault()}
+                disabled={saving}
+                onClick={() => saveHostKey(host)}
+                class="rounded-md border border-danger/40 px-2 py-1 text-xs text-danger-soft transition-colors hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Remove key
+              </button>
+            </div>
+          </SettingsRow>
+        ))}
 
+        {draft.hasApiKey && (
+          <SettingsRow
+            label="Legacy API key"
+            description="Key saved for the batch endpoint using the previous settings. You can replace or remove it here."
+            layout="stacked"
+          >
+            <div class="space-y-2">
+              <input
+                type="password"
+                value={draft.apiKey ?? ''}
+                disabled={saving}
+                onInput={(event) => setDraft({ ...draft, apiKey: event.currentTarget.value })}
+                onBlur={() => {
+                  const apiKey = draft.apiKey?.trim();
+                  if (apiKey) void save({ ...draft, apiKey }, { silent: true });
+                }}
+                placeholder="sk-..."
+                class={FORM_CONTROL_CLASS}
+              />
+              {draft.hasApiKey &&
+                !draft.apiKey &&
+                (() => {
+                  const hostOf = (url: string) => {
+                    try {
+                      return new URL(url.trim()).host;
+                    } catch {
+                      return url.trim();
+                    }
+                  };
+                  const keyScopedElsewhere =
+                    draft.apiKeyEndpoint &&
+                    draft.endpoint.trim() &&
+                    hostOf(draft.apiKeyEndpoint) !== hostOf(draft.endpoint);
+                  return (
+                    <div class="flex items-center justify-between gap-3">
+                      <div
+                        class={keyScopedElsewhere ? 'text-xs text-warning' : 'text-xs text-success'}
+                      >
+                        {keyScopedElsewhere
+                          ? 'Saved key is scoped to a different host. Re-enter it for this endpoint.'
+                          : 'Key saved. Enter a new key to replace it.'}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void removeKey();
+                        }}
+                        disabled={saving}
+                        class="rounded-md border border-danger/40 px-2 py-1 text-xs text-danger-soft transition-colors hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Remove key
+                      </button>
+                    </div>
+                  );
+                })()}
+            </div>
+          </SettingsRow>
+        )}
         <SettingsRow
           label="Allow insecure TLS"
           description="Only enable for trusted self-signed local gateways."

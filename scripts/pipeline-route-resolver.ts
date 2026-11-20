@@ -1,3 +1,4 @@
+import { posix } from 'node:path';
 import ts from 'typescript';
 import { createPipelineBuilderResolver } from './pipeline-builder-factory.ts';
 
@@ -20,8 +21,11 @@ const unknown: LocalPipelineResolution = { kind: 'unknown' };
 export function createLocalPipelineResolver(
   source: string,
   fileName = 'route.ts',
-  strictCalls = false
-): (operationName: string) => LocalPipelineResolution {
+  strictCalls = false,
+  sourceOf?: (file: string) => string | undefined
+): ((operationName: string) => LocalPipelineResolution) & {
+  exportedFactory(name: string, arity: number): LocalPipelineResolution;
+} {
   const unwrap = unwrapPipelineExpression;
   const path = fileName.endsWith('.tsx') ? '/route.tsx' : '/route.ts';
   const options: ts.CompilerOptions = { noLib: true, noResolve: true, noEmit: true };
@@ -73,12 +77,20 @@ export function createLocalPipelineResolver(
     parameters = new Map<ts.Symbol, string>()
   ): LocalPipelineResolution {
     let current = unwrap(expression);
-    if (!ts.isCallExpression(current) || !ts.isPropertyAccessExpression(current.expression))
+    if (
+      !ts.isCallExpression(current) ||
+      !ts.isPropertyAccessExpression(current.expression) ||
+      (strictCalls && (current.flags & ts.NodeFlags.OptionalChain) !== 0)
+    )
       return unknown;
     if (!['end', 'endAsync'].includes(current.expression.name.text)) return unknown;
     current = unwrap(current.expression.expression);
     while (ts.isCallExpression(current) && ts.isPropertyAccessExpression(current.expression)) {
-      if (!['input', 'pipe'].includes(current.expression.name.text)) return unknown;
+      if (
+        !['input', 'pipe'].includes(current.expression.name.text) ||
+        (strictCalls && (current.flags & ts.NodeFlags.OptionalChain) !== 0)
+      )
+        return unknown;
       current = unwrap(current.expression.expression);
     }
     if (!ts.isCallExpression(current) || current.arguments.length !== 1) return unknown;
@@ -199,6 +211,8 @@ export function createLocalPipelineResolver(
     expression = unwrap(expression);
     const direct = pipeline(expression);
     if (direct.kind === 'named') return direct;
+    const imported = importedFactory(expression);
+    if (imported.kind === 'named') return imported;
     const built = localFactory(expression);
     if (built.kind === 'named') return built;
     if (strictCalls) {
@@ -208,17 +222,23 @@ export function createLocalPipelineResolver(
     if (ts.isArrowFunction(expression) || ts.isFunctionExpression(expression)) {
       if (ts.isBlock(expression.body)) {
         const body = expression.body.statements;
-        if (
-          strictCalls &&
-          body.length === 1 &&
-          ts.isTryStatement(body[0]) &&
-          body[0].tryBlock.statements.length === 1
-        ) {
-          const [attempt] = body[0].tryBlock.statements;
+        const statement = body[0];
+        if (strictCalls && body.length === 1 && ts.isTryStatement(statement)) {
+          const [attempt] = statement.tryBlock.statements;
+          const recovery = statement.catchClause?.block.statements;
+          const fallback = recovery?.[0];
+          if (
+            statement.tryBlock.statements.length !== 1 ||
+            statement.finallyBlock?.statements.length ||
+            (fallback &&
+              (recovery?.length !== 1 ||
+                !ts.isThrowStatement(fallback) ||
+                !ts.isIdentifier(unwrap(fallback.expression))))
+          )
+            return unknown;
           if (ts.isReturnStatement(attempt) && attempt.expression)
             return action(attempt.expression, seen);
         }
-        const statement = body[0];
         if (
           strictCalls &&
           statement &&
@@ -269,6 +289,47 @@ export function createLocalPipelineResolver(
   }
 
   const matches = new Map<string, ts.Expression[]>();
+
+  const importedFiles = new Map<string, ReturnType<typeof createLocalPipelineResolver>>();
+  function importedFactory(expression: ts.Expression): LocalPipelineResolution {
+    if (
+      !sourceOf ||
+      !strictCalls ||
+      !ts.isCallExpression(expression) ||
+      (expression.flags & ts.NodeFlags.OptionalChain) !== 0 ||
+      expression.arguments.some(ts.isSpreadElement) ||
+      !ts.isIdentifier(expression.expression)
+    )
+      return unknown;
+    const callee = expression.expression;
+    const declarations = checker.getSymbolAtLocation(callee)?.declarations;
+    const declaration = declarations?.length === 1 ? declarations[0] : undefined;
+    if (!declaration || !ts.isImportSpecifier(declaration) || declaration.isTypeOnly)
+      return unknown;
+    const imported = importDeclaration(callee);
+    if (
+      !imported ||
+      imported.importClause?.isTypeOnly ||
+      !ts.isStringLiteral(imported.moduleSpecifier)
+    )
+      return unknown;
+    const specifier = imported.moduleSpecifier.text;
+    if (!/^\.\.?\/[^\\?#]+\.tsx?$/.test(specifier)) return unknown;
+    const target = posix.normalize(posix.join(posix.dirname(fileName), specifier));
+    if (target.startsWith('../') || target.startsWith('/')) return unknown;
+    let resolver = importedFiles.get(target);
+    if (!resolver) {
+      const text = sourceOf(target);
+      if (text === undefined) return unknown;
+      resolver = createLocalPipelineResolver(text, target, true);
+      importedFiles.set(target, resolver);
+    }
+    return resolver.exportedFactory(
+      (declaration.propertyName ?? declaration.name).text,
+      expression.arguments.length
+    );
+  }
+
   const visit = (node: ts.Node) => {
     if (
       ts.isCallExpression(node) &&
@@ -316,8 +377,53 @@ export function createLocalPipelineResolver(
     ts.forEachChild(node, visit);
   };
   visit(parsed);
-  return (operationName) => {
-    const found = matches.get(operationName);
-    return found?.length === 1 ? callable(found[0], new Set()) : unknown;
-  };
+  function exportedFactory(name: string, arity: number): LocalPipelineResolution {
+    const statements = parsed.statements.filter(
+      (node): node is ts.FunctionDeclaration =>
+        ts.isFunctionDeclaration(node) && node.name?.text === name
+    );
+    if (statements.length !== 1) return unknown;
+    const [decl] = statements;
+    if (
+      !decl.body ||
+      decl.body.statements.length !== 1 ||
+      decl.asteriskToken ||
+      decl.parameters.length !== arity ||
+      !decl.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ||
+      decl.modifiers.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ||
+      decl.parameters.some((p) => !ts.isIdentifier(p.name) || p.initializer || p.dotDotDotToken)
+    )
+      return unknown;
+    const declarationName = decl.name!;
+    const binding = checker.getSymbolAtLocation(declarationName);
+    if (!binding || binding.declarations?.length !== 1) return unknown;
+    function hasOtherUse(node: ts.Node): boolean {
+      if (ts.isCallExpression(node)) {
+        const callee = unwrap(node.expression);
+        if (ts.isIdentifier(callee) && callee.text === 'eval') return true;
+      }
+      if (ts.isIdentifier(node) && node !== declarationName && node.text === name) {
+        const parent = node.parent;
+        const value = ts.isShorthandPropertyAssignment(parent)
+          ? checker.getShorthandAssignmentValueSymbol(parent)
+          : checker.getSymbolAtLocation(node);
+        if (value === binding && !(ts.isCallExpression(parent) && parent.expression === node))
+          return true;
+      }
+      return ts.forEachChild(node, (child) => (hasOtherUse(child) ? true : undefined)) === true;
+    }
+    if (hasOtherUse(parsed)) return unknown;
+    const [statement] = decl.body.statements;
+    return ts.isReturnStatement(statement) && statement.expression
+      ? pipeline(statement.expression)
+      : unknown;
+  }
+
+  return Object.assign(
+    (operationName: string) => {
+      const found = matches.get(operationName);
+      return found?.length === 1 ? callable(found[0], new Set()) : unknown;
+    },
+    { exportedFactory }
+  );
 }

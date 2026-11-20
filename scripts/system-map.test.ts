@@ -339,7 +339,10 @@ test.each([
   ['execute', 0],
   ['execute, ...overrides', 1],
   ['execute, execute() { return noPipeline(); }', 1],
-  ['execute: async () => { try { return await execute(); } catch (e) { return recover(e); } }', 0],
+  ['execute: async () => { try { return await execute(); } catch (e) { throw e; } }', 0],
+  ['execute: async () => { try { return await execute(); } catch (e) { return recover(e); } }', 1],
+  ['execute: async () => { try { return await execute(); } catch (e) { return fallback(); } }', 1],
+  ['execute: async () => { try { return await execute(); } finally { fallback(); } }', 1],
   [
     'execute: async () => { try { return ready && await execute(); } catch (e) { return recover(e); } }',
     1,
@@ -351,6 +354,7 @@ test.each([
     import superpipe from 'superpipe';
     import { defineOperation } from './registry';
     const execute = superpipe({})('demo.read').endAsync();
+    const fallback = superpipe({})('demo.fallback').endAsync();
     defineOperation({ name: 'demo.read', ${property} });
   `;
   const counts = countPipelineRoutes(new Map([['packages/demo/src/operations.ts', source]]), true);

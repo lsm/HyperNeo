@@ -494,7 +494,8 @@ function stringToken(text: string | undefined): string | undefined {
 
 export function countPipelineRoutes(
   sources: Map<string, string>,
-  strictCalls = false
+  strictCalls = false,
+  sourceContext: ReadonlyMap<string, string> = sources
 ): PipelineCounts {
   const counts: PipelineCounts = { missing: 0, misnamed: 0, dynamic: 0, unreadable: 0 };
   for (const [file, source] of sources) {
@@ -831,7 +832,8 @@ export function countPipelineRoutes(
           const resolved = (resolveLocal ??= createLocalPipelineResolver(
             source,
             file,
-            strictCalls
+            strictCalls,
+            (file) => sourceContext.get(file)
           ))(name);
           if (resolved.kind !== 'named' || resolved.name !== name) counts.unreadable++;
         }
