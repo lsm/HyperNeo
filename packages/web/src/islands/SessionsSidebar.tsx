@@ -335,7 +335,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
               ?.folders ?? []
           )
         )
-          throw new Error('Project has chats or workers');
+          throw new Error('Project has active work');
         await forgetSystemProject(removeProjectTarget.path.slice(4));
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Failed to forget project');

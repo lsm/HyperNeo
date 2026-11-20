@@ -191,6 +191,9 @@ try {
   await page.waitForTimeout(1500);
   assert(await hidden.isDisabled(), 'a hidden live worker must refuse removal');
   assert.equal(await hidden.getAttribute('title'), 'Project has active work');
+  await page.getByTestId('project-group-header').filter({hasText:'hidden-worker'}).hover();
+  await page.getByRole('tooltip').filter({hasText:'Project has active work'}).waitFor({state:'visible', timeout:3000});
+  await page.screenshot({path:`${run}/evidence/sidebar-${scheme}-active-work.png`, animations:'disabled'});
   console.log('Project with hidden live worker refused removal');
   const direct = await page.evaluate(async () => {
     const socket = new WebSocket(`${location.origin.replace('http', 'ws')}/ws`);
@@ -263,8 +266,10 @@ try {
   assert.equal(await archived.count(), 0);
   assert(existsSync(`${run}/projects/alpha/retained.txt`));
   await page.getByText('Retained chat').waitFor();
-  const remainingSessions = await callRpc('session.list', {includeArchived:true, includeSpaceSessions:true});
-  assert(remainingSessions.sessions.some(({id, status}) => id === 'ended-worker' && status === 'ended'));
+  const { session: finished } = await callRpc('session.get', {sessionId:'ended-worker'});
+  assert.equal(finished.status, 'ended');
+  assert.equal(finished.context?.spaceId, 'space:sidebar-fixture');
+  await page.screenshot({path:`${run}/evidence/sidebar-${scheme}-after.png`, animations:'disabled'});
   console.log('Forgotten project stayed gone; the finished worker, file and unrelated chat remain');
 } finally {
   await browser.close();

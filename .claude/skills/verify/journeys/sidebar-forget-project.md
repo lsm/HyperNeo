@@ -11,7 +11,8 @@ The desktop screenshots show the remove control, confirmation, disabled reason a
 Set `VERIFY_COLOR_SCHEME` to `light` or `dark` to capture both appearances. The browser
 checks that the protected Inbox and projects with a chat, active hidden worker, or uncheckable
 remote work refuse removal. The tooltip distinguishes visible chats from active work.
-A finished hidden worker in an otherwise empty project allows removal and its record stays ended.
+A finished Space worker in an otherwise empty project allows removal. After reload,
+the project stays gone and a direct session read confirms that the worker stays ended.
 A simulated offline peer cannot block a local folder check. A two-folder history project disappears without deleting
 files; a stale folder reports failure and leaves the other membership intact.
 A project without folders or other workspace aliases can be forgotten. An unrelated
