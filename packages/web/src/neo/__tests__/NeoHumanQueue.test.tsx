@@ -631,7 +631,7 @@ describe('NeoHumanQueue', () => {
     expect(view.queryByRole('alert')).toBeNull();
   });
 
-  it('opens the full ask from its group header and goes back to the queue', () => {
+  it('shows the full ask in place of its queued cards, titled once', () => {
     const view = render(
       <NeoHumanQueue
         queue={queue}
@@ -642,16 +642,10 @@ describe('NeoHumanQueue', () => {
       />
     );
     const trip = within(view.getByRole('region', { name: 'Plan the trip' }));
-    const open = trip.getByRole('button', { name: 'Open the ask' });
-    expect(open.getAttribute('aria-expanded')).toBe('false');
-    fireEvent.click(open);
-    expect(open.getAttribute('aria-expanded')).toBe('true');
     expect(trip.getByText('Full ask Plan the trip')).toBeTruthy();
     expect(trip.queryByText('Book hotel')).toBeNull();
-    expect(view.queryByText('Full ask File taxes')).toBeNull();
-    fireEvent.click(open);
-    expect(trip.queryByText('Full ask Plan the trip')).toBeNull();
-    expect(trip.getByText('Book hotel')).toBeTruthy();
+    expect(trip.queryByRole('heading', { name: 'Plan the trip' })).toBeNull();
+    expect(view.getByText('Full ask File taxes')).toBeTruthy();
   });
 
   it('leaves the full ask to the scene card a reference already shows', () => {
@@ -663,15 +657,9 @@ describe('NeoHumanQueue', () => {
       renderAsk: (entry: NeoAskEntry) => <p>Full ask {entry.ask.title}</p>,
     };
     const view = render(<NeoHumanQueue {...props} />);
-    fireEvent.click(
-      within(view.getByRole('region', { name: 'Plan the trip' })).getByRole('button', {
-        name: 'Open the ask',
-      })
-    );
     expect(view.getByText('Full ask Plan the trip')).toBeTruthy();
     view.rerender(<NeoHumanQueue {...props} focus={{ askId: 'trip', todoId: 'unqueued-step' }} />);
     const trip = within(view.getByRole('region', { name: 'Plan the trip' }));
-    expect(trip.queryByRole('button', { name: 'Open the ask' })).toBeNull();
     expect(view.queryByText('Full ask Plan the trip')).toBeNull();
     expect(trip.getByText('Book hotel')).toBeTruthy();
   });
@@ -699,15 +687,14 @@ describe('NeoHumanQueue', () => {
         renderAsk={(shown) => <p>{shown.summary ? 'Summary ask' : 'Validated ask'}</p>}
       />
     );
-    expect(view.queryByRole('button', { name: 'Open the ask' })).toBeNull();
+    expect(view.queryByText('Summary ask')).toBeNull();
     settle.reject(new Error('offline'));
     expect(await view.findByText('Couldn’t load the full card.')).toBeTruthy();
-    expect(view.queryByRole('button', { name: 'Open the ask' })).toBeNull();
+    expect(view.queryByText('Summary ask')).toBeNull();
     fireEvent.click(view.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(onLoadDetails).toHaveBeenCalledTimes(2));
     settle.resolve(detailed);
-    fireEvent.click(await view.findByRole('button', { name: 'Open the ask' }));
-    expect(view.getByText('Validated ask')).toBeTruthy();
+    expect(await view.findByText('Validated ask')).toBeTruthy();
     expect(view.queryByText('Summary ask')).toBeNull();
   });
 
@@ -750,7 +737,7 @@ describe('NeoHumanQueue', () => {
       const view = render(<NeoHumanQueue {...props} entries={[at(1, true)]} />);
       await waitFor(() => expect(reads).toHaveLength(1));
       reads[0].resolve(at(1, false));
-      fireEvent.click(await view.findByRole('button', { name: 'Open the ask' }));
+      await view.findByRole('checkbox', { name: 'iPad' });
       const pick = () => view.getByRole('checkbox', { name: 'iPad' }) as HTMLInputElement;
       const confirm = () => view.getByRole('button', { name: 'Confirm' }) as HTMLButtonElement;
       const desktop = () => {
@@ -822,25 +809,23 @@ describe('NeoHumanQueue', () => {
   });
 
   it('keeps cards in the queue order across asks, in runs labelled by ask', () => {
-    const view = render(
-      <NeoHumanQueue
-        queue={{
-          items: [
-            { state: 'waiting', askId: 'trip', questionId: 'q1', text: 'A new', todos: [] },
-            { state: 'waiting', askId: 'tax', questionId: 'q3', text: 'B middle', todos: [] },
-            { state: 'waiting', askId: 'trip', questionId: 'q2', text: 'A old', todos: [] },
-          ],
-          counts: {
-            trip: { waiting: 2, held: 0, progress: 0 },
-            tax: { waiting: 1, held: 0, progress: 0 },
-          },
-        }}
-        entries={entries}
-        onHold={vi.fn()}
-        onAnswer={vi.fn()}
-        renderAsk={(shown) => <p>Full ask {shown.ask.title}</p>}
-      />
-    );
+    const props = {
+      queue: {
+        items: [
+          { state: 'waiting', askId: 'trip', questionId: 'q1', text: 'A new', todos: [] },
+          { state: 'waiting', askId: 'tax', questionId: 'q3', text: 'B middle', todos: [] },
+          { state: 'waiting', askId: 'trip', questionId: 'q2', text: 'A old', todos: [] },
+        ],
+        counts: {
+          trip: { waiting: 2, held: 0, progress: 0 },
+          tax: { waiting: 1, held: 0, progress: 0 },
+        },
+      } as Queue,
+      entries,
+      onHold: vi.fn(),
+      onAnswer: vi.fn(),
+    };
+    const view = render(<NeoHumanQueue {...props} />);
     const runs = [...view.container.querySelectorAll('[data-queue-ask]')];
     expect(runs.map((run) => run.getAttribute('aria-label'))).toEqual([
       'Plan the trip',
@@ -853,11 +838,15 @@ describe('NeoHumanQueue', () => {
       )
     ).toEqual(['q1', 'q3', 'q2']);
     expect(view.container.querySelectorAll('[id="neo-ref-ask-trip"]')).toHaveLength(1);
-    expect(view.getAllByRole('button', { name: 'Open the ask' })).toHaveLength(2);
-    fireEvent.click(within(runs[0] as HTMLElement).getByRole('button', { name: 'Open the ask' }));
+    view.rerender(
+      <NeoHumanQueue {...props} renderAsk={(shown) => <p>Full ask {shown.ask.title}</p>} />
+    );
+    expect(
+      [...view.container.querySelectorAll('[data-queue-ask]')].map((run) =>
+        run.getAttribute('aria-label')
+      )
+    ).toEqual(['Plan the trip', 'File taxes']);
     expect(view.getAllByText('Full ask Plan the trip')).toHaveLength(1);
-    expect(view.container.querySelector('[data-queue-card="q2"]')).toBeNull();
-    expect(view.container.querySelector('[data-queue-card="q3"]')).toBeTruthy();
   });
 
   it('keeps the open full ask and its unsent choice when its leading card changes', async () => {
@@ -902,8 +891,7 @@ describe('NeoHumanQueue', () => {
     );
     await waitFor(() => expect(reads).toHaveLength(1));
     reads[0](at(1, false, [choice]));
-    fireEvent.click(await view.findByRole('button', { name: 'Open the ask' }));
-    const pick = view.getByRole('checkbox', { name: 'iPad' }) as HTMLInputElement;
+    const pick = (await view.findByRole('checkbox', { name: 'iPad' })) as HTMLInputElement;
     fireEvent.click(pick);
     view.rerender(
       <NeoHumanQueue
@@ -934,11 +922,6 @@ describe('NeoHumanQueue', () => {
     );
     expect(view.getByRole('checkbox', { name: 'iPad' })).toBe(pick);
     expect(pick.checked).toBe(true);
-  });
-
-  it('has no header button when the full ask cannot be shown', () => {
-    const { view } = show();
-    expect(view.queryByRole('button', { name: 'Open the ask' })).toBeNull();
   });
 
   it('names a group by its queued card until the ask title is known', () => {

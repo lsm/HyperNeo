@@ -47,26 +47,26 @@ try {
   assert.deepEqual((await regions()).sort(), ['Synthetic tax filing', 'Synthetic trip plan']);
   assert.equal(await page.locator('[data-scene-group="attention"], [data-scene-group="running"]').count(), 0, 'the queue is the only list of open work');
   await queue.getByText('Book the hotel by the station for three nights?').waitFor();
-  await queue.locator('[data-queue-card="tax-card"]').getByRole('button', { name: 'Agree' }).waitFor({ timeout: 10000 });
+  await queue.locator('[data-ask-question="tax-card"]').getByRole('button', { name: 'Agree' }).waitFor({ timeout: 10000 });
   await queue.getByText('Book the hotel', { exact: true }).waitFor();
   for (const scheme of ['light', 'dark']) {
     await page.emulateMedia({ colorScheme: scheme });
     await page.screenshot({ path: join(evidence, `queue-1280-${scheme}.png`) });
   }
   await page.emulateMedia({ colorScheme: 'light' });
-  const hotel = queue.locator('[data-queue-card="hotel-card"]');
+  const hotel = queue.locator('[data-ask-question="hotel-card"]');
   await hotel.getByRole('button', { name: 'Hold' }).click();
   await states.getByRole('button', { name: 'Held 2' }).waitFor({ timeout: 10000 });
   await states.getByRole('button', { name: 'Held 2' }).click();
-  await queue.getByText('The whole ask').waitFor();
+  await queue.locator('article[data-ask]').first().waitFor();
   await queue.getByText('Keep the trip to one week?').waitFor();
   await queue.getByText('On hold').nth(1).waitFor({ timeout: 10000 });
-  await queue.locator('[data-queue-card="trip-card"] [data-ask-question]').getByText('Keep the trip to one week?').waitFor();
+  await queue.locator('[data-ask-question="trip-card"]').getByText('Keep the trip to one week?').waitFor();
   assert.equal(await queue.getByText('On hold').count(), 2, 'held cards say they are held');
-  result.heldAfterHold = await queue.locator('[data-queue-card]').evaluateAll((all) => all.map((node) => node.getAttribute('data-queue-card')).sort());
+  result.heldAfterHold = await queue.locator('[data-ask-question]').evaluateAll((all) => all.map((node) => node.getAttribute('data-ask-question')).sort());
   assert.deepEqual(result.heldAfterHold, ['hotel-card', 'trip-card']);
   await page.screenshot({ path: join(evidence, 'queue-1280-held.png') });
-  await queue.locator('[data-queue-card="hotel-card"]').getByRole('button', { name: 'Take back' }).click();
+  await queue.locator('[data-ask-question="hotel-card"]').getByRole('button', { name: 'Take back' }).click();
   await states.getByRole('button', { name: 'Held 1' }).waitFor({ timeout: 10000 });
   await page.reload();
   await queue.waitFor();

@@ -629,7 +629,7 @@ describe('Neo public work scenes', () => {
     todos: [],
   });
 
-  it('keeps the queue in its newest-card order across asks, with one copy of each card', () => {
+  it('lists each ask once per state as its full card, in its newest-card order', () => {
     const { container, model } = mount(true, true);
     const a = testAskEntry('ask-a', 'Ask A', {
       state: 'waiting',
@@ -688,7 +688,11 @@ describe('Neo public work scenes', () => {
         )
       );
     }
-    expect(seen).toEqual(['a100', 'b80', 'a10', 'a-held', 'a-step', 'run-step']);
+    expect(seen).toEqual([
+      ...['a100', 'a10', 'a-held', 'a-step', 'b80'],
+      ...['a100', 'a10', 'a-held', 'a-step'],
+      ...['a100', 'a10', 'a-held', 'a-step', 'run-step'],
+    ]);
   });
 
   it('shows the full document of a queued card once its ask is read', async () => {
@@ -1156,14 +1160,13 @@ describe('card reply notice navigation', () => {
   });
 
   it.each([
-    [null, false, false],
-    ['Money', false, false],
-    [null, true, false],
-    ['Money', false, true],
-    ['Travel', false, true],
+    [null, false],
+    ['Money', false],
+    ['Money', true],
+    ['Travel', true],
   ])(
-    'opens a child todo quote on its own full todo, topic %s, parent opened %s, searching %s',
-    async (topic, parentOpened, searching) => {
+    'opens a child todo quote on its own full todo, topic %s, searching %s',
+    async (topic, searching) => {
       const { model } = mount();
       const card = {
         id: 'qp',
@@ -1246,12 +1249,6 @@ describe('card reply notice navigation', () => {
         };
       });
       if (topic) fireEvent.click(screen.getByRole('button', { name: `${topic} 1` }));
-      if (parentOpened)
-        fireEvent.click(
-          within(screen.getByRole('region', { name: 'Fictional trip' })).getByRole('button', {
-            name: 'Open the ask',
-          })
-        );
       if (topic !== 'Travel') {
         const child = document.querySelector('article[data-ask="hotel-ask"]') as HTMLElement;
         expect(
@@ -1439,8 +1436,6 @@ describe('card reply notice navigation', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'In progress 1' }));
     const queue = screen.getByRole('region', { name: 'Fictional trip' });
-    expect(within(queue).queryByRole('button', { name: 'Ask actions' })).toBeNull();
-    fireEvent.click(within(queue).getByRole('button', { name: 'Open the ask' }));
     expect(within(queue).getByRole('button', { name: 'Ask actions' })).toBeTruthy();
     expect(
       within(queue).getByRole('button', { name: 'Step actions: Fictional hotel' })

@@ -9,7 +9,7 @@ const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}) });
 const out = `${run}/evidence/${phase}`;
 mkdirSync(out, { recursive: true });
-const expectedCards = ['waiting-old-question', 'waiting-b-report', 'waiting-a-question', 'waiting-b-question', 'waiting-old-early', 'waiting-a-held'];
+const expectedCards = ['waiting-old-question', 'waiting-old-early', 'waiting-b-report', 'waiting-b-question', 'waiting-a-question', 'waiting-a-held', 'waiting-a-question', 'waiting-a-held'];
 const expectedGroups = { waiting: ['waiting-a', 'waiting-b', 'waiting-old'], progress: ['blocked', 'queued', 'running'], cards: ['done'] };
 const observations = [];
 const daemonQueue = () => {
@@ -115,8 +115,10 @@ try {
       if (phase === 'after') {
         assert.deepEqual(reloaded, initial, 'unrelated status update and reload keep the same order');
         for (const key of ['waiting', 'progress', 'cards']) assert.deepEqual([...new Set(initial[key])].sort(), expectedGroups[key], key);
-        assert.deepEqual(cards, expectedCards, 'unanswered cards newest first across asks, held cards after');
-        assert.deepEqual({ cards: reloaded.queueCards, progressTodos: reloaded.progressTodos }, daemonQueue(), 'cards and work render in the daemon queue order');
+        assert.deepEqual(cards, expectedCards, 'each ask shows once as its full card, asks ordered by their newest card; Held shows the held ask in full');
+        const daemon = daemonQueue();
+        assert.deepEqual([...new Set(reloaded.queueCards)].sort(), [...new Set(daemon.cards)].sort(), 'every queued card renders inside its full ask');
+        assert.deepEqual(reloaded.progressTodos, daemon.progressTodos, 'work renders in the daemon queue order');
         assert(tail, 'the promoted long report opens in full');
       }
       else assert.notDeepEqual(cards, expectedCards, 'reproduce cards grouped by ask instead of by card time');

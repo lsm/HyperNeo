@@ -230,7 +230,6 @@ export const zhHans: Record<keyof typeof en, string> = {
   'queue.loadFailed': '没能载入完整卡片。',
   'queue.stepFailed': '没能加载这一步。',
   'queue.refreshFailed': '没能刷新列表。',
-  'queue.openAsk': '打开整件事',
   'queue.takeBack': '拿回来',
   'queue.onHold': '已放着',
   'queue.owner.human': '该你做',
