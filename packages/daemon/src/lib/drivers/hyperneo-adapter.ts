@@ -5,7 +5,6 @@ import { releaseWorkerSandbox, workerSandboxOn } from './worker-sandbox.ts';
 import { WorktreeManager } from '../worktree-manager.ts';
 import { gitWorktreeProject } from './worktree-project.ts';
 import { getWorktreeBaseDir } from '../worktree-path-utils.ts';
-import { THINKING_OPTIONS } from '@hyperneo/shared';
 import { sdkMessageBodyAt } from '../../storage/repositories/sdk-message-body-read.ts';
 import { workStartPreparation, type WorkExecutionPreparer } from './start-preparation.ts';
 import { workExecutionLocation } from './execution-location.ts';
@@ -22,7 +21,7 @@ import { ModelUnavailableError } from '../session/session-lifecycle.ts';
 import { matchChatsBy } from './match-chats.ts';
 import { withChatEvidence } from './places.ts';
 import { selectLocalStartFolder } from './start-folder.ts';
-import { workStartConfiguration } from './start-configuration.ts';
+import { resolveHyperneoThinking, workStartConfiguration } from './start-configuration.ts';
 import type {
   FindQuery,
   PlaceGroup,
@@ -680,12 +679,7 @@ async function requireHyperneoStartConfiguration(
   request: StartRequest,
   deps: HyperneoAdapterDeps
 ): Promise<Gate<HyperneoStartRequest>> {
-  const effort =
-    request.effort === undefined ? undefined : workStartConfiguration.normalize(request.effort);
-  const thinking =
-    effort === undefined
-      ? undefined
-      : THINKING_OPTIONS.find((entry) => [entry.value, entry.label.toLowerCase()].includes(effort));
+  const thinking = resolveHyperneoThinking(request.effort);
   if (request.effort !== undefined && !thinking)
     return { reason: reject('unsupported_effort', `Unknown HyperNeo effort ${request.effort}.`) };
   const configured = { ...request, ...(thinking ? { effort: thinking.label.toLowerCase() } : {}) };
