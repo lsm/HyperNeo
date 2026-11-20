@@ -64,33 +64,29 @@ function collectMembers(
   };
 }
 
-export const readTaskMembers = (superpipe({})('task.member.list') as PipelineAPI)
-  .input(['deps', 'taskId', 'caller'])
-  .pipe(
-    (deps: ListTaskMembersDependencies, taskId: string, caller: OperationCaller) =>
-      deps.admitTask(taskId, caller) ? { value: taskId } : { reason: null },
-    ['deps', 'taskId', 'caller'],
-    'result:roster'
-  )
-  .pipe(
-    (deps: ListTaskMembersDependencies, taskId: string) =>
-      locateTask(deps.taskRepo, deps.readCoreTask, taskId),
-    ['deps', 'roster'],
-    'result:roster'
-  )
-  .pipe(
-    (deps: ListTaskMembersDependencies, located: LocatedTask) =>
-      collectMembers(deps.nodeExecutionRepo, located),
-    ['deps', 'roster'],
-    'roster'
-  )
-  .end('roster') as (
-  deps: ListTaskMembersDependencies,
+export function admitTaskMember(
   taskId: string,
-  caller: OperationCaller
-) => TaskRoster | null;
+  allowed: boolean
+): { value: string } | { reason: null } {
+  return allowed ? { value: taskId } : { reason: null };
+}
 
 export function createListTaskMembersOperation(deps: ListTaskMembersDependencies) {
+  const readTaskMembers = (
+    superpipe({
+      admitTask: deps.admitTask.bind(deps),
+      taskRepo: deps.taskRepo,
+      readCoreTask: deps.readCoreTask,
+      nodeExecutionRepo: deps.nodeExecutionRepo,
+    })('task.member.list') as PipelineAPI
+  )
+    .input(['taskId', 'caller'])
+    .pipe('admitTask', ['taskId', 'caller'], 'allowed')
+    .pipe(admitTaskMember, ['taskId', 'allowed'], 'result:roster')
+    .pipe(locateTask, ['taskRepo', 'readCoreTask', 'roster'], 'result:roster')
+    .pipe(collectMembers, ['nodeExecutionRepo', 'roster'], 'roster')
+    .end('roster') as (taskId: string, caller: OperationCaller) => TaskRoster | null;
+
   return defineOperation({
     name: 'task.member.list',
     description:
@@ -103,6 +99,6 @@ export function createListTaskMembersOperation(deps: ListTaskMembersDependencies
         members: z.array(NodeExecutionSchema),
       })
       .nullable(),
-    execute: async (input, caller) => readTaskMembers(deps, input.taskId, caller),
+    execute: async (input, caller) => readTaskMembers(input.taskId, caller),
   });
 }
