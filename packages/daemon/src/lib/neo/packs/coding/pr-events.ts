@@ -1,6 +1,9 @@
 import { readCodingUnownedClaims } from './unowned-claims-worker.ts';
 import { codingPrEventReads } from './pr-event-routing-db.ts';
 import { codingRepoWatched } from './watched-repos.ts';
+import { codingReviewAfter } from './stage-preferences.ts';
+import { type CodingAttend, codingPrHeadEvent } from './attention.ts';
+import type { NeoAttentionEvent } from '../../attention/decide.ts';
 import type { WorkRef } from '../../../drivers/types.ts';
 import { Logger } from '../../../logger.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
@@ -170,6 +173,7 @@ export class CodingPrEventRepository {
       .get(row.repo, row.number) as { owner: string | null } | null;
     return {
       mergeBy: new CodingPrLedgerRepository(this.db).policy(row.repo).mergeBy,
+      reviewAfter: codingReviewAfter(this.db, row.repo),
       owner:
         codingRepoWatched(this.db, row.repo) && found?.owner
           ? (JSON.parse(found.owner) as WorkRef)
@@ -178,15 +182,37 @@ export class CodingPrEventRepository {
   }
 }
 
+export function codingReviewAfterApprovalEvent(
+  row: Pick<CodingPrTransition, 'repo' | 'number' | 'title' | 'head'>,
+  url: string
+): NeoAttentionEvent {
+  return codingPrHeadEvent(
+    'coding.review_after_approval',
+    { url, head: row.head },
+    0,
+    `${row.repo}#${row.number} "${row.title}" was approved on head ${row.head.slice(0, 7)}. This repository's coding preference review.after is "approved": add a todo that reviews ${url} at exactly ${row.head}, with named.workKind "coding.review" and target start so the daemon picks the reviewer line from the coding.review routes. It is done when the posted review link exists. Whether the review holds the merge stays with crossModelReview.`
+  );
+}
+
 export async function deliverCodingPrEvents(
   repo: CodingPrEventRepository,
   transitions: readonly CodingPrTransition[],
-  deps: CodingSweepDeps
+  deps: CodingSweepDeps,
+  attend?: CodingAttend
 ): Promise<void> {
   return repo.exclusive(async () => {
     for (const row of transitions) {
       const event = planCodingPrEvent(row);
-      if (event && !(await repo.routeLater(row)).owner)
+      const route = await repo.routeLater(row);
+      if (row.state === 'approved_green' && route.reviewAfter === 'approved' && attend) {
+        const woken = await attend(
+          codingReviewAfterApprovalEvent(row, codingPrUrl(deps.host, row))
+        ).catch(() => false);
+        log.warn(
+          `Review after approval for ${row.repo}#${row.number}@${row.head.slice(0, 7)}: ${woken ? 'woken' : 'not woken'}`
+        );
+      }
+      if (event && !route.owner)
         log.warn(`PR event ${event.key} skipped: ${row.repo}#${row.number} has no owner`);
     }
     for (const row of await repo.pendingEventsLater()) {

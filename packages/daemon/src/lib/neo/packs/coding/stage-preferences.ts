@@ -56,26 +56,56 @@ export const CODING_STAGE_PREFERENCES: Record<string, NeoPackPreferenceDeclarati
     )
   );
 
+export const CODING_REVIEW_AFTER_PREFERENCE: NeoPackPreferenceDeclaration = {
+  label: { en: 'Review: start automatically', 'zh-Hans': '审查：自动开始' },
+  valueLabels: {
+    never: { en: 'Never', 'zh-Hans': '不自动' },
+    approved: { en: 'After review bot approval', 'zh-Hans': '审查机器人批准后' },
+  },
+  valueDescriptions: {
+    never: { en: 'Neo starts a review only when asked.', 'zh-Hans': '只有被要求时 Neo 才开审查。' },
+    approved: {
+      en: 'When the review bot approves a head, Neo is told to start a coding.review worker for it.',
+      'zh-Hans': '审查机器人批准某个提交后，提醒 Neo 开一个审查工作者。',
+    },
+  },
+  scope: 'repo',
+  type: { kind: 'enum', values: ['never', 'approved'] },
+  default: 'never',
+  question: {
+    en: 'When should a review start automatically?',
+    'zh-Hans': '什么时候自动开始审查？',
+  },
+  ask: 'Start a review automatically after the review bot approves a head? The reviewer line follows the coding.review routes; whether it holds the merge stays with crossModelReview.',
+};
+
+function codingRepoPreference(db: Database, repo: string, key: string): string {
+  const scope = db
+    .prepare(
+      "SELECT scope_key FROM neo_pack_preferences WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?"
+    )
+    .get(repo, key) as { scope_key: string } | undefined;
+  const value = getNeoPackPreference(
+    db,
+    'coding',
+    { kind: 'repo', key: scope?.scope_key ?? repo },
+    key
+  )?.value;
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+export const codingReviewAfter = (db: Database, repo: string) =>
+  codingRepoPreference(db, repo, 'review.after') || 'never';
+
 export function codingStagePreference(
   db: Database,
   input: Pick<Plan, 'repo' | 'stage'>
 ): Preference {
   return Object.fromEntries(
-    (['harness', 'model', 'effort'] as const).map((field) => {
-      const key = `${input.stage}.${field}`;
-      const scope = db
-        .prepare(
-          "SELECT scope_key FROM neo_pack_preferences WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?"
-        )
-        .get(input.repo, key) as { scope_key: string } | undefined;
-      const value = getNeoPackPreference(
-        db,
-        'coding',
-        { kind: 'repo', key: scope?.scope_key ?? input.repo },
-        key
-      )?.value;
-      return [field, typeof value === 'string' ? value.trim() : ''];
-    })
+    (['harness', 'model', 'effort'] as const).map((field) => [
+      field,
+      codingRepoPreference(db, input.repo, `${input.stage}.${field}`),
+    ])
   );
 }
 
