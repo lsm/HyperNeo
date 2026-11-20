@@ -309,7 +309,8 @@ describe('login hold', () => {
       });
       expect(reset).not.toHaveBeenCalled();
       expect(refresh).not.toHaveBeenCalled();
-      expect(h.agent.getProcessingState()).toMatchObject({
+      expect(h.agent.getProcessingState()).toMatchObject({ reason: 'login' });
+      expect(JSON.parse((await h.persisted()) ?? '{}')).toMatchObject({
         reason: 'login',
         heldPrompt: { uuid: 'human-login', content: 'do the thing' },
       });

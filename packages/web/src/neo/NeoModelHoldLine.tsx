@@ -13,9 +13,13 @@ export function NeoModelHoldLine({ hold, class: className }: { hold: ModelHold; 
     setPending(true);
     setError(null);
     try {
-      const response = await loginProvider('anthropic');
+      const response = await loginProvider(hold.provider);
       if (!response.success) throw new Error(response.error || 'Failed to start login');
-      setFlow({ ...response, providerId: 'anthropic', providerName: 'Claude' });
+      setFlow({
+        ...response,
+        providerId: hold.provider,
+        providerName: hold.provider === 'anthropic' ? 'Claude' : hold.provider,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
     } finally {
@@ -43,7 +47,11 @@ export function NeoModelHoldLine({ hold, class: className }: { hold: ModelHold; 
           verificationUri={flow.verificationUri}
           onCancel={() => setFlow(null)}
           onComplete={() => setFlow(null)}
-          onSubmitCallback={(input) => submitProviderCallback(flow.providerId, input)}
+          onSubmitCallback={
+            flow.providerId === 'anthropic'
+              ? (input) => submitProviderCallback(flow.providerId, input)
+              : undefined
+          }
         />
       )}
     </>
