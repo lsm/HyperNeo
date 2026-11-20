@@ -121,28 +121,26 @@ describe('Neo floating controls', () => {
   it('opens the settings drawer with connection controls and no project management', () => {
     const { open } = renderLive();
     expect(within(banner()).queryByRole('button', { name: 'Projects' })).toBeNull();
-    const logo = within(banner()).getByRole('button', { name: '设置和连接' });
+    const logo = within(banner()).getByRole('button', { name: '设置' });
     fireEvent.click(logo);
-    const drawer = screen.getByRole('dialog', { name: 'Settings and connection' });
-    expect(within(drawer).getByText('Connected')).toBeTruthy();
+    const drawer = screen.getByRole('dialog', { name: '设置' });
+    expect(within(drawer).getByText('已连接')).toBeTruthy();
     expect(within(drawer).queryByText('Projects')).toBeNull();
     expect(within(drawer).getByRole('combobox', { name: '主题' })).toBeTruthy();
     expect(within(drawer).queryByRole('combobox', { name: /Move under/ })).toBeNull();
-    expect(within(drawer).getByRole('button', { name: 'Reconnect' })).toBeTruthy();
+    expect(within(drawer).getByRole('button', { name: '重新连接' })).toBeTruthy();
     expect(logo.getAttribute('aria-expanded')).toBe('true');
-    fireEvent.click(within(drawer).getByRole('button', { name: 'Refresh Neo' }));
+    fireEvent.click(within(drawer).getByRole('button', { name: '刷新 Neo' }));
     expect(open).toHaveBeenCalledWith();
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('closes the drawer on Escape, a backdrop click and a drag to the left, returning focus to the mark', async () => {
     renderLive();
-    const logo = within(banner()).getByRole('button', { name: '设置和连接' });
+    const logo = within(banner()).getByRole('button', { name: '设置' });
     logo.focus();
     fireEvent.click(logo);
-    expect(document.activeElement).toBe(
-      screen.getByRole('dialog', { name: 'Settings and connection' })
-    );
+    expect(document.activeElement).toBe(screen.getByRole('dialog', { name: '设置' }));
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).toBeNull();
     await waitFor(() => expect(document.activeElement).toBe(logo));
@@ -150,7 +148,7 @@ describe('Neo floating controls', () => {
     fireEvent.click(screen.getByTestId('neo-drawer-backdrop'));
     expect(screen.queryByRole('dialog')).toBeNull();
     fireEvent.click(logo);
-    const drawer = screen.getByRole('dialog', { name: 'Settings and connection' });
+    const drawer = screen.getByRole('dialog', { name: '设置' });
     fireEvent.pointerDown(drawer, { clientX: 300 });
     fireEvent.pointerMove(drawer, { clientX: 260 });
     fireEvent.pointerUp(drawer, { clientX: 290 });
@@ -193,7 +191,7 @@ describe('Neo floating controls', () => {
 
   it('draws the logo and work buttons as 44px round glass with a press state in both themes', () => {
     renderLive();
-    const logo = within(banner()).getByRole('button', { name: '设置和连接' });
+    const logo = within(banner()).getByRole('button', { name: '设置' });
     expect(logo.className).toContain('neo-glass-button');
     const css = readFileSync('src/neo/neo.css', 'utf8');
     const glass = css.match(/\.neo-glass-button\s*\{([^}]*)\}/)?.[1] ?? '';

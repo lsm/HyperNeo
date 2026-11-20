@@ -4,7 +4,7 @@ Build web, then launch a fresh isolated verify daemon on a free non-8399 port.
 Use env -i, NODE_ENV=test and a dedicated HOME/data/DB; no provider is needed.
 Pair a disposable headless browser using a test-only CLI human code.
 
-Open /neo and its Settings and connection drawer. Connection is first, with
+Open /neo and its Settings drawer. Connection is first, with
 Reconnect and Refresh Neo. No project list, Move under selects or section editor
 is present. Make a test CLI relay code after pairing the browser; reopen the
 drawer and verify Pending devices follows Connection. Allow must remove the row

@@ -45,8 +45,8 @@ try {
       await back.click({ timeout: 3000 });
       assert.equal(await page.locator('.neo-session-pane').count(), 0);
       await page.getByRole('button', { name: 'Close work list', exact: true }).click();
-      await page.getByRole('button', { name: 'Settings and connection', exact: true }).click();
-      const drawer = page.getByRole('dialog', { name: 'Settings and connection' });
+      await page.getByRole('button', { name: 'Settings', exact: true }).click();
+      const drawer = page.getByRole('dialog', { name: 'Settings', exact: true });
       await drawer.waitFor();
       await page.screenshot({ path: `${run}/evidence/titlebar-drawer-${theme}.png` });
     } finally { await context.close(); }

@@ -42,8 +42,8 @@ try {
       await composer.fill(fixture.longLink);
       await measure('composer');
       await composer.fill('');
-      await page.getByRole('button', { name: 'Settings and connection', exact: true }).click();
-      await page.getByRole('dialog', { name: 'Settings and connection' }).waitFor();
+      await page.getByRole('button', { name: 'Settings', exact: true }).click();
+      await page.getByRole('dialog', { name: 'Settings', exact: true }).waitFor();
       await measure('drawer');
       await page.locator('[data-testid="neo-drawer-backdrop"]').click({ position: { x: width - 5, y: 200 }, force: true });
       if (width < 1120) await page.getByRole('button', { name: /^Your work/ }).click();

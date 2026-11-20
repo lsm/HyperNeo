@@ -33,8 +33,8 @@ try {
   await page.getByText('This browser is paired.').waitFor();
 
   await page.goto(`${base}/neo`);
-  await page.getByRole('button', { name: 'Settings and connection' }).first().click();
-  const drawer = page.getByRole('dialog', { name: 'Settings and connection' });
+  await page.getByRole('button', { name: 'Settings', exact: true }).first().click();
+  const drawer = page.getByRole('dialog', { name: 'Settings', exact: true });
   await drawer.getByText('The agent can use the desktop').waitFor();
   await drawer.getByText('Book the dentist on the clinic site').waitFor();
   await page.waitForTimeout(500);
