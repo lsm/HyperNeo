@@ -37,6 +37,66 @@ test.each([
   expect(resolveLocalPipeline(source, 'demo.read')).toEqual({ kind: 'unknown' });
 });
 
+test.each([
+  [
+    'builder',
+    "function finish(builder) { return (builder as PipelineAPI).input('input').endAsync('input'); }",
+    "finish(superpipe({})('demo.read'))",
+    'named',
+  ],
+  [
+    'helper chain',
+    "const addInput = (builder) => builder.input('input'); const configure = (builder) => addInput(builder);",
+    '((input) => (run as Run)(input))',
+    'named',
+  ],
+  [
+    'unfinished builder',
+    "const wrap = (builder) => builder.input('input');",
+    "wrap(superpipe({})('demo.read'))",
+    'unknown',
+  ],
+  [
+    'reassigned helper',
+    'function finish(builder) { return builder.end(); } ({ finish } = replacements);',
+    "finish(superpipe({})('demo.read'))",
+    'unknown',
+  ],
+  [
+    'untrusted builder',
+    'const finish = (builder) => builder.end();',
+    "finish(other({})('demo.read'))",
+    'unknown',
+  ],
+  [
+    'literal default',
+    'const finish = (builder, enabled = true) => builder.end();',
+    "finish(superpipe({})('demo.read'))",
+    'named',
+  ],
+  [
+    'default with an effect',
+    'const finish = (builder, enabled = reconfigure()) => builder.end();',
+    "finish(superpipe({})('demo.read'))",
+    'unknown',
+  ],
+  [
+    'conditional helper',
+    'const finish = (builder) => ready ? builder.end() : other;',
+    "finish(superpipe({})('demo.read'))",
+    'unknown',
+  ],
+])(
+  'strict resolution follows only a finished builder through %s',
+  (testCase, helpers, execute, kind) => {
+    const setup =
+      testCase === 'helper chain' ? "const run = configure(superpipe({})('demo.read')).end();" : '';
+    const source = `${imports} ${helpers} ${setup} defineOperation({ name: 'demo.read', execute: ${execute} });`;
+    const result = createLocalPipelineResolver(source, 'route.ts', true)('demo.read');
+    expect(result).toEqual(kind === 'named' ? { kind, name: 'demo.read' } : { kind });
+  }
+);
+
 test('does not count a shadowed superpipe import as a pipeline', () => {
   const source = `${imports}
     function setup(superpipe) {

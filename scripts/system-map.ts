@@ -478,7 +478,7 @@ function closeToken(tokens: PipelineToken[], start: number): number {
   const pending: string[] = [];
   for (let i = start; i < tokens.length; i++) {
     const text = tokens[i].text;
-    if (pairs[text]) pending.push(pairs[text]);
+    if (Object.hasOwn(pairs, text)) pending.push(pairs[text]);
     else if (text === ')' || text === '}' || text === ']') {
       if (pending.pop() !== text) return -1;
       if (!pending.length) return i;
