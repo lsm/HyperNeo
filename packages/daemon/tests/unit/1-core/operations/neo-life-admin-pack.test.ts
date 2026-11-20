@@ -12,15 +12,18 @@ describe('life-admin brief', () => {
       'life-admin',
       'delegation',
       'model-routing',
+      'computer-use',
     ]);
     expect(neoPackBriefs(NEO_DEFAULT_PACKS).map((brief) => brief.id)).toEqual([
       'coding',
       'delegation',
+      'computer-use',
     ]);
     expect(neoPackBriefs(['coding', 'life-admin']).map((brief) => brief.id)).toEqual([
       'coding',
       'life-admin',
       'delegation',
+      'computer-use',
     ]);
   });
 });

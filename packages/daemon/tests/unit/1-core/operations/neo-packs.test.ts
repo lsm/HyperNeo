@@ -4,6 +4,7 @@ import { join, relative } from 'node:path';
 import {
   NEO_PACK_CODING_INSTRUCTIONS,
   NEO_PACK_DELEGATION_INSTRUCTIONS,
+  NEO_PACK_COMPUTER_USE_INSTRUCTIONS,
   NEO_PACK_SKILLS,
 } from '@hyperneo/prompts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
@@ -12,6 +13,7 @@ import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
 import { chooseLine } from '../../../../src/lib/neo/pack-selection.ts';
 import { validatePackPreference } from '../../../../src/lib/neo/preference-operations.ts';
 import { DELEGATION_PACK_BRIEF } from '../../../../src/lib/neo/packs/delegation/pack.ts';
+import { COMPUTER_USE_PACK_BRIEF } from '../../../../src/lib/neo/packs/computer-use/pack.ts';
 
 const pack = (id: string, describe = id): NeoPack => ({ id, describe, instructions: () => null });
 
@@ -25,12 +27,13 @@ describe('neoPackBriefs', () => {
         skill: 'coding-pack',
       },
       DELEGATION_PACK_BRIEF,
+      COMPUTER_USE_PACK_BRIEF,
     ]);
   });
 
   test('ships the coding pack as a skill whose body is the pack instructions', () => {
     const briefs = neoPackBriefs(NEO_DEFAULT_PACKS);
-    expect(briefs.map((brief) => brief.skill)).toEqual(['coding-pack', undefined]);
+    expect(briefs.map((brief) => brief.skill)).toEqual(['coding-pack', undefined, undefined]);
     expect(briefs[0].guidance).toBeUndefined();
     expect(Object.keys(NEO_PACK_SKILLS)).toEqual(['coding-pack']);
     for (const [name, skill] of Object.entries(NEO_PACK_SKILLS)) {
@@ -48,6 +51,7 @@ describe('neoPackBriefs', () => {
     expect(prompt).not.toContain(NEO_PACK_CODING_INSTRUCTIONS.slice(0, 80));
     expect(prompt).not.toContain('Guidance for work under the coding pack');
     expect(prompt).toContain(NEO_PACK_DELEGATION_INSTRUCTIONS);
+    expect(prompt).toContain(NEO_PACK_COMPUTER_USE_INSTRUCTIONS);
     expect(prompt).toContain('coding — Software work in git repositories');
     expect(prompt).toContain('load its guidance skill: coding-pack.');
   });
