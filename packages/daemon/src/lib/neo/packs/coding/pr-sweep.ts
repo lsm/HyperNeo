@@ -13,7 +13,7 @@ import { CodingStageFactsRepository, codingCrossModelFindings } from './stage-fa
 import { readCodingReviewThreads } from './connector-review-thread-reader.ts';
 
 export const CODING_PR_FRESH_MS = 15 * 60_000;
-export const CODING_PR_REMINDERS = 2;
+export const CODING_PR_REMINDERS = NUDGE_STEPS - 1;
 export const CODING_MANUAL_MERGE_NEXT_STEP =
   'Complete all required merge gates, re-read the head, then squash-merge manually with --match-head-commit and the full approved head SHA.';
 

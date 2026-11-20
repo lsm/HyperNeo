@@ -163,6 +163,14 @@ export class CodingTodoPrRepository {
     return gatewayFor(this.db).call(codingTodoPrReads, 'waiting', todoIds);
   }
 
+  parked(todoIds: readonly string[]): Set<string> {
+    return new Set(this.trackedPrs(todoIds).map((pr) => pr.todoId));
+  }
+
+  readParked(todoIds: readonly string[]): Promise<Set<string>> {
+    return gatewayFor(this.db).call(codingTodoPrReads, 'parked', todoIds);
+  }
+
   openLedger(todoIds: readonly string[]) {
     return this.trackedPrs(todoIds).flatMap(({ closedAt, ...pr }) =>
       closedAt === null ? [pr] : []
@@ -612,6 +620,7 @@ export function createCodingTodoPack(
     },
     statusLine: (todo) => codingTodoStatusLine(todo, repo.prs(todo.id), ledger),
     waiting: (todos) => repo.readWaiting(todos.map((todo) => todo.id)),
+    parked: (todos) => repo.readParked(todos.map((todo) => todo.id)),
     ...createCodingTodoPolicy(repo),
   };
 }
@@ -627,5 +636,5 @@ export const codingTodoPrReads = defineRepositoryOp(
   'coding.todoPrReads',
   'read',
   CodingTodoPrRepository,
-  ['waiting', 'holder', 'linkedIssues', 'openLedger']
+  ['waiting', 'parked', 'holder', 'linkedIssues', 'openLedger']
 );
