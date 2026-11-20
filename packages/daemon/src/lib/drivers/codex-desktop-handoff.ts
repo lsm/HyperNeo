@@ -59,9 +59,8 @@ export async function requestCodexDesktopCompaction(
   socketPath: string | undefined,
   threadId: string,
   idle: () => Promise<boolean>
-): Promise<'submitted' | 'busy' | 'no_owner'> {
+): Promise<'await_rollout' | 'busy' | 'no_owner'> {
   if (!socketPath) return 'no_owner';
-  let dispatched = false;
   try {
     return await withCodexDesktopIpc(
       socketPath,
@@ -72,22 +71,21 @@ export async function requestCodexDesktopCompaction(
           return 'no_owner';
         }
         if (!(await idle())) return 'busy';
-        dispatched = true;
-        const result = await client.call(
-          'thread-follower-compact-thread',
-          { conversationId: threadId },
-          1,
-          owner.handledByClientId
-        );
-        if (result.resultType !== 'success')
-          throw new Error(result.error ?? 'Codex Desktop did not acknowledge compaction.');
-        return 'submitted';
+        await client
+          .call(
+            'thread-follower-compact-thread',
+            { conversationId: threadId },
+            1,
+            owner.handledByClientId
+          )
+          .catch(() => undefined);
+        return 'await_rollout';
       },
       Date.now() + TIMEOUT_MS
     );
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    if (!dispatched && (code === 'ENOENT' || code === 'ECONNREFUSED')) return 'no_owner';
+    if (code === 'ENOENT' || code === 'ECONNREFUSED') return 'no_owner';
     throw error;
   }
 }

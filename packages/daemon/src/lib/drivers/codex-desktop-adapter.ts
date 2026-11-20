@@ -1484,6 +1484,18 @@ async function compactCodexWorker(
 
 export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAdapter {
   const compactions = new Map<string, Promise<Result<{ compacted: boolean }>>>();
+  const deliver = async (
+    ref: WorkRef,
+    message: string,
+    from: string,
+    mode: 'auto' | 'steer' | 'queue'
+  ) => {
+    await compactions.get(ref.id);
+    const input = from === 'chat' ? message : `${message}\n${WORK_AGENT_INPUT}`;
+    return mode === 'steer'
+      ? runCodexSend(ref, input, deps, mode)
+      : runCodexQueue(ref, input, deps, mode);
+  };
   return {
     id: 'codex-desktop',
     supportsStartPreparation: !!deps.prepareExecution,
@@ -1521,29 +1533,9 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
       ),
     start: (request) => runCodexStart(request, deps),
     rename: (ref, title) => runCodexRename(ref, title, deps),
-    send: async (ref, message, context) => {
-      await compactions.get(ref.id);
-      return runCodexQueue(
-        ref,
-        context.from === 'chat' ? message : `${message}\n${WORK_AGENT_INPUT}`,
-        deps,
-        'auto'
-      );
-    },
-    steer: (ref, message, context) =>
-      runCodexSend(
-        ref,
-        context.from === 'chat' ? message : `${message}\n${WORK_AGENT_INPUT}`,
-        deps,
-        'steer'
-      ),
-    queue: (ref, message, context) =>
-      runCodexQueue(
-        ref,
-        context.from === 'chat' ? message : `${message}\n${WORK_AGENT_INPUT}`,
-        deps,
-        'queue'
-      ),
+    send: (ref, message, context) => deliver(ref, message, context.from, 'auto'),
+    steer: (ref, message, context) => deliver(ref, message, context.from, 'steer'),
+    queue: (ref, message, context) => deliver(ref, message, context.from, 'queue'),
     withdraw: (ref, queuedSubmissionId) => runCodexWithdraw(ref, queuedSubmissionId, deps),
     status: async (ref, since, receipt) => {
       const result = await runCodexStatus(ref, deps, since, receipt);

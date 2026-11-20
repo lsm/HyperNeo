@@ -480,46 +480,69 @@ describe('withCodexDesktopIpc', () => {
         );
     }
 
-    test('compacts through the Desktop owner and waits for the matching completed turn', async () => {
-      const accepted = Promise.withResolvers<void>();
-      const f = await fixture((message, _socket, send) => {
-        const reply = (result: object) =>
-          send({ type: 'response', requestId: message.requestId, ...result });
-        if (message.method === 'thread-owner-discovery') {
-          reply({ resultType: 'success', handledByClientId: 'owner' });
-          return;
-        }
-        expect(message).toMatchObject({
-          method: 'thread-follower-compact-thread',
-          targetClientId: 'owner',
-          version: 1,
-          params: { conversationId: 'one' },
+    test.each([true, false])(
+      'waits for Desktop compaction before delivering input (ack: %s)',
+      async (ack) => {
+        const accepted = Promise.withResolvers<void>();
+        const f = await fixture((message, socket, send) => {
+          const reply = (result: object) =>
+            send({ type: 'response', requestId: message.requestId, ...result });
+          if (message.method === 'thread-owner-discovery') {
+            reply({ resultType: 'success', handledByClientId: 'owner' });
+            return;
+          }
+          if (message.method === 'thread-follower-steer-turn') {
+            reply({ resultType: 'success', result: { result: { turnId: 'next' } } });
+            return;
+          }
+          expect(message).toMatchObject({
+            method: 'thread-follower-compact-thread',
+            targetClientId: 'owner',
+            version: 1,
+            params: { conversationId: 'one' },
+          });
+          if (ack) reply({ resultType: 'success', result: { ok: true } });
+          else socket.destroy();
+          accepted.resolve();
         });
-        reply({ resultType: 'success', result: { ok: true } });
-        accepted.resolve();
-      });
-      const driver = driverFor(f.path);
-      const ref = { adapter: driver.id, id: 'one' };
-      const append = (entry: object) =>
-        appendFileSync(join(directory, 'rollout.jsonl'), JSON.stringify(entry) + '\n');
-      const turn = (type: string, id: string) =>
-        append({ type: 'event_msg', payload: { type, turn_id: id } });
-      turn('task_started', 'previous');
-      append({ type: 'compacted', payload: {} });
-      turn('task_complete', 'previous');
-      const context = {
-        from: 'neo' as const,
-        caller: { source: 'internal' as const, role: 'neo' as const },
-      };
-      const compacting = driver.compact!(ref, context);
-      await accepted.promise;
-      turn('task_started', 'compact');
-      append({ type: 'compacted', payload: {} });
-      expect(await driver.status!(ref)).toMatchObject({ ok: true, value: { status: 'running' } });
-      expect(await driver.compact!(ref, context)).toMatchObject({ ok: false, reason: 'busy' });
-      turn('task_complete', 'compact');
-      expect(await compacting).toEqual({ ok: true, value: { compacted: true } });
-    });
+        const driver = driverFor(f.path);
+        const ref = { adapter: driver.id, id: 'one' };
+        const append = (entry: object) =>
+          appendFileSync(join(directory, 'rollout.jsonl'), JSON.stringify(entry) + '\n');
+        const turn = (type: string, id: string) =>
+          append({ type: 'event_msg', payload: { type, turn_id: id } });
+        turn('task_started', 'previous');
+        append({ type: 'compacted', payload: {} });
+        turn('task_complete', 'previous');
+        const context = {
+          from: 'neo' as const,
+          caller: { source: 'internal' as const, role: 'neo' as const },
+        };
+        const compacting = driver.compact!(ref, context);
+        await accepted.promise;
+        turn('task_started', 'compact');
+        append({ type: 'compacted', payload: {} });
+        expect(await driver.status!(ref)).toMatchObject({ ok: true, value: { status: 'running' } });
+        expect(await driver.compact!(ref, context)).toMatchObject({ ok: false, reason: 'busy' });
+        const beforeDelivery = f.seen.length;
+        const deliveries = [
+          driver.send!(ref, 'send', context),
+          driver.steer!(ref, 'steer', context),
+          driver.queue!(ref, 'queue', context),
+        ];
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(f.seen).toHaveLength(beforeDelivery);
+        turn('task_complete', 'compact');
+        expect(await compacting).toEqual({ ok: true, value: { compacted: true } });
+        const [sent, steered, queued] = await Promise.all(deliveries);
+        expect(sent.ok).toBe(true);
+        expect(steered.ok).toBe(true);
+        expect(queued).toMatchObject({ ok: false, reason: 'busy' });
+        expect(f.seen.filter(({ method }) => method === 'thread-follower-steer-turn')).toHaveLength(
+          2
+        );
+      }
+    );
 
     test.each([false, true])(
       'serializes only the same thread (separate threads: %s)',
