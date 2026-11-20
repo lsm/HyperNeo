@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
-import { readDesktopPreference, writeDesktopPreference } from '../lib/desktop-preference.ts';
+import {
+  desktopPreferenceRead,
+  readDesktopPreference,
+  writeDesktopPreference,
+} from '../lib/desktop-preference.ts';
 import { t } from '../lib/i18n/index.ts';
 import { invokeOperation } from '../lib/operations.ts';
 import { connectionState } from '../lib/state.ts';
@@ -48,6 +52,7 @@ export function DesktopControl({
       setWorkers(result.workers.filter((entry) => entry.state !== 'off'));
   }, [worker]);
   const connected = connectionState.value === 'connected';
+  const reread = desktopPreferenceRead.value;
   const active = workers.length > 0;
   useEffect(() => {
     live.current = true;
@@ -55,7 +60,7 @@ export function DesktopControl({
     return () => {
       live.current = false;
     };
-  }, [read, connected]);
+  }, [read, connected, reread]);
   useEffect(() => {
     const timer = setInterval(() => void read(), active ? 5000 : 30000);
     return () => clearInterval(timer);

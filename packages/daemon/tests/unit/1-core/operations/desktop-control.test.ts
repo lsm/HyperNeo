@@ -289,3 +289,59 @@ test('a todo stored with desktop control in its draft keeps it off', () => {
     )
   ).toEqual({ folder: 'docs' });
 });
+
+let cards = 0;
+function desktopCard(todoId: string) {
+  const store = new NeoAskTodoRepository(db);
+  const question = store.askQuestion(
+    `card-${(cards += 1)}`,
+    'ask',
+    {
+      text: 'May a worker use Calendar?',
+      kind: 'desktop_control',
+      options: null,
+      multiple: false,
+      noLabel: null,
+      yesLabel: null,
+      todoId,
+      app: 'Calendar',
+    },
+    1
+  );
+  return { store, question };
+}
+const preference = () =>
+  (
+    db.prepare("SELECT value_json FROM neo_pack_preferences WHERE key = 'desktopControl'").get() as
+      | { value_json: string }
+      | undefined
+  )?.value_json;
+const todoNamed = (id: string) =>
+  JSON.parse(
+    (db.prepare('SELECT named FROM neo_todos WHERE id = ?').get(id) as { named: string | null })
+      .named ?? '{}'
+  );
+
+test('answering the desktop card applies the todo opt-in and the preference itself', () => {
+  for (const [todo, answer, on, saved] of [
+    ['dentist', 'No', undefined, undefined],
+    ['taxes', 'Allow', true, undefined],
+  ] as const) {
+    const { store, question } = desktopCard(todo);
+    expect(store.answerQuestion(question, answer, 'button', 2)?.state).toBe('answered');
+    expect(todoNamed(todo).desktopControl).toBe(on);
+    expect(preference()).toBe(saved);
+  }
+  const { store, question } = desktopCard('dentist');
+  store.answerQuestion(question, 'Always allow', 'button', 3);
+  expect(todoNamed('dentist').desktopControl).toBe(true);
+  expect(preference()).toBe('true');
+});
+
+test('always allow still saves the preference when the todo already finished', () => {
+  db.prepare("UPDATE neo_todos SET state = 'done' WHERE id = 'dentist'").run();
+  const { store, question } = desktopCard('dentist');
+  store.answerQuestion(question, 'Always allow', 'button', 2);
+  expect(todoNamed('dentist').desktopControl).toBeUndefined();
+  expect(preference()).toBe('true');
+});

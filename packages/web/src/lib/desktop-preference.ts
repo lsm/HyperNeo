@@ -1,3 +1,4 @@
+import { signal } from '@preact/signals';
 import type { MessageHub } from '@hyperneo/shared';
 import { invokeOperation } from './operations.ts';
 
@@ -21,3 +22,5 @@ export async function writeDesktopPreference(hub: MessageHub, value: boolean) {
   );
   if (!result.ok) throw new Error(result.reason);
 }
+
+export const desktopPreferenceRead = signal(0);

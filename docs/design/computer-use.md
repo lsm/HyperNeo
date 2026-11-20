@@ -79,7 +79,7 @@ Two facts stay apart: whether desktop control may be used, and whether Neo asks 
    - Otherwise: add the todo with desktopControl omitted, then send the `desktop_control` card with that todoId and the app.
    - Use native desktop control for every computer step, browsers included.
    - `desktop_app_not_connected`: ask the human to open HyperNeo Desktop. `desktop_permissions_required`: the app opened its permissions guide; wait.
-2. **One card per todo, three answers**: "Yes, and don't ask again" allows this todo and sets the preference true; "Only this task" allows this todo; "No" leaves it off so Neo takes another route or hands the step to the human. The separate ask-once preference card goes away.
+2. **One card per todo, three answers**: "Yes, and don't ask again" allows this todo and sets the preference true; "Only this task" allows this todo; "No" leaves it off so Neo takes another route or hands the step to the human. The daemon applies the answer, the todo opt-in and the preference in one transaction, so every client and the API behave the same. The separate ask-once preference card goes away.
 3. **One switch on the Desktop control panel.** It reads and writes `core.desktopControl`: on = don't ask, off = ask per todo.
 
 ### Not in scope

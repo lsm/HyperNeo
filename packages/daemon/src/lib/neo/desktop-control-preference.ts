@@ -31,3 +31,16 @@ export function desktopControlPreference(db: Database): unknown {
 export function planDesktopControl(request: unknown, preference: unknown) {
   return request === true && preference === true ? 'allow' : 'off';
 }
+
+export function saveDesktopControlPreference(db: Database, value: boolean, now: number) {
+  db.prepare(`INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
+    VALUES (?, ?, ?, ?, ?, 'human', ?) ON CONFLICT (pack, scope_kind, scope_key, key)
+    DO UPDATE SET value_json=excluded.value_json, set_by=excluded.set_by, set_at=excluded.set_at`).run(
+    address.pack,
+    address.scope.kind,
+    address.scope.key,
+    address.key,
+    JSON.stringify(value),
+    now
+  );
+}

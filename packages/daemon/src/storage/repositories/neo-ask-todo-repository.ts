@@ -2,6 +2,7 @@ import {
   DESKTOP_CONTROL_ANSWERS,
   desktopControlPreference,
   planDesktopControl,
+  saveDesktopControlPreference,
 } from '../../lib/neo/desktop-control-preference.ts';
 import { proposalQuestionId } from '../../lib/neo/proposal.ts';
 import { queueNeoRequestReply, queueNeoRequestSettledReply } from '../../lib/neo/request-todo.ts';
@@ -1183,6 +1184,15 @@ export class NeoAskTodoRepository {
         }
         this.pruneQuestions(question.askId, now);
         for (const { todo, patch } of effects) this.writeTodo(todo, patch, now, false, false);
+        if (question.kind === 'desktop_control' && answer !== 'No') {
+          const todo = question.todoId ? this.getTodo(question.todoId) : null;
+          if (todo && ['todo', 'doing', 'blocked'].includes(todo.state))
+            this.updateTodo(todo, { named: { ...todo.named, desktopControl: true } }, now);
+          if (answer === 'Always allow') {
+            saveDesktopControlPreference(this.db, true, now);
+            settingsChanged = 'preferences';
+          }
+        }
         const preferences = applyPackPreferenceAnswer(this.db, question.id);
         if (preferences.ok && preferences.applied) settingsChanged = 'preferences';
         const rules = applyNeoRuleAnswer(this.db, question.id, approval);
