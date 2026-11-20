@@ -353,6 +353,25 @@ describe('session.runtimeSettings.update', () => {
     });
   });
 
+  test('keeps the current provider when an exact model ID is shared', async () => {
+    const h = harness();
+    catalog.mockReturnValue([model('shared-flash', 'openrouter'), model('shared-flash')]);
+    h.sessions.set('plain', makeSession({ id: 'plain' }));
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'plain',
+      model: 'shared-flash',
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      settings: { model: 'shared-flash', provider: 'anthropic' },
+      changes: { model: true, provider: false },
+    });
+    expect(h.persisted.get('plain')).toMatchObject({
+      model: 'shared-flash',
+      provider: 'anthropic',
+    });
+  });
+
   test('a running turn refuses settings without entering the native switch', async () => {
     const h = harness();
     h.sessions.set('plain', makeSession({ id: 'plain' }));

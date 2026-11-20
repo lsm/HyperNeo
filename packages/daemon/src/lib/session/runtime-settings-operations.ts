@@ -113,10 +113,17 @@ function resolveSettings(target: Target, input: Input) {
   const thinkingLevel = resolveHyperneoThinking(input.thinkingLevel)?.value;
   if (input.thinkingLevel !== undefined && thinkingLevel === undefined)
     return { reason: { ok: false, reason: 'invalid_thinking_level' } as Failure };
-  const models =
-    input.model === undefined
+  const available =
+    input.model === undefined ? [] : usableModels(getAvailableModels('global'), input.provider);
+  const current = JSON.parse(target.snapshot.config) as Session['config'];
+  const currentProviderMatch = available.find(
+    (entry) => entry.id === input.model && entry.provider === current.provider
+  );
+  const models = currentProviderMatch
+    ? [currentProviderMatch]
+    : input.model === undefined
       ? []
-      : matchModelIdOrName(usableModels(getAvailableModels('global'), input.provider), input.model);
+      : matchModelIdOrName(available, input.model);
   if (models.length > 1)
     return {
       reason: {
