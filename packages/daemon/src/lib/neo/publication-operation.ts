@@ -157,8 +157,8 @@ export function requirePublicationLifetime(
     : { reason: { accepted: false, reason: 'publication_superseded' } };
 }
 
-export function createNeoPublisher(runtime: NeoPublicationRuntime) {
-  return (superpipe({})('neo.publication.publish') as PipelineAPI)
+const createNeoPublisher = (runtime: NeoPublicationRuntime) =>
+  (superpipe({})('neo.publication.publish') as PipelineAPI)
     .input(['input', 'caller', 'workOn'])
     .pipe(admitPublicationDraft, 'input', 'result:publication')
     .pipe(
@@ -395,13 +395,13 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     caller: OperationCaller,
     workOn?: boolean
   ) => Promise<Receipt>;
-}
 
 export function createNeoPublicationOperation(
-  publish: ReturnType<typeof createNeoPublisher>,
+  runtime: NeoPublicationRuntime,
   present?: (items: NeoPublication[]) => Promise<NeoPublication[]>
 ) {
-  return defineOperation({
+  const publish = createNeoPublisher(runtime);
+  const operation = defineOperation({
     name: 'neo.publication.publish',
     description: neoToolDescription('neo.publication.publish'),
     policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -416,4 +416,5 @@ export function createNeoPublicationOperation(
       );
     },
   });
+  return { publish, operation };
 }
