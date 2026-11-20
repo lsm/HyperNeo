@@ -61,9 +61,10 @@ export function createDesktopCallOperation(
         caller.source === 'mcp' &&
         !!caller.sessionId &&
         !!caller.role &&
+        caller.role !== 'neo' &&
         caller.principal === undefined
           ? { value: caller.sessionId! }
-          : refuse('desktop_not_enabled'),
+          : refuse('desktop_worker_only'),
       'caller',
       'result:outcome'
     )
@@ -137,7 +138,7 @@ export function createDesktopCallOperation(
   return defineOperation({
     name: 'desktop.call',
     description:
-      'Run an allowed desktop action for this in-process session’s approved, opted-in todo.',
+      'Run an allowed desktop action for this in-process session’s approved, opted-in todo. Only a worker session can call it; Neo gets desktop_worker_only and has no switch to turn it on.',
     inputSchema: Input,
     resultSchema: z.union([DesktopDispatchReply.extend({ ok: z.boolean() }), Refusal]),
     policy: { safetyClass: 'mutate' },
