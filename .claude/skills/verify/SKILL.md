@@ -314,13 +314,14 @@ this exercises the SDK/MCP path but is not evidence of OS sandbox enforcement.
 Dispatch helpers use `codex-desktop-peer.ts` for a synthetic Desktop IPC peer.
 They put their run's `bin` first on PATH; the helper stubs `ps` and refuses
 `open`, so owner discovery cannot inspect or open the real desktop app.
-Explicit Desktop steering and thread creation require the IPC peer. Automatic Codex
+Explicit Desktop steering and thread creation use the IPC peer when it listens. Automatic Codex
 sends route by Desktop ownership: while the stubbed probe reports Desktop running
 they deliver through owner discovery plus follower steer or turn start, and their
 proofs must show no app-server `thread/resume` or native queue call; while it
 reports Desktop not running they use the native app-server queue, checking the
 loaded list and resuming saved unloaded threads before settings or enqueue, with
-already loaded threads never resumed.
+already loaded threads never resumed. A running Desktop whose IPC socket is
+missing or refuses (the ChatGPT-hosted Codex has none) routes like a stopped one.
 
 ```bash
 .claude/skills/verify/doctor.sh 9311 "$RUN"

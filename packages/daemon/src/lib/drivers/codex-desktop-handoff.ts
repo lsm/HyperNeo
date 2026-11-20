@@ -94,10 +94,14 @@ export async function requestCodexDesktopCompaction(
       Date.now() + TIMEOUT_MS
     );
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT' || code === 'ECONNREFUSED') return 'no_owner';
+    if (codexDesktopIpcAbsent(error)) return 'no_owner';
     throw error;
   }
+}
+
+export function codexDesktopIpcAbsent(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return code === 'ENOENT' || code === 'ECONNREFUSED';
 }
 
 async function openCodexDesktopOwner(
@@ -384,6 +388,15 @@ async function sendDesktopTurn(
     };
     return await withCodexDesktopIpc(socketPath, admit, deadline);
   } catch (error) {
+    if (!dispatched && codexDesktopIpcAbsent(error)) {
+      log.warn('work.send route', {
+        threadId,
+        messageId,
+        path: 'app-server',
+        reason: 'desktop_ipc_absent',
+      });
+      return { value: 'app-server' };
+    }
     log.warn('work.send desktop transport failed', {
       threadId,
       messageId,

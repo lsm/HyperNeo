@@ -35,6 +35,7 @@ import type { SpawnFn } from '../runtime-spawn/index.ts';
 import { type CodexAppServer, CodexRequestError, compactCodexThread } from './codex-app-server.ts';
 import {
   type CodexSendGate,
+  codexDesktopIpcAbsent,
   requestCodexDesktopCompaction,
   steerCodexDesktopTurn,
 } from './codex-desktop-handoff.ts';
@@ -1311,8 +1312,8 @@ export async function startCodexThread(
           })
         : request.message;
       const message = `${brief}\n${CODEX_WORKER_INSTRUCTIONS}`;
-      await deps.startDesktopTurn(threadId, {
-        threadId,
+      const opening = {
+        threadId: createdThreadId,
         approvalPolicy: 'never',
         ...(sandbox
           ? { permissions: sandbox.permissions }
@@ -1320,6 +1321,18 @@ export async function startCodexThread(
         input: [{ type: 'text', text: message, text_elements: [] }],
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
+      };
+      await deps.startDesktopTurn(createdThreadId, opening).catch(async (error: unknown) => {
+        if (!codexDesktopIpcAbsent(error)) throw error;
+        const shared = await withCodexAppServer(deps, async (server) => {
+          await server.call('thread/resume', {
+            threadId: createdThreadId,
+            ...(sandbox ? { permissions: sandbox.permissions } : { sandbox: 'danger-full-access' }),
+          });
+          await server.call('turn/start', opening);
+          return { ok: true as const, value: null };
+        });
+        if (!shared.ok) throw new Error(shared.detail);
       });
       const receipt = await readCodexStartReceipt(
         startedRolloutPath(started),
