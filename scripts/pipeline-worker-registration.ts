@@ -106,6 +106,7 @@ function ignoredImport(node: ts.Statement, file: string, target: ImportRef): boo
   if (clause?.isTypeOnly) return true;
   const bindings = clause?.namedBindings;
   return (
+    !clause?.name &&
     !!bindings &&
     ts.isNamedImports(bindings) &&
     bindings.elements.every(
@@ -318,6 +319,9 @@ export function registeredRepositoryMethod(command: ImportRef, method: string, s
   const table = namedConstant(registry, 'DB_OPS');
   const declaration = table?.parent.parent.parent;
   if (
+    !declaration ||
+    !ts.isVariableStatement(declaration) ||
+    declaration.declarationList.declarations.length !== 1 ||
     !registry.statements.every(
       (statement) =>
         statement === declaration || (ts.isImportDeclaration(statement) && !importsMap(statement))

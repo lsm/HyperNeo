@@ -301,6 +301,12 @@ test.each([
     'unknown',
   ],
   [
+    'registry alias in the same declaration',
+    'db(database).call(query, "read", input)',
+    ['db-ops.ts', '[op.name, op]));', '[op.name, op])), alias = DB_OPS;'],
+    'unknown',
+  ],
+  [
     'replaced method',
     'db(database).call(query, "read", input)',
     ['read.ts', 'export const query', 'Query.prototype.read = () => null; export const query'],
