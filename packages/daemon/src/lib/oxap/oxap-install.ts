@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import type { GlobalSettings } from '@hyperneo/shared';
 
-export const OXAP_VERSION = '0.1.0-alpha.38';
+export const OXAP_VERSION = '0.1.0-alpha.39';
 const RELEASE = `https://github.com/lsm/oxap/releases/download/v${OXAP_VERSION}`;
 
 export type OxapHubBinary = NonNullable<GlobalSettings['oxapHub']>;

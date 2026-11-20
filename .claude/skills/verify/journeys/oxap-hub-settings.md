@@ -2,7 +2,7 @@
 
 Use the shared isolation and pinned Bun in `../SKILL.md`. Supply the pinned OXAP
 binary for this platform (its `--version` must print the release name, for example
-`oxap-0.1.0-alpha.38-macos-arm64`) with that name and its SHA-256:
+`oxap-0.1.0-alpha.39-macos-arm64`) with that name and its SHA-256:
 
 ```sh
 TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \

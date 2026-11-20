@@ -14,6 +14,8 @@ export type OxapHarness = {
   nativeId: (link: string) => string | undefined;
 };
 
+const DEEPSEEK_SESSION_PREFIX = 'deepseek://sessions/';
+
 export const OXAP_HARNESSES = {
   'oxap-codex': {
     label: 'OXAP Codex',
@@ -32,6 +34,29 @@ export const OXAP_HARNESSES = {
       sandbox: 'workspace-write',
     }),
     nativeId: (link: string) => /^codex:\/\/threads\/([a-zA-Z0-9._~-]+)$/.exec(link)?.[1],
+  },
+  'oxap-deepseek': {
+    label: 'OXAP DeepSeek',
+    adapter: 'deepseek',
+    providers: ['deepseek'],
+    thinking: false,
+    input: 'text',
+    settings: ['executable'],
+    environment: ['HOME', 'PATH', 'DSH_HOME'],
+    key: 'DEEPSEEK_API_KEY',
+    entry: (settings: Readonly<Record<string, string>>, environment: readonly string[]) => ({
+      type: 'deepseek',
+      executable: settings.executable,
+      args: ['--profile', 'sdk'],
+      environment,
+      any_directory: true,
+      provider: 'deepseek-official',
+      model: 'deepseek-v4-pro',
+    }),
+    nativeId: (link: string) =>
+      link.startsWith(DEEPSEEK_SESSION_PREFIX)
+        ? link.slice(DEEPSEEK_SESSION_PREFIX.length)
+        : undefined,
   },
 } as const satisfies Record<string, OxapHarness>;
 
