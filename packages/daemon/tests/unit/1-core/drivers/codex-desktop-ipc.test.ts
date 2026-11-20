@@ -406,8 +406,8 @@ describe('withCodexDesktopIpc', () => {
     });
   });
 
-  describe('Desktop-owned concurrent work.send', () => {
-    async function operations(path: string, reportUncertain = async (_report: unknown) => {}) {
+  describe('Desktop-owned worker', () => {
+    function driverFor(path: string) {
       const statePath = join(directory, 'overlap-state.sqlite');
       const db = new Database(statePath);
       db.exec(`CREATE TABLE threads (id TEXT, name TEXT, title TEXT, first_user_message TEXT, cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT);
@@ -428,7 +428,7 @@ describe('withCodexDesktopIpc', () => {
       );
       db.close();
       let nextId = 0;
-      const driver = createCodexDesktopAdapter({
+      return createCodexDesktopAdapter({
         statePath,
         desktopSocketPath: path,
         desktopRunning: async () => true,
@@ -454,6 +454,10 @@ describe('withCodexDesktopIpc', () => {
         gitCheckout: async () => null,
         newId: () => `input-${++nextId}`,
       });
+    }
+
+    async function operations(path: string, reportUncertain = async (_report: unknown) => {}) {
+      const driver = driverFor(path);
       const registry = createOperationRegistry(
         createWorkVerbOperations({
           adapters: () => [driver],
@@ -475,6 +479,47 @@ describe('withCodexDesktopIpc', () => {
           { source: 'mcp', role: 'neo', sessionId: 'neo' }
         );
     }
+
+    test('compacts through the Desktop owner and waits for the matching completed turn', async () => {
+      const accepted = Promise.withResolvers<void>();
+      const f = await fixture((message, _socket, send) => {
+        const reply = (result: object) =>
+          send({ type: 'response', requestId: message.requestId, ...result });
+        if (message.method === 'thread-owner-discovery') {
+          reply({ resultType: 'success', handledByClientId: 'owner' });
+          return;
+        }
+        expect(message).toMatchObject({
+          method: 'thread-follower-compact-thread',
+          targetClientId: 'owner',
+          version: 1,
+          params: { conversationId: 'one' },
+        });
+        reply({ resultType: 'success', result: { ok: true } });
+        accepted.resolve();
+      });
+      const driver = driverFor(f.path);
+      const ref = { adapter: driver.id, id: 'one' };
+      const append = (entry: object) =>
+        appendFileSync(join(directory, 'rollout.jsonl'), JSON.stringify(entry) + '\n');
+      const turn = (type: string, id: string) =>
+        append({ type: 'event_msg', payload: { type, turn_id: id } });
+      turn('task_started', 'previous');
+      append({ type: 'compacted', payload: {} });
+      turn('task_complete', 'previous');
+      const context = {
+        from: 'neo' as const,
+        caller: { source: 'internal' as const, role: 'neo' as const },
+      };
+      const compacting = driver.compact!(ref, context);
+      await accepted.promise;
+      turn('task_started', 'compact');
+      append({ type: 'compacted', payload: {} });
+      expect(await driver.status!(ref)).toMatchObject({ ok: true, value: { status: 'running' } });
+      expect(await driver.compact!(ref, context)).toMatchObject({ ok: false, reason: 'busy' });
+      turn('task_complete', 'compact');
+      expect(await compacting).toEqual({ ok: true, value: { compacted: true } });
+    });
 
     test.each([false, true])(
       'serializes only the same thread (separate threads: %s)',

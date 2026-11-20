@@ -1,6 +1,5 @@
-import { createPushedWorkerRepo } from '../../../helpers/native-worker-worktree';
-import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -40,6 +39,7 @@ import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { createPushedWorkerRepo } from '../../../helpers/native-worker-worktree';
 
 const NOW = Date.parse('2026-10-04T12:00:00.000Z');
 
@@ -1229,6 +1229,7 @@ describe('codex-desktop adapter status and send', () => {
     async (method) => {
       let notify: (message: { method: string; params: unknown }) => void = () => {};
       const unsubscribe = vi.fn();
+      const itemRecorded = Promise.withResolvers<void>();
       const call = vi.fn(async (request: string) => {
         if (request === 'thread/resume') return {};
         notify({ method, params: { threadId: 'busy', item: { type: 'contextCompaction' } } });
@@ -1236,7 +1237,9 @@ describe('codex-desktop adapter status and send', () => {
           method: 'item/completed',
           params: { threadId: 'idle', item: { type: 'agentMessage' } },
         });
+        notify({ method: 'turn/started', params: { threadId: 'idle', turn: { id: 'compact' } } });
         notify({ method, params: { threadId: 'idle', item: { type: 'contextCompaction' } } });
+        itemRecorded.resolve();
         return {};
       });
       const connect = vi.fn(
@@ -1253,7 +1256,19 @@ describe('codex-desktop adapter status and send', () => {
       expect(driver.capabilities).toContain('compact');
       expect(await driver.compact!(ref('busy'), user)).toMatchObject({ ok: false, reason: 'busy' });
       expect(connect).not.toHaveBeenCalled();
-      expect(await driver.compact!(ref('idle'), user)).toEqual({
+      const compacting = driver.compact!(ref('idle'), user);
+      await itemRecorded.promise;
+      notify({
+        method: 'turn/completed',
+        params: { threadId: 'idle', turn: { id: 'other', status: 'completed' } },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unsubscribe).not.toHaveBeenCalled();
+      notify({
+        method: 'turn/completed',
+        params: { threadId: 'idle', turn: { id: 'compact', status: 'completed' } },
+      });
+      expect(await compacting).toEqual({
         ok: true,
         value: { compacted: true },
       });
