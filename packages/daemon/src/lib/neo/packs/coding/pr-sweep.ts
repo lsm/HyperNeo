@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { codingRepoWatched } from './watched-repos.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
-import { planNudge } from '../../nudge.ts';
+import { NUDGE_STEPS, planNudge } from '../../nudge.ts';
 import type { WorkRef } from '../../../drivers/types.ts';
 import { Logger } from '../../../logger.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
@@ -56,6 +56,11 @@ export const STATE_TEXT: Partial<Record<CodingPrState, string>> = {
   waiting_ci: 'waiting for CI',
   waiting_cross_review: 'waiting for a cross-model review',
 };
+
+// An open PR keeps its todo with the pack only while the sweep still chases it.
+// A PR waiting on a human, or one whose nudges are spent, goes back to Neo.
+export const codingPrStillChased = (state: CodingPrState | null, nudges: number) =>
+  state === null || (!!STATE_TEXT[state] && nudges < NUDGE_STEPS);
 
 const NEXT_STEP: Partial<Record<CodingPrState, string>> = {
   approved_green: CODING_MANUAL_MERGE_NEXT_STEP,

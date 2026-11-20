@@ -13,6 +13,7 @@ import { neoWorkPrVerdict, type NeoWorkPr } from '@hyperneo/shared/types/neo-sna
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { codingPrKey } from './pr-key.ts';
+import { codingPrStillChased } from './pr-sweep.ts';
 import { codingCanonicalRepo } from './watched-repos.ts';
 import { CodingTurnPrRepository, readCodingTurnFacts } from './turn-prs.ts';
 import { codingNamedPrKeys } from './turn-owner.ts';
@@ -151,15 +152,9 @@ export class CodingTodoPrRepository {
   }
 
   waiting(todoIds: readonly string[]): Set<string> {
-    const rows = this.db
-      .prepare(
-        `SELECT todo_id AS todoId, prs_json AS prs FROM pack_coding_todo_prs
-          WHERE todo_id IN (SELECT value FROM json_each(?))`
-      )
-      .all(JSON.stringify(todoIds)) as { todoId: string; prs: string }[];
     return new Set(
-      rows.flatMap((row) =>
-        (JSON.parse(row.prs) as NeoWorkPr[]).some((pr) => pr.state === 'OPEN') ? [row.todoId] : []
+      this.openLedger(todoIds).flatMap((pr) =>
+        codingPrStillChased(pr.state, pr.nudges) ? [pr.todoId] : []
       )
     );
   }
@@ -170,9 +165,15 @@ export class CodingTodoPrRepository {
 
   openLedger(
     todoIds: readonly string[]
-  ): { todoId: string; url: string; state: CodingPrState | null; since: number | null }[] {
+  ): {
+    todoId: string;
+    url: string;
+    state: CodingPrState | null;
+    since: number | null;
+    nudges: number;
+  }[] {
     const ledger = this.db.prepare(
-      'SELECT state, state_since AS since, closed_at AS closedAt FROM pack_coding_pr_ledger WHERE repo = ? AND number = ?'
+      'SELECT state, state_since AS since, closed_at AS closedAt, nudges FROM pack_coding_pr_ledger WHERE repo = ? AND number = ?'
     );
     return (
       this.db
@@ -189,10 +190,20 @@ export class CodingTodoPrRepository {
             ? (ledger.get(
                 codingCanonicalRepo(this.db, `${parsed.owner}/${parsed.repo}`),
                 Number(parsed.number)
-              ) as { state: CodingPrState; since: number; closedAt: number | null } | undefined)
+              ) as
+                | { state: CodingPrState; since: number; closedAt: number | null; nudges: number }
+                | undefined)
             : undefined;
         return pr.state === 'OPEN' && !row?.closedAt
-          ? [{ todoId, url: pr.url, state: row?.state ?? null, since: row?.since ?? null }]
+          ? [
+              {
+                todoId,
+                url: pr.url,
+                state: row?.state ?? null,
+                since: row?.since ?? null,
+                nudges: row?.nudges ?? 0,
+              },
+            ]
           : [];
       })
     );

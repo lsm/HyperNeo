@@ -128,6 +128,24 @@ describe('coding.idle_with_open_pr through the Neo attention sweep', () => {
     expect(told('mailbox')).toEqual([]);
   });
 
+  test('a pull request waiting on a human goes back to Neo instead of the pack', async () => {
+    ledger('waiting_human', T0);
+    await sweep(T0 + HOUR);
+    expect(told('neo_notes')).toEqual([]);
+    expect(told('mailbox')).toEqual([
+      expect.stringContaining('Todo "Ship it" (todo-1) needs your next step'),
+    ]);
+  });
+
+  test('a pull request whose nudges are spent goes back to Neo', async () => {
+    ledger('failing', T0);
+    db.prepare('UPDATE pack_coding_pr_ledger SET nudges = 3').run();
+    await sweep(T0 + HOUR);
+    expect(told('mailbox')).toEqual([
+      expect.stringContaining('Todo "Ship it" (todo-1) needs your next step'),
+    ]);
+  });
+
   test('a running worker is no message', async () => {
     live('todo-1', 'running');
     await sweep(T0);
