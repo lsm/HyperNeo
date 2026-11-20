@@ -763,6 +763,7 @@ impl Drivers {
                     ("CUA_DRIVER_RS_HOME", home),
                     ("CUA_DRIVER_RS_TELEMETRY_ENABLED", "0"),
                     ("CUA_DRIVER_RS_UPDATE_CHECK", "0"),
+                    ("CUA_DRIVER_ALLOW_CAPTURE_CONSENT_ALERT", "1"),
                 ],
             )
             .await?;
