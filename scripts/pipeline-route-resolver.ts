@@ -1,7 +1,7 @@
 import { posix } from 'node:path';
 import ts from 'typescript';
-import { serializedPipelineCallback } from './pipeline-serial-callback.ts';
 import { createPipelineBuilderResolver } from './pipeline-builder-factory.ts';
+import { serializedPipelineCallback } from './pipeline-serial-callback.ts';
 
 export type LocalPipelineResolution = { kind: 'named'; name: string } | { kind: 'unknown' };
 
