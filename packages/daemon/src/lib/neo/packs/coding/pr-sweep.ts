@@ -57,8 +57,6 @@ export const STATE_TEXT: Partial<Record<CodingPrState, string>> = {
   waiting_cross_review: 'waiting for a cross-model review',
 };
 
-// An open PR keeps its todo with the pack only while the sweep still chases it.
-// A PR waiting on a human, or one whose nudges are spent, goes back to Neo.
 export const codingPrStillChased = (state: CodingPrState | null, nudges: number) =>
   state === null || (!!STATE_TEXT[state] && nudges < NUDGE_STEPS);
 
