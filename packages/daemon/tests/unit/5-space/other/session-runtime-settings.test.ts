@@ -434,14 +434,34 @@ describe('session.runtimeSettings.update', () => {
     expect(h.liveConfigs).toHaveLength(0);
   });
 
-  test('refuses unknown thinking levels without writing', async () => {
+  test.each([
+    {
+      input: { thinkingLevel: 'maximum' },
+      refusal: { ok: false, reason: 'invalid_thinking_level' },
+    },
+    {
+      input: { model: 'Shared Name' },
+      refusal: {
+        ok: false,
+        reason: 'ambiguous_model',
+        availableModels: ['first-model', 'second-model'],
+      },
+    },
+  ])('returns a validated refusal for $input without writing', async ({ input, refusal }) => {
     const h = harness();
     h.sessions.set('plain', makeSession({ id: 'plain' }));
-    const result = await run(h, 'session.runtimeSettings.update', {
-      sessionId: 'plain',
-      thinkingLevel: 'maximum',
-    });
-    expect(result).toMatchObject({ ok: false, reason: 'invalid_thinking_level' });
+    catalog.mockReturnValue([
+      { ...model('first-model'), name: 'Shared Name' },
+      { ...model('second-model'), name: 'Shared Name' },
+    ]);
+    const registry = createOperationRegistry([...h.operations.values()]);
+    const outcome = await invokeOperation(
+      registry,
+      'session.runtimeSettings.update',
+      { sessionId: 'plain', ...input },
+      { source: 'rpc' }
+    );
+    expect(outcome).toEqual({ kind: 'completed', value: refusal });
     expect(h.persisted.size).toBe(0);
   });
 
