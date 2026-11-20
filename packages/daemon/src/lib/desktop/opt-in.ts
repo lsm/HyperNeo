@@ -34,3 +34,13 @@ export function desktopOptIn(rows: readonly DesktopTodoRow[], worker: string) {
     ? candidates[0]
     : null;
 }
+
+export const desktopAllowedRow = (row: DesktopTodoRow) =>
+  JSON.parse(row.named ?? '{}').desktopControl !== false;
+
+export function desktopAllowed(rows: readonly DesktopTodoRow[], worker: string) {
+  const own = rows.filter((row) => row.worker === worker && row.active);
+  const doing = own.filter((row) => row.doing);
+  const candidates = doing.length ? doing : own;
+  return candidates.length === 1 && desktopAllowedRow(candidates[0]) ? candidates[0] : null;
+}
