@@ -1611,7 +1611,12 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
       if (refused) return refused;
       await releaseWorkerSandbox(found.value.thread.folder);
       return withCodexAppServer({ appServer: deps.bootstrapServer }, async (server) => {
-        await server.call('thread/archive', { threadId: ref.id });
+        try {
+          await server.call('thread/archive', { threadId: ref.id });
+        } catch (error) {
+          if (codexAppHoldsThread(error, ref.id)) return reject('busy', CODEX_APP_HOLDS_THREAD);
+          throw error;
+        }
         const worktree = await cleanupOwnedWorktree(found.value.thread.folder, [deps.worktreesDir]);
         return { ok: true, value: { archived: true, ...(worktree ? { worktree } : {}) } };
       });

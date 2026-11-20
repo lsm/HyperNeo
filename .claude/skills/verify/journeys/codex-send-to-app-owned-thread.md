@@ -30,5 +30,5 @@ holds the writer lock. Expect six `PASS` lines and `failed=0`:
 
 Before the fix, the send failed with the raw `thread/resume` error. A version that
 queued past the refusal returned `ok: true`, but the queued message never ran.
-Steer and compaction on such a thread are covered by unit tests: steer is
-refused as not sent, and compaction reports `busy`.
+Steer, compaction and archive on such a thread are covered by unit tests: steer
+is refused as not sent, and compaction and archive report `busy`.
