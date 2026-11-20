@@ -328,8 +328,28 @@ export function createCodingAssignmentOperation(deps: Deps) {
         };
   }
 
-  const assign = (superpipe({})('neo.coding.assign') as PipelineAPI)
+  const assign = (superpipe({ handoffFinished: Boolean })('neo.coding.assign') as PipelineAPI)
     .input(['input', 'caller'])
+    .pipe(
+      (input: Input) => {
+        if (running.has(input.todoId))
+          return refuse('Actor assignment is already in progress for this todo.');
+        running.add(input.todoId);
+        return { value: input.todoId };
+      },
+      'input',
+      'result:assignment'
+    )
+    .pipe((todoId: string) => ({ lockedTodo: todoId, assignment: null }), 'assignment', [
+      'lockedTodo',
+      'assignment',
+    ])
+    .pipe(
+      (input: Input) => (hasReviewHandoff(input) ? acceptReviewHandoff(input) : null),
+      'input',
+      'assignment'
+    )
+    .pipe('!handoffFinished', 'assignment')
     .pipe((input: Input) => admit(input, deps), 'input', 'result:assignment')
     .pipe(
       async (input: Input): Promise<Gate<Pr>> => {
@@ -404,6 +424,9 @@ export function createCodingAssignmentOperation(deps: Deps) {
       ['input', 'caller', 'assignment'],
       'assignment'
     )
+    .onExit((_exit, { lockedTodo }) => {
+      if (typeof lockedTodo === 'string') running.delete(lockedTodo);
+    })
     .endAsync('assignment') as (
     input: Input,
     caller: OperationCaller
@@ -421,19 +444,6 @@ export function createCodingAssignmentOperation(deps: Deps) {
       z.object({ ok: z.literal(false), reason: z.string() }),
     ]),
     policy: { safetyClass: 'mutate', roles: ['neo'] },
-    execute: async (input, caller) => {
-      if (running.has(input.todoId))
-        return {
-          ok: false as const,
-          reason: 'Actor assignment is already in progress for this todo.',
-        };
-      running.add(input.todoId);
-      try {
-        if (hasReviewHandoff(input)) return await acceptReviewHandoff(input);
-        return await assign(input, caller);
-      } finally {
-        running.delete(input.todoId);
-      }
-    },
+    execute: (input, caller) => assign(input, caller),
   });
 }
