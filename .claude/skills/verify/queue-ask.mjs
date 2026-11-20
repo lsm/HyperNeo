@@ -15,9 +15,6 @@ export async function revealAsk(page, askId) {
   if (await card.count()) return card;
   const section = await queueSection(page, askId);
   if (!section) return card;
-  const open = section.locator('[data-queue-open]');
-  await open.waitFor();
-  if ((await open.getAttribute('aria-expanded')) !== 'true') await open.click();
   await card.first().waitFor();
   return card;
 }

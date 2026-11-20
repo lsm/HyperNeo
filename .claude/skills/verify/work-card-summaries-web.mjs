@@ -74,7 +74,7 @@ try {
     if (width === 1280) {
       await waitFor(() => held.length > 0, 'the queue reads the ask it lists');
       assert.equal(await section.getByRole('button', { name: 'Ship', exact: true }).count(), 0, 'no answer before the full read');
-      assert.equal(await section.locator('[data-queue-open]').count(), 0, 'no full ask before the full read');
+      assert.equal(await section.locator('article[data-ask]').count(), 0, 'no full ask before the full read');
       const pending = readsOf('a-api');
       await page.getByRole('textbox', { name: 'Message Neo', exact: true }).fill('Synthetic unsent draft');
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -83,7 +83,6 @@ try {
       for (const release of held.splice(0)) release();
     }
     await section.getByRole('button', { name: 'Ship', exact: true }).waitFor();
-    await section.locator('[data-queue-open]').click();
     const card = page.locator('[data-ask="a-api"]:visible');
     await card.getByText('Draft the iOS API client').waitFor();
     const show = card.getByRole('button', { name: 'Show details: Preserve quote replies' });
@@ -101,7 +100,7 @@ try {
       const failed = await queueSection(page, 'a-api');
       assert(failed, 'the ask stays in the queue for its unfinished step');
       await failed.getByRole('alert').first().waitFor();
-      assert.equal(await failed.locator('[data-queue-open]').count(), 0, 'no full ask from a failed read');
+      assert.equal(await failed.locator('article[data-ask]').count(), 0, 'no full ask from a failed read');
       const failedReads = readsOf('a-api');
       await page.getByRole('textbox', { name: 'Message Neo', exact: true }).fill('Another unsent draft');
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -112,7 +111,7 @@ try {
       await failed.getByRole('button', { name: 'Retry', exact: true }).first().click();
       await waitFor(() => readsOf('a-api') > failedReads, 'Retry reads the ask again');
       await failed.getByRole('alert').waitFor({ state: 'detached' });
-      await failed.locator('[data-queue-open]').waitFor();
+      await failed.locator('article[data-ask]').waitFor();
     }
     observed.push({ width, detailReads: reads.length, todoCount: 22, summaryOutsideQueue: true, questionAnswered: width === 1280, pendingFailedAndRetriedReads: width === 1280 });
     await page.close();
