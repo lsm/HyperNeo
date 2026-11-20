@@ -1172,6 +1172,11 @@ export function NeoLive() {
             </p>
           )}
           {publicConversation && <NeoWorkTabs selected={workTab} onSelect={setWorkTab} />}
+          {showTab('inbox') && neoUnhandled > 0 && (
+            <p class="mt-3 text-xs text-fg-muted">
+              {t('live.neoUnhandled', { count: neoUnhandled })}
+            </p>
+          )}
           {showTab('scheduled') && <SessionSchedules sessionId={neo.sessionId} />}
           {showTab('goals') && <NeoGoals sessionId={neo.sessionId} />}
           {showTab('inbox') && (
@@ -1186,11 +1191,6 @@ export function NeoLive() {
                     onOpenWork={openWork}
                   />
                 ) : null
-              )}
-              {neoUnhandled > 0 && (
-                <p class="mt-3 text-xs text-fg-muted">
-                  {t('live.neoUnhandled', { count: neoUnhandled })}
-                </p>
               )}
               {publicConversation && <NeoWorkSearch query={workQuery} onQuery={setWorkQuery} />}
               {!!workQuery.trim() &&
