@@ -108,11 +108,14 @@ export function codexDesktopIpcAbsent(error: unknown): boolean {
 export function codexDesktopIpcListening(socketPath: string): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = createConnection(socketPath);
-    socket.once('connect', () => {
+    const done = (listening: boolean) => {
+      clearTimeout(timer);
       socket.destroy();
-      resolve(true);
-    });
-    socket.once('error', (error) => resolve(!codexDesktopIpcAbsent(error)));
+      resolve(listening);
+    };
+    const timer = setTimeout(() => done(true), 1000);
+    socket.once('connect', () => done(true));
+    socket.once('error', (error) => done(!codexDesktopIpcAbsent(error)));
   });
 }
 
