@@ -102,7 +102,7 @@ const work = {
 
 async function approvedPlan() {
   const world = setup();
-  const opened = await world.invoke('neo.ask.open', {
+  const opened = await world.invoke('neo.ask.propose', {
     title: 'Plan',
     request: 'Plan',
     todos: [world.step('A'), world.step('B')],

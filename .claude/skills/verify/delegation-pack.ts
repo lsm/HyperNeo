@@ -130,7 +130,7 @@ try {
     value: 'self',
     configured: false,
   });
-  const ask = await mcp('neo.ask.open', {
+  const ask = await mcp('neo.ask.propose', {
     title: 'Delegation proof',
     request: 'Prove shared worker preferences',
     todos: [],
@@ -178,7 +178,7 @@ try {
   });
   observed.push({ agentWriteRefusal: denied });
   assert.equal(denied.isError, true);
-  const secondAsk = await mcp('neo.ask.open', { title: 'Delegation follow-up', request: 'Check updated preferences' });
+  const secondAsk = await mcp('neo.ask.propose', { title: 'Delegation follow-up', request: 'Check updated preferences' });
   const secondQuestion = new NeoAskTodoRepository(raw).listQuestions(secondAsk.ask.id)[0];
   assert(secondQuestion);
   assert.equal((await human('neo.question.answer', { questionId: secondQuestion.id, answer: 'yes' })).ok, true);

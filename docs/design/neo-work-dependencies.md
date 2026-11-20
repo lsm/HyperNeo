@@ -71,7 +71,7 @@ Superseding a card does not silently redirect edges. Dependencies and
 bindings cannot be materially changed after dispatch; changed work requires a new card.
 
 Neo supplies `dependsOn` through `neo.work.propose` / `neo.work.start`, and `deliveredBy` on
-items through `neo.ask.open` / `neo.ask.edit`. Start may validate and persist pre-dispatch graph
+items through `neo.ask.propose` / `neo.ask.edit`. Start may validate and persist pre-dispatch graph
 edits, but cannot approve the resulting revision itself. Invalid plans return typed refusals
 with blockers. Build referenced cards/items before adding edges; never expose partially validated plans.
 
@@ -291,7 +291,7 @@ Read the resulting code before measuring a row; do not implement a competing sib
 | --- | --- |
 | #6749 — live worker for archived target | Already merged in PR #6765 (`fc44fd0b`); A1 reuses its retargeting code. No second implementation. |
 | #6747 — own-PR attribution | Its verified merge is required by A1's coding evidence integration and N1 guidance; audit against explicit issue/PR identity rather than trusting branch claims. |
-| #6750 — checked outcomes and withdrawn PR questions | R2 waits for its merge; then K2 follows R2 and B2 follows K2, serializing neo.ask.open/edit changes. |
+| #6750 — checked outcomes and withdrawn PR questions | R2 waits for its merge; then K2 follows R2 and B2 follows K2, serializing neo.ask.propose/edit changes. |
 | #6754 — close/follow/fold | Owns the existing fold operation. B1/B2 wait for its merge; B1 owns the dependency binding remapping extension and B2 wires that extension, without rewriting fold ownership. |
 | #6763 — model/effort per driver | A2 waits for its merge and preserves its driver request/refusal contract; do not independently rebuild work.start configuration. |
 
@@ -318,7 +318,7 @@ F3 can land before D. No deployment is part of this track.
 | K1 — build check registry | Build pure loaded-pack validation, evidence-independence metadata and string schemas; migrate the hard-coded DB constraint. | R1 | Unknown/colliding kinds rejected; missing metadata is non-independent; existing kinds preserved. |
 | K2 — wire registered checks | Swap operation validation/check dispatch to the registry, retaining existing checks' behavior. | K1, R2 | Loaded-pack checks work through the operations door; no life-admin behavior change. |
 | B1 — build outcome bindings | Add deliveredBy persistence and pure validation; extend #6754's fold with binding remapping/invalidation. | R2, #6754 | Missing/foreign cards rejected; changed bindings clear evidence; fold preserves card identity. |
-| B2 — wire binding operations | Add deliveredBy to neo.ask.open/edit and transactional fold behavior, returning updated views. | B1, K2 | Real operation tests prove atomic bindings/revisions and target-ask approval isolation. |
+| B2 — wire binding operations | Add deliveredBy to neo.ask.propose/edit and transactional fold behavior, returning updated views. | B1, K2 | Real operation tests prove atomic bindings/revisions and target-ask approval isolation. |
 
 ### Slice 2: graph, common admission, and deterministic dispatch
 

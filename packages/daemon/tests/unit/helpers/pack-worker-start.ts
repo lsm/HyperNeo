@@ -114,7 +114,7 @@ export function packWorkerStartFixture(
     after: [],
   });
   const open = () =>
-    invoke('neo.ask.open', { title: 'Synthetic matter', request: 'Track tasks', todos: [] });
+    invoke('neo.ask.propose', { title: 'Synthetic matter', request: 'Track tasks', todos: [] });
   const bind = (todoId: string, id: string, daemon?: string) => {
     const ref = { adapter: 'fixture', id, ...(daemon ? { daemon } : {}) };
     if (!sessions.get(todoId)) sessions.create(todoId, { verb: 'adopt', ref });

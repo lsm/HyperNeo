@@ -9,7 +9,7 @@ bash .claude/skills/verify/proof-run.sh "$EVIDENCE" .claude/skills/verify/ask-se
 
 This owns an isolated daemon with real reader/writer workers. Call the actual
 `neo.ask.settle` WebSocket RPC and agent MCP handler for reopening historical
-parents with `neo.ask.open`; read full public Work cards through `neo.ask.read`. Only work.stop
+parents with `neo.ask.propose`; read full public Work cards through `neo.ask.read`. Only work.stop
 is scripted, using the production operation schema and invocation boundary.
 No live daemon, provider, external GitHub request or real worker process is used.
 Before activation the first public settle fails on main-thread settlement SQL.

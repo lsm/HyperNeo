@@ -12,7 +12,7 @@ to fix this, so the grouping has to be right on its own.
 
 Four facts in the code cause it:
 
-1. **Neo writes every topic as free text.** `neo.ask.open` and `neo.ask.topic` take any
+1. **Neo writes every topic as free text.** `neo.ask.propose` and `neo.ask.topic` take any
    string up to 12 characters (`Topic` in `ask-record-operations.ts`). Nothing in the
    daemon knows which topic an ask belongs to.
 2. **Neo only sees topics on open asks.** The plan lines list open asks only
@@ -82,7 +82,7 @@ Project titles are not Neo's picks and are never rewritten this way.
 
 ## What does not change
 
-`neo.ask.open` and `neo.ask.topic` keep their inputs; the stored topic becomes Neo's pick.
+`neo.ask.propose` and `neo.ask.topic` keep their inputs; the stored topic becomes Neo's pick.
 Projects, the project mirror, and the chips' look and colours. Asks without todos or origin
 behave as today, apart from the prompt.
 
@@ -96,7 +96,7 @@ first.
    function over the ask, its todos' targets and `named`, at most one origin ask, this
    machine's name and the alias table.
    About 120 production lines.
-2. **Prompt and plan context.** The prompt line, the tool text of `neo.ask.open` and
+2. **Prompt and plan context.** The prompt line, the tool text of `neo.ask.propose` and
    `neo.ask.topic`, and the 30-day topic list in `plan-context.ts`. About 40 production
    lines.
 3. **Daily tidy.** `neo.topic.merge` and the turn in the daily pass. About 80 production

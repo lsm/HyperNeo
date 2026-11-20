@@ -46,12 +46,12 @@ try {
         assert.equal(columns.length, 1);
         db.prepare("INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?, 'Synthetic Neo', '/tmp', '2026-11-07T00:00:00Z', '2026-11-07T00:00:00Z', 'active', '{}', '{}')").run(sender);
         new NeoRepository(db).reserveBinding({ sessionId: sender, kind: 'neo', projectId: null });
-        const labelled = await call('neo.ask.open', { title: 'Synthetic screen time', request: 'Synthetic request', topic: ' 家长控制 ' });
-        const plain = await call('neo.ask.open', { title: 'Synthetic inbox', request: 'Synthetic request' });
+        const labelled = await call('neo.ask.propose', { title: 'Synthetic screen time', request: 'Synthetic request', topic: ' 家长控制 ' });
+        const plain = await call('neo.ask.propose', { title: 'Synthetic inbox', request: 'Synthetic request' });
         assert.equal(labelled.ask.topic, '家长控制');
         assert.equal(plain.ask.topic, null);
-        const tooLong = await handler({ name: 'neo.ask.open', input: { title: 'Synthetic long', request: 'Synthetic request', topic: 'Thirteen char' } });
-        evidence.push({ phase, name: 'neo.ask.open', refused: tooLong.content[0].text });
+        const tooLong = await handler({ name: 'neo.ask.propose', input: { title: 'Synthetic long', request: 'Synthetic request', topic: 'Thirteen char' } });
+        evidence.push({ phase, name: 'neo.ask.propose', refused: tooLong.content[0].text });
         assert.equal(tooLong.isError, true);
         assert.equal((await call('neo.ask.topic', { askId: plain.ask.id, topic: '邮件' })).ask.topic, '邮件');
         await call('neo.ask.settle', { askId: labelled.ask.id, status: 'dropped', outcome: 'Synthetic drop' });
@@ -65,5 +65,5 @@ try {
       assert.equal(topics[ids.plain], '邮件');
     } finally { await app.cleanup(); }
   }
-  console.log(`PASS: neo.ask.open topic trimmed and optional, 13 chars refused, neo.ask.topic sets open asks and refuses settled ones, RPC snapshot carries topic across restart. Evidence: ${run}/evidence/ask-topics.json`);
+  console.log(`PASS: neo.ask.propose topic trimmed and optional, 13 chars refused, neo.ask.topic sets open asks and refuses settled ones, RPC snapshot carries topic across restart. Evidence: ${run}/evidence/ask-topics.json`);
 } finally { globalThis.fetch = network; writeFileSync(join(run, 'evidence/ask-topics.json'), JSON.stringify(evidence, null, 2)); }

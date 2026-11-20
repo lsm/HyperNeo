@@ -13,7 +13,7 @@ env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test \
 ```
 
 The fresh DB has the nullable `neo_asks.topic` column. Through the production
-MCP adapter as a Neo session, `neo.ask.open` with topic `" 家长控制 "` stores
+MCP adapter as a Neo session, `neo.ask.propose` with topic `" 家长控制 "` stores
 `家长控制`, one without topic stores null, and a 13-character topic is refused.
 `neo.ask.topic` sets `邮件` on the open ask; after the first ask is dropped it
 answers `ask_settled: this ask is dropped.` and keeps its topic. The RPC

@@ -171,7 +171,7 @@ export function createNeoAskRecordOperations(
 ) {
   const present = async (result: AskReceipt | Rejection) =>
     result.ok ? { ...result, todos: await project(result.todos) } : result;
-  const open = (superpipe({})('neo.ask.open') as PipelineAPI)
+  const open = (superpipe({})('neo.ask.propose') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe((caller: OperationCaller) => requireAskSession(caller), 'caller', 'result:outcome')
     .pipe(
@@ -624,8 +624,8 @@ export function createNeoAskRecordOperations(
 
   return [
     defineOperation({
-      name: 'neo.ask.open',
-      description: neoToolDescription('neo.ask.open'),
+      name: 'neo.ask.propose',
+      description: neoToolDescription('neo.ask.propose'),
       inputSchema: Open,
       resultSchema: AskResult,
       policy: {

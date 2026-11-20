@@ -385,7 +385,7 @@ asks and todos, not Space tasks, and its cadence is a `session_schedules` row
 - `goal.journal.list {goalId, before?, limit}`.
 - `goal.facts {goalId}` is a read: the same facts the scheduler sees, so Neo and the UI
   agree with it.
-- `neo.ask.open` takes an optional `goalId`, and its gate checks that the caller owns
+- `neo.ask.propose` takes an optional `goalId`, and its gate checks that the caller owns
   the goal.
 
 ### Goals as a schedule source
@@ -672,7 +672,7 @@ Goals and UI (fs2), each one PR from dev; sizes are production lines:
 3. **Journal** (~150): `goal_journal`, `goal.journal.append` and `list`, run-id
    idempotence.
 4. **Goals as a schedule source** (~150): `facts`/`message`, `goal.facts`,
-   `neo_asks.goal_id` and the `neo.ask.open` gate, and the schedule lifecycle on
+   `neo_asks.goal_id` and the `neo.ask.propose` gate, and the schedule lifecycle on
    create/pause/close. Needs the scheduler service.
 5. **Wake rows** (~150): the `wake` item in `neo.conversation.read` and the web row.
    Needs the `scheduled_wake` origin. Reuses M4's collapsible row and its extra item

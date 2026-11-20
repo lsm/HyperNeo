@@ -114,7 +114,7 @@ describe('todo and ask bookkeeping records through MCP', () => {
     try {
       historicalAsk(h.store, 'neo', 'Existing worker');
       const ref = { adapter: 'hyperneo', id: '10000000-0000-4000-8000-000000000001' };
-      const result = await h.call('neo.ask.open', {
+      const result = await h.call('neo.ask.propose', {
         title: 'Existing worker',
         request: 'Track its result',
         todos: [

@@ -503,7 +503,17 @@ describe('projectNeoAskEntries todo order and done todos', () => {
   });
 
   test('neo.ask.read gives an agent one line per todo and neo.todo.read gives one todo in full', async () => {
-    const { store } = seed(['doing', 'todo']);
+    const { store, sessions } = seed(['doing', 'todo']);
+    sessions.create('t0', {
+      verb: 'start',
+      adapter: 'hyperneo',
+      model: 'requested',
+      effort: 'high',
+    });
+    sessions.recordRef('t0', { adapter: 'hyperneo', id: 'recorded-worker' }, 2, undefined, {
+      model: 'observed',
+      effort: 'medium',
+    });
     store.updateTodo(
       store.getTodo('t0')!,
       { instruction: 'Build the parser', report: 'Opened the pull request' },
@@ -524,10 +534,16 @@ describe('projectNeoAskEntries todo order and done todos', () => {
       source: 'rpc',
     })) as Read;
     expect(human.ok && human.entry.todos[0]).toMatchObject({ instruction: 'Build the parser' });
-    const todoRead = createNeoTodoReadOperation(store, admit, project);
+    const todoRead = createNeoTodoReadOperation(store, sessions, admit, project);
     expect(await todoRead.execute(todoRead.inputSchema.parse({ todoId: 't0' }), mcp)).toMatchObject(
       {
         ok: true,
+        startConfiguration: {
+          requestedModel: 'requested',
+          requestedEffort: 'high',
+          actualModel: 'observed',
+          actualEffort: 'medium',
+        },
         todo: {
           id: 't0',
           state: 'doing',

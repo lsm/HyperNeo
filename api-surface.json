@@ -23295,369 +23295,25 @@
     },
     {
       "inputSchema": {
-        "$defs": {
-          "__schema0": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "number"
-              },
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              },
-              {
-                "items": {
-                  "$ref": "#/$defs/__schema0"
-                },
-                "type": "array"
-              },
-              {
-                "additionalProperties": {
-                  "$ref": "#/$defs/__schema0"
-                },
-                "propertyNames": {
-                  "type": "string"
-                },
-                "type": "object"
-              }
-            ]
-          }
-        },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
-          "goalId": {
-            "anyOf": [
-              {
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+          "askId": {
+            "minLength": 1,
+            "type": "string"
           },
-          "projectId": {
-            "anyOf": [
-              {
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "request": {
+          "outcome": {
             "maxLength": 4000,
-            "minLength": 1,
-            "type": "string"
-          },
-          "title": {
-            "maxLength": 200,
-            "minLength": 1,
-            "type": "string"
-          },
-          "todos": {
-            "default": [],
-            "items": {
-              "properties": {
-                "after": {
-                  "description": "Required. The earlier steps of this ask this todo waits for: indexes of earlier todos in the same neo.ask.open call, or todo ids. [] means it waits for nothing. The daemon starts each step once everything it waits for is done.",
-                  "items": {
-                    "anyOf": [
-                      {
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      {
-                        "maximum": 9007199254740991,
-                        "minimum": 0,
-                        "type": "integer"
-                      }
-                    ]
-                  },
-                  "maxItems": 20,
-                  "type": "array"
-                },
-                "check": {
-                  "properties": {
-                    "kind": {
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "pack": {
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "params": {
-                      "additionalProperties": {},
-                      "default": {},
-                      "propertyNames": {
-                        "type": "string"
-                      },
-                      "type": "object"
-                    }
-                  },
-                  "required": [
-                    "pack",
-                    "kind"
-                  ],
-                  "type": "object"
-                },
-                "instruction": {
-                  "anyOf": [
-                    {
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "default": null
-                },
-                "named": {
-                  "anyOf": [
-                    {
-                      "additionalProperties": {},
-                      "propertyNames": {
-                        "type": "string"
-                      },
-                      "type": "object"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "default": null
-                },
-                "priority": {
-                  "default": "normal",
-                  "enum": [
-                    "low",
-                    "normal",
-                    "high",
-                    "urgent"
-                  ],
-                  "type": "string"
-                },
-                "producesFollowUp": {
-                  "description": "True when this todo's result is more work: a design, plan, research or inventory. Once it finishes, its ask cannot settle done until a later todo exists (unstarted is fine). Add each follow-up with after: [this todo's id].",
-                  "type": "boolean"
-                },
-                "target": {
-                  "oneOf": [
-                    {
-                      "properties": {
-                        "adapter": {
-                          "maxLength": 80,
-                          "minLength": 1,
-                          "type": "string"
-                        },
-                        "createFolder": {
-                          "type": "boolean"
-                        },
-                        "effort": {
-                          "maxLength": 100,
-                          "minLength": 1,
-                          "type": "string"
-                        },
-                        "model": {
-                          "maxLength": 200,
-                          "minLength": 1,
-                          "type": "string"
-                        },
-                        "name": {
-                          "maxLength": 80,
-                          "minLength": 1,
-                          "type": "string"
-                        },
-                        "place": {
-                          "properties": {
-                            "codeIdentity": {
-                              "type": "string"
-                            },
-                            "daemon": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "folder": {
-                              "type": "string"
-                            },
-                            "machine": {
-                              "type": "string"
-                            },
-                            "name": {
-                              "type": "string"
-                            },
-                            "remotes": {
-                              "items": {
-                                "type": "string"
-                              },
-                              "type": "array"
-                            },
-                            "repoName": {
-                              "type": "string"
-                            },
-                            "spaceId": {
-                              "type": "string"
-                            },
-                            "toolProject": {
-                              "properties": {
-                                "id": {
-                                  "type": "string"
-                                },
-                                "name": {
-                                  "type": "string"
-                                }
-                              },
-                              "required": [
-                                "id",
-                                "name"
-                              ],
-                              "type": "object"
-                            }
-                          },
-                          "required": [
-                            "machine",
-                            "name"
-                          ],
-                          "type": "object"
-                        },
-                        "preparationParameters": {
-                          "additionalProperties": {
-                            "$ref": "#/$defs/__schema0"
-                          },
-                          "description": "Parameters for the linked ask pack preparation stage.",
-                          "propertyNames": {
-                            "type": "string"
-                          },
-                          "type": "object"
-                        },
-                        "sandbox": {
-                          "description": "Ask for the OS worker sandbox (writes limited to the work folder), e.g. for untrusted or external code. Applies when the human set the worker sandbox to on-demand.",
-                          "type": "boolean"
-                        },
-                        "sessionTitle": {
-                          "description": "For a Codex start, set a generic sessionTitle, never the task title. When omitted, the driver assigns the next free generic project name.",
-                          "maxLength": 200,
-                          "minLength": 1,
-                          "type": "string"
-                        },
-                        "verb": {
-                          "const": "start",
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "verb",
-                        "adapter"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "properties": {
-                        "ref": {
-                          "properties": {
-                            "adapter": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "daemon": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "id": {
-                              "minLength": 1,
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "adapter",
-                            "id"
-                          ],
-                          "type": "object"
-                        },
-                        "verb": {
-                          "const": "send",
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "verb",
-                        "ref"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "properties": {
-                        "ref": {
-                          "properties": {
-                            "adapter": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "daemon": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "id": {
-                              "minLength": 1,
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "adapter",
-                            "id"
-                          ],
-                          "type": "object"
-                        },
-                        "verb": {
-                          "const": "bind",
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "verb",
-                        "ref"
-                      ],
-                      "type": "object"
-                    }
-                  ]
-                },
-                "title": {
-                  "minLength": 1,
-                  "type": "string"
-                }
-              },
-              "required": [
-                "title",
-                "check",
-                "after"
-              ],
-              "type": "object"
-            },
-            "maxItems": 20,
-            "type": "array"
-          },
-          "topic": {
-            "maxLength": 12,
             "minLength": 1,
             "type": "string"
           }
         },
         "required": [
-          "title",
-          "request"
+          "askId",
+          "outcome"
         ],
         "type": "object"
       },
-      "name": "neo.ask.open",
+      "name": "neo.ask.outcome",
       "resultSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "anyOf": [
@@ -24177,25 +23833,369 @@
     },
     {
       "inputSchema": {
+        "$defs": {
+          "__schema0": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "items": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "type": "array"
+              },
+              {
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "propertyNames": {
+                  "type": "string"
+                },
+                "type": "object"
+              }
+            ]
+          }
+        },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
-          "askId": {
+          "goalId": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projectId": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "request": {
+            "maxLength": 4000,
             "minLength": 1,
             "type": "string"
           },
-          "outcome": {
-            "maxLength": 4000,
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "todos": {
+            "default": [],
+            "items": {
+              "properties": {
+                "after": {
+                  "description": "Required. The earlier steps of this ask this todo waits for: indexes of earlier todos in the same neo.ask.propose call, or todo ids. [] means it waits for nothing. The daemon starts each step once everything it waits for is done.",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    ]
+                  },
+                  "maxItems": 20,
+                  "type": "array"
+                },
+                "check": {
+                  "properties": {
+                    "kind": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "pack": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "params": {
+                      "additionalProperties": {},
+                      "default": {},
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "pack",
+                    "kind"
+                  ],
+                  "type": "object"
+                },
+                "instruction": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "named": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": {},
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "priority": {
+                  "default": "normal",
+                  "enum": [
+                    "low",
+                    "normal",
+                    "high",
+                    "urgent"
+                  ],
+                  "type": "string"
+                },
+                "producesFollowUp": {
+                  "description": "True when this todo's result is more work: a design, plan, research or inventory. Once it finishes, its ask cannot settle done until a later todo exists (unstarted is fine). Add each follow-up with after: [this todo's id].",
+                  "type": "boolean"
+                },
+                "target": {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "adapter": {
+                          "maxLength": 80,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "createFolder": {
+                          "type": "boolean"
+                        },
+                        "effort": {
+                          "maxLength": 100,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "model": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "name": {
+                          "maxLength": 80,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "place": {
+                          "properties": {
+                            "codeIdentity": {
+                              "type": "string"
+                            },
+                            "daemon": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "folder": {
+                              "type": "string"
+                            },
+                            "machine": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "remotes": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "repoName": {
+                              "type": "string"
+                            },
+                            "spaceId": {
+                              "type": "string"
+                            },
+                            "toolProject": {
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "name"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "machine",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "preparationParameters": {
+                          "additionalProperties": {
+                            "$ref": "#/$defs/__schema0"
+                          },
+                          "description": "Parameters for the linked ask pack preparation stage.",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "type": "object"
+                        },
+                        "sandbox": {
+                          "description": "Ask for the OS worker sandbox (writes limited to the work folder), e.g. for untrusted or external code. Applies when the human set the worker sandbox to on-demand.",
+                          "type": "boolean"
+                        },
+                        "sessionTitle": {
+                          "description": "For a Codex start, set a generic sessionTitle, never the task title. When omitted, the driver assigns the next free generic project name.",
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "verb": {
+                          "const": "start",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "verb",
+                        "adapter"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "ref": {
+                          "properties": {
+                            "adapter": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "daemon": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "id": {
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "adapter",
+                            "id"
+                          ],
+                          "type": "object"
+                        },
+                        "verb": {
+                          "const": "send",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "verb",
+                        "ref"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "ref": {
+                          "properties": {
+                            "adapter": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "daemon": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "id": {
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "adapter",
+                            "id"
+                          ],
+                          "type": "object"
+                        },
+                        "verb": {
+                          "const": "bind",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "verb",
+                        "ref"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                },
+                "title": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "title",
+                "check",
+                "after"
+              ],
+              "type": "object"
+            },
+            "maxItems": 20,
+            "type": "array"
+          },
+          "topic": {
+            "maxLength": 12,
             "minLength": 1,
             "type": "string"
           }
         },
         "required": [
-          "askId",
-          "outcome"
+          "title",
+          "request"
         ],
         "type": "object"
       },
-      "name": "neo.ask.outcome",
+      "name": "neo.ask.propose",
       "resultSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "anyOf": [
@@ -44369,6 +44369,49 @@
                 "const": true,
                 "type": "boolean"
               },
+              "startConfiguration": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "actualEffort": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "actualModel": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "requestedEffort": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "requestedModel": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "requestedModel",
+                      "requestedEffort",
+                      "actualModel",
+                      "actualEffort"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "todo": {
                 "additionalProperties": false,
                 "properties": {
@@ -44684,7 +44727,8 @@
             },
             "required": [
               "ok",
-              "todo"
+              "todo",
+              "startConfiguration"
             ],
             "type": "object"
           }

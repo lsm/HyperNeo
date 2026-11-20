@@ -51,7 +51,7 @@ function setup() {
   const call = async (name: string, input: unknown, caller = as('neo-a')) =>
     (await ops[name].execute(ops[name].inputSchema.parse(input), caller)) as Receipt;
   const open = (title: string, request: string, caller?: OperationCaller) =>
-    call('neo.ask.open', { title, request }, caller);
+    call('neo.ask.propose', { title, request }, caller);
   return { db, store, call, open };
 }
 
@@ -141,7 +141,7 @@ describe('neoAskMatterRefusal', () => {
   });
 });
 
-describe('neo.ask.open', () => {
+describe('neo.ask.propose', () => {
   test('a second ask for the same pull request is refused with the first one’s id', async () => {
     const { open, store } = setup();
     const first = await open('Review the fix', `Review ${pull} and merge it`);
@@ -158,7 +158,7 @@ describe('neo.ask.open', () => {
     const { call, store } = setup();
     const both = await Promise.all(
       ['Review the fix', 'Deploy the fix'].map((title) =>
-        call('neo.ask.open', { title, request: `Handle ${pull}` })
+        call('neo.ask.propose', { title, request: `Handle ${pull}` })
       )
     );
     const [opened] = store.listOpenAsks();

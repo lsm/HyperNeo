@@ -87,7 +87,7 @@ function setup() {
 }
 
 describe('bind an already running worker without dispatch', () => {
-  test.each(['neo.ask.open', 'neo.todo.add'])(
+  test.each(['neo.ask.propose', 'neo.todo.add'])(
     '%s refuses a bind target with an instruction',
     async (name) => {
       const { db, calls, invoke } = setup();
@@ -100,7 +100,7 @@ describe('bind an already running worker without dispatch', () => {
           target: { verb: 'bind', ref },
         };
         const input =
-          name === 'neo.ask.open'
+          name === 'neo.ask.propose'
             ? { title: 'Synthetic work', request: 'Track work', todos: [draft] }
             : { ...draft, askId: 'ask' };
         await expect(invoke(name, input)).rejects.toThrow(
@@ -128,7 +128,7 @@ describe('bind an already running worker without dispatch', () => {
   test('add with a bind target records the todo as doing on that worker without dispatch', async () => {
     const { db, sessions, calls, invoke } = setup();
     try {
-      const opened = await invoke('neo.ask.open', {
+      const opened = await invoke('neo.ask.propose', {
         title: 'Observed worker',
         request: 'Track work',
         todos: [{ after: [], title: 'Merge', check: pendingTodoCheck }],
@@ -157,7 +157,7 @@ describe('bind an already running worker without dispatch', () => {
   test('a bind target waits for nothing unfinished: it is refused and adds no todo', async () => {
     const { db, store, calls, invoke } = setup();
     try {
-      const opened = await invoke('neo.ask.open', {
+      const opened = await invoke('neo.ask.propose', {
         title: 'Observed worker',
         request: 'Track work',
         todos: [{ after: [], title: 'First step', check: pendingTodoCheck }],
@@ -181,7 +181,7 @@ describe('bind an already running worker without dispatch', () => {
   test('a passive hold through the base operation opens no decision card', async () => {
     const { db, store, invoke } = setup();
     try {
-      const opened = await invoke('neo.ask.open', {
+      const opened = await invoke('neo.ask.propose', {
         title: 'Synthetic work',
         request: 'Track work',
         todos: [
@@ -207,7 +207,7 @@ describe('bind an already running worker without dispatch', () => {
   test('hold is its own operation: neo.todo.hold opens a hold card, edit refuses hold', async () => {
     const { db, store, calls, invoke } = setup();
     try {
-      const opened = await invoke('neo.ask.open', {
+      const opened = await invoke('neo.ask.propose', {
         title: 'Synthetic work',
         request: 'Track work',
         todos: [

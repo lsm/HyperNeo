@@ -1,4 +1,4 @@
 ---
-id: neo.ask.open
+id: neo.ask.propose
 ---
 Open a proposal for work that the human has not directly requested. Give a short title and a request that explains the proposed work and why; quote a session's words when relevant. The request is the human-facing card text: use the human's language, at most 400 characters, and no internal IDs. The daemon asks the human to choose Do it or Don't with a button; a chat reply leaves the card open. Do not supply todos: wait for the human to answer Do it, then add them with neo.todo.add. Don't drops the ask. A goalId links a cycle proposal to a goal; even a confirmed mandate does not approve the proposal. A retry returns the same proposal and cannot add todos. For a direct human message, use neo.todo.add with its input instead. A session request records a reply todo; to act on it, open a separate proposal. projectId names the project by id or title. Reuse an open ask for the same matter. topic names a lasting area in the human’s language (2–6 characters). Reuse an existing topic or use 其他.

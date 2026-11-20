@@ -209,7 +209,7 @@ import mdToolSnapshot from './neo/tools/neo.snapshot.md' with { type: 'text' };
 import mdToolProjectSave from './neo/tools/neo.project.save.md' with { type: 'text' };
 import mdToolAskDoneTodos from './neo/tools/neo.ask.doneTodos.md' with { type: 'text' };
 import mdToolAskRead from './neo/tools/neo.ask.read.md' with { type: 'text' };
-import mdToolAskOpen from './neo/tools/neo.ask.open.md' with { type: 'text' };
+import mdToolAskPropose from './neo/tools/neo.ask.propose.md' with { type: 'text' };
 import mdToolAskOutcome from './neo/tools/neo.ask.outcome.md' with { type: 'text' };
 import mdToolAskTopic from './neo/tools/neo.ask.topic.md' with { type: 'text' };
 import mdToolAskSettle from './neo/tools/neo.ask.settle.md' with { type: 'text' };
@@ -693,7 +693,7 @@ export const NEO_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = Object.fr
     'neo/tools/neo.project.save.md': mdToolProjectSave,
     'neo/tools/neo.ask.doneTodos.md': mdToolAskDoneTodos,
     'neo/tools/neo.ask.read.md': mdToolAskRead,
-    'neo/tools/neo.ask.open.md': mdToolAskOpen,
+    'neo/tools/neo.ask.propose.md': mdToolAskPropose,
     'neo/tools/neo.ask.outcome.md': mdToolAskOutcome,
     'neo/tools/neo.ask.topic.md': mdToolAskTopic,
     'neo/tools/neo.ask.settle.md': mdToolAskSettle,

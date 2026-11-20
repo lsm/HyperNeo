@@ -15,7 +15,7 @@ describe('Neo scheduled goal-cycle guidance', () => {
       'goal.facts',
       'neo.home.read',
       'goal.journal.list',
-      'neo.ask.open',
+      'neo.ask.propose',
       'goal.journal.append',
       'goal.session.update',
     ])

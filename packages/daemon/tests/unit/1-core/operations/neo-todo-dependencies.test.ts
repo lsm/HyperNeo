@@ -98,7 +98,7 @@ describe('todo dependencies', () => {
   test('a plan names which earlier steps each step waits for', async () => {
     const { db, invoke, step } = setup();
     try {
-      const opened = await invoke('neo.ask.open', {
+      const opened = await invoke('neo.ask.propose', {
         title: 'Plan',
         request: 'Plan with a join',
         todos: [step('A'), step('B', []), step('C', [0, 1])],
@@ -116,7 +116,7 @@ describe('todo dependencies', () => {
   test('missing, self and circular dependencies are refused', async () => {
     const { db, store, invoke, step } = setup();
     try {
-      const opened = await invoke('neo.ask.open', {
+      const opened = await invoke('neo.ask.propose', {
         title: 'Plan',
         request: 'Plan',
         todos: [step('A'), step('B', [0])],
@@ -147,7 +147,7 @@ describe('todo dependencies', () => {
   test('a bad reference anywhere in a plan refuses the whole plan before anything is saved', async () => {
     const { db, store, invoke, step } = setup();
     try {
-      const opened = await invoke('neo.ask.open', {
+      const opened = await invoke('neo.ask.propose', {
         title: 'Plan',
         request: 'Plan with a forward reference',
         todos: [step('A'), step('B', [2]), step('C')],
@@ -162,7 +162,7 @@ describe('todo dependencies', () => {
   test('start on a step that waits for unfinished steps approves it without dispatching', async () => {
     const { db, invoke, step } = setup();
     try {
-      const opened = await invoke('neo.ask.open', {
+      const opened = await invoke('neo.ask.propose', {
         title: 'Plan',
         request: 'Plan',
         todos: [step('A')],
@@ -185,8 +185,8 @@ describe('todo dependencies', () => {
     const { db, invoke, step } = setup();
     try {
       const plan = { title: 'Plan', request: 'Plan' };
-      await invoke('neo.ask.open', { ...plan, todos: [step('A'), step('B', [0])] });
-      const again = (await invoke('neo.ask.open', {
+      await invoke('neo.ask.propose', { ...plan, todos: [step('A'), step('B', [0])] });
+      const again = (await invoke('neo.ask.propose', {
         ...plan,
         todos: [step('A'), step('B', [])],
       })) as unknown as { records?: string[] };
@@ -246,14 +246,14 @@ describe('todo dependencies', () => {
         instruction: 'Do it.',
         target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } },
       };
-      const opened = await invoke('neo.ask.open', {
+      const opened = await invoke('neo.ask.propose', {
         ...plan,
         todos: [
           { ...step('A'), ...work },
           { ...step('B', [0]), ...work },
         ],
       });
-      const again = await invoke('neo.ask.open', {
+      const again = await invoke('neo.ask.propose', {
         ...plan,
         todos: [
           { ...step('A'), ...work },
@@ -272,9 +272,9 @@ describe('todo dependencies', () => {
     const { db, store, invoke, step } = setup();
     try {
       const plan = { title: 'Plan', request: 'Plan' };
-      const opened = await invoke('neo.ask.open', { ...plan, todos: [step('A')] });
+      const opened = await invoke('neo.ask.propose', { ...plan, todos: [step('A')] });
       store.updateTodo(opened.todos[0], { state: 'done', evidence: 'Done.' }, 5);
-      const again = await invoke('neo.ask.open', {
+      const again = await invoke('neo.ask.propose', {
         ...plan,
         todos: [
           step('A'),
@@ -295,7 +295,7 @@ describe('todo dependencies', () => {
   test('what a started todo waits for cannot change under its running worker', async () => {
     const { db, store, invoke, step } = setup();
     try {
-      const opened = await invoke('neo.ask.open', {
+      const opened = await invoke('neo.ask.propose', {
         title: 'Plan',
         request: 'Plan',
         todos: [step('A'), step('B', [])],

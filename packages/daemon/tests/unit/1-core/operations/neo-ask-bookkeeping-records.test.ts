@@ -108,7 +108,7 @@ function setup(overrides: Partial<Pick<NeoTodoControls, 'resolveTarget' | 'advan
   const call = async (name: string, input: unknown) => {
     const draft = input as { title?: string; request?: string };
     if (
-      name === 'neo.ask.open' &&
+      name === 'neo.ask.propose' &&
       draft.title &&
       draft.request &&
       ['Recorded worker', 'Canonical target batch'].includes(draft.title) &&
@@ -155,7 +155,7 @@ describe('todo and ask bookkeeping records through MCP', () => {
             },
           ],
         };
-        const first = await h.call('neo.ask.open', input);
+        const first = await h.call('neo.ask.propose', input);
         expect(first.ok).toBe(true);
         if (state === 'done') {
           h.store.openAsk({
@@ -172,7 +172,7 @@ describe('todo and ask bookkeeping records through MCP', () => {
         }
         const before = h.store.listTodos(first.ask.id);
         gone = true;
-        const again = await h.call('neo.ask.open', input);
+        const again = await h.call('neo.ask.propose', input);
         expect(again).toMatchObject({
           ok: true,
           ask: { id: first.ask.id, status: state },
@@ -205,7 +205,7 @@ describe('todo and ask bookkeeping records through MCP', () => {
       });
       h.store.settleAsk(h.ask, 'done', 'Finished', 2);
       const before = h.store.listTodos(h.ask.id);
-      const reply = await h.call('neo.ask.open', {
+      const reply = await h.call('neo.ask.propose', {
         title: h.ask.title,
         request: 'Track work',
         todos: [
@@ -253,7 +253,7 @@ describe('todo and ask bookkeeping records through MCP', () => {
           target: { verb: 'send', ref: { adapter: 'hyperneo', id } },
         }));
         if (position === 0) todos.reverse();
-        const result = await h.call('neo.ask.open', {
+        const result = await h.call('neo.ask.propose', {
           title: 'Invalid target batch',
           request: 'Track batch',
           todos,
@@ -285,7 +285,7 @@ describe('todo and ask bookkeeping records through MCP', () => {
       },
     });
     try {
-      const result = await h.call('neo.ask.open', {
+      const result = await h.call('neo.ask.propose', {
         title: 'Canonical target batch',
         request: 'Track batch',
         todos: ['short-a', 'short-b'].map((id) => ({
@@ -369,7 +369,7 @@ describe('todo and ask bookkeeping records through MCP', () => {
       });
       h.store.settleAsk(h.ask, 'done', 'Finished request', 2);
       const before = h.store.listTodos(h.ask.id);
-      const result = await h.call('neo.ask.open', {
+      const result = await h.call('neo.ask.propose', {
         title: h.ask.title,
         request: 'Follow-up',
         todos: [{ after: [], title: 'New task', check: pendingTodoCheck }],

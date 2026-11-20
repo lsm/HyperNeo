@@ -97,12 +97,12 @@ try {
   await call('work.status', { ref: refs[0] });
   for (const verb of ['send', 'bind'] as const) {
     const title = `Open matching ${verb}`;
-    const opened = await call('neo.ask.open', { title, request: 'Use matching worker', todos: [{ title: 'Matching worker', after: [], check, instruction: verb === 'send' ? 'Implement' : null, target: { verb, ref: refs[0] } }] });
+    const opened = await call('neo.ask.propose', { title, request: 'Use matching worker', todos: [{ title: 'Matching worker', after: [], check, instruction: verb === 'send' ? 'Implement' : null, target: { verb, ref: refs[0] } }] });
     assert.equal(opened.ok, true, JSON.stringify(opened));
   }
   const countAsks = () => (db.prepare('SELECT count(*) AS n FROM neo_asks').get() as { n: number }).n;
   const beforeBadAsk = countAsks();
-  const badAsk = await call('neo.ask.open', { title: 'Open wrong worker', request: 'Use the wrong worker', todos: [{ title: 'Wrong worker', after: [], check, instruction: 'Implement', target: { verb: 'send', ref: refs[1] } }] });
+  const badAsk = await call('neo.ask.propose', { title: 'Open wrong worker', request: 'Use the wrong worker', todos: [{ title: 'Wrong worker', after: [], check, instruction: 'Implement', target: { verb: 'send', ref: refs[1] } }] });
   assert.equal(badAsk.ok, false, JSON.stringify(badAsk));
   assert.match(badAsk.reason, /^worker_repository_mismatch:/);
   assert.equal(countAsks(), beforeBadAsk);

@@ -10,7 +10,7 @@ For example: sessions keep asking Neo for something. Neo opens an ask whose requ
 
 Two gaps allow this:
 
-- `neo.ask.open` (`daemon/src/lib/neo/ask-record-operations.ts`) lets Neo open an ask in its own words and start todos on it at once. Its tool text says an ask records "a human request", but nothing checks that.
+- `neo.ask.propose` (`daemon/src/lib/neo/ask-record-operations.ts`) lets Neo open an ask in its own words and start todos on it at once. Its tool text says an ask records "a human request", but nothing checks that.
 - `work.start` (`daemon/src/lib/drivers/work-operations.ts`) takes `todoId` as optional. A missing one is "recorded without blocking", so a session can start with no ask behind it.
 
 Words relayed by another session cannot be trusted either. The session door takes the sender from the request body (`daemon/src/lib/messaging/session-door.ts`), and the CLI reads it from environment variables (`cli/src/session-cli.ts`). Any session with a shell can claim to be any other session and invent a quote. Only the human's own devices are authenticated.
@@ -26,11 +26,11 @@ New work starts only from the human, and the human always acts on their own devi
 - "Do it" on a proposal card.
 - The human's answer to a relayed session question (`neo.question.relaySession`, written through the Track path). That card is the proposal: its ask is accepted once the human answers it, and not before.
 
-**2. Everything else is a proposal.** When Neo opens an ask with `neo.ask.open`, the same call asks a yes/no card on it ("Do it" / "Don't"). The card shows the request and why. This covers Neo's own ideas, words another session relayed (shown as a quote), and asks in a goal's cycle (`neo.ask.open` with `goalId`). A confirmed goal mandate does not skip the card: any session can create a goal and point it at a confirmed revision, so it cannot prove the human wanted this ask.
+**2. Everything else is a proposal.** When Neo opens an ask with `neo.ask.propose`, the same call asks a yes/no card on it ("Do it" / "Don't"). The card shows the request and why. This covers Neo's own ideas, words another session relayed (shown as a quote), and asks in a goal's cycle (`neo.ask.propose` with `goalId`). A confirmed goal mandate does not skip the card: any session can create a goal and point it at a confirmed revision, so it cannot prove the human wanted this ask.
 
 - The ask takes no todos until the human answers "Do it".
 - "Don't" settles the ask as `dropped`.
-- If `neo.ask.open` is called with todos for a new proposal, the call is refused and nothing is written. The retry path is refused too.
+- If `neo.ask.propose` is called with todos for a new proposal, the call is refused and nothing is written. The retry path is refused too.
 
 A session's request to Neo (`recordNeoRequestTodo`) still records its ask and its reply todo, so the request is not lost. That ask only holds Neo to replying. To act on it, Neo opens a proposal.
 
@@ -57,7 +57,7 @@ A session's request to Neo (`recordNeoRequestTodo`) still records its ask and it
 
 The checks are pure functions added as steps in the existing superpipe pipelines:
 
-- `neo.ask.open`;
+- `neo.ask.propose`;
 - `neo.todo.add`;
 - `start-work`, before `routeStart`;
 - `work.send` and `work.queue`, beside `requireSendPurpose`.
@@ -66,8 +66,8 @@ Each check takes facts and returns a `Gate`. The facts are the ask, its proposal
 
 ## Tests (written first)
 
-- `neo.ask.open` makes a proposal card. A todo on it is refused until "Do it", then accepted. "Don't" drops the ask.
-- `neo.ask.open` with todos for a new proposal is refused, and nothing is written. The same holds on retry.
+- `neo.ask.propose` makes a proposal card. A todo on it is refused until "Do it", then accepted. "Don't" drops the ask.
+- `neo.ask.propose` with todos for a new proposal is refused, and nothing is written. The same holds on retry.
 - A human message to Neo opens an accepted ask, and its todo starts.
 - An existing ask with no proposal card still takes todos, unless it is a session-request ask or has an unanswered relayed question.
 - An ask in a goal's cycle is a proposal, even when the goal's mandate was confirmed.
@@ -82,4 +82,4 @@ Each check takes facts and returns a `Gate`. The facts are the ask, its proposal
 Two PRs, as the human asked. Relayed card answers exist today (`daemon/src/lib/neo/relay-answer.ts`). Slice 1 removes them. Proposal cards exist only from slice 2, which merges after slice 1, so no proposal can ever be approved by a relayed answer:
 
 1. **Remove relayed answers**: everything listed in rule 4. Removal only.
-2. **The rule**: the proposal card, the checks in `neo.ask.open`, `neo.todo.add`, `start-work` and `work.send`/`work.queue`, the tests, and the matching tool text in `neo.ask.open.md` and `goal-cycle.md`. It merges only after slice 1.
+2. **The rule**: the proposal card, the checks in `neo.ask.propose`, `neo.todo.add`, `start-work` and `work.send`/`work.queue`, the tests, and the matching tool text in `neo.ask.propose.md` and `goal-cycle.md`. It merges only after slice 1.

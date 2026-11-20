@@ -35,7 +35,7 @@ The core knows nothing about any one kind of work. A pack supplies the four thin
 | Group | Neo's operations |
 |---|---|
 | Reading | `neo.snapshot`, `neo.conversation.read`, `neo.pack.read`, Bash with `gh`, `work.find`, `work.read` |
-| Asks | `neo.ask.open`, `neo.ask.settle` |
+| Asks | `neo.ask.propose`, `neo.ask.settle` |
 | Todos | `neo.todo.add`, `neo.todo.edit`, `neo.todo.remove`, `neo.todo.continue`, `neo.todo.retry`, `neo.todo.done` |
 | Questions | `neo.question.ask`, `neo.question.answer`, `neo.question.retire` |
 | Publishing and state | `neo.publication.publish` (revises with `publicationId`), `neo.project.save` (labels), `neo.rule.save` |
@@ -88,7 +88,7 @@ Native tools are Read, Bash, WebSearch and WebFetch. Projects and domains such a
 - While a linked row is open, `done` and `close` are refused with `pr_open`.
 - A PR links to one open todo (`pr_linked`).
 - `neo.todo.continue` on a merged PR is refused (`pr_merged`). A push to a merged branch is reported to the worker and Neo.
-- `neo.ask.open` refuses an ask that overlaps an open one (`ask_open`).
+- `neo.ask.propose` refuses an ask that overlaps an open one (`ask_open`).
 
 ## Deletions
 

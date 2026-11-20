@@ -64,7 +64,7 @@ try {
   const retryDraft = { after: [], title: 'Recorded retry', check: { pack: 'coding', kind: 'pr_merged', params: { urls: ['https://github.com/synthetic/retry/pull/1'] } } };
   const retryInput = { title: 'Repository read budget', request: 'Keep the same card', todos: [retryDraft] };
   seedHistoricalAsk(store, root, retryInput);
-  const opened = await call('neo.ask.open', retryInput);
+  const opened = await call('neo.ask.propose', retryInput);
   const prepare = db.prepare;
   let repositoryStatements = 0;
   db.prepare = (...args: Parameters<typeof prepare>) => {
@@ -72,7 +72,7 @@ try {
     return Reflect.apply(prepare, db, args);
   };
   try {
-    const retried = await call('neo.ask.open', { ...retryInput, todos: Array.from({ length: 20 }, () => retryDraft) });
+    const retried = await call('neo.ask.propose', { ...retryInput, todos: Array.from({ length: 20 }, () => retryDraft) });
     assert.deepEqual(retried.todos.map((todo: { id: string }) => todo.id), [opened.todos[0].id]);
     assert.equal(repositoryStatements, 3, 'one ask scope and one stored todo read per operation');
     observed.repositoryStatements = repositoryStatements;

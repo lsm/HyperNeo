@@ -48,7 +48,7 @@ try {
         db.prepare("INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?, 'Synthetic bookkeeping proof', '/tmp', '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z', 'active', '{}', '{}')").run(sender);
         new NeoRepository(db).reserveBinding({ sessionId: sender, kind: 'neo', projectId: null });
         seedHistoricalAsk(new NeoAskTodoRepository(db), sender, { title: 'Record bookkeeping', request: 'Keep todo mutations moving and retain warnings' });
-        const opened = await invoke('neo.ask.open', { title: 'Record bookkeeping', request: 'Keep todo mutations moving and retain warnings', todos: [{ after: [], title: 'PR not identified yet', doneWhen: 'Merged', check: { ...check, params: {} } }] });
+        const opened = await invoke('neo.ask.propose', { title: 'Record bookkeeping', request: 'Keep todo mutations moving and retain warnings', todos: [{ after: [], title: 'PR not identified yet', doneWhen: 'Merged', check: { ...check, params: {} } }] });
         assert(opened.records[0].startsWith('pr_merged_needs_urls:'));
         const first = await invoke('neo.todo.add', { after: [], askId: opened.ask.id, title: 'Original', doneWhen: 'Merged', check });
         const duplicate = await invoke('neo.todo.add', { after: [], askId: first.todo.askId, title: 'Follow-up', doneWhen: 'Merged', check });
