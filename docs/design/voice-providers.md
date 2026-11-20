@@ -263,7 +263,9 @@ default and target branch), near the repository's 300-line budget, failing tests
        of the two providers.
      - `voice/apply-preset-operation.ts` (new): `voice.applyProviderPreset` as one pipeline
        with no input — a thin call to one registered gateway write operation (defined
-       beside `globalSettingsWrites` in `packages/daemon/src/storage/db-gateway/db-ops.ts`)
+       beside `globalSettingsWrites` in
+       `packages/daemon/src/storage/repositories/global-settings-writes.ts`, registered
+       in `packages/daemon/src/storage/db-gateway/db-ops.ts`)
        that on its own connection reads the provider row, derives the preset from it
        (refusing `provider_not_chosen` if the row is missing or holds neither enum),
        re-runs the `legacy_key_host_changed` and `settings_changed_since_answer` guards
