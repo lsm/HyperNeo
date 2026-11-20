@@ -750,6 +750,7 @@ describe('owned Copilot lifecycle', () => {
       'status',
       'turns',
       'stop',
+      'compact',
       'archive',
     ]);
     const work = await start(fixture, 'settled');
