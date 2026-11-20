@@ -481,6 +481,35 @@ describe('withCodexDesktopIpc', () => {
     }
 
     test.each([
+      { noOwner: false, reason: 'not_delivered', detail: 'thread-owner-discovery timed out' },
+      { noOwner: true, reason: 'unreachable', detail: 'Alternate writer forbidden' },
+    ])(
+      'falls back for compaction only on confirmed owner absence ($noOwner)',
+      async ({ noOwner, reason, detail }) => {
+        const f = await fixture((message, _socket, send) => {
+          expect(message.method).toBe('thread-owner-discovery');
+          if (noOwner)
+            send({
+              type: 'response',
+              requestId: message.requestId,
+              resultType: 'error',
+              error: 'no-client-found',
+            });
+        });
+        const driver = driverFor(f.path);
+        const result = await driver.compact!(
+          { adapter: driver.id, id: 'one' },
+          { from: 'neo', caller: { source: 'internal', role: 'neo' } }
+        );
+        expect(result).toMatchObject({
+          ok: false,
+          reason,
+          detail: expect.stringContaining(detail),
+        });
+      }
+    );
+
+    test.each([
       { ack: true, startedId: 'compact', finishedId: 'compact' },
       { ack: false, startedId: 'compact', finishedId: undefined },
       { ack: true, startedId: undefined, finishedId: undefined },

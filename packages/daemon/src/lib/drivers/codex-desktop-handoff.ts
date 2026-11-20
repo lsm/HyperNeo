@@ -38,14 +38,18 @@ async function codexDesktopRunning(spawn: SpawnFn, platform = process.platform):
   }
 }
 
-function discoverCodexDesktopOwner({ call }: CodexDesktopIpc, threadId: string) {
+function requestCodexDesktopOwner({ call }: CodexDesktopIpc, threadId: string) {
   return call(
     'thread-owner-discovery',
     { hostId: 'local', conversationId: threadId },
     1,
     undefined,
     1_000
-  ).catch((error: unknown) => {
+  );
+}
+
+function discoverCodexDesktopOwner(client: CodexDesktopIpc, threadId: string) {
+  return requestCodexDesktopOwner(client, threadId).catch((error: unknown) => {
     if (
       error instanceof Error &&
       error.message === 'Codex Desktop thread-owner-discovery timed out.'
@@ -65,11 +69,10 @@ export async function requestCodexDesktopCompaction(
     return await withCodexDesktopIpc(
       socketPath,
       async (client) => {
-        const owner = await discoverCodexDesktopOwner(client, threadId);
-        if (owner?.resultType !== 'success' || !owner.handledByClientId) {
-          if (owner?.error && owner.error !== 'no-client-found') throw new Error(owner.error);
-          return 'no_owner';
-        }
+        const owner = await requestCodexDesktopOwner(client, threadId);
+        if (owner.resultType === 'error' && owner.error === 'no-client-found') return 'no_owner';
+        if (owner.resultType !== 'success' || !owner.handledByClientId)
+          throw new Error(owner.error ?? 'Desktop did not confirm thread ownership.');
         if (!(await idle())) return 'busy';
         const detail = await client
           .call(
