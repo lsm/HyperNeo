@@ -221,7 +221,6 @@ export type NeoHumanQueueItem =
       todos: { id: string; title: string }[];
     }
   | {
-      // waiting: Neo has left this step for a day.
       state: 'progress' | 'waiting';
       askId: string;
       todoId: string;

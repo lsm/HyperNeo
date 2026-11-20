@@ -6,7 +6,6 @@ import { neoTodoCovered } from './todo-state.ts';
 const UNFINISHED: readonly NeoTodo['state'][] = ['todo', 'doing', 'blocked'];
 const DAY = 24 * 60 * 60 * 1000;
 
-// Neo's step left for a day is shown to the human as waiting on them.
 const neoStalled = (owner: NeoStepOwner | undefined, now: number | undefined) =>
   owner?.owner === 'neo' && now !== undefined && now - owner.since >= DAY;
 
