@@ -458,6 +458,14 @@ describe('Neo public work scenes', () => {
     expect(within(work).getByRole('status').textContent).toBe('No work yet.');
     expect(work.querySelectorAll('[data-scene-group]')).toHaveLength(0);
     if (!desktop) {
+      expect(within(work).queryByRole('heading', { name: 'Your work' })).toBeNull();
+      const tabRow = work.querySelector('[data-work-tabs]')?.parentElement;
+      expect(
+        within(tabRow as HTMLElement).getByRole('button', { name: 'Close work list' })
+      ).toBeTruthy();
+      expect(
+        within(tabRow as HTMLElement).getByRole('button', { name: 'Search work' })
+      ).toBeTruthy();
       fireEvent.click(screen.getByRole('button', { name: 'Close work list' }));
       expect(screen.queryByRole('region', { name: 'Work scenes' })).toBeNull();
       fireEvent.click(screen.getByRole('button', { name: 'Your work' }));
@@ -904,7 +912,7 @@ describe('card reply notice navigation', () => {
     fireEvent.click(screen.getByRole('button', { name: /I replied · View card/ }));
     const dialog = await screen.findByRole('dialog', { name: 'Sign-off card' });
     expect(await within(dialog).findByText('Choose a sign-off')).toBeTruthy();
-    expect(screen.getByRole('searchbox')).toHaveProperty('value', '');
+    expect(screen.queryByRole('searchbox')).toBeNull();
   });
 
   it.each([true, false])('opens the exact paged done todo with owner loaded=%s', async (loaded) => {
