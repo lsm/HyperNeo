@@ -19,7 +19,8 @@ It starts a real `codex app-server` on a unix socket in a temporary
 PASS or FAIL line per check, ending with `failed=0`:
 
 - The IPC probe used by `work.start` reports a missing path and a stale socket
-  as absent, and a listening socket as present.
+  as absent, and a listening socket as present. `python3` leaves the stale
+  socket bound with no listener; if it cannot, that check fails.
 - A thread created on the shared app-server sends `thread/started` to the app
   connection.
 - A thread created on a spawned app-server stays unheard by the app, even after

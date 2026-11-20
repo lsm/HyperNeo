@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -56,7 +56,11 @@ try {
     stale,
   ]);
   check('a missing Desktop IPC socket counts as absent', !(await codexDesktopIpcListening(join(home, 'missing.sock'))));
-  check('a stale Desktop IPC path counts as absent', !(await codexDesktopIpcListening(stale)));
+  check(
+    'a stale Desktop IPC socket counts as absent',
+    lstatSync(stale, { throwIfNoEntry: false })?.isSocket() === true &&
+      !(await codexDesktopIpcListening(stale))
+  );
   const app = await connect();
   check('a listening socket counts as present', await codexDesktopIpcListening(socket));
   const seen = startedIds(app);
