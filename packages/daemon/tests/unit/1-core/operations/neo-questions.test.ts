@@ -157,6 +157,14 @@ describe('neo.question operations', () => {
         ok: true,
         question: { askId: 'ask', kind: 'desktop_control', todoId: h.fix.id },
       });
+      expect(
+        await h.call('neo.question.ask', {
+          todoId: 'missing-todo',
+          kind: 'desktop_control',
+          app: 'Calendar',
+          text: 'Allow desktop control for Calendar?',
+        })
+      ).toMatchObject({ ok: false, reason: expect.stringMatching(/^todo_closed/) });
     } finally {
       h.db.close();
     }

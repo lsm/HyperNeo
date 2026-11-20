@@ -712,16 +712,14 @@ export function createNeoQuestionOperations(
     )
     .pipe('!isRelay', 'input')
     .pipe(
-      (input: z.infer<typeof Ask>, caller: OperationCaller) =>
-        resolveNeoInputAsk(
-          store,
-          inputs,
-          caller,
-          input.kind === 'desktop_control' && !input.askId && !input.input
-            ? { askId: store.getTodo(input.todoId)?.askId }
-            : input,
-          input.text
-        ),
+      async (input: z.infer<typeof Ask>, caller: OperationCaller) => {
+        if (input.kind !== 'desktop_control' || input.askId || input.input)
+          return resolveNeoInputAsk(store, inputs, caller, input, input.text);
+        const askId = store.getTodo(input.todoId)?.askId;
+        return askId
+          ? { value: { askId } }
+          : fail(`todo_closed: no current todo ${input.todoId}; pass a todoId from this ask.`);
+      },
       ['input', 'caller'],
       'binding'
     )
