@@ -1263,6 +1263,40 @@ html.tauri-desktop .fixed.top-4 {
   top: 68px;
 }
 
+html.tauri-desktop body:has(.neo-shell) {
+  --safe-height: 100dvh;
+  padding-top: 0;
+}
+
+html.tauri-desktop body:has(.neo-shell) .desktop-drag-strip {
+  height: 40px;
+  background: linear-gradient(color-mix(in srgb, var(--bg) 70%, transparent), transparent);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  -webkit-mask-image: linear-gradient(#000 40%, transparent);
+  mask-image: linear-gradient(#000 40%, transparent);
+}
+
+html.tauri-desktop
+  body:has(.neo-shell)
+  :is(
+    .neo-session-pane,
+    .neo-drawer-layer,
+    .neo-scene-list.neo-scene-sheet,
+    .fixed.inset-0,
+    .fixed.top-0.left-0.right-0
+  ) {
+  top: 40px;
+}
+
+html.tauri-desktop .neo-shell .neo-float-dock {
+  top: 44px;
+}
+
+html.tauri-desktop .neo-shell :is(.neo-chat-rail, .neo-scene-list:not(.neo-scene-sheet)) {
+  padding-top: 100px;
+}
+
 html.tauri-desktop #root > main {
   min-height: var(--safe-height);
 }
