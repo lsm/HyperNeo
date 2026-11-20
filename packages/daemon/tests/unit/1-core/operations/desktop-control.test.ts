@@ -1,6 +1,6 @@
 import { beforeEach, expect, test } from 'vitest';
 import { createDesktopControlOperation } from '../../../../src/lib/desktop/control-operation.ts';
-import { desktopOptIn, readDesktopTodos } from '../../../../src/lib/desktop/opt-in.ts';
+import { desktopAllowed, readDesktopTodos } from '../../../../src/lib/desktop/opt-in.ts';
 import {
   createOperationRegistry,
   type OperationCaller,
@@ -62,7 +62,7 @@ beforeEach(() => {
   }
 });
 
-const optedIn = (worker: string) => desktopOptIn(readDesktopTodos(db), worker)?.id ?? null;
+const optedIn = (worker: string) => desktopAllowed(readDesktopTodos(db), worker)?.id ?? null;
 function set(input: { todoId: string; on: boolean }, caller = human) {
   return invokeOperation(
     createOperationRegistry([createDesktopControlOperation(db)]),
@@ -72,24 +72,24 @@ function set(input: { todoId: string; on: boolean }, caller = human) {
   );
 }
 
-test('desktop control is off for every todo until the human turns it on', () => {
-  expect([optedIn('worker-a'), optedIn('worker-b')]).toEqual([null, null]);
+test('desktop control is on for every todo until the human turns it off', () => {
+  expect([optedIn('worker-a'), optedIn('worker-b')]).toEqual(['dentist', 'taxes']);
 });
 
-test('turning desktop control on is per todo, and it turns back off', async () => {
-  expect(await set({ todoId: 'taxes', on: true })).toMatchObject({
+test('turning desktop control off is per todo, and it turns back on', async () => {
+  expect(await set({ todoId: 'taxes', on: false })).toMatchObject({
     kind: 'completed',
-    value: { accepted: true, desktopControl: true },
+    value: { accepted: true, desktopControl: false },
   });
-  expect([optedIn('worker-a'), optedIn('worker-b')]).toEqual([null, 'taxes']);
+  expect([optedIn('worker-a'), optedIn('worker-b')]).toEqual(['dentist', null]);
   expect(
     JSON.parse(
       (db.prepare('SELECT named FROM neo_todos WHERE id = ?').get('taxes') as { named: string })
         .named
     )
-  ).toEqual({ folder: 'docs', desktopControl: true });
-  await set({ todoId: 'taxes', on: false });
-  expect(optedIn('worker-b')).toBeNull();
+  ).toEqual({ folder: 'docs', desktopControl: false });
+  await set({ todoId: 'taxes', on: true });
+  expect(optedIn('worker-b')).toBe('taxes');
 });
 
 test('a finished or unknown todo cannot turn desktop control on', async () => {
@@ -104,7 +104,8 @@ test('a finished or unknown todo cannot turn desktop control on', async () => {
   ).toEqual({ named: null });
 });
 
-test('agents and Neo cannot turn desktop control on', async () => {
+test('agents and Neo cannot turn desktop control back on', async () => {
+  await set({ todoId: 'dentist', on: false });
   for (const caller of [
     { source: 'mcp', role: 'neo' },
     { source: 'rpc', principal: 'local', device: { deviceId: 'test-agent', kind: 'agent' } },
@@ -267,7 +268,8 @@ test('a worker cannot use Neo’s desktop preference to opt a todo in', async ()
   expect(storedOptIns()).toBe(0);
 });
 
-test('Neo cannot turn desktop control on by editing a todo', async () => {
+test('Neo cannot turn desktop control back on by editing a todo', async () => {
+  await set({ todoId: 'dentist', on: false });
   await invokeOperation(
     neoOperations(),
     'neo.todo.edit',

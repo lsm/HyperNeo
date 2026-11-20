@@ -69,7 +69,6 @@ export function NeoHumanQueue({
   const [ask, setAsk] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, NeoAskEntry>>({});
   const [attempt, setAttempt] = useState(0);
-  const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
   const shown = useRef<Record<string, NeoAskEntry>>({});
   const [settled, setSettled] = useState(0);
   const requests = useRef(
@@ -283,11 +282,8 @@ export function NeoHumanQueue({
       {runs.map(({ id, first, items: run }) => {
         const validated = renderAsk && id !== outside ? card(id) : undefined;
         if (validated) shown.current[id] = validated;
-        const full =
-          renderAsk &&
-          id !== outside &&
-          (validated ?? (opened.has(id) ? shown.current[id] : undefined));
-        const showFull = !!full && opened.has(id);
+        const full = renderAsk && id !== outside && (validated ?? shown.current[id]);
+        const showFull = !!full;
         if (showFull && !first) return null;
         return (
           <section
@@ -295,28 +291,9 @@ export function NeoHumanQueue({
             id={id === outside || showFull || !first ? undefined : `neo-ref-ask-${id}`}
             data-queue-ask={id}
             aria-label={title(id)}
-            class="rounded-2xl border border-line p-4"
+            class={showFull ? undefined : 'rounded-2xl border border-line p-4'}
           >
-            <div class="flex items-center justify-between gap-2">
-              <h3 class="text-sm font-medium">{title(id)}</h3>
-              {full && first && (
-                <button
-                  type="button"
-                  data-queue-open
-                  class={neoPlainClass}
-                  aria-expanded={showFull}
-                  onClick={() =>
-                    setOpened((current) => {
-                      const next = new Set(current);
-                      if (!next.delete(id)) next.add(id);
-                      return next;
-                    })
-                  }
-                >
-                  {t('queue.openAsk')}
-                </button>
-              )}
-            </div>
+            {!showFull && <h3 class="text-sm font-medium">{title(id)}</h3>}
             {showFull && failed(id) && (
               <p role="alert" class="mt-2 text-sm text-danger">
                 {t('queue.loadFailed')}{' '}
@@ -424,7 +401,7 @@ function QueueItem({
               type="checkbox"
               class={`${FORM_CHECKBOX_CLASS} accent-accent`}
               disabled={disabled || refreshing}
-              checked={desktop.named?.desktopControl === true}
+              checked={desktop.named?.desktopControl !== false}
               onChange={(event) =>
                 onDesktopControl?.(item.todoId, (event.target as HTMLInputElement).checked)
               }

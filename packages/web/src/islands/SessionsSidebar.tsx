@@ -221,7 +221,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
       findProjectWork(project.folders)
         .then((busy) => {
           if (!current) return;
-          const entry = { key, reason: busy ? 'Project has chats or workers' : '' };
+          const entry = { key, reason: busy ? 'Project has active work' : '' };
           systemWorkRef.current[project.id] = entry;
           setSystemWork((previous) => ({ ...previous, [project.id]: entry }));
         })
@@ -335,7 +335,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
               ?.folders ?? []
           )
         )
-          throw new Error('Project has chats or workers');
+          throw new Error('Project has active work');
         await forgetSystemProject(removeProjectTarget.path.slice(4));
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Failed to forget project');
@@ -544,8 +544,8 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
                           );
                           if (!item) return 'Checking project work';
                           if (item.isProtected) return 'This project cannot be forgotten.';
-                          if (unarchived(project.sessions).length > 0 || item.hasSessions)
-                            return 'Project has chats or workers';
+                          if (unarchived(project.sessions).length > 0) return 'Project has chats';
+                          if (item.hasSessions) return 'Project has active work';
                           if (item.unknownWork) return 'Cannot check all work for this project';
                           const checked = systemWork[item.id];
                           return checked?.key === workKey(item)

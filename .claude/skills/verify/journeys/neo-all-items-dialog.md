@@ -27,9 +27,9 @@ versions dialogs, links, final text, bounded previews and unchanged open answers
 Import verifyAllReadError and verifyAllSession from neo-all-read-error-web.mjs
 and run each in separate contexts at both widths, with phase after. Every read of
 the two fixture asks is refused. The unfinished ask stays in the inbox queue as its
-queued items with the load error and Retry, and no Open the ask button, since the
+queued items with the load error and Retry, and no full card, since the
 full view needs a good read; Retry must read again, and once a read succeeds Retry
-clears the error and Open the ask appears. The fixture's finished history
+clears the error and the full card appears. The fixture's finished history
 ask has no card or unfinished step, so it stays a summary card outside the queue:
 it reads nothing until All opens, then shows one error in the dialog and restores
 the card error after closing. Opening the last completed todo's session must dismiss All,

@@ -35,9 +35,9 @@ change only an older fixture card's outcome/activity time. It reloads the actual
 snapshot and records the resulting order. No model runs or production DB writes.
 Before proves the cards render grouped by ask instead of by card time.
 After reads the inbox queue, which replaces the card list when the daemon sends
-it. Under Waiting on you, every unanswered card across asks renders newest first
-(ID ascending for equal times), in runs of consecutive cards from one ask, so an
-ask can appear again further down; under Held, the held card follows. The cards
+it. Under Waiting on you, each ask renders once as its full card, as on the phone,
+and asks are ordered by their newest card (ID ascending for equal times); under
+Held, the held ask renders in full. Every queued card must render inside its ask,
 and the In progress work must match the snapshot's queue order exactly. The three
 waiting asks, the blocked, running and queued work, and the finished ask (the only
 remaining card) must each sit in their place. The held screenshot shows the Held

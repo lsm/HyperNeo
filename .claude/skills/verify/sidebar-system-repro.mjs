@@ -78,8 +78,18 @@ try {
     await page.getByText('Connectivity update').waitFor({timeout:15000});
     console.log('Observed temporary work lookup failure');
   }
-  await page.waitForFunction(() => !document.querySelector('[aria-label="Remove project neo-read"]')?.disabled, null, {timeout: 15000});
-  console.log('An offline peer did not block removal of a local project');
+  const ended = page.getByRole('button', { name: 'Remove project neo-read' });
+  await page.waitForFunction(() => {
+    const button = document.querySelector('[aria-label="Remove project neo-read"]');
+    return button && button.title !== 'Checking project work';
+  }, null, { timeout: 15000 });
+  if (process.env.VERIFY_INJECT_FAILURE) {
+    await page.waitForFunction(() => !document.querySelector('[aria-label="Remove project neo-read"]')?.disabled, null, {timeout: 15000});
+  }
+  assert.equal(await page.getByText('Finished synthetic worker').count(), 0);
+  await page.screenshot({ path: `${run}/evidence/sidebar-ended-worker.png` });
+  assert.equal(await ended.isEnabled(), true, `a finished hidden worker blocked removal: ${await ended.getAttribute('title')}`);
+  console.log('A finished hidden worker and an offline peer did not block removal');
   if (process.env.VERIFY_INJECT_FAILURE) console.log('Work lookup recovered after the project list refreshed');
   await page.screenshot({ path: `${run}/evidence/sidebar-system-hover.png` });
   const inbox = page.getByRole('button', {name: 'Remove project Inbox'});
@@ -87,7 +97,7 @@ try {
   assert(await inbox.isDisabled(), 'the protected Inbox must refuse removal');
   assert.equal(await inbox.getAttribute('title'), 'This project cannot be forgotten.');
   await page.getByTestId('project-group-header').filter({hasText:'occupied'}).hover();
-  await page.getByRole('tooltip').filter({hasText:'Project has chats or workers'}).waitFor({state:'visible', timeout:3000});
+  await page.getByRole('tooltip').filter({hasText:'Project has chats'}).waitFor({state:'visible', timeout:3000});
   await page.screenshot({path:`${run}/evidence/sidebar-${scheme}-refusal.png`, animations:'disabled'});
   console.log('Protected Inbox cannot be forgotten');
   async function callRpc(method, data) {
@@ -180,6 +190,10 @@ try {
   await hidden.waitFor({state: 'attached'});
   await page.waitForTimeout(1500);
   assert(await hidden.isDisabled(), 'a hidden live worker must refuse removal');
+  assert.equal(await hidden.getAttribute('title'), 'Project has active work');
+  await page.getByTestId('project-group-header').filter({hasText:'hidden-worker'}).hover();
+  await page.getByRole('tooltip').filter({hasText:'Project has active work'}).waitFor({state:'visible', timeout:3000});
+  await page.screenshot({path:`${run}/evidence/sidebar-${scheme}-active-work.png`, animations:'disabled'});
   console.log('Project with hidden live worker refused removal');
   const direct = await page.evaluate(async () => {
     const socket = new WebSocket(`${location.origin.replace('http', 'ws')}/ws`);
@@ -252,7 +266,11 @@ try {
   assert.equal(await archived.count(), 0);
   assert(existsSync(`${run}/projects/alpha/retained.txt`));
   await page.getByText('Retained chat').waitFor();
-  console.log('Forgotten project stayed gone; the file and unrelated chat remain');
+  const { session: finished } = await callRpc('session.get', {sessionId:'ended-worker'});
+  assert.equal(finished.status, 'ended');
+  assert.equal(finished.context?.spaceId, 'space:sidebar-fixture');
+  await page.screenshot({path:`${run}/evidence/sidebar-${scheme}-after.png`, animations:'disabled'});
+  console.log('Forgotten project stayed gone; the finished worker, file and unrelated chat remain');
 } finally {
   await browser.close();
 }
