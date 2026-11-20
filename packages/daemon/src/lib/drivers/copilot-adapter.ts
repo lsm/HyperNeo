@@ -580,15 +580,35 @@ export function createCopilotAdapter(
     deps.desktop
   );
   const owns = (id: string) => copilotOwnsSession(deps.directory, id);
-  const mutate = <T>(ref: W.WorkRef, effect: () => Promise<W.Result<T>>) =>
+  const mutate = <T>(
+    ref: W.WorkRef,
+    verb: W.WorkVerb,
+    effect: () => Promise<W.Result<T>>,
+    desktopEffect: () => Promise<W.Result<T>> | undefined
+  ) =>
     guard(async () => {
       if (!owns(ref.id) && (await deps.desktop?.status?.(ref))?.ok)
-        return reject('unsupported', 'Use the Copilot app to control this Desktop-owned session.');
+        return (
+          (deps.desktop?.capabilities.includes(verb) && (await desktopEffect())) ||
+          reject('unsupported', 'Open the Copilot app to control this Desktop-owned session.')
+        );
       return effect();
     }, ref.id);
+  const startPreferred: NonNullable<W.WorkAdapter['start']> = async (request, context) => {
+    if (deps.desktop?.capabilities.includes('start') && deps.desktop.start) {
+      const result = await deps.desktop.start(request, context);
+      if (result.ok || result.reason !== 'unreachable' || !result.notSent) return result;
+    }
+    return start(request);
+  };
   return {
     ...discovery,
+    get supportsStartEffort() {
+      return deps.desktop?.supportsStartEffort === true;
+    },
     resolveStartConfiguration: async (request) => {
+      if (deps.desktop?.capabilities.includes('start'))
+        return { ok: true, value: { model: request.model, effort: request.effort } };
       const selected = admit(request);
       return 'reason' in selected
         ? selected.reason
@@ -627,16 +647,40 @@ export function createCopilotAdapter(
       steer:
         'Copilot strict same-turn steering is unsupported: immediate input can fall back to a later turn; the pinned protocol has no expected-active-turn precondition. Use auto or queue for explicit enqueue delivery.',
     },
-    start: (request: W.StartRequest) => {
-      const pending = guard(() => start(request));
+    start: (request, context) => {
+      const pending = guard(() => startPreferred(request, context));
       starts.add(pending);
       void pending.finally(() => starts.delete(pending));
       return pending;
     },
-    rename: (ref, title) => mutate(ref, () => rename(ref, title)),
-    send: (ref, message) => mutate(ref, () => send(ref, message)),
-    queue: (ref, message) => mutate(ref, () => send(ref, message)),
-    withdraw: (ref, inputId) => mutate(ref, () => withdraw(ref, inputId)),
+    rename: (ref, title, context) =>
+      mutate(
+        ref,
+        'rename',
+        () => rename(ref, title),
+        () => deps.desktop?.rename?.(ref, title, context)
+      ),
+    send: (ref, message, context) =>
+      mutate(
+        ref,
+        'send',
+        () => send(ref, message),
+        () => deps.desktop?.send?.(ref, message, context)
+      ),
+    queue: (ref, message, context) =>
+      mutate(
+        ref,
+        'queue',
+        () => send(ref, message),
+        () => deps.desktop?.queue?.(ref, message, context)
+      ),
+    withdraw: (ref, inputId, context) =>
+      mutate(
+        ref,
+        'withdraw',
+        () => withdraw(ref, inputId),
+        () => deps.desktop?.withdraw?.(ref, inputId, context)
+      ),
     status: (ref, since, receipt) =>
       guard(async () => {
         if (!owns(ref.id)) {
@@ -645,8 +689,20 @@ export function createCopilotAdapter(
         }
         return status(ref, receipt, since);
       }, ref.id),
-    stop: (ref) => mutate(ref, () => stop(ref)),
-    compact: (ref) => mutate(ref, () => compact(ref)),
+    stop: (ref, context) =>
+      mutate(
+        ref,
+        'stop',
+        () => stop(ref),
+        () => deps.desktop?.stop?.(ref, context)
+      ),
+    compact: (ref) =>
+      mutate(
+        ref,
+        'compact',
+        () => compact(ref),
+        () => undefined
+      ),
     turns: (ref, cursor, limit) =>
       guard(async () => {
         const record = lookup(ref);
@@ -660,7 +716,13 @@ export function createCopilotAdapter(
           record.value.snapshot.inputs
         );
       }, ref.id),
-    archive: (ref, admit) => mutate(ref, () => archive(ref, admit)),
+    archive: (ref, admit) =>
+      mutate(
+        ref,
+        'archive',
+        () => archive(ref, admit),
+        () => deps.desktop?.archive?.(ref, admit)
+      ),
     async close() {
       closed = true;
       await Promise.allSettled([...starts, ...transactions.values()]);

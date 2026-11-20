@@ -24,7 +24,7 @@ function readTurnPosition(cursor: string) {
   }
 }
 
-function readCopilotInputs(
+export function readCopilotInputs(
   file: string,
   id: string,
   inputs: State['inputs'],

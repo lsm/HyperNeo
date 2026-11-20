@@ -1,11 +1,17 @@
 import { basename, isAbsolute, join } from 'node:path';
+import { existsSync, mkdirSync } from 'node:fs';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { createCopilotInputReader, readCopilotHistory } from './copilot-history.ts';
 import { COPILOT_CLIENT } from './copilot-discovery.ts';
-import { readCopilotTurnFacts } from './copilot-observations.ts';
+import {
+  readCopilotInputs,
+  readCopilotObservations,
+  readCopilotTurnFacts,
+} from './copilot-observations.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import { reject } from './work-operations.ts';
 import type { FindQuery, PlaceGroup, WorkAdapter, WorkSummary } from './types.ts';
+import { createCopilotDesktopControl } from './copilot-desktop-control.ts';
 
 const DESKTOP_CONTROL =
   'Copilot Desktop exposes session links and history. Use the app to control Desktop-owned sessions.';
@@ -25,6 +31,8 @@ export interface CopilotDesktopSession {
   running: number;
   interrupted: number;
   archived: number;
+  model?: string | null;
+  effort?: string | null;
 }
 
 export type CopilotDesktopRead = {
@@ -53,6 +61,8 @@ function summarize(session: CopilotDesktopSession, machine: string): WorkSummary
     archived: Boolean(session.archived),
     lastActivityAt: Date.parse(session.updatedAt) || 0,
     link: `ghapp://sessions/${encodeURIComponent(session.workspaceId)}`,
+    ...(session.model ? { model: session.model } : {}),
+    ...(session.effort ? { effort: session.effort } : {}),
   };
 }
 
@@ -90,7 +100,8 @@ const find = (superpipe({})('copilot-desktop-find') as PipelineAPI)
 export function createCopilotDesktopAdapter(
   read: Read,
   machine: string,
-  home: string
+  home: string,
+  controlAvailable?: () => boolean
 ): WorkAdapter {
   const readInput = createCopilotInputReader();
   const historyFile = async (id: string) => {
@@ -100,20 +111,59 @@ export function createCopilotDesktopAdapter(
     return join(home, '.copilot', 'session-state', id, 'events.jsonl');
   };
   const readableHistory = (id: string) => historyFile(id).catch(() => null);
+  const control = createCopilotDesktopControl({
+    machine,
+    homeDir: home,
+    folderExists: existsSync,
+    makeFolder: (folder) => mkdirSync(folder),
+    find: async (id) => (await read({ includeClosed: true, limit: 1 }, id))[0],
+    summarize: (session) => summarize(session, machine),
+    observedInput: async (id, inputId) => {
+      const file = await readableHistory(id);
+      return (
+        file !== null &&
+        readCopilotInputs(file, id, {}, (observed) => observed === inputId)[inputId]?.state ===
+          'observed'
+      );
+    },
+  });
   return {
     id: COPILOT_CLIENT.id,
-    capabilities: ['find', 'status', 'turns'],
-    unsupportedCapabilities: {
-      start: DESKTOP_CONTROL,
-      send: DESKTOP_CONTROL,
-      steer: DESKTOP_CONTROL,
-      queue: DESKTOP_CONTROL,
-      withdraw: DESKTOP_CONTROL,
-      stop: DESKTOP_CONTROL,
-      compact: DESKTOP_CONTROL,
-      rename: DESKTOP_CONTROL,
-      archive: DESKTOP_CONTROL,
+    get capabilities(): WorkAdapter['capabilities'] {
+      return controlAvailable?.()
+        ? [
+            'find',
+            'status',
+            'turns',
+            'start',
+            'send',
+            'queue',
+            'withdraw',
+            'stop',
+            'rename',
+            'archive',
+          ]
+        : ['find', 'status', 'turns'];
     },
+    get supportsStartEffort() {
+      return controlAvailable?.() === true;
+    },
+    get unsupportedCapabilities() {
+      return controlAvailable?.()
+        ? { steer: DESKTOP_CONTROL, compact: DESKTOP_CONTROL }
+        : {
+            start: DESKTOP_CONTROL,
+            send: DESKTOP_CONTROL,
+            steer: DESKTOP_CONTROL,
+            queue: DESKTOP_CONTROL,
+            withdraw: DESKTOP_CONTROL,
+            stop: DESKTOP_CONTROL,
+            compact: DESKTOP_CONTROL,
+            rename: DESKTOP_CONTROL,
+            archive: DESKTOP_CONTROL,
+          };
+    },
+    ...control,
     find: (query) => find(query, read, machine),
     async readTurns(id, around, before, after, cursor) {
       const file = await readableHistory(id);
@@ -129,13 +179,43 @@ export function createCopilotDesktopAdapter(
         ? readCopilotTurnFacts(file, ref.id, cursor, limit)
         : reject('not_found', 'Copilot Desktop session not found.');
     },
-    async status(ref, _since, receipt) {
+    async status(ref, since, receipt) {
       const [session] = await read({ includeClosed: true, limit: 1 }, ref.id);
       if (!session || !isAbsolute(session.folder))
         return reject('not_found', 'Copilot Desktop session not found.');
-      if (receipt)
-        return reject('unsupported', 'Copilot Desktop only reports saved session status.');
-      return { ok: true, value: summarize(session, machine) };
+      const value = summarize(session, machine);
+      if (receipt && receipt.executionId !== ref.id)
+        return reject('not_found', 'Receipt belongs to another Copilot session.');
+      const file = receipt || since !== undefined ? await readableHistory(ref.id) : null;
+      const input =
+        receipt && file
+          ? readCopilotInputs(file, ref.id, {}, (id) => id === receipt.inputId)[receipt.inputId]
+          : undefined;
+      return {
+        ok: true,
+        value: {
+          ...value,
+          ...(file && since !== undefined
+            ? readCopilotObservations(file, ref.id, {}, () => false, since)
+            : {}),
+          ...(receipt
+            ? {
+                inputEvidence:
+                  input?.state === 'observed'
+                    ? {
+                        receipt,
+                        state: 'observed',
+                        exchange: [],
+                        exchangeCut: true,
+                        replyReport: input.replyReport,
+                        replyAvailability: input.replyAvailability,
+                      }
+                    : { receipt, state: 'unavailable' },
+              }
+            : {}),
+          ...(input?.replyReport ? { lastReply: input.replyReport } : {}),
+        },
+      };
     },
   };
 }

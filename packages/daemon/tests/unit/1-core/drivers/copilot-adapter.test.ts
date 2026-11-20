@@ -77,6 +77,36 @@ async function start(fixture: ReturnType<typeof setup>, message = fixture.reques
 }
 
 describe('owned Copilot lifecycle', () => {
+  test.each([true, false])(
+    'falls back from Desktop only before dispatch (notSent=%p)',
+    async (notSent) => {
+      const fixture = setup();
+      const adapter = createCopilotAdapter(fixture.discovery, {
+        ...fixture.deps,
+        desktop: {
+          ...fixture.discovery,
+          capabilities: ['find', 'start'],
+          start: async () => ({
+            ok: false,
+            reason: 'unreachable',
+            detail: 'Synthetic Desktop disconnect',
+            ...(notSent ? { notSent: true } : {}),
+          }),
+        },
+      });
+      owners.push(adapter);
+      const started = await adapter.start!(fixture.request, context);
+      if (notSent) expect(started).toMatchObject({ ok: true });
+      else
+        expect(started).toEqual({
+          ok: false,
+          reason: 'unreachable',
+          detail: 'Synthetic Desktop disconnect',
+        });
+      expect(existsSync(join(fixture.run, 'owned'))).toBe(notSent);
+    }
+  );
+
   test('compacts settled work without sending a prompt and preserves its receipt', async () => {
     const f = setup('--durable-inputs');
     const work = await start(f, 'settled');

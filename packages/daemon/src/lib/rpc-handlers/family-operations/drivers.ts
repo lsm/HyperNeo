@@ -32,6 +32,7 @@ import {
   copilotDesktopStatePath,
   createCopilotDesktopAdapter,
 } from '../../drivers/copilot-desktop-adapter.ts';
+import { copilotDesktopControlAvailable } from '../../drivers/copilot-desktop-channel.ts';
 import { codexWorkerHome, copilotWorkerDirectory } from '../../drivers/worker-directories.ts';
 import { ensureCodexDesktopProject } from '../../drivers/codex-desktop-project.ts';
 import { neoWorkerPermissionMode } from '@hyperneo/shared/types/settings';
@@ -618,7 +619,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
         ? context.deps.db.readCopilotDesktopAsync({ statePath: copilotDesktopPath, query, id })
         : Promise.resolve([]),
     machine,
-    homedir()
+    homedir(),
+    () => copilotDesktopControlAvailable(homedir())
   );
   const copilotCli = copilotAdapters(
     () => new Set(context.deps.db.listAcpSessionIds().map((session) => session.acpSessionId)),
