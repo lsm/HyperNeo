@@ -153,8 +153,8 @@ export class CodingTodoPrRepository {
 
   waiting(todoIds: readonly string[]): Set<string> {
     return new Set(
-      this.openLedger(todoIds).flatMap((pr) =>
-        codingPrStillChased(pr.state, pr.nudges) ? [pr.todoId] : []
+      this.trackedPrs(todoIds).flatMap((pr) =>
+        pr.closedAt !== null || codingPrStillChased(pr.state, pr.nudges) ? [pr.todoId] : []
       )
     );
   }
@@ -163,12 +163,19 @@ export class CodingTodoPrRepository {
     return gatewayFor(this.db).call(codingTodoPrReads, 'waiting', todoIds);
   }
 
-  openLedger(todoIds: readonly string[]): {
+  openLedger(todoIds: readonly string[]) {
+    return this.trackedPrs(todoIds).flatMap(({ closedAt, ...pr }) =>
+      closedAt === null ? [pr] : []
+    );
+  }
+
+  private trackedPrs(todoIds: readonly string[]): {
     todoId: string;
     url: string;
     state: CodingPrState | null;
     since: number | null;
     nudges: number;
+    closedAt: number | null;
   }[] {
     const ledger = this.db.prepare(
       'SELECT state, state_since AS since, closed_at AS closedAt, nudges FROM pack_coding_pr_ledger WHERE repo = ? AND number = ?'
@@ -192,7 +199,7 @@ export class CodingTodoPrRepository {
                 | { state: CodingPrState; since: number; closedAt: number | null; nudges: number }
                 | undefined)
             : undefined;
-        return pr.state === 'OPEN' && !row?.closedAt
+        return pr.state === 'OPEN'
           ? [
               {
                 todoId,
@@ -200,6 +207,7 @@ export class CodingTodoPrRepository {
                 state: row?.state ?? null,
                 since: row?.since ?? null,
                 nudges: row?.nudges ?? 0,
+                closedAt: row?.closedAt ?? null,
               },
             ]
           : [];
