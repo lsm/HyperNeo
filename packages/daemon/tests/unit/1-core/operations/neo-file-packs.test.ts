@@ -1,4 +1,5 @@
 import { DELEGATION_PACK_BRIEF } from '../../../../src/lib/neo/packs/delegation/pack.ts';
+import { COMPUTER_USE_PACK_BRIEF } from '../../../../src/lib/neo/packs/computer-use/pack.ts';
 import { describe, expect, test } from 'bun:test';
 import {
   loadNeoFilePacks,
@@ -170,6 +171,7 @@ describe('neoSettingsPackBriefs', () => {
         skill: 'coding-pack',
       },
       DELEGATION_PACK_BRIEF,
+      COMPUTER_USE_PACK_BRIEF,
     ]);
     adoptNeoFilePacks(
       loadNeoFilePacks({
@@ -180,10 +182,18 @@ describe('neoSettingsPackBriefs', () => {
     );
     expect(neoSettingsPackBriefs({ packs: ['inbox-triage'] }).map((brief) => brief.id)).toEqual([
       'delegation',
+      'computer-use',
       'inbox-triage',
     ]);
-    expect(neoSettingsPackBriefs().map((brief) => brief.id)).toEqual(['coding', 'delegation']);
-    expect(neoSettingsPackBriefs({ packs: [] }).map((brief) => brief.id)).toEqual(['delegation']);
+    expect(neoSettingsPackBriefs().map((brief) => brief.id)).toEqual([
+      'coding',
+      'delegation',
+      'computer-use',
+    ]);
+    expect(neoSettingsPackBriefs({ packs: [] }).map((brief) => brief.id)).toEqual([
+      'delegation',
+      'computer-use',
+    ]);
     adoptNeoFilePacks([]);
   });
 });

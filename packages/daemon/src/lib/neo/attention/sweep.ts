@@ -15,15 +15,17 @@ const owner = ({ todo, facts }: NeoStepRow) => nextStepOwner({ ...facts, todo })
 
 export async function neoPackWaiting(
   packs: readonly NeoPack[],
-  todos: readonly NeoTodo[]
+  todos: readonly NeoTodo[],
+  hook: 'waiting' | 'parked' = 'waiting'
 ): Promise<Set<string>> {
   const waiting = new Set<string>();
   for (const pack of packs) {
     const asked = todos.filter(
       (todo) => !waiting.has(todo.id) && (!todo.check || pack.id === todo.check.pack)
     );
-    if (!asked.length || !pack.todos?.waiting) continue;
-    for (const id of await pack.todos.waiting(asked)) waiting.add(id);
+    const read = pack.todos?.[hook] ?? pack.todos?.waiting;
+    if (!asked.length || !read) continue;
+    for (const id of await read.call(pack.todos, asked)) waiting.add(id);
   }
   return waiting;
 }
