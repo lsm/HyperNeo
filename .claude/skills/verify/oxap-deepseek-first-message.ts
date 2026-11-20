@@ -6,7 +6,11 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { checkOxapBinary } from '../../../packages/daemon/src/lib/oxap/oxap-binary.ts';
 import { readHubOptions } from '../../../packages/daemon/src/lib/oxap/oxap-settings.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
-import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
+import {
+  type LiveQueryDeltaEvent,
+  MessageHub,
+  WebSocketClientTransport,
+} from '../../../packages/shared/src/mod.ts';
 import { answerCodexProbeLocally, serveLocalRelease } from './oxap-codex-provider.ts';
 
 const [binary, version, sha256, runArgument] = process.argv.slice(2);
@@ -74,9 +78,19 @@ try {
     if (error?.userMessage) errors.push(error.userMessage);
   }, { subscriberName: 'oxap-deepseek-first-message-proof' });
   evidence.errors = errors;
-  const replies: unknown[] = [];
-  hub.onEvent('liveQuery.delta', (delta) => {
-    if ((delta as { subscriptionId?: string }).subscriptionId === 'deepseek-chat') replies.push(delta);
+  type ChatRow = {
+    id: string;
+    type: string;
+    is_error?: boolean;
+    message?: { content?: { type: string; text?: string }[] };
+  };
+  const rows = new Map<string, ChatRow>();
+  hub.onEvent('liveQuery.delta', (event) => {
+    const delta = event as LiveQueryDeltaEvent;
+    if (delta.subscriptionId !== 'deepseek-chat') return;
+    for (const row of [...(delta.added ?? []), ...(delta.updated ?? [])] as ChatRow[]) {
+      rows.set(row.id, row);
+    }
   });
   await hub.request('liveQuery.subscribe', {
     queryName: 'messages.bySession',
@@ -86,19 +100,30 @@ try {
   await hub.request('message.send', { sessionId, content: 'Synthetic DeepSeek prompt' });
   const client = await app.oxapEngine.getHub(() => readHubOptions(app.oxapSettings));
   const deadline = Date.now() + 20_000;
-  while (replies.length === 0 || !JSON.stringify(replies).includes('Synthetic DeepSeek reply')) {
+  while (![...rows.values()].some((row) => row.type === 'result')) {
     assert.deepEqual(errors, [], 'The first message failed');
-    assert(Date.now() < deadline, 'The first message produced no assistant reply');
+    assert(Date.now() < deadline, 'The first message did not finish');
     await new Promise((done) => setTimeout(done, 25));
   }
   const status = await client.request('work.status', { session_id: sessionId });
   assert.equal((status as { link?: string }).link, `deepseek://sessions/${sessionId}`);
-  assert.equal(app.sessionManager.getSession(sessionId)?.sdkSessionId, sessionId);
+  assert.equal(app.db.getSession(sessionId)?.sdkSessionId, sessionId);
+  const capabilities = (await client.request('capabilities', { adapter: 'deepseek' })) as {
+    payload?: { features?: Record<string, { level?: string }> };
+  };
+  const modelSwitch = capabilities.payload?.features?.['session.model.switch']?.level;
+  assert.equal(modelSwitch, 'emulated');
   assert.deepEqual(errors, []);
-  const assistantReplies = replies.filter((delta) =>
-    JSON.stringify(delta).includes('Synthetic DeepSeek reply')
-  ).length;
-  Object.assign(evidence, { opened: 1, firstMessageReplies: assistantReplies, pass: true });
+  assert.deepEqual(
+    [...rows.values()].filter((row) => row.type === 'result').map((row) => row.is_error),
+    [false]
+  );
+  const replies = [...rows.values()].filter((row) => row.type === 'assistant');
+  assert.deepEqual(
+    replies.flatMap((row) => (row.message?.content ?? []).map((block) => block.text)),
+    ['Synthetic DeepSeek reply']
+  );
+  Object.assign(evidence, { opened: 1, firstMessageReplies: replies.length, modelSwitch, pass: true });
   console.log(JSON.stringify(evidence));
 } finally {
   await transport.close();
