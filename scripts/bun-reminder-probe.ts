@@ -103,6 +103,10 @@ try {
     [...(await gateway.call(codingTodoPrReads, 'waiting', ['bun-waiting-missing']))],
     []
   );
+  db.prepare(
+    `INSERT INTO pack_coding_pr_ledger (repo, number, title, branch, head, state, state_since, read_at)
+     VALUES ('example/synthetic', 1, 'Probe', 'probe', 'abc1234', 'waiting_ci', 1, 1)`
+  ).run();
   for (const state of ['OPEN', 'CLOSED', 'MERGED']) {
     const prs = [
       { url: 'https://github.com/example/synthetic/pull/1', state, checks: 'none', review: 'none' },
