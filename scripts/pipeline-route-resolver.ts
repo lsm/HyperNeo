@@ -6,6 +6,7 @@ import {
   valueImport,
 } from './pipeline-worker-registration.ts';
 import { createPipelineBuilderResolver } from './pipeline-builder-factory.ts';
+import { serializedPipelineCallback } from './pipeline-serial-callback.ts';
 
 export type LocalPipelineResolution = { kind: 'named'; name: string } | { kind: 'unknown' };
 
@@ -392,6 +393,13 @@ export function createLocalPipelineResolver(
       (strictCalls && (expression.flags & ts.NodeFlags.OptionalChain) !== 0)
     )
       return unknown;
+    const serialized = strictCalls ? serializedPipelineCallback(expression, checker) : undefined;
+    if (serialized) {
+      const { callback, declaration } = serialized;
+      if (seen.has(declaration)) return unknown;
+      seen.add(declaration);
+      return callable(callback, seen);
+    }
     const callee = strictCalls ? unwrap(expression.expression) : expression.expression;
     if (ts.isIdentifier(callee)) return callable(callee, seen);
     if (!strictCalls) return unknown;

@@ -585,7 +585,7 @@ describe('Neo preview Work layout', () => {
       await open('a');
       const oldFocus = vi.spyOn(draft, 'focus');
       fireEvent.click(screen.getByRole('tab', { name: 'Your work · 0' }));
-      expect(screen.getByText('No work yet.')).toBeTruthy();
+      expect(screen.getByText('Your inbox is empty')).toBeTruthy();
       if (!work) fireEvent.click(screen.getByRole('tab', { name: 'File a' }));
       resize(719);
       await waitFor(() => expect(screen.queryByRole('tablist')).toBeNull());
