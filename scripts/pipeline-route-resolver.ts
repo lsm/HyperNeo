@@ -16,6 +16,32 @@ export function unwrapPipelineExpression(expression: ts.Expression): ts.Expressi
   return expression;
 }
 
+function recoveryWithoutPipeline(
+  node: ts.Node,
+  resolveCall?: (call: ts.CallExpression) => boolean
+): boolean {
+  if (ts.isNewExpression(node) || ts.isTaggedTemplateExpression(node)) return false;
+  if (ts.isCallExpression(node) && !resolveCall?.(node)) return false;
+  return !ts.forEachChild(
+    node,
+    (child) => !recoveryWithoutPipeline(child, resolveCall) || undefined
+  );
+}
+
+export function directTryReturn(
+  statement: ts.TryStatement,
+  resolveCall?: (call: ts.CallExpression) => boolean
+): ts.ReturnStatement | undefined {
+  const [attempt] = statement.tryBlock.statements;
+  if (
+    statement.tryBlock.statements.length === 1 &&
+    ts.isReturnStatement(attempt) &&
+    !statement.finallyBlock?.statements.length &&
+    (!statement.catchClause || recoveryWithoutPipeline(statement.catchClause, resolveCall))
+  )
+    return attempt;
+}
+
 const unknown: LocalPipelineResolution = { kind: 'unknown' };
 
 export function createLocalPipelineResolver(
@@ -207,30 +233,26 @@ export function createLocalPipelineResolver(
 
   const resolveBuilder = createPipelineBuilderResolver(checker, unwrap, importedSuperpipe);
 
-  function recoveryWithoutPipeline(node: ts.Node, seen = new Set<ts.Node>()): boolean {
-    if (ts.isNewExpression(node) || ts.isTaggedTemplateExpression(node)) return false;
-    if (ts.isCallExpression(node)) {
-      const callee = unwrap(node.expression);
-      if (!ts.isIdentifier(callee)) return false;
-      const declarations = checker.getSymbolAtLocation(callee)?.declarations;
-      const declaration = declarations?.length === 1 ? declarations[0] : undefined;
-      if (
-        !declaration ||
-        !ts.isVariableDeclaration(declaration) ||
-        !ts.isVariableDeclarationList(declaration.parent) ||
-        !(declaration.parent.flags & ts.NodeFlags.Const) ||
-        !declaration.initializer ||
-        seen.has(declaration)
-      )
-        return false;
-      const initializer = unwrap(declaration.initializer);
-      if (
-        (!ts.isArrowFunction(initializer) && !ts.isFunctionExpression(initializer)) ||
-        !recoveryWithoutPipeline(initializer, new Set([...seen, declaration]))
-      )
-        return false;
-    }
-    return !ts.forEachChild(node, (child) => !recoveryWithoutPipeline(child, seen) || undefined);
+  function resolveRecoveryCall(call: ts.CallExpression, seen: ReadonlySet<ts.Node>): boolean {
+    const callee = unwrap(call.expression);
+    if (!ts.isIdentifier(callee)) return false;
+    const declarations = checker.getSymbolAtLocation(callee)?.declarations;
+    const declaration = declarations?.length === 1 ? declarations[0] : undefined;
+    if (
+      !declaration ||
+      !ts.isVariableDeclaration(declaration) ||
+      !ts.isVariableDeclarationList(declaration.parent) ||
+      !(declaration.parent.flags & ts.NodeFlags.Const) ||
+      !declaration.initializer ||
+      seen.has(declaration)
+    )
+      return false;
+    const initializer = unwrap(declaration.initializer);
+    const visited = new Set([...seen, declaration]);
+    return (
+      (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer)) &&
+      recoveryWithoutPipeline(initializer, (nested) => resolveRecoveryCall(nested, visited))
+    );
   }
 
   function callable(expression: ts.Expression, seen: Set<ts.Node>): LocalPipelineResolution {
@@ -250,15 +272,10 @@ export function createLocalPipelineResolver(
         const body = expression.body.statements;
         const statement = body[0];
         if (strictCalls && body.length === 1 && ts.isTryStatement(statement)) {
-          const [attempt] = statement.tryBlock.statements;
-          if (
-            statement.tryBlock.statements.length !== 1 ||
-            statement.finallyBlock?.statements.length ||
-            (statement.catchClause && !recoveryWithoutPipeline(statement.catchClause))
-          )
-            return unknown;
-          if (ts.isReturnStatement(attempt) && attempt.expression)
-            return action(attempt.expression, seen);
+          const attempt = directTryReturn(statement, (call) =>
+            resolveRecoveryCall(call, new Set())
+          );
+          return attempt?.expression ? action(attempt.expression, seen) : unknown;
         }
         if (
           strictCalls &&
