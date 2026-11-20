@@ -21,10 +21,10 @@ import { getDataDir } from '../data-dir.ts';
 import { neoEvidencePathRefusal } from './core-todo-checks.ts';
 import { readNeoTodoCompletion } from './todo-completion.ts';
 import {
-  neoHoldNeedsDecision,
   NeoTodoDoneInput,
   TodoResult,
   type NeoTodoControls,
+  type WriteNeoTodoHold,
 } from './todo-operations.ts';
 
 type Input = Parameters<InstanceType<typeof neoTodoMutationReads.Repository>['plan']>[0];
@@ -45,24 +45,19 @@ interface Dependencies {
 }
 const kinds = new Map<string, Input['kind']>([
   ['neo.todo.edit', 'edit'],
-  ['neo.todo.hold', 'edit'],
   ['neo.todo.remove', 'remove'],
 ]);
 
-const holdAsEdit = (name: string, input: unknown): object => {
-  if (name !== 'neo.todo.hold') return input as object;
-  const { todoId, reason } = input as { todoId: string; reason: string | null };
-  return { todoId, hold: reason };
-};
+function mutationReceipt(result: Result): Result {
+  if (!result.ok) return result;
+  const { todo, records } = result;
+  return { ok: true, todo, ...(records ? { records } : {}) };
+}
 
 async function presentMutation(deps: Dependencies, result: Result): Promise<Result> {
   if (!result.ok) return result;
   const [todo] = await deps.project([result.todo]);
-  return {
-    ok: true,
-    todo,
-    ...(result.records ? { records: result.records } : {}),
-  };
+  return mutationReceipt({ ...result, todo });
 }
 
 function buildTodoMutation(deps: Dependencies, pipeline: ReturnType<SuperPipeFactory>) {
@@ -200,23 +195,21 @@ function buildTodoMutation(deps: Dependencies, pipeline: ReturnType<SuperPipeFac
 }
 
 export function wireNeoTodoMutations(
-  definitions: readonly OperationDefinition[],
+  createDefinitions: (writeHold: WriteNeoTodoHold) => readonly OperationDefinition[],
   deps: Dependencies
 ): OperationDefinition[] {
   const mutate = buildTodoMutation(deps, superpipe({})('neo.todo.mutate-through-writer'));
   const done = buildTodoMutation(deps, superpipe({})('neo.todo.done'));
+  const definitions = createDefinitions(async ({ todoId, reason }, caller) =>
+    mutationReceipt(await mutate({ todoId, hold: reason, kind: 'edit' }, caller))
+  );
   const operations = definitions.map<OperationDefinition>((entry) => {
     const kind = kinds.get(entry.name);
     return kind
       ? {
           ...entry,
-          execute: (input, caller) =>
-            entry.name === 'neo.todo.hold' &&
-            neoHoldNeedsDecision(input as { reason: string | null; decision?: boolean })
-              ? entry.execute(input, caller)
-              : mutate({ ...holdAsEdit(entry.name, input), kind } as Input, caller).then((result) =>
-                  presentMutation(deps, result)
-                ),
+          execute: async (input, caller) =>
+            presentMutation(deps, await mutate({ ...(input as object), kind } as Input, caller)),
         }
       : entry;
   });

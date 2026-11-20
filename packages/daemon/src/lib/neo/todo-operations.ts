@@ -333,8 +333,10 @@ const Hold = z.object({
   decision: z.boolean().optional().describe('Ask the human to start, resume or remove this step.'),
 });
 
-export const neoHoldNeedsDecision = (input: { reason: string | null; decision?: boolean }) =>
-  input.reason !== null && input.decision === true;
+export type WriteNeoTodoHold = (
+  input: { todoId: string; reason: string | null },
+  caller: OperationCaller
+) => Promise<TodoReceipt | Rejection>;
 
 const Remove = z.object({
   todoId: Text,
@@ -569,7 +571,8 @@ export function createNeoTodoOperations(
   packs: () => readonly NeoPack[],
   artifact: ArtifactRefReader,
   project: <T extends NeoTodo>(todos: readonly T[]) => Promise<T[]> = async (todos) => [...todos],
-  inputs: NeoInputReads = noNeoInputReads
+  inputs: NeoInputReads = noNeoInputReads,
+  writeHold?: WriteNeoTodoHold
 ) {
   const present = async (result: TodoReceipt | Rejection) => {
     if (!result.ok || !result.todo) return result;
@@ -815,20 +818,36 @@ export function createNeoTodoOperations(
     caller: OperationCaller
   ) => Promise<TodoReceipt | Rejection>;
 
-  const holdCard = owned(superpipe({})('neo.todo.hold') as PipelineAPI)
+  const hold = (superpipe({})('neo.todo.hold') as PipelineAPI)
+    .input(['input', 'caller'])
     .pipe(
-      (
-        todo: NeoTodo,
-        input: { reason: string }
-      ): Gate<{ todo: NeoTodo; draft: NeoQuestionDraft }> => {
+      (input: z.infer<typeof Hold>) => {
+        if (input.reason === null || input.decision !== true)
+          return { value: { kind: 'edit' as const, request: input } };
+        const todo = todos.getTodo(input.todoId);
+        const ask = todo ? todos.getAsk(todo.askId) : null;
+        const admitted = todo ? admit(ask, todo) : requireNeoOpenTodo(todo, ask);
+        if (!todo || 'reason' in admitted) return admitted;
         const plan = planNeoHoldCard(todo, todos.todoCards(todo), input.reason);
-        return 'reason' in plan ? fail(plan.reason) : { value: { todo, draft: plan.value } };
+        return 'reason' in plan
+          ? fail(plan.reason)
+          : { value: { kind: 'card' as const, todo, draft: plan.value } };
       },
-      ['outcome', 'input'],
+      'input',
       'result:outcome'
     )
     .pipe(
-      async ({ todo, draft }: { todo: NeoTodo; draft: NeoQuestionDraft }) => {
+      async (
+        plan:
+          | { kind: 'edit'; request: z.infer<typeof Hold> }
+          | { kind: 'card'; todo: NeoTodo; draft: NeoQuestionDraft },
+        caller: OperationCaller
+      ) => {
+        if (plan.kind === 'edit')
+          return writeHold
+            ? writeHold(plan.request, caller)
+            : edit({ todoId: plan.request.todoId, hold: plan.request.reason }, caller);
+        const { todo, draft } = plan;
         const failed = todo.startedAt === null ? null : await controls.stop(todo);
         if (failed)
           return {
@@ -843,11 +862,11 @@ export function createNeoTodoOperations(
           records: [`held: card ${card.id} holds it until the human answers.`],
         };
       },
-      'outcome',
+      ['outcome', 'caller'],
       'outcome'
     )
     .endAsync('outcome') as (
-    input: { todoId: string; reason: string },
+    input: z.infer<typeof Hold>,
     caller: OperationCaller
   ) => Promise<TodoReceipt | Rejection>;
 
@@ -874,12 +893,7 @@ export function createNeoTodoOperations(
       inputSchema: Hold,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) =>
-        present(
-          neoHoldNeedsDecision(input)
-            ? await holdCard({ todoId: input.todoId, reason: input.reason! }, caller)
-            : await edit({ todoId: input.todoId, hold: input.reason }, caller)
-        ),
+      execute: async (input, caller) => present(await hold(input, caller)),
     }),
     defineOperation({
       name: 'neo.todo.remove',

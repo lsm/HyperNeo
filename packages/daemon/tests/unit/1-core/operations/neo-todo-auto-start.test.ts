@@ -64,13 +64,17 @@ function setup(
   const gateway = gatewayFor(db);
   const operations = [
     ...wireNeoTodoMutations(
-      createNeoTodoOperations(
-        store,
-        sessions,
-        controls,
-        () => packs,
-        () => null
-      ),
+      (writeHold) =>
+        createNeoTodoOperations(
+          store,
+          sessions,
+          controls,
+          () => packs,
+          () => null,
+          undefined,
+          undefined,
+          writeHold
+        ),
       {
         gateway,
         write: gateway.run.bind(gateway),
