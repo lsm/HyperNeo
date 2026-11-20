@@ -91,7 +91,7 @@ try {
   assert.deepEqual(listed.tools.map(tool => tool.name).sort(), ['invoke', 'neo_work', 'neo_todo', 'neo_publish', 'neo_ask', 'neo_question', 'neo_session', 'neo_speech'].sort());
   const description = listed.tools[0].description!;
   const schemas: unknown[] = [];
-  for (const name of ['work.send', 'neo.publication.publish', 'neo.todo.add', 'neo.todo.continue', 'neo.todo.edit', 'neo.question.ask', 'neo.ask.settle', 'neo.snapshot', 'work.find', 'neo.ask.open', 'neo.todo.done', 'neo.question.get']) {
+  for (const name of ['work.send', 'neo.publication.publish', 'neo.todo.add', 'neo.todo.continue', 'neo.todo.edit', 'neo.question.ask', 'neo.ask.settle', 'neo.snapshot', 'work.find', 'neo.ask.propose', 'neo.todo.done', 'neo.question.get']) {
     const reply = await client.callTool({ name: 'invoke', arguments: { name: 'operations.describe', input: { name } } });
     assert(Array.isArray(reply.content));
     const described = JSON.parse((reply.content[0] as { text: string }).text);

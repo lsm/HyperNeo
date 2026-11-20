@@ -74,7 +74,7 @@ describe('root Neo system prompt', () => {
     expect(NEO_ROOT_TURN_END).toContain('其他');
   });
   test('non-Neo proposal callers still get topic guidance', () => {
-    expect(neoToolDescription('neo.ask.open')).toContain('topic names a lasting area');
+    expect(neoToolDescription('neo.ask.propose')).toContain('topic names a lasting area');
   });
   test('neo.topic.merge tells Neo it rewrites the pick on every ask and leaves project topics', () => {
     expect(neoToolDescription('neo.topic.merge')).toContain('every ask, open or settled');

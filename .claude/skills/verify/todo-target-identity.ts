@@ -64,11 +64,11 @@ try {
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM work_delivery_inputs').get().n, 0);
   seedHistoricalAsk(todos, sender, { title: 'Refused target batch', request: 'Resolve every target before recording' });
   const beforeBatch = todos.listAsks(null, 100);
-  const batch = await handler({ name: 'neo.ask.open', input: {
+  const batch = await handler({ name: 'neo.ask.propose', input: {
     title: 'Refused target batch', request: 'Resolve every target before recording',
     todos: [worker.slice(0, 8), 'deadbeef'].map((id, n) => ({ after: [], title: `Batch item ${n}`, check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, instruction: 'Synthetic instruction', target: { verb: 'send', ref: { adapter: 'hyperneo', id } } })),
   } });
-  evidence.push({ operation: 'neo.ask.open', batch });
+  evidence.push({ operation: 'neo.ask.propose', batch });
   assert.notEqual(batch.isError, true);
   const rejectedBatch = JSON.parse(batch.content[0].text);
   assert.equal(rejectedBatch.ok, false);
@@ -95,12 +95,12 @@ try {
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM work_delivery_inputs').get().n, 0);
   const reopenInput = { title: 'Idempotent worker ask', request: 'Keep tracking it', todos: [{ after: [], title: 'Unfinished gate', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } } }, { after: [0], title: 'Recorded worker', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, instruction: 'Work', target: { verb: 'send', ref: { adapter: 'hyperneo', id: worker } } }] };
   seedHistoricalAsk(todos, sender, reopenInput);
-  const opened = JSON.parse((await handler({ name: 'neo.ask.open', input: reopenInput })).content[0].text);
+  const opened = JSON.parse((await handler({ name: 'neo.ask.propose', input: reopenInput })).content[0].text);
   assert.equal(opened.ok, true);
   db.prepare('DELETE FROM sessions WHERE id=?').run(worker);
   const beforeReopen = todos.listTodos(opened.ask.id);
-  const reopen = await handler({ name: 'neo.ask.open', input: reopenInput });
-  evidence.push({ operation: 'neo.ask.open', deletedSyntheticWorker: true, reopen });
+  const reopen = await handler({ name: 'neo.ask.propose', input: reopenInput });
+  evidence.push({ operation: 'neo.ask.propose', deletedSyntheticWorker: true, reopen });
   assert.notEqual(reopen.isError, true);
   const reopened = JSON.parse(reopen.content[0].text);
   assert.equal(reopened.ok, true, JSON.stringify(reopened));
@@ -110,8 +110,8 @@ try {
   db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ?').run('github.com/synthetic/child', 'settled-parent-child');
   assert.equal((db.prepare('SELECT repo FROM neo_asks WHERE id = ?').get('settled-parent-child') as { repo: string }).repo, 'github.com/synthetic/child');
   todos.settleAsk(opened.ask, 'done', 'Synthetic result complete', Date.now());
-  const settled = await handler({ name: 'neo.ask.open', input: { ...reopenInput, todos: [reopenInput.todos[0], { ...reopenInput.todos[1], title: 'New worker task' }] } });
-  evidence.push({ operation: 'neo.ask.open', settledMissingWorker: true, settled });
+  const settled = await handler({ name: 'neo.ask.propose', input: { ...reopenInput, todos: [reopenInput.todos[0], { ...reopenInput.todos[1], title: 'New worker task' }] } });
+  evidence.push({ operation: 'neo.ask.propose', settledMissingWorker: true, settled });
   assert.notEqual(settled.isError, true);
   const receipt = JSON.parse(settled.content[0].text);
   assert.equal(receipt.ok, true, JSON.stringify(receipt));

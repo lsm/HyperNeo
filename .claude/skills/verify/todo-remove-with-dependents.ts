@@ -44,7 +44,7 @@ try {
     const cards = (askId: string) =>
       (db.prepare('SELECT id, state, kind, options, todos, cause, text FROM neo_questions WHERE ask_id = ? AND cause IS NOT NULL').all(askId) as { id: string; state: string; kind: string; options: string; todos: string; cause: string; text: string }[]);
     const chain = async (name: string) => {
-      const ask = await invoke(`${name}: open the ask`, 'neo.ask.open', { title: `Synthetic ${name}`, request: `Synthetic request for ${name}` });
+      const ask = await invoke(`${name}: open the ask`, 'neo.ask.propose', { title: `Synthetic ${name}`, request: `Synthetic request for ${name}` });
       assert.equal(ask.ok, true, JSON.stringify(ask));
       acceptProposalFixture(new NeoAskTodoRepository(db), ask.ask.id);
       const add = async (title: string, after: string[]) => {

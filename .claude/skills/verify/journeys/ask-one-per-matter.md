@@ -11,7 +11,7 @@ bash .claude/skills/verify/proof-run.sh \
 
 Through the real agent MCP door, as a Neo session, on the daemon's own packs:
 
-- The first `neo.ask.open` names a synthetic pull request by URL and opens.
+- The first `neo.ask.propose` names a synthetic pull request by URL and opens.
 - A second one with another title names the same pull request as `owner/repo#n`.
   It is refused with `ask_open`, the first ask's title and id, and no ask is added.
 - A retry with the first title returns the first ask.

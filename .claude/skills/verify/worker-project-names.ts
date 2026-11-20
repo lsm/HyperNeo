@@ -96,7 +96,7 @@ try {
     assert(result.ok, JSON.stringify(result));
     return result;
   };
-  const opened = await call('neo.ask.open', {
+  const opened = await call('neo.ask.propose', {
     title: 'Synthetic matter',
     request: 'Name the workers',
     todos: [],

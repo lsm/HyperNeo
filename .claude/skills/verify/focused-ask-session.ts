@@ -94,7 +94,7 @@ try {
   const db = app.db.getDatabase();
   new NeoRepository(db).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
   seedHistoricalAsk(new NeoAskTodoRepository(db), root, { title: 'Fictional seed library positioning', request: 'Discuss the positioning directly over several days.' });
-  const opened = await call('neo.ask.open', { title: 'Fictional seed library positioning', request: 'Discuss the positioning directly over several days.' });
+  const opened = await call('neo.ask.propose', { title: 'Fictional seed library positioning', request: 'Discuss the positioning directly over several days.' });
   assert(opened.ok);
   const ordinary = await call('neo.question.ask', { askId: opened.ask.id, kind: 'reply', text: 'A regular worker report', sourceSession: ref });
   assert(ordinary.ok);

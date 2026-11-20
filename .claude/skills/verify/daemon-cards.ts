@@ -82,7 +82,7 @@ try {
   step('daemon card open from before: its answer is still carried out after a restart', { card: service!.todos.getQuestion(legacy.id), todo: service!.todos.getTodo('legacy-todo') });
 
   seedHistoricalAsk(service!.todos, root, { title: 'Synthetic failing start', request: 'Start on a missing daemon' });
-  const ask = await neo('neo.ask.open', { title: 'Synthetic failing start', request: 'Start on a missing daemon' });
+  const ask = await neo('neo.ask.propose', { title: 'Synthetic failing start', request: 'Start on a missing daemon' });
   assert.equal(ask.ok, true, JSON.stringify(ask));
   const added = await neo('neo.todo.add', { askId: ask.ask.id, title: 'Remote step', after: [], instruction: 'Synthetic instruction', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'never-written') } }, target: { verb: 'start', adapter: 'hyperneo', place: { daemon: 'synthetic-missing-daemon', machine: 'synthetic-machine', name: 'synthetic', folder: join(run, 'workspace') } } });
   step('failed start: add', added);

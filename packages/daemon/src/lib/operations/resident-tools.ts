@@ -22,7 +22,7 @@ export const NEO_RESIDENT_FAMILIES = [
   {
     name: 'neo_ask',
     prefix: 'neo.ask',
-    actions: ['read', 'settle', 'open', 'topic', 'search', 'outcome'],
+    actions: ['read', 'settle', 'propose', 'topic', 'search', 'outcome'],
   },
   {
     name: 'neo_question',

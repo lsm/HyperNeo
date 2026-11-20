@@ -46,7 +46,7 @@ try {
     invoke: (name, input) => invokeOperation(registry, name, input, { source: 'internal', role: 'neo', sessionId: 'fixture-neo' }),
   });
   let askNumber = 0;
-  const open = async () => { const result = await world.invoke('neo.ask.open', { title: `Synthetic matter ${askNumber++}`, request: 'Track tasks', todos: [] }); const askId = result.ask.id; acceptProposalFixture(world.store, askId); return askId; };
+  const open = async () => { const result = await world.invoke('neo.ask.propose', { title: `Synthetic matter ${askNumber++}`, request: 'Track tasks', todos: [] }); const askId = result.ask.id; acceptProposalFixture(world.store, askId); return askId; };
   const bind = async (askId: string, id: string, at: number) => {
     const result = await world.invoke('neo.todo.add', { after: [], askId, ...world.draft(id), instruction: null, target: undefined });
     world.bind(result.todo.id, id);

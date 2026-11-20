@@ -109,7 +109,7 @@ const TodoDraft = z.object({
     .array(z.union([Text, z.number().int().min(0)]))
     .max(20)
     .describe(
-      'Required. The earlier steps of this ask this todo waits for: indexes of earlier todos in the same neo.ask.open call, or todo ids. [] means it waits for nothing. The daemon starts each step once everything it waits for is done.'
+      'Required. The earlier steps of this ask this todo waits for: indexes of earlier todos in the same neo.ask.propose call, or todo ids. [] means it waits for nothing. The daemon starts each step once everything it waits for is done.'
     ),
 });
 

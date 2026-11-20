@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 
 const MARKER = 'verify-cross-repo';
 const ASK = {
-  name: 'neo.ask.open',
+  name: 'neo.ask.propose',
   input: {
     title: 'Attach open PRs',
     request: 'Attach the open PRs to their sessions',
@@ -36,7 +36,7 @@ createServer(async (req, res) => {
   const last = JSON.stringify(content ?? '');
   const goalId = /verify-goal-ask:([a-zA-Z0-9-]+)/.exec(last)?.[1];
   const ask = goalId ? {
-    name: 'neo.ask.open',
+    name: 'neo.ask.propose',
     input: { title: 'Publish guide', request: 'Publish the adapter guide because the goal calls for it', goalId },
   } : ASK;
   const block =

@@ -153,12 +153,12 @@ tools, so pack instructions cannot sit in the system prompt per ask.
 
 - The system prompt carries core rules plus each enabled pack's `describe`
   line, and tells Neo to choose an ask's pack when it opens it.
-- `neo.ask.open` takes an optional `pack`: a plain string, checked against the
+- `neo.ask.propose` takes an optional `pack`: a plain string, checked against the
   enabled packs by a pure admission gate (the operation schema is static). The
   pack is stored on the ask. An ask with no pack is generic.
 - `neo.pack.read {id}` returns a pack's instructions: progressive disclosure,
   the step where Agent Skills read a body on use. It returns text only and
-  needs no gate. Per ADR 0007, `neo.ask.open` returns the pack's briefing in
+  needs no gate. Per ADR 0007, `neo.ask.propose` returns the pack's briefing in
   the same value when a pack is set.
 - Done-check, follow-up and card notes for a pack's ask embed that pack's
   fragment, once per delivered note and never per reminder, so done-time
@@ -174,7 +174,7 @@ per-ask switch.
 
 ### 7. Operations
 
-`neo.pack.read` and the `pack` field of `neo.ask.open` are core: the new
+`neo.pack.read` and the `pack` field of `neo.ask.propose` are core: the new
 operation gets its entry in `OPERATION_NAMES` like any other.
 
 Built-in packs may contribute operations. They are always registered, so the
@@ -249,7 +249,7 @@ One PR per rung (ADR 0004 ladder):
 | b | Extract: move `work-prs.ts`, `NeoWorkPrRepository`, `goal-merge.md` and `done-check-prs-*.md` into `packs/coding/`, verbatim | daemon-code |
 | c1 | Core `neo_work_checks` table, migration and repository; bookkeeping copied and dual-written, coding still the only producer | Neo backend |
 | c2 | `NeoEvidence`, `NeoPack`, the coding pack implementing it, core pipelines wired through it | Neo backend |
-| d | Prompt split: core plus coding fragment, `neo.ask.open {pack}`, `neo.pack.read`; gated on the eval | Neo backend |
+| d | Prompt split: core plus coding fragment, `neo.ask.propose {pack}`, `neo.pack.read`; gated on the eval | Neo backend |
 | e | Second pack: life admin (`docs/design/neo-life-admin-pack.md`), shipped disabled; the enable setting; the file-pack loader | first free |
 | f | `pr_merged` to `coding.pr_merged`, with its migration | Neo backend |
 | g | Delete the copied `neo_work_prs` columns | Neo backend |
@@ -269,7 +269,7 @@ and land inside the coding pack.
 
 - ADR 0004 — superpipe pipelines; packs are stage functions inside them.
 - ADR 0006 — the operations door that pack operations go through.
-- ADR 0007 — capability briefings; `neo.pack.read` and `neo.ask.open` return
+- ADR 0007 — capability briefings; `neo.pack.read` and `neo.ask.propose` return
   the briefing for the pack they attach.
 - Epic #6230 — this ladder. Epic #6002 — asks driven to outcomes.
 - Claude Code plugins and mods: https://code.claude.com/docs/en/plugins/overview

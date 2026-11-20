@@ -37,7 +37,7 @@ try {
   db.prepare("INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?, 'Synthetic todo size proof', '/tmp', '2026-11-13T00:00:00Z', '2026-11-13T00:00:00Z', 'active', '{}', '{}')").run(sender);
   new NeoRepository(db).reserveBinding({ sessionId: sender, kind: 'neo', projectId: null });
   seedHistoricalAsk(store, sender, { title: 'Synthetic eleven-step ask', request: 'Measure todo result sizes' });
-  const opened = await agent('neo.ask.open', {
+  const opened = await agent('neo.ask.propose', {
     title: 'Synthetic eleven-step ask',
     request: 'Measure todo result sizes',
     todos: Array.from({ length: 11 }, (_, n) => ({ after: [], title: `Step ${n}`, check: { pack: 'core', kind: 'evidence', params: { path: join(run, `missing-${n}`) } } })),

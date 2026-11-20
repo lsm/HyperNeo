@@ -129,7 +129,7 @@ describe('activated ask settlement', () => {
     );
   const reopen = () =>
     ops
-      .find((op) => op.name === 'neo.ask.open')!
+      .find((op) => op.name === 'neo.ask.propose')!
       .execute(
         { title: 'Work', request: 'Keep work', todos: [] },
         { source: 'mcp', role: 'neo', sessionId: 'neo' }

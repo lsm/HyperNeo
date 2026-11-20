@@ -55,7 +55,7 @@ const seed=(id:string,askId:string,adopted=false)=>{
  if(adopted)sessions.bind(id,{adapter:'hyperneo',id},2);else{sessions.create(id,{verb:'send',ref:{adapter:'hyperneo',id}});sessions.recordRef(id,{adapter:'hyperneo',id},2);}sessions.recordLive(id,'running',undefined);
 };
 const card=(id:string,askId:string,todoId:string|null)=>store.askQuestion(id,askId,{kind:'reply',...(todoId?{todoId}:{}),text:'Choose first',options:null,multiple:false,yesLabel:null,noLabel:null},3);
-const reopen=async(id:string)=>{const result=await mcp({name:'neo.ask.open',input:{title:id,request:'Keep full work',todos:[]}});assert(!result.isError,JSON.stringify(result));return JSON.parse(result.content[0].text) as Receipt;};
+const reopen=async(id:string)=>{const result=await mcp({name:'neo.ask.propose',input:{title:id,request:'Keep full work',todos:[]}});assert(!result.isError,JSON.stringify(result));return JSON.parse(result.content[0].text) as Receipt;};
 const result:Record<string,unknown>={surface:'Real WebSocket settle/Work-card RPCs and actual agent MCP handler; scripted work.stop boundary'};
 try{
  await app.spaceRuntimeService.ready();await app.jobProcessor.stop();await transport.connect();
