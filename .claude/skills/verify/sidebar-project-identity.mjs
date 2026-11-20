@@ -19,12 +19,25 @@ try {
   await rows.nth(1).waitFor();
   const count = await rows.count();
   console.log(`Visible rows for three checkouts of two repositories: ${count}`);
-  await page.screenshot({ path: `${out}/sidebar-project-identity.png` });
   assert.equal(count, 2);
   const codeRows = page.getByTestId('project-group-header').filter({ hasText: 'code-fixture' });
   const codeCount = await codeRows.count();
   console.log(`Visible rows for two checkouts sharing Git history without a remote: ${codeCount}`);
   assert.equal(codeCount, 1);
+  for (const row of await page.getByTestId('project-group-header').all()) {
+    if ((await row.getAttribute('aria-expanded')) === 'true') await row.click();
+  }
+  for (const colorScheme of ['light', 'dark']) {
+    await page.emulateMedia({ colorScheme });
+    await page.reload();
+    await rows.nth(1).waitFor();
+    await page.waitForFunction((theme) => document.documentElement.dataset.theme === theme, colorScheme);
+    await page.mouse.move(500, 100);
+    await page.screenshot({
+      path: `${out}/sidebar-project-identity-${colorScheme}.png`,
+      animations: 'disabled',
+    });
+  }
   await page.getByRole('button', { name: 'Remove project code-fixture', exact: true }).click();
   await codeRows.waitFor({ state: 'detached' });
   await page.reload();

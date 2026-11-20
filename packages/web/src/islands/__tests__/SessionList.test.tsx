@@ -192,6 +192,32 @@ describe('SessionsSidebar', () => {
     expect(screen.getAllByTestId('project-group-header')).toHaveLength(1);
   });
 
+  it('shows one row for two repository checkouts and removes both saved folders', async () => {
+    const repositoryProject = { id: 'repository:fixture', name: 'Project' };
+    const first = '/primary/project';
+    const second = '/secondary/project';
+    const unrelated = createHistory('/other/project');
+    mockGetWorkspaceHistory.mockResolvedValue([
+      { ...createHistory(first, 3), repositoryProject },
+      { ...createHistory(second, 2), repositoryProject },
+      unrelated,
+    ]);
+    render(<SessionsSidebar />);
+
+    expect(await screen.findByText(second)).toBeTruthy();
+    expect(screen.getByText(first)).toBeTruthy();
+    expect(screen.getAllByTestId('project-group-header')).toHaveLength(2);
+    expect(mockGetWorkspaceHistory).toHaveBeenCalledWith({ includeRepositoryProjects: true });
+
+    mockGetWorkspaceHistory.mockResolvedValue([unrelated]);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove project Project', exact: true }));
+    await waitFor(() => expect(screen.getAllByTestId('project-group-header')).toHaveLength(1));
+    expect(mockRemoveWorkspaceFromHistory.mock.calls).toEqual([[first], [second]]);
+    expect(
+      screen.getByRole('button', { name: 'New session in project', exact: true })
+    ).toBeTruthy();
+  });
+
   it('refreshes the sidebar after a partial project removal failure and retries only remaining folders', async () => {
     const project = { id: 'p1', name: 'Product', folders: ['/code', '/docs'] };
     mockGetWorkspaceHistory.mockResolvedValue(

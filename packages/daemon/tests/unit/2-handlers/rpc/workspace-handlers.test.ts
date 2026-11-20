@@ -1,12 +1,13 @@
 import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { createTables } from '../../../../src/storage/schema';
 import { WorkspaceHistoryRepository } from '../../../../src/storage/repositories/workspace-history-repository';
 import { setupWorkspaceHandlers } from '../../../../src/lib/rpc-handlers/workspace-handlers';
-import type { MessageHub } from '@hyperneo/shared';
+import type { MessageHub, WorkspaceHistoryResponse } from '@hyperneo/shared';
 import type { McpImportService } from '../../../../src/lib/mcp/mcp-import-service';
 import type {
   DaemonInternalEventMap,
@@ -73,6 +74,31 @@ describe('workspace handlers', () => {
   });
 
   describe('workspace.history', () => {
+    it('groups checkouts of the same remote while keeping a separate same-named repo', async () => {
+      const first = makeWorkspace('first/project');
+      const second = makeWorkspace('second/project');
+      const unrelated = makeWorkspace('unrelated/project');
+      for (const [path, remote] of [
+        [first, 'https://example.test/team/project.git'],
+        [second, 'git@example.test:team/project.git'],
+        [unrelated, 'https://example.test/other/project.git'],
+      ]) {
+        execFileSync('git', ['init', '--quiet', path]);
+        execFileSync('git', ['-C', path, 'remote', 'add', 'origin', remote]);
+        repo.upsert(path);
+      }
+
+      const history = handlers.get('workspace.history')!;
+      const { entries } = (await history({
+        includeRepositoryProjects: true,
+      })) as WorkspaceHistoryResponse;
+      const projects = new Map(entries.map((entry) => [entry.path, entry.repositoryProject]));
+      expect(projects.size).toBe(3);
+      expect(projects.get(first)).toMatchObject({ id: expect.any(String), name: 'project' });
+      expect(projects.get(second)).toEqual(projects.get(first));
+      expect(projects.get(unrelated)).toBeUndefined();
+    });
+
     it('returns empty list when no workspaces have been added', async () => {
       const handler = handlers.get('workspace.history')!;
       const result = (await handler({})) as { entries: unknown[] };
