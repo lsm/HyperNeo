@@ -366,28 +366,25 @@ impl Drivers {
                     "panic" => "panic",
                     "real" => "real",
                     "mock-allow" => "mock-allow",
+                    "mock-allow-all" => "mock-allow-all",
                     "mock-deny" => "mock-deny",
                     "mock-hold" => "mock-hold",
                     _ => "deny",
                 };
                 grants::ASKS.lock().unwrap().1.clear();
             }
-            let dialogs = grants::FIXTURE_DIALOG.lock().unwrap().1;
-            let texts: serde_json::Map<String, Value> =
-                ["observe", "launch", "pointer", "keyboard", "other"]
-                    .map(|class| {
-                        (
-                            class.to_owned(),
-                            json!(grants::dialog_text("com.apple.finder", class)),
-                        )
-                    })
-                    .into_iter()
-                    .collect();
-            return Ok(json!({"dialogs": dialogs, "texts": texts}));
+            return Ok(json!({"dialogs": grants::FIXTURE_DIALOG.lock().unwrap().1}));
+        }
+        #[cfg(test)]
+        if request.action == "fixture-dialog-texts" {
+            return Ok(json!({"texts": grants::dialog_texts()}));
         }
         #[cfg(test)]
         if request.action == "fixture-dialog-buttons" {
-            return Ok(json!({"buttons": grants::dialog_buttons()}));
+            let bundle = request
+                .tool
+                .unwrap_or_else(|| "com.apple.calculator".to_owned());
+            return Ok(json!({"buttons": grants::dialog_buttons(bundle)}));
         }
         #[cfg(test)]
         if request.action == "fixture-slots" {
