@@ -140,7 +140,7 @@ if (import.meta.main) {
     const sources = readRepositorySources(process.cwd(), true);
     console.log(
       JSON.stringify(
-        reportPipelineVerdicts(sources, (input) => countPipelineRoutes(input, strict)),
+        reportPipelineVerdicts(sources, (input) => countPipelineRoutes(input, strict, sources)),
         null,
         2
       )
