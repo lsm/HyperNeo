@@ -1,10 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { MessageHub, MessageHubRouter } from '@hyperneo/shared';
 import { NeoSpeech } from '../../../../src/lib/neo/speech.ts';
-import {
-  createNeoPublisher,
-  createNeoPublicationOperation,
-} from '../../../../src/lib/neo/publication-operation.ts';
+import { createNeoPublicationOperation } from '../../../../src/lib/neo/publication-operation.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -105,7 +102,7 @@ describe('publication speech follows the committed version', () => {
     };
     const registry = createOperationRegistry([
       ...speech.operations,
-      createNeoPublicationOperation(createNeoPublisher(runtime)),
+      createNeoPublicationOperation(runtime).operation,
     ]);
     const mcp = createOperationMcpHandler(registry, () => caller);
     send = async (input = draft) =>

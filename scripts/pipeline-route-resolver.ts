@@ -1,5 +1,6 @@
 import { posix } from 'node:path';
 import ts from 'typescript';
+import { createPipelineBuilderResolver } from './pipeline-builder-factory.ts';
 
 export type LocalPipelineResolution = { kind: 'named'; name: string } | { kind: 'unknown' };
 
@@ -204,6 +205,8 @@ export function createLocalPipelineResolver(
       : unknown;
   }
 
+  const resolveBuilder = createPipelineBuilderResolver(checker, unwrap, importedSuperpipe);
+
   function callable(expression: ts.Expression, seen: Set<ts.Node>): LocalPipelineResolution {
     expression = unwrap(expression);
     const direct = pipeline(expression);
@@ -212,6 +215,10 @@ export function createLocalPipelineResolver(
     if (imported.kind === 'named') return imported;
     const built = localFactory(expression);
     if (built.kind === 'named') return built;
+    if (strictCalls) {
+      const name = resolveBuilder(expression);
+      if (name !== undefined) return { kind: 'named', name };
+    }
     if (ts.isArrowFunction(expression) || ts.isFunctionExpression(expression)) {
       if (ts.isBlock(expression.body)) {
         if (expression.body.statements.length !== 1) return unknown;
@@ -243,11 +250,11 @@ export function createLocalPipelineResolver(
     if (ts.isAwaitExpression(expression)) return action(expression.expression, seen);
     if (
       !ts.isCallExpression(expression) ||
-      (strictCalls && (expression.flags & ts.NodeFlags.OptionalChain) !== 0) ||
-      !ts.isIdentifier(expression.expression)
+      (strictCalls && (expression.flags & ts.NodeFlags.OptionalChain) !== 0)
     )
       return unknown;
-    return callable(expression.expression, seen);
+    const callee = strictCalls ? unwrap(expression.expression) : expression.expression;
+    return ts.isIdentifier(callee) ? callable(callee, seen) : unknown;
   }
 
   const matches = new Map<string, ts.Expression[]>();
