@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
-const [port, out] = process.argv.slice(2);
-assert(port && out && port !== '8399');
+const [port, out, populated] = process.argv.slice(2);
+assert(port && out && populated && port !== '8399');
 const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({
   ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}),
@@ -45,6 +45,17 @@ try {
   console.log(`Visible rows for the removed project after reload: ${await codeRows.count()}`);
   assert.equal(await codeRows.count(), 0);
 
+  await page.getByTestId('add-project-button').click();
+  await page.getByTestId('add-project-path-input').fill(populated);
+  await page.getByTestId('add-project-path-input').press('Enter');
+  const expandedMembership = page.locator(
+    '[data-testid="project-group-header"][title*="/primary/"][title*="/populated/"]'
+  );
+  await expandedMembership.waitFor();
+  const expanded = await expandedMembership.getAttribute('aria-expanded');
+  console.log(`Grouped project expanded after adding a checkout with commits: ${expanded}`);
+  assert.equal(expanded, 'false');
+
   await page.routeWebSocket('**/ws', (route) => {
     const server = route.connectToServer();
     route.onMessage((raw) => {
@@ -54,9 +65,9 @@ try {
     });
   });
   await page.reload();
-  await rows.nth(2).waitFor();
+  await rows.nth(3).waitFor();
   console.log(`Visible saved rows after the grouped history request times out: ${await rows.count()}`);
-  assert.equal(await rows.count(), 3);
+  assert.equal(await rows.count(), 4);
 } finally {
   await browser.close();
 }
