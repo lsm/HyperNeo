@@ -397,3 +397,21 @@ test.each([
   sources.delete(`${dbDirectory}/db-gateway-worker.ts`);
   expect(countPipelineRoutes(input, true, sources)).toMatchObject({ unreadable: 1 });
 });
+
+test.each([
+  ['another gateway call', 'db(database).call(query, "read", input);', 'named'],
+  ['an alias', 'const alias = query;', 'unknown'],
+  ['an unrelated call', 'mutate.call(query);', 'unknown'],
+  ['a shadowed gateway', 'function db() {}', 'unknown'],
+])('confines a command with %s', (_title, extra, kind) => {
+  const path = `${dbDirectory}/route.ts`;
+  const source = `import { defineOperation } from './registry.ts';
+    import { gatewayFor as db } from './db-gateway.ts';
+    import { query } from './read.ts';
+    function other(input) { ${extra} }
+    defineOperation({ name: 'demo.read', execute: (input) => db(database).call(query, 'read', input) });`;
+  const sources = new Map(workerSource).set(path, source);
+  expect(createLocalPipelineResolver(source, path, true, sources)('demo.read')).toEqual(
+    kind === 'named' ? { kind, name: 'demo.read' } : { kind }
+  );
+});
