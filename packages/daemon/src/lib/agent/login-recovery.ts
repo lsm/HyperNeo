@@ -195,7 +195,14 @@ export function createLoginRecovery(deps: LoginRecoveryDeps) {
   }
 
   async function hold(providerId: string, prompt: HeldPrompt | null): Promise<boolean> {
-    if (holds.get(providerId)?.active) return true;
+    const existing = holds.get(providerId);
+    if (existing?.active) {
+      if (prompt && !existing.prompt) {
+        existing.prompt = prompt;
+        await persist(providerId, existing);
+      }
+      return true;
+    }
     const facts = deps.facts(providerId, false);
     if (mayResume(facts)) return false;
     const state = startHold(providerId, prompt, facts.needsLoginAt !== null);

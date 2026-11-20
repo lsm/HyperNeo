@@ -16,6 +16,7 @@ export function getHumanSendSilenceMs(): number {
 export interface HumanSendFacts {
   status: AgentProcessingState['status'];
   held: boolean;
+  needsLoginAt?: number | null;
   openTools: number;
   lastActivityAt: number;
   now: number;
@@ -80,6 +81,10 @@ interface RecoveryEffects {
 }
 
 const readFacts = (effects: RecoveryEffects) => effects.facts();
+const gateLoginReady = (facts: HumanSendFacts, outcome?: unknown) =>
+  facts.needsLoginAt != null || outcome === 'definitive'
+    ? { reason: 'deliver' as const }
+    : { value: 'recover' as const };
 const gateNotAlive = (facts: HumanSendFacts) =>
   isSessionAlive(facts) ? { reason: 'deliver' as const } : { value: 'recover' as const };
 const probe = (effects: RecoveryEffects) => effects.reachable();
@@ -95,11 +100,14 @@ const recovered = () => ({ value: 'recovered' as const });
 export const runHumanSendRecovery = (superpipe({})('human-send-recovery') as PipelineAPI)
   .input(['effects'])
   .pipe(readFacts, 'effects', 'facts')
+  .pipe(gateLoginReady, 'facts', 'result:route')
   .pipe(gateNotAlive, 'facts', 'result:route')
   .pipe(probe, 'effects', 'reachable')
   .pipe(gateReachable, 'reachable', 'result:route')
   .pipe(gateNotSlow, 'facts', 'result:route')
   .pipe(refresh, 'effects', 'refreshed')
+  .pipe(readFacts, 'effects', 'refreshedFacts')
+  .pipe(gateLoginReady, ['refreshedFacts', 'refreshed'], 'result:route')
   .pipe(rebuild, 'effects', 'rebuilt')
   .pipe(wake, 'effects', 'woken')
   .pipe(recovered, 'woken', 'result:route')
