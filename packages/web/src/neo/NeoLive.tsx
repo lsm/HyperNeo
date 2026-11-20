@@ -239,6 +239,7 @@ export function NeoLive() {
     referenceRequest.current = null;
     setCardOpening(false);
     setWorkQuery('');
+    setWorkTab('inbox');
     setLoadingHistory(false);
     setChat(null);
     setCardTarget(null);
@@ -807,6 +808,7 @@ export function NeoLive() {
     const ticket = {};
     referenceRequest.current = ticket;
     setWorkQuery('');
+    setWorkTab('inbox');
     setCardTarget(null);
     setCardUnavailable(false);
     setCardOpening(true);

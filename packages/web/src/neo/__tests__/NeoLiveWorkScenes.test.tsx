@@ -1095,7 +1095,7 @@ describe('card reply notice navigation', () => {
     expect(group.querySelector('h2')?.textContent).toBe('Needs your attention · 1');
   });
 
-  it('drops a topic that hides an opened reference', async () => {
+  it.each(['topic', 'tab'] as const)('drops a %s that hides an opened reference', async (hider) => {
     const { model } = mount();
     const trip = testAskEntry('trip', 'Fictional trip', { state: 'doing' });
     trip.ask.topic = 'Travel';
@@ -1147,12 +1147,11 @@ describe('card reply notice navigation', () => {
         },
       };
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Travel 1' }));
+    const hide = hider === 'topic' ? 'Travel 1' : 'Goals';
+    fireEvent.click(screen.getByRole('button', { name: hide }));
     fireEvent.click(screen.getByRole('button', { name: /Quoted tax target/ }));
     await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-todo-tax-step'));
-    expect(screen.getByRole('button', { name: 'Travel 1' }).getAttribute('aria-pressed')).toBe(
-      'false'
-    );
+    expect(screen.getByRole('button', { name: hide }).getAttribute('aria-pressed')).toBe('false');
   });
 
   it.each([
