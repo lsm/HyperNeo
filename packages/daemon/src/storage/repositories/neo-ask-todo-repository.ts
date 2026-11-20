@@ -1,6 +1,9 @@
 import {
+  DESKTOP_CONTROL_ANSWERS,
+  desktopControlAnswerAllowed,
   desktopControlPreference,
   planDesktopControl,
+  saveDesktopControlPreference,
 } from '../../lib/neo/desktop-control-preference.ts';
 import { proposalQuestionId } from '../../lib/neo/proposal.ts';
 import { queueNeoRequestReply, queueNeoRequestSettledReply } from '../../lib/neo/request-todo.ts';
@@ -254,7 +257,7 @@ const toQuestion = ({
   ...(replyToJson ? { replyTo: JSON.parse(replyToJson) as string[] } : {}),
   confirm: parsed<NonNullable<NeoQuestion['confirm']>>(confirmJson),
   ...(app
-    ? { kind: 'desktop_control' as const, options: ['Allow'], multiple: false }
+    ? { kind: 'desktop_control' as const, options: [...DESKTOP_CONTROL_ANSWERS], multiple: false }
     : row.kind === 'start'
       ? { kind: 'choice' as const, options: JSON.parse(row.todos) as string[], multiple: true }
       : { kind: row.kind, options: parsed<string[]>(row.options), multiple: row.multiple === 1 }),
@@ -779,10 +782,6 @@ export class NeoAskTodoRepository {
     return desktopControlPreference(this.db);
   }
 
-  desktopControlQuestionState(): Promise<{ id: string; state: string } | null> {
-    return gatewayFor(this.db).call(neoAskInputReads, 'desktopControlQuestionState');
-  }
-
   addTodo(...args: Parameters<NeoTodoInsert>): NeoTodo {
     const storage = this.storage;
     const todo = this.inTransaction(() =>
@@ -1167,6 +1166,9 @@ export class NeoAskTodoRepository {
   ): NeoQuestion | null {
     let settingsChanged: 'rules' | 'preferences' | undefined;
     const changed = this.db.transaction(() => {
+      const todo = question.todoId ? this.getTodo(question.todoId) : null;
+      if (question.kind === 'desktop_control' && !desktopControlAnswerAllowed(answer, todo))
+        return false;
       const answered = this.changeQuestion(
         question.id,
         {
@@ -1186,6 +1188,13 @@ export class NeoAskTodoRepository {
         }
         this.pruneQuestions(question.askId, now);
         for (const { todo, patch } of effects) this.writeTodo(todo, patch, now, false, false);
+        if (todo && question.kind === 'desktop_control' && answer !== 'No') {
+          this.updateTodo(todo, { named: { ...todo.named, desktopControl: true } }, now);
+          if (answer === 'Always allow') {
+            saveDesktopControlPreference(this.db, true, now);
+            settingsChanged = 'preferences';
+          }
+        }
         const preferences = applyPackPreferenceAnswer(this.db, question.id);
         if (preferences.ok && preferences.applied) settingsChanged = 'preferences';
         const rules = applyNeoRuleAnswer(this.db, question.id, approval);
