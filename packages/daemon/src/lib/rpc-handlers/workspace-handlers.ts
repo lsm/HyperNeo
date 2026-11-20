@@ -8,9 +8,16 @@ import { validateWorkspaceDirectory } from '../workspace-path.ts';
 import type { WorkspaceHistoryRepository } from '../../storage/repositories/workspace-history-repository.ts';
 import { identifyWorkspaces } from '../drivers/code-identity.ts';
 import { mergePlaceGroups } from '../drivers/places.ts';
+import type { Place } from '../drivers/types.ts';
 import { neoRepositoryIdentity } from '../neo/project-mirror.ts';
 
 const log = new Logger('workspace-handlers');
+
+function repositoryKeys(place: Place): string[] {
+  return [neoRepositoryIdentity(place.remotes?.[0]), place.codeIdentity].flatMap(
+    (key) => key ?? []
+  );
+}
 
 async function groupWorkspaceHistory(
   entries: WorkspaceHistoryEntry[]
@@ -28,15 +35,17 @@ async function groupWorkspaceHistory(
       }))
   );
   const projects = new Map<string, NonNullable<WorkspaceHistoryEntry['repositoryProject']>>();
-  for (const group of mergePlaceGroups(groups, groups.length, (place) =>
-    [place.codeIdentity, neoRepositoryIdentity(place.remotes?.[0])].flatMap((key) => key ?? [])
-  )) {
+  for (const group of mergePlaceGroups(groups, groups.length, repositoryKeys)) {
     const { projectId, workspaces } = group;
     if (!projectId || !workspaces || workspaces.length < 2) continue;
-    const digest = createHash('sha256').update(projectId).digest('hex');
+    const memberKeys = workspaces.map(repositoryKeys);
+    const sharedKey = memberKeys[0].find((key) => memberKeys.every((keys) => keys.includes(key)));
+    const digest = createHash('sha256')
+      .update(sharedKey ?? projectId)
+      .digest('hex');
     const project = {
       id: `repository:${digest}`,
-      name: workspaces[0].repoName ?? workspaces[0].name,
+      name: workspaces.map((place) => place.repoName ?? place.name).sort()[0],
     };
     for (const workspace of workspaces) {
       if (workspace.folder) projects.set(workspace.folder, project);
