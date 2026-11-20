@@ -12,4 +12,4 @@ env -i PATH="$PATH" NODE_ENV=test HOME="$run/home" CODEX_HOME="$run/codex" \
   bun .claude/skills/verify/codex-worker-compaction.ts "$run" "$codex_bin"
 ```
 
-A pass prints the matching notification and the number of compaction model requests. The probe exits nonzero if the app-server never confirms compaction.
+A pass prints the start, compaction, and completion notifications for the same turn and the number of compaction model requests. The probe exits nonzero unless the turn reports a completed status.
