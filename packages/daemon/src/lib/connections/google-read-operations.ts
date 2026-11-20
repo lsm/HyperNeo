@@ -104,7 +104,7 @@ export function project(value: unknown) {
 }
 
 export function createGoogleReadOperations(db: () => Database, service: () => Promise<Service>) {
-  const accounts = (superpipe({})('google-session-accounts') as PipelineAPI)
+  const accounts = (superpipe({})('google.accounts') as PipelineAPI)
     .input('caller')
     .pipe(admit, 'caller', 'result:result')
     .pipe(() => gatewayFor(db()).call(googleConnectionReads, 'list'), 'result', 'rows')
@@ -121,7 +121,7 @@ export function createGoogleReadOperations(db: () => Database, service: () => Pr
       'result'
     )
     .endAsync('result');
-  const search = (superpipe({})('gmail-session-search') as PipelineAPI)
+  const search = (superpipe({})('gmail.search') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admit, 'caller', 'result:result')
     .pipe(() => service(), 'result', 'service')
