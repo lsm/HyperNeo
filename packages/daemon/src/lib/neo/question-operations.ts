@@ -681,8 +681,26 @@ export function createNeoQuestionOperations(
   }),
   language: () => LanguageSetting | undefined = () => undefined
 ) {
-  const ask = (superpipe({})('neo.question.ask') as PipelineAPI)
+  type AskInput = z.infer<typeof Ask> | z.infer<typeof RelayAsk>;
+  const isRelay = (input: AskInput): input is z.infer<typeof RelayAsk> => input.kind === 'relay';
+  const ask = (superpipe({ isRelay })('neo.question.ask') as PipelineAPI)
     .input(['input', 'caller'])
+    .pipe(
+      (input: AskInput, caller: OperationCaller) =>
+        isRelay(input)
+          ? relay(
+              {
+                ...(input.todoId ? { todoId: input.todoId } : { session: input.session }),
+                title: input.text,
+                options: input.options,
+              },
+              caller
+            )
+          : null,
+      ['input', 'caller'],
+      'outcome'
+    )
+    .pipe('!isRelay', 'input')
     .pipe(
       (input: z.infer<typeof Ask>, caller: OperationCaller) =>
         resolveNeoInputAsk(store, inputs, caller, input, input.text),
@@ -841,7 +859,7 @@ export function createNeoQuestionOperations(
       'outcome'
     )
     .endAsync('outcome') as (
-    input: z.infer<typeof Ask>,
+    input: AskInput,
     caller: OperationCaller
   ) => Promise<QuestionReceipt | Rejection>;
 
@@ -1008,17 +1026,7 @@ export function createNeoQuestionOperations(
       inputSchema: z.union([RelayAsk, Ask]),
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) =>
-        input.kind === 'relay'
-          ? ((await relay(
-              {
-                ...(input.todoId ? { todoId: input.todoId } : { session: input.session }),
-                title: input.text,
-                options: input.options,
-              },
-              caller
-            )) as QuestionReceipt | Rejection)
-          : ask(input, caller),
+      execute: (input, caller) => ask(input, caller),
     }),
     defineOperation({
       name: 'neo.question.retire',
