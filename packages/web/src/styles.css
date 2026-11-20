@@ -1287,12 +1287,19 @@ html.tauri-desktop
   body:has(.neo-shell)
   :is(
     .neo-session-pane,
-    .neo-drawer-layer,
     .neo-scene-list.neo-scene-sheet,
     .fixed.inset-0,
     .fixed.top-0.left-0.right-0
   ) {
   top: 40px;
+}
+
+html.tauri-desktop body:has(.neo-shell) .neo-drawer-layer {
+  top: 0;
+}
+
+html.tauri-desktop .neo-drawer {
+  padding-top: 56px;
 }
 
 html.tauri-desktop .neo-shell .neo-float-dock {
