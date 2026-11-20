@@ -1,4 +1,5 @@
 import {
+  DESKTOP_CONTROL_ANSWERS,
   desktopControlPreference,
   planDesktopControl,
 } from '../../lib/neo/desktop-control-preference.ts';
@@ -254,7 +255,7 @@ const toQuestion = ({
   ...(replyToJson ? { replyTo: JSON.parse(replyToJson) as string[] } : {}),
   confirm: parsed<NonNullable<NeoQuestion['confirm']>>(confirmJson),
   ...(app
-    ? { kind: 'desktop_control' as const, options: ['Allow'], multiple: false }
+    ? { kind: 'desktop_control' as const, options: [...DESKTOP_CONTROL_ANSWERS], multiple: false }
     : row.kind === 'start'
       ? { kind: 'choice' as const, options: JSON.parse(row.todos) as string[], multiple: true }
       : { kind: row.kind, options: parsed<string[]>(row.options), multiple: row.multiple === 1 }),
@@ -777,10 +778,6 @@ export class NeoAskTodoRepository {
 
   desktopControlPreference(): unknown {
     return desktopControlPreference(this.db);
-  }
-
-  desktopControlQuestionState(): Promise<{ id: string; state: string } | null> {
-    return gatewayFor(this.db).call(neoAskInputReads, 'desktopControlQuestionState');
   }
 
   addTodo(...args: Parameters<NeoTodoInsert>): NeoTodo {

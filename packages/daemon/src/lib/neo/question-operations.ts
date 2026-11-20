@@ -35,6 +35,7 @@ import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-to
 import type { StagedWorkerQuestion } from '../work-queue/follow-through.ts';
 import { planNeoRemovedPrerequisiteAnswer } from './todo-removal.ts';
 import { isHumanWorkDecision } from './proposal.ts';
+import { DESKTOP_CONTROL_ANSWERS } from './desktop-control-preference.ts';
 
 const ReportLine = z
   .string()
@@ -623,7 +624,7 @@ export function planNeoQuestionAnswer(
   const picked = [answer].flat();
   const allowed =
     question.kind === 'desktop_control'
-      ? typeof answer === 'string' && answer === 'Allow'
+      ? typeof answer === 'string' && DESKTOP_CONTROL_ANSWERS.includes(answer)
       : question.kind === 'yesno'
         ? typeof answer === 'string' && (answer === 'no' || answer === 'yes')
         : question.kind === 'reply'

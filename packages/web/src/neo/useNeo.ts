@@ -9,6 +9,7 @@ import type {
 import type { NeoQuestionAnswer, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { invokeOperation } from '../lib/operations.ts';
+import { writeDesktopPreference } from '../lib/desktop-preference.ts';
 import type { OperationName } from '@hyperneo/shared/types/operation-names';
 import { type NeoTodoControl, neoTodoControlCall } from './todo-controls.ts';
 import { SessionStore } from '../lib/session-store.ts';
@@ -176,6 +177,17 @@ export function useNeo() {
     }
   }
 
+  async function setDesktopPreference(value: boolean) {
+    setError('');
+    try {
+      await writeDesktopPreference(await connectionManager.getHub(), value);
+      return true;
+    } catch (cause) {
+      if (alive.current) setError(cause instanceof Error ? cause.message : String(cause));
+      return false;
+    }
+  }
+
   async function muteSession(key: string, muted: boolean) {
     setError('');
     try {
@@ -260,6 +272,7 @@ export function useNeo() {
     settleAsk,
     controlTodo,
     setDesktopControl,
+    setDesktopPreference,
     muteSession,
     answerQuestion,
     holdQuestion,

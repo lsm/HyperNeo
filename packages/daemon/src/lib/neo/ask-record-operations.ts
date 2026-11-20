@@ -394,8 +394,6 @@ export function createNeoAskRecordOperations(
         const rows = drafts.map((todo) => recordedRow(todo, currentScope));
         const desktop = await preflightTodoDesktopControl(
           store,
-          controls.askDesktopControl,
-          ask.id,
           drafts.some((todo, index) => !rows[index] && todo.named?.desktopControl === true),
           caller.role
         );

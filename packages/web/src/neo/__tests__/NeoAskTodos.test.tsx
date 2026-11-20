@@ -113,7 +113,8 @@ describe('QuestionBox', () => {
     const view = render(
       <QuestionBox question={card} onAnswer={vi.fn()} onDesktopAllow={vi.fn()} />
     );
-    expect(view.getByRole('button', { name: '\u5141\u8bb8' })).toBeTruthy();
+    for (const name of ['不行', '只这个任务', '可以，以后不用再问'])
+      expect(view.getByRole('button', { name })).toBeTruthy();
   });
 
   it('offers desktop control for the named app and todo', async () => {
@@ -128,8 +129,19 @@ describe('QuestionBox', () => {
     });
     const view = render(<QuestionBox question={card} onAnswer={vi.fn()} onDesktopAllow={allow} />);
     await waitFor(() => expect(view.getByText('Todo t1 — Calendar')).toBeTruthy());
-    fireEvent.click(view.getByRole('button', { name: 'Allow' }));
-    expect(allow).toHaveBeenCalledWith(card);
+    fireEvent.click(view.getByRole('button', { name: 'Only this task' }));
+    expect(allow).toHaveBeenCalledWith(card, false);
+    fireEvent.click(view.getByRole('button', { name: "Yes, don't ask again" }));
+    expect(allow).toHaveBeenCalledWith(card, true);
+  });
+
+  it('declines desktop control as a plain answer', () => {
+    locale.value = 'en';
+    const answer = vi.fn();
+    const card = question('desktop', { kind: 'desktop_control', app: 'Calendar', todoId: 't1' });
+    const view = render(<QuestionBox question={card} onAnswer={answer} onDesktopAllow={vi.fn()} />);
+    fireEvent.click(view.getByRole('button', { name: 'No' }));
+    expect(answer).toHaveBeenCalledWith('No');
   });
 });
 
@@ -1394,14 +1406,24 @@ describe('neoQuestionAnswerLabel', () => {
         question('desktop', { kind: 'desktop_control', answer: 'Allow', answeredBy: 'button' }),
         []
       )
-    ).toBe('\u5141\u8bb8');
+    ).toBe('只这个任务');
     locale.value = 'en';
     expect(
       neoQuestionAnswerLabel(
         question('desktop', { kind: 'desktop_control', answer: 'Allow', answeredBy: 'button' }),
         []
       )
-    ).toBe('Allow');
+    ).toBe('Only this task');
+    expect(
+      neoQuestionAnswerLabel(
+        question('desktop', {
+          kind: 'desktop_control',
+          answer: 'Always allow',
+          answeredBy: 'button',
+        }),
+        []
+      )
+    ).toBe("Yes, don't ask again");
   });
 
   it('says chat answers in the human words and an empty multiple choice as none', () => {

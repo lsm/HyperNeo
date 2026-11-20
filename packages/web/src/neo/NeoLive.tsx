@@ -311,11 +311,14 @@ export function NeoLive() {
       entries: neoAskEntriesInOrder(workEntries.filter((entry) => neoAskEntryGroup(entry) === key)),
     };
   });
-  const allowDesktop = (question: NeoQuestionEntry) => {
-    if (question.todoId)
-      void neo.setDesktopControl(question.todoId, true).then((ok) => {
-        if (ok) void neo.answerQuestion(question.id, 'Allow');
-      });
+  const allowDesktop = (question: NeoQuestionEntry, always: boolean) => {
+    const todoId = question.todoId;
+    if (!todoId) return;
+    void (async () => {
+      if (always && !(await neo.setDesktopPreference(true))) return;
+      if (await neo.setDesktopControl(todoId, true))
+        await neo.answerQuestion(question.id, always ? 'Always allow' : 'Allow');
+    })();
   };
   const askCard = (
     entry: NeoAskEntry,

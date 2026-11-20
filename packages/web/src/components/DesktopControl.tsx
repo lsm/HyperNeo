@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
+import { readDesktopPreference, writeDesktopPreference } from '../lib/desktop-preference.ts';
 import { t } from '../lib/i18n/index.ts';
 import { invokeOperation } from '../lib/operations.ts';
 import { connectionState } from '../lib/state.ts';
+import { SettingsToggle } from './settings/SettingsSection.tsx';
 
 type DesktopState = 'off' | 'unavailable' | 'running' | 'stopped' | 'stop_unconfirmed';
 type DesktopWorker = { worker: string; todo: string | null; state: DesktopState };
@@ -27,10 +29,16 @@ export function DesktopControl({
   const [workers, setWorkers] = useState<DesktopWorker[]>([]);
   const [stopping, setStopping] = useState<Record<string, boolean>>({});
   const [outcome, setOutcome] = useState<Record<string, 'failed' | 'unconfirmed' | undefined>>({});
+  const [always, setAlways] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
   const live = useRef(true);
   const read = useCallback(async () => {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) return;
+    if (!worker)
+      void readDesktopPreference(hub)
+        .then((value) => live.current && setAlways(value))
+        .catch(() => null);
     const result = await invokeOperation<{ workers?: DesktopWorker[] }>(
       hub,
       'desktop.status',
@@ -71,13 +79,43 @@ export function DesktopControl({
         : undefined;
     setOutcome((current) => ({ ...current, [id]: next }));
   };
-  if (workers.length === 0) return null;
+  const toggle = async (value: boolean) => {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) return;
+    setSaving(true);
+    const saved = await writeDesktopPreference(hub, value).then(
+      () => true,
+      () => false
+    );
+    if (!live.current) return;
+    setSaving(false);
+    if (saved) setAlways(value);
+  };
+  if (workers.length === 0 && (worker || always === null)) return null;
   return (
     <section
       aria-label={t('desktop.title')}
       class={`flex flex-col gap-2 text-sm ${className ?? ''}`}
     >
       {!worker && <h3 class="text-sm font-medium text-fg-muted">{t('desktop.title')}</h3>}
+      {!worker && always !== null && (
+        <div class="flex items-center gap-3">
+          <span class="min-w-0 flex-1">
+            <span class="block">{t('desktop.always')}</span>
+            <span class="block text-xs text-fg-muted">
+              {t(always ? 'desktop.always.on' : 'desktop.always.off')}
+            </span>
+          </span>
+          <span class="settings-theme">
+            <SettingsToggle
+              checked={always}
+              disabled={saving}
+              aria-label={t('desktop.always')}
+              onChange={(value) => void toggle(value)}
+            />
+          </span>
+        </div>
+      )}
       {workers.map((entry) => {
         const unconfirmed =
           entry.state === 'stop_unconfirmed' ||

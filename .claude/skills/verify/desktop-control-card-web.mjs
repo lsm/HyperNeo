@@ -54,7 +54,7 @@ try {
       await card.waitFor();
     }
     if (name === 'phone-dark') {
-      await card.getByRole('button', { name: 'Allow' }).tap();
+      await card.getByRole('button', { name: 'Only this task' }).tap();
       await card.waitFor({ state: 'hidden' });
       assert(chinesePage);
       await chinesePage.reload();
@@ -67,7 +67,7 @@ try {
       assert.match(await answered.innerText(), /\u5141\u8bb8/, 'the answered card action must use Chinese');
     }
   }
-  console.log('PASS: four views named the todo and app; Allow closed the card');
+  console.log('PASS: four views named the todo and app; Only this task closed the card');
 } catch (error) {
   if (currentPage) {
     await currentPage.screenshot({ path: join(out, 'failure.png') });
