@@ -261,7 +261,6 @@ export const en = {
   'live.loadingOlder': 'Loading older outcomes…',
   'live.drop.title': 'Drop photos or files here',
   'live.drop.hint': 'Added to this conversation. Review before sending.',
-  'live.menu': 'Settings and connection',
   'live.work': 'Your work',
   'live.workAttention': 'Your work, {count} need your attention',
   'live.heading': 'A little less on your mind.',

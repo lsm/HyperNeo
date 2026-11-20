@@ -262,7 +262,6 @@ export const zhHans: Record<keyof typeof en, string> = {
   'live.loadingOlder': '正在加载更早的结果…',
   'live.drop.title': '把照片或文件拖到这里',
   'live.drop.hint': '会加到这次对话里，发送前可以检查。',
-  'live.menu': '设置和连接',
   'live.work': '你的事',
   'live.workAttention': '你的事，{count} 件等你处理',
   'live.heading': '少操一点心。',

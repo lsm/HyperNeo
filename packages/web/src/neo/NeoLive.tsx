@@ -873,7 +873,7 @@ export function NeoLive() {
         <button
           type="button"
           onClick={() => setDrawerOpen(true)}
-          aria-label={t('live.menu')}
+          aria-label={t('drawer.title')}
           aria-expanded={drawerOpen}
           aria-haspopup="dialog"
           class="neo-glass-button"

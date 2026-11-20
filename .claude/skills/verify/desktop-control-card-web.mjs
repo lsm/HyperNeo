@@ -43,7 +43,7 @@ try {
       await card.getByRole('button', { name: label, exact: true }).waitFor({ timeout: 5000 });
     await page.screenshot({ path: join(out, `${name}.png`) });
     if (touch) await page.getByRole('button', { name: 'Close work list' }).tap();
-    await page.getByRole('button', { name: zh ? '设置和连接' : 'Settings and connection' }).first().click();
+    await page.getByRole('button', { name: zh ? '设置' : 'Settings', exact: true }).first().click();
     const toggle = page.getByRole('switch', { name: zh ? '直接使用，不用问' : 'Use without asking' });
     await toggle.waitFor();
     assert.equal(await toggle.getAttribute('aria-checked'), 'false');

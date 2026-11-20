@@ -41,10 +41,10 @@ const drawer = (connection: 'connected' | 'disconnected' = 'connected') =>
   );
 
 describe('NeoDrawer', () => {
-  it('sets the server-wide language and says when the server refuses it', async () => {
+  it('sets the server-wide language, says when the server refuses it, and clears that on reopen', async () => {
     invoke.mockResolvedValue({ ok: true, pending: [] });
     applyLanguage('system');
-    drawer();
+    const view = drawer();
     const select = screen.getByRole('combobox', { name: 'Language' }) as HTMLSelectElement;
     expect(select.value).toBe('system');
     expect(
@@ -61,6 +61,15 @@ describe('NeoDrawer', () => {
     expect((await screen.findByRole('alert')).textContent).toBe(
       'Couldn’t change the language. Try again.'
     );
+    const props = {
+      onClose: () => {},
+      connection: 'connected' as const,
+      onReconnect: () => {},
+      onRefresh: () => {},
+    };
+    view.rerender(<NeoDrawer open={false} {...props} />);
+    view.rerender(<NeoDrawer open {...props} />);
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('requires the phone code for two-way approval', async () => {

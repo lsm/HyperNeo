@@ -121,7 +121,7 @@ describe('Neo floating controls', () => {
   it('opens the settings drawer with connection controls and no project management', () => {
     const { open } = renderLive();
     expect(within(banner()).queryByRole('button', { name: 'Projects' })).toBeNull();
-    const logo = within(banner()).getByRole('button', { name: '设置和连接' });
+    const logo = within(banner()).getByRole('button', { name: '设置' });
     fireEvent.click(logo);
     const drawer = screen.getByRole('dialog', { name: '设置' });
     expect(within(drawer).getByText('已连接')).toBeTruthy();
@@ -137,7 +137,7 @@ describe('Neo floating controls', () => {
 
   it('closes the drawer on Escape, a backdrop click and a drag to the left, returning focus to the mark', async () => {
     renderLive();
-    const logo = within(banner()).getByRole('button', { name: '设置和连接' });
+    const logo = within(banner()).getByRole('button', { name: '设置' });
     logo.focus();
     fireEvent.click(logo);
     expect(document.activeElement).toBe(screen.getByRole('dialog', { name: '设置' }));
@@ -191,7 +191,7 @@ describe('Neo floating controls', () => {
 
   it('draws the logo and work buttons as 44px round glass with a press state in both themes', () => {
     renderLive();
-    const logo = within(banner()).getByRole('button', { name: '设置和连接' });
+    const logo = within(banner()).getByRole('button', { name: '设置' });
     expect(logo.className).toContain('neo-glass-button');
     const css = readFileSync('src/neo/neo.css', 'utf8');
     const glass = css.match(/\.neo-glass-button\s*\{([^}]*)\}/)?.[1] ?? '';

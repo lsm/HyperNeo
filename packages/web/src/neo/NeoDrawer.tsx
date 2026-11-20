@@ -35,6 +35,9 @@ export function NeoDrawer({
   const [languageFailed, setLanguageFailed] = useState(false);
   const panel = useRef<HTMLElement>(null);
   useEffect(() => {
+    if (!open) setLanguageFailed(false);
+  }, [open]);
+  useEffect(() => {
     if (!open || !panel.current) return;
     const opener = document.activeElement as HTMLElement | null;
     const onKey = (event: KeyboardEvent) => {
