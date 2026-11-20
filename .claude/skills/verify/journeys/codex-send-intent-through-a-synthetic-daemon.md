@@ -74,6 +74,16 @@ Retain observed.json, proof.log and
 run-status.json for red and green runs. The wrapper removes disposable daemon
 data after saving evidence.
 
+Last, the helper leaves the IPC socket file in place but stops its listener,
+which is what a running ChatGPT-hosted Codex looks like: it shares the managed
+app-server and has no Desktop IPC router. With the Desktop probe still reporting
+running, an automatic send must queue once on the app-server, make no Desktop
+call, and log route reason `desktop_ipc_absent`. Before that fix the same step
+returned `not_delivered` with `connect ECONNREFUSED ... No background writer
+was started`. New-thread creation falls back to the same shared app-server for
+its opening turn (`thread/resume`, then `turn/start`) when the IPC socket is
+missing or refuses. Unit tests cover that; this journey does not start threads.
+
 This proves daemon routing and transcript reporting with a synthetic receiver.
 It does not prove native Desktop queue consumption or rendering. After merge,
 read hyperneo build and confirm the served commit contains the squash commit.
