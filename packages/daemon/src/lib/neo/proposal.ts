@@ -35,7 +35,6 @@ export function requireAcceptedAsk(
   return { reason: { ok: false, reason: notAcceptedReason(pendingProposal ? proposal : null) } };
 }
 
-/** Names the card the human still has to answer, so Neo waits for it instead of asking again. */
 export function notAcceptedReason(proposal: NeoQuestion | null): string {
   return proposal?.state === 'open'
     ? `ask_not_accepted: the human has not answered Do it on this ask's card (question ${proposal.id}). Wait for that answer; do not open another card asking for approval.`
