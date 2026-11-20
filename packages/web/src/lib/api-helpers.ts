@@ -392,10 +392,10 @@ export async function findProjectWork(folders: string[]): Promise<boolean> {
       more?: boolean;
     }>('operation.invoke', {
       name: 'work.find',
-      input: { folder, includeClosed: true, limit: 50 },
+      input: { folder, localOnly: true, limit: 50 },
     });
-    if (result.more || result.unreachable.length) throw new Error('Could not check all work');
     if (result.places.some((place) => place.work.length > 0)) return true;
+    if (result.more || result.unreachable.length) throw new Error('Could not check all work');
   }
   return false;
 }

@@ -544,8 +544,8 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
                           );
                           if (!item) return 'Checking project work';
                           if (item.isProtected) return 'This project cannot be forgotten.';
-                          if (project.sessions.length > 0 || item.hasSessions)
-                            return 'Project has chats, including archived chats';
+                          if (unarchived(project.sessions).length > 0 || item.hasSessions)
+                            return 'Project has chats or workers';
                           if (item.unknownWork) return 'Cannot check all work for this project';
                           const checked = systemWork[item.id];
                           return checked?.key === workKey(item)

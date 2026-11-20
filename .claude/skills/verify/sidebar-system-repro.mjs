@@ -87,7 +87,7 @@ try {
   assert(await inbox.isDisabled(), 'the protected Inbox must refuse removal');
   assert.equal(await inbox.getAttribute('title'), 'This project cannot be forgotten.');
   await page.getByTestId('project-group-header').filter({hasText:'occupied'}).hover();
-  await page.getByRole('tooltip').filter({hasText:'Project has chats, including archived chats'}).waitFor({state:'visible', timeout:3000});
+  await page.getByRole('tooltip').filter({hasText:'Project has chats or workers'}).waitFor({state:'visible', timeout:3000});
   await page.screenshot({path:`${run}/evidence/sidebar-${scheme}-refusal.png`, animations:'disabled'});
   console.log('Protected Inbox cannot be forgotten');
   async function callRpc(method, data) {
