@@ -15,7 +15,7 @@ use security_framework::os::macos::code_signing::{
 use serde_json::{json, Value};
 use std::{ffi::c_void, str::FromStr};
 
-const ANCHOR: &str = "anchor apple or (anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists)";
+const ANCHOR: &str = "anchor apple or (anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists) or (anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.9] exists)";
 
 #[link(name = "Security", kind = "framework")]
 extern "C" {

@@ -46,7 +46,8 @@ const explanations: Record<string, string> = {
   desktop_not_opted_in: 'This worker has no approved desktop control binding.',
   invalid_arguments: 'The arguments do not match the tool schema or worker.',
   guards_unavailable: 'The trusted desktop host could not check this call.',
-  target_unverified: 'The target app could not be verified from its code signature.',
+  target_unverified:
+    'The target could not be verified: pass the app pid, and the app must be signed by Apple, the Mac App Store or a Developer ID. Other arguments will not help; report it to Neo.',
   target_mismatch: 'The addressed process, window or app does not match the verified target.',
   app_action_not_authorized:
     'The owner has not approved access to this app. The Mac asks the owner in a dialog; retry after they answer.',
