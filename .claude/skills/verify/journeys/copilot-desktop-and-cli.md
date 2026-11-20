@@ -43,7 +43,10 @@ Check an App settings mismatch prevents the initial prompt, and the accepted
 settings come back from the stored session. Submit and withdraw one queued message, stop
 the initial turn, send a follow-up, read its reply with the receipt, then
 rename and archive the same work. In dual mode, the startup reference must
-come from the Desktop peer.
+come from the Desktop peer. The local channel also requires the OS listener
+to belong to the advertised PID before authenticating. The focused daemon
+tests cover stale advertisements, uncorrelated errors, uncertain sends and
+the pre-dispatch-only CLI fallback.
 
 The peer proves routing and receipt handling in an isolated daemon. With
 separate approval to use the signed-in macOS App's local connection credential

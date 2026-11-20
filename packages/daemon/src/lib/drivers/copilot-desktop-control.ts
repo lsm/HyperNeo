@@ -148,8 +148,8 @@ export function createCopilotDesktopControl(
       });
       if (!confirmed.ok || started.value.workspace_id !== workspace.id)
         return reject(
-          'not_delivered',
-          'Copilot Desktop did not apply the requested session settings.'
+          'unreachable',
+          `Copilot Desktop created session ${id}, but did not confirm the requested settings or workspace. No prompt was sent. Do not replay.`
         );
       const session = await deps.find(id);
       if (

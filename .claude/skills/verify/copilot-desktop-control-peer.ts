@@ -135,7 +135,7 @@ export async function verifyCopilotDesktopControl(
     title: 'Desktop work', model: 'desktop-model', effort: 'high', message: 'Initial prompt',
   };
   const bad = await rpc<Result<WorkStarted>>('work.start', { ...request, effort: 'low' });
-  assert(!bad.ok && bad.reason === 'not_delivered', JSON.stringify(bad));
+  assert(!bad.ok && bad.reason === 'unreachable' && !bad.notSent, JSON.stringify(bad));
   assert(!peer.messages.includes('send_message'));
   const started = await rpc<Result<WorkStarted>>('work.start', request);
   assert(started.ok, JSON.stringify(started));
