@@ -92,7 +92,8 @@ type NeoServiceArgs =
 
 export function createNeoService(...args: NeoServiceArgs) {
   const [db] = args;
-  const readers = createNeoCodingReaders(() => db.getDatabase());
+  const database = () => db.getDatabase();
+  const readers = createNeoCodingReaders(database);
   const todoPrs = new CodingTodoPrRepository(db.getDatabase());
   const service = new NeoService(
     (core) => {
@@ -170,7 +171,7 @@ export function createNeoService(...args: NeoServiceArgs) {
           coding,
           lifeAdmin,
           delegation,
-          createComputerUsePack(() => db.getDatabase()),
+          createComputerUsePack(database),
           createModelRoutingPack({
             database: () => db.getDatabase(),
             provider: (id) => getProviderRegistry().get(id),
