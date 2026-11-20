@@ -417,6 +417,16 @@ describe('coding todo pack waiting', async () => {
     const other = todo({ pack: 'coding', kind: 'pr_merged', params: {} });
     expect([...(await pack.waiting!([row, other]))]).toEqual([]);
     repo.record(row.id, [pr(1, 'OPEN')], 2);
+    expect([...(await pack.waiting!([row, other]))]).toEqual([]);
+    db.prepare(
+      `INSERT INTO pack_coding_pr_ledger (repo, number, title, branch, head, state, state_since, read_at)
+       VALUES ('lsm/neo-ios', 1, 'Ship', 'ship', 'abc1234', 'waiting_ci', 2, 2)`
+    ).run();
+    expect([...(await pack.waiting!([row, other]))]).toEqual([row.id]);
+    db.prepare("UPDATE pack_coding_pr_ledger SET state = 'waiting_human'").run();
+    expect([...(await pack.waiting!([row, other]))]).toEqual([]);
+    expect([...(await pack.parked!([row, other]))]).toEqual([row.id]);
+    db.prepare("UPDATE pack_coding_pr_ledger SET state = 'merged', closed_at = 3").run();
     expect([...(await pack.waiting!([row, other]))]).toEqual([row.id]);
     repo.record(row.id, [pr(1, 'MERGED')], 3);
     expect([...(await pack.waiting!([row, other]))]).toEqual([]);
