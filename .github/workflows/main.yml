@@ -23,6 +23,7 @@
 # | PR to dev (prompts/daemon unit tests) | check + unit (online + web skipped)             |
 # | PR to dev (web-only, per changes)     | check + web (unit + online skipped)             |
 # | PR to dev (docs-only, per changes)    | none (only the path filter and the gate run)    |
+# | PR to dev (tooling no test reaches)   | check only (unit, online + web skipped)         |
 # | Push to dev                           | check + unit + online + web (no path filter)    |
 # | workflow_dispatch                     | mocked CI + build                               |
 #
@@ -251,7 +252,7 @@ jobs:
   # web-only PRs skip daemon unit+online, prompt or daemon-unit-test PRs skip
   # online, and docs-only PRs (scripts/lib/inert-docs.sh) skip check too. Everything outside
   # packages/web (resp. the daemon-side packages) counts as daemon (resp.
-  # web) work, so unknown/infra paths (scripts/, .github/, lockfiles) run
+  # web) work, so unknown/infra paths (.github/, lockfiles, tooling a test reaches) run
   # BOTH suites — the safe default. Push/workflow_dispatch events skip this
   # job and the test jobs treat a skipped filter as "run everything".
   # ============================================
@@ -298,6 +299,9 @@ jobs:
             exit 0
           fi
           . scripts/lib/inert-docs.sh
+          # scripts/ and .claude/ files that no test leg reaches only need the
+          # check job (see scripts/lib/unreached-tooling.py).
+          unreached=$(python3 scripts/lib/unreached-tooling.py < "$files")
           code=false
           daemon=false
           online=false
@@ -306,6 +310,7 @@ jobs:
           while IFS= read -r -d '' f; do
             if is_inert_doc "$f"; then continue; fi
             code=true
+            if printf '%s\n' "$unreached" | grep -qxF -- "$f"; then continue; fi
             case "$f" in
               packages/desktop/*|packages/daemon/src/lib/runtime-process-identity.ts|.github/workflows/main.yml|.github/workflows/release.yml) desktop=true ;;
             esac
