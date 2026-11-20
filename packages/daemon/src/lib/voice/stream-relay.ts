@@ -41,7 +41,7 @@ export interface VoiceStreamDeps {
 type Gate<T> = { value: T } | { reason: string };
 
 export function voiceMode(voice: VoiceSettings | undefined): VoiceMode {
-  if (!voiceParts(voice).live) return 'batch';
+  if (!voiceParts(voice).live?.endpoint.trim()) return 'batch';
   return voice?.mode === 'batch' || voice?.mode === 'streaming' ? voice.mode : 'auto';
 }
 

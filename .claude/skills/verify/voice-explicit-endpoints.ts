@@ -63,6 +63,7 @@ try {
           enabled: true,
           endpoint: `http://127.0.0.1:${asr.port}${path}`,
           streamEndpoint: '',
+          ...(path.startsWith('/custom') ? { live: { provider: 'deepgram', endpoint: '' } } : {}),
           model: 'stub',
           mode: 'streaming',
           allowPrivateNetwork: true,
