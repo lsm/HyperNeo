@@ -80,3 +80,29 @@ describe('neoTodoFollowUpRefusal', () => {
     expect(neoTodoFollowUpRefusal(h.store.listTodos(h.ask.id))).toBeNull();
   });
 });
+
+describe('runMigrations', () => {
+  test('leaves plan data empty for todos created after startup', () => {
+    const db = new Database(':memory:');
+    try {
+      runMigrations(db, () => {});
+      createTables(db);
+      const store = new NeoAskTodoRepository(db);
+      const ask = store.openAsk({
+        id: 'ask-new',
+        title: 'New request',
+        request: 'Write a plan',
+        sessionId: 'neo-a',
+        projectId: null,
+        originMessageId: null,
+        createdAt: 1,
+      });
+      const todo = store.addTodo('todo-new', ask.id, { ...draft, title: 'Write a plan' }, 1);
+      expect(
+        db.prepare('SELECT plan, plan_check_json FROM neo_todos WHERE id = ?').get(todo.id)
+      ).toEqual({ plan: 0, plan_check_json: null });
+    } finally {
+      db.close();
+    }
+  });
+});
