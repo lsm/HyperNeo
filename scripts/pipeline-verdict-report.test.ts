@@ -1,4 +1,7 @@
 import { describe, expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { reportPipelineVerdicts } from './pipeline-verdict-report.ts';
 
 const file = 'packages/demo/src/operations.ts';
@@ -69,4 +72,36 @@ describe('reportPipelineVerdicts', () => {
       )
     ).toThrow('Ambiguous pipeline attribution');
   });
+});
+
+test('report CLI selects the strict classifier and rejects unknown options', () => {
+  const root = mkdtempSync(join(tmpdir(), 'pipeline-report-'));
+  try {
+    const env = { HOME: root, PATH: process.env.PATH ?? '', NODE_ENV: 'test' };
+    const init = Bun.spawnSync(['git', 'init', '-q'], { cwd: root, env });
+    expect(init.exitCode).toBe(0);
+    const source = join(root, file);
+    mkdirSync(dirname(source), { recursive: true });
+    writeFileSync(
+      source,
+      `const run = superpipe({})('demo.read').end();
+      defineOperation({ name: 'demo.read', execute: () => condition && run() });`
+    );
+    const run = (...args: string[]) =>
+      Bun.spawnSync(
+        [process.execPath, join(import.meta.dir, 'pipeline-verdict-report.ts'), ...args],
+        { cwd: root, env, stdout: 'pipe', stderr: 'pipe' }
+      );
+    const legacy = run();
+    const strict = run('--strict');
+    const invalid = run('--unknown');
+    expect(legacy.exitCode).toBe(0);
+    expect(JSON.parse(legacy.stdout.toString())[0].verdict).toBe('named');
+    expect(strict.exitCode).toBe(0);
+    expect(JSON.parse(strict.stdout.toString())[0].verdict).toBe('unreadable');
+    expect(invalid.exitCode).toBe(1);
+    expect(invalid.stderr.toString()).toContain('Expected no arguments or --strict');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
