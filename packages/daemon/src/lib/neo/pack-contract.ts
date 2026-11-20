@@ -58,6 +58,7 @@ export interface NeoTodoPack {
   statusLine(todo: NeoTodo): NeoStatusLine | null;
   repository?(draft: NeoTodoRepositoryDraft, scope?: NeoTodoPolicyScope): string | null;
   waiting?(todos: readonly NeoTodo[]): Promise<ReadonlySet<string>>;
+  parked?(todos: readonly NeoTodo[]): Promise<ReadonlySet<string>>;
   doneWhen?(check: NeoTodoCheck): string | null;
   addUrls?(todo: NeoTodo, urls: readonly string[]): NeoTodoCheck | null;
   refuse?(

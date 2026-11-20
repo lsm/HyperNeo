@@ -1,8 +1,5 @@
 import { describe, expect, test, vi } from 'vitest';
-import {
-  createNeoPublisher,
-  createNeoPublicationOperation,
-} from '../../../../src/lib/neo/publication-operation';
+import { createNeoPublicationOperation } from '../../../../src/lib/neo/publication-operation';
 import {
   createNeoPublicationReadOperation,
   readNeoPublicationPage,
@@ -23,7 +20,7 @@ const ledger = {
 };
 const operations = [
   createNeoPublicationReadOperation(ledger as never),
-  createNeoPublicationOperation(createNeoPublisher({} as never)),
+  createNeoPublicationOperation({} as never).operation,
 ];
 
 describe('publication operations', () => {
