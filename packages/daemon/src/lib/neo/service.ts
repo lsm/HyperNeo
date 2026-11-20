@@ -136,7 +136,7 @@ import { neoTodoFollowUpRefusal } from './todo-follow-up.ts';
 import { neoTodoCovered } from './todo-state.ts';
 import { neoPromptTools, planNeoSessionConfig } from './session-config.ts';
 import { changeSessionToolChoice } from '../tools/change-session-tool-choice.ts';
-import { createNeoPublisher } from './publication-operation.ts';
+import { createNeoPublicationOperation } from './publication-operation.ts';
 import {
   neoSessionQuestionNote,
   keepNeoSessionNotices,
@@ -162,7 +162,8 @@ export class NeoService {
   readonly speech: NeoSpeech;
   readonly publications: NeoPublicationRepository;
   readonly asks: NeoConversationAskRepository;
-  readonly publish: ReturnType<typeof createNeoPublisher>;
+  readonly publish: ReturnType<typeof createNeoPublicationOperation>['publish'];
+  readonly publicationOperation: ReturnType<typeof createNeoPublicationOperation>['operation'];
   readonly todos: NeoAskTodoRepository;
   readonly todoSessions: NeoTodoSessionRepository;
   readonly todoRunner: NeoTodoRunner;
@@ -439,7 +440,7 @@ export class NeoService {
         this.log.warn('Neo working list not sent', error);
       }
     };
-    this.publish = createNeoPublisher({
+    const publicationRuntime: Parameters<typeof createNeoPublicationOperation>[0] = {
       receivedHumanInput: (sessionId, id) => {
         const conversation = this.repo.readConversationId();
         return conversation && sessionId === frontSessionId(conversation)
@@ -483,7 +484,12 @@ export class NeoService {
       speech: (sessionId, version, text) => this.speech.publish(sessionId, version, text),
       notify: notifyPublication,
       artifact: createArtifactRefReader(() => this.db.getDatabase()),
-    });
+    };
+    const publication = createNeoPublicationOperation(publicationRuntime, (items) =>
+      this.presentPublications(items)
+    );
+    this.publish = publication.publish;
+    this.publicationOperation = publication.operation;
     const offSpeech = events.subscribe(
       'sdk.message',
       ({ sessionId, message }) =>
