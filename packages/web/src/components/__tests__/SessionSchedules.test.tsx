@@ -80,7 +80,7 @@ describe('SessionSchedules', () => {
       input: { target: { adapter: 'hyperneo', id: 'root' } },
     });
     expect(container.querySelector('details')?.open).toBe(true);
-    expect(screen.getByText('Every 60 min')).toBeTruthy();
+    expect(screen.getByText('Hourly')).toBeTruthy();
     expect(screen.queryByText(/Nudge/)).toBeNull();
     expect(screen.getByText(/Skipped · Session busy/)).toBeTruthy();
     expect([...container.querySelectorAll('time')].map((time) => time.dateTime)).toEqual([

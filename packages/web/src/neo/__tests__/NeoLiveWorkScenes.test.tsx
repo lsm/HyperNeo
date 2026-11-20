@@ -455,7 +455,7 @@ describe('Neo public work scenes', () => {
     const { container } = mount(true, true);
     expect(container.querySelector('.neo-shell')?.classList.contains('neo-has-scenes')).toBe(true);
     const work = screen.getByRole('region', { name: 'Work scenes' });
-    expect(within(work).getByRole('status').textContent).toBe('No work yet.');
+    expect(within(work).getByRole('status').textContent).toContain('Your inbox is empty');
     expect(work.querySelectorAll('[data-scene-group]')).toHaveLength(0);
     if (!desktop) {
       expect(within(work).queryByRole('heading', { name: 'Your work' })).toBeNull();
@@ -768,7 +768,7 @@ describe('Neo public work scenes', () => {
 
   it('keeps the empty legacy scene list collapsed without a public Work placeholder', () => {
     const { container } = mount(false, true);
-    expect(screen.queryByText('No work yet.')).toBeNull();
+    expect(screen.queryByText('Your inbox is empty')).toBeNull();
     expect(container.querySelector('.neo-has-scenes')).toBeNull();
     expect(container.querySelector('.neo-scene-list')?.childElementCount).toBe(0);
   });
@@ -782,11 +782,11 @@ describe('Neo public work scenes', () => {
     expect(container.querySelector('.neo-shell')?.classList.contains('neo-has-scenes')).toBe(true);
     expect(
       within(screen.getByRole('region', { name: 'Work scenes' })).getByRole('status').textContent
-    ).toBe('No work yet.');
+    ).toContain('Your inbox is empty');
     act(() => {
       model.value = { ...model.value, snapshot: { ...model.value.snapshot, todoAsks: entries } };
     });
-    expect(screen.queryByText('No work yet.')).toBeNull();
+    expect(screen.queryByText('Your inbox is empty')).toBeNull();
     expect(screen.getByRole('region', { name: 'Needs your attention' })).toBeTruthy();
   });
 
