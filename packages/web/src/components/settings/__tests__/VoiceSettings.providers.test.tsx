@@ -1,6 +1,6 @@
+import type { GlobalSettings } from '@hyperneo/shared';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { GlobalSettings } from '@hyperneo/shared';
 import { updateGlobalSettings } from '../../../lib/api-helpers.ts';
 import { VoiceSettings } from '../VoiceSettings.tsx';
 
@@ -47,6 +47,14 @@ describe('VoiceSettings providers', () => {
     expect((screen.getByLabelText('Speech model') as HTMLInputElement).value).toBe('tts');
     expect((screen.getByLabelText('Speech voice') as HTMLInputElement).value).toBe('alloy');
     expect(screen.queryByLabelText('Live model')).toBeNull();
+  });
+
+  it('does not configure speech when an empty field is left unchanged', () => {
+    globalSettings.value = { voice: { enabled: true, endpoint: '', model: '' } } as GlobalSettings;
+    render(<VoiceSettings />);
+    fireEvent.focus(screen.getByLabelText('Speech endpoint'));
+    fireEvent.blur(screen.getByLabelText('Speech endpoint'));
+    expect(updateGlobalSettings).not.toHaveBeenCalled();
   });
 
   it('persists provider and speech edits through voice settings', async () => {

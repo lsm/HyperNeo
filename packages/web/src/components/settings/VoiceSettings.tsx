@@ -37,9 +37,10 @@ const PRESETS = {
 };
 
 function hasLiveRoute(voice: VoiceSettingsConfig): boolean {
-  if (voice.streamProtocol && voice.streamProtocol !== 'deepgram') return false;
+  const protocol = voice.live?.provider ?? voice.streamProtocol ?? 'deepgram';
+  if (protocol !== 'deepgram' && protocol !== 'openai-realtime') return false;
   try {
-    const url = new URL(voice.streamEndpoint?.trim() ?? '');
+    const url = new URL((voice.live?.endpoint ?? voice.streamEndpoint)?.trim() ?? '');
     return url.protocol === 'ws:' || url.protocol === 'wss:';
   } catch {
     return false;
@@ -109,6 +110,21 @@ export function VoiceSettings() {
     }
   };
 
+  const recorded = draft.recorded ?? {
+    provider: 'openai' as const,
+    endpoint: draft.endpoint,
+    model: draft.model,
+  };
+  const live = draft.live ?? {
+    provider: draft.streamProtocol ?? 'deepgram',
+    endpoint: draft.streamEndpoint ?? '',
+  };
+  const speech = draft.speech ?? {
+    provider: 'openai' as const,
+    endpoint: '',
+    model: '',
+    voice: '',
+  };
   const hosts = [
     ...new Set(
       [
@@ -136,14 +152,49 @@ export function VoiceSettings() {
     );
   };
 
-  const patchOnBlur = (field: 'endpoint' | 'streamEndpoint' | 'model') => {
-    const current = draft[field]?.trim() ?? '';
-    if (current === (settings[field] ?? '').trim()) return;
-    void save({ ...draft, [field]: current } as VoiceSettingsConfig, { silent: true });
+  const patchPart = (part: 'recorded' | 'live' | 'speech', field: string, value: string) => {
+    const current = part === 'recorded' ? recorded : part === 'live' ? live : speech;
+    const next = { ...current, [field]: value };
+    const legacy =
+      part === 'recorded'
+        ? {
+            ...(field === 'endpoint' ? { endpoint: value } : {}),
+            ...(field === 'model' ? { model: value } : {}),
+          }
+        : part === 'live'
+          ? {
+              ...(field === 'endpoint' ? { streamEndpoint: value } : {}),
+              ...(field === 'provider'
+                ? { streamProtocol: value as VoiceSettingsConfig['streamProtocol'] }
+                : {}),
+            }
+          : {};
+    const updated = { ...draft, ...legacy, [part]: next } as VoiceSettingsConfig;
+    setDraft(updated);
+    return updated;
+  };
+
+  const savePartOnBlur = (part: 'recorded' | 'live' | 'speech', field: string, value: string) => {
+    const current = value.trim();
+    const previous =
+      part === 'recorded'
+        ? (settings.recorded?.[field as 'endpoint' | 'model'] ??
+          settings[field as 'endpoint' | 'model'])
+        : part === 'live'
+          ? (settings.live?.endpoint ?? settings.streamEndpoint)
+          : settings.speech?.[field as 'endpoint' | 'model' | 'voice'];
+    if (current === (previous ?? '').trim()) return;
+    void save(patchPart(part, field, current), { silent: true });
   };
 
   const applyPreset = (preset: keyof typeof PRESETS) => {
-    patch(PRESETS[preset]);
+    const values = PRESETS[preset];
+    patch({
+      ...values,
+      recorded: { provider: 'openai', endpoint: values.endpoint, model: values.model },
+      live: { provider: 'deepgram', endpoint: values.streamEndpoint },
+      streamProtocol: 'deepgram',
+    });
   };
 
   const testConnection = async () => {
@@ -231,6 +282,21 @@ export function VoiceSettings() {
           </div>
         </SettingsRow>
 
+        <SettingsRow label="Recorded provider" layout="stacked">
+          <select
+            aria-label="Recorded provider"
+            value={recorded.provider}
+            disabled={saving}
+            onChange={(event) =>
+              void save(patchPart('recorded', 'provider', event.currentTarget.value))
+            }
+            class={FORM_CONTROL_CLASS}
+          >
+            <option value="openai">OpenAI compatible</option>
+            <option value="deepgram">Deepgram</option>
+          </select>
+        </SettingsRow>
+
         <SettingsRow
           label="Batch endpoint"
           description="Full HTTP or HTTPS URL for batch transcription. Used exactly as entered."
@@ -239,13 +305,28 @@ export function VoiceSettings() {
           <input
             type="url"
             aria-label="Batch endpoint"
-            value={draft.endpoint}
+            value={recorded.endpoint}
             disabled={saving}
-            onInput={(event) => setDraft({ ...draft, endpoint: event.currentTarget.value })}
-            onBlur={() => patchOnBlur('endpoint')}
+            onInput={(event) => patchPart('recorded', 'endpoint', event.currentTarget.value)}
+            onBlur={(event) => savePartOnBlur('recorded', 'endpoint', event.currentTarget.value)}
             placeholder="https://api.openai.com/v1/audio/transcriptions"
             class={FORM_CONTROL_CLASS}
           />
+        </SettingsRow>
+
+        <SettingsRow label="Live provider" layout="stacked">
+          <select
+            aria-label="Live provider"
+            value={live.provider}
+            disabled={saving}
+            onChange={(event) =>
+              void save(patchPart('live', 'provider', event.currentTarget.value))
+            }
+            class={FORM_CONTROL_CLASS}
+          >
+            <option value="deepgram">Deepgram</option>
+            <option value="openai-realtime">OpenAI Realtime</option>
+          </select>
         </SettingsRow>
 
         <SettingsRow
@@ -256,10 +337,10 @@ export function VoiceSettings() {
           <input
             type="url"
             aria-label="Live endpoint"
-            value={draft.streamEndpoint ?? ''}
+            value={live.endpoint}
             disabled={saving}
-            onInput={(event) => setDraft({ ...draft, streamEndpoint: event.currentTarget.value })}
-            onBlur={() => patchOnBlur('streamEndpoint')}
+            onInput={(event) => patchPart('live', 'endpoint', event.currentTarget.value)}
+            onBlur={(event) => savePartOnBlur('live', 'endpoint', event.currentTarget.value)}
             placeholder="wss://asr.example.com/v1/listen"
             class={FORM_CONTROL_CLASS}
           />
@@ -268,15 +349,42 @@ export function VoiceSettings() {
         <SettingsRow label="Model" description="Model names vary by backend." layout="stacked">
           <input
             type="text"
-            value={draft.model}
+            value={recorded.model}
             disabled={saving}
-            onInput={(event) => setDraft({ ...draft, model: event.currentTarget.value })}
-            onBlur={() => patchOnBlur('model')}
+            onInput={(event) => patchPart('recorded', 'model', event.currentTarget.value)}
+            onBlur={(event) => savePartOnBlur('recorded', 'model', event.currentTarget.value)}
             placeholder="whisper-1"
             class={FORM_CONTROL_CLASS}
           />
         </SettingsRow>
 
+        <SettingsRow label="Speech provider" layout="stacked">
+          <select
+            aria-label="Speech provider"
+            value={speech.provider}
+            disabled={saving}
+            onChange={(event) =>
+              void save(patchPart('speech', 'provider', event.currentTarget.value))
+            }
+            class={FORM_CONTROL_CLASS}
+          >
+            <option value="openai">OpenAI compatible</option>
+            <option value="deepgram">Deepgram</option>
+          </select>
+        </SettingsRow>
+        {(['endpoint', 'model', 'voice'] as const).map((field) => (
+          <SettingsRow key={field} label={`Speech ${field}`} layout="stacked">
+            <input
+              type={field === 'endpoint' ? 'url' : 'text'}
+              aria-label={`Speech ${field}`}
+              value={speech[field] ?? ''}
+              disabled={saving}
+              onInput={(event) => patchPart('speech', field, event.currentTarget.value)}
+              onBlur={(event) => savePartOnBlur('speech', field, event.currentTarget.value)}
+              class={FORM_CONTROL_CLASS}
+            />
+          </SettingsRow>
+        ))}
         {hosts.map((host) => (
           <SettingsRow
             key={host}
