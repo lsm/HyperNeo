@@ -344,10 +344,10 @@ test('the RPC snapshot carries the human queue with each in-progress todo owner'
         text: 'Ship it?',
         todos: [{ id: 'todo-1', title: 'Title '.repeat(100) }],
       },
-      { state: 'progress', askId: 'index-0', todoId: 'todo-0', title: 'todo-0', owner: 'neo' },
+      { state: 'waiting', askId: 'index-0', todoId: 'todo-0', title: 'todo-0', owner: 'neo' },
     ],
     counts: {
-      'index-0': { waiting: 0, held: 0, progress: 1 },
+      'index-0': { waiting: 1, held: 0, progress: 0 },
       'index-1': { waiting: 1, held: 0, progress: 0 },
     },
   });
@@ -377,7 +377,7 @@ test('a project-scoped snapshot still carries the whole human queue, like needsY
   expect(scoped.todoAsks?.map((entry) => entry.ask.id)).toEqual(['index-0']);
   expect(scoped.needsYou).toBe(1);
   expect(scoped.humanQueue?.counts).toEqual({
-    'index-0': { waiting: 0, held: 0, progress: 1 },
+    'index-0': { waiting: 1, held: 0, progress: 0 },
     'index-1': { waiting: 1, held: 0, progress: 0 },
   });
 });
@@ -457,6 +457,6 @@ test('a card written during the snapshot does not leave its todo owned by the hu
   const { humanQueue } = await snapshot(rpc);
   expect(wrote).toBe(true);
   expect(humanQueue?.items).toEqual([
-    expect.objectContaining({ state: 'progress', todoId: 'todo-0', owner: 'neo' }),
+    expect.objectContaining({ state: 'waiting', todoId: 'todo-0', owner: 'neo' }),
   ]);
 });
