@@ -125,7 +125,7 @@ const SCOPE_NOTE =
   'Human (RPC) callers pass spaceId; agent (MCP) callers inherit the Space of their own session and may not override it. Neo (MCP) callers name any Space.';
 
 export function createAuditOperations(deps: AuditOperationDependencies): OperationDefinition[] {
-  const list = (superpipe({ deps, admission: READ_ADMISSION })('space-audit-list') as PipelineAPI)
+  const list = (superpipe({ deps, admission: READ_ADMISSION })('space.audit.list') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(resolveAuditScope, ['input', 'caller', 'admission'], 'result:outcome')
     .pipe(listAuditEntriesPage, ['outcome', 'input', 'deps'], 'outcome')

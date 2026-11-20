@@ -179,7 +179,7 @@ const ownerSetResultSchema = z.union([
 
 export function createSetGoalOwnerOperation(deps: AgentAssignmentDependencies) {
   const access = 'mutate' as const;
-  const set = (superpipe({ deps, access })('goal-owner-set-pipeline') as PipelineAPI)
+  const set = (superpipe({ deps, access })('goal.owner.set') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitAgentCaller, ['input', 'caller', 'deps', 'access'], 'result:outcome')
     .pipe(admitGoalOwnershipCaller, ['outcome', 'caller', 'deps'], 'result:outcome')
@@ -201,7 +201,7 @@ export function createSetGoalOwnerOperation(deps: AgentAssignmentDependencies) {
 
 export function createSetScopeOwnerOperation(deps: AgentAssignmentDependencies) {
   const access = 'mutate' as const;
-  const set = (superpipe({ deps, access })('scope-owner-set-pipeline') as PipelineAPI)
+  const set = (superpipe({ deps, access })('evolution.scope.owner.set') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitAgentCaller, ['input', 'caller', 'deps', 'access'], 'result:outcome')
     .pipe(gateScopeTargets, ['outcome', 'input', 'deps'], 'result:outcome')

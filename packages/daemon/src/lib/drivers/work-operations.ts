@@ -1357,7 +1357,53 @@ async function changeQueuedInput(
         'The input may already have been queued or withdrawn; inspect its owning daemon before retrying.'
       );
 }
-const runQueuedInput = (superpipe({})('change-queued-work-input') as PipelineAPI)
+const runQueueWork = (superpipe({})('work.queue') as PipelineAPI)
+  .input(['input', 'caller', 'deps'])
+  .pipe(routeQueuedInput, ['input', 'deps'], 'result:outcome')
+  .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
+  .pipe(requireSendPurpose, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
+  .pipe(workSourceFacts, ['input', 'caller', 'deps'], 'sourceFacts')
+  .pipe(requireWorkSource, ['sourceFacts', 'outcome'], 'result:outcome')
+  .pipe(
+    (
+      input: QueuedInput,
+      caller: OperationCaller,
+      route: Route<'queue' | 'withdraw'>,
+      deps: WorkVerbDeps
+    ) =>
+      queueOrdinaryInput(
+        'message' in input ? { ...input, mode: 'queue' } : input,
+        caller,
+        route,
+        deps
+      ),
+    ['input', 'caller', 'outcome', 'deps'],
+    'result:outcome'
+  )
+  .pipe(requireFreeWorker, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
+  .pipe(selectSendOrigin, ['input', 'caller'], 'from')
+  .pipe(acceptWorkInput, ['input', 'from', 'caller', 'deps'], 'inputId')
+  .pipe(workReplyInput, ['input', 'from', 'caller', 'deps'], 'deliveryInput')
+  .pipe(
+    (
+      route: Route<'queue' | 'withdraw'>,
+      input: QueuedInput,
+      from: string,
+      caller: OperationCaller,
+      deps: WorkVerbDeps,
+      inputId: string | undefined
+    ) => recordThrownWork(() => changeQueuedInput(route, input, from, caller, deps), inputId, deps),
+    ['outcome', 'deliveryInput', 'from', 'caller', 'deps', 'inputId'],
+    'outcome'
+  )
+  .pipe(recordWorkOutcome, ['inputId', 'input', 'outcome', 'deps'], 'outcome')
+  .endAsync('outcome') as (
+  input: QueuedInput,
+  caller: OperationCaller,
+  deps: WorkVerbDeps
+) => Promise<QueuedResult>;
+
+const runWithdrawWork = (superpipe({})('work.withdraw') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
   .pipe(routeQueuedInput, ['input', 'deps'], 'result:outcome')
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
@@ -1523,7 +1569,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
       inputSchema: SendWorkInputSchema,
       resultSchema: SendWorkResultSchema,
       policy: { safetyClass: 'mutate' },
-      execute: (input, caller) => runQueuedInput(input, caller, deps) as Promise<SendResult>,
+      execute: (input, caller) => runQueueWork(input, caller, deps) as Promise<SendResult>,
     }),
     defineOperation({
       name: 'work.withdraw',
@@ -1532,7 +1578,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
       resultSchema: WithdrawWorkResultSchema,
       policy: { safetyClass: 'mutate' },
       execute: (input, caller) =>
-        runQueuedInput(input, caller, deps) as Promise<z.infer<typeof WithdrawWorkResultSchema>>,
+        runWithdrawWork(input, caller, deps) as Promise<z.infer<typeof WithdrawWorkResultSchema>>,
     }),
     defineOperation({
       name: 'work.status',
