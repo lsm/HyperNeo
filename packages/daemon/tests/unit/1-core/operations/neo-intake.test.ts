@@ -9,6 +9,7 @@ import {
 } from '../../../../src/lib/neo/intake.ts';
 import { createNeoOperations } from '../../helpers/neo-service.ts';
 import type { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoPublicationOperation } from '../../../../src/lib/neo/publication-operation.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -160,6 +161,7 @@ describe('durable Neo intake operation', () => {
         installedPacks: () => [],
         packOperations: [],
         speech: { operations: [] },
+        publicationOperation: createNeoPublicationOperation({} as never).operation,
       } as unknown as NeoService)
     );
     expect(registry.get('neo.message.send')?.policy?.safetyClass).toBe('human_only');
