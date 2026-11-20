@@ -11,6 +11,12 @@ import { CODING_REVIEW_AFTER_PREFERENCE } from '../../../../src/lib/neo/packs/co
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
+const merged = (head: string) => ({
+  ...pr(head),
+  state: 'MERGED',
+  closedAt: '2026-01-01T00:00:00Z',
+  mergedAt: '2026-01-01T00:00:00Z',
+});
 const pr = (head: string, title = 'PR 1') => ({
   number: 1,
   title,
@@ -24,13 +30,13 @@ const pr = (head: string, title = 'PR 1') => ({
   closedAt: null,
   commits: { nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] },
 });
-const response = (node: unknown) => ({
+const response = (node: unknown, done: unknown[] = []) => ({
   data: {
     rateLimit: { remaining: 4000 },
     repository: {
       nameWithOwner: 'lsm/a',
-      open: { pageInfo: { hasNextPage: false }, nodes: [node] },
-      done: { nodes: [] },
+      open: { pageInfo: { hasNextPage: false }, nodes: node ? [node] : [] },
+      done: { nodes: done },
     },
   },
 });
@@ -55,12 +61,17 @@ function setup(preferences: Record<string, unknown>) {
   const ledger = new CodingPrLedgerRepository(db);
   const attended: NeoAttentionEvent[] = [];
   let answer: () => Promise<boolean> = async () => true;
-  const sweep = async (node: unknown, now: number) => {
-    await reconcileCodingPrLedger(ledger, ['lsm/a'], async () => response(node), now);
-    await deliverCodingReviewAfterApproval(db, 'github.com', async (event) => {
-      attended.push(event);
-      return answer();
-    });
+  const sweep = async (node: unknown, now: number, done: unknown[] = []) => {
+    await reconcileCodingPrLedger(ledger, ['lsm/a'], async () => response(node, done), now);
+    await deliverCodingReviewAfterApproval(
+      db,
+      'github.com',
+      async (event) => {
+        attended.push(event);
+        return answer();
+      },
+      now
+    );
   };
   return { db, attended, sweep, fail: (next: () => Promise<boolean>) => (answer = next) };
 }
@@ -105,6 +116,23 @@ describe('review after approval', () => {
       await sweep(pr('heada'), 300);
       await sweep(pr('heada'), 400);
       expect(attended).toHaveLength(3);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a head observed approved is still told after the PR merges', async () => {
+    const { db, attended, sweep, fail } = setup({ 'review.after': 'approved', mergeBy: 'daemon' });
+    try {
+      fail(async () => false);
+      await sweep(pr('heada'), 100);
+      fail(async () => true);
+      await sweep(null, 200, [merged('heada')]);
+      await sweep(null, 300, [merged('heada')]);
+      expect(attended.map((event) => event.subject.id)).toEqual([
+        'https://github.com/lsm/a/pull/1@heada',
+        'https://github.com/lsm/a/pull/1@heada',
+      ]);
     } finally {
       db.close();
     }

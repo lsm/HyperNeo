@@ -369,9 +369,9 @@ export function createCodingPack(deps: {
           (fact, marker) => deps.prLedger.write('recordPostedReview', fact.url, marker),
           (host, until) => deps.prLedger.write('recordReviewCommentHold', host, until)
         );
+      await deliverCodingReviewAfterApproval(deps.database(), prSweepDeps.host, attend, now);
       await mergeSweep(now);
       await deliverCodingPrEvents(deps.prEvents, transitions, prSweepDeps);
-      await deliverCodingReviewAfterApproval(deps.database(), prSweepDeps.host, attend);
       await deliverCodingHealth(
         deps.prLedger,
         codingWatchedRepos(deps.database()) ?? deps.projectRepos(),
