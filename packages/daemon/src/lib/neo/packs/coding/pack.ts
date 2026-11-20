@@ -8,7 +8,7 @@ import { createCodingDaemonMergeSweep } from './daemon-merge-sweep.ts';
 import { CODING_ATTENTION_KINDS, type CodingAttend, scanCodingIdleOpenPrs } from './attention.ts';
 import { checkCodingPrApproved } from './pr-approved.ts';
 import { checkCodingDeployed } from './deployed.ts';
-import { codingLinkExists } from './link-exists.ts';
+import { createCodingLinkExists } from './link-exists.ts';
 import { withCodingMergeContext } from './merge-context.ts';
 import { codingWatchedRepos, initializeCodingWatches } from './watched-repos.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
@@ -137,7 +137,7 @@ export function createCodingPack(deps: {
       ),
       createCodingPrFileOperation(deps.database),
     ],
-    linkExists: (url) => codingLinkExists(url),
+    linkExists: createCodingLinkExists(),
     tracker: createCodingIssueTracker({
       repositories: (askId, todoId) => deps.todoPrs.trackerRepositories(askId, todoId),
       createdAt: (marker) => {

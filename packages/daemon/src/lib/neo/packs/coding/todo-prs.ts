@@ -12,6 +12,7 @@ import type { NeoTodo, NeoTodoCheck } from '@hyperneo/shared/types/neo-ask';
 import { neoWorkPrVerdict, type NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
+import { codingLinkIsComment } from './link-exists.ts';
 import { codingPrKey } from './pr-key.ts';
 import { codingPrStillChased } from './pr-sweep.ts';
 import { codingCanonicalRepo } from './watched-repos.ts';
@@ -528,7 +529,7 @@ export function createCodingTodoPolicy(
           draft.check.kind === 'evidence' &&
           JSON.stringify(draft.check) !== JSON.stringify(scope.todo?.check) &&
           (typeof draft.check.params.url !== 'string' ||
-            /\/(?:pull|issues)\/\d+\/?$/.test(draft.check.params.url))
+            codingLinkIsComment(draft.check.params.url) === false)
         )
           return 'coding_evidence_refused: use pr_merged, pr_approved, issue_closed, coding.deployed, human_confirmed, or core.evidence {url} for a review or comment link.';
         if (

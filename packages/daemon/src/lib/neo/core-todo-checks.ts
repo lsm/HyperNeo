@@ -18,12 +18,12 @@ const Check = z.discriminatedUnion('kind', [
     params: z.union([
       z.strictObject({ artifact: Text }),
       z.strictObject({ path: Text.refine(isAbsolute, 'Use an absolute file path') }),
-      z.strictObject({ url: Text.url().regex(/^https?:\/\//) }),
+      z.strictObject({ url: Text.url().regex(/^https:\/\//) }),
     ]),
   }),
 ]);
 type CoreCheck = z.infer<typeof Check>;
-export type NeoLinkExists = (url: string) => Promise<boolean>;
+export type NeoLinkExists = (url: string) => Promise<boolean | null>;
 const unmet: NeoTodoCheckResult = { done: false, evidence: null };
 
 function sentence(check: CoreCheck): string {
@@ -41,7 +41,7 @@ function doneWhen(rule: NeoTodoCheck) {
 
 type CheckDraft = Pick<NeoTodo, 'check'> & { id?: string };
 const invalid =
-  'invalid_core_check: use human_confirmed {questionId}, evidence {path: absolute file path} or evidence {url: http(s) link} (on edit omit the check to keep the current one).';
+  'invalid_core_check: use human_confirmed {questionId}, evidence {path: absolute file path} or evidence {url: https link} (on edit omit the check to keep the current one).';
 const admit = (superpipe({})('neo.todo.core-admission') as PipelineAPI)
   .input(['draft', 'peers'])
   .pipe(
@@ -98,13 +98,7 @@ export function neoLinkExists(packs: () => readonly NeoPack[]): NeoLinkExists {
       const known = await pack.linkExists?.(url);
       if (typeof known === 'boolean') return known;
     }
-    return fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(10_000) }).then(
-      async (response) => {
-        await response.body?.cancel();
-        return response.ok;
-      },
-      () => false
-    );
+    return null;
   };
 }
 
@@ -116,7 +110,7 @@ export const coreTodoPolicy = {
 export function createCoreTodoPack(db: Database, linkExists: NeoLinkExists): NeoPack {
   const store = new NeoAskTodoRepository(db);
   const artifacts = new ArtifactFileReadRepository(db);
-  async function observe(todo: NeoTodo, check: CoreCheck): Promise<boolean> {
+  async function observe(todo: NeoTodo, check: CoreCheck): Promise<boolean | null> {
     if (check.kind === 'human_confirmed') {
       const question = store.getQuestion(check.params.questionId);
       return (
@@ -157,6 +151,12 @@ export function createCoreTodoPack(db: Database, linkExists: NeoLinkExists): Neo
     .pipe(
       async (todo: NeoTodo, rule: CoreCheck): Promise<NeoTodoCheckResult> => {
         const done = await observe(todo, rule);
+        if (done === null)
+          return {
+            done: false,
+            evidence: null,
+            failed: `link_unsupported: no installed pack can check ${'url' in rule.params ? rule.params.url : 'this link'}.`,
+          };
         return { done, evidence: done ? sentence(rule) : null };
       },
       ['todo', 'observed'],
@@ -174,6 +174,7 @@ export function createCoreTodoPack(db: Database, linkExists: NeoLinkExists): Neo
     readFacts: check,
     judge: (_todo, facts): NeoTodoJudgement => {
       const result = facts as NeoTodoCheckResult;
+      if (result.failed) return { state: 'failed', reason: result.failed };
       return result.done ? { state: 'done', evidence: result.evidence } : { state: 'no_opinion' };
     },
     todos: {

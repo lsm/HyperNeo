@@ -33,7 +33,7 @@ function fixture() {
     { title: 'Verify', doneWhen: 'Observed', instruction: null, named: null, check: null },
     1
   );
-  const linkExists = mock(async (_url: string) => false);
+  const linkExists = mock(async (_url: string): Promise<boolean | null> => false);
   const pack = createCoreTodoPack(db, linkExists);
   const checked = (kind: string, params: Record<string, unknown>) => ({
     ...todo,
@@ -106,11 +106,26 @@ test('evidence url asks the link resolver and passes when the link exists', asyn
   ).toStartWith('invalid_core_check:');
 });
 
-test('the link resolver asks packs first and falls back to fetching', async () => {
+test('a link no installed pack can check fails instead of fetching it', async () => {
   const known = { linkExists: async (url: string) => (url.includes('known') ? true : null) };
   const exists = neoLinkExists(() => [known as never]);
   expect(await exists('https://example.invalid/known')).toBe(true);
-  expect(await exists('https://example.invalid/missing')).toBe(false);
+  expect(await exists('https://example.invalid/other')).toBeNull();
+  const { pack, linkExists, checked } = fixture();
+  linkExists.mockImplementation(async () => null);
+  const todo = checked('evidence', { url: 'https://example.invalid/other' });
+  const result = await pack.todos!.check(todo);
+  expect(result).toMatchObject({
+    done: false,
+    failed: expect.stringContaining('link_unsupported:'),
+  });
+  expect(pack.judge!(todo, result)).toMatchObject({ state: 'failed' });
+  expect(
+    pack.todos!.refuse!({
+      check: { pack: 'core', kind: 'evidence', params: { url: 'http://example.com/x' } },
+      instruction: null,
+    })
+  ).toStartWith('invalid_core_check:');
 });
 
 test.each([
