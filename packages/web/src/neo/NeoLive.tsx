@@ -12,6 +12,7 @@ import type { NeoAskHistoryPage, NeoResult } from '@hyperneo/shared/types/neo-sn
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { NeoWakeRow } from './NeoWakeRow.tsx';
 import { NeoGoals } from './NeoGoals.tsx';
+import { NeoWorkTabs, type NeoWorkTab } from './NeoWorkTabs.tsx';
 import { SessionSchedules } from '../components/SessionSchedules.tsx';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useSignal } from '@preact/signals';
@@ -230,6 +231,7 @@ export function NeoLive() {
   )
     workEntries.push(referenced.entry);
   const [workQuery, setWorkQuery] = useState('');
+  const [workTab, setWorkTab] = useState<NeoWorkTab>('inbox');
   const search = useNeoWorkSearch(workEntries, workQuery, loadNeoAskDetails, findNeoWork);
   useEffect(() => {
     setHistory(null);
@@ -532,6 +534,7 @@ export function NeoLive() {
         }
       : entry;
   const neoUnhandled = view?.neoUnhandled ?? 0;
+  const showTab = (tab: NeoWorkTab) => !publicConversation || workTab === tab;
   const ready = !!neo.sessionId && neo.store.activeSessionId.value === neo.sessionId;
   const replyInComposer = (quote: NeoQuote) => {
     setQuoted({ scope: neo.sessionId!, quote });
@@ -1166,151 +1169,159 @@ export function NeoLive() {
               {t('chat.cardUnavailable')}
             </p>
           )}
-          {neoUnhandled > 0 && (
-            <p class="mt-3 text-xs text-fg-muted">
-              {t('live.neoUnhandled', { count: neoUnhandled })}
-            </p>
-          )}
-          <SessionSchedules sessionId={neo.sessionId} />
-          {publicConversation?.entries.map((entry) =>
-            entry.kind === 'wake' ? (
-              <NeoWakeRow
-                key={entry.key}
-                entryKey={entry.key}
-                wake={entry.wake}
-                conversationId={publicConversation.conversationId!}
-                onOpenWork={openWork}
-              />
-            ) : null
-          )}
-          <NeoGoals sessionId={neo.sessionId} />
-          {publicConversation && <NeoWorkSearch query={workQuery} onQuery={setWorkQuery} />}
-          {!!workQuery.trim() && (search.pending || search.failed || !search.results.length) && (
-            <p role="status" class="mt-4 text-sm text-fg-muted">
-              {t(
-                search.pending
-                  ? 'live.searching'
-                  : search.failed
-                    ? 'live.searchFailed'
-                    : 'live.noMatchingWork'
-              )}
-            </p>
-          )}
-          {publicConversation && !workQuery.trim() && workCount === 0 && (
-            <p role="status" class="mt-6 text-sm text-fg-muted">
-              {t('live.noWork')}
-            </p>
-          )}
-          {!workQuery.trim() && (
-            <NeoTopicChips entries={sceneEntries} selected={topic} onSelect={chooseTopic} />
-          )}
-          {humanQueue && (
-            <NeoHumanQueue
-              queue={humanQueue}
-              entries={workEntries}
-              disabled={!connected || !!neo.busyWork}
-              onAnswer={(questionId, answer) => void neo.answerQuestion(questionId, answer)}
-              onHold={(questionId, held) => void neo.holdQuestion(questionId, held)}
-              onLoadDetails={loadNeoAskDetails}
-              onOpen={openSession}
-              focus={cardTarget}
-              reveal={reveal}
-              renderAsk={(entry, refreshing) => askCard(entry, false, refreshing)}
-              onStale={() =>
-                neo.refresh().catch((cause: unknown) => {
-                  neo.setError(cause instanceof Error ? cause.message : t('queue.refreshFailed'));
-                  throw cause;
-                })
-              }
-              onDesktopControl={(todoId, on) => void neo.setDesktopControl(todoId, on)}
-              onDesktopAllow={allowDesktop}
-              onReply={
-                ready
-                  ? (question) =>
-                      replyInComposer({
-                        author: 'Neo',
-                        text: neoQuestionText(question),
-                        anchor: `neo-ref-question-${question.id}`,
-                        replyTo: { kind: 'question', id: question.id },
-                      })
-                  : undefined
-              }
-            />
-          )}
-          {!fullQueue && !workQuery.trim() && openCards.length > 0 && (
-            <section aria-label={t('live.group.cards')} class="mt-6 space-y-3" data-neo-cards>
-              <h2 class="text-xs font-medium text-fg-muted">
-                {t('live.group.cards')} · {openCards.length}
-              </h2>
-              {openCards.map(({ entry, question }) => (
-                <div key={question.id} class="rounded-2xl border border-line p-4">
-                  <p class="break-words text-xs text-fg-muted">{entry.ask.title}</p>
-                  <QuestionBox
-                    question={question}
-                    onOpen={openSession}
-                    disabled={!connected || !!neo.busyWork}
-                    onAnswer={(answer) => void neo.answerQuestion(question.id, answer)}
-                    onDesktopAllow={allowDesktop}
-                    onReply={replyToQuestion && (() => replyToQuestion(question))}
+          {publicConversation && <NeoWorkTabs selected={workTab} onSelect={setWorkTab} />}
+          {showTab('scheduled') && <SessionSchedules sessionId={neo.sessionId} />}
+          {showTab('goals') && <NeoGoals sessionId={neo.sessionId} />}
+          {showTab('inbox') && (
+            <>
+              {publicConversation?.entries.map((entry) =>
+                entry.kind === 'wake' ? (
+                  <NeoWakeRow
+                    key={entry.key}
+                    entryKey={entry.key}
+                    wake={entry.wake}
+                    conversationId={publicConversation.conversationId!}
+                    onOpenWork={openWork}
                   />
-                </div>
-              ))}
-            </section>
-          )}
-          {(workQuery.trim()
-            ? [{ key: 'search', label: t('live.searchWork'), entries: search.results }]
-            : sceneGroups.map((group) => ({
-                ...group,
-                entries: (topic
-                  ? group.entries.filter((entry) => entry.ask.topicKey === topic)
-                  : group.entries
-                )
-                  .filter(
-                    (entry) =>
-                      !fullQueue ||
-                      group.key === 'outcomes' ||
-                      entry.ask.id === outsideQueue ||
-                      !fullQueue.counts[entry.ask.id]
-                  )
-                  .map(withoutQueued),
-              }))
-          ).map((group) =>
-            group.entries.length === 0 ? null : (
-              <section
-                key={group.key}
-                aria-label={group.label}
-                class="mt-6 space-y-3"
-                data-scene-group={group.key}
-              >
-                <h2 class="text-xs font-medium text-fg-muted">
-                  {group.label} ·{' '}
-                  {group.key === 'attention' && !topic && !fullQueue
-                    ? attentionCount
-                    : group.entries.length}
-                </h2>
-                {group.entries.map((entry) =>
-                  askCard(entry, true, false, !fullQueue && group.key === 'attention')
+                ) : null
+              )}
+              {neoUnhandled > 0 && (
+                <p class="mt-3 text-xs text-fg-muted">
+                  {t('live.neoUnhandled', { count: neoUnhandled })}
+                </p>
+              )}
+              {publicConversation && <NeoWorkSearch query={workQuery} onQuery={setWorkQuery} />}
+              {!!workQuery.trim() &&
+                (search.pending || search.failed || !search.results.length) && (
+                  <p role="status" class="mt-4 text-sm text-fg-muted">
+                    {t(
+                      search.pending
+                        ? 'live.searching'
+                        : search.failed
+                          ? 'live.searchFailed'
+                          : 'live.noMatchingWork'
+                    )}
+                  </p>
                 )}
-              </section>
-            )
-          )}
-          {!!workQuery.trim() && search.nextCursor && (
-            <Button
-              variant="ghost"
-              disabled={!connected || search.pending}
-              onClick={search.loadMore}
-            >
-              {t('live.moreSearchResults')}
-            </Button>
-          )}
-          {historyCursor && (
-            <Button
-              variant="ghost"
-              disabled={!connected || loadingHistory}
-              onClick={() => void loadOlder()}
-            >
-              {t(loadingHistory ? 'live.loadingOlder' : 'live.showOlder')}
-            </Button>
+              {publicConversation && !workQuery.trim() && workCount === 0 && (
+                <p role="status" class="mt-6 text-sm text-fg-muted">
+                  {t('live.noWork')}
+                </p>
+              )}
+              {!workQuery.trim() && (
+                <NeoTopicChips entries={sceneEntries} selected={topic} onSelect={chooseTopic} />
+              )}
+              {humanQueue && (
+                <NeoHumanQueue
+                  queue={humanQueue}
+                  entries={workEntries}
+                  disabled={!connected || !!neo.busyWork}
+                  onAnswer={(questionId, answer) => void neo.answerQuestion(questionId, answer)}
+                  onHold={(questionId, held) => void neo.holdQuestion(questionId, held)}
+                  onLoadDetails={loadNeoAskDetails}
+                  onOpen={openSession}
+                  focus={cardTarget}
+                  reveal={reveal}
+                  renderAsk={(entry, refreshing) => askCard(entry, false, refreshing)}
+                  onStale={() =>
+                    neo.refresh().catch((cause: unknown) => {
+                      neo.setError(
+                        cause instanceof Error ? cause.message : t('queue.refreshFailed')
+                      );
+                      throw cause;
+                    })
+                  }
+                  onDesktopControl={(todoId, on) => void neo.setDesktopControl(todoId, on)}
+                  onDesktopAllow={allowDesktop}
+                  onReply={
+                    ready
+                      ? (question) =>
+                          replyInComposer({
+                            author: 'Neo',
+                            text: neoQuestionText(question),
+                            anchor: `neo-ref-question-${question.id}`,
+                            replyTo: { kind: 'question', id: question.id },
+                          })
+                      : undefined
+                  }
+                />
+              )}
+              {!fullQueue && !workQuery.trim() && openCards.length > 0 && (
+                <section aria-label={t('live.group.cards')} class="mt-6 space-y-3" data-neo-cards>
+                  <h2 class="text-xs font-medium text-fg-muted">
+                    {t('live.group.cards')} · {openCards.length}
+                  </h2>
+                  {openCards.map(({ entry, question }) => (
+                    <div key={question.id} class="rounded-2xl border border-line p-4">
+                      <p class="break-words text-xs text-fg-muted">{entry.ask.title}</p>
+                      <QuestionBox
+                        question={question}
+                        onOpen={openSession}
+                        disabled={!connected || !!neo.busyWork}
+                        onAnswer={(answer) => void neo.answerQuestion(question.id, answer)}
+                        onDesktopAllow={allowDesktop}
+                        onReply={replyToQuestion && (() => replyToQuestion(question))}
+                      />
+                    </div>
+                  ))}
+                </section>
+              )}
+              {(workQuery.trim()
+                ? [{ key: 'search', label: t('live.searchWork'), entries: search.results }]
+                : sceneGroups.map((group) => ({
+                    ...group,
+                    entries: (topic
+                      ? group.entries.filter((entry) => entry.ask.topicKey === topic)
+                      : group.entries
+                    )
+                      .filter(
+                        (entry) =>
+                          !fullQueue ||
+                          group.key === 'outcomes' ||
+                          entry.ask.id === outsideQueue ||
+                          !fullQueue.counts[entry.ask.id]
+                      )
+                      .map(withoutQueued),
+                  }))
+              ).map((group) =>
+                group.entries.length === 0 ? null : (
+                  <section
+                    key={group.key}
+                    aria-label={group.label}
+                    class="mt-6 space-y-3"
+                    data-scene-group={group.key}
+                  >
+                    <h2 class="text-xs font-medium text-fg-muted">
+                      {group.label} ·{' '}
+                      {group.key === 'attention' && !topic && !fullQueue
+                        ? attentionCount
+                        : group.entries.length}
+                    </h2>
+                    {group.entries.map((entry) =>
+                      askCard(entry, true, false, !fullQueue && group.key === 'attention')
+                    )}
+                  </section>
+                )
+              )}
+              {!!workQuery.trim() && search.nextCursor && (
+                <Button
+                  variant="ghost"
+                  disabled={!connected || search.pending}
+                  onClick={search.loadMore}
+                >
+                  {t('live.moreSearchResults')}
+                </Button>
+              )}
+              {historyCursor && (
+                <Button
+                  variant="ghost"
+                  disabled={!connected || loadingHistory}
+                  onClick={() => void loadOlder()}
+                >
+                  {t(loadingHistory ? 'live.loadingOlder' : 'live.showOlder')}
+                </Button>
+              )}
+            </>
           )}
         </div>
         {chat && (

@@ -128,6 +128,8 @@ function mount(publicMode = true, status = 'ready') {
 describe('Neo desktop panes', () => {
   it('keeps scheduled work in the side panel instead of the chat rail', () => {
     const { container } = mount();
+    expect(screen.queryByTestId('schedule-panel')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '定时', hidden: true }));
     const schedules = screen.getByTestId('schedule-panel');
     expect(schedules.closest('#neo-preview-work-panel')).toBeTruthy();
     expect(container.querySelector('.neo-chat-rail [data-testid="schedule-panel"]')).toBeNull();

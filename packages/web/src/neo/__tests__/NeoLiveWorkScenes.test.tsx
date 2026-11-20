@@ -767,7 +767,7 @@ describe('Neo public work scenes', () => {
     set({ needsYou: 4, neoUnhandled: 2 });
     expect(screen.getByRole('button', { name: /^Your work, 4 need/, hidden: true })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Needs your attention · 4' })).toBeTruthy();
-    expect(screen.getByText('Neo has 2 still to handle')).toBeTruthy();
+    expect(screen.getByText('Waiting on Neo to check or unblock: 2')).toBeTruthy();
     set({ needsYou: 4, neoUnhandled: 0 });
     expect(screen.queryByText(/still to handle/)).toBeNull();
   });
@@ -793,7 +793,7 @@ describe('Neo public work scenes', () => {
     });
     expect(screen.queryByRole('region', { name: 'Needs your attention' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Your work', hidden: true })).toBeTruthy();
-    expect(screen.getByText('Neo has 1 still to handle')).toBeTruthy();
+    expect(screen.getByText('Waiting on Neo to check or unblock: 1')).toBeTruthy();
   });
 
   it('shows no pending check banner and only work scene groups in legacy mode', () => {
