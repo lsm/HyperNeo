@@ -16,23 +16,27 @@ These two patterns block the analyzer from confirming that any export is registe
 
 ## Verified route analysis
 
-I ran the strict verdict report and opened every non-named route. The causes are:
+I ran the strict verdict report and opened every non-named route.
 
-**Strict-mode execute limitation (5 routes).** The strict analyzer only follows single-expression or simple two-statement async execute functions. These five routes have multi-statement execute bodies that call a matching pipeline but the analyzer cannot follow the control flow:
+**Same-file pipeline, multi-statement execute (4 routes).** These routes have a matching superpipe in the same file, but the strict analyzer cannot follow their multi-statement async execute:
 
-| Route | Pipeline | Same file? |
-|-------|----------|-----------|
-| `neo.ask.doneTodos` | `neo.ask.doneTodos` (ask-entries.ts:355) | Yes |
-| `neo.conversation.read` | `neo.conversation.read` (conversation-read-operation.ts:48) | Yes |
-| `neo.publication.publish` | `neo.publication.publish` (publication-operation.ts:161) | Yes |
-| `neo.todo.done` | `neo.todo.done` (todo-mutation-operation.ts:200) | Yes |
-| `neo.project.forget` | `neo.project.forget` (project-forget-operation.ts:32) | Yes |
+| Route | Pipeline | Location |
+|-------|----------|----------|
+| `neo.ask.doneTodos` | `neo.ask.doneTodos` | ask-entries.ts:355 |
+| `neo.conversation.read` | `neo.conversation.read` | conversation-read-operation.ts:48 |
+| `neo.publication.publish` | `neo.publication.publish` | publication-operation.ts:161 |
+| `neo.todo.done` | `neo.todo.done` | todo-mutation-operation.ts:200 |
 
-Fix: extend the analyzer to handle `const result = await pipeline(...); return ...` patterns, or simplify the execute to a single expression.
+Fix: extend the analyzer to handle `const result = await pipeline(...); return ...` patterns.
 
-**Opaque service callback (1 route).** `connections.google.connect` calls `(await service()).connectPipeline(input)`. The pipeline `connections.google.connect` exists in lifecycle.ts:231 but the analyzer cannot resolve the `service()` indirection. Fix: refactor the execute to import and call the pipeline directly.
+**Cross-file through gateway (2 routes).** These routes call a repository method that goes through the gateway before reaching the pipeline:
 
-**Deep cross-file trace (1 route).** `neo.project.save` calls `service.repo.saveProjectCurrent()` which calls `gatewayFor().call(neoProjectMoveWrites, 'save')` which calls `saveNeoProjectCommand` (the pipeline `neo.project.save` in project-save.ts:30). This needs a multi-level cross-file pass. Fix: extend the analyzer or refactor the execute to call the pipeline directly.
+- `neo.project.save`: execute → `repo.saveProjectCurrent()` → `gatewayFor().call(neoProjectMoveWrites, 'save')` → `saveNeoProjectCommand` (pipeline in project-save.ts:30).
+- `neo.project.forget`: execute → `repo.forgetProjectCommand()` → `gatewayFor().call(neoProjectForgetWrites, 'forget')` → `runNeoProjectForget` (pipeline in project-forget-operation.ts:32).
+
+Fix: extend the analyzer with a cross-file pass that follows repository methods into `gatewayFor().call()` and then into the repository command's method. Preserve the gateway call — do not refactor to bypass it, or serialization is lost.
+
+**Opaque service callback (1 route).** `connections.google.connect` calls `(await service()).connectPipeline(input)`. The pipeline exists in lifecycle.ts:231 but is wrapped in a `serial` closure. Direct import would bypass serialization. Fix: extend the analyzer to follow `(await service()).method()` by resolving the service factory's return type. Preserve the `serial` wrapper.
 
 **Misnamed routes (7 routes).** Rename the pipelines to match operation names:
 
@@ -46,7 +50,7 @@ Fix: extend the analyzer to handle `const result = await pipeline(...); return .
 | `work.queue` | `change-queued-work-input` |
 | `work.withdraw` | `change-queued-work-input` |
 
-For `work.queue` and `work.withdraw`, extract a factory `buildQueuedInputPipeline(name)` and create two named instances. No logic duplication.
+For `work.queue` and `work.withdraw`, inline two separate pipeline definitions. A shared factory would be opaque to the analyzer. The duplication is 41 lines each; acceptable for analyzer clarity.
 
 ## Decision
 
@@ -73,7 +77,7 @@ Expanding spreads requires the analyzer to follow an import, find the exported a
 
 ## What happens to #11388
 
-Reuse the test fixtures and the `confinedWorkerRegistration` guard. Rework or drop the spread-expansion and factory-evaluation logic. Extend the analyzer with: (a) multi-statement async execute handling, (b) a one-level cross-file pass for repository method calls, (c) a `gatewayRun` handler for `gatewayFor().run(op, args)`. The 11 SDK transactions use `defineDbOp`; the analyzer confirms registration via `registrationKey` without tracing to a pipeline.
+Reuse the test fixtures and the `confinedWorkerRegistration` guard. Rework or drop the spread-expansion and factory-evaluation logic. Extend the analyzer with: (a) multi-statement async execute handling, (b) cross-file pass for repository methods, (c) `gatewayRun` handler for `gatewayFor().run(op, args)`, (d) service-method resolution for `(await service()).method()` patterns. The 11 SDK transactions use `defineDbOp`; the analyzer confirms registration via `registrationKey` without tracing to a pipeline.
 
 ## Existing test
 
@@ -90,24 +94,24 @@ Reuse the test fixtures and the `confinedWorkerRegistration` guard. Rework or dr
 ## Sequencing
 
 1. **This design:** registry fix (inline spread, replace factory, update test).
-2. **#11388 rework:** drop spread/factory handling, add multi-statement execute, cross-file pass, `gatewayRun` handler.
-3. **Route fixes:** simplify opaque execute functions, rename misnamed pipelines, extract shared pipeline factory.
+2. **#11388 rework:** drop spread/factory handling, add multi-statement execute, cross-file pass, `gatewayRun` handler, service-method resolution.
+3. **Route fixes:** rename misnamed pipelines, inline shared queue pipeline.
 4. **Coverage proof:** independent inventory + assertion + timing (below).
 
 Steps 2 and 3 can proceed in parallel after step 1 merges.
 
 ## Test plan
 
-**Independent inventory.** A script reads all `packages/*/src/**/*.ts` files (matching the report's scope), finds every `defineOperation(` call, extracts the `name` argument and, for duplicate names, the `inputSchema` hash (same algorithm as `schemaVariant` in pipeline-verdict-report.ts). Writes `file:name:variant` tuples to a file. This inventory is independent of the analyzer.
+**Independent inventory.** A script reads all files matching `isSource` in system-map.ts (packages/*/src, .ts and .tsx, excluding .d.ts, tests, __tests__, __mocks__, .test., .spec.), finds every `defineOperation(` call, extracts the `name` argument and, for duplicate names, the `inputSchema` hash (same algorithm as `schemaVariant`). Writes `file:name:variant` tuples. This inventory is independent of the analyzer.
 
 **Coverage assertion.** Run `bun scripts/pipeline-verdict-report.ts --strict` and assert:
 - Every `file:name:variant` tuple in the inventory appears in the report with verdict `named`.
 - The report contains no routes absent from the inventory.
 - Zero routes with verdict `unreadable` or `misnamed`.
 
-**Timing assertion.** The analysis phase (excluding source I/O) completes in under 1 second. Source reading takes ~870 ms on the reference machine and is I/O bound; total wall time will be higher. Measure on the CI runner and adjust the limit if needed.
+**Timing assertion.** The whole command (`bun scripts/pipeline-verdict-report.ts --strict`) completes in under 2 seconds on the CI runner. Current baseline: ~1.5 seconds end-to-end on the author's machine (866 ms source I/O + 1033 ms analysis). The 1-second target is not achievable while source I/O alone takes ~870 ms; 2 seconds is the achievable limit.
 
-**Negative cases.** A fixture with an unregistered `defineDbOp` stays unresolved. A fixture with a `defineRepositoryOp` whose methods array contains a non-literal stays unresolved. A fixture with a spread in the registry stays unresolved. A fixture with a missing schema variant for duplicate names throws.
+**Negative cases.** A fixture with an unregistered `defineDbOp` stays unresolved. A fixture with a `defineRepositoryOp` whose methods array contains a non-literal stays unresolved. A fixture with a spread in the registry stays unresolved. A fixture with a missing schema variant for duplicate names throws. An inventory that omits a route causes the coverage assertion to fail.
 
 **Existing test.** The sdk-message-transactions test passes with individual op imports.
 
