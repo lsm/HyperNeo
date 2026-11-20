@@ -999,13 +999,20 @@ async function finishCodexQueue(
   };
 }
 
-export const queueCodexMessage = (superpipe({})('codex-queue-message') as PipelineAPI)
-  .input(['detail', 'message', 'deps', 'mode'])
-  .pipe(resumeCodexQueueSandbox, 'detail', 'result:delivery')
-  .pipe(routeCodexQueueOwner, ['delivery', 'detail', 'message', 'deps', 'mode'], 'result:delivery')
-  .pipe(queueOnCodexServer, ['detail', 'message', 'deps', 'delivery'], 'queued')
-  .pipe(finishCodexQueue, ['delivery', 'queued', 'detail', 'message', 'deps'], 'result:delivery')
-  .endAsync('delivery') as (
+const queueCodexStages = (pipeline: PipelineAPI) =>
+  pipeline
+    .pipe(resumeCodexQueueSandbox, 'detail', 'result:delivery')
+    .pipe(
+      routeCodexQueueOwner,
+      ['delivery', 'detail', 'message', 'deps', 'mode'],
+      'result:delivery'
+    )
+    .pipe(queueOnCodexServer, ['detail', 'message', 'deps', 'delivery'], 'queued')
+    .pipe(finishCodexQueue, ['delivery', 'queued', 'detail', 'message', 'deps'], 'result:delivery');
+
+export const queueCodexMessage = queueCodexStages(
+  (superpipe({})('codex-queue-message') as PipelineAPI).input(['detail', 'message', 'deps', 'mode'])
+).endAsync('delivery') as (
   detail: CodexThreadDetail,
   message: string,
   deps: CodexDesktopAdapterDeps,
@@ -1170,12 +1177,13 @@ const runCodexRename = (superpipe({})('codex-rename-work') as PipelineAPI)
   deps: CodexDesktopAdapterDeps
 ) => Promise<Result<{ renamed: true; title: string }>>;
 
-const runCodexQueue = (superpipe({})('codex-queue-work') as PipelineAPI)
-  .input(['ref', 'message', 'deps', 'mode'])
-  .pipe(requireCodexThread, ['ref', 'deps'], 'result:outcome')
-  .pipe(requireOpenCodexThread, 'outcome', 'result:outcome')
-  .pipe(queueCodexMessage, ['outcome', 'message', 'deps', 'mode'], 'outcome')
-  .endAsync('outcome') as (
+const runCodexQueue = queueCodexStages(
+  (superpipe({})('codex-queue-work') as PipelineAPI)
+    .input(['ref', 'message', 'deps', 'mode'])
+    .pipe(requireCodexThread, ['ref', 'deps'], 'result:delivery')
+    .pipe(requireOpenCodexThread, 'delivery', 'result:delivery')
+    .pipe((detail: CodexThreadDetail) => detail, 'delivery', 'detail')
+).endAsync('delivery') as (
   ref: WorkRef,
   message: string,
   deps: CodexDesktopAdapterDeps,
