@@ -16,4 +16,22 @@ rg 'not describable:' "$run/missing"
 bun run system-map routes list > "$run/list"
 rg 'packages/web/src/neo/neo-file-question.ts neoFileQuestionText' "$run/list"
 tail -1 "$run/list"
+bun scripts/pipeline-verdict-report.ts --strict > "$run/verdicts.json"
+echo 'strict report exit=0'
+jq -er '
+  [
+    "evolution.scope.owner.set",
+    "goal.owner.set",
+    "space.audit.list",
+    "gmail.search",
+    "google.accounts",
+    "work.queue",
+    "work.withdraw"
+  ] as $expected
+  | [.[] | .name as $name | select($expected | index($name))] as $routes
+  | ($routes[] | [.name, .verdict] | @tsv),
+    ("matched routes: " + ($routes | length | tostring)),
+    (($routes | map(.name) | sort) == ($expected | sort)
+      and ($routes | all(.verdict == "named")))
+' "$run/verdicts.json"
 printf 'route proof: passed\n'
