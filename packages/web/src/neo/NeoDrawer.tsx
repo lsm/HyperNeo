@@ -33,9 +33,11 @@ export function NeoDrawer({
 }) {
   const dragFrom = useRef<number | null>(null);
   const [languageFailed, setLanguageFailed] = useState(false);
+  const languageAttempt = useRef(0);
   const panel = useRef<HTMLElement>(null);
   useEffect(() => {
-    if (!open) setLanguageFailed(false);
+    languageAttempt.current += 1;
+    setLanguageFailed(false);
   }, [open]);
   useEffect(() => {
     if (!open || !panel.current) return;
@@ -127,10 +129,14 @@ export function NeoDrawer({
             disabled={connection !== 'connected'}
             onChange={(event) => {
               const language = event.currentTarget.value as LanguageSetting;
+              const attempt = ++languageAttempt.current;
+              const settle = (failed: boolean) => {
+                if (attempt === languageAttempt.current) setLanguageFailed(failed);
+              };
               setLanguageFailed(false);
               updateGlobalSettings({ language })
-                .then((result) => setLanguageFailed(!result.success))
-                .catch(() => setLanguageFailed(true));
+                .then((result) => settle(!result.success))
+                .catch(() => settle(true));
             }}
             class="neo-drawer-action h-11 w-full appearance-auto bg-surface text-fg"
           >

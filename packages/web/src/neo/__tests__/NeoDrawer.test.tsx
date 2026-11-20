@@ -72,6 +72,29 @@ describe('NeoDrawer', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
+  it('drops a language result from before the drawer was closed and reopened', async () => {
+    invoke.mockResolvedValue({ ok: true, pending: [] });
+    applyLanguage('system');
+    const props = {
+      onClose: () => {},
+      connection: 'connected' as const,
+      onReconnect: () => {},
+      onRefresh: () => {},
+    };
+    const view = render(<NeoDrawer open {...props} />);
+    let settle = (_: { success: boolean }) => {};
+    updateGlobalSettings.mockReturnValueOnce(new Promise((resolve) => (settle = resolve)));
+    const select = screen.getByRole('combobox', { name: 'Language' }) as HTMLSelectElement;
+    act(() => {
+      select.value = 'zh-Hans';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    view.rerender(<NeoDrawer open={false} {...props} />);
+    view.rerender(<NeoDrawer open {...props} />);
+    await act(async () => settle({ success: false }));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
   it('requires the phone code for two-way approval', async () => {
     const pending = {
       id: 'scan',
