@@ -38,7 +38,8 @@ import { createDelegationPack } from './delegation/pack.ts';
 import { createComputerUsePack } from './computer-use/pack.ts';
 import { createModelRoutingPack } from './model-routing/pack.ts';
 import { getProviderRegistry } from '../../providers/registry.ts';
-import { createCoreTodoPack } from '../core-todo-checks.ts';
+import { createCoreTodoPack, neoLinkExists } from '../core-todo-checks.ts';
+import type { NeoPack } from '../pack-contract.ts';
 import type { DaemonExtension } from '../../extensions/contract.ts';
 
 export function createNeoCodingReaders(db: () => Database) {
@@ -166,27 +167,24 @@ export function createNeoService(...args: NeoServiceArgs) {
           new CodingPrLedgerRepository(db.getDatabase())
         ),
       ];
+      const packs: NeoPack[] = [
+        coding,
+        lifeAdmin,
+        delegation,
+        createComputerUsePack(database),
+        createModelRoutingPack({
+          database: () => db.getDatabase(),
+          provider: (id) => getProviderRegistry().get(id),
+        }),
+      ];
+      packs.push(
+        createCoreTodoPack(
+          db.getDatabase(),
+          neoLinkExists(() => packs)
+        )
+      );
       return {
-        packs: [
-          coding,
-          lifeAdmin,
-          delegation,
-          createComputerUsePack(database),
-          createModelRoutingPack({
-            database: () => db.getDatabase(),
-            provider: (id) => getProviderRegistry().get(id),
-          }),
-          createCoreTodoPack(db.getDatabase(), async (repo, sha, build) => {
-            const fact = await new CodingPrLedgerRepository(db.getDatabase()).ancestryFacts.refresh(
-              {
-                repo,
-                baseOid: sha,
-                headOid: build,
-              }
-            );
-            return fact.ancestry.status === 'known' && fact.ancestry.contains;
-          }),
-        ],
+        packs,
         defaults: NEO_DEFAULT_PACKS,
         operations: createNeoProjectTreeOperations(core.repo, (refs) =>
           configured.readRefStates(refs)

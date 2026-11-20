@@ -2,8 +2,7 @@ import { afterEach, expect, mock, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BUILD_METADATA } from '../../../../src/lib/build-metadata.ts';
-import { createCoreTodoPack } from '../../../../src/lib/neo/core-todo-checks.ts';
+import { createCoreTodoPack, neoLinkExists } from '../../../../src/lib/neo/core-todo-checks.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { ArtifactFileRepository } from '../../../../src/storage/repositories/artifact-file-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -34,13 +33,13 @@ function fixture() {
     { title: 'Verify', doneWhen: 'Observed', instruction: null, named: null, check: null },
     1
   );
-  const contains = mock(async () => false);
-  const pack = createCoreTodoPack(db, contains);
+  const linkExists = mock(async (_url: string) => false);
+  const pack = createCoreTodoPack(db, linkExists);
   const checked = (kind: string, params: Record<string, unknown>) => ({
     ...todo,
     check: { pack: 'core', kind, params },
   });
-  return { db, store, pack, contains, checked };
+  return { db, store, pack, linkExists, checked };
 }
 
 test('evidence waits for a regular file, or a registered artifact in this work context', async () => {
@@ -85,19 +84,33 @@ test('evidence waits for a regular file, or a registered artifact in this work c
   expect(await pack.todos!.check(todo)).toEqual({ done: false, evidence: null });
 });
 
-test('deployed compares the requested commit to the daemon build, never the working tree HEAD', async () => {
-  const { pack, contains, checked } = fixture();
-  const todo = checked('deployed', { repo: 'lsm/HyperNeo', sha: 'a'.repeat(40) });
+test('evidence url asks the link resolver and passes when the link exists', async () => {
+  const { pack, linkExists, checked } = fixture();
+  const url = 'https://github.com/owner/repo/pull/7#pullrequestreview-9';
+  const todo = checked('evidence', { url });
   expect(await pack.todos!.check(todo)).toEqual({ done: false, evidence: null });
-  expect(contains).toHaveBeenCalledWith('lsm/hyperneo', 'a'.repeat(40), BUILD_METADATA.commit);
-  contains.mockImplementation(async () => true);
-  expect(await pack.todos!.check(todo)).toMatchObject({ done: true });
+  expect(linkExists).toHaveBeenCalledWith(url);
+  linkExists.mockImplementation(async () => true);
+  expect(await pack.todos!.check(todo)).toEqual({ done: true, evidence: `Link ${url} exists.` });
   expect(
-    await pack.todos!.check(checked('deployed', { repo: 'other/repo', sha: BUILD_METADATA.commit }))
-  ).toEqual({ done: false, evidence: null });
+    pack.todos!.refuse!({
+      check: { pack: 'core', kind: 'evidence', params: { url: 'not a link' } },
+      instruction: null,
+    })
+  ).toStartWith('invalid_core_check:');
   expect(
-    await pack.todos!.check(checked('deployed', { repo: 'lsm/HyperNeo', sha: 'unknown' }))
-  ).toEqual({ done: false, evidence: null });
+    pack.todos!.refuse!({
+      check: { pack: 'core', kind: 'deployed', params: { repo: 'a/b', sha: 'a'.repeat(40) } },
+      instruction: null,
+    })
+  ).toStartWith('invalid_core_check:');
+});
+
+test('the link resolver asks packs first and falls back to fetching', async () => {
+  const known = { linkExists: async (url: string) => (url.includes('known') ? true : null) };
+  const exists = neoLinkExists(() => [known as never]);
+  expect(await exists('https://example.invalid/known')).toBe(true);
+  expect(await exists('https://example.invalid/missing')).toBe(false);
 });
 
 test.each([

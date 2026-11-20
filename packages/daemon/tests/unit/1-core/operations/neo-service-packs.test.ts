@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test';
 import { NEO_WORK_GOAL_MERGE } from '@hyperneo/prompts';
 import type { MessageHub } from '@hyperneo/shared';
-import { BUILD_METADATA } from '../../../../src/lib/build-metadata.ts';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
 import { planNeoHoldCard } from '../../../../src/lib/neo/daemon-cards.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
@@ -80,26 +79,6 @@ test('core checks stay installed with only life-admin enabled and read actual ou
     done: false,
     evidence: null,
   });
-  expect(
-    await core!.todos!.check({
-      ...todo,
-      check: {
-        pack: 'core',
-        kind: 'deployed',
-        params: { repo: 'lsm/HyperNeo', sha: BUILD_METADATA.commit },
-      },
-    })
-  ).toMatchObject({ done: true });
-  expect(
-    await core!.todos!.check({
-      ...todo,
-      check: {
-        pack: 'core',
-        kind: 'deployed',
-        params: { repo: 'other/repository', sha: BUILD_METADATA.commit },
-      },
-    })
-  ).toEqual({ done: false, evidence: null });
   expect(service.todos.getTodo(todo.id)?.state).toBe('todo');
 });
 

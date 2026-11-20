@@ -422,6 +422,8 @@ export function codingTodoDoneWhen(check: NeoTodoCheck): string | null {
   if (check.kind === 'pr_approved')
     return `${check.params.url} approved under the repository's saved merge policy`;
   if (check.kind === 'issue_closed') return `${check.params.issue} completed`;
+  if (check.kind === 'deployed')
+    return `The running daemon build contains ${check.params.repo}@${check.params.sha}`;
   if (check.kind !== 'pr_merged') return null;
   const refs = codingCheckRefs(check);
   return refs.length
@@ -440,6 +442,13 @@ export function codingTodoCheckRefusal(
     return codingIssueRef(draft.check)
       ? null
       : 'issue_closed_invalid_issue: params.issue must be owner/repo#N.';
+  if (draft.check?.kind === 'deployed')
+    return typeof draft.check.params.repo === 'string' &&
+      /^[\w.-]+\/[\w.-]+$/.test(draft.check.params.repo) &&
+      typeof draft.check.params.sha === 'string' &&
+      /^[0-9a-f]{40}$/.test(draft.check.params.sha)
+      ? null
+      : 'deployed_invalid: params must be {repo: owner/repo, sha: full 40-character commit}.';
   if (draft.check?.kind !== 'pr_merged') return null;
   const urls = draft.check.params.urls;
   if (
@@ -457,7 +466,7 @@ type CodingTodoFacts = {
   observedAt: number;
   incomplete?: true;
   issue?: NeoRefState;
-  approval?: NeoTodoCheckResult;
+  external?: NeoTodoCheckResult;
 };
 
 export function createCodingTodoPolicy(
@@ -517,9 +526,11 @@ export function createCodingTodoPolicy(
           name &&
           draft.check?.pack === 'core' &&
           draft.check.kind === 'evidence' &&
-          JSON.stringify(draft.check) !== JSON.stringify(scope.todo?.check)
+          JSON.stringify(draft.check) !== JSON.stringify(scope.todo?.check) &&
+          (typeof draft.check.params.url !== 'string' ||
+            /\/(?:pull|issues)\/\d+\/?$/.test(draft.check.params.url))
         )
-          return 'coding_evidence_refused: use pr_merged, pr_approved, issue_closed, deployed, or human_confirmed.';
+          return 'coding_evidence_refused: use pr_merged, pr_approved, issue_closed, coding.deployed, human_confirmed, or core.evidence {url} for a review or comment link.';
         if (
           draft.check?.pack === 'coding' &&
           (draft.target?.verb === 'send' || draft.target?.verb === 'bind')
@@ -568,7 +579,8 @@ export function createCodingTodoPack(
   readPrs: NeoWorkPrReader,
   ledger?: CodingLedgerState,
   readRefs?: NeoRefStateReader,
-  readApproval?: (url: string) => Promise<NeoTodoCheckResult>
+  readApproval?: (url: string) => Promise<NeoTodoCheckResult>,
+  readDeployed?: (repo: string, sha: string) => Promise<NeoTodoCheckResult>
 ): NeoTodoPack & NeoTodoFactJudge<CodingTodoFacts | null> {
   const readFacts = async (todo: NeoTodo, persist = true): Promise<CodingTodoFacts | null> => {
     if (todo.check && todo.check.pack !== 'coding') return null;
@@ -576,7 +588,16 @@ export function createCodingTodoPack(
       return {
         prs: [],
         observedAt: Date.now(),
-        approval: await readApproval?.(String(todo.check.params.url)),
+        external: await readApproval?.(String(todo.check.params.url)),
+      };
+    if (todo.check?.kind === 'deployed')
+      return {
+        prs: [],
+        observedAt: Date.now(),
+        external: await readDeployed?.(
+          String(todo.check.params.repo).toLowerCase(),
+          String(todo.check.params.sha)
+        ),
       };
     const facts = await readCodingTurnFacts(todo, repo.turnPrs, readPrs);
     if (persist && !facts.incomplete)
@@ -594,8 +615,8 @@ export function createCodingTodoPack(
     const replacements = named.size
       ? facts.prs.filter((pr) => !named.has(codingPrKey(pr.url) ?? ''))
       : [];
-    return todo.check?.kind === 'pr_approved'
-      ? (facts.approval ?? { done: false, evidence: null })
+    return todo.check?.kind === 'pr_approved' || todo.check?.kind === 'deployed'
+      ? (facts.external ?? { done: false, evidence: null })
       : todo.check?.kind === 'issue_closed'
         ? codingIssueCheck(facts.issue)
         : todo.check
