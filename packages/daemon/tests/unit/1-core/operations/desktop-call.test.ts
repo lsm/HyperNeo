@@ -243,12 +243,13 @@ test.each([
   { source: 'rpc', principal: 'local', sessionId: 'worker-a', role: 'universal_read' },
   { source: 'mcp', sessionId: 'worker-a' },
   { source: 'mcp', role: 'direct_task_worker' },
+  { source: 'mcp', sessionId: 'neo:coordinator', role: 'neo' },
 ] as OperationCaller[])(
   'refuses caller $source/$role/$principal before contacting the host',
   async (identity) => {
     expect(await call(identity)).toMatchObject({
       kind: 'completed',
-      value: { ok: false, reason: 'desktop_not_enabled', dispatched: false },
+      value: { ok: false, reason: 'desktop_worker_only', dispatched: false },
     });
     expect(requests).toHaveLength(0);
     expect(audit()).toHaveLength(0);
