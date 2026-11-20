@@ -49,6 +49,7 @@ import { workStartConfiguration } from './start-configuration.ts';
 import { selectLocalStartFolder } from './start-folder.ts';
 import { readTailLines } from './transcript-tail.ts';
 import type {
+  ArchiveAdmission,
   FindQuery,
   PlaceGroup,
   Rejected,
@@ -63,6 +64,7 @@ import type {
   WorkStarted,
   WorkStatus,
   WorkSummary,
+  WorkArchived,
   WorkTurnFact,
   WorkWithdrawal,
 } from './types.ts';
@@ -821,22 +823,39 @@ function codexAppHoldsThread(error: unknown, threadId: string): boolean {
   );
 }
 
-export async function queueCodexMessage(
+interface CodexQueueSandbox {
+  enabled: boolean;
+  prepared: Awaited<ReturnType<typeof resumeWorkerSandbox>>;
+}
+
+async function resumeCodexQueueSandbox(
+  detail: CodexThreadDetail
+): Promise<Gate<CodexQueueSandbox>> {
+  const enabled = workerSandboxOn(true);
+  try {
+    return {
+      value: {
+        enabled,
+        prepared: enabled ? await resumeWorkerSandbox(detail.thread.folder) : null,
+      },
+    };
+  } catch (error) {
+    return {
+      reason: reject(
+        'not_delivered',
+        `worker sandbox: ${error instanceof Error ? error.message : String(error)}`
+      ),
+    };
+  }
+}
+
+async function routeCodexQueueOwner(
+  sandbox: CodexQueueSandbox,
   detail: CodexThreadDetail,
   message: string,
   deps: CodexDesktopAdapterDeps,
   mode: 'auto' | 'queue' = 'auto'
-): Promise<Result<WorkDelivery>> {
-  const sandboxEnabled = workerSandboxOn(true);
-  let sandbox: Awaited<ReturnType<typeof resumeWorkerSandbox>> = null;
-  try {
-    sandbox = sandboxEnabled ? await resumeWorkerSandbox(detail.thread.folder) : null;
-  } catch (error) {
-    return reject(
-      'not_delivered',
-      `worker sandbox: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
+): Promise<CodexSendGate<CodexQueueSandbox>> {
   const owner = await steerCodexDesktopTurn(
     deps.desktopSocketPath,
     deps.spawn,
@@ -848,14 +867,48 @@ export async function queueCodexMessage(
   );
   if ('reason' in owner) {
     sendLog.warn('work.send queue result', { threadId: detail.thread.id, result: owner.reason });
-    return owner.reason;
+    return owner;
   }
   sendLog.warn('work.send route', {
     threadId: detail.thread.id,
     path: 'queue',
     reason: 'native_queue',
   });
-  const queued = await withCodexMessageServer<WorkDelivery>(deps, async (server) => {
+  return { value: sandbox };
+}
+
+function admitCodexQueuePreparation(error: unknown, threadId: string, step: string): Rejected {
+  return codexAppHoldsThread(error, threadId)
+    ? reject('not_delivered', CODEX_APP_HOLDS_THREAD, true)
+    : reject('not_delivered', `${step}: ${String(error)}`, true);
+}
+
+function planCodexQueueAddFailure(error: unknown, threadId: string): 'cli' | Rejected {
+  if (/-32601|unknown method|method not found|unrecognized (?:request|method)/i.test(String(error)))
+    return 'cli';
+  if (codexAppHoldsThread(error, threadId))
+    return reject('not_delivered', CODEX_APP_HOLDS_THREAD, true);
+  return reject('not_delivered', `thread/queue/add: ${String(error)}`);
+}
+
+function readCodexQueuedSubmission(added: unknown): Gate<string> {
+  const parsed = z
+    .object({
+      queuedSubmission: z.object({ id: z.string().min(1) }),
+    })
+    .safeParse(added);
+  return parsed.success
+    ? { value: parsed.data.queuedSubmission.id }
+    : { reason: reject('not_delivered', `thread/queue/add: ${parsed.error.message}`) };
+}
+
+function queueOnCodexServer(
+  detail: CodexThreadDetail,
+  message: string,
+  deps: CodexDesktopAdapterDeps,
+  { enabled: sandboxEnabled, prepared: sandbox }: CodexQueueSandbox
+): Promise<Result<WorkDelivery>> {
+  return withCodexMessageServer<WorkDelivery>(deps, async (server) => {
     let step = 'thread/loaded/list';
     try {
       if (sandbox) {
@@ -893,9 +946,7 @@ export async function queueCodexMessage(
         });
       }
     } catch (error) {
-      if (codexAppHoldsThread(error, detail.thread.id))
-        return reject('not_delivered', CODEX_APP_HOLDS_THREAD, true);
-      return reject('not_delivered', `${step}: ${String(error)}`, true);
+      return admitCodexQueuePreparation(error, detail.thread.id, step);
     }
     const before = codexUserInputIds(
       await readRolloutTail(detail.thread.rolloutPath).catch(() => [])
@@ -909,24 +960,11 @@ export async function queueCodexMessage(
         input: [{ type: 'text', text: message }],
       });
     } catch (error) {
-      if (
-        /-32601|unknown method|method not found|unrecognized (?:request|method)/i.test(
-          String(error)
-        )
-      )
-        return queueCodexCliMessage(detail, message, deps);
-      if (codexAppHoldsThread(error, detail.thread.id))
-        return reject('not_delivered', CODEX_APP_HOLDS_THREAD, true);
-      return reject('not_delivered', `thread/queue/add: ${String(error)}`);
+      const failure = planCodexQueueAddFailure(error, detail.thread.id);
+      return failure === 'cli' ? queueCodexCliMessage(detail, message, deps) : failure;
     }
-    const parsed = z
-      .object({
-        queuedSubmission: z.object({ id: z.string().min(1) }),
-      })
-      .safeParse(added);
-    if (!parsed.success)
-      return reject('not_delivered', `thread/queue/add: ${parsed.error.message}`);
-    const { queuedSubmission } = parsed.data;
+    const submission = readCodexQueuedSubmission(added);
+    if ('reason' in submission) return submission.reason;
     const delivery = codexQueueDelivery(
       await readRolloutTail(detail.thread.rolloutPath).catch(() => []),
       message,
@@ -939,15 +977,40 @@ export async function queueCodexMessage(
       value: {
         ...delivery,
         delivered: !!delivery.receipt,
-        queuedSubmissionId: queuedSubmission.id,
+        queuedSubmissionId: submission.value,
       },
     };
   });
-  sendLog.warn('work.send queue result', { threadId: detail.thread.id, result: queued });
-  return sandboxEnabled && !sandbox && !queued.ok && queued.reason === 'unreachable'
-    ? queueCodexCliMessage(detail, message, deps)
-    : queued;
 }
+
+async function finishCodexQueue(
+  sandbox: CodexQueueSandbox,
+  queued: Result<WorkDelivery>,
+  detail: CodexThreadDetail,
+  message: string,
+  deps: CodexDesktopAdapterDeps
+): Promise<{ value: Result<WorkDelivery> }> {
+  sendLog.warn('work.send queue result', { threadId: detail.thread.id, result: queued });
+  return {
+    value:
+      sandbox.enabled && !sandbox.prepared && !queued.ok && queued.reason === 'unreachable'
+        ? await queueCodexCliMessage(detail, message, deps)
+        : queued,
+  };
+}
+
+export const queueCodexMessage = (superpipe({})('codex-queue-message') as PipelineAPI)
+  .input(['detail', 'message', 'deps', 'mode'])
+  .pipe(resumeCodexQueueSandbox, 'detail', 'result:delivery')
+  .pipe(routeCodexQueueOwner, ['delivery', 'detail', 'message', 'deps', 'mode'], 'result:delivery')
+  .pipe(queueOnCodexServer, ['detail', 'message', 'deps', 'delivery'], 'queued')
+  .pipe(finishCodexQueue, ['delivery', 'queued', 'detail', 'message', 'deps'], 'result:delivery')
+  .endAsync('delivery') as (
+  detail: CodexThreadDetail,
+  message: string,
+  deps: CodexDesktopAdapterDeps,
+  mode?: 'auto' | 'queue'
+) => Promise<Result<WorkDelivery>>;
 
 export function admitCodexSteerTurn(read: unknown): Gate<string> {
   const turn = z
@@ -1471,26 +1534,34 @@ function completedDesktopCompaction(lines: readonly string[]): boolean {
   return false;
 }
 
-async function compactCodexWorker(
-  ref: WorkRef,
+const codexThreadBusy = () => reject('busy', 'The Codex thread still has a live turn.');
+
+async function requireIdleCodexThread(detail: CodexThreadDetail): Promise<Gate<CodexThreadDetail>> {
+  return (await readActiveCodexTurn(detail.thread.rolloutPath))
+    ? { reason: codexThreadBusy() }
+    : { value: detail };
+}
+
+function admitCodexCompactionFailure(error: unknown, threadId: string): Rejected {
+  return codexAppHoldsThread(error, threadId)
+    ? reject('busy', CODEX_APP_HOLDS_THREAD)
+    : reject('not_delivered', error instanceof Error ? error.message : String(error));
+}
+
+async function compactIdleCodexThread(
+  detail: CodexThreadDetail,
   deps: CodexDesktopAdapterDeps
 ): Promise<Result<{ compacted: boolean }>> {
-  const found = requireCodexThread(ref, deps);
-  if ('reason' in found) return found.reason;
-  const open = requireOpenCodexThread(found.value);
-  if ('reason' in open) return open.reason;
-  const path = open.value.thread.rolloutPath;
+  const { id, rolloutPath: path } = detail.thread;
   const idle = async () => !(await readActiveCodexTurn(path));
-  const busy = () => reject('busy', 'The Codex thread still has a live turn.');
-  if (!(await idle())) return busy();
   try {
     const { size } = await stat(path);
-    const route = await requestCodexDesktopCompaction(deps.desktopSocketPath, ref.id, idle);
-    if (route === 'busy') return busy();
+    const route = await requestCodexDesktopCompaction(deps.desktopSocketPath, id, idle);
+    if (route === 'busy') return codexThreadBusy();
     if (route === 'no_owner') {
-      if (!(await idle())) return busy();
+      if (!(await idle())) return codexThreadBusy();
       return await withCodexAppServer(deps, async (server) =>
-        (await compactCodexThread(server, ref.id))
+        (await compactCodexThread(server, id))
           ? { ok: true, value: { compacted: true } }
           : reject('not_delivered', 'The Codex app-server did not confirm compaction.')
       );
@@ -1503,10 +1574,83 @@ async function compactCodexWorker(
     } while (Date.now() < deadline);
     return reject('not_delivered', 'Codex Desktop did not confirm compaction.');
   } catch (error) {
-    if (codexAppHoldsThread(error, ref.id)) return reject('busy', CODEX_APP_HOLDS_THREAD);
-    return reject('not_delivered', error instanceof Error ? error.message : String(error));
+    return admitCodexCompactionFailure(error, id);
   }
 }
+
+const runCodexCompact = (superpipe({})('codex-compact-work') as PipelineAPI)
+  .input(['ref', 'deps'])
+  .pipe(requireCodexThread, ['ref', 'deps'], 'result:compaction')
+  .pipe(requireOpenCodexThread, 'compaction', 'result:compaction')
+  .pipe(requireIdleCodexThread, 'compaction', 'result:compaction')
+  .pipe(
+    async (detail: CodexThreadDetail, deps: CodexDesktopAdapterDeps) => ({
+      value: await compactIdleCodexThread(detail, deps),
+    }),
+    ['compaction', 'deps'],
+    'result:compaction'
+  )
+  .endAsync('compaction') as (
+  ref: WorkRef,
+  deps: CodexDesktopAdapterDeps
+) => Promise<Result<{ compacted: boolean }>>;
+
+async function requireCodexArchiveIdle(
+  detail: CodexThreadDetail
+): Promise<Gate<CodexThreadDetail>> {
+  return !detail.thread.archived && (await readActiveCodexTurn(detail.thread.rolloutPath))
+    ? { reason: codexThreadBusy() }
+    : { value: detail };
+}
+
+function admitCodexArchive(
+  detail: CodexThreadDetail,
+  admit: ArchiveAdmission
+): Gate<CodexThreadDetail> {
+  const refused = admit();
+  return refused ? { reason: refused } : { value: detail };
+}
+
+async function archiveCodexThread(
+  detail: CodexThreadDetail,
+  deps: CodexDesktopAdapterDeps
+): Promise<Result<WorkArchived>> {
+  const { id, folder, archived } = detail.thread;
+  if (archived) {
+    await releaseWorkerSandbox(folder);
+    const worktree = await cleanupOwnedWorktree(folder, [deps.worktreesDir]);
+    return { ok: true, value: { archived: false, ...(worktree ? { worktree } : {}) } };
+  }
+  return withCodexAppServer({ appServer: deps.bootstrapServer }, async (server) => {
+    try {
+      await server.call('thread/archive', { threadId: id });
+    } catch (error) {
+      if (codexAppHoldsThread(error, id)) return reject('busy', CODEX_APP_HOLDS_THREAD);
+      throw error;
+    }
+    await releaseWorkerSandbox(folder);
+    const worktree = await cleanupOwnedWorktree(folder, [deps.worktreesDir]);
+    return { ok: true, value: { archived: true, ...(worktree ? { worktree } : {}) } };
+  });
+}
+
+const runCodexArchive = (superpipe({})('codex-archive-work') as PipelineAPI)
+  .input(['ref', 'admit', 'deps'])
+  .pipe(requireCodexThread, ['ref', 'deps'], 'result:archive')
+  .pipe(requireCodexArchiveIdle, 'archive', 'result:archive')
+  .pipe(admitCodexArchive, ['archive', 'admit'], 'result:archive')
+  .pipe(
+    async (detail: CodexThreadDetail, deps: CodexDesktopAdapterDeps) => ({
+      value: await archiveCodexThread(detail, deps),
+    }),
+    ['archive', 'deps'],
+    'result:archive'
+  )
+  .endAsync('archive') as (
+  ref: WorkRef,
+  admit: ArchiveAdmission,
+  deps: CodexDesktopAdapterDeps
+) => Promise<Result<WorkArchived>>;
 
 export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAdapter {
   const compactions = new Map<string, Promise<Result<{ compacted: boolean }>>>();
@@ -1574,7 +1718,7 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
     compact: async (ref) => {
       if (compactions.has(ref.id))
         return reject('busy', 'Codex compaction is already in progress.');
-      const compaction = compactCodexWorker(ref, deps);
+      const compaction = runCodexCompact(ref, deps);
       compactions.set(ref.id, compaction);
       try {
         return await compaction;
@@ -1587,31 +1731,6 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
       const at = 'reason' in found ? 0 : found.value.thread.updatedAt;
       return at ? at + CODEX_CACHE_MS : null;
     },
-    archive: async (ref, admit) => {
-      const found = requireCodexThread(ref, deps);
-      if ('reason' in found) return found.reason;
-      if (found.value.thread.archived) {
-        const refused = admit();
-        if (refused) return refused;
-        await releaseWorkerSandbox(found.value.thread.folder);
-        const worktree = await cleanupOwnedWorktree(found.value.thread.folder, [deps.worktreesDir]);
-        return { ok: true, value: { archived: false, ...(worktree ? { worktree } : {}) } };
-      }
-      if (await readActiveCodexTurn(found.value.thread.rolloutPath))
-        return reject('busy', 'The Codex thread still has a live turn.');
-      const refused = admit();
-      if (refused) return refused;
-      return withCodexAppServer({ appServer: deps.bootstrapServer }, async (server) => {
-        try {
-          await server.call('thread/archive', { threadId: ref.id });
-        } catch (error) {
-          if (codexAppHoldsThread(error, ref.id)) return reject('busy', CODEX_APP_HOLDS_THREAD);
-          throw error;
-        }
-        await releaseWorkerSandbox(found.value.thread.folder);
-        const worktree = await cleanupOwnedWorktree(found.value.thread.folder, [deps.worktreesDir]);
-        return { ok: true, value: { archived: true, ...(worktree ? { worktree } : {}) } };
-      });
-    },
+    archive: (ref, admit) => runCodexArchive(ref, admit, deps),
   };
 }
