@@ -46,7 +46,7 @@ A HyperNeo session already calls daemon operations in process: every session get
 ## Where it lives
 
 - The mechanism is core: `packages/daemon/src/lib/desktop` (operation, pipeline, pure decision) and the desktop app (peer check, `dispatch`). A security boundary cannot sit in a pack, because packs can be turned off.
-- A `computer-use` pack is optional and later. It would only carry Neo's guidance: when to turn desktop control on for a todo, and which apps suit it. Sign-in, codes, forms and payment preferences stay in the delegation pack.
+- A `computer-use` pack carries only Neo's guidance (see below). Sign-in, codes, forms and payment preferences stay in the delegation pack.
 
 ## Change
 
@@ -54,3 +54,65 @@ Two PRs:
 
 1. Host: the peer-PID check on the control socket, and `dispatch` (start the slot if needed, resolve, grant check and send, in one request). It can be tested alone with a fixture driver and a fake peer.
 2. Daemon: `desktop.call` with its in-process admission, one pipeline with `decideDesktopCall`, and the audit row.
+
+## Neo guidance, the switch and readiness
+
+### Problem
+
+- Neo told a human to turn on desktop control in a settings page. No such switch exists.
+  - Neo had called `desktop.call` itself, and only workers can call it.
+  - `neo.todo.add` refuses a desktopControl todo with "turn it on from the todo on the Neo page".
+- Workers on v0.60.2 got `target_unverified` because nothing told them every call needs `pid`. #11165 fixes this on dev.
+- The global preference `core.desktopControl` already exists, with two values: "allow for tasks that need it" and "manual approval per task". It is asked once on a card and never shown again.
+- Neo can use the computer three ways and has no rule for choosing:
+  - native desktop control through a local worker;
+  - a Codex or Claude Desktop worker with its own computer use;
+  - the life-admin pack's Chrome DevTools connection, which reaches page content only.
+
+### Design
+
+1. **The `computer-use` pack holds the Neo guidance.**
+   - Mark the pack `alwaysEnabled`, as with delegation, so existing pack selections still get the routing and handoff guidance.
+   - Core keeps the operations, the opt-in rule, the preference and the admission gate.
+   - The pack's `instructions()` read cached facts each turn (see Readiness): native ready, fallback eligible, and the preference.
+   - When neither route is usable, `instructions()` returns only the handoff instruction, never null. `neo.pack.read` therefore still serves it.
+   - The guidance:
+     - Only a worker can call `desktop.call`.
+     - Preference "allow": add the todo on a local worker with `named.desktopControl: true`.
+     - Otherwise (manual or unset): add the todo with desktopControl omitted. The admission gate refuses true in that case. Then send the existing `desktop_control` card with that todoId and the app, and the human taps Allow. The app-wide grant dialog from #11165 still asks about each app.
+     - Use native desktop control for every computer step, browser steps included. Try a fallback worker's own computer use only when native is not ready.
+     - Handoff: ask the human with the step that fixes it (open HyperNeo Desktop and grant its permissions), or ask them to do the step themselves. This happens when neither route is usable, when a fallback start fails, or when the fallback worker reports it has no computer use.
+2. **One switch on the Desktop control panel** (slice 2).
+   - The panel shows whenever the desktop app answers, with zero workers too.
+   - The switch reads and writes `core.desktopControl`:
+     - on = allow for tasks that need it;
+     - off = manual approval per task.
+   - Inside the desktop app, turning it on calls the existing `desktop_permission_status` command. If a permission is missing, it opens the existing permissions window, whose button calls `open_desktop_permission_settings`.
+   - Outside the desktop app (browser or phone), the panel shows the cached permission status. It says to open HyperNeo Desktop on that Mac to grant what is missing.
+3. **Refusals say what to do.**
+   - A non-worker caller gets `desktop_worker_only` (#11286).
+   - In slice 1, the `neo.todo.add` refusal names the todo's "Let it use this computer" menu item and the Allow card. Slice 2 adds the panel switch to that text and to the pack guidance.
+4. **Life-admin uses desktop control, not Chrome DevTools.** #11146 does this, and lands only after slice 1 ships the handoff. Chrome DevTools reaches page content only, so it cannot click extension popups such as a password manager, or browser dialogs.
+
+### Readiness
+
+- **Native ready** = the desktop app answers `{"action":"app_status"}` on `desktop/control.sock` with both Accessibility and Screen Recording granted.
+  - Keep the existing newline-delimited JSON framing, peer authorization and unknown-field rejection. Make `worker` optional at deserialization. Handle `app_status` before worker validation and return `{accessibility, screenRecording}` from `desktop_permission_status` in the existing response envelope.
+  - Every other action still requires a valid worker ID. Per-worker `status` still returns `{state, pid}`.
+  - Socket reachability alone does not count.
+- **Fallback eligible** = `work.adapters` lists a Codex Desktop or Claude Desktop adapter with health ok and the start capability.
+  - Listed, health-only or degraded adapters do not count.
+  - Eligible only means Neo may try. Health checks the client version and read-only discovery, not computer use. A failed start, or a worker that reports no computer use, goes to the handoff.
+- The daemon refreshes both facts every 30 seconds and caches them in memory.
+- `desktop.status` exposes the cached host status as top-level `app: {reachable, accessibility, screenRecording}` for the panel.
+- The pack's synchronous `instructions()` read the cache.
+
+### Not in scope
+
+- No new preference, table or column. No change to the worker-side opt-in rule.
+
+### PRs
+
+1. The `computer-use` pack, the readiness cache and the `app_status` socket action. The refusal text names the todo menu and the Allow card. This absorbs #11286.
+2. The panel switch, plus the permission flow. It adds the switch to the refusal text and the pack guidance.
+3. #11146, gated on slice 1's handoff, pointing life-admin at the pack.
