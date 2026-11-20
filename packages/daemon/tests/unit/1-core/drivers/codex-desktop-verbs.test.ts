@@ -2084,34 +2084,76 @@ describe('codex-desktop adapter status and send', () => {
     }
   );
 
-  test('a thread another app-server writes still takes queued input', async () => {
-    const queued: string[] = [];
-    const driver = adapter(
-      0,
-      '',
-      async () => ({
-        call: async (method, params) => {
-          if (method === 'thread/loaded/list') return { data: [], nextCursor: null };
-          if (method === 'thread/resume') {
-            const rejection = { code: -32600, message: 'thread idle already has an active writer' };
-            throw new CodexRequestError(`thread/resume: ${JSON.stringify(rejection)}`, rejection);
-          }
-          if (method !== 'thread/queue/add') throw new Error(`${method}: thread not found: idle`);
-          queued.push((params.input as { text: string }[])[0].text);
-          return { queuedSubmission: { id: 'owner-queue' } };
-        },
-        close: () => {},
-      }),
-      undefined,
-      '',
-      { realServer: true }
-    );
-    expect(await driver.send!(ref('idle'), 'continue after compaction', user)).toEqual({
-      ok: true,
-      value: { delivered: false, queuedSubmissionId: 'owner-queue' },
+  const appHeld = (method: string) => {
+    const message =
+      method === 'thread/resume'
+        ? 'thread idle already has an active writer'
+        : 'thread not found: idle';
+    const rejection = { code: -32600, message };
+    return new CodexRequestError(`${method}: ${JSON.stringify(rejection)}`, rejection);
+  };
+  const appHeldRefusal = {
+    ok: false,
+    reason: 'not_delivered',
+    detail: expect.stringContaining('The Codex app has this thread open'),
+    notSent: true,
+  };
+
+  test.each(['send', 'queue'] as const)(
+    '%s to an idle thread the Codex app holds refuses plainly and queues nothing',
+    async (verb) => {
+      const calls: string[] = [];
+      const driver = adapter(
+        0,
+        '',
+        async () => ({
+          call: async (method) => {
+            calls.push(method);
+            if (method === 'thread/loaded/list') return { data: [], nextCursor: null };
+            throw appHeld(method);
+          },
+          close: () => {},
+        }),
+        undefined,
+        '',
+        { realServer: true }
+      );
+      expect(await driver[verb]!(ref('idle'), 'continue after compaction', user)).toEqual(
+        appHeldRefusal
+      );
+      expect(calls).toEqual(['thread/loaded/list', 'thread/resume']);
+      expect(spawned).toEqual([]);
+    }
+  );
+
+  test('steering a turn the Codex app runs refuses plainly as not sent', async () => {
+    const driver = adapter(0, '', async () => ({
+      call: async (method) => {
+        if (method === 'thread/turns/list')
+          return { data: [{ id: 'active', status: 'inProgress' }] };
+        throw appHeld(method);
+      },
+      close: () => {},
+    }));
+    expect(await driver.steer!(ref('idle'), 'answer the worker', user)).toEqual(appHeldRefusal);
+  });
+
+  test('compacting an idle thread the Codex app holds waits as busy', async () => {
+    const call = vi.fn(async (method: string) => {
+      throw appHeld(method);
     });
-    expect(queued).toEqual(['continue after compaction']);
-    expect(spawned).toEqual([]);
+    const driver = adapter(0, '', async () => ({
+      call,
+      close: () => {},
+      onNotification: () => () => {},
+    }));
+    expect(await driver.compact!(ref('idle'), user)).toEqual({
+      ok: false,
+      reason: 'busy',
+      detail: expect.stringContaining('The Codex app has this thread open'),
+    });
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(call).toHaveBeenCalledWith('thread/resume', { threadId: 'idle' });
   });
 
   test.each([0, 1])(
