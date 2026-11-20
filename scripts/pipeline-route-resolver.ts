@@ -295,20 +295,19 @@ export function createLocalPipelineResolver(
             ts.isSpreadAssignment(property) ||
             (property.name && ts.isComputedPropertyName(property.name))
         );
+      const handler =
+        execute && ts.isPropertyAssignment(execute)
+          ? execute.initializer
+          : shorthand
+            ? execute.name
+            : undefined;
       if (
+        handler &&
+        handlers.length === 1 &&
         name &&
         ts.isPropertyAssignment(name) &&
-        ts.isStringLiteral(name.initializer) &&
-        execute &&
-        handlers.length === 1 &&
-        (ts.isPropertyAssignment(execute) || shorthand)
+        ts.isStringLiteral(name.initializer)
       ) {
-        const handler = ts.isPropertyAssignment(execute)
-          ? execute.initializer
-          : ts.isShorthandPropertyAssignment(execute)
-            ? execute.name
-            : null;
-        if (!handler) return;
         const nameMatches = matches.get(name.initializer.text) ?? [];
         nameMatches.push(handler);
         matches.set(name.initializer.text, nameMatches);
