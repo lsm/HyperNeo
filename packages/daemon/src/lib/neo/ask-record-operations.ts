@@ -1,4 +1,4 @@
-import { proposalQuestionId } from './proposal.ts';
+import { proposalCardRecord, proposalQuestionId } from './proposal.ts';
 import { openHumanCard, requireHumanCard } from './human-card.ts';
 import { neoToolDescription } from '@hyperneo/prompts';
 import { neoTodoAfterRefusal } from './todo-dependencies.ts';
@@ -422,6 +422,8 @@ export function createNeoAskRecordOperations(
           ids.push(row?.id ?? ('todo' in added ? added.todo?.id : undefined));
           if ('records' in added && added.records) records.push(...added.records);
         }
+        const card = store.getQuestion(proposalQuestionId(ask.id));
+        if (card?.state === 'open') records.unshift(proposalCardRecord(card.id));
         return {
           ok: true,
           ask: store.getAsk(ask.id) ?? ask,

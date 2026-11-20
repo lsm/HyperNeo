@@ -31,12 +31,15 @@ export function requireAcceptedAsk(
         (question.state !== 'answered' || question.answeredBy !== 'button')
     );
   const sessionRequest = todos.some((todo) => typeof todo.named?.requestFrom === 'string');
-  return pendingProposal || pendingSessionQuestion || sessionRequest
-    ? {
-        reason: {
-          ok: false,
-          reason: 'ask_not_accepted: human approval is required before starting work.',
-        },
-      }
-    : { value: ask };
+  if (!(pendingProposal || pendingSessionQuestion || sessionRequest)) return { value: ask };
+  return { reason: { ok: false, reason: notAcceptedReason(pendingProposal ? proposal : null) } };
 }
+
+export function notAcceptedReason(proposal: NeoQuestion | null): string {
+  return proposal?.state === 'open'
+    ? `ask_not_accepted: the human has not answered Do it on this ask's card (question ${proposal.id}). Wait for that answer; do not open another card asking for approval.`
+    : 'ask_not_accepted: human approval is required before starting work.';
+}
+
+export const proposalCardRecord = (questionId: string) =>
+  `proposal_card: the human now sees a Do it / Don't card for this ask (question ${questionId}). Add todos after the human answers Do it; do not open another card asking for approval.`;
