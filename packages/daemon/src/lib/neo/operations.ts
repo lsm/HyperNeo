@@ -156,7 +156,7 @@ const SnapshotOk = z.object({
             todos: z.array(z.object({ id: z.string(), title: z.string() })),
           }),
           z.object({
-            state: z.literal('progress'),
+            state: z.enum(['progress', 'waiting']),
             askId: z.string(),
             todoId: z.string(),
             title: z.string(),

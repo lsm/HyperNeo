@@ -37,6 +37,19 @@ describe('neoHumanQueue', () => {
     ]);
   });
 
+  test("Neo's step left for a day waits on the human", () => {
+    const owner: NeoStepOwner = { owner: 'neo', reason: 'idle_worker', since: 0 };
+    const at = (now: number) =>
+      neoHumanQueue({
+        questions: [],
+        todos: [todo('t1', 'doing')],
+        owners: new Map([['t1', owner]]),
+        now,
+      }).items[0].state;
+    expect(at(24 * 60 * 60 * 1000 - 1)).toBe('progress');
+    expect(at(24 * 60 * 60 * 1000)).toBe('waiting');
+  });
+
   test('a finished todo is not listed, with or without an answered card', () => {
     const queue = neoHumanQueue({
       questions: [card('q1', ['t1'], { state: 'answered' })],
