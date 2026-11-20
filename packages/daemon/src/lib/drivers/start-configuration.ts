@@ -1,3 +1,4 @@
+import { THINKING_OPTIONS } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 
@@ -17,6 +18,14 @@ type Gate<T> =
   | { value: T }
   | { reason: { ok: false; reason: z.infer<typeof RefusalSchema>; detail: string } };
 const normalized = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');
+export function resolveHyperneoThinking(value: string | undefined) {
+  if (value === undefined) return undefined;
+  const effort = normalized(value);
+  return THINKING_OPTIONS.find(
+    (entry) => entry.value === effort || entry.label.toLowerCase() === effort
+  );
+}
+
 const refuse = (reason: z.infer<typeof RefusalSchema>, detail: string): Gate<never> => ({
   reason: { ok: false, reason, detail },
 });

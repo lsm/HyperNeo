@@ -327,6 +327,32 @@ describe('session.runtimeSettings.update', () => {
     expect(result.appliesFrom).toBe('next-turn');
   });
 
+  test('persists a thinking effort label as its thinking-level ID', async () => {
+    const h = harness();
+    h.sessions.set('plain', makeSession({ id: 'plain' }));
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'plain',
+      thinkingLevel: 'high',
+    });
+    expect(result).toMatchObject({ ok: true, settings: { thinkingLevel: 'think24k' } });
+    expect(h.persisted.get('plain')?.thinkingLevel).toBe('think24k');
+  });
+
+  test('resolves a unique display name across providers regardless of case', async () => {
+    const h = harness();
+    catalog.mockReturnValue([{ ...model('review-flash', 'openrouter'), name: 'Review Flash' }]);
+    h.sessions.set('plain', makeSession({ id: 'plain' }));
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'plain',
+      model: 'review FLASH',
+    });
+    expect(result).toMatchObject({ ok: true, settings: { model: 'review-flash' } });
+    expect(h.persisted.get('plain')).toMatchObject({
+      model: 'review-flash',
+      provider: 'openrouter',
+    });
+  });
+
   test('a running turn refuses settings without entering the native switch', async () => {
     const h = harness();
     h.sessions.set('plain', makeSession({ id: 'plain' }));
@@ -408,15 +434,15 @@ describe('session.runtimeSettings.update', () => {
     expect(h.liveConfigs).toHaveLength(0);
   });
 
-  test('thinking level normalizes unknown values to off', async () => {
+  test('refuses unknown thinking levels without writing', async () => {
     const h = harness();
     h.sessions.set('plain', makeSession({ id: 'plain' }));
     const result = await run(h, 'session.runtimeSettings.update', {
       sessionId: 'plain',
       thinkingLevel: 'maximum',
     });
-    expect(result.ok).toBe(true);
-    expect((result.settings as Record<string, unknown>).thinkingLevel).toBe('off');
+    expect(result).toMatchObject({ ok: false, reason: 'invalid_thinking_level' });
+    expect(h.persisted.size).toBe(0);
   });
 
   test('provider-only updates use the non-interrupting joint switch', async () => {

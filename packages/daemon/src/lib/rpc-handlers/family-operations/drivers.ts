@@ -119,16 +119,12 @@ import { WorktreeManager } from '../../worktree-manager.ts';
 import { readWorkTurnPage, type WorkTurnPage } from '../../../storage/work-turn-page.ts';
 import type { SessionManager } from '../../session/session-manager.ts';
 import { ModelUnavailableError } from '../../session/session-lifecycle.ts';
-import {
-  THINKING_OPTIONS,
-  type ModelInfo,
-  type Provider,
-  type SessionConfig,
-} from '@hyperneo/shared';
+import { type ModelInfo, type Provider, type SessionConfig } from '@hyperneo/shared';
 import type { FamilyOperationContext } from './context.ts';
 import { embedQueryOrNull } from '../../../storage/vector-similarity.ts';
-import { usableModels } from '../../usable-models.ts';
+import { matchModelIdOrName, usableModels } from '../../usable-models.ts';
 import { planWorkPlacement, type GitCheckout } from '../../drivers/work-placement.ts';
+import { resolveHyperneoThinking } from '../../drivers/start-configuration.ts';
 
 const WORK_CHAT_LIMIT = 200;
 const log = new Logger('work-operations');
@@ -149,9 +145,7 @@ async function readAvailableModels(): Promise<readonly ModelInfo[]> {
 export async function resolveDriverModel(models: readonly ModelInfo[], requested: string) {
   const { findInModels } = await import('../../model-service.ts');
   const available = usableModels(models);
-  const exact = available.find((entry) => entry.id === requested);
-  if (exact) return exact;
-  const names = available.filter((entry) => entry.name?.toLowerCase() === requested.toLowerCase());
+  const names = matchModelIdOrName(available, requested);
   if (names.length > 1)
     throw new ModelUnavailableError(
       `Model name '${requested}' is ambiguous: ${names.map((entry) => `${entry.id} (${entry.provider})`).join(', ')}. Choose an exact model ID.`
@@ -174,9 +168,7 @@ export async function createDriverSession(
     ? null
     : (await sessionManager.getWorktreeManager().detectGitSupport(workspacePath)).gitRoot;
   const placement = planWorkPlacement(await checkoutAt(gitRoot));
-  const thinkingLevel = THINKING_OPTIONS.find(
-    (entry) => entry.label.toLowerCase() === effort
-  )?.value;
+  const thinkingLevel = resolveHyperneoThinking(effort)?.value;
   const create = (config?: Partial<SessionConfig>) =>
     sessionManager.createSession({
       workspacePath,
@@ -320,8 +312,8 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
           : null;
     },
     effort: (sessionId) =>
-      THINKING_OPTIONS.find(
-        (entry) => entry.value === sessionManager.getSessionFromDB(sessionId)?.config?.thinkingLevel
+      resolveHyperneoThinking(
+        sessionManager.getSessionFromDB(sessionId)?.config?.thinkingLevel
       )?.label.toLowerCase() ?? null,
     model: (sessionId) => sessionManager.getSessionFromDB(sessionId)?.config?.model ?? null,
     provider: (sessionId) => sessionManager.getSessionFromDB(sessionId)?.config?.provider ?? null,
