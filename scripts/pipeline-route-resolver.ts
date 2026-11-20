@@ -330,10 +330,11 @@ export function createLocalPipelineResolver(
       (strictCalls && (expression.flags & ts.NodeFlags.OptionalChain) !== 0)
     )
       return unknown;
-    const callback = strictCalls ? serializedPipelineCallback(expression, checker) : undefined;
-    if (callback) {
-      if (seen.has(callback)) return unknown;
-      seen.add(callback);
+    const serialized = strictCalls ? serializedPipelineCallback(expression, checker) : undefined;
+    if (serialized) {
+      const { callback, declaration } = serialized;
+      if (seen.has(declaration)) return unknown;
+      seen.add(declaration);
       return callable(callback, seen);
     }
     const callee = strictCalls ? unwrap(expression.expression) : expression.expression;

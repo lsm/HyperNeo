@@ -125,5 +125,5 @@ export function serializedPipelineCallback(call: ts.CallExpression, checker: ts.
     }
     return ts.forEachChild(node, (child) => hasOtherUse(child) || undefined) === true;
   }
-  return hasOtherUse(declaration.getSourceFile()) ? undefined : callback;
+  return hasOtherUse(declaration.getSourceFile()) ? undefined : { callback, declaration };
 }
