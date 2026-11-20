@@ -27,9 +27,10 @@ test.each([
   ['patched Promise', `Promise.resolve = customResolve; ${serialQueue}`, 'unknown'],
   ['dynamic evaluation', `${serialQueue} (eval)('pending = custom');`, 'unknown'],
   ['competing recovery', serialQueue.replace('() => undefined);', '() => otherRun());'), 'unknown'],
-])('strictly follows a queue with %s', (_title, queue, kind) => {
+  ['nested queue', serialQueue, 'unknown', 'serialize(() => run())'],
+] as const)('strictly follows a queue with %s', (_title, queue, kind, action = 'run()') => {
   const source = `${imports} ${runner} ${queue}
-    defineOperation({ name: 'demo.read', execute: () => serialize(() => run()) });`;
+    defineOperation({ name: 'demo.read', execute: () => serialize(() => ${action}) });`;
   expect(createLocalPipelineResolver(source, 'route.ts', true)('demo.read')).toEqual(
     kind === 'named' ? { kind, name: 'demo.read' } : { kind }
   );
