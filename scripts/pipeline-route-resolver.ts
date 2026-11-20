@@ -207,6 +207,32 @@ export function createLocalPipelineResolver(
 
   const resolveBuilder = createPipelineBuilderResolver(checker, unwrap, importedSuperpipe);
 
+  function recoveryWithoutPipeline(node: ts.Node, seen = new Set<ts.Node>()): boolean {
+    if (ts.isNewExpression(node) || ts.isTaggedTemplateExpression(node)) return false;
+    if (ts.isCallExpression(node)) {
+      const callee = unwrap(node.expression);
+      if (!ts.isIdentifier(callee)) return false;
+      const declarations = checker.getSymbolAtLocation(callee)?.declarations;
+      const declaration = declarations?.length === 1 ? declarations[0] : undefined;
+      if (
+        !declaration ||
+        !ts.isVariableDeclaration(declaration) ||
+        !ts.isVariableDeclarationList(declaration.parent) ||
+        !(declaration.parent.flags & ts.NodeFlags.Const) ||
+        !declaration.initializer ||
+        seen.has(declaration)
+      )
+        return false;
+      const initializer = unwrap(declaration.initializer);
+      if (
+        (!ts.isArrowFunction(initializer) && !ts.isFunctionExpression(initializer)) ||
+        !recoveryWithoutPipeline(initializer, new Set([...seen, declaration]))
+      )
+        return false;
+    }
+    return !ts.forEachChild(node, (child) => !recoveryWithoutPipeline(child, seen) || undefined);
+  }
+
   function callable(expression: ts.Expression, seen: Set<ts.Node>): LocalPipelineResolution {
     expression = unwrap(expression);
     const direct = pipeline(expression);
@@ -225,15 +251,10 @@ export function createLocalPipelineResolver(
         const statement = body[0];
         if (strictCalls && body.length === 1 && ts.isTryStatement(statement)) {
           const [attempt] = statement.tryBlock.statements;
-          const recovery = statement.catchClause?.block.statements;
-          const fallback = recovery?.[0];
           if (
             statement.tryBlock.statements.length !== 1 ||
             statement.finallyBlock?.statements.length ||
-            (fallback &&
-              (recovery?.length !== 1 ||
-                !ts.isThrowStatement(fallback) ||
-                !ts.isIdentifier(unwrap(fallback.expression))))
+            (statement.catchClause && !recoveryWithoutPipeline(statement.catchClause))
           )
             return unknown;
           if (ts.isReturnStatement(attempt) && attempt.expression)

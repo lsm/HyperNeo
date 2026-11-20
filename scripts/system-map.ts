@@ -568,11 +568,7 @@ export function countPipelineRoutes(
           )
             return false;
         } else if (statements.length !== 1) return false;
-        let statement = statements[statements.length - 1];
-        if (ts.isTryStatement(statement)) {
-          if (statement.finallyBlock || statement.tryBlock.statements.length !== 1) return false;
-          statement = statement.tryBlock.statements[0];
-        }
+        const statement = statements[statements.length - 1];
         if (!ts.isReturnStatement(statement)) return false;
         const expression = statement.expression;
         if (!expression) return false;
@@ -835,7 +831,8 @@ export function countPipelineRoutes(
             strictCalls,
             (file) => sourceContext.get(file)
           ))(name);
-          if (resolved.kind !== 'named' || resolved.name !== name) counts.unreadable++;
+          if (resolved.kind === 'named' && resolved.name !== name && strictCalls) counts.misnamed++;
+          else if (resolved.kind !== 'named' || resolved.name !== name) counts.unreadable++;
         }
       } else if (!reached.some((pipeline) => pipeline.name === name)) counts.misnamed++;
       i = end;

@@ -342,6 +342,11 @@ test.each([
   ['execute: async () => { try { return await execute(); } catch (e) { throw e; } }', 0],
   ['execute: async () => { try { return await execute(); } catch (e) { return recover(e); } }', 1],
   ['execute: async () => { try { return await execute(); } catch (e) { return fallback(); } }', 1],
+  [
+    'execute: async () => { try { return await execute(); } catch { return projectFailure(); } }',
+    0,
+  ],
+  ['execute: async () => { try { return await execute(); } catch { return runFallback(); } }', 1],
   ['execute: async () => { try { return await execute(); } finally { fallback(); } }', 1],
   [
     'execute: async () => { try { return ready && await execute(); } catch (e) { return recover(e); } }',
@@ -355,6 +360,8 @@ test.each([
     import { defineOperation } from './registry';
     const execute = superpipe({})('demo.read').endAsync();
     const fallback = superpipe({})('demo.fallback').endAsync();
+    const projectFailure = () => ({ ok: false });
+    const runFallback = () => fallback();
     defineOperation({ name: 'demo.read', ${property} });
   `;
   const counts = countPipelineRoutes(new Map([['packages/demo/src/operations.ts', source]]), true);
