@@ -349,6 +349,14 @@ test.each([
     0,
   ],
   ['execute: async () => { try { return await execute(); } catch { return runFallback(); } }', 1],
+  [
+    "execute: async () => { try { return superpipe({})('demo.read').end()(); } catch { return projectFailure(); } }",
+    0,
+  ],
+  [
+    "execute: async () => { try { return superpipe({})('demo.read').end()(); } catch { return runFallback(); } }",
+    1,
+  ],
   ['execute: async () => { try { return await execute(); } finally { fallback(); } }', 1],
   [
     'execute: async () => { try { return ready && await execute(); } catch (e) { return recover(e); } }',

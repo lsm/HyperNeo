@@ -330,7 +330,8 @@ export function createLocalPipelineResolver(
     )
       return unknown;
     const callee = strictCalls ? unwrap(expression.expression) : expression.expression;
-    return ts.isIdentifier(callee) ? callable(callee, seen) : unknown;
+    if (ts.isIdentifier(callee)) return callable(callee, seen);
+    return strictCalls ? pipeline(callee) : unknown;
   }
 
   const matches = new Map<string, ts.Expression[]>();
