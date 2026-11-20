@@ -163,9 +163,7 @@ export class CodingTodoPrRepository {
     return gatewayFor(this.db).call(codingTodoPrReads, 'waiting', todoIds);
   }
 
-  openLedger(
-    todoIds: readonly string[]
-  ): {
+  openLedger(todoIds: readonly string[]): {
     todoId: string;
     url: string;
     state: CodingPrState | null;

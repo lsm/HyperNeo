@@ -58,7 +58,7 @@ export const STATE_TEXT: Partial<Record<CodingPrState, string>> = {
 };
 
 export const codingPrStillChased = (state: CodingPrState | null, nudges: number) =>
-  state === null || (!!STATE_TEXT[state] && nudges < NUDGE_STEPS);
+  state !== null && !!STATE_TEXT[state] && nudges < NUDGE_STEPS;
 
 const NEXT_STEP: Partial<Record<CodingPrState, string>> = {
   approved_green: CODING_MANUAL_MERGE_NEXT_STEP,

@@ -146,6 +146,14 @@ describe('coding.idle_with_open_pr through the Neo attention sweep', () => {
     ]);
   });
 
+  test('a pull request the ledger does not track goes back to Neo', async () => {
+    db.prepare('DELETE FROM pack_coding_pr_ledger').run();
+    await sweep(T0 + HOUR);
+    expect(told('mailbox')).toEqual([
+      expect.stringContaining('Todo "Ship it" (todo-1) needs your next step'),
+    ]);
+  });
+
   test('a running worker is no message', async () => {
     live('todo-1', 'running');
     await sweep(T0);
