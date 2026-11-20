@@ -16,6 +16,32 @@ export function unwrapPipelineExpression(expression: ts.Expression): ts.Expressi
   return expression;
 }
 
+function recoveryWithoutPipeline(
+  node: ts.Node,
+  resolveCall?: (call: ts.CallExpression) => boolean
+): boolean {
+  if (ts.isNewExpression(node) || ts.isTaggedTemplateExpression(node)) return false;
+  if (ts.isCallExpression(node) && !resolveCall?.(node)) return false;
+  return !ts.forEachChild(
+    node,
+    (child) => !recoveryWithoutPipeline(child, resolveCall) || undefined
+  );
+}
+
+export function directTryReturn(
+  statement: ts.TryStatement,
+  resolveCall?: (call: ts.CallExpression) => boolean
+): ts.ReturnStatement | undefined {
+  const [attempt] = statement.tryBlock.statements;
+  if (
+    statement.tryBlock.statements.length === 1 &&
+    ts.isReturnStatement(attempt) &&
+    !statement.finallyBlock?.statements.length &&
+    (!statement.catchClause || recoveryWithoutPipeline(statement.catchClause, resolveCall))
+  )
+    return attempt;
+}
+
 const unknown: LocalPipelineResolution = { kind: 'unknown' };
 
 export function createLocalPipelineResolver(
@@ -207,6 +233,28 @@ export function createLocalPipelineResolver(
 
   const resolveBuilder = createPipelineBuilderResolver(checker, unwrap, importedSuperpipe);
 
+  function resolveRecoveryCall(call: ts.CallExpression, seen: ReadonlySet<ts.Node>): boolean {
+    const callee = unwrap(call.expression);
+    if (!ts.isIdentifier(callee)) return false;
+    const declarations = checker.getSymbolAtLocation(callee)?.declarations;
+    const declaration = declarations?.length === 1 ? declarations[0] : undefined;
+    if (
+      !declaration ||
+      !ts.isVariableDeclaration(declaration) ||
+      !ts.isVariableDeclarationList(declaration.parent) ||
+      !(declaration.parent.flags & ts.NodeFlags.Const) ||
+      !declaration.initializer ||
+      seen.has(declaration)
+    )
+      return false;
+    const initializer = unwrap(declaration.initializer);
+    const visited = new Set([...seen, declaration]);
+    return (
+      (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer)) &&
+      recoveryWithoutPipeline(initializer, (nested) => resolveRecoveryCall(nested, visited))
+    );
+  }
+
   function callable(expression: ts.Expression, seen: Set<ts.Node>): LocalPipelineResolution {
     expression = unwrap(expression);
     const direct = pipeline(expression);
@@ -221,8 +269,32 @@ export function createLocalPipelineResolver(
     }
     if (ts.isArrowFunction(expression) || ts.isFunctionExpression(expression)) {
       if (ts.isBlock(expression.body)) {
+        const body = expression.body.statements;
+        const statement = body[0];
+        if (strictCalls && body.length === 1 && ts.isTryStatement(statement)) {
+          const attempt = directTryReturn(statement, (call) =>
+            resolveRecoveryCall(call, new Set())
+          );
+          return attempt?.expression ? action(attempt.expression, seen) : unknown;
+        }
+        if (
+          strictCalls &&
+          statement &&
+          body.length === 2 &&
+          ts.isVariableStatement(statement) &&
+          (statement.declarationList.flags & ts.NodeFlags.Const) !== 0 &&
+          statement.declarationList.declarations.length === 1
+        ) {
+          const { name, initializer } = statement.declarationList.declarations[0];
+          const projection = body[1];
+          return ts.isIdentifier(name) &&
+            initializer &&
+            ts.isReturnStatement(projection) &&
+            recoveryWithoutPipeline(projection, (call) => resolveRecoveryCall(call, new Set()))
+            ? action(initializer, seen)
+            : unknown;
+        }
         if (expression.body.statements.length !== 1) return unknown;
-        const statement = expression.body.statements[0];
         return ts.isReturnStatement(statement) && statement.expression
           ? action(statement.expression, seen)
           : unknown;
@@ -230,7 +302,11 @@ export function createLocalPipelineResolver(
       return action(expression.body, seen);
     }
     if (!ts.isIdentifier(expression)) return unknown;
-    const declarations = checker.getSymbolAtLocation(expression)?.declarations;
+    const binding =
+      ts.isShorthandPropertyAssignment(expression.parent) && expression.parent.name === expression
+        ? checker.getShorthandAssignmentValueSymbol(expression.parent)
+        : checker.getSymbolAtLocation(expression);
+    const declarations = binding?.declarations;
     if (declarations?.length !== 1) return unknown;
     const declaration = declarations[0];
     if (
@@ -254,7 +330,8 @@ export function createLocalPipelineResolver(
     )
       return unknown;
     const callee = strictCalls ? unwrap(expression.expression) : expression.expression;
-    return ts.isIdentifier(callee) ? callable(callee, seen) : unknown;
+    if (ts.isIdentifier(callee)) return callable(callee, seen);
+    return strictCalls ? pipeline(callee) : unknown;
   }
 
   const matches = new Map<string, ts.Expression[]>();
@@ -311,19 +388,34 @@ export function createLocalPipelineResolver(
       const name = properties.find(
         (property) => ts.isPropertyAssignment(property) && property.name.getText(parsed) === 'name'
       );
-      const execute = properties.find(
-        (property) =>
-          ts.isPropertyAssignment(property) && property.name.getText(parsed) === 'execute'
+      const handlers = properties.filter(
+        ({ name }) =>
+          name && (ts.isIdentifier(name) || ts.isStringLiteral(name)) && name.text === 'execute'
       );
+      const [execute] = handlers;
+      const ambiguousProperties =
+        strictCalls &&
+        properties.some(
+          (property) =>
+            ts.isSpreadAssignment(property) ||
+            (property.name && ts.isComputedPropertyName(property.name))
+        );
+      const handler =
+        execute && ts.isPropertyAssignment(execute)
+          ? execute.initializer
+          : strictCalls && execute && ts.isShorthandPropertyAssignment(execute)
+            ? execute.name
+            : undefined;
       if (
+        handler &&
+        !ambiguousProperties &&
+        handlers.length === 1 &&
         name &&
         ts.isPropertyAssignment(name) &&
-        ts.isStringLiteral(name.initializer) &&
-        execute &&
-        ts.isPropertyAssignment(execute)
+        ts.isStringLiteral(name.initializer)
       ) {
         const nameMatches = matches.get(name.initializer.text) ?? [];
-        nameMatches.push(execute.initializer);
+        nameMatches.push(handler);
         matches.set(name.initializer.text, nameMatches);
       }
     }

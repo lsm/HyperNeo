@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
 import {
   createLocalPipelineResolver,
+  directTryReturn,
   unwrapPipelineExpression,
 } from './pipeline-route-resolver.ts';
 
@@ -502,6 +503,17 @@ export function countPipelineRoutes(
     if (!isSource(file)) continue;
     const tokens = pipelineTokens(source);
     let resolveLocal: ReturnType<typeof createLocalPipelineResolver> | undefined;
+    const countResolved = (name: string) => {
+      const resolved = (resolveLocal ??= createLocalPipelineResolver(
+        source,
+        file,
+        strictCalls,
+        (file) => sourceContext.get(file)
+      ))(name);
+      if (resolved.kind !== 'named' || (!strictCalls && resolved.name !== name))
+        counts.unreadable++;
+      else if (resolved.name !== name) counts.misnamed++;
+    };
     let parsedCalls: ts.SourceFile | undefined;
     const hasUnconditionalCall = (start: number, name: string, inlineOffset?: number): boolean => {
       const parsed = (parsedCalls ??= ts.createSourceFile(
@@ -568,12 +580,9 @@ export function countPipelineRoutes(
           )
             return false;
         } else if (statements.length !== 1) return false;
-        let statement = statements[statements.length - 1];
-        if (ts.isTryStatement(statement)) {
-          if (statement.finallyBlock || statement.tryBlock.statements.length !== 1) return false;
-          statement = statement.tryBlock.statements[0];
-        }
-        if (!ts.isReturnStatement(statement)) return false;
+        let statement: ts.Statement | undefined = statements[statements.length - 1];
+        if (ts.isTryStatement(statement)) statement = directTryReturn(statement);
+        if (!statement || !ts.isReturnStatement(statement)) return false;
         const expression = statement.expression;
         if (!expression) return false;
         body = expression;
@@ -759,7 +768,14 @@ export function countPipelineRoutes(
       let name: string | undefined;
       let executeStart = -1;
       let executeEnd = -1;
+      let ambiguousProperties = false;
       for (let j = i + 3; j < end; j++) {
+        if (
+          strictCalls &&
+          (j === i + 3 || tokens[j - 1]?.text === ',') &&
+          (tokens[j].text === '.' || tokens[j].text === '[')
+        )
+          ambiguousProperties = true;
         if (tokens[j].text === 'name' && tokens[j + 1]?.text === ':')
           name = stringToken(tokens[j + 2]?.text);
         if (tokens[j].text === 'execute' && tokens[j + 1]?.text === ':') {
@@ -780,8 +796,9 @@ export function countPipelineRoutes(
           j = close;
         }
       }
-      if (!name || executeStart < 0 || executeEnd < 0) {
-        counts.unreadable++;
+      if (ambiguousProperties || !name || executeStart < 0 || executeEnd < 0) {
+        if (strictCalls && name && !ambiguousProperties) countResolved(name);
+        else counts.unreadable++;
         i = end;
         continue;
       }
@@ -824,15 +841,7 @@ export function countPipelineRoutes(
         );
         if (arrow && !call) {
           counts.missing++;
-        } else {
-          const resolved = (resolveLocal ??= createLocalPipelineResolver(
-            source,
-            file,
-            strictCalls,
-            (file) => sourceContext.get(file)
-          ))(name);
-          if (resolved.kind !== 'named' || resolved.name !== name) counts.unreadable++;
-        }
+        } else countResolved(name);
       } else if (!reached.some((pipeline) => pipeline.name === name)) counts.misnamed++;
       i = end;
     }

@@ -334,3 +334,80 @@ test('routes list reports coverage and a real exported runner', () => {
   expect(list.stdout.toString()).toContain('neoFileQuestionText  neo-file-question-text');
   expect(list.stdout.toString()).toMatch(/\d+ describable, \d+ not describable/);
 });
+
+test.each([
+  ['execute', 0],
+  ['execute, ...overrides', 1],
+  ['execute: execute, ...overrides', 1],
+  ['execute: execute, [key]: fallback', 1],
+  ['execute, execute() { return noPipeline(); }', 1],
+  ['execute: async () => { try { return await execute(); } catch (e) { throw e; } }', 0],
+  ['execute: async () => { try { return await execute(); } catch (e) { return recover(e); } }', 1],
+  ['execute: async () => { try { return await execute(); } catch (e) { return fallback(); } }', 1],
+  [
+    'execute: async () => { try { return await execute(); } catch { return projectFailure(); } }',
+    0,
+  ],
+  ['execute: async () => { try { return await execute(); } catch { return runFallback(); } }', 1],
+  [
+    "execute: async () => { try { return superpipe({})('demo.read').end()(); } catch { return projectFailure(); } }",
+    0,
+  ],
+  [
+    "execute: async () => { try { return superpipe({})('demo.read').end()(); } catch { return runFallback(); } }",
+    1,
+  ],
+  ['execute: async () => { try { return await execute(); } finally { fallback(); } }', 1],
+  [
+    'execute: async () => { try { return ready && await execute(); } catch (e) { return recover(e); } }',
+    1,
+  ],
+  ['execute: async () => { const result = await execute(); return project(result); }', 0],
+  [
+    'execute: async () => { const result = await execute(); return result.ok ? result : await fallback(); }',
+    1,
+  ],
+  ['execute: async () => { const result = ready && await execute(); return project(result); }', 1],
+])('strict counts the guaranteed executor for %s', (property, unreadable) => {
+  const source = `
+    import superpipe from 'superpipe';
+    import { defineOperation } from './registry';
+    const execute = superpipe({})('demo.read').endAsync();
+    const fallback = superpipe({})('demo.fallback').endAsync();
+    const projectFailure = () => ({ ok: false });
+    const project = (result) => ({ result });
+    const runFallback = () => fallback();
+    defineOperation({ name: 'demo.read', ${property} });
+  `;
+  const counts = countPipelineRoutes(new Map([['packages/demo/src/operations.ts', source]]), true);
+  expect(counts).toEqual({ missing: 0, misnamed: 0, dynamic: 0, unreadable });
+});
+
+test('strict shorthand mismatches preserve later cross-file factory resolution', () => {
+  const sources = new Map([
+    [
+      'packages/demo/src/operations.ts',
+      `
+      import superpipe from 'superpipe';
+      import { defineOperation } from './registry';
+      import { make } from './factory.ts';
+      const execute = superpipe({})('demo.different').end();
+      defineOperation({ name: 'demo.shorthand', execute });
+      defineOperation({ name: 'demo.imported', execute: make() });
+    `,
+    ],
+    [
+      'packages/demo/src/factory.ts',
+      `
+      import superpipe from 'superpipe';
+      export function make() { return superpipe({})('demo.imported').end(); }
+    `,
+    ],
+  ]);
+  expect(countPipelineRoutes(sources, true)).toEqual({
+    missing: 0,
+    misnamed: 1,
+    dynamic: 0,
+    unreadable: 0,
+  });
+});
