@@ -81,8 +81,8 @@ const one = (state: string, todo: string | null = 'Book the dentist') => ({
   value: { workers: [{ worker, todo, state }] },
 });
 
-test('a worker whose todo did not turn on desktop control is off', async () => {
-  db.prepare('UPDATE neo_todos SET named = ?').run('{}');
+test('a worker whose todo turned desktop control off is off', async () => {
+  db.prepare('UPDATE neo_todos SET named = ?').run('{"desktopControl":false}');
   await openApp();
   expect(await status({ worker })).toMatchObject(one('off', 'Book the dentist'));
 });
@@ -123,7 +123,7 @@ test('without a worker it reads every worker on a running todo', async () => {
     'Plain',
     'doing',
     1,
-    '{}'
+    '{"desktopControl":false}'
   );
   db.prepare('INSERT INTO neo_todo_sessions VALUES(?,?)').run(
     'other',

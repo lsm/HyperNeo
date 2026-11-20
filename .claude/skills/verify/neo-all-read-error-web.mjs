@@ -23,7 +23,7 @@ export async function verifyAllReadError(page, fixture, { phase, evidence, touch
   const section = await queueSection(page, 'all-items');
   assert(section, 'the unfinished ask is in the queue');
   await section.getByRole('alert').first().waitFor();
-  assert.equal(await section.locator('[data-queue-open]').count(), 0, 'no full ask from a refused read');
+  assert.equal(await section.locator('article[data-ask]').count(), 0, 'no full ask from a refused read');
   const before = reads;
   await use(section.getByRole('button', { name: 'Retry', exact: true }).first());
   for (let attempt = 0; reads === before && attempt < 200; attempt++) await page.waitForTimeout(25);
@@ -31,7 +31,7 @@ export async function verifyAllReadError(page, fixture, { phase, evidence, touch
   await section.getByRole('alert').first().waitFor();
   refused.delete('all-items');
   await use(section.getByRole('button', { name: 'Retry', exact: true }).first());
-  await section.locator('[data-queue-open]').waitFor();
+  await section.locator('article[data-ask]').waitFor();
   assert.equal(await section.getByRole('alert').count(), 0, 'a good read clears the queue error');
   const card = page.locator('[data-ask="all-history"]:visible');
   await card.waitFor();

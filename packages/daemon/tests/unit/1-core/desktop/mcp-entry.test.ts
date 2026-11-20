@@ -62,7 +62,7 @@ test('binding uses readonly named opt-in and the recorded worker driver', async 
     target_app_id: null,
   });
   expect(await readFile(join(root, 'daemon.db'))).toEqual(before);
-  db.prepare('UPDATE neo_todos SET named = ?').run('{}');
+  db.prepare('UPDATE neo_todos SET named = ?').run('{"desktopControl":false}');
   expect(await readDesktopBinding(worker)).toBeNull();
 });
 test('ambiguous, unapproved, remote and finished bindings are refused', async () => {

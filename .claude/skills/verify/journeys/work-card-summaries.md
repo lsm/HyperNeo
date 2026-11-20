@@ -34,8 +34,8 @@ full card only from a good neo.ask.read, so the summary behaviour is checked on 
 second fixture ask with only finished work, which stays a summary card outside the
 queue: its 22-todo count is visible, no detail RPC runs until All opens, and the
 expanded row in All shows the full instructions and report after one read. The
-queued ask then shows its question with no answer buttons and no Open the ask
-until its read returns; opening it shows the full instructions and report, and
+queued ask then shows its question with no answer buttons and no full card
+until its read returns; the full card then shows the instructions and report, and
 answering removes the buttons. Choice selectors use the option text as rendered
 (Ship); the fixture question sets no option letters. Inspect
 summary/detail PNGs and browser.json. Native iOS is outside this journey; clients
