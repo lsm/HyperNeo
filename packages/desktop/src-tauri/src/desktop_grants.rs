@@ -1,8 +1,9 @@
+use objc2::{rc::Retained, AllocAnyThread, MainThreadMarker};
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAlertSecondButtonReturn, NSApplication, NSImage,
     NSWorkspace,
 };
-use objc2_foundation::{NSBundle, NSLocale, NSString};
+use objc2_foundation::{NSBundle, NSLocale, NSPoint, NSRect, NSSize, NSString};
 use security_framework::{
     access_control::{ProtectionMode, SecAccessControl},
     passwords::{
@@ -220,6 +221,23 @@ pub(super) fn admit(bundle_id: &str, requirement: &str, _class: &str) {
         .insert(format!("all\n{requirement}"), bundle_id.to_owned());
 }
 
+/// HyperNeo's icon with the target app's icon as a badge in the lower right.
+fn badged_icon(app_icon: &NSImage, mtm: MainThreadMarker) -> Option<Retained<NSImage>> {
+    let hyperneo = NSApplication::sharedApplication(mtm).applicationIconImage()?;
+    let side = 128.0;
+    let image = NSImage::initWithSize(NSImage::alloc(), NSSize::new(side, side));
+    #[allow(deprecated)]
+    image.lockFocus();
+    hyperneo.drawInRect(NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(side, side)));
+    app_icon.drawInRect(NSRect::new(
+        NSPoint::new(side * 0.5, 0.0),
+        NSSize::new(side * 0.5, side * 0.5),
+    ));
+    #[allow(deprecated)]
+    image.unlockFocus();
+    Some(image)
+}
+
 fn prepare_alert(alert: &NSAlert, app_name: &str, message: &str, wildcard: bool) {
     let zh = chinese();
     let title = if zh {
@@ -339,10 +357,12 @@ fn owner_allows(bundle_id: &str, requirement: &str, class: &str) -> Option<Owner
                 .map_or_else(|| bundle_id.to_owned(), |(name, _)| name.clone());
             let message = dialog_text(&name, class, wildcard)?;
             prepare_alert(&alert, &name, &message, wildcard);
-            // The verified app's own icon is the dialog icon, so the human sees which app it is.
-            if let Some((_, icon)) = presented.as_ref() {
+            if let Some(icon) = presented
+                .as_ref()
+                .and_then(|(_, icon)| badged_icon(icon, mtm))
+            {
                 // SAFETY: called on the main thread with a live NSImage owned by `presented`.
-                unsafe { alert.setIcon(Some(icon)) };
+                unsafe { alert.setIcon(Some(&icon)) };
             }
             #[allow(deprecated)]
             NSApplication::sharedApplication(mtm).activateIgnoringOtherApps(true);

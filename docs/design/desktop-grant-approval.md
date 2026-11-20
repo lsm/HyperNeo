@@ -11,7 +11,7 @@ The earlier plan had the host accept the paired owner's card answer delivered by
 ## Flow
 
 1. A worker call resolves to a verified app and action class with no grant. The host opens one modal dialog per app. The call has a 20-second deadline for approval and dispatch.
-2. The dialog uses the verified app’s icon as its own and names the app; it follows the Mac’s language (Chinese or English). "Allow <App>" is the rightmost default button (Return), followed by "Allow all apps" where eligible and "Don't Allow" (Escape).
+2. The dialog icon is HyperNeo’s icon with the verified app’s icon as a badge, and the text names the app; it follows the Mac’s language (Chinese or English). "Allow <App>" is the rightmost default button (Return), followed by "Allow all apps" where eligible and "Don't Allow" (Escape).
 3. Allow records the app-wide grant in the host's private keychain group. Allow all apps records one device-wide grant. Listed terminals, editors, automation tools and password managers, along with Keychain Access and System Settings, still require individual grants. A decline records no grant and returns `owner_declined` for that app for ten minutes. A pending answer returns `waiting_for_owner` after the wait expires.
 4. An allowed call checks the target and deadline again before dispatch. If approval arrives after the deadline, it records the grant for the next call and never dispatches the expired call.
 
