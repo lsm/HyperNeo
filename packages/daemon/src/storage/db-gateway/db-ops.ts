@@ -79,7 +79,19 @@ import {
 } from '../repositories/neo-todo-session-repository.ts';
 import { codingTodoPrReads } from '../../lib/neo/packs/coding/todo-prs.ts';
 import { neoTodoReads, neoTodoWrites } from '../repositories/neo-ask-todo-repository.ts';
-import { SDK_MESSAGE_TRANSACTIONS } from '../repositories/sdk-message-transactions.ts';
+import {
+  sdkPendingRemoval,
+  sdkPromptEnsure,
+  sdkPromptActivate,
+  sdkPromptRetry,
+  sdkNeoIntake,
+  sdkNeoWakeQueue,
+  sdkDeliveryTeardown,
+  sdkMailboxFailure,
+  sdkColumnBackfillChunk,
+  sdkColumnBackfillComplete,
+  sdkDeliveryFencedStatus,
+} from '../repositories/sdk-message-transactions.ts';
 import { neoWakeQueueWrite } from '../repositories/neo-wake-queue-repository.ts';
 import { externalEventSweeps } from '../repositories/space-external-event-sweep-repository.ts';
 import {
@@ -295,7 +307,17 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     neoTodoWrites,
     sdkMessageWrites,
     neoWakeQueueWrite,
-    ...SDK_MESSAGE_TRANSACTIONS,
+    sdkPendingRemoval,
+    sdkPromptEnsure,
+    sdkPromptActivate,
+    sdkPromptRetry,
+    sdkNeoIntake,
+    sdkNeoWakeQueue,
+    sdkDeliveryTeardown,
+    sdkMailboxFailure,
+    sdkColumnBackfillChunk,
+    sdkColumnBackfillComplete,
+    sdkDeliveryFencedStatus,
     recordWouldRefuse,
     enrollLocalDevice,
     deviceKindByCredential,
