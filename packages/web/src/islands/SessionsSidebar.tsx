@@ -88,6 +88,20 @@ function buildView(
     systemTime.set(definition.id, project.updatedAt);
     return [definition];
   });
+  const repositories = new Map<string, NonNullable<WorkspaceHistoryEntry['project']>>();
+  for (const { path, repositoryProject } of history) {
+    if (!repositoryProject || memberships.has(path)) continue;
+    const definition = repositories.get(repositoryProject.id) ?? {
+      ...repositoryProject,
+      folders: [],
+    };
+    definition.folders.push(path);
+    repositories.set(definition.id, definition);
+  }
+  for (const repository of repositories.values()) {
+    if (repository.folders.length < 2) continue;
+    for (const folder of repository.folders) memberships.set(folder, repository);
+  }
   const projectKey = (path: string) => memberships.get(path)?.id ?? path;
   const definitions = new Map(
     [...memberships.values(), ...systemDefinitions].map((project) => [project.id, project])
@@ -178,8 +192,12 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 
   const historyVersion = workspaceHistoryVersionSignal.value;
   useEffect(() => {
-    getWorkspaceHistory()
-      .then(setHistory)
+    let current = true;
+    getWorkspaceHistory({ includeRepositoryProjects: true })
+      .catch(() => (current ? getWorkspaceHistory() : undefined))
+      .then((entries) => {
+        if (current && entries) setHistory(entries);
+      })
       .catch(() => {});
     listSystemProjects()
       .then((projects) => {
@@ -189,6 +207,9 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
         if (failedWorkRef.current.size > 0) setWorkRefresh((version) => version + 1);
       })
       .catch(() => {});
+    return () => {
+      current = false;
+    };
   }, [historyVersion, sessions.value]);
 
   const workKey = (project: SystemProject) =>
