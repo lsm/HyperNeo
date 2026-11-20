@@ -475,12 +475,36 @@ export function createNeoAskReadOperation(
 
 const TodoLine = NeoTodoSchema.pick({ id: true, title: true, state: true });
 
+const TodoStartConfiguration = z.object({
+  requestedModel: z.string().nullable(),
+  requestedEffort: z.string().nullable(),
+  actualModel: z.string().nullable(),
+  actualEffort: z.string().nullable(),
+});
+
 export function createNeoTodoReadOperation(
   store: NeoAskTodoRepository,
+  sessions: NeoTodoSessionRepository,
   admit: (caller: OperationCaller) => { value: OperationCaller } | { reason: Rejection },
   project: <T extends NeoTodo>(todos: readonly T[]) => Promise<T[]>
 ) {
   const inputSchema = z.object({ todoId: z.string().trim().min(1) });
+  async function readDetail(todo: NeoTodo) {
+    const [projected, card] = await Promise.all([
+      project([todo]),
+      sessions.read('readCard', todo.id),
+    ]);
+    const startConfiguration =
+      card?.target?.verb === 'start'
+        ? {
+            requestedModel: card.target.model ?? null,
+            requestedEffort: card.target.effort ?? null,
+            actualModel: card.model,
+            actualEffort: card.effort,
+          }
+        : null;
+    return { ok: true as const, todo: projected[0]!, startConfiguration };
+  }
   const read = (superpipe({})('neo.todo.read') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admit, 'caller', 'result:outcome')
@@ -491,22 +515,22 @@ export function createNeoTodoReadOperation(
       'todo',
       'result:outcome'
     )
-    .pipe(
-      async (todo: NeoTodo) => ({ ok: true as const, todo: (await project([todo]))[0]! }),
-      'outcome',
-      'outcome'
-    )
+    .pipe(readDetail, 'outcome', 'outcome')
     .endAsync('outcome') as (
     input: z.infer<typeof inputSchema>,
     caller: OperationCaller
-  ) => Promise<{ ok: true; todo: NeoTodo } | Rejection>;
+  ) => Promise<Awaited<ReturnType<typeof readDetail>> | Rejection>;
   return defineOperation({
     name: 'neo.todo.read',
     description: neoToolDescription('neo.todo.read'),
     inputSchema,
     resultSchema: z.union([
       z.object({ ok: z.literal(false), reason: z.string() }),
-      z.object({ ok: z.literal(true), todo: NeoTodoSchema }),
+      z.object({
+        ok: z.literal(true),
+        todo: NeoTodoSchema,
+        startConfiguration: TodoStartConfiguration.nullable(),
+      }),
     ]),
     policy: { safetyClass: 'read', roles: ['neo'] },
     execute: read,

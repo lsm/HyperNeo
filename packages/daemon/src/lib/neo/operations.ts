@@ -832,6 +832,7 @@ export function createNeoOperations(
     ),
     createNeoTodoReadOperation(
       service.todos,
+      service.todoSessions,
       (caller) => admitNeoCaller(service, caller, 'neo.todo.read'),
       (todos) => service.todoWorkers(todos)
     ),

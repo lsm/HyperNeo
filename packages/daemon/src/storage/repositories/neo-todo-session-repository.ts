@@ -81,6 +81,10 @@ const LIVE_TODO_STATES = ['todo', 'doing', 'blocked'];
 
 export class NeoTodoSessionRepository extends NeoDriverSessionRows {
   read(
+    method: 'readCard',
+    todoId: string
+  ): Promise<ReturnType<NeoTodoSessionRepository['readCard']>>;
+  read(
     method: 'unrecordedStarts'
   ): Promise<ReturnType<NeoTodoSessionRepository['unrecordedStarts']>>;
   read(method: 'awaitingReports'): Promise<ReturnType<NeoTodoSessionRepository['awaitingReports']>>;
@@ -909,6 +913,7 @@ export const neoTodoSessionReads = defineRepositoryOp(
   'read',
   NeoTodoSessionRepository,
   [
+    'readCard',
     'unrecordedStarts',
     'awaitingReports',
     'nudgeContext',
