@@ -150,7 +150,7 @@ export function createCopilotDesktopAdapter(
     },
     get unsupportedCapabilities() {
       return controlAvailable?.()
-        ? { steer: DESKTOP_CONTROL }
+        ? { steer: DESKTOP_CONTROL, compact: DESKTOP_CONTROL }
         : {
             start: DESKTOP_CONTROL,
             send: DESKTOP_CONTROL,
@@ -158,6 +158,7 @@ export function createCopilotDesktopAdapter(
             queue: DESKTOP_CONTROL,
             withdraw: DESKTOP_CONTROL,
             stop: DESKTOP_CONTROL,
+            compact: DESKTOP_CONTROL,
             rename: DESKTOP_CONTROL,
             archive: DESKTOP_CONTROL,
           };

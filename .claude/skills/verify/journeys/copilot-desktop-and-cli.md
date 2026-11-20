@@ -63,5 +63,5 @@ the follow-up by its receipt, and archives the session with the folder retained.
 The script emits action results and the requested settings.
 
 The CLI also exposes start, send, queue, withdraw, stop, rename, and archive
-for daemon-owned sessions. Strict same-turn steering and driver compaction
-are unsupported.
+for daemon-owned sessions. Neo can compact an idle owned CLI worker kept for
+reuse. Strict same-turn steering remains unsupported.

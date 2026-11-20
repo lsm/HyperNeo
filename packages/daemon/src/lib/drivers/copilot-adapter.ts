@@ -472,6 +472,34 @@ export function createCopilotAdapter(
       'stopped'
     )
     .endAsync('stopped') as (ref: W.WorkRef) => Promise<W.Result<{ stopped: boolean }>>;
+  const compact = (superpipe({})('copilot-compact') as PipelineAPI)
+    .input(['ref'])
+    .pipe(lookup, 'ref', 'result:compaction')
+    .pipe(refresh, 'compaction', 'compaction')
+    .pipe(
+      async (record: Record): Promise<W.Result<{ compacted: boolean }>> => {
+        if (record.archived) return reject('not_open', 'Copilot work is archived.');
+        if (closed || record.pendingSubmission || record.snapshot.status === 'unreachable')
+          return unavailable();
+        if (['queued', 'running', 'needs_you'].includes(record.snapshot.status))
+          return reject('busy', 'Copilot work still has an active input.');
+        const id = record.work.ref.id;
+        const worker = await open(record, true);
+        try {
+          return (await worker.compact())
+            ? { ok: true, value: { compacted: true } }
+            : reject('not_delivered', 'Copilot did not complete compaction.');
+        } catch (error) {
+          return reject('not_delivered', errorMessage(error));
+        } finally {
+          live.delete(id);
+          await worker.close();
+        }
+      },
+      'compaction',
+      'compaction'
+    )
+    .endAsync('compaction') as (ref: W.WorkRef) => Promise<W.Result<{ compacted: boolean }>>;
   const admitArchive = (record: Record, admit: W.ArchiveAdmission): Gate<Record> => {
     if (
       launching.has(record.work.ref.id) ||
@@ -612,6 +640,7 @@ export function createCopilotAdapter(
       'status',
       'turns',
       'stop',
+      'compact',
       'archive',
     ] as const,
     unsupportedCapabilities: {
@@ -666,6 +695,13 @@ export function createCopilotAdapter(
         'stop',
         () => stop(ref),
         () => deps.desktop?.stop?.(ref, context)
+      ),
+    compact: (ref) =>
+      mutate(
+        ref,
+        'compact',
+        () => compact(ref),
+        () => undefined
       ),
     turns: (ref, cursor, limit) =>
       guard(async () => {

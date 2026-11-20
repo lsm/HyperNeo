@@ -107,6 +107,41 @@ describe('owned Copilot lifecycle', () => {
     }
   );
 
+  test('compacts settled work without sending a prompt and preserves its receipt', async () => {
+    const f = setup('--durable-inputs');
+    const work = await start(f, 'settled');
+    const previous = await f.adapter.status!(work.ref, undefined, work.receipt);
+    expect(previous).toMatchObject({ ok: true, value: { status: 'done', lastReply: 'REPLY_1' } });
+    expect(await f.adapter.compact!(work.ref, context)).toEqual({
+      ok: true,
+      value: { compacted: true },
+    });
+    expect(await f.adapter.status!(work.ref, undefined, work.receipt)).toEqual(previous);
+    const calls = readFileSync(join(f.run, 'calls.jsonl'), 'utf8');
+    expect(calls.match(/"method":"session\.send"/g)).toHaveLength(1);
+    expect(calls.match(/"method":"session\.history\.compact"/g)).toHaveLength(1);
+  });
+
+  test('refuses to compact while a turn is active or when Copilot reports failure', async () => {
+    const busy = setup();
+    const active = await start(busy);
+    expect(await busy.adapter.compact!(active.ref, context)).toMatchObject({
+      ok: false,
+      reason: 'busy',
+    });
+    expect(readFileSync(join(busy.run, 'calls.jsonl'), 'utf8')).not.toContain(
+      'session.history.compact'
+    );
+
+    const refused = setup('--durable-inputs');
+    writeFileSync(join(refused.run, 'refuse-compaction'), '');
+    const idle = await start(refused, 'settled');
+    expect(await refused.adapter.compact!(idle.ref, context)).toMatchObject({
+      ok: false,
+      reason: 'not_delivered',
+    });
+  });
+
   test('starts a new repository before its first commit in the project folder', async () => {
     const f = setup();
     const folder = join(f.run, 'unborn');
@@ -745,6 +780,7 @@ describe('owned Copilot lifecycle', () => {
       'status',
       'turns',
       'stop',
+      'compact',
       'archive',
     ]);
     const work = await start(fixture, 'settled');
