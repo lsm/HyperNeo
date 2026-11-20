@@ -67,7 +67,7 @@ try {
     }
     assert.equal(routes, NEO_RESIDENT_FAMILIES.flatMap(({ actions }) => actions).length);
     assert.equal((await call('neo_todo', { action: 'start', input: {} })).isError, true);
-    const opened = await call('neo_ask', { action: 'open', input: { title: 'Resident proof', request: 'Check resident routing' } });
+    const opened = await call('neo_ask', { action: 'propose', input: { title: 'Resident proof', request: 'Check resident routing' } });
     assert.equal(opened.isError, false);
     assert.equal(opened.value.ok, true);
     const askId = (opened.value.ask as { id: string }).id;

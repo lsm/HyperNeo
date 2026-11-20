@@ -53,7 +53,7 @@ try {
       ['c-tutor', '孩子'],
       ['d-roof', '家'],
     ]) {
-      const opened = await call('neo.ask.open', { title, request: 'Synthetic request', topic });
+      const opened = await call('neo.ask.propose', { title, request: 'Synthetic request', topic });
       assert.equal(opened.ok, true);
       ids[title] = opened.ask.id;
     }

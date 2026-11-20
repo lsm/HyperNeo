@@ -34,36 +34,36 @@ try {
     };
     const open = () => db.prepare("SELECT id FROM neo_asks WHERE status = 'open' ORDER BY created_at").all().map((row) => (row as { id: string }).id);
 
-    const first = await invoke('first ask for the pull request', 'neo.ask.open', { title: 'Review the fix', request: `Review ${pull} and merge it` });
+    const first = await invoke('first ask for the pull request', 'neo.ask.propose', { title: 'Review the fix', request: `Review ${pull} and merge it` });
     assert.equal(first.ok, true, JSON.stringify(first));
-    const second = await invoke('second ask for the same pull request', 'neo.ask.open', { title: 'Deploy the fix', request: 'Deploy synthetic/proof#7 once it is merged' });
+    const second = await invoke('second ask for the same pull request', 'neo.ask.propose', { title: 'Deploy the fix', request: 'Deploy synthetic/proof#7 once it is merged' });
     assert.equal(second.ok, false);
     assert(second.reason.startsWith('ask_open:'), second.reason);
     assert(second.reason.includes(`(${first.ask.id})`), second.reason);
     assert.deepEqual(open(), [first.ask.id]);
-    const retry = await invoke('retry with the first title', 'neo.ask.open', { title: 'Review the fix', request: `Review ${pull} and merge it` });
+    const retry = await invoke('retry with the first title', 'neo.ask.propose', { title: 'Review the fix', request: `Review ${pull} and merge it` });
     assert.equal(retry.ask.id, first.ask.id);
-    const other = await invoke('ask for another pull request', 'neo.ask.open', { title: 'Review the next', request: 'Review synthetic/proof#8' });
+    const other = await invoke('ask for another pull request', 'neo.ask.propose', { title: 'Review the next', request: 'Review synthetic/proof#8' });
     assert.equal(other.ok, true, JSON.stringify(other));
-    const plain = await invoke('ask that names no pull request', 'neo.ask.open', { title: 'Tidy the notes', request: 'No reference here' });
+    const plain = await invoke('ask that names no pull request', 'neo.ask.propose', { title: 'Tidy the notes', request: 'No reference here' });
     assert.equal(plain.ok, true, JSON.stringify(plain));
     assert.deepEqual(open(), [first.ask.id, other.ask.id, plain.ask.id]);
     const settled = await invoke('settle the first ask', 'neo.ask.settle', { askId: first.ask.id, status: 'dropped', outcome: 'Synthetic: not needed' });
     assert.equal(settled.ok, true, JSON.stringify(settled));
-    const again = await invoke('ask for the pull request after the first is settled', 'neo.ask.open', { title: 'Deploy the fix', request: 'Deploy synthetic/proof#7 once it is merged' });
+    const again = await invoke('ask for the pull request after the first is settled', 'neo.ask.propose', { title: 'Deploy the fix', request: 'Deploy synthetic/proof#7 once it is merged' });
     assert.equal(again.ok, true, JSON.stringify(again));
     assert.notEqual(again.ask.id, first.ask.id);
 
     const project = new NeoRepository(db).saveProject({ id: 'synthetic-proof', title: 'Synthetic proof', summary: '', context: '' }, 0);
     assert(project);
     db.prepare('INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)').run('repo:synthetic/proof', project.id);
-    const full = await invoke('project ask for the full form', 'neo.ask.open', { projectId: project.id, title: 'Review nine', request: 'Review https://github.com/synthetic/proof/pull/9' });
+    const full = await invoke('project ask for the full form', 'neo.ask.propose', { projectId: project.id, title: 'Review nine', request: 'Review https://github.com/synthetic/proof/pull/9' });
     assert.equal(full.ok, true, JSON.stringify(full));
     for (const request of ['Merge PR #9 once green', 'Deploy proof#9', 'Deploy Proof#9', 'Merge #009', 'Deploy proof#009'])
-      assert.match((await invoke(`project ask for "${request}"`, 'neo.ask.open', { projectId: project.id, title: `Short ${request}`, request })).reason, new RegExp(`^ask_open: .*\\(${full.ask.id}\\) is already open for synthetic/proof#9`));
-    const unbound = await invoke('ask with no project for "#9"', 'neo.ask.open', { title: 'Loose nine', request: 'Merge #9' });
+      assert.match((await invoke(`project ask for "${request}"`, 'neo.ask.propose', { projectId: project.id, title: `Short ${request}`, request })).reason, new RegExp(`^ask_open: .*\\(${full.ask.id}\\) is already open for synthetic/proof#9`));
+    const unbound = await invoke('ask with no project for "#9"', 'neo.ask.propose', { title: 'Loose nine', request: 'Merge #9' });
     assert.equal(unbound.ok, true, JSON.stringify(unbound));
-    const next = await invoke('project ask for "#10"', 'neo.ask.open', { projectId: project.id, title: 'Ten', request: 'Merge #10' });
+    const next = await invoke('project ask for "#10"', 'neo.ask.propose', { projectId: project.id, title: 'Ten', request: 'Merge #10' });
     assert.equal(next.ok, true, JSON.stringify(next));
   } finally { await app.cleanup(); }
   console.log('PASS: the real daemon refuses a second open ask for the same pull request with the first ask’s id, also when it is written proof#N, #N, PR #N or with leading zeros in a project bound to that repository, and opens it once the first is settled.');

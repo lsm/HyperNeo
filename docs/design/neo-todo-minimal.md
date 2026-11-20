@@ -134,7 +134,7 @@ Remove.
 
 > Changed by `neo-asks-the-human.md`: after the retries the todo is still marked failed, but no card opens; Neo is woken with reason `failed`.
 
-**8. One ask per matter.** `neo.ask.open` refuses a second open ask for the same matter
+**8. One ask per matter.** `neo.ask.propose` refuses a second open ask for the same matter
 and returns the existing one. A pack supplies the matter key (the coding pack: the pull
 request or issue); core only compares keys. An open ask with no live todo and no open
 card is settled by the daemon after Neo has had one turn to write its outcome.

@@ -208,7 +208,7 @@ No inference from producer input, trigger, text, time or the latest human turn.
 An answer may refer to a consumed input from an earlier turn.
 
 Use the same `replyTo: string[]` on `neo.question.ask` for **Asked back** and on
-todo creation (`neo.ask.open` todo drafts and any direct todo-create door) for
+todo creation (`neo.ask.propose` todo drafts and any direct todo-create door) for
 **Became todo**. Attach links to the individual question/todo, not every sibling
 sharing an ask. `askId`, `goalId` and parent work links continue to group work;
 they do not imply a reply. Existing human-send `replyTo:{kind,id}` means a quoted

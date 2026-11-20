@@ -13,7 +13,7 @@ const families = {
   neo_work: ['work', ['send', 'find', 'status', 'rename', 'adapters', 'read']],
   neo_todo: ['neo.todo', ['add', 'continue', 'edit', 'remove', 'hold', 'done']],
   neo_publish: ['neo.publication', ['publish']],
-  neo_ask: ['neo.ask', ['read', 'settle', 'open', 'topic', 'search', 'outcome']],
+  neo_ask: ['neo.ask', ['read', 'settle', 'propose', 'topic', 'search', 'outcome']],
   neo_question: ['neo.question', ['ask', 'get', 'retire']],
   neo_session: ['neo.session', ['archive']],
   neo_speech: ['neo.speech', ['say']],

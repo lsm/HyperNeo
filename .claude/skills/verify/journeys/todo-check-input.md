@@ -19,7 +19,7 @@ named result file lets the normal completion operation mark it done. The same
 check edit includes PR URLs unsupported by the new check: these must be recorded
 without dropping the requested check or its derived sentence.
 
-The shared draft schema also covers todos supplied to neo.ask.open. Focused
+The shared draft schema also covers todos supplied to neo.ask.propose. Focused
 contracts cover missing/null checks, unsupported kinds, removed input fields,
 legacy rows, URL edits and current completion-check revalidation. This proof
 covers agent/RPC receipts and persisted state; it does not verify visual layout.

@@ -180,7 +180,7 @@ test('Neo cannot turn desktop control on when it adds or opens a todo', async ()
   expect(
     await invokeOperation(
       registry,
-      'neo.ask.open',
+      'neo.ask.propose',
       { title: 'Errand', request: 'Errand', todos: [draft] },
       neo
     )
@@ -239,7 +239,7 @@ test('desktop refusal leaves the entire ask.open todo batch unwritten', async ()
   };
   const result = await invokeOperation(
     neoOperations(),
-    'neo.ask.open',
+    'neo.ask.propose',
     { title: 'Errands', request: 'Errands', todos: [plain, draft] },
     neo
   );
@@ -257,7 +257,7 @@ test('a worker cannot use Neo’s desktop preference to opt a todo in', async ()
     VALUES ('core', 'global', '', 'desktopControl', 'true', 'human', 1)`).run();
   const outcome = await invokeOperation(
     neoOperations(),
-    'neo.ask.open',
+    'neo.ask.propose',
     { title: 'Errands', request: 'Errands', todos: [draft] },
     { ...neo, role: 'workflow_worker' }
   );

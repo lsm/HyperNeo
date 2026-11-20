@@ -186,7 +186,7 @@ describe('neo.todo.add repo', () => {
   });
 });
 
-describe('neo.ask.open repo', () => {
+describe('neo.ask.propose repo', () => {
   test.each(['send', 'bind'] as const)(
     'resolves repository remotes before accepting a %s target',
     async (verb) => {
@@ -217,7 +217,7 @@ describe('neo.ask.open repo', () => {
         () => null,
         undefined,
         { gateway: gatewayFor(db), changed: () => {} }
-      ).find((op) => op.name === 'neo.ask.open')!;
+      ).find((op) => op.name === 'neo.ask.propose')!;
       try {
         const input = open.inputSchema.parse({
           title: 'Repository worker',
@@ -272,7 +272,7 @@ describe('neo.ask.open repo', () => {
       () => null,
       undefined,
       { gateway: gatewayFor(db), changed: () => {} }
-    ).find((op) => op.name === 'neo.ask.open')!;
+    ).find((op) => op.name === 'neo.ask.propose')!;
     const receipt = (await open.execute(
       open.inputSchema.parse({
         title: 'Fix login',
@@ -337,7 +337,7 @@ describe('repository steps on one card', () => {
         undefined,
         { gateway: gatewayFor(db), changed: () => {} }
       ),
-      'neo.ask.open'
+      'neo.ask.propose'
     );
     const open = <T extends { title: string }>(input: T) => {
       historicalAsk(store, 'neo', input.title);

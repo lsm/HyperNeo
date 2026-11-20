@@ -53,7 +53,7 @@ try {
     new NeoRepository(db).reserveBinding({ sessionId: sender, kind: 'neo', projectId: null });
     const bound = { verb: 'bind', ref };
     seedHistoricalAsk(store, sender, { title: 'Synthetic prerequisites', request: 'Finish A before J and X before Y' });
-    const opened = await invoke('neo.ask.open', { title: 'Synthetic prerequisites', request: 'Finish A before J and X before Y', todos: [{ title: 'A', check, after: [], target: bound }, { title: 'J', check, after: [0] }, { title: 'X', check, after: [], target: bound }] });
+    const opened = await invoke('neo.ask.propose', { title: 'Synthetic prerequisites', request: 'Finish A before J and X before Y', todos: [{ title: 'A', check, after: [], target: bound }, { title: 'J', check, after: [0] }, { title: 'X', check, after: [], target: bound }] });
     assert.equal(opened.ok, true, JSON.stringify(opened));
     const [a, j, x] = opened.todos.map((todo: { id: string }) => todo.id);
     const askId = opened.todos[0].askId;

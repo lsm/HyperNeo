@@ -226,7 +226,7 @@ try {
       return id;
     };
     seedHistoricalAsk(store, root, { title: 'Chain', request: 'Run the plan in order.' });
-    const opened = await call('neo.ask.open', { title: 'Chain', request: 'Run the plan in order.', todos: [
+    const opened = await call('neo.ask.propose', { title: 'Chain', request: 'Run the plan in order.', todos: [
       { ...step('chain-1'), after: [] },
       { ...step('chain-2', 'restart'), after: [0] },
       { ...step('chain-3', 'blocked'), after: [1] },

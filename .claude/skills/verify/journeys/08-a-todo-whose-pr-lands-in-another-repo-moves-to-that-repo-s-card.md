@@ -8,7 +8,7 @@
    until explicitly settled. Its recorded repo stays as seeded during this slice.
 
    The metadata-only MCP variant runs through `ask-bookkeeping-actions.ts` using
-   SKILL.md's proof wrapper. A two-repository `neo.ask.open` must return one open
+   SKILL.md's proof wrapper. A two-repository `neo.ask.propose` must return one open
    ask with both todos. Its public reader must preserve that result after database
    reopen, while historical child cards remain readable as independent cards.
 

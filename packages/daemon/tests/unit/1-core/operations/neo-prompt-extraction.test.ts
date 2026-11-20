@@ -63,7 +63,7 @@ const extractedToolDescriptions = {
   ],
   'ask-entries.ts': ['neo.ask.doneTodos', 'neo.ask.read'],
   'ask-record-operations.ts': [
-    'neo.ask.open',
+    'neo.ask.propose',
     'neo.ask.outcome',
     'neo.ask.topic',
     'neo.ask.settle',

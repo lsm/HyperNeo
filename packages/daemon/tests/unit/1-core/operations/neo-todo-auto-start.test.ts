@@ -101,7 +101,7 @@ function setup(
     const op = operations.find((candidate) => candidate.name === name)!;
     const draft = input as { title?: string; request?: string; todos?: unknown[] };
     if (
-      name === 'neo.ask.open' &&
+      name === 'neo.ask.propose' &&
       draft.todos?.length &&
       draft.title &&
       draft.request &&
@@ -161,7 +161,7 @@ describe('todo automatic start', () => {
   test('an added chain starts step by step with no Start card', async () => {
     const { db, store, invoke, step, runner, sent, work } = setup();
     try {
-      const opened = await invoke('neo.ask.open', {
+      const opened = await invoke('neo.ask.propose', {
         title: 'Chain',
         request: 'A, then B, then C.',
         todos: [
@@ -191,7 +191,7 @@ describe('todo automatic start', () => {
   test('a todo added to a running ask starts with no Start card', async () => {
     const { db, store, invoke, step, sent, work } = setup();
     try {
-      const opened = await invoke('neo.ask.open', {
+      const opened = await invoke('neo.ask.propose', {
         title: 'Running',
         request: 'A now, B later.',
         todos: [{ ...step('A', []), ...work }],
@@ -214,7 +214,7 @@ describe('todo automatic start', () => {
   test('closing an unrelated card leaves a held todo held', async () => {
     const { db, store, invoke, step, runner, sent, work, reply } = setup();
     try {
-      const opened = await invoke('neo.ask.open', {
+      const opened = await invoke('neo.ask.propose', {
         title: 'Held',
         request: 'B waits for the human.',
         todos: [step('X', []), { ...step('B', [0]), ...work }],
@@ -238,7 +238,7 @@ describe('todo automatic start', () => {
   test('closing an unrelated card leaves an unapproved todo held', async () => {
     const { db, store, invoke, step, runner, sent, work, reply, seedUnapproved } = setup();
     try {
-      const opened = await invoke('neo.ask.open', {
+      const opened = await invoke('neo.ask.propose', {
         title: 'Unapproved',
         request: 'B waits for approval.',
         todos: [step('X', []), { ...step('B', [0]), ...work }],
@@ -260,7 +260,7 @@ describe('todo automatic start', () => {
   test('every start path refuses an unapproved todo', async () => {
     const { db, store, invoke, step, runner, sent, work, seedUnapproved } = setup();
     try {
-      const opened = await invoke('neo.ask.open', {
+      const opened = await invoke('neo.ask.propose', {
         title: 'Gate',
         request: 'B waits for approval.',
         todos: [step('X', []), { ...step('B', [0]), ...work }],
@@ -282,7 +282,7 @@ describe('todo automatic start', () => {
   test('an open question on the parent ask holds a child step', async () => {
     const { db, store, invoke, step, runner, sent, work, reply } = setup();
     try {
-      const opened = await invoke('neo.ask.open', {
+      const opened = await invoke('neo.ask.propose', {
         title: 'Split',
         request: 'A here, B elsewhere.',
         todos: [step('A', []), { ...step('B', [0]), ...work }],
@@ -322,7 +322,7 @@ describe('todo automatic start', () => {
     });
     let removing: Promise<unknown> | undefined;
     try {
-      const opened = await invoke('neo.ask.open', {
+      const opened = await invoke('neo.ask.propose', {
         title: 'Limit',
         request: 'One at a time.',
         todos: [

@@ -94,7 +94,7 @@ function setup(repository: string | null, seedPeer = true) {
     () => null,
     async (todos) => [...todos],
     { gateway: gatewayFor(db), changed: () => {} }
-  ).find((op) => op.name === 'neo.ask.open')!;
+  ).find((op) => op.name === 'neo.ask.propose')!;
   return {
     db,
     store,
@@ -169,7 +169,7 @@ describe('neo.todo.add evidence paths', () => {
     expect((await add({ path: join(getDataDir(), 'work', 'proof.md') })).ok).toBe(false);
   });
 
-  test('neo.ask.open refuses a misplaced path before recording anything', async () => {
+  test('neo.ask.propose refuses a misplaced path before recording anything', async () => {
     const { db, open } = setup(null);
     const evidence = (params: Record<string, unknown>) => ({
       pack: 'core',
