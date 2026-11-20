@@ -429,6 +429,20 @@ describe('VoiceStream against a stub Deepgram server', () => {
     }
   });
 
+  test('an empty configured live part falls back to batch even in streaming mode', async () => {
+    for (const endpoint of ['', '   ']) {
+      const { via, stream } = await start({
+        mode: 'streaming',
+        streamEndpoint: 'wss://old.example.test/listen',
+        live: { provider: 'openai-realtime', endpoint },
+      });
+      expect(via).toBe('batch');
+      expect(connections).toHaveLength(0);
+      stream.write(new Uint8Array([1, 0, 2, 0]));
+      expect(await stream.stop()).toEqual({ text: 'batch text', via: 'batch' });
+    }
+  });
+
   test('a start that times out aborts its late relay and retires it', async () => {
     const created: { posted: string[]; closed: number }[] = [];
     let release: (value: null) => void = () => {};
