@@ -71,14 +71,21 @@ export async function requestCodexDesktopCompaction(
           return 'no_owner';
         }
         if (!(await idle())) return 'busy';
-        await client
+        const detail = await client
           .call(
             'thread-follower-compact-thread',
             { conversationId: threadId },
             1,
             owner.handledByClientId
           )
-          .catch(() => undefined);
+          .then(
+            (response) =>
+              response.resultType === 'success'
+                ? undefined
+                : (response.error ?? 'Desktop returned no acknowledgment.'),
+            (error: unknown) => String(error)
+          );
+        if (detail) log.warn('Codex Desktop compaction request unconfirmed', { threadId, detail });
         return 'await_rollout';
       },
       Date.now() + TIMEOUT_MS

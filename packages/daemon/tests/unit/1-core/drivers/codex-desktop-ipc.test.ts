@@ -480,9 +480,13 @@ describe('withCodexDesktopIpc', () => {
         );
     }
 
-    test.each([true, false])(
-      'waits for Desktop compaction before delivering input (ack: %s)',
-      async (ack) => {
+    test.each([
+      { ack: true, startedId: 'compact', finishedId: 'compact' },
+      { ack: false, startedId: 'compact', finishedId: undefined },
+      { ack: true, startedId: undefined, finishedId: undefined },
+    ])(
+      'waits for Desktop compaction before delivering input ($ack, $startedId, $finishedId)',
+      async ({ ack, startedId, finishedId }) => {
         const accepted = Promise.withResolvers<void>();
         const f = await fixture((message, socket, send) => {
           const reply = (result: object) =>
@@ -509,7 +513,7 @@ describe('withCodexDesktopIpc', () => {
         const ref = { adapter: driver.id, id: 'one' };
         const append = (entry: object) =>
           appendFileSync(join(directory, 'rollout.jsonl'), JSON.stringify(entry) + '\n');
-        const turn = (type: string, id: string) =>
+        const turn = (type: string, id?: string) =>
           append({ type: 'event_msg', payload: { type, turn_id: id } });
         turn('task_started', 'previous');
         append({ type: 'compacted', payload: {} });
@@ -520,10 +524,11 @@ describe('withCodexDesktopIpc', () => {
         };
         const compacting = driver.compact!(ref, context);
         await accepted.promise;
-        turn('task_started', 'compact');
+        turn('task_started', startedId);
         append({ type: 'compacted', payload: {} });
         expect(await driver.status!(ref)).toMatchObject({ ok: true, value: { status: 'running' } });
         expect(await driver.compact!(ref, context)).toMatchObject({ ok: false, reason: 'busy' });
+        if (startedId) turn('task_complete', 'other');
         const beforeDelivery = f.seen.length;
         const deliveries = [
           driver.send!(ref, 'send', context),
@@ -532,7 +537,7 @@ describe('withCodexDesktopIpc', () => {
         ];
         await new Promise((resolve) => setTimeout(resolve, 50));
         expect(f.seen).toHaveLength(beforeDelivery);
-        turn('task_complete', 'compact');
+        turn('task_complete', finishedId);
         expect(await compacting).toEqual({ ok: true, value: { compacted: true } });
         const [sent, steered, queued] = await Promise.all(deliveries);
         expect(sent.ok).toBe(true);

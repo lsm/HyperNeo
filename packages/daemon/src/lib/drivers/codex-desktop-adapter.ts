@@ -1422,26 +1422,20 @@ const runCodexTurns = (superpipe({})('codex-turns') as PipelineAPI)
 ) => Promise<Result<{ turns: WorkTurnFact[] }>>;
 
 function completedDesktopCompaction(lines: readonly string[]): boolean {
-  let turnId: unknown;
-  let persisted = false;
+  let turn: { id?: string; persisted: boolean } | undefined;
   for (const line of lines) {
     const entry = parseLine(line);
     const { type, turn_id, error } = entry?.payload ?? {};
-    if (entry?.type === 'compacted' && typeof turnId === 'string') persisted = true;
+    if (entry?.type === 'compacted' && turn) turn.persisted = true;
     if (entry?.type !== 'event_msg') continue;
+    const id = typeof turn_id === 'string' && turn_id ? turn_id : undefined;
     if (type === 'task_started') {
-      turnId = turn_id;
-      persisted = false;
+      turn = { id, persisted: false };
+      continue;
     }
-    if (type === 'task_complete' && turn_id === turnId) {
-      if (persisted && !error) return true;
-      turnId = undefined;
-      persisted = false;
-    }
-    if (type === 'turn_aborted' && turn_id === turnId) {
-      turnId = undefined;
-      persisted = false;
-    }
+    if (!turn || (turn.id && id && turn.id !== id)) continue;
+    if (type === 'task_complete' && turn.persisted && !error) return true;
+    if (type === 'task_complete' || type === 'turn_aborted') turn = undefined;
   }
   return false;
 }
