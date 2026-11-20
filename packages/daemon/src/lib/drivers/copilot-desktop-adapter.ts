@@ -110,6 +110,7 @@ export function createCopilotDesktopAdapter(
       queue: DESKTOP_CONTROL,
       withdraw: DESKTOP_CONTROL,
       stop: DESKTOP_CONTROL,
+      compact: DESKTOP_CONTROL,
       rename: DESKTOP_CONTROL,
       archive: DESKTOP_CONTROL,
     },

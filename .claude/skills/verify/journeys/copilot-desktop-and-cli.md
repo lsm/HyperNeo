@@ -50,5 +50,5 @@ button is visible. The session should return to Idle. On v1.4.3 the local test
 transcript retained both replies and an abort event for the interrupted turn.
 
 The CLI also exposes start, send, queue, withdraw, stop, rename, and archive
-for daemon-owned sessions. Strict same-turn steering and driver compaction
-are unsupported.
+for daemon-owned sessions. Neo can compact an idle owned CLI worker kept for
+reuse. Strict same-turn steering remains unsupported.

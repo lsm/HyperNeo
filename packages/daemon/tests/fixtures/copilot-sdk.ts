@@ -422,6 +422,13 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
         process.argv.includes('--delayed-abort') ? 2250 : 15
       );
       break;
+    case 'session.history.compact':
+      reply(
+        existsSync(join(process.cwd(), 'refuse-compaction'))
+          ? { success: false, tokensRemoved: 0, messagesRemoved: 0 }
+          : { success: true, tokensRemoved: 512, messagesRemoved: 3 }
+      );
+      break;
     case 'ping':
       if (existsSync(join(process.cwd(), 'block-ping'))) break;
       if (process.argv.includes('--crash-on-ping')) process.exit(1);
