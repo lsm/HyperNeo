@@ -142,12 +142,33 @@ function registrationKey(command: ImportRef, sourceOf: SourceOf) {
     : undefined;
 }
 
+function importsMap(statement: ts.ImportDeclaration): boolean {
+  const clause = statement.importClause;
+  const bindings = clause?.namedBindings;
+  return (
+    clause?.name?.text === 'Map' ||
+    (bindings !== undefined &&
+      (ts.isNamespaceImport(bindings)
+        ? bindings.name.text === 'Map'
+        : bindings.elements.some((element) => element.name.text === 'Map')))
+  );
+}
+
 export function registeredRepositoryMethod(command: ImportRef, method: string, sourceOf: SourceOf) {
   const file = `${gatewayDirectory}/db-ops.ts`;
   const registry = parse(sourceOf, file);
   const source = parse(sourceOf, command.file);
   if (!registry || !source) return undefined;
-  const registrations = isRegistrationList(namedConstant(registry, 'DB_OPS'));
+  const table = namedConstant(registry, 'DB_OPS');
+  const declaration = table?.parent.parent.parent;
+  if (
+    !registry.statements.every(
+      (statement) =>
+        statement === declaration || (ts.isImportDeclaration(statement) && !importsMap(statement))
+    )
+  )
+    return undefined;
+  const registrations = isRegistrationList(table);
   if (!registrations) return undefined;
   const imports = namedImports(file, registry);
   const registered = imports.filter(
@@ -184,6 +205,6 @@ export function registeredRepositoryMethod(command: ImportRef, method: string, s
   const literals = methods.elements.filter(ts.isStringLiteral);
   return literals.length === methods.elements.length &&
     literals.filter((element) => element.text === method).length === 1
-    ? repository.text
+    ? { name: repository.text, registrationOffset: repository.getStart(source) }
     : undefined;
 }

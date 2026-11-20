@@ -1,4 +1,3 @@
-import { posix } from 'node:path';
 import ts from 'typescript';
 import {
   dbGatewayFile,
@@ -56,7 +55,11 @@ export function createLocalPipelineResolver(
   sourceOf?: (file: string) => string | undefined
 ): ((operationName: string) => LocalPipelineResolution) & {
   exportedFactory(name: string, arity: number): LocalPipelineResolution;
-  repositoryMethod(repository: string, method: string): LocalPipelineResolution;
+  repositoryMethod(
+    repository: string,
+    method: string,
+    registrationOffset: number
+  ): LocalPipelineResolution;
   exportedRunner(name: string): LocalPipelineResolution;
 } {
   const unwrap = unwrapPipelineExpression;
@@ -368,8 +371,9 @@ export function createLocalPipelineResolver(
     const source = repository ? sourceOf(target.file) : undefined;
     if (!repository || source === undefined) return unknown;
     return createLocalPipelineResolver(source, target.file, true, sourceOf).repositoryMethod(
-      repository,
-      method.text
+      repository.name,
+      method.text,
+      repository.registrationOffset
     );
   }
 
@@ -401,22 +405,9 @@ export function createLocalPipelineResolver(
       !ts.isIdentifier(expression.expression)
     )
       return unknown;
-    const callee = expression.expression;
-    const declarations = checker.getSymbolAtLocation(callee)?.declarations;
-    const declaration = declarations?.length === 1 ? declarations[0] : undefined;
-    if (!declaration || !ts.isImportSpecifier(declaration) || declaration.isTypeOnly)
-      return unknown;
-    const imported = importDeclaration(callee);
-    if (
-      !imported ||
-      imported.importClause?.isTypeOnly ||
-      !ts.isStringLiteral(imported.moduleSpecifier)
-    )
-      return unknown;
-    const specifier = imported.moduleSpecifier.text;
-    if (!/^\.\.?\/[^\\?#]+\.tsx?$/.test(specifier)) return unknown;
-    const target = posix.normalize(posix.join(posix.dirname(fileName), specifier));
-    if (target.startsWith('../') || target.startsWith('/')) return unknown;
+    const ref = importedReference(expression.expression);
+    if (!ref || ref.file.startsWith('../') || ref.file.startsWith('/')) return unknown;
+    const target = ref.file;
     let resolver = importedFiles.get(target);
     if (!resolver) {
       const text = sourceOf(target);
@@ -424,10 +415,7 @@ export function createLocalPipelineResolver(
       resolver = createLocalPipelineResolver(text, target, true);
       importedFiles.set(target, resolver);
     }
-    return resolver.exportedFactory(
-      (declaration.propertyName ?? declaration.name).text,
-      expression.arguments.length
-    );
+    return resolver.exportedFactory(ref.name, expression.arguments.length);
   }
 
   const visit = (node: ts.Node) => {
@@ -518,13 +506,25 @@ export function createLocalPipelineResolver(
       : unknown;
   }
 
-  function repositoryMethod(repository: string, method: string): LocalPipelineResolution {
+  function repositoryMethod(
+    repository: string,
+    method: string,
+    registrationOffset: number
+  ): LocalPipelineResolution {
     const classes = parsed.statements.filter(
       (node): node is ts.ClassDeclaration =>
         ts.isClassDeclaration(node) && node.name?.text === repository
     );
     if (classes.length !== 1) return unknown;
     const [declaration] = classes;
+    if (ts.getDecorators(declaration)?.length || declaration.heritageClauses?.length)
+      return unknown;
+    function usesClass(node: ts.Node): boolean {
+      if (ts.isIdentifier(node) && node.text === repository)
+        return node !== declaration.name && node.getStart(parsed) !== registrationOffset;
+      return ts.forEachChild(node, (child) => usesClass(child) || undefined) === true;
+    }
+    if (usesClass(parsed)) return unknown;
     if (
       declaration.members.some(
         (member) =>
@@ -533,10 +533,7 @@ export function createLocalPipelineResolver(
       )
     )
       return unknown;
-    if (
-      declaration.heritageClauses?.length ||
-      declaration.members.some((member) => member.name && ts.isComputedPropertyName(member.name))
-    )
+    if (declaration.members.some((member) => member.name && ts.isComputedPropertyName(member.name)))
       return unknown;
     const candidates = declaration.members.filter(
       (member) =>
@@ -549,6 +546,13 @@ export function createLocalPipelineResolver(
     if (
       !ts.isMethodDeclaration(candidate) ||
       candidate.asteriskToken ||
+      ts.getDecorators(candidate)?.length ||
+      candidate.parameters.some(
+        (parameter) =>
+          parameter.initializer ||
+          !ts.isIdentifier(parameter.name) ||
+          ts.getDecorators(parameter)?.length
+      ) ||
       candidate.modifiers?.some(
         (m) => m.kind === ts.SyntaxKind.StaticKeyword || m.kind === ts.SyntaxKind.AsyncKeyword
       ) ||
@@ -564,8 +568,6 @@ export function createLocalPipelineResolver(
       (returned.flags & ts.NodeFlags.OptionalChain) !== 0
     )
       return unknown;
-    const local = callable(returned.expression, new Set());
-    if (local.kind === 'named') return local;
     const ref = importedReference(returned.expression);
     const source = ref ? sourceOf?.(ref.file) : undefined;
     if (!ref || source === undefined) return unknown;
@@ -582,7 +584,9 @@ export function createLocalPipelineResolver(
       .filter((declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === name);
     if (statements.length !== 1) return unknown;
     const [declaration] = statements;
-    return ts.isIdentifier(declaration.name) ? callable(declaration.name, new Set()) : unknown;
+    return (declaration.parent.flags & ts.NodeFlags.Const) !== 0 && declaration.initializer
+      ? pipeline(declaration.initializer)
+      : unknown;
   }
 
   return Object.assign(

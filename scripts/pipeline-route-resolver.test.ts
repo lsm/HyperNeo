@@ -249,6 +249,11 @@ const workerSource = new Map([
     export const query = defineRepositoryOp('domain.query', 'read', Query, ['read']);`,
   ],
   [
+    `${dbDirectory}/other.ts`,
+    `import { defineDbOp } from './db-op.ts';
+    export const other = defineDbOp({ name: 'domain.query', mode: 'read', run: () => 0 });`,
+  ],
+  [
     `${dbDirectory}/query.ts`,
     `import superpipe from 'superpipe';
     export const runQuery = superpipe({})('demo.read').input('input').end('input');`,
@@ -277,8 +282,26 @@ test.each([
     [
       'db-ops.ts',
       'export const DB_OPS = new Map([query]',
-      "import { query as alias } from './read.ts'; export const DB_OPS = new Map([query, alias]",
+      "import { other } from './other.ts'; export const DB_OPS = new Map([query, other]",
     ],
+    'unknown',
+  ],
+  [
+    'registry mutation',
+    'db(database).call(query, "read", input)',
+    ['db-ops.ts', '[op.name, op]));', '[op.name, op])); DB_OPS.clear();'],
+    'unknown',
+  ],
+  [
+    'replaced method',
+    'db(database).call(query, "read", input)',
+    ['read.ts', 'export const query', 'Query.prototype.read = () => null; export const query'],
+    'unknown',
+  ],
+  [
+    'decorated method',
+    'db(database).call(query, "read", input)',
+    ['read.ts', 'read(input)', '@replace read(input)'],
     'unknown',
   ],
   [
