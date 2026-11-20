@@ -7,6 +7,7 @@ import { createCodingRetryMergeOperation } from './retry-merge-operation.ts';
 import { createCodingDaemonMergeSweep } from './daemon-merge-sweep.ts';
 import { CODING_ATTENTION_KINDS, type CodingAttend, scanCodingIdleOpenPrs } from './attention.ts';
 import { checkCodingPrApproved } from './pr-approved.ts';
+import { deliverCodingReviewAfterApproval } from './review-after-approval.ts';
 import { checkCodingDeployed } from './deployed.ts';
 import { createCodingLinkExists } from './link-exists.ts';
 import { withCodingMergeContext } from './merge-context.ts';
@@ -45,7 +46,7 @@ import { readCodingDaemonMergeFacts } from './daemon-merge-facts.ts';
 import { decideCodingDaemonMerge } from './daemon-merge-gates.ts';
 import { prepareCodingMerge } from './merge-gates.ts';
 import { deliverCodingHealth } from './health-delivery.ts';
-import { CODING_STAGE_PREFERENCES } from './stage-preferences.ts';
+import { CODING_REVIEW_AFTER_PREFERENCE, CODING_STAGE_PREFERENCES } from './stage-preferences.ts';
 import { decideCodingSessionTarget } from './session-target.ts';
 import { CODING_WORK_KINDS, type CodingLines } from './stage-lines.ts';
 import { createCodingReviewThreadReader } from './connector-review-thread-reader.ts';
@@ -185,6 +186,7 @@ export function createCodingPack(deps: {
         ask: 'Which repositories should this instance watch?',
       },
       ...CODING_STAGE_PREFERENCES,
+      'review.after': CODING_REVIEW_AFTER_PREFERENCE,
       provenance: {
         label: { en: 'Independent model provenance', 'zh-Hans': '独立模型来源' },
         valueLabels: {
@@ -367,6 +369,7 @@ export function createCodingPack(deps: {
           (fact, marker) => deps.prLedger.write('recordPostedReview', fact.url, marker),
           (host, until) => deps.prLedger.write('recordReviewCommentHold', host, until)
         );
+      await deliverCodingReviewAfterApproval(deps.database(), prSweepDeps.host, attend, now);
       await mergeSweep(now);
       await deliverCodingPrEvents(deps.prEvents, transitions, prSweepDeps);
       await deliverCodingHealth(

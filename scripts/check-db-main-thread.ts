@@ -9,6 +9,7 @@ const workers = new Set([
   'lib/event-loop-watchdog-worker.ts',
   'lib/neo/packs/coding/project-mirror-worker.ts',
   'lib/neo/packs/coding/review-comment-marks-worker.ts',
+  'lib/neo/packs/coding/review-after-worker.ts',
   'lib/neo/packs/coding/review-merge-hold-worker.ts',
   'lib/neo/packs/coding/session-assignments-worker.ts',
   'lib/neo/packs/coding/unowned-claims-worker.ts',

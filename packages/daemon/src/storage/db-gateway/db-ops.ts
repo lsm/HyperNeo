@@ -96,6 +96,10 @@ import {
   codingHandoffWrites,
 } from '../../lib/neo/packs/coding/review-merge-hold-worker.ts';
 import { codingSweepReads, codingSweepWrites } from '../../lib/neo/packs/coding/pr-sweep.ts';
+import {
+  codingReviewAfterReads,
+  codingReviewAfterWrites,
+} from '../../lib/neo/packs/coding/review-after-worker.ts';
 import { codingTurnPrReads } from '../../lib/neo/packs/coding/turn-prs.ts';
 import { codingTodoPrWrites } from '../../lib/neo/packs/coding/todo-prs.ts';
 import { codingSessionAssignmentReads } from '../../lib/neo/packs/coding/session-assignments-worker.ts';
@@ -330,6 +334,8 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     codingSweepReads,
     codingTurnPrReads,
     codingSweepWrites,
+    codingReviewAfterReads,
+    codingReviewAfterWrites,
     claudeDesktopOutboxWrites,
     recordOperationRefusal,
     recordClaudeInboxRoute,
