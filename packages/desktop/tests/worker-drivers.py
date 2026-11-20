@@ -861,18 +861,20 @@ open(sys.argv[2], 'w').write(reply.decode())
         print(f'self_app={reason}')
 
     def test_dialog_names_only_existing_checks(self):
-        texts = self.call('fixture-dialog')['result']['texts']
+        texts = self.call('fixture-dialog-texts')['result']['texts']
         self.assertEqual(sorted(texts), ['keyboard', 'launch', 'observe', 'other', 'pointer'])
         self.assertIsNone(texts['other'])
         for text in (texts[name] for name in ('observe', 'launch', 'pointer', 'keyboard')):
-            self.assertIn('App: com.apple.finder', text)
+            self.assertIn('App: Finder', text)
             for promise in ('focus', 'idle', 'revoke'):
                 self.assertNotIn(promise, text.lower())
         print('dialog_text=no_focus_idle_revoke unknown_class=refused')
 
     def test_dialog_puts_allow_on_the_right_as_the_default(self):
         buttons = self.call('fixture-dialog-buttons')['result']['buttons']
-        self.assertEqual(buttons, [['Allow', '\r'], ["Don't Allow", '\x1b']])
+        self.assertEqual(buttons, [['Allow Calculator', '\r'], ['Allow all apps', ''], ["Don't Allow", '\x1b']])
+        guarded = self.call('fixture-dialog-buttons', tool='com.apple.Terminal')['result']['buttons']
+        self.assertEqual(guarded, [['Allow Terminal', '\r'], ["Don't Allow", '\x1b']])
         print('dialog_buttons=allow_rightmost_return deny_left_escape')
 
     def test_owner_yes_grants_the_app(self):
@@ -1037,6 +1039,21 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertEqual(other['reason'], 'owner_declined')
         self.assertEqual(self.dialogs(), before + 2)
         print('app_grant=one_dialog pointer_and_keyboard=dispatched')
+
+    def test_allow_all_covers_other_apps_but_system_settings_still_asks(self):
+        before = self.dialogs('mock-allow-all')
+        first = self.dispatch('click', {'pid': finder()}, workDir=str(self.work))['result']
+        self.assertTrue(first['dispatched'], first)
+        self.assertEqual(self.dialogs('mock-deny'), before + 1)
+        dock = int(subprocess.check_output(['/usr/bin/pgrep', '-x', 'Dock']).split()[0])
+        second = self.dispatch('type_text', {'pid': dock}, workDir=str(self.work))['result']
+        self.assertTrue(second['dispatched'], second)
+        self.assertEqual(self.dialogs(), before + 1)
+
+        guarded = self.resolve('launch_app', {'bundle_id': 'com.apple.systempreferences'}, action='resolve')
+        self.assertEqual(guarded['reason'], 'owner_declined')
+        self.assertEqual(self.dialogs(), before + 2)
+        print('wildcard=shared_between_apps system_settings=asks_separately')
 
     def test_owner_decline_is_returned_to_the_original_dispatch(self):
         pid = finder()

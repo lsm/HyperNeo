@@ -14,6 +14,6 @@ core-foundation = "=0.10.1"
 core-graphics = "=0.25.0"
 security-framework = { version = "=3.7.0", features = ["OSX_10_15"] }
 dispatch2 = "=0.3.1"
-objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSString"] }
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSAlert", "NSApplication", "NSButton", "NSControl", "NSResponder", "NSView"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSBundle", "NSString", "NSURL"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSAlert", "NSApplication", "NSButton", "NSControl", "NSImage", "NSResponder", "NSView", "NSWorkspace"] }
 log = "0.4"

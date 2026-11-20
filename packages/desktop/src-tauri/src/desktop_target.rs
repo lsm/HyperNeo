@@ -139,6 +139,19 @@ fn signer(code: *const c_void) -> Result<Signer, &'static str> {
     }
 }
 
+pub(super) fn matches_app(path: &str, bundle_id: &str, requirement: &str) -> bool {
+    let Some(url) = CFURL::from_path(path, true) else {
+        return false;
+    };
+    let Ok(code) = SecStaticCode::from_path(&url, Flags::NONE) else {
+        return false;
+    };
+    let anchor = SecRequirement::from_str(ANCHOR).expect("valid anchor requirement");
+    code.check_validity(Flags::STRICT_VALIDATE, &anchor).is_ok()
+        && signer(code.as_concrete_TypeRef() as _)
+            .is_ok_and(|signer| signer.bundle_id == bundle_id && signer.requirement == requirement)
+}
+
 fn owner(window: u32) -> Option<i32> {
     let owned = copy_window_info(kCGWindowListOptionAll, kCGNullWindowID)?;
     let windows: CFArray<CFDictionary<CFString, CFType>> =
