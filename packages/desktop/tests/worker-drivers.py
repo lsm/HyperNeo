@@ -866,6 +866,7 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertIsNone(texts['other'])
         for text in (texts[name] for name in ('observe', 'launch', 'pointer', 'keyboard')):
             self.assertIn('App: Finder', text)
+            self.assertIn('Bundle ID: com.apple.finder', text)
             for promise in ('focus', 'idle', 'revoke'):
                 self.assertNotIn(promise, text.lower())
         print('dialog_text=no_focus_idle_revoke unknown_class=refused')
@@ -877,7 +878,7 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertEqual(guarded, [['Allow Terminal', '\r'], ["Don't Allow", '\x1b']])
         print('dialog_buttons=allow_rightmost_return deny_left_escape')
 
-    def test_terminal_capable_editors_and_password_managers_require_individual_approval(self):
+    def test_shell_capable_apps_and_password_managers_require_individual_approval(self):
         for bundle in (
             'com.microsoft.VSCode',
             'com.microsoft.VSCodeInsiders',
@@ -885,6 +886,11 @@ open(sys.argv[2], 'w').write(reply.decode())
             'com.todesktop.230313mzl4w4u92',
             'com.jetbrains.intellij',
             'com.apple.dt.Xcode',
+            'com.apple.shortcuts',
+            'com.apple.ScriptEditor2',
+            'com.apple.Automator',
+            'com.sublimetext.4',
+            'org.vim.MacVim',
             'me.proton.pass.catalyst',
             'com.dashlane.dashlanephonefinal',
             'in.sinew.Enpass-Desktop.App',

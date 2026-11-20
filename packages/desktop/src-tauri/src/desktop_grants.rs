@@ -63,6 +63,10 @@ fn allows_wildcard(bundle_id: &str) -> bool {
             | "org.keepassxc.keepassxc"
             | "com.lastpass.lastpass"
             | "com.apple.dt.xcode"
+            | "com.apple.shortcuts"
+            | "com.apple.scripteditor2"
+            | "com.apple.automator"
+            | "org.vim.macvim"
             | "com.microsoft.vscode"
             | "com.microsoft.vscodeinsiders"
             | "com.microsoft.vscodeexploration"
@@ -73,6 +77,7 @@ fn allows_wildcard(bundle_id: &str) -> bool {
         "com.1password.",
         "com.agilebits.",
         "com.jetbrains.",
+        "com.sublimetext.",
         "me.proton.pass",
         "com.dashlane.",
         "in.sinew.enpass",
@@ -177,13 +182,13 @@ fn app_presentation(alert: Option<&NSAlert>, bundle_id: &str, requirement: &str)
         .find(|name| !name.trim().is_empty())
 }
 
-fn dialog_text(app_name: &str, class: &str, wildcard: bool) -> Option<String> {
+fn dialog_text(app_name: &str, bundle_id: &str, class: &str, wildcard: bool) -> Option<String> {
     match class {
         "observe" | "launch" | "pointer" | "keyboard" => (),
         _ => return None,
     }
     let mut text = format!(
-        "A HyperNeo worker asked to open this app, see its windows, click, scroll and type in it.\n\nApp: {app_name}\n\nIf you allow it, HyperNeo workers can do these actions in this app without asking again."
+        "A HyperNeo worker asked to open this app, see its windows, click, scroll and type in it.\n\nBundle ID: {bundle_id}\nApp: {app_name}\n\nIf you allow it, HyperNeo workers can do these actions in this app without asking again."
     );
     if wildcard {
         text.push_str("\n\nAllow all apps extends this permission to other apps. Apps on the built-in exception list, including Terminal, VS Code, Keychain Access, System Settings and Passwords, still ask separately.");
@@ -217,7 +222,7 @@ pub(super) fn dialog_buttons(bundle_id: String) -> Option<Vec<(String, String)>>
         let alert = NSAlert::new(mtm);
         let name = fixture_app_name(&bundle_id);
         let wildcard = allows_wildcard(&bundle_id);
-        let message = dialog_text(&name, "launch", wildcard)?;
+        let message = dialog_text(&name, &bundle_id, "launch", wildcard)?;
         prepare_alert(&alert, &name, &message, wildcard);
         Some(
             alert
@@ -237,10 +242,11 @@ pub(super) fn dialog_buttons(bundle_id: String) -> Option<Vec<(String, String)>>
 #[cfg(test)]
 pub(super) fn dialog_texts() -> BTreeMap<&'static str, Option<String>> {
     dispatch2::run_on_main(|_| {
-        let finder = fixture_app_name("com.apple.finder");
+        let bundle_id = "com.apple.finder";
+        let finder = fixture_app_name(bundle_id);
         ["observe", "launch", "pointer", "keyboard", "other"]
             .into_iter()
-            .map(|class| (class, dialog_text(&finder, class, true)))
+            .map(|class| (class, dialog_text(&finder, bundle_id, class, true)))
             .collect()
     })
 }
@@ -294,7 +300,7 @@ fn owner_allows(bundle_id: &str, requirement: &str, class: &str) -> Option<Owner
             let alert = NSAlert::new(mtm);
             let name = app_presentation(Some(&alert), bundle_id, requirement)
                 .unwrap_or_else(|| bundle_id.to_owned());
-            let message = dialog_text(&name, class, wildcard)?;
+            let message = dialog_text(&name, bundle_id, class, wildcard)?;
             prepare_alert(&alert, &name, &message, wildcard);
             #[allow(deprecated)]
             NSApplication::sharedApplication(mtm).activateIgnoringOtherApps(true);
