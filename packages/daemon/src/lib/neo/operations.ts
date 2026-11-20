@@ -798,15 +798,17 @@ export function createNeoOperations(
       (change) => service.preferenceChanged(change)
     ),
     ...wireNeoTodoMutations(
-      createNeoTodoOperations(
-        service.todos,
-        service.todoSessions,
-        todoControls,
-        () => service.installedPacks(),
-        createArtifactRefReader(() => service.db.getDatabase()),
-        (todos) => service.todoWorkers(todos),
-        inputReads
-      ),
+      (writeHold) =>
+        createNeoTodoOperations(
+          service.todos,
+          service.todoSessions,
+          todoControls,
+          () => service.installedPacks(),
+          createArtifactRefReader(() => service.db.getDatabase()),
+          (todos) => service.todoWorkers(todos),
+          inputReads,
+          writeHold
+        ),
       {
         gateway: mutationGateway,
         write: mutationGateway.run.bind(mutationGateway),
