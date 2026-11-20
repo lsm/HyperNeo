@@ -68,24 +68,15 @@ export function createCopilotFind(
       ),
     ]);
     if (owned.status === 'rejected') throw owned.reason;
-    if (
-      external.status === 'rejected' &&
-      !owned.value.length &&
-      !(app.status === 'fulfilled' && app.value.length)
-    )
-      throw external.reason;
+    const failures: { source: string; reason: unknown }[] = [];
+    if (external.status === 'rejected')
+      failures.push({ source: 'External Copilot', reason: external.reason });
+    if (app.status === 'rejected') failures.push({ source: 'Copilot Desktop', reason: app.reason });
     return {
       external: external.status === 'fulfilled' ? external.value : [],
       desktop: app.status === 'fulfilled' ? app.value : [],
-      desktopFailure: app.status === 'rejected' ? { reason: app.reason } : undefined,
-      owned:
-        external.status === 'fulfilled'
-          ? owned.value
-          : owned.value.map((work) => ({
-              ...work,
-              watchHint:
-                `${work.watchHint ?? ''} External Copilot discovery unavailable; this list contains owned work only.`.trim(),
-            })),
+      owned: owned.value,
+      failures,
     };
   };
   const combine = (loaded: Awaited<ReturnType<typeof load>>, query: FindQuery) => {
@@ -127,10 +118,11 @@ export function createCopilotFind(
         return work.length || (placeMatches && !text) ? [{ ...group, work }] : [];
       }
     );
-    if (!loaded.desktopFailure) return merged;
-    const { reason } = loaded.desktopFailure;
-    if (!merged.some((group) => group.work.length)) throw reason;
-    const hint = `Copilot Desktop discovery unavailable: ${errorMessage(reason)}`;
+    if (!loaded.failures.length) return merged;
+    if (!merged.some((group) => group.work.length)) throw loaded.failures[0].reason;
+    const hint = loaded.failures
+      .map(({ source, reason }) => `${source} discovery unavailable: ${errorMessage(reason)}`)
+      .join(' ');
     return merged.map((group) => ({
       ...group,
       work: group.work.map((item) => ({

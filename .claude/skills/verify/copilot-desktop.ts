@@ -17,7 +17,7 @@ assert(run && Number.isInteger(port) && port > 0 && port !== 8399);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
-assert(['desktop', 'cli', 'both'].includes(mode));
+assert(['desktop', 'cli', 'both', 'cli-failure'].includes(mode));
 const home = join(run, 'home');
 const cli = mode !== 'desktop';
 const desktop = mode !== 'cli';
@@ -25,6 +25,7 @@ writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
 if (cli) {
   prepareCopilotFixture(run);
   process.env.COPILOT_CLI_PATH = join(run, 'bin/copilot');
+  if (mode === 'cli-failure') writeFileSync(join(home, 'copilot-list-failure'), '');
 }
 const state = join(home, '.copilot/data.db');
 if (desktop) {
@@ -109,6 +110,13 @@ try {
   assert.equal(matches.length, 1);
   const [session] = matches;
   assert.equal(session.title, desktop ? 'Desktop title' : 'Synthetic sum task');
+  if (mode === 'cli-failure') {
+    assert.match(session.watchHint ?? '', /External Copilot discovery unavailable/);
+    const missed = await rpc<z.infer<typeof FindWorkResultSchema>>('work.find', {
+      ...query, text: 'No matching session',
+    });
+    assert.match(missed.unreachable[0]?.reason ?? '', /Synthetic listing failure/);
+  }
   if (desktop) {
     assert.equal(session.link, 'ghapp://sessions/desktop-workspace');
     const status = await rpc<Result<WorkDetail>>('work.status', { ref: session.ref });
@@ -197,7 +205,7 @@ try {
     assert(turns.ok && turns.value.turns.some((turn) => turn.ended === 'stopped'));
     if (desktop) assert.deepEqual(readFileSync(state), before);
   }
-  if (desktop) {
+  if (desktop && mode !== 'cli-failure') {
     const db = new Database(state);
     try {
       if (cli) {
