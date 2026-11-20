@@ -2,7 +2,7 @@
 
 ## 中文摘要
 
-目标：让 system-map 静态分析工具在一秒内解析所有数据库操作路由。当前 255 个路由已命名，8 个不可读，7 个命名错误。PR #11388 试图通过教分析器展开 spread 和求值工厂函数来解决，但 531 行代码改变了 0 个真实路由。本设计选择更简单的方案：改注册表代码本身，让名字和 spread 对静态分析显而易见。具体做法：内联 11 个 `SDK_MESSAGE_TRANSACTIONS` 元素、把 `sdkOp()` 工厂改为直接调用 `defineDbOp` 并传入字面量名字。分析器只需处理字面量，不需要展开或求值。
+目标：让 system-map 静态分析工具解析所有数据库操作路由。当前 255 个路由已命名，8 个不可读，7 个命名错误。PR #11388 试图通过教分析器展开 spread 和求值工厂函数来解决，但 531 行代码改变了 0 个真实路由。本设计选择更简单的方案：改注册表代码本身，让名字和 spread 对静态分析显而易见。具体做法：内联 11 个 `SDK_MESSAGE_TRANSACTIONS` 元素、把 `sdkOp()` 工厂改为直接调用 `defineDbOp` 并传入字面量名字。
 
 ## Problem
 
@@ -14,43 +14,47 @@ The system-map static route tool resolves database-operation routes to their nam
 
 These two patterns block the analyzer from confirming that any export is registered in `DB_OPS`, so all 201 operations stay unknown.
 
-## Scope: all 15 non-named routes
+## Verified route analysis
 
-This design covers the registry fix. The remaining 8 unreadable and 7 misnamed routes need separate work, sequenced after the registry fix:
+I ran the strict verdict report and opened every non-named route. The causes are:
 
-**Registry fix (this design).** Inline the spread, replace the factory. After this, the analyzer can confirm every `defineRepositoryOp` and `defineDbOp` registration in `DB_OPS`.
+**Strict-mode execute limitation (5 routes).** The strict analyzer only follows single-expression or simple two-statement async execute functions. These five routes have multi-statement execute bodies that call a matching pipeline but the analyzer cannot follow the control flow:
 
-**Cross-file tracing (3 routes).** `neo.project.save`, `neo.project.forget`, `neo.publication.read` call `gatewayFor().call()` inside repository class methods. The analyzer needs a one-level cross-file pass: when an operation's `execute` calls `service.repo.someMethod()`, follow into the repository method and look for `gatewayFor().call()`. This is a small extension to #11388's existing `gatewayCall` handler.
+| Route | Pipeline | Same file? |
+|-------|----------|-----------|
+| `neo.ask.doneTodos` | `neo.ask.doneTodos` (ask-entries.ts:355) | Yes |
+| `neo.conversation.read` | `neo.conversation.read` (conversation-read-operation.ts:48) | Yes |
+| `neo.publication.publish` | `neo.publication.publish` (publication-operation.ts:161) | Yes |
+| `neo.todo.done` | `neo.todo.done` (todo-mutation-operation.ts:200) | Yes |
+| `neo.project.forget` | `neo.project.forget` (project-forget-operation.ts:32) | Yes |
 
-**Generic dispatch (2 routes).** `neo.ask.doneTodos` and `neo.todo.done` call `store.read(method)` or `deps.gateway.call(op, method)` where `method` is a variable. The analyzer cannot resolve these without evaluating the generic type parameter. These routes stay unreadable until the call sites are refactored to use literal method names (e.g. `store.read('doneTodoFacts', input.askId)` instead of `store.read(method, ...)`).
+Fix: extend the analyzer to handle `const result = await pipeline(...); return ...` patterns, or simplify the execute to a single expression.
 
-**Opaque callbacks (2 routes).** `neo.publication.publish` and `connections.google.connect` pass callbacks into a runtime object. The pipeline is reachable only through the callback. Refactor the execute functions to call the pipeline directly instead of through a callback.
+**Opaque service callback (1 route).** `connections.google.connect` calls `(await service()).connectPipeline(input)`. The pipeline `connections.google.connect` exists in lifecycle.ts:231 but the analyzer cannot resolve the `service()` indirection. Fix: refactor the execute to import and call the pipeline directly.
 
-**Direct DB access (1 route).** `neo.conversation.read` reads via `db.prepare()` directly, not through the gateway. This route does not go through the DB gateway at all; it is not a DB-operation route in the registry sense. The analyzer should classify it as a direct-DB route, not unreadable.
+**Deep cross-file trace (1 route).** `neo.project.save` calls `service.repo.saveProjectCurrent()` which calls `gatewayFor().call(neoProjectMoveWrites, 'save')` which calls `saveNeoProjectCommand` (the pipeline `neo.project.save` in project-save.ts:30). This needs a multi-level cross-file pass. Fix: extend the analyzer or refactor the execute to call the pipeline directly.
 
-**Misnamed routes (7 routes).** Rename the pipelines to match the operation names:
+**Misnamed routes (7 routes).** Rename the pipelines to match operation names:
 
-| Operation | Current pipeline | New pipeline |
-|-----------|-----------------|--------------|
-| `evolution.scope.owner.set` | `scope-owner-set-pipeline` | `evolution.scope.owner.set` |
-| `goal.owner.set` | `goal-owner-set-pipeline` | `goal.owner.set` |
-| `space.audit.list` | `space-audit-list` | `space.audit.list` |
-| `gmail.search` | `gmail-session-search` | `gmail.search` |
-| `google.accounts` | `google-session-accounts` | `google.accounts` |
-| `work.queue` | `change-queued-work-input` | `work.queue` |
-| `work.withdraw` | `change-queued-work-input` | `work.withdraw` |
+| Operation | Current pipeline |
+|-----------|-----------------|
+| `evolution.scope.owner.set` | `scope-owner-set-pipeline` |
+| `goal.owner.set` | `goal-owner-set-pipeline` |
+| `space.audit.list` | `space-audit-list` |
+| `gmail.search` | `gmail-session-search` |
+| `google.accounts` | `google-session-accounts` |
+| `work.queue` | `change-queued-work-input` |
+| `work.withdraw` | `change-queued-work-input` |
 
-For `work.queue` and `work.withdraw`, duplicate the shared pipeline into two named pipelines. Each is a thin wrapper over the same logic.
-
-**Direct DB ops (11 SDK transactions).** The SDK `defineDbOp` registrations are terminal operations, not pipeline routes. The analyzer confirms they are registered but does not trace them to pipelines. No additional work needed.
+For `work.queue` and `work.withdraw`, extract a factory `buildQueuedInputPipeline(name)` and create two named instances. No logic duplication.
 
 ## Decision
 
 Change the registry code so names and spreads are statically obvious. Do not teach the analyzer to expand spreads or evaluate factories.
 
-**Inline `SDK_MESSAGE_TRANSACTIONS`.** The spread exists because `sdk-message-transactions.ts` exports both individual op constants and the array. Only `db-ops.ts` imports the array. Inline the 11 elements directly into the `DB_OPS` array and delete the exported constant. The individual op exports stay.
+**Inline `SDK_MESSAGE_TRANSACTIONS`.** Only `db-ops.ts` imports the array. Inline the 11 elements directly into the `DB_OPS` array and delete the exported constant. The individual op exports stay.
 
-**Replace `sdkOp()` with direct `defineDbOp` calls.** Each of the 11 ops currently calls `sdkOp('name', fn)`. Change each to call `defineDbOp({ name: 'sdk_messages.name', mode: 'write', run: ... })` directly. The `sdkOp` wrapper does three things: builds the name via template literal, calls `applySdkBodyWriteMode`, and assembles a `Dependencies` object. Extract the dependency assembly into a plain helper `sdkDependencies(db, changes)` that does not build the name. Each op then reads:
+**Replace `sdkOp()` with direct `defineDbOp` calls.** Extract the dependency assembly into a plain helper `sdkDependencies(db, changes)` that does not build the name. Each op then reads:
 
 ```ts
 export const sdkPromptEnsure = defineDbOp({
@@ -69,9 +73,7 @@ Expanding spreads requires the analyzer to follow an import, find the exported a
 
 ## What happens to #11388
 
-Reuse the test fixtures and the `confinedWorkerRegistration` guard. Rework or drop the spread-expansion and factory-evaluation logic. The PR's core value — tracing a `gatewayFor().call()` to a named runner through the registry — is correct once the registry is readable. The merge contract (390 production / 100 test lines) becomes reachable after removing the spread and factory handling.
-
-Extend the analyzer with a one-level cross-file pass for repository method calls (the 3 cross-file routes). Add a `gatewayRun` handler for `gatewayFor().run(op, args)` alongside the existing `gatewayCall` handler. The 11 SDK transactions use `defineDbOp`; the analyzer confirms registration via `registrationKey` without tracing to a pipeline.
+Reuse the test fixtures and the `confinedWorkerRegistration` guard. Rework or drop the spread-expansion and factory-evaluation logic. Extend the analyzer with: (a) multi-statement async execute handling, (b) a one-level cross-file pass for repository method calls, (c) a `gatewayRun` handler for `gatewayFor().run(op, args)`. The 11 SDK transactions use `defineDbOp`; the analyzer confirms registration via `registrationKey` without tracing to a pipeline.
 
 ## Existing test
 
@@ -88,24 +90,24 @@ Extend the analyzer with a one-level cross-file pass for repository method calls
 ## Sequencing
 
 1. **This design:** registry fix (inline spread, replace factory, update test).
-2. **#11388 rework:** drop spread/factory handling, add cross-file pass, add `gatewayRun` handler.
-3. **Route fixes:** refactor generic dispatch call sites, opaque callbacks, direct DB access, rename misnamed pipelines.
+2. **#11388 rework:** drop spread/factory handling, add multi-statement execute, cross-file pass, `gatewayRun` handler.
+3. **Route fixes:** simplify opaque execute functions, rename misnamed pipelines, extract shared pipeline factory.
 4. **Coverage proof:** independent inventory + assertion + timing (below).
 
 Steps 2 and 3 can proceed in parallel after step 1 merges.
 
 ## Test plan
 
-**Independent inventory.** A script greps for `defineOperation(` across `packages/daemon/src/` and `packages/space/src/`, extracts the `name` argument from each call, and writes the names to a file. This inventory is independent of the analyzer.
+**Independent inventory.** A script reads all `packages/*/src/**/*.ts` files (matching the report's scope), finds every `defineOperation(` call, extracts the `name` argument and, for duplicate names, the `inputSchema` hash (same algorithm as `schemaVariant` in pipeline-verdict-report.ts). Writes `file:name:variant` tuples to a file. This inventory is independent of the analyzer.
 
 **Coverage assertion.** Run `bun scripts/pipeline-verdict-report.ts --strict` and assert:
-- Every name in the independent inventory appears in the report.
-- Every route in the report has verdict `named` (zero `unreadable`, zero `misnamed`).
-- The set of report names equals the set of inventory names (no omissions, no additions).
+- Every `file:name:variant` tuple in the inventory appears in the report with verdict `named`.
+- The report contains no routes absent from the inventory.
+- Zero routes with verdict `unreadable` or `misnamed`.
 
-**Timing assertion.** The strict report completes in under 2 seconds on the CI runner. Current baseline: ~1.5 seconds on the author's machine.
+**Timing assertion.** The analysis phase (excluding source I/O) completes in under 1 second. Source reading takes ~870 ms on the reference machine and is I/O bound; total wall time will be higher. Measure on the CI runner and adjust the limit if needed.
 
-**Negative cases.** A fixture with an unregistered `defineDbOp` stays unresolved. A fixture with a `defineRepositoryOp` whose methods array contains a non-literal stays unresolved. A fixture with a spread in the registry stays unresolved.
+**Negative cases.** A fixture with an unregistered `defineDbOp` stays unresolved. A fixture with a `defineRepositoryOp` whose methods array contains a non-literal stays unresolved. A fixture with a spread in the registry stays unresolved. A fixture with a missing schema variant for duplicate names throws.
 
 **Existing test.** The sdk-message-transactions test passes with individual op imports.
 
