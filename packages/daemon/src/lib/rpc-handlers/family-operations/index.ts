@@ -1,3 +1,4 @@
+import { createDesktopAccessOperation } from '../../desktop/access-operation.ts';
 import { createDesktopCallOperation } from '../../desktop/call-operation.ts';
 import { createDesktopControlOperation } from '../../desktop/control-operation.ts';
 import { createDesktopStatusOperation } from '../../desktop/status-operation.ts';
@@ -19,6 +20,7 @@ export function collectFamilyOperations(context: FamilyOperationContext): Operat
     createDesktopCallOperation(context.deps.db.getDatabase(), {
       getSession: (id) => context.deps.db.getSession(id),
     }),
+    createDesktopAccessOperation(),
     createDesktopControlOperation(context.deps.db.getDatabase()),
     createDesktopStatusOperation(context.deps.db.getDatabase()),
     createDesktopStopOperation(),

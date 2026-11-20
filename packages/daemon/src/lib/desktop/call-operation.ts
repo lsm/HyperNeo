@@ -7,7 +7,12 @@ import type { Database } from '../../storage/sqlite-compat.ts';
 import { getDataDir } from '../data-dir.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { DesktopDispatchReply, dispatchDesktopCall } from './host-dispatch.ts';
-import { desktopOptIn, readDesktopTodos, type DesktopTodoRow } from './opt-in.ts';
+import {
+  desktopAllowed,
+  desktopAllowedRow,
+  readDesktopTodos,
+  type DesktopTodoRow,
+} from './opt-in.ts';
 import catalog from './tool-catalog.json' with { type: 'json' };
 
 const arm = (tool: { name: string; description: string; inputSchema: unknown }) =>
@@ -72,20 +77,13 @@ export function createDesktopCallOperation(
       (worker: string): Facts => {
         const session = options.getSession(worker);
         const rows = readDesktopTodos(db, worker);
-        const todo = desktopOptIn(rows, worker);
+        const todo = desktopAllowed(rows, worker);
         const active = rows.filter((row) => row.active);
         return {
           todo,
           ambiguous:
-            !active.some((row) => row.doing) &&
-            active.filter((row) => JSON.parse(row.named ?? '{}').desktopControl === true).length >
-              1,
-          finished:
-            !todo &&
-            !rows.some((row) => row.active) &&
-            rows.some(
-              (row) => row.finished && JSON.parse(row.named ?? '{}').desktopControl === true
-            ),
+            !active.some((row) => row.doing) && active.filter(desktopAllowedRow).length > 1,
+          finished: !todo && !active.length && rows.some((row) => row.finished),
           worker,
           workDir: session?.worktree?.worktreePath ?? session?.workspacePath ?? null,
         };

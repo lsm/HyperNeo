@@ -1,11 +1,10 @@
 [
   {
     "name": "list_windows",
-    "description": "List windows for an authorized target app. With no app or pid, list windows across apps, including their titles, without an app grant.",
+    "description": "List one app's windows by its pid. With no pid, list windows across apps, including their titles and pids, without an app grant.",
     "inputSchema": {
       "type": "object",
       "properties": {
-        "app": { "type": "string" },
         "pid": { "type": "integer" },
         "session": { "type": "string" }
       },

@@ -8,6 +8,6 @@ Pass check {pack,kind,params}. The daemon generates doneWhen; do not supply it. 
 - Give every step that needs execution its instruction and target: {verb:start,adapter,place?} or {verb:send,ref}. Omit both for a check-only wait; the daemon checks it and gives you the next step if the check is unmet 24 hours after prerequisite completion.
 - Bind work already underway with {verb:bind,ref}, no instruction, and satisfied prerequisites (after: [] if parallel). It records doing without sending. Coding send and bind refuse unknown or mismatched worker remotes.
 - Workers are long-lived sessions. Name them for the project and a number, never for a task. New local workers default to '<engine> <project> <n>'; use target.name only for another name that follows this rule. named records the engine, session, repository or folder the human named. For a named session require an exact work.find {session} ref.
-- For a step that must use this computer, follow the computer-use pack guidance for named.desktopControl.
+- For a step that must use this computer, call desktop.access.request first, as the computer-use pack guidance says, and leave named.desktopControl out.
 
 A runnable todo starts once its prerequisites pass and a slot is free. Never start todos yourself. There is no start flag or Start card. Set priority from human urgency: urgent, high, normal (default), low. Set producesFollowUp:true for work that yields later steps. On completion, add those steps with after:[its id]; the daemon wakes you and done settlement waits for a successor, which can be unstarted.

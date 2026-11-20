@@ -257,7 +257,7 @@ test.each([
 );
 
 test.each([
-  "UPDATE neo_todos SET named='{}'",
+  `UPDATE neo_todos SET named='{"desktopControl":false}'`,
   'UPDATE neo_todos SET approved_at=NULL',
   "UPDATE neo_asks SET status='closed'",
   `INSERT INTO neo_todos VALUES('second','ask','Other','doing',1,'{"desktopControl":true}'); INSERT INTO neo_todo_sessions VALUES('second','{"adapter":"hyperneo","id":"worker-a"}')`,
@@ -269,6 +269,12 @@ test.each([
     value: { reason: 'desktop_not_enabled', dispatched: false },
   });
   expect(requests).toHaveLength(0);
+});
+
+test('dispatches for a todo that never mentions desktop control', async () => {
+  db.exec("UPDATE neo_todos SET named='{}'");
+  expect(await call()).toMatchObject({ kind: 'completed', value: { dispatched: true } });
+  expect(requests).toHaveLength(1);
 });
 
 test.each(['todo', 'blocked'])('dispatches for an approved opted-in %s todo', async (state) => {

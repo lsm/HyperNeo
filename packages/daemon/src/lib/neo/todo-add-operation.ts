@@ -34,7 +34,7 @@ export async function preflightTodoDesktopControl(
     reason: {
       ok: false,
       reason:
-        'desktop_control_requires_permission: The human has not allowed desktop control without asking. Add the todo with desktopControl left out, then send a desktop_control card for it.',
+        'desktop_control_requires_permission: Leave desktopControl out. Workers may use this Mac by default; call desktop.access.request {app} first so the Mac asks the human for that app.',
     },
   };
 }
