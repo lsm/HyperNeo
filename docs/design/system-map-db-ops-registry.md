@@ -14,17 +14,35 @@ The system-map static route tool resolves database-operation routes to their nam
 
 These two patterns block the analyzer from confirming that any export is registered in `DB_OPS`, so all 201 operations stay unknown.
 
-## Scope
+## Scope: all 15 non-named routes
 
-This design covers making the registry readable. It does not cover:
+This design covers the registry fix. The remaining 8 unreadable and 7 misnamed routes need separate work, sequenced after the registry fix:
 
-- **Cross-file tracing.** Three unreadable routes (`neo.project.save`, `neo.project.forget`, `neo.publication.read`) call `gatewayFor().call()` inside repository class methods, not directly in the operation's `execute`. The analyzer needs a cross-file method-call pass to follow these.
-- **Generic dispatch.** Two unreadable routes (`neo.ask.doneTodos`, `neo.todo.done`) call `gatewayFor().call(op, method)` where `method` is a generic type parameter, not a string literal. The analyzer cannot resolve generic dispatch.
-- **Opaque callbacks.** Two unreadable routes (`neo.publication.publish`, `connections.google.connect`) pass callbacks into a runtime object; the pipeline is reachable only through the callback.
-- **Direct DB access.** One unreadable route (`neo.conversation.read`) reads via `db.prepare()` directly, not through the gateway at all.
-- **Misnamed routes.** Seven routes have pipeline names that differ from operation names (e.g. `work.queue` resolves to `change-queued-work-input`). These are intentional shared pipelines; renaming them is a separate decision.
+**Registry fix (this design).** Inline the spread, replace the factory. After this, the analyzer can confirm every `defineRepositoryOp` and `defineDbOp` registration in `DB_OPS`.
 
-These are tracked in #11329 and are not blocked by this design.
+**Cross-file tracing (3 routes).** `neo.project.save`, `neo.project.forget`, `neo.publication.read` call `gatewayFor().call()` inside repository class methods. The analyzer needs a one-level cross-file pass: when an operation's `execute` calls `service.repo.someMethod()`, follow into the repository method and look for `gatewayFor().call()`. This is a small extension to #11388's existing `gatewayCall` handler.
+
+**Generic dispatch (2 routes).** `neo.ask.doneTodos` and `neo.todo.done` call `store.read(method)` or `deps.gateway.call(op, method)` where `method` is a variable. The analyzer cannot resolve these without evaluating the generic type parameter. These routes stay unreadable until the call sites are refactored to use literal method names (e.g. `store.read('doneTodoFacts', input.askId)` instead of `store.read(method, ...)`).
+
+**Opaque callbacks (2 routes).** `neo.publication.publish` and `connections.google.connect` pass callbacks into a runtime object. The pipeline is reachable only through the callback. Refactor the execute functions to call the pipeline directly instead of through a callback.
+
+**Direct DB access (1 route).** `neo.conversation.read` reads via `db.prepare()` directly, not through the gateway. This route does not go through the DB gateway at all; it is not a DB-operation route in the registry sense. The analyzer should classify it as a direct-DB route, not unreadable.
+
+**Misnamed routes (7 routes).** Rename the pipelines to match the operation names:
+
+| Operation | Current pipeline | New pipeline |
+|-----------|-----------------|--------------|
+| `evolution.scope.owner.set` | `scope-owner-set-pipeline` | `evolution.scope.owner.set` |
+| `goal.owner.set` | `goal-owner-set-pipeline` | `goal.owner.set` |
+| `space.audit.list` | `space-audit-list` | `space.audit.list` |
+| `gmail.search` | `gmail-session-search` | `gmail.search` |
+| `google.accounts` | `google-session-accounts` | `google.accounts` |
+| `work.queue` | `change-queued-work-input` | `work.queue` |
+| `work.withdraw` | `change-queued-work-input` | `work.withdraw` |
+
+For `work.queue` and `work.withdraw`, duplicate the shared pipeline into two named pipelines. Each is a thin wrapper over the same logic.
+
+**Direct DB ops (11 SDK transactions).** The SDK `defineDbOp` registrations are terminal operations, not pipeline routes. The analyzer confirms they are registered but does not trace them to pipelines. No additional work needed.
 
 ## Decision
 
@@ -53,7 +71,7 @@ Expanding spreads requires the analyzer to follow an import, find the exported a
 
 Reuse the test fixtures and the `confinedWorkerRegistration` guard. Rework or drop the spread-expansion and factory-evaluation logic. The PR's core value — tracing a `gatewayFor().call()` to a named runner through the registry — is correct once the registry is readable. The merge contract (390 production / 100 test lines) becomes reachable after removing the spread and factory handling.
 
-The PR's `registeredRepositoryMethod` currently only accepts `defineRepositoryOp`. The 11 SDK transactions use `defineDbOp`, which the analyzer handles separately via `registrationKey`. Making the SDK transactions readable does not itself trace those operations to pipelines; it only confirms they are registered.
+Extend the analyzer with a one-level cross-file pass for repository method calls (the 3 cross-file routes). Add a `gatewayRun` handler for `gatewayFor().run(op, args)` alongside the existing `gatewayCall` handler. The 11 SDK transactions use `defineDbOp`; the analyzer confirms registration via `registrationKey` without tracing to a pipeline.
 
 ## Existing test
 
@@ -67,10 +85,28 @@ The PR's `registeredRepositoryMethod` currently only accepts `defineRepositoryOp
 | `packages/daemon/src/storage/repositories/sdk-message-transactions.ts` | Replace `sdkOp(name, fn)` with direct `defineDbOp({ name: 'sdk_messages.<name>', ... })` calls. Remove the `sdkOp` wrapper. Extract a `sdkDependencies(db, changes)` helper. |
 | `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-transactions.test.ts` | Replace `SDK_MESSAGE_TRANSACTIONS` import with individual op imports; update the registration assertion. |
 
+## Sequencing
+
+1. **This design:** registry fix (inline spread, replace factory, update test).
+2. **#11388 rework:** drop spread/factory handling, add cross-file pass, add `gatewayRun` handler.
+3. **Route fixes:** refactor generic dispatch call sites, opaque callbacks, direct DB access, rename misnamed pipelines.
+4. **Coverage proof:** independent inventory + assertion + timing (below).
+
+Steps 2 and 3 can proceed in parallel after step 1 merges.
+
 ## Test plan
 
-1. `bun scripts/pipeline-verdict-report.ts --strict` shows zero unresolved DB-operation routes and zero misnamed DB-operation routes. The report runs in under two seconds.
-2. An independent inventory script counts the registered operations by reading `DB_OPS` at runtime and confirms the count matches the analyzer's resolved count.
-3. Negative cases: a fixture with an unregistered `defineDbOp` and a fixture with a `defineRepositoryOp` whose methods array contains a non-literal both stay unresolved.
-4. The existing sdk-message-transactions test passes with the updated imports.
-5. `bun run check` passes.
+**Independent inventory.** A script greps for `defineOperation(` across `packages/daemon/src/` and `packages/space/src/`, extracts the `name` argument from each call, and writes the names to a file. This inventory is independent of the analyzer.
+
+**Coverage assertion.** Run `bun scripts/pipeline-verdict-report.ts --strict` and assert:
+- Every name in the independent inventory appears in the report.
+- Every route in the report has verdict `named` (zero `unreadable`, zero `misnamed`).
+- The set of report names equals the set of inventory names (no omissions, no additions).
+
+**Timing assertion.** The strict report completes in under 2 seconds on the CI runner. Current baseline: ~1.5 seconds on the author's machine.
+
+**Negative cases.** A fixture with an unregistered `defineDbOp` stays unresolved. A fixture with a `defineRepositoryOp` whose methods array contains a non-literal stays unresolved. A fixture with a spread in the registry stays unresolved.
+
+**Existing test.** The sdk-message-transactions test passes with individual op imports.
+
+**Repo checks.** `bun run check` passes.
