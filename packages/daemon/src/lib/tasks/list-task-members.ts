@@ -65,14 +65,29 @@ function collectMembers(
 }
 
 export const readTaskMembers = (superpipe({})('task.member.list') as PipelineAPI)
-  .input(['taskRepo', 'readCoreTask', 'nodeExecutionRepo', 'taskId'])
-  .pipe(locateTask, ['taskRepo', 'readCoreTask', 'taskId'], 'result:roster')
-  .pipe(collectMembers, ['nodeExecutionRepo', 'roster'], 'roster')
+  .input(['deps', 'taskId', 'caller'])
+  .pipe(
+    (deps: ListTaskMembersDependencies, taskId: string, caller: OperationCaller) =>
+      deps.admitTask(taskId, caller) ? { value: taskId } : { reason: null },
+    ['deps', 'taskId', 'caller'],
+    'result:roster'
+  )
+  .pipe(
+    (deps: ListTaskMembersDependencies, taskId: string) =>
+      locateTask(deps.taskRepo, deps.readCoreTask, taskId),
+    ['deps', 'roster'],
+    'result:roster'
+  )
+  .pipe(
+    (deps: ListTaskMembersDependencies, located: LocatedTask) =>
+      collectMembers(deps.nodeExecutionRepo, located),
+    ['deps', 'roster'],
+    'roster'
+  )
   .end('roster') as (
-  taskRepo: ListTaskMembersDependencies['taskRepo'],
-  readCoreTask: ListTaskMembersDependencies['readCoreTask'],
-  nodeExecutionRepo: ListTaskMembersDependencies['nodeExecutionRepo'],
-  taskId: string
+  deps: ListTaskMembersDependencies,
+  taskId: string,
+  caller: OperationCaller
 ) => TaskRoster | null;
 
 export function createListTaskMembersOperation(deps: ListTaskMembersDependencies) {
@@ -88,9 +103,6 @@ export function createListTaskMembersOperation(deps: ListTaskMembersDependencies
         members: z.array(NodeExecutionSchema),
       })
       .nullable(),
-    execute: async (input, caller) =>
-      deps.admitTask(input.taskId, caller)
-        ? readTaskMembers(deps.taskRepo, deps.readCoreTask, deps.nodeExecutionRepo, input.taskId)
-        : null,
+    execute: async (input, caller) => readTaskMembers(deps, input.taskId, caller),
   });
 }
