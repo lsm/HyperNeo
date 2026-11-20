@@ -1,5 +1,10 @@
 import { posix } from 'node:path';
 import ts from 'typescript';
+import {
+  dbGatewayFile,
+  registeredRepositoryMethod,
+  valueImport,
+} from './pipeline-worker-registration.ts';
 import { createPipelineBuilderResolver } from './pipeline-builder-factory.ts';
 
 export type LocalPipelineResolution = { kind: 'named'; name: string } | { kind: 'unknown' };
@@ -51,6 +56,8 @@ export function createLocalPipelineResolver(
   sourceOf?: (file: string) => string | undefined
 ): ((operationName: string) => LocalPipelineResolution) & {
   exportedFactory(name: string, arity: number): LocalPipelineResolution;
+  repositoryMethod(repository: string, method: string): LocalPipelineResolution;
+  exportedRunner(name: string): LocalPipelineResolution;
 } {
   const unwrap = unwrapPipelineExpression;
   const path = fileName.endsWith('.tsx') ? '/route.tsx' : '/route.ts';
@@ -321,6 +328,51 @@ export function createLocalPipelineResolver(
     return callable(declaration.initializer, seen);
   }
 
+  function importedReference(identifier: ts.Identifier) {
+    const declarations = checker.getSymbolAtLocation(identifier)?.declarations;
+    const specifier = declarations?.length === 1 ? declarations[0] : undefined;
+    return specifier && ts.isImportSpecifier(specifier)
+      ? valueImport(fileName, specifier)
+      : undefined;
+  }
+
+  function gatewayCall(call: ts.CallExpression): LocalPipelineResolution {
+    const callee = unwrap(call.expression);
+    const [command, method] = call.arguments;
+    if (
+      !sourceOf ||
+      !strictCalls ||
+      !ts.isPropertyAccessExpression(callee) ||
+      callee.name.text !== 'call' ||
+      !command ||
+      !ts.isIdentifier(command) ||
+      !method ||
+      !ts.isStringLiteral(method) ||
+      call.arguments.some(ts.isSpreadElement)
+    )
+      return unknown;
+    const receiver = unwrap(callee.expression);
+    if (
+      !ts.isCallExpression(receiver) ||
+      !ts.isIdentifier(receiver.expression) ||
+      (receiver.flags & ts.NodeFlags.OptionalChain) !== 0 ||
+      receiver.arguments.length !== 1 ||
+      ts.isSpreadElement(receiver.arguments[0])
+    )
+      return unknown;
+    const helper = importedReference(receiver.expression);
+    if (helper?.file !== dbGatewayFile || helper.name !== 'gatewayFor') return unknown;
+    const target = importedReference(command);
+    if (!target) return unknown;
+    const repository = registeredRepositoryMethod(target, method.text, sourceOf);
+    const source = repository ? sourceOf(target.file) : undefined;
+    if (!repository || source === undefined) return unknown;
+    return createLocalPipelineResolver(source, target.file, true, sourceOf).repositoryMethod(
+      repository,
+      method.text
+    );
+  }
+
   function action(expression: ts.Expression, seen: Set<ts.Node>): LocalPipelineResolution {
     expression = unwrap(expression);
     if (ts.isAwaitExpression(expression)) return action(expression.expression, seen);
@@ -331,7 +383,9 @@ export function createLocalPipelineResolver(
       return unknown;
     const callee = strictCalls ? unwrap(expression.expression) : expression.expression;
     if (ts.isIdentifier(callee)) return callable(callee, seen);
-    return strictCalls ? pipeline(callee) : unknown;
+    if (!strictCalls) return unknown;
+    const inline = pipeline(callee);
+    return inline.kind === 'named' ? inline : gatewayCall(expression);
   }
 
   const matches = new Map<string, ts.Expression[]>();
@@ -464,11 +518,78 @@ export function createLocalPipelineResolver(
       : unknown;
   }
 
+  function repositoryMethod(repository: string, method: string): LocalPipelineResolution {
+    const classes = parsed.statements.filter(
+      (node): node is ts.ClassDeclaration =>
+        ts.isClassDeclaration(node) && node.name?.text === repository
+    );
+    if (classes.length !== 1) return unknown;
+    const [declaration] = classes;
+    if (
+      declaration.members.some(
+        (member) =>
+          !ts.isMethodDeclaration(member) &&
+          !(ts.isConstructorDeclaration(member) && member.body?.statements.length === 0)
+      )
+    )
+      return unknown;
+    if (
+      declaration.heritageClauses?.length ||
+      declaration.members.some((member) => member.name && ts.isComputedPropertyName(member.name))
+    )
+      return unknown;
+    const candidates = declaration.members.filter(
+      (member) =>
+        member.name &&
+        (ts.isIdentifier(member.name) || ts.isStringLiteral(member.name)) &&
+        member.name.text === method
+    );
+    if (candidates.length !== 1) return unknown;
+    const [candidate] = candidates;
+    if (
+      !ts.isMethodDeclaration(candidate) ||
+      candidate.asteriskToken ||
+      candidate.modifiers?.some(
+        (m) => m.kind === ts.SyntaxKind.StaticKeyword || m.kind === ts.SyntaxKind.AsyncKeyword
+      ) ||
+      candidate.body?.statements.length !== 1
+    )
+      return unknown;
+    const [statement] = candidate.body.statements;
+    if (!ts.isReturnStatement(statement) || !statement.expression) return unknown;
+    const returned = unwrap(statement.expression);
+    if (
+      !ts.isCallExpression(returned) ||
+      !ts.isIdentifier(returned.expression) ||
+      (returned.flags & ts.NodeFlags.OptionalChain) !== 0
+    )
+      return unknown;
+    const local = callable(returned.expression, new Set());
+    if (local.kind === 'named') return local;
+    const ref = importedReference(returned.expression);
+    const source = ref ? sourceOf?.(ref.file) : undefined;
+    if (!ref || source === undefined) return unknown;
+    return createLocalPipelineResolver(source, ref.file, true).exportedRunner(ref.name);
+  }
+
+  function exportedRunner(name: string): LocalPipelineResolution {
+    const statements = parsed.statements
+      .filter(ts.isVariableStatement)
+      .filter((statement) =>
+        statement.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
+      )
+      .flatMap((statement) => [...statement.declarationList.declarations])
+      .filter((declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === name);
+    if (statements.length !== 1) return unknown;
+    const [declaration] = statements;
+    return ts.isIdentifier(declaration.name) ? callable(declaration.name, new Set()) : unknown;
+  }
+
   return Object.assign(
     (operationName: string) => {
       const found = matches.get(operationName);
       return found?.length === 1 ? callable(found[0], new Set()) : unknown;
     },
-    { exportedFactory }
+    { exportedFactory, repositoryMethod, exportedRunner }
   );
 }

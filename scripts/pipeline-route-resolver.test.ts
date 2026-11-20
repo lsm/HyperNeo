@@ -231,3 +231,75 @@ test.each(['path = other;', '({ path } = handlers);', 'eval("path = other");'])(
     });
   }
 );
+
+const dbDirectory = 'packages/daemon/src/storage/db-gateway';
+const workerSource = new Map([
+  [
+    `${dbDirectory}/db-ops.ts`,
+    `import { query } from './read.ts';
+    export const DB_OPS = new Map([query].map((op) => [op.name, op]));`,
+  ],
+  [
+    `${dbDirectory}/read.ts`,
+    `import { defineRepositoryOp } from './db-op.ts';
+    import { runQuery } from './query.ts';
+    class Query {
+      read(input) { return runQuery(input); }
+    }
+    export const query = defineRepositoryOp('domain.query', 'read', Query, ['read']);`,
+  ],
+  [
+    `${dbDirectory}/query.ts`,
+    `import superpipe from 'superpipe';
+    export const runQuery = superpipe({})('demo.read').input('input').end('input');`,
+  ],
+]);
+
+test.each([
+  ['registered method', 'db().call(query, "read", input)', undefined, 'named'],
+  ['dynamic method', 'db().call(query, method, input)', undefined, 'unknown'],
+  ['dynamic command', 'db().call(command, "read", input)', undefined, 'unknown'],
+  [
+    'unregistered command',
+    'db().call(query, "read", input)',
+    ['db-ops.ts', '[query]', '[]'],
+    'unknown',
+  ],
+  [
+    'unlisted method',
+    'db().call(query, "read", input)',
+    ['read.ts', "['read']", "['write']"],
+    'unknown',
+  ],
+  [
+    'shadowed registration key',
+    'db().call(query, "read", input)',
+    [
+      'db-ops.ts',
+      'export const DB_OPS = new Map([query]',
+      "import { query as alias } from './read.ts'; export const DB_OPS = new Map([query, alias]",
+    ],
+    'unknown',
+  ],
+  [
+    'opaque handler',
+    'db().call(query, "read", input)',
+    ['read.ts', 'return runQuery(input)', 'return fn(input)'],
+    'unknown',
+  ],
+])('strictly resolves a database worker with %s', (_title, execute, edit, kind) => {
+  const sources = new Map(workerSource);
+  if (edit) {
+    const [file, before, after] = edit;
+    const path = `${dbDirectory}/${file}`;
+    sources.set(path, sources.get(path)!.replace(before, after));
+  }
+  const source = `import { defineOperation } from './registry.ts';
+    import { gatewayFor as db } from './db-gateway.ts';
+    import { query } from './read.ts';
+    defineOperation({ name: 'demo.read', execute: (input) => ${execute} });`;
+  const resolve = createLocalPipelineResolver(source, `${dbDirectory}/route.ts`, true, (file) =>
+    sources.get(file)
+  );
+  expect(resolve('demo.read')).toEqual(kind === 'named' ? { kind, name: 'demo.read' } : { kind });
+});
