@@ -8,6 +8,7 @@ import { vi } from 'vitest';
 import { WebSocketServer } from 'ws';
 import {
   type CodexAppServer,
+  CodexRequestError,
   connectCodexAppServer,
 } from '../../../../src/lib/drivers/codex-app-server';
 import {
@@ -2082,6 +2083,36 @@ describe('codex-desktop adapter status and send', () => {
       expect(spawned).toEqual([]);
     }
   );
+
+  test('a thread another app-server writes still takes queued input', async () => {
+    const queued: string[] = [];
+    const driver = adapter(
+      0,
+      '',
+      async () => ({
+        call: async (method, params) => {
+          if (method === 'thread/loaded/list') return { data: [], nextCursor: null };
+          if (method === 'thread/resume') {
+            const rejection = { code: -32600, message: 'thread idle already has an active writer' };
+            throw new CodexRequestError(`thread/resume: ${JSON.stringify(rejection)}`, rejection);
+          }
+          if (method !== 'thread/queue/add') throw new Error(`${method}: thread not found: idle`);
+          queued.push((params.input as { text: string }[])[0].text);
+          return { queuedSubmission: { id: 'owner-queue' } };
+        },
+        close: () => {},
+      }),
+      undefined,
+      '',
+      { realServer: true }
+    );
+    expect(await driver.send!(ref('idle'), 'continue after compaction', user)).toEqual({
+      ok: true,
+      value: { delivered: false, queuedSubmissionId: 'owner-queue' },
+    });
+    expect(queued).toEqual(['continue after compaction']);
+    expect(spawned).toEqual([]);
+  });
 
   test.each([0, 1])(
     'active-writer CLI queue returns its receipt or refusal: %s',
