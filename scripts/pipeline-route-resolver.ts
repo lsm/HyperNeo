@@ -280,12 +280,19 @@ export function createLocalPipelineResolver(
         if (
           strictCalls &&
           statement &&
+          body.length === 2 &&
           ts.isVariableStatement(statement) &&
           (statement.declarationList.flags & ts.NodeFlags.Const) !== 0 &&
           statement.declarationList.declarations.length === 1
         ) {
           const { name, initializer } = statement.declarationList.declarations[0];
-          return ts.isIdentifier(name) && initializer ? action(initializer, seen) : unknown;
+          const projection = body[1];
+          return ts.isIdentifier(name) &&
+            initializer &&
+            ts.isReturnStatement(projection) &&
+            recoveryWithoutPipeline(projection, (call) => resolveRecoveryCall(call, new Set()))
+            ? action(initializer, seen)
+            : unknown;
         }
         if (expression.body.statements.length !== 1) return unknown;
         return ts.isReturnStatement(statement) && statement.expression
@@ -385,11 +392,9 @@ export function createLocalPipelineResolver(
           name && (ts.isIdentifier(name) || ts.isStringLiteral(name)) && name.text === 'execute'
       );
       const [execute] = handlers;
-      const shorthand =
+      const ambiguousProperties =
         strictCalls &&
-        execute &&
-        ts.isShorthandPropertyAssignment(execute) &&
-        !properties.some(
+        properties.some(
           (property) =>
             ts.isSpreadAssignment(property) ||
             (property.name && ts.isComputedPropertyName(property.name))
@@ -397,11 +402,12 @@ export function createLocalPipelineResolver(
       const handler =
         execute && ts.isPropertyAssignment(execute)
           ? execute.initializer
-          : shorthand
+          : strictCalls && execute && ts.isShorthandPropertyAssignment(execute)
             ? execute.name
             : undefined;
       if (
         handler &&
+        !ambiguousProperties &&
         handlers.length === 1 &&
         name &&
         ts.isPropertyAssignment(name) &&
