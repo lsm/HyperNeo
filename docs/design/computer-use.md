@@ -72,6 +72,7 @@ Two PRs:
 ### Design
 
 1. **The `computer-use` pack holds the Neo guidance.**
+   - Mark the pack `alwaysEnabled`, as with delegation, so existing pack selections still get the routing and handoff guidance.
    - Core keeps the operations, the opt-in rule, the preference and the admission gate.
    - The pack's `instructions()` read cached facts each turn (see Readiness): native ready, fallback eligible, and the preference.
    - When neither route is usable, `instructions()` returns only the handoff instruction, never null. `neo.pack.read` therefore still serves it.
@@ -96,14 +97,14 @@ Two PRs:
 ### Readiness
 
 - **Native ready** = the desktop app answers `{"action":"app_status"}` on `desktop/control.sock` with both Accessibility and Screen Recording granted.
-  - Use the existing newline-delimited JSON framing and peer authorization. Handle this read-only request before worker validation. It takes no worker ID and returns `{accessibility, screenRecording}` from `desktop_permission_status` in the usual response envelope.
-  - The existing per-worker `status` request keeps its worker ID and `{state, pid}` response.
+  - Keep the existing newline-delimited JSON framing, peer authorization and unknown-field rejection. Make `worker` optional at deserialization. Handle `app_status` before worker validation and return `{accessibility, screenRecording}` from `desktop_permission_status` in the existing response envelope.
+  - Every other action still requires a valid worker ID. Per-worker `status` still returns `{state, pid}`.
   - Socket reachability alone does not count.
 - **Fallback eligible** = `work.adapters` lists a Codex Desktop or Claude Desktop adapter with health ok and the start capability.
   - Listed, health-only or degraded adapters do not count.
   - Eligible only means Neo may try. Health checks the client version and read-only discovery, not computer use. A failed start, or a worker that reports no computer use, goes to the handoff.
 - The daemon refreshes both facts every 30 seconds and caches them in memory.
-- `desktop.status` returns them as top-level `app: {reachable, accessibility, screenRecording}`, which the panel reads.
+- `desktop.status` exposes the cached host status as top-level `app: {reachable, accessibility, screenRecording}` for the panel.
 - The pack's synchronous `instructions()` read the cache.
 
 ### Not in scope
