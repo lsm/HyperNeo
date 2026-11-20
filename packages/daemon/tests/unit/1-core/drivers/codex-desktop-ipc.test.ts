@@ -367,7 +367,7 @@ describe('withCodexDesktopIpc', () => {
       });
     });
 
-    test('refuses instead of creating a background writer if running Desktop cannot be reached', async () => {
+    test('routes to the shared app-server when running Desktop has no IPC endpoint', async () => {
       directory = mkdtempSync(join(tmpdir(), 'codex-running-no-ipc-'));
       expect(
         await steerCodexDesktopTurn(
@@ -379,7 +379,7 @@ describe('withCodexDesktopIpc', () => {
           'auto',
           async () => true
         )
-      ).toMatchObject({ reason: { ok: false, reason: 'not_delivered' } });
+      ).toEqual({ value: 'app-server' });
     });
   });
 
@@ -916,7 +916,7 @@ describe('withCodexDesktopIpc', () => {
     });
 
     test.each(['missing', 'stale'] as const)(
-      'a running Desktop with a %s IPC socket refuses the auto send without enqueueing',
+      'a running Desktop with a %s IPC socket queues the auto send through the app-server',
       async (connection) => {
         const f = await fixture((message, _socket, send) =>
           send({
@@ -953,13 +953,11 @@ describe('withCodexDesktopIpc', () => {
         expect(result).toMatchObject({
           kind: 'completed',
           value: {
-            ok: false,
-            reason: 'not_delivered',
-            notSent: true,
-            detail: expect.stringContaining('No background writer was started'),
+            ok: true,
+            value: { delivered: true, queuedSubmissionId: 'existing-queue' },
           },
         });
-        expect(calls).toEqual([]);
+        expect(calls).toEqual(['thread/loaded/list', 'thread/settings/update', 'thread/queue/add']);
         expect(f.seen).toEqual([]);
         expect(launches).toEqual([]);
       }
