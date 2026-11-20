@@ -807,6 +807,20 @@ async function withCodexMessageServer<Value>(
   }
 }
 
+const CODEX_APP_HOLDS_THREAD =
+  'The Codex app has this thread open on its own app-server, and HyperNeo cannot reach the app. Start new work, or close the thread in the Codex app and try again.';
+
+function codexAppHoldsThread(error: unknown, threadId: string): boolean {
+  const rejection = z
+    .object({ code: z.literal(-32600), message: z.string() })
+    .safeParse(error instanceof CodexRequestError ? error.rejection : null);
+  return (
+    rejection.success &&
+    (rejection.data.message.includes(`thread ${threadId} already has an active writer`) ||
+      rejection.data.message === `thread not found: ${threadId}`)
+  );
+}
+
 export async function queueCodexMessage(
   detail: CodexThreadDetail,
   message: string,
@@ -879,6 +893,8 @@ export async function queueCodexMessage(
         });
       }
     } catch (error) {
+      if (codexAppHoldsThread(error, detail.thread.id))
+        return reject('not_delivered', CODEX_APP_HOLDS_THREAD, true);
       return reject('not_delivered', `${step}: ${String(error)}`, true);
     }
     const before = codexUserInputIds(
@@ -1010,7 +1026,11 @@ async function tryServerCodexSend(
     );
     if ('reason' in turn) return turn.reason;
     attempted = true;
-    return callCodexSteer(server, detail.thread.id, turn.value, message);
+    return callCodexSteer(server, detail.thread.id, turn.value, message).catch((error: unknown) => {
+      if (!codexAppHoldsThread(error, detail.thread.id)) throw error;
+      attempted = false;
+      return reject('not_delivered', CODEX_APP_HOLDS_THREAD, true);
+    });
   });
   sendLog.warn('work.send app-server result', { threadId: detail.thread.id, mode, result });
   return {
@@ -1491,6 +1511,7 @@ async function compactCodexWorker(
     } while (Date.now() < deadline);
     return reject('not_delivered', 'Codex Desktop did not confirm compaction.');
   } catch (error) {
+    if (codexAppHoldsThread(error, ref.id)) return reject('busy', CODEX_APP_HOLDS_THREAD);
     return reject('not_delivered', error instanceof Error ? error.message : String(error));
   }
 }

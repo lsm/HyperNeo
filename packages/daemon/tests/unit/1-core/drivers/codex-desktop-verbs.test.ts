@@ -2097,7 +2097,7 @@ describe('codex-desktop adapter status and send', () => {
     reason: 'not_delivered',
     detail: expect.stringContaining('The Codex app has this thread open'),
     notSent: true,
-  };
+  } as const;
 
   test.each(['send', 'queue'] as const)(
     '%s to an idle thread the Codex app holds refuses plainly and queues nothing',
