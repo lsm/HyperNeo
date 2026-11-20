@@ -1,9 +1,9 @@
-use objc2::MainThreadMarker;
+use objc2::{rc::Retained, AllocAnyThread, MainThreadMarker};
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAlertSecondButtonReturn, NSApplication, NSImage,
-    NSImageView, NSStackView, NSView, NSWorkspace,
+    NSWorkspace,
 };
-use objc2_foundation::{NSArray, NSBundle, NSPoint, NSRect, NSSize, NSString};
+use objc2_foundation::{NSBundle, NSLocale, NSPoint, NSRect, NSSize, NSString};
 use security_framework::{
     access_control::{ProtectionMode, SecAccessControl},
     passwords::{
@@ -184,16 +184,31 @@ fn app_presentation(
     Some((name, workspace.iconForFile(&path)))
 }
 
-fn dialog_text(app_name: &str, bundle_id: &str, class: &str, wildcard: bool) -> Option<String> {
+/// Dialog copy follows the Mac's first preferred language; tests stay in English.
+fn chinese() -> bool {
+    !cfg!(test)
+        && NSLocale::preferredLanguages()
+            .firstObject()
+            .is_some_and(|language| language.to_string().starts_with("zh"))
+}
+
+fn dialog_text(app_name: &str, class: &str, wildcard: bool) -> Option<String> {
     match class {
         "observe" | "launch" | "pointer" | "keyboard" => (),
         _ => return None,
     }
-    let mut text = format!(
-        "A HyperNeo worker wants to open {app_name}, see it, click and type in it. HyperNeo will not ask again for this app.\n\n{bundle_id}"
-    );
+    let zh = chinese();
+    let mut text = if zh {
+        format!("HyperNeo 会打开 {app_name}，查看、点击和输入。以后不再问这个应用。")
+    } else {
+        format!("HyperNeo can open {app_name}, look at it, click and type. It won't ask again for this app.")
+    };
     if wildcard {
-        text.push_str("\n\nAllow all apps also covers other apps. Sensitive apps, including terminals, code editors, password managers, Keychain Access and System Settings, always ask.");
+        text.push_str(if zh {
+            "\n\n允许所有应用：其他应用也不再问；终端、编辑器、密码类应用和系统设置除外。"
+        } else {
+            "\n\nAllow all apps covers other apps too, except terminals, editors, password apps and System Settings."
+        });
     }
     Some(text)
 }
@@ -206,47 +221,51 @@ pub(super) fn admit(bundle_id: &str, requirement: &str, _class: &str) {
         .insert(format!("all\n{requirement}"), bundle_id.to_owned());
 }
 
-fn icon_view(image: &NSImage, side: f64, mtm: MainThreadMarker) -> objc2::rc::Retained<NSView> {
-    image.setSize(NSSize::new(side, side));
-    let view = NSImageView::imageViewWithImage(image, mtm);
-    view.setFrameSize(NSSize::new(side, side));
-    objc2::rc::Retained::into_super(objc2::rc::Retained::into_super(view))
-}
-
-fn who_controls_whom(
-    app_icon: &NSImage,
-    mtm: MainThreadMarker,
-) -> Option<objc2::rc::Retained<NSView>> {
+/// HyperNeo's icon with the target app's icon as a badge in the lower right.
+fn badged_icon(app_icon: &NSImage, mtm: MainThreadMarker) -> Option<Retained<NSImage>> {
     let hyperneo = NSApplication::sharedApplication(mtm).applicationIconImage()?;
-    let arrow = NSImage::imageWithSystemSymbolName_accessibilityDescription(
-        &NSString::from_str("arrow.right"),
-        Some(&NSString::from_str("controls")),
-    )?;
-    let views = [
-        icon_view(&hyperneo, 48.0, mtm),
-        icon_view(&arrow, 20.0, mtm),
-        icon_view(app_icon, 48.0, mtm),
-    ];
-    let stack = NSStackView::stackViewWithViews(&NSArray::from_retained_slice(&views), mtm);
-    stack.setSpacing(12.0);
-    stack.setFrame(NSRect::new(
-        NSPoint::new(0.0, 0.0),
-        NSSize::new(160.0, 52.0),
+    let side = 128.0;
+    let image = NSImage::initWithSize(NSImage::alloc(), NSSize::new(side, side));
+    #[allow(deprecated)]
+    image.lockFocus();
+    hyperneo.drawInRect(NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(side, side)));
+    app_icon.drawInRect(NSRect::new(
+        NSPoint::new(side * 0.5, 0.0),
+        NSSize::new(side * 0.5, side * 0.5),
     ));
-    Some(objc2::rc::Retained::into_super(stack))
+    #[allow(deprecated)]
+    image.unlockFocus();
+    Some(image)
 }
 
 fn prepare_alert(alert: &NSAlert, app_name: &str, message: &str, wildcard: bool) {
-    alert.setMessageText(&NSString::from_str(&format!(
-        "Let HyperNeo control {app_name}?"
-    )));
+    let zh = chinese();
+    let title = if zh {
+        format!("让 HyperNeo 使用 {app_name}？")
+    } else {
+        format!("Let HyperNeo use {app_name}?")
+    };
+    alert.setMessageText(&NSString::from_str(&title));
     alert.setInformativeText(&NSString::from_str(message));
-    alert.addButtonWithTitle(&NSString::from_str(&format!("Allow {app_name}")));
+    let allow = if zh {
+        format!("允许 {app_name}")
+    } else {
+        format!("Allow {app_name}")
+    };
+    alert.addButtonWithTitle(&NSString::from_str(&allow));
     if wildcard {
-        alert.addButtonWithTitle(&NSString::from_str("Allow all apps"));
+        alert.addButtonWithTitle(&NSString::from_str(if zh {
+            "允许所有应用"
+        } else {
+            "Allow all apps"
+        }));
     }
     alert
-        .addButtonWithTitle(&NSString::from_str("Don't Allow"))
+        .addButtonWithTitle(&NSString::from_str(if zh {
+            "不允许"
+        } else {
+            "Don't Allow"
+        }))
         .setKeyEquivalent(&NSString::from_str("\u{1b}"));
 }
 
@@ -256,7 +275,7 @@ pub(super) fn dialog_buttons(bundle_id: String) -> Option<Vec<(String, String)>>
         let alert = NSAlert::new(mtm);
         let name = fixture_app_name(&bundle_id);
         let wildcard = allows_wildcard(&bundle_id);
-        let message = dialog_text(&name, &bundle_id, "launch", wildcard)?;
+        let message = dialog_text(&name, "launch", wildcard)?;
         prepare_alert(&alert, &name, &message, wildcard);
         Some(
             alert
@@ -280,7 +299,7 @@ pub(super) fn dialog_texts() -> BTreeMap<&'static str, Option<String>> {
         let finder = fixture_app_name(bundle_id);
         ["observe", "launch", "pointer", "keyboard", "other"]
             .into_iter()
-            .map(|class| (class, dialog_text(&finder, bundle_id, class, true)))
+            .map(|class| (class, dialog_text(&finder, class, true)))
             .collect()
     })
 }
@@ -336,13 +355,14 @@ fn owner_allows(bundle_id: &str, requirement: &str, class: &str) -> Option<Owner
             let name = presented
                 .as_ref()
                 .map_or_else(|| bundle_id.to_owned(), |(name, _)| name.clone());
-            let message = dialog_text(&name, bundle_id, class, wildcard)?;
+            let message = dialog_text(&name, class, wildcard)?;
             prepare_alert(&alert, &name, &message, wildcard);
-            if let Some(accessory) = presented
+            if let Some(icon) = presented
                 .as_ref()
-                .and_then(|(_, icon)| who_controls_whom(icon, mtm))
+                .and_then(|(_, icon)| badged_icon(icon, mtm))
             {
-                alert.setAccessoryView(Some(&accessory));
+                // SAFETY: called on the main thread with a live NSImage owned by `presented`.
+                unsafe { alert.setIcon(Some(&icon)) };
             }
             #[allow(deprecated)]
             NSApplication::sharedApplication(mtm).activateIgnoringOtherApps(true);
