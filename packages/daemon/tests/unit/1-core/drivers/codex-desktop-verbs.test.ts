@@ -2126,6 +2126,43 @@ describe('codex-desktop adapter status and send', () => {
     }
   );
 
+  test.each(['send', 'queue'] as const)(
+    'a prepared worker %s to an idle thread the Codex app holds refuses plainly and queues nothing',
+    async (verb) => {
+      const root = join(dir, 'prepared');
+      mkdirSync(join(root, '.git'), { recursive: true });
+      await prepareWorkerSandbox(root);
+      const db = new Database(statePath);
+      db.prepare('UPDATE threads SET cwd=? WHERE id=?').run(root, 'idle');
+      db.close();
+      const calls: string[] = [];
+      const driver = adapter(
+        0,
+        '',
+        async () => ({
+          call: async (method) => {
+            calls.push(method);
+            if (method === 'permissionProfile/list')
+              return { data: [{ id: 'hyperneo-worker', allowed: true }] };
+            if (method === 'thread/loaded/list') return { data: [], nextCursor: null };
+            throw appHeld(method);
+          },
+          close: () => {},
+        }),
+        undefined,
+        '',
+        { realServer: true }
+      );
+      try {
+        expect(await driver[verb]!(ref('idle'), 'run local tests', user)).toEqual(appHeldRefusal);
+        expect(calls).toEqual(['permissionProfile/list', 'thread/loaded/list', 'thread/resume']);
+        expect(spawned).toEqual([]);
+      } finally {
+        await releaseWorkerSandbox(root);
+      }
+    }
+  );
+
   test('steering a turn the Codex app runs refuses plainly as not sent', async () => {
     const driver = adapter(0, '', async () => ({
       call: async (method) => {
