@@ -42,6 +42,7 @@ function harness(
     unresolvedDefault?: boolean;
     reuse?: 'long_lived' | 'per_ask' | 'per_todo';
     sameAsk?: string[];
+    reconfigure?: 'applies' | 'refused' | 'unchanged';
   },
   history?: ReadonlyMap<string, { sameAskAt: number | null; settledAt: number | null }>,
   claim?: Pick<WorkVerbDeps, 'claimWorker' | 'unclaimWorker'>
@@ -69,6 +70,17 @@ function harness(
                   ...(config.requestedProvider ? { provider: config.requestedProvider } : {}),
                 },
               };
+        }
+      : undefined,
+    reconfigure: config?.reconfigure
+      ? async (_ref, settings) => {
+          if (config.reconfigure === 'refused') return false;
+          if (config.reconfigure === 'applies') {
+            config.model = settings.model ?? config.model;
+            config.effort = settings.effort ?? config.effort;
+            config.provider = settings.provider ?? config.provider;
+          }
+          return true;
         }
       : undefined,
     capabilities: ['find', 'start', 'send'],
@@ -621,6 +633,26 @@ describe('work.start reuse for a shared model id whose default is not the first 
     const pinned = harness([{ id: 'idle-first', status: 'done' }], ['idle-first'], config);
     expect((await pinned.start(neo, false, { model: 'Sol 6.1' })).value?.ref.id).toBe('fresh');
     expect(pinned.sent).toEqual([]);
+  });
+});
+
+describe('work.start switches an idle worker in place', () => {
+  test.each([
+    { reconfigure: 'applies' as const, reuse: true },
+    { reconfigure: 'refused' as const, reuse: false },
+    { reconfigure: 'unchanged' as const, reuse: false },
+  ])('reuses only after the switch is confirmed: %j', async ({ reconfigure, reuse }) => {
+    const id = `switch-${reconfigure}`;
+    const run = harness([{ id, status: 'done' }], [id], {
+      adapter: 'hyperneo',
+      model: 'other-model',
+      effort: 'low',
+      reconfigure,
+    });
+    const result = await run.start(neo, false, { model: 'Sol 6.1', effort: 'high' });
+    expect(result.value?.ref.id).toBe(reuse ? id : 'fresh');
+    expect(run.sent).toEqual(reuse ? [id] : []);
+    if (reuse) expect(result.value).toMatchObject({ model: 'gpt-6.1-sol', effort: 'high' });
   });
 });
 

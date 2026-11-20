@@ -720,6 +720,20 @@ export async function startWork(
   );
 }
 
+function matchesRequested(
+  requested: z.infer<typeof workStartConfiguration.schema> & { provider?: string },
+  identity: { provider?: string; model?: string; effort?: string } | null
+): boolean {
+  return (
+    !!identity &&
+    (requested.provider === undefined || requested.provider === identity.provider) &&
+    workStartConfiguration.confirm(requested, {
+      ...(identity.model ? { model: identity.model } : {}),
+      ...(identity.effort ? { effort: identity.effort } : {}),
+    }).ok
+  );
+}
+
 /** @public */
 export async function reuseIdleWorker(
   route: Route<'start'>,
@@ -898,7 +912,7 @@ export async function reuseIdleWorker(
       reuseHolds.delete(key);
       throw error;
     }
-    const identity = status?.ok ? status.value : null;
+    let identity = status?.ok ? status.value : null;
     if (adapter.status && identity?.status !== 'done') {
       reuseHolds.delete(key);
       if (prior?.id === work.ref.id && identity && todoId) {
@@ -907,17 +921,17 @@ export async function reuseIdleWorker(
       }
       continue;
     }
-    if (
-      requested &&
-      (!identity ||
-        (requested.provider !== undefined && requested.provider !== identity.provider) ||
-        !workStartConfiguration.confirm(requested, {
-          ...(identity.model ? { model: identity.model } : {}),
-          ...(identity.effort ? { effort: identity.effort } : {}),
-        }).ok)
-    ) {
-      reuseHolds.delete(key);
-      continue;
+    if (requested && !matchesRequested(requested, identity)) {
+      const switched =
+        identity && adapter.reconfigure
+          ? await adapter.reconfigure(work.ref, requested).catch(() => false)
+          : false;
+      const after = switched ? await adapter.status?.(work.ref).catch(() => null) : null;
+      identity = after?.ok ? after.value : null;
+      if (identity?.status !== 'done' || !matchesRequested(requested, identity)) {
+        reuseHolds.delete(key);
+        continue;
+      }
     }
     const message = input.provenance
       ? withWorkerProvenance(input.message, {
