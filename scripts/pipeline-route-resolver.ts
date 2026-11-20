@@ -145,7 +145,18 @@ export function createLocalPipelineResolver(
     if (built.kind === 'named') return built;
     if (ts.isArrowFunction(expression) || ts.isFunctionExpression(expression)) {
       if (ts.isBlock(expression.body)) {
-        const statement = expression.body.statements[0];
+        const body = expression.body.statements;
+        if (
+          strictCalls &&
+          body.length === 1 &&
+          ts.isTryStatement(body[0]) &&
+          body[0].tryBlock.statements.length === 1
+        ) {
+          const [attempt] = body[0].tryBlock.statements;
+          if (ts.isReturnStatement(attempt) && attempt.expression)
+            return action(attempt.expression, seen);
+        }
+        const statement = body[0];
         if (
           strictCalls &&
           statement &&

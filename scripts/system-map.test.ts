@@ -318,6 +318,11 @@ test.each([
   ['execute', 0],
   ['execute, ...overrides', 1],
   ['execute, execute() { return noPipeline(); }', 1],
+  ['execute: async () => { try { return await execute(); } catch (e) { return recover(e); } }', 0],
+  [
+    'execute: async () => { try { return ready && await execute(); } catch (e) { return recover(e); } }',
+    1,
+  ],
   ['execute: async () => { const result = await execute(); return project(result); }', 0],
   ['execute: async () => { const result = ready && await execute(); return project(result); }', 1],
 ])('strict counts the guaranteed executor for %s', (property, unreadable) => {
