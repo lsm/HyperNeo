@@ -24,27 +24,35 @@ try {
   await page.getByLabel('Name for this browser').fill('Sidebar check');
   await page.getByRole('button', { name: 'Pair this browser' }).click();
   await page.getByText('This browser is paired.').waitFor();
-  if (process.env.VERIFY_INJECT_FAILURE) {
-    let requestId;
-    let injected = false;
-    await page.routeWebSocket('**/ws', (route) => {
-      const server = route.connectToServer();
-      route.onMessage((raw) => {
-        const message = JSON.parse(String(raw));
-        if (!injected && !requestId && message.method === 'operation.invoke' && message.data?.name === 'work.find' && message.data?.input?.folder?.endsWith('/projects/alpha')) requestId = message.id;
-        server.send(raw);
-      });
-      server.onMessage((raw) => {
-        const message = JSON.parse(String(raw));
-        if (requestId && (message.id === requestId || message.requestId === requestId)) {
-          message.data.unreachable = [{source:'synthetic', reason:'temporary outage'}];
-          requestId = null;
-          injected = true;
+  let injectTemporaryFailure = Boolean(process.env.VERIFY_INJECT_FAILURE);
+  await page.routeWebSocket('**/ws', (route) => {
+    const server = route.connectToServer();
+    const failures = new Map();
+    route.onMessage((raw) => {
+      const message = JSON.parse(String(raw));
+      const { name, input } = message.data ?? {};
+      if (message.method === 'operation.invoke' && name === 'work.find' && input?.folder?.endsWith('/projects/alpha')) {
+        if (!input.localOnly) failures.set(message.id, 'offline-peer');
+        else if (injectTemporaryFailure) {
+          failures.set(message.id, 'local-adapter');
+          injectTemporaryFailure = false;
         }
-        route.send(JSON.stringify(message));
-      });
+      }
+      server.send(raw);
     });
-  }
+    server.onMessage((raw) => {
+      const message = JSON.parse(String(raw));
+      const id = message.requestId ?? message.id;
+      const source = failures.get(id);
+      if (source && message.data) {
+        message.data.unreachable.push({source, reason:'synthetic outage'});
+        failures.delete(id);
+        route.send(JSON.stringify(message));
+      } else {
+        route.send(raw);
+      }
+    });
+  });
   await page.goto(`http://127.0.0.1:${port}/sessions`);
   await page.getByRole('button', { name: 'New session in neo-read' }).waitFor({ state: 'attached' });
   for (const name of ['Shared project', 'Stale project']) {
@@ -71,6 +79,7 @@ try {
     console.log('Observed temporary work lookup failure');
   }
   await page.waitForFunction(() => !document.querySelector('[aria-label="Remove project neo-read"]')?.disabled, null, {timeout: 15000});
+  console.log('An offline peer did not block removal of a local project');
   if (process.env.VERIFY_INJECT_FAILURE) console.log('Work lookup recovered after the project list refreshed');
   await page.screenshot({ path: `${run}/evidence/sidebar-system-hover.png` });
   const inbox = page.getByRole('button', {name: 'Remove project Inbox'});
@@ -78,7 +87,7 @@ try {
   assert(await inbox.isDisabled(), 'the protected Inbox must refuse removal');
   assert.equal(await inbox.getAttribute('title'), 'This project cannot be forgotten.');
   await page.getByTestId('project-group-header').filter({hasText:'occupied'}).hover();
-  await page.getByRole('tooltip').filter({hasText:'Project has chats, including archived chats'}).waitFor({state:'visible', timeout:3000});
+  await page.getByRole('tooltip').filter({hasText:'Project has chats or workers'}).waitFor({state:'visible', timeout:3000});
   await page.screenshot({path:`${run}/evidence/sidebar-${scheme}-refusal.png`, animations:'disabled'});
   console.log('Protected Inbox cannot be forgotten');
   async function callRpc(method, data) {
@@ -120,10 +129,12 @@ try {
   assert.deepEqual(await callRpc('workspace.remove', {path:`${run}/projects/stale-a`}), {success:false});
   console.log('Missing folder produced an error; remaining membership was intact');
   const archived = page.getByRole('button', {name: 'Remove project archived-chat'});
-  await archived.waitFor({state: 'attached'});
-  assert(await archived.isDisabled());
-  assert.equal(await archived.getAttribute('title'), 'Project has chats, including archived chats');
-  console.log('Archived chats remain protected with an explicit reason');
+  await archived.click({timeout:15000});
+  await page.getByRole('button', {name:'Forget project'}).click();
+  await archived.waitFor({state:'detached'});
+  const archivedSessions = await callRpc('session.list', {includeArchived:true});
+  assert(archivedSessions.sessions.some(({id, status}) => id === 'archived-chat' && status === 'archived'));
+  console.log('Archived-only project was forgotten and its chat stayed archived');
   const linked = page.getByRole('button', {name: 'Remove project linked-ask'});
   await linked.click({timeout:15000});
   await page.getByRole('button', {name: 'Forget project'}).click();
@@ -238,6 +249,7 @@ try {
   await page.getByRole('button', {name: 'New session in occupied'}).waitFor();
   assert.equal(await page.getByRole('button', {name: 'New session in neo-read'}).count(), 0);
   assert.equal(await page.getByRole('button', {name: 'New session in alpha'}).count(), 0);
+  assert.equal(await archived.count(), 0);
   assert(existsSync(`${run}/projects/alpha/retained.txt`));
   await page.getByText('Retained chat').waitFor();
   console.log('Forgotten project stayed gone; the file and unrelated chat remain');
