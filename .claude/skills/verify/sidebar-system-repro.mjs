@@ -78,8 +78,15 @@ try {
     await page.getByText('Connectivity update').waitFor({timeout:15000});
     console.log('Observed temporary work lookup failure');
   }
-  await page.waitForFunction(() => !document.querySelector('[aria-label="Remove project neo-read"]')?.disabled, null, {timeout: 15000});
-  console.log('An offline peer did not block removal of a local project');
+  const ended = page.getByRole('button', { name: 'Remove project neo-read' });
+  await page.waitForFunction(() => {
+    const button = document.querySelector('[aria-label="Remove project neo-read"]');
+    return button && button.title !== 'Checking project work';
+  }, null, { timeout: 15000 });
+  assert.equal(await page.getByText('Finished synthetic worker').count(), 0);
+  await page.screenshot({ path: `${run}/evidence/sidebar-ended-worker.png` });
+  assert.equal(await ended.isEnabled(), true, `a finished hidden worker blocked removal: ${await ended.getAttribute('title')}`);
+  console.log('A finished hidden worker and an offline peer did not block removal');
   if (process.env.VERIFY_INJECT_FAILURE) console.log('Work lookup recovered after the project list refreshed');
   await page.screenshot({ path: `${run}/evidence/sidebar-system-hover.png` });
   const inbox = page.getByRole('button', {name: 'Remove project Inbox'});
