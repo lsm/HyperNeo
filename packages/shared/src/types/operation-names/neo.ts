@@ -1,8 +1,8 @@
 export const NEO_OPERATION_NAMES = [
   'neo.ask.doneTodos',
   'neo.ask.history',
-  'neo.ask.propose',
   'neo.ask.outcome',
+  'neo.ask.propose',
   'neo.ask.read',
   'neo.ask.search',
   'neo.ask.settle',
