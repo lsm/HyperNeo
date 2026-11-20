@@ -2086,7 +2086,7 @@ describe('codex-desktop adapter status and send', () => {
 
   const appHeld = (method: string) => {
     const message =
-      method === 'thread/resume'
+      method === 'thread/resume' || method === 'thread/archive'
         ? 'thread idle already has an active writer'
         : 'thread not found: idle';
     const rejection = { code: -32600, message };
@@ -2136,6 +2136,25 @@ describe('codex-desktop adapter status and send', () => {
       close: () => {},
     }));
     expect(await driver.steer!(ref('idle'), 'answer the worker', user)).toEqual(appHeldRefusal);
+  });
+
+  test('archiving an idle thread the Codex app holds waits as busy', async () => {
+    const calls: string[] = [];
+    const driver = adapter(0, '', undefined, '/codex/worktrees', '', {
+      bootstrapServer: async () => ({
+        call: async (method) => {
+          calls.push(method);
+          throw appHeld(method);
+        },
+        close: () => {},
+      }),
+    });
+    expect(await driver.archive!(ref('idle'), () => null)).toEqual({
+      ok: false,
+      reason: 'busy',
+      detail: expect.stringContaining('The Codex app has this thread open'),
+    });
+    expect(calls).toEqual(['thread/archive']);
   });
 
   test('compacting an idle thread the Codex app holds waits as busy', async () => {
