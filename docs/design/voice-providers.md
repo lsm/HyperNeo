@@ -115,13 +115,14 @@ voice up by answering Neo:
   parts already equal the preset's output the apply is a no-op success and writes nothing,
   so unrelated settings writes after a successful apply never block anything.
   The guards, the preset choice and the write are one step, not two. Inside one
-  immediate transaction the apply re-reads the provider row and derives the preset from
-  that row: the row it validates is the row it maps. A provider switch between the
-  operation's first read and the transaction therefore cannot write the old provider's
-  preset — a valid-to-valid change (OpenAI read first, Deepgram committed meanwhile)
-  applies Deepgram under the newer row's `set_at`, and a row that is missing or holds
-  neither enum on the re-read refuses `provider_not_chosen`. Against that row and the
-  settings read in the same transaction it re-runs both refusals and the part-equality
+  immediate transaction the apply reads the provider row and derives the preset from
+  that row: the row it validates is the row it maps, and there is no earlier read — the
+  operation pipeline is a thin call into the transaction, so whatever the row holds
+  when the transaction runs is what governs. A provider switch before the apply runs
+  (OpenAI answered earlier, Deepgram committed since) therefore applies Deepgram under
+  the Deepgram row's `set_at`, never the old provider's preset; a row that is missing
+  or holds neither enum refuses `provider_not_chosen`. Against that row and the
+  settings read in the same transaction it runs both refusals and the part-equality
   check, merges the three parts into the `voice` object it just read — the settings
   store merges at the top-level key, replacing the whole `voice` object, so preserved
   fields must come from that read — and writes. The transaction has one owner: a
@@ -250,7 +251,7 @@ default and target branch), near the repository's 300-line budget, failing tests
      - `voice/apply-preset-operation.ts` (new): `voice.applyProviderPreset` as one pipeline
        with no input — a thin call to one registered gateway write operation (defined
        beside `globalSettingsWrites` in `packages/daemon/src/storage/db-gateway/db-ops.ts`)
-       that on its own connection re-reads the provider row, derives the preset from it
+       that on its own connection reads the provider row, derives the preset from it
        (refusing `provider_not_chosen` if the row is missing or holds neither enum),
        re-runs the `legacy_key_host_changed` and `settings_changed_since_answer` guards
        and the part-equality check against those reads, and writes through the settings
@@ -285,8 +286,8 @@ daemon integration cases for cards and Neo messages:
 | A legacy inline key, then a preset whose recorded host differs from the current one | refused `legacy_key_host_changed`; the inline key is never sent to the new host; after the key is saved per host or cleared, the apply fills the preset |
 | Parts edited on the web after the card was answered, then the apply | refused `settings_changed_since_answer`; parts unchanged; a fresh card answer applies over them |
 | A web voice edit in the same second as the card answer, parts differing from the preset | refused `settings_changed_since_answer` — the answer's own second counts as written; parts unchanged |
-| The provider row changed from OpenAI to Deepgram between the operation's first read and its transaction | the transaction derives Deepgram's preset from the row it re-read, under that row's `set_at`; the stale OpenAI preset is never written |
-| The provider row deleted between the reads | refused `provider_not_chosen`; settings unchanged |
+| The provider row switched to Deepgram before the apply runs, after an earlier OpenAI answer | the transaction reads Deepgram and derives Deepgram's preset under that row's `set_at`; the earlier answer's preset is never written |
+| The provider row deleted before the apply runs | refused `provider_not_chosen`; settings unchanged |
 | The web voice draft loaded before the preset apply, saved after it | refused `voice_changed_since_edit`; the form reloads and re-applies the edit; the applied parts stand |
 | A key-only save from a draft loaded before the preset apply | refused the same way; no key or old endpoint is written over the applied parts |
 | A web edit committed while the apply transaction runs | the edit is either seen inside the transaction and the apply refuses, or commits after it — a voice save only with a matching baseline, so it lands on the applied parts; no edit or saved key is lost |
