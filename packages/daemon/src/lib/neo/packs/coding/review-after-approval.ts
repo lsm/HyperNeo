@@ -12,12 +12,18 @@ const log = new Logger('NeoCodingReviewAfter');
 export const codingReviewAfterText = (row: Due, url: string) =>
   `${row.repo}#${row.number} "${row.title}" was approved on head ${row.head.slice(0, 7)}. This repository's coding preference review.after is "approved": add a todo that reviews ${url} at exactly ${row.head}, with named.workKind "coding.review" and target start so the daemon picks the reviewer line from the coding.review routes. It is done when the posted review link exists. Whether the review holds the merge stays with crossModelReview.`;
 
-export async function deliverCodingReviewAfterApproval(
+export function deliverCodingReviewAfterApproval(
   db: Database,
   host: string,
   attend: CodingAttend,
   now = Date.now()
 ): Promise<void> {
+  return deliver(db, host, attend, now).catch((error) =>
+    log.warn(`Review after approval failed: ${String(error)}`)
+  );
+}
+
+async function deliver(db: Database, host: string, attend: CodingAttend, now: number) {
   await gatewayFor(db).call(codingReviewAfterWrites, 'observe', now);
   for (const row of await gatewayFor(db).call(codingReviewAfterReads, 'due')) {
     const url = `https://${host}/${row.repo}/pull/${row.number}`;

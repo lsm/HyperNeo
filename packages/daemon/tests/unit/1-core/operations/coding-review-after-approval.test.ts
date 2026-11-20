@@ -8,6 +8,11 @@ import {
 import { deliverCodingReviewAfterApproval } from '../../../../src/lib/neo/packs/coding/review-after-approval.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { CODING_REVIEW_AFTER_PREFERENCE } from '../../../../src/lib/neo/packs/coding/stage-preferences.ts';
+import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops.ts';
+import {
+  codingReviewAfterReads,
+  codingReviewAfterWrites,
+} from '../../../../src/lib/neo/packs/coding/review-after-worker.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
@@ -157,4 +162,20 @@ describe('review after approval', () => {
       default: 'never',
     });
   });
+});
+
+test('both review-after operations run through the DB worker registry', () => {
+  for (const op of [codingReviewAfterReads, codingReviewAfterWrites])
+    expect(DB_OPS.get(op.name)).toBe(op as never);
+});
+
+test('a failing store never stops the coding sweep', async () => {
+  const db = new Database(':memory:');
+  try {
+    await expect(
+      deliverCodingReviewAfterApproval(db, 'github.com', async () => true, 1)
+    ).resolves.toBeUndefined();
+  } finally {
+    db.close();
+  }
 });
