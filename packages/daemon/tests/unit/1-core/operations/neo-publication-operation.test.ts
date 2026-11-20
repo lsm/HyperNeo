@@ -1,10 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import { subscribeToStructuredLogs, type StructuredLogEvent } from '@hyperneo/shared';
-import {
-  createNeoPublisher,
-  createNeoPublicationOperation,
-} from '../../../../src/lib/neo/publication-operation.ts';
+import { createNeoPublicationOperation } from '../../../../src/lib/neo/publication-operation.ts';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { NeoFrontInputRepository } from '../../../../src/storage/repositories/neo-front-input-worker.ts';
@@ -39,7 +36,8 @@ const caller = { source: 'mcp' as const, sessionId: root.sessionId, role: 'neo' 
 describe('Neo publication without runtime input attribution', () => {
   let mailbox: MailboxTestDb;
   let ledger: NeoPublicationRepository;
-  let publish: ReturnType<typeof createNeoPublisher>;
+  let operation: ReturnType<typeof createNeoPublicationOperation>['operation'];
+  let publish: ReturnType<typeof createNeoPublicationOperation>['publish'];
   const notify = vi.fn();
   let held: Promise<void> | null;
   let failWrite: boolean;
@@ -66,7 +64,7 @@ describe('Neo publication without runtime input attribution', () => {
     sourceSession = undefined;
     received = new Set();
     current = [];
-    publish = createNeoPublisher({
+    ({ publish, operation } = createNeoPublicationOperation({
       ...{ currentHumanInputs: () => current },
       receivedHumanInput: (_sessionId, id) => received.has(id),
       getBinding: (id) => repo.getBindingBySession(id),
@@ -87,7 +85,7 @@ describe('Neo publication without runtime input attribution', () => {
         who.sessionId === root.sessionId
           ? ([report, video].find((ref) => ref.artifactId === id) ?? null)
           : null,
-    });
+    }));
   });
   afterEach(() => mailbox.close());
   const rawPayload = () =>
@@ -148,10 +146,7 @@ describe('Neo publication without runtime input attribution', () => {
   });
 
   test('published and retried messages tell the model no assistant text is needed unless a record was requested', async () => {
-    const handler = createOperationMcpHandler(
-      createOperationRegistry([createNeoPublicationOperation(publish)]),
-      () => caller
-    );
+    const handler = createOperationMcpHandler(createOperationRegistry([operation]), () => caller);
     const send = (input = draft) => handler({ name: 'neo.publication.publish', input });
     const first = JSON.parse((await send()).content[0].text);
     expect(first).toMatchObject({
@@ -300,7 +295,6 @@ describe('Neo publication without runtime input attribution', () => {
   });
 
   test.each(['work', 'consultation'])('rejects %s links at the publish input schema', (kind) => {
-    const operation = createNeoPublicationOperation(publish);
     expect(
       operation.inputSchema.safeParse({ ...draft, links: [{ kind, id: 'old', label: 'Old' }] })
         .success
@@ -330,10 +324,7 @@ describe('Neo publication without runtime input attribution', () => {
   });
 
   test('session null is the same as no session', async () => {
-    const handler = createOperationMcpHandler(
-      createOperationRegistry([createNeoPublicationOperation(publish)]),
-      () => caller
-    );
+    const handler = createOperationMcpHandler(createOperationRegistry([operation]), () => caller);
     const reply = JSON.parse(
       (await handler({ name: 'neo.publication.publish', input: { ...draft, session: null } }))
         .content[0].text

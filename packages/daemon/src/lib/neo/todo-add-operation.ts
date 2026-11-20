@@ -34,7 +34,7 @@ export async function preflightTodoDesktopControl(
     reason: {
       ok: false,
       reason:
-        'desktop_control_requires_permission: The human can turn desktop control on from the todo on the Neo page. Leave desktopControl out to add the todo with it off.',
+        'desktop_control_requires_permission: The human has not allowed desktop control without asking. Add the todo with desktopControl left out, then send a desktop_control card for it.',
     },
   };
 }

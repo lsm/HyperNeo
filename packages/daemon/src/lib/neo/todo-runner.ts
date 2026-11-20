@@ -1383,7 +1383,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     )
     .pipe(
       async (context: NudgeContext) =>
-        (await neoPackWaiting(deps.packs(), [context.todo])).has(context.todo.id)
+        (await neoPackWaiting(deps.packs(), [context.todo], 'parked')).has(context.todo.id)
           ? { reason: null }
           : { value: context },
       'admission',
