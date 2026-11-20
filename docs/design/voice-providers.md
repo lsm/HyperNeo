@@ -143,10 +143,12 @@ voice up by answering Neo:
   `settings-handlers.ts`), so a check there can pass, the preset can commit, and the
   stale draft can still write after it. Slice 5 therefore puts the baseline comparison
   inside the gateway transaction that writes the voice patch — in
-  `globalSettingsWrites.apply` (`packages/daemon/src/storage/repositories/global-settings-writes.ts`), the
-  registered write the web form already goes through — refusing
-  `voice_changed_since_edit` there, key-only saves included (details under slice 5,
-  below). Until that has landed, 7a is not activated: the apply ships behind it,
+  `globalSettingsWrites.apply` (`packages/daemon/src/storage/repositories/global-settings-writes.ts`),
+  the registered write the web form already goes through — comparing the stored `voice`
+  against the load-time baseline the form sends with each save (the edited draft is not
+  the baseline) and refusing `voice_changed_since_edit` on a mismatch there, key-only
+  saves included (details under slice 5, below). Until that has landed, 7a is not
+  activated: the apply ships behind it,
   because the current unconditional web writer would let a queued draft overwrite an
   applied preset.
   The two commits — the card answer and the apply — are deliberately not atomic with
@@ -217,16 +219,19 @@ default and target branch), near the repository's 300-line budget, failing tests
    pointing at the human's own server with the same OpenAI and Deepgram shapes. The
    voice save becomes a compare-and-set: the form builds a full `voice` draft from the
    settings it loaded (`VoiceSettings.tsx`) and queues whole-draft saves — the gateway
-   strips daemon-owned keys (`keepNeoOwnedSettings`) but passes `voice` through — so the
-   draft carries the `voice` object it was built from. The authoritative check is not
+   strips daemon-owned keys (`keepNeoOwnedSettings`) but passes `voice` through. Each
+   save therefore carries two voice objects: the edited draft, and the load-time
+   baseline the draft started from — the draft is mutated in place, so it cannot serve
+   as its own baseline, and comparing the stored `voice` against the edited draft would
+   refuse every legitimate edit. The authoritative check is not
    in the handler, where preparation runs before the gateway call, but in
    `globalSettingsWrites.apply` (`packages/daemon/src/storage/repositories/global-settings-writes.ts`),
    inside the same gateway transaction that writes the patch: it refuses
-   `voice_changed_since_edit` when the stored `voice` differs from that baseline,
-   whatever field the save touches, a key-only save included; the form then reloads and
-   re-applies the human's edit onto the fresh settings. A queued draft can therefore
-   never overwrite settings saved after it was built — the preset apply's write
-   included. 7a is not activated until this has landed.
+   `voice_changed_since_edit` when the stored `voice` differs from the load-time
+   baseline, whatever field the save touches, a key-only save included; the form then
+   reloads and re-applies the human's edit onto the fresh settings. A queued draft can
+   therefore never overwrite settings saved after it was loaded — the preset apply's
+   write included. 7a is not activated until this has landed.
 6. **Tests Neo can run — merged (#11177).** All three test operations, and saving a key
    wakes Neo with an attention event naming the host (never the key).
 7. **The provider card, re-cut.** The choice is recorded by the existing card machinery and
