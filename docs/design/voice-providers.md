@@ -86,11 +86,13 @@ voice up by answering Neo:
   field (keys, `enabled`, mode, TLS switches) and publishing the settings update so the
   form reflects it. Rows reach the table on two paths, both stamped `set_by: 'human'`: a
   card answer, and the `pack.preferences.set` operation, which is authorized for the
-  local human user only (`safetyClass: 'human_only'`, `preference-operations.ts`). The
+  local human user only (`safetyClass: 'human_only'`, `neo/preference-operations.ts`). The
   stamp records the writer's claim of human authority, not which path wrote it. The web
   pack-settings form renders no voice fields — its sections are hardcoded to the
-  delegation pack (enum selects, `PackSettings.tsx`) and the coding pack (which edits
-  text and list preferences through `pack.preferences.set`, `CodingPackSettings.tsx`),
+  delegation pack (enum selects, `packages/web/src/components/settings/PackSettings.tsx`)
+  and the coding pack (which edits
+  text and list preferences through `pack.preferences.set`,
+  `packages/web/src/components/settings/CodingPackSettings.tsx`),
   and this design adds no voice UI there — so for the voice pack the card is the only
   surfaced source of rows: one enum value, shown literally on the card before the human
   applies it. Neo authors nothing here: it cannot set a preference row or a voice field
@@ -104,7 +106,7 @@ voice up by answering Neo:
   voice key before changing the recorded host"); the per-host key field that makes saving
   it possible arrives with slice 5. And when the three parts the apply would write differ
   from the parts currently saved, the apply refuses `settings_changed_since_answer` if the
-  global settings were written at or after the second of the newest recorded row. The two
+  global settings were written at or after the second of the provider row. The two
   clocks are different sizes: `global_settings.updated_at` is a whole second
   (`datetime('now')`), a preference row's `set_at` is milliseconds, so an edit at .800 in
   the same second as an answer at .200 would compare as older than the answer and slip
@@ -135,15 +137,17 @@ voice up by answering Neo:
   `packages/daemon/src/storage/repositories/settings-repository.ts` (whose write
   notifies `global_settings` subscribers) and records the change with the change
   recorder it is handed, so the gateway publishes the update after the commit
-  (`DbGateway.run` in `storage/db-gateway/db-gateway.ts`; the write lane does the same
-  in `db-gateway-worker.ts`). The operation pipeline is a thin call to that one op and
+  (`DbGateway.run` in `packages/daemon/src/storage/db-gateway/db-gateway.ts`; the write
+  lane does the same in `db-gateway-worker.ts` in that folder). The operation pipeline
+  is a thin call to that one op and
   does nothing else around it: `SettingsManager.updateGlobalSettingsAsync` is a
   separate asynchronous gateway call and is not this atomic step.
   A web edit that commits while the apply runs either lands first, and the transaction
   sees it and refuses, or lands after. Landing after is safe only once the web save is
   conditional at the point where it serializes. Preparation in the handler runs before
-  the gateway call (`prepareGlobalSettingsUpdate`, then `updateGlobalSettingsAsync`,
-  `settings-handlers.ts`), so a check there can pass, the preset can commit, and the
+  the gateway call (`prepareGlobalSettingsUpdate` in
+  `rpc-handlers/settings-handlers.ts`, then the settings manager's
+  `updateGlobalSettingsAsync`), so a check there can pass, the preset can commit, and the
   stale draft can still write after it. Slice 5 therefore puts the baseline comparison
   inside the gateway transaction that writes the voice patch — in
   `globalSettingsWrites.apply` (`packages/daemon/src/storage/repositories/global-settings-writes.ts`),
@@ -221,7 +225,8 @@ default and target branch), near the repository's 300-line budget, failing tests
    model and voice — this is where a custom provider is entered, each part's address
    pointing at the human's own server with the same OpenAI and Deepgram shapes. The
    voice save becomes a compare-and-set: the form builds a full `voice` draft from the
-   settings it loaded (`VoiceSettings.tsx`) and queues whole-draft saves — the gateway
+   settings it loaded (`packages/web/src/components/settings/VoiceSettings.tsx`) and
+   queues whole-draft saves — the gateway
    strips daemon-owned keys (`keepNeoOwnedSettings`) but passes `voice` through. Each
    save therefore carries two voice objects: the edited draft, and the load-time
    baseline the draft started from — the draft is mutated in place, so it cannot serve
