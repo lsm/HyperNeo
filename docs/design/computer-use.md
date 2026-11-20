@@ -95,8 +95,9 @@ Two PRs:
 
 ### Readiness
 
-- **Native ready** = the desktop app answers a new `status` action on `desktop/control.sock` with both Accessibility and Screen Recording granted.
-  - The answer comes from `desktop_permission_status`.
+- **Native ready** = the desktop app answers `{"action":"app_status"}` on `desktop/control.sock` with both Accessibility and Screen Recording granted.
+  - Use the existing newline-delimited JSON framing and peer authorization. Handle this read-only request before worker validation. It takes no worker ID and returns `{accessibility, screenRecording}` from `desktop_permission_status` in the usual response envelope.
+  - The existing per-worker `status` request keeps its worker ID and `{state, pid}` response.
   - Socket reachability alone does not count.
 - **Fallback eligible** = `work.adapters` lists a Codex Desktop or Claude Desktop adapter with health ok and the start capability.
   - Listed, health-only or degraded adapters do not count.
@@ -111,6 +112,6 @@ Two PRs:
 
 ### PRs
 
-1. The `computer-use` pack, the readiness cache and the `status` socket action. The refusal text names the todo menu and the Allow card. This absorbs #11286.
+1. The `computer-use` pack, the readiness cache and the `app_status` socket action. The refusal text names the todo menu and the Allow card. This absorbs #11286.
 2. The panel switch, plus the permission flow. It adds the switch to the refusal text and the pack guidance.
 3. #11146, gated on slice 1's handoff, pointing life-admin at the pack.
