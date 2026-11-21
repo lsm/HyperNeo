@@ -466,9 +466,12 @@ describe('codex-desktop adapter status and send', () => {
       const db = new Database(statePath);
       db.prepare('UPDATE threads SET cwd=? WHERE id=?').run(folder, 'idle');
       db.close();
-      const driver = adapter(0, '', undefined, worktrees, '', {
-        bootstrapServer: async () => ({ call: async () => null, close: () => {} }),
-      });
+      const driver = adapter(
+        0,
+        '',
+        async () => ({ call: async () => null, close: () => {} }),
+        worktrees
+      );
       const result = await driver.archive!(ref('idle'), () => null);
       expect(result).toMatchObject({
         ok: true,
@@ -493,18 +496,16 @@ describe('codex-desktop adapter status and send', () => {
       db.close();
       const calls: string[] = [];
       let closed = false;
-      const driver = adapter(0, '', undefined, '/codex/worktrees', '', {
-        bootstrapServer: async () => ({
-          call: async (method, params) => {
-            calls.push(method);
-            expect(params.threadId).toBe('idle');
-            return {};
-          },
-          close: () => {
-            closed = true;
-          },
-        }),
-      });
+      const driver = adapter(0, '', async () => ({
+        call: async (method, params) => {
+          calls.push(method);
+          expect(params.threadId).toBe('idle');
+          return {};
+        },
+        close: () => {
+          closed = true;
+        },
+      }));
       const result = await driver.archive!({ adapter: driver.id, id: 'idle' }, () => null);
       expect(result.ok).toBe(true);
       expect(existsSync(env.TMPDIR)).toBe(false);
@@ -518,15 +519,13 @@ describe('codex-desktop adapter status and send', () => {
 
   test('raises a runtime removal failure after archiving so the release retries it', async () => {
     const calls: string[] = [];
-    const driver = adapter(0, '', undefined, '/codex/worktrees', '', {
-      bootstrapServer: async () => ({
-        call: async (method) => {
-          calls.push(method);
-          return {};
-        },
-        close: () => {},
-      }),
-    });
+    const driver = adapter(0, '', async () => ({
+      call: async (method) => {
+        calls.push(method);
+        return {};
+      },
+      close: () => {},
+    }));
     const failure = vi
       .spyOn(sandbox, 'releaseWorkerSandbox')
       .mockRejectedValue(new Error('synthetic EBUSY'));
@@ -2183,15 +2182,13 @@ describe('codex-desktop adapter status and send', () => {
     db.prepare('UPDATE threads SET cwd=? WHERE id=?').run(root, 'idle');
     db.close();
     const calls: string[] = [];
-    const driver = adapter(0, '', undefined, '/codex/worktrees', '', {
-      bootstrapServer: async () => ({
-        call: async (method) => {
-          calls.push(method);
-          throw appHeld(method);
-        },
-        close: () => {},
-      }),
-    });
+    const driver = adapter(0, '', async () => ({
+      call: async (method) => {
+        calls.push(method);
+        throw appHeld(method);
+      },
+      close: () => {},
+    }));
     expect(await driver.archive!(ref('idle'), () => null)).toEqual({
       ok: false,
       reason: 'busy',

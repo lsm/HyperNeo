@@ -1629,7 +1629,8 @@ async function archiveCodexThread(
     const worktree = await cleanupOwnedWorktree(folder, [deps.worktreesDir]);
     return { ok: true, value: { archived: false, ...(worktree ? { worktree } : {}) } };
   }
-  return withCodexAppServer({ appServer: deps.bootstrapServer }, async (server) => {
+  const appServer = () => deps.appServer().catch(() => deps.bootstrapServer());
+  return withCodexAppServer({ appServer }, async (server) => {
     try {
       await server.call('thread/archive', { threadId: id });
     } catch (error) {
