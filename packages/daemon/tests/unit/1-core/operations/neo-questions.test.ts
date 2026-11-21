@@ -776,6 +776,34 @@ describe('neoQuestionAnsweredNote', () => {
       })
     ).toBe('The human answered "Which layout?": 1 (List), 3 (Table).');
   });
+
+  test('says a yes/no answer with its label, and plainly when the card had none', () => {
+    const card = {
+      id: 'q',
+      askId: 'a',
+      text: 'Send it?',
+      kind: 'yesno' as const,
+      options: null,
+      multiple: false,
+      noLabel: null,
+      yesLabel: null,
+      todos: [],
+      state: 'answered' as const,
+      answer: 'yes',
+      answeredBy: 'button' as const,
+      answeredAt: 1,
+      retiredReason: null,
+      replacedBy: null,
+      createdAt: 1,
+    };
+    expect(neoQuestionAnsweredNote(card)).toBe('The human answered "Send it?": yes.');
+    expect(neoQuestionAnsweredNote({ ...card, answer: 'no' })).toBe(
+      'The human answered "Send it?": no.'
+    );
+    expect(neoQuestionAnsweredNote({ ...card, yesLabel: '发出去' })).toBe(
+      'The human answered "Send it?": yes (发出去).'
+    );
+  });
 });
 
 describe('neo.question.retire and replaces', () => {

@@ -26,7 +26,7 @@ New work starts only from the human, and the human always acts on their own devi
 - Yes on a proposal card.
 - The human's answer to a relayed session question (`neo.question.relaySession`, written through the Track path). That card is the proposal: its ask is accepted once the human answers it, and not before.
 
-**2. Everything else is a proposal.** When Neo opens an ask with `neo.ask.propose`, the same call asks a yes/no card on it. Neo writes the two button labels in the human's language, such as 发出去 / 先不做; without them the buttons read Confirm / Cancel. The card shows the request and why. This covers Neo's own ideas, words another session relayed (shown as a quote), and asks in a goal's cycle (`neo.ask.propose` with `goalId`). A confirmed goal mandate does not skip the card: any session can create a goal and point it at a confirmed revision, so it cannot prove the human wanted this ask.
+**2. Everything else is a proposal.** When Neo opens an ask with `neo.ask.propose`, the same call asks a yes/no card on it. Neo writes the two button labels in the human's language, such as 发出去 / 先不做; without them each app shows its default (web: Confirm / Cancel; iOS: Yes / No). The card shows the request and why. This covers Neo's own ideas, words another session relayed (shown as a quote), and asks in a goal's cycle (`neo.ask.propose` with `goalId`). A confirmed goal mandate does not skip the card: any session can create a goal and point it at a confirmed revision, so it cannot prove the human wanted this ask.
 
 - The ask takes no todos until the human answers yes.
 - No settles the ask as `dropped`.
