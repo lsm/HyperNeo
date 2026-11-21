@@ -536,6 +536,10 @@ export function countPipelineRoutes(
       const parameters = execute.parameters;
       return (
         ts.isIdentifier(callee) &&
+        parameters.every(
+          (parameter) =>
+            ts.isIdentifier(parameter.name) && !parameter.initializer && !parameter.dotDotDotToken
+        ) &&
         body.arguments.every(
           (argument) =>
             ts.isIdentifier(argument) &&
