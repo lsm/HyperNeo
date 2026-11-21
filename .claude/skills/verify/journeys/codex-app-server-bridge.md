@@ -5,7 +5,7 @@ wrapper and the pinned Bun version from `SKILL.md`.
 
 ```bash
 bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence \
-  .claude/skills/verify/codex-app-server-bridge.ts verify
+  .claude/skills/verify/codex-app-server-bridge.ts verify 0
 ```
 
 The journey boots real HyperNeo daemons with a fresh home and database and uses
