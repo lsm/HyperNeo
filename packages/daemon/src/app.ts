@@ -4,6 +4,7 @@ import { NEO_DRIVER_REFRESH } from './lib/neo/driver-refresh.ts';
 import { createPeerPairRoute } from './routes/neo-peer.ts';
 import { collectDaemonScratch } from './lib/drivers/daemon-scratch.ts';
 import { createCodexSetupHost } from './lib/drivers/codex-setup-host.ts';
+import { createCodexSetup } from './lib/drivers/codex-setup.ts';
 import {
   GitHubWatchInventory,
   reportGitHubWatchHealth,
@@ -15,6 +16,8 @@ import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import { startSessionDoor } from './lib/messaging/session-door.ts';
 import { stampActiveAttempt } from './lib/tasks/direct-attempt-flag.ts';
 import { homedir } from 'os';
+import { existsSync } from 'node:fs';
+import { codexStatePath } from './storage/codex-desktop-read.ts';
 import { parsePositiveInt, type Config } from './config.ts';
 import type { WebSocketData } from './types/websocket.ts';
 import { createHttpWsServer, type ServerHandle } from './lib/runtime-server/index.ts';
@@ -366,6 +369,7 @@ export interface CreateDaemonAppOptions {
   standalone?: boolean;
   onStructuredLogSinkReady?: (flush: () => Promise<void>) => void;
   googleConnections?: Parameters<typeof createGoogleConnectionRefreshLoop>[1];
+  codexSetupSpawn?: Parameters<typeof createCodexSetupHost>[0];
 }
 
 export interface DaemonAppContext {
@@ -1183,10 +1187,27 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     }
 
     startupTimer.start('rpc handlers + space runtime provision');
-    const codexHost = process.platform === 'darwin' ? createCodexSetupHost() : undefined;
+    const codexHost =
+      process.platform === 'darwin' ? createCodexSetupHost(options.codexSetupSpawn) : undefined;
+    const codexSetup =
+      codexHost && (options.codexSetupSpawn || process.env.NODE_ENV !== 'test')
+        ? createCodexSetup(
+            codexHost,
+            () => settingsManager.getGlobalSettings().codexAppServerBridge,
+            (codexAppServerBridge) => {
+              settingsManager.updateGlobalSettings({ codexAppServerBridge });
+            }
+          )
+        : undefined;
     const rpcHandlers = await setupRPCHandlers(
       {
-        admitCodexWork: codexHost?.admit,
+        admitCodexWork:
+          codexHost &&
+          ((send) => {
+            codexSetup?.firstUse();
+            return codexHost.admit(send);
+          }),
+        codexSetup,
         extensions,
         purgeClaudeFeed: (sessionIds) => purgeWorkFeedSessions(db.gateway, 'claude', sessionIds),
         deviceOf: (clientId) => transport.deviceOf(clientId),
@@ -1337,7 +1358,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         () => server?.stop(true),
         () => removeRuntimeDescriptorFile(),
         () => sessionDoor?.close(),
-        () => codexHost?.close(),
+        () => codexSetup?.close() ?? codexHost?.close(),
         () => {
           for (const timer of cooldownResumeTimers) clearTimeout(timer);
         },
@@ -1379,9 +1400,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     };
     const codexBridge = settingsManager.getGlobalSettings().codexAppServerBridge;
     if (codexHost && codexBridge?.enabled === true) {
-      await codexHost.startBridge(codexBridge.port).catch((error: Error) => {
-        logError(`[Daemon] Codex bridge unavailable: ${error.message}`);
-      });
+      await (codexSetup?.login() ?? codexHost.startBridge(codexBridge.port)).catch(
+        (error: Error) => {
+          logError(`[Daemon] Codex bridge unavailable: ${error.message}`);
+        }
+      );
     }
     server = await createHttpWsServer({
       hostname: config.host,
@@ -1715,6 +1738,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       processWatchdog.start();
       logInfo('[Daemon] Process watchdog started');
     }
+    if (codexSetup && (existsSync(codexStatePath(homedir())) || codexBridge?.decision))
+      codexSetup.check();
 
     let isCleanedUp = false;
     const cleanup = async () => {
@@ -1727,7 +1752,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       for (const timer of cooldownResumeTimers) clearTimeout(timer);
 
       removeRuntimeDescriptorFile();
-      await codexHost?.close();
+      await (codexSetup?.close() ?? codexHost?.close());
       await sessionDoor?.close();
 
       logExtensionStopFailures(await extensions.stop());

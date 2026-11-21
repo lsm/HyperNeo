@@ -249,7 +249,14 @@ export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
 
   workFeedScope?: 'all' | 'own';
   codexCuAutoReap?: boolean;
-  codexAppServerBridge?: { enabled: boolean; port?: number };
+  codexAppServerBridge?: {
+    enabled: boolean;
+    port?: number;
+    originalUrl?: string | null;
+    remoteControl?: 'enabled' | 'skipped';
+    decision?: 'asked' | 'approved' | 'declined';
+    questionId?: string;
+  };
   oxapHub?: { path: string; version: string; sha256: string };
 }
 

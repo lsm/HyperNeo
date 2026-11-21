@@ -9,6 +9,7 @@ import { createHttpWsServer } from '../../../packages/daemon/src/lib/runtime-ser
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
 import { DatabaseCredentialStore } from '../../../packages/daemon/src/lib/credentials/credential-store.ts';
 import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
+import { startGoogleLogin } from '../../../packages/daemon/src/lib/connections/google-login.ts';
 
 const run = resolve(process.argv[2]);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -61,9 +62,22 @@ const fetchImpl = ((url: string | URL, init?: RequestInit) => {
 let firstId = '', secondId = '', oldLogin = '';
 try {
   for (const phase of ['initial', 'restart']) {
+    const firstStarted = Promise.withResolvers<void>();
+    const releaseFirst = Promise.withResolvers<void>();
+    let pauseFirst = phase === 'initial';
+    let startCount = 0;
     const googleConnections = {
       createStore: (db: ConstructorParameters<typeof DatabaseCredentialStore>[0]) => new DatabaseCredentialStore(db, 'synthetic-proof-key'),
       fetchImpl,
+      startLogin: async (client: Parameters<typeof startGoogleLogin>[0]) => {
+        startCount++;
+        if (pauseFirst) {
+          pauseFirst = false;
+          firstStarted.resolve();
+          await releaseFirst.promise;
+        }
+        return startGoogleLogin(client, { fetchImpl });
+      },
     };
     const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false, googleConnections });
     let ws: WebSocket | undefined;
@@ -75,14 +89,16 @@ try {
       await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('WebSocket unavailable')); });
       const call = (name: string, input: unknown = {}) => new Promise<any>((done, fail) => {
         const id = crypto.randomUUID();
-        const timer = setTimeout(() => fail(new Error('Google management RPC timed out')), 10000);
-        ws!.onmessage = (event) => {
+        const timer = setTimeout(() => { ws!.removeEventListener('message', onMessage); fail(new Error('Google management RPC timed out')); }, 10000);
+        const onMessage = (event: MessageEvent) => {
           const reply = JSON.parse(String(event.data));
           if (reply.id !== id && reply.requestId !== id) return;
           clearTimeout(timer);
+          ws!.removeEventListener('message', onMessage);
           evidence.push({ phase, name, reply });
           if (reply.error) fail(new Error(JSON.stringify(reply.error))); else done(reply.data);
         };
+        ws!.addEventListener('message', onMessage);
         ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
       });
       const authorize = async (start: { authorizeUrl: string }) => {
@@ -113,6 +129,23 @@ try {
       assert.equal(JSON.parse(refused.content[0].text).code, 'forbidden');
       if (phase === 'initial') {
         assert.deepEqual((await call('connections.list')).connections, []);
+        const input = { clientId: 'synthetic-client', clientSecret: 'synthetic-client-secret' };
+        const firstPending = call('connections.google.connect', input);
+        try {
+          await firstStarted.promise;
+          const secondPending = call('connections.google.connect', input);
+          await call('connections.list');
+          assert.equal(startCount, 1, 'a second login started before the first was released');
+          releaseFirst.resolve();
+          const [firstAttempt, secondAttempt] = await Promise.all([firstPending, secondPending]);
+          assert.equal(startCount, 2);
+          assert.equal(firstAttempt.state, 'pending');
+          assert.equal(secondAttempt.state, 'pending');
+          assert.notEqual(firstAttempt.loginId, secondAttempt.loginId);
+          assert.equal((await call('connections.google.login', { loginId: firstAttempt.loginId })).state, 'missing');
+          assert.equal((await call('connections.google.login', { loginId: secondAttempt.loginId })).state, 'pending');
+          evidence.push({ phase: 'concurrent', startsBeforeRelease: 1, startsAfterRelease: 2 });
+        } finally { releaseFirst.resolve(); }
         const first = await connect(); assert.equal(first.state, 'complete'); firstId = first.connectionId;
         subject = 'synthetic-subject-2';
         const second = await connect(); assert.equal(second.state, 'complete'); secondId = second.connectionId;

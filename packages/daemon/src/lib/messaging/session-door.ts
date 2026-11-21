@@ -12,6 +12,7 @@ const DOOR_OPERATIONS = new Set([
   'message.send',
   'neo.question.get',
   'system.build',
+  'system.codex.setup',
   'system.restart.reserve',
   'device.pair.create',
   'device.pair.pending',

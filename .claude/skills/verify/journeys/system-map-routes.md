@@ -8,7 +8,8 @@ calls, direct and re-entrant queue callbacks, and returned factory methods with 
 It also checks awaited async factories with identifier arguments.
 The wrapper also runs the strict verdict CLI on the current source tree and
 checks that the seven operations from step 3 of the DB operation registry design
-and the done-todo page and conversation reader appear exactly once with verdict `named`.
+and the done-todo page, conversation reader, and todo completion appear exactly
+once with verdict `named`.
 The wrapper exits nonzero if a check fails.
 
 For the strict registry verdict on the real source tree, run
@@ -16,4 +17,7 @@ For the strict registry verdict on the real source tree, run
 inspect the JSON. A registered DB operation may be named by its registry key;
 unregistered or ambiguous operations remain unreadable. This report does not
 prove that an opaque post-pipeline callback is only a projection.
+The regular verdict also checks the typed goal-session executor.
 The worker checks reject a returned runner with an effectful argument.
+The regular verdict also checks that the shorthand executor of `work.health`
+is recognized as a named pipeline.

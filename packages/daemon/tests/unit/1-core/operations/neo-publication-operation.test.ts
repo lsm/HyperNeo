@@ -19,6 +19,7 @@ import { join } from 'node:path';
 import { publishHandoff, publicHandoffReference } from '../../../../src/lib/handoffs/outbox.ts';
 import { DELIVERABLE_CHAR_LIMIT } from '../../../../src/lib/neo/publication.ts';
 import { NEO_REPLY_CHAR_LIMIT, neoCharCount } from '@hyperneo/shared/types/neo-publication';
+import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
 const root = { sessionId: `neo:${conversationId}`, kind: 'neo' as const, projectId: null };
@@ -38,6 +39,7 @@ describe('Neo publication without runtime input attribution', () => {
   let ledger: NeoPublicationRepository;
   let operation: ReturnType<typeof createNeoPublicationOperation>['operation'];
   let publish: ReturnType<typeof createNeoPublicationOperation>['publish'];
+  let runtime: Parameters<typeof createNeoPublicationOperation>[0];
   const notify = vi.fn();
   let held: Promise<void> | null;
   let failWrite: boolean;
@@ -64,7 +66,7 @@ describe('Neo publication without runtime input attribution', () => {
     sourceSession = undefined;
     received = new Set();
     current = [];
-    ({ publish, operation } = createNeoPublicationOperation({
+    runtime = {
       ...{ currentHumanInputs: () => current },
       receivedHumanInput: (_sessionId, id) => received.has(id),
       getBinding: (id) => repo.getBindingBySession(id),
@@ -85,7 +87,8 @@ describe('Neo publication without runtime input attribution', () => {
         who.sessionId === root.sessionId
           ? ([report, video].find((ref) => ref.artifactId === id) ?? null)
           : null,
-    }));
+    };
+    ({ publish, operation } = createNeoPublicationOperation(runtime));
   });
   afterEach(() => mailbox.close());
   const rawPayload = () =>
@@ -94,6 +97,57 @@ describe('Neo publication without runtime input attribution', () => {
         payload_json: string;
       }
     ).payload_json;
+
+  test('presents successful operation receipts without changing internal publication', async () => {
+    const present = vi.fn(async (items: NeoPublication[]) =>
+      items.map((item) => ({ ...item, shortText: 'Presented' }))
+    );
+    const { publish: internal, operation: publicOperation } = createNeoPublicationOperation(
+      runtime,
+      present
+    );
+    const internalReceipt = await internal({ ...draft, requestId: 'internal' }, caller);
+    expect(internalReceipt).toMatchObject({ accepted: true, publication: { shortText: 'Ready' } });
+    expect(present).not.toHaveBeenCalled();
+
+    const handler = createOperationMcpHandler(
+      createOperationRegistry([publicOperation]),
+      () => caller
+    );
+    const response = await handler({ name: 'neo.publication.publish', input: draft });
+    expect(JSON.parse(response.content[0].text)).toMatchObject({
+      accepted: true,
+      publication: { shortText: 'Presented' },
+    });
+    expect(present).toHaveBeenCalledTimes(1);
+    expect(ledger.list(conversationId)?.map((entry) => entry.shortText)).toEqual([
+      'Ready',
+      'Ready',
+    ]);
+
+    const rejected = await handler({
+      name: 'neo.publication.publish',
+      input: {
+        ...draft,
+        requestId: 'rejected',
+        replyTo: ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'],
+      },
+    });
+    expect(JSON.parse(rejected.content[0].text)).toMatchObject({
+      accepted: false,
+      reason: expect.stringContaining('unknown_reply_target'),
+    });
+    expect(present).toHaveBeenCalledTimes(1);
+  });
+
+  test('propagates publication presentation failures from the operation', async () => {
+    const { operation: publicOperation } = createNeoPublicationOperation(runtime, async () => {
+      throw new Error('presentation failed');
+    });
+    await expect(publicOperation.execute(draft as never, caller)).rejects.toThrow(
+      'presentation failed'
+    );
+  });
 
   test('retains verified worker handoffs and refuses forged, foreign or altered ones without writing', async () => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), 'publication-handoff-')));

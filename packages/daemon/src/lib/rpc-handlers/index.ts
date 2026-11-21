@@ -19,6 +19,9 @@ import { claudeInboxName } from '../drivers/claude-inbox.ts';
 import { createClaudeInboxDriver } from '../drivers/claude-inbox-driver.ts';
 import { ClaudeInboxRouteRepository } from '../../storage/repositories/claude-inbox-route-repository.ts';
 import { createClaudeDesktopModsDriver } from '../drivers/claude-desktop-mods-driver.ts';
+import { createCodexSetupOperation } from '../drivers/codex-setup-operation.ts';
+import { codexSetupQuestion } from '../drivers/codex-setup-question.ts';
+import type { createCodexSetup } from '../drivers/codex-setup.ts';
 import { sharedLiveSessions } from '../drivers/claude-desktop-adapter.ts';
 import { spawnProcess } from '../runtime-spawn/index.ts';
 import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
@@ -120,6 +123,7 @@ import type { ExternalEventExtensionContext } from '../external-events/types.ts'
 
 export interface RPCHandlerDependencies {
   admitCodexWork?: <T>(send: () => Promise<T>) => Promise<T>;
+  codexSetup?: ReturnType<typeof createCodexSetup>;
   extensions: DaemonExtensions;
   watchSessionRepo?: (owner: string, repo: string) => Promise<string | null>;
   messageHub: MessageHub;
@@ -470,6 +474,20 @@ export async function setupRPCHandlers<SpaceServices = never>(
     })
   );
   const neoHome = new NeoHomeRepository(neoFolderPath(), neoService.repo);
+  if (deps.codexSetup) {
+    deps.codexSetup.bindQuestion(
+      codexSetupQuestion(neoService.todos, () => neoService.openDefault())
+    );
+    const unsubscribe = deps.internalEventBus.subscribe(
+      'neo.changed',
+      () => {
+        if (deps.settingsManager.getGlobalSettings().codexAppServerBridge?.decision === 'asked')
+          deps.codexSetup?.check();
+      },
+      { subscriberName: 'codex-setup-question' }
+    );
+    driverCleanup.push(async () => unsubscribe());
+  }
   const startupTasks: Promise<void>[] = [];
   const boundFamilyContext: FamilyOperationContext = {
     ...familyContext,
@@ -489,6 +507,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
     executionPreparations: () => neoService.packs(),
   };
   const familyOperations = [
+    createCodexSetupOperation(deps.codexSetup),
     createSessionToolActivationOperation({
       write: persistToolPreferences,
       exclusive: exclusiveToolPreferences,

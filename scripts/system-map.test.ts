@@ -336,6 +336,55 @@ test('routes list reports coverage and a real exported runner', () => {
 });
 
 test.each([
+  ['async (input) => (execute as Run)(input) as never', 0],
+  ['async (input) => ready ? (execute as Run)(input) : fallback()', 1],
+  ['async (input) => (execute as Run)(fallback()) as never', 1],
+  ['async (execute) => (execute as Run)(input) as never', 1],
+  ['async (input) => (execute as Run)(input) as never, ...overrides', 1],
+  ['async (input) => (somethingElse as Run)(input) as never', 1],
+  ['async (input) => (execute as Run)(other) as never', 1],
+  ['async (input = fallback()) => (execute as Run)(input) as never', 1],
+])('regular checker recognizes only proven typed calls: %s', (operation, unreadable) => {
+  const source = `
+    import superpipe from 'superpipe';
+    import { defineOperation } from './registry';
+    const execute = superpipe({})('demo.read').endAsync();
+    defineOperation({ name: 'demo.read', execute: ${operation} });
+  `;
+  expect(countPipelineRoutes(new Map([['packages/demo/src/operations.ts', source]]))).toEqual({
+    missing: 0,
+    misnamed: 0,
+    dynamic: 0,
+    unreadable,
+  });
+});
+
+test.each([
+  ['execute', 'demo.read', 0, 0],
+  ['execute', 'demo.other', 0, 1],
+  ['execute, ...overrides', 'demo.read', 1, 0],
+  ['execute, [key]: fallback', 'demo.read', 1, 0],
+  ['execute, execute() { return fallback(); }', 'demo.read', 1, 0],
+  ["execute, 'execute': fallback", 'demo.read', 1, 0],
+])(
+  'regular checker resolves only an unambiguous shorthand: %s',
+  (property, pipeline, unreadable, misnamed) => {
+    const source = `
+    import superpipe from 'superpipe';
+    import { defineOperation } from './registry';
+    const execute = superpipe({})('${pipeline}').endAsync();
+    defineOperation({ name: 'demo.read', ${property} });
+  `;
+    expect(countPipelineRoutes(new Map([['packages/demo/src/operations.ts', source]]))).toEqual({
+      missing: 0,
+      misnamed,
+      dynamic: 0,
+      unreadable,
+    });
+  }
+);
+
+test.each([
   ['execute', 0],
   ['execute, ...overrides', 1],
   ['execute: execute, ...overrides', 1],

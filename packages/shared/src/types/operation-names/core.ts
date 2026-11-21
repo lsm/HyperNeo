@@ -14,5 +14,6 @@ export const CORE_OPERATION_NAMES = [
   'operations.describe',
   'operations.list',
   'system.build',
+  'system.codex.setup',
   'system.restart.reserve',
 ] as const;

@@ -2355,7 +2355,9 @@ describe('codex-desktop adapter status and send', () => {
         expect(await driver.send!(ref('idle'), 'answer', user)).toMatchObject({
           ok: false,
           reason: 'not_delivered',
-          detail: expect.stringContaining('The Codex app has this thread open'),
+          detail: expect.stringMatching(
+            /^The Codex app has this thread open.*The app may have reverted after an update, so quit and reopen it or rerun `hyperneo codex-setup`\.$/
+          ),
           notSent: true,
         });
         expect(accepted).toBe(0);

@@ -515,6 +515,42 @@ export function countPipelineRoutes(
       else if (resolved.name !== name && !resolved.terminal) counts.misnamed++;
     };
     let parsedCalls: ts.SourceFile | undefined;
+    const hasTypedDirectCall = (start: number): boolean => {
+      const parsed = (parsedCalls ??= ts.createSourceFile(
+        file,
+        source,
+        ts.ScriptTarget.Latest,
+        true
+      ));
+      const offset = tokens[start].offset;
+      let execute: ts.ArrowFunction | undefined;
+      const find = (node: ts.Node) => {
+        if (node.getStart(parsed) === offset && ts.isArrowFunction(node)) execute = node;
+        else if (node.pos <= offset && node.end > offset) ts.forEachChild(node, find);
+      };
+      find(parsed);
+      if (!execute || ts.isBlock(execute.body)) return false;
+      const body = unwrapPipelineExpression(execute.body);
+      if (!ts.isCallExpression(body) || body.questionDotToken) return false;
+      const callee = unwrapPipelineExpression(body.expression);
+      const parameters = execute.parameters;
+      return (
+        ts.isIdentifier(callee) &&
+        parameters.every(
+          (parameter) =>
+            ts.isIdentifier(parameter.name) && !parameter.initializer && !parameter.dotDotDotToken
+        ) &&
+        body.arguments.every(
+          (argument) =>
+            ts.isIdentifier(argument) &&
+            parameters.some(
+              (parameter) =>
+                ts.isIdentifier(parameter.name) && parameter.name.text === argument.text
+            )
+        ) &&
+        (body !== execute.body || callee !== body.expression)
+      );
+    };
     const hasUnconditionalCall = (start: number, name: string, inlineOffset?: number): boolean => {
       const parsed = (parsedCalls ??= ts.createSourceFile(
         file,
@@ -769,13 +805,18 @@ export function countPipelineRoutes(
       let executeStart = -1;
       let executeEnd = -1;
       let ambiguousProperties = false;
+      let shorthandExecute = false;
+      let executorProperties = 0;
       for (let j = i + 3; j < end; j++) {
         if (
-          strictCalls &&
           (j === i + 3 || tokens[j - 1]?.text === ',') &&
           (tokens[j].text === '.' || tokens[j].text === '[')
         )
           ambiguousProperties = true;
+        if (tokens[j].text === 'execute' && (j === i + 3 || tokens[j - 1]?.text === ',')) {
+          executorProperties++;
+          if (j + 1 === end || tokens[j + 1]?.text === ',') shorthandExecute = true;
+        }
         if (tokens[j].text === 'name' && tokens[j + 1]?.text === ':')
           name = stringToken(tokens[j + 2]?.text);
         if (tokens[j].text === 'execute' && tokens[j + 1]?.text === ':') {
@@ -796,7 +837,20 @@ export function countPipelineRoutes(
           j = close;
         }
       }
-      if (ambiguousProperties || !name || executeStart < 0 || executeEnd < 0) {
+      if (
+        !strictCalls &&
+        name &&
+        shorthandExecute &&
+        executorProperties === 1 &&
+        !ambiguousProperties
+      ) {
+        const resolved = createLocalPipelineResolver(source, file, true, sourceContext)(name);
+        if (resolved.kind !== 'named') counts.unreadable++;
+        else if (resolved.name !== name) counts.misnamed++;
+        i = end;
+        continue;
+      }
+      if ((strictCalls && ambiguousProperties) || !name || executeStart < 0 || executeEnd < 0) {
         if (strictCalls && name && !ambiguousProperties) countResolved(name);
         else counts.unreadable++;
         i = end;
@@ -829,6 +883,13 @@ export function countPipelineRoutes(
               )))
       );
       if (reached.length === 0) {
+        if (!strictCalls && hasTypedDirectCall(executeStart)) {
+          const resolved = createLocalPipelineResolver(source, file, true, sourceContext)(name);
+          if (resolved.kind === 'named' && resolved.name === name) {
+            i = end;
+            continue;
+          }
+        }
         const arrow = body.includes('=>') || (body.includes('=') && body.includes('>'));
         const call = body.some(
           (token, index) =>
