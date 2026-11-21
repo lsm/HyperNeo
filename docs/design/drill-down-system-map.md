@@ -41,11 +41,17 @@ The same package + component rule is a pure function of a file path; both drill 
 
 No second notion of "changed files" is introduced.
 
+**Components with zero routes.** With `--diff`, the component set is the union of route-bearing components and components of changed source files. A touched component with no route rows — `web/components` from a change to `packages/web/src/components/CommandAutocomplete.tsx`, or a component whose last route this PR deletes (the changed file still yields the key) — appears in the index as `— 0 routes (touched)` and as a section heading with no route lines. Without `--diff`, only route-bearing components appear. Zero-route components never appear without a touch mark, so they cannot accumulate stale clutter.
+
 ### Output
 
 Markdown to stdout. Redirect to a file, read it in a terminal or an editor. Generated fresh from the working tree on every run, so it cannot go stale and is never committed.
 
-A compact component index comes first — one line per component with its route count, an anchor link into the list below, and a `(touched)` marker — so the overview is one screen; the full route lists follow. Trimmed real example of the shape:
+A compact component index comes first — one line per component with its route count, a `(touched)` marker when marked, and an anchor link into the list below — so the overview is one screen; the full route lists follow.
+
+Anchors are explicit and package-qualified, because GitHub derives heading anchors from the full heading text (counts and touch markers would destabilize them). Every section starts with `<a id="pkg-area"></a>`, where the id is the package name, a hyphen, and the area with every non-alphanumeric run collapsed to a single hyphen (`(root)` becomes `root`). Index links target those ids; the ids change only when a component is renamed or moves.
+
+Trimmed real example of the shape:
 
 ```markdown
 # System map — 271 routes, 271 named, 0 unreadable
@@ -53,23 +59,33 @@ A compact component index comes first — one line per component with its route 
 - [daemon/agents](#daemon-agents) — 16 routes (touched)
 - [daemon/connections](#daemon-connections) — 17 routes
 - [daemon/neo](#daemon-neo) — 79 routes (touched)
+- [web/components](#web-components) — 0 routes (touched)
 - [space/(root)](#space-root) — 2 routes
 - [space/evolution](#space-evolution) — 13 routes
 
 ## daemon — 237 routes
 
+<a id="daemon-agents"></a>
 ### agents — 16 routes (touched)
 - `evolution.scope.owner.set` — [assign-agent-operation.ts](packages/daemon/src/lib/agents/assign-agent-operation.ts)
 
+<a id="daemon-neo"></a>
 ### neo — 79 routes (touched)
 - `neo.ask.doneTodos` (touched) — [ask-entries.ts](packages/daemon/src/lib/neo/ask-entries.ts)
 - `neo.project.save` — [operations.ts](packages/daemon/src/lib/neo/operations.ts)
 
+## web — 0 routes
+
+<a id="web-components"></a>
+### components — 0 routes (touched)
+
 ## space — 34 routes
 
+<a id="space-root"></a>
 ### (root) — 2 routes
 - `space.list` — [space-read-operations.ts](packages/space/src/space-read-operations.ts)
 
+<a id="space-evolution"></a>
 ### evolution — 13 routes
 - `evolution.episode.create` — [episode-operations.ts](packages/space/src/evolution/episode-operations.ts)
 ```
@@ -82,11 +98,11 @@ A compact component index comes first — one line per component with its route 
 
 ### Implementation sketch
 
-In `scripts/system-map.ts`: a `map` case in `main` that calls the exported `reportPipelineVerdicts` with `readRepositorySources` (the same wiring `pipeline-verdict-report.ts` uses as a script), groups rows by the two path segments, sorts by descending route count then name, prints the component index and then the route lists, and — with `--diff` — marks components from the grouped diff files and routes by exact file match. Estimated around 100 lines, reusing the existing `git` helper and `isSource` filter.
+In `scripts/system-map.ts`: a `map` case in `main` that calls the exported `reportPipelineVerdicts` with `readRepositorySources` (the same wiring `pipeline-verdict-report.ts` uses as a script), groups rows by the two path segments, sorts by descending route count then name, prints the component index (explicit package-qualified anchors, zero-route touched components included with `--diff`) and then the route lists, and — with `--diff` — marks components from the grouped diff files and routes by exact file match. Estimated around 100 lines, reusing the existing `git` helper and `isSource` filter.
 
 ## Test plan
 
-Unit test in `scripts/system-map.test.ts` style, on fixture sources (as `pipeline-verdict-report.test.ts` already does): grouping counts per package and component, `(root)` placement for src-level files, the component index matching the lists below it, `--diff` marking a component whose changed file has no route row (helper-only change), exact-file route marks, stable output ordering, and the summary line matching the row count. `bun run check` passes.
+Unit test in `scripts/system-map.test.ts` style, on fixture sources (as `pipeline-verdict-report.test.ts` already does): grouping counts per package and component, `(root)` placement for src-level files, the component index matching the lists below it, `--diff` marking a component whose changed file has no route row (helper-only change), a touched component with zero routes appearing as `0 routes (touched)` with an empty section and never appearing without `--diff`, anchor ids staying identical when counts or touch markers change and every index link resolving to a emitted anchor, exact-file route marks, stable output ordering, and the summary line matching the row count. `bun run check` passes.
 
 ## Non-goals
 
