@@ -22,6 +22,7 @@ bun scripts/pipeline-verdict-report.ts > "$run/regular-verdicts.json"
 jq -e '[.[] | select(.name == "goal.session.create" and .verdict == "named")] | length == 1' "$run/regular-verdicts.json"
 jq -er '
   [
+    "neo.ask.doneTodos",
     "evolution.scope.owner.set",
     "goal.owner.set",
     "space.audit.list",

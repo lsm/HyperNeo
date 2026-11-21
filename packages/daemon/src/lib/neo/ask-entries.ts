@@ -386,6 +386,11 @@ export function createNeoDoneTodosOperation(
       ['paged', 'todos', 'facts'],
       'outcome'
     )
+    .pipe(
+      async (page: DonePage) => ({ ...page, todos: await project(page.todos) }),
+      'outcome',
+      'outcome'
+    )
     .endAsync('outcome') as (
     input: z.infer<typeof DoneTodos>,
     caller: OperationCaller
@@ -404,10 +409,7 @@ export function createNeoDoneTodosOperation(
       }),
     ]),
     policy: { safetyClass: 'read', roles: ['neo'] },
-    execute: async (input, caller) => {
-      const result = await read(input, caller);
-      return result.ok ? { ...result, todos: await project(result.todos) } : result;
-    },
+    execute: read,
   });
 }
 

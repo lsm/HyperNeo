@@ -58,6 +58,42 @@ test.each([
   ['block body', 'const make = () => { return { go: () => run() }; };', 'make().go()', 'named'],
   ['async factory', 'const make = async () => ({ go: () => run() });', 'make().go()', 'unknown'],
   [
+    'awaited async factory with arguments',
+    'const make = async (value) => ({ go: (item) => run(item) });',
+    '(await make(input)).go(input)',
+    'named',
+  ],
+  [
+    'awaited factory with effectful argument',
+    'const make = async (value) => ({ go: (item) => run(item) });',
+    '(await make(sideEffect())).go(input)',
+    'unknown',
+  ],
+  [
+    'awaited factory with unbound argument',
+    'const make = async (value) => ({ go: (item) => run(item) });',
+    '(await make(globalInput)).go(input)',
+    'unknown',
+  ],
+  [
+    'awaited factory with runner parameter shadow',
+    'const make = async (run) => ({ go: (item) => run(item) });',
+    '(await make(input)).go(input)',
+    'unknown',
+  ],
+  [
+    'async factory thenable',
+    'const make = async () => ({ then: () => run() });',
+    '(await make()).then()',
+    'unknown',
+  ],
+  [
+    'awaited synchronous factory',
+    'const make = () => ({ go: () => run() });',
+    '(await make()).go()',
+    'unknown',
+  ],
+  [
     'method shorthand',
     'const make = () => ({ go() { return run(); } });',
     'make().go()',
@@ -454,6 +490,18 @@ test.each([
     'opaque handler',
     'db(database).call(query, "read", input)',
     ['read.ts', 'return runQuery(input)', 'return fn(input)'],
+    'unknown',
+  ],
+  [
+    'effectful runner argument',
+    'db(database).call(query, "read", input)',
+    ['read.ts', 'return runQuery(input)', 'return runQuery(sideEffect())'],
+    'unknown',
+  ],
+  [
+    'unbound runner argument',
+    'db(database).call(query, "read", input)',
+    ['read.ts', 'return runQuery(input)', 'return runQuery(other)'],
     'unknown',
   ],
 ])('strictly resolves a database worker with %s', (_title, execute, edit, kind) => {
