@@ -54,14 +54,29 @@ describe('neo.project.forget', () => {
   });
 
   test('concurrent forget requests admit only one winner', async () => {
-    const results = await Promise.all([forget(atlas), forget(atlas)]);
-    expect(results.filter((result) => (result as { ok: boolean }).ok)).toHaveLength(1);
-    expect(results).toContainEqual({ ok: false, reason: 'project_missing' });
+    const cleaned: string[][] = [];
+    const registry = createOperationRegistry([
+      createNeoProjectForgetOperation(repo, async (repos) => {
+        expect(repo.getProject(atlas)).toBeNull();
+        cleaned.push([...repos]);
+      }),
+    ]);
+    const call = () => invokeOperation(registry, 'neo.project.forget', { projectId: atlas }, human);
+    const results = await Promise.all([call(), call()]);
+    expect(results).toContainEqual({
+      kind: 'completed',
+      value: { ok: true, repos: ['lsm/neo-atlas'] },
+    });
+    expect(results).toContainEqual({
+      kind: 'completed',
+      value: { ok: false, reason: 'project_missing' },
+    });
+    expect(cleaned).toEqual([['lsm/neo-atlas']]);
   });
 
   test('an external callback failure cannot roll back a committed forget', async () => {
     const registry = createOperationRegistry([
-      createNeoProjectForgetOperation(repo, () => {
+      createNeoProjectForgetOperation(repo, async () => {
         expect(repo.getProject(atlas)).toBeNull();
         throw new Error('synthetic external effect failure');
       }),
