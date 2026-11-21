@@ -513,6 +513,24 @@ open(sys.argv[2], 'w').write(reply.decode())
         wait_until(lambda: not alive(driver['pid']))
         self.assertFalse((self.root / 'desktop/control.sock').exists())
 
+    def test_app_shutdown_waits_for_a_driver_with_input_in_flight(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        self.assertTrue(self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']['dispatched'])
+        driver = json.loads((self.lifecycle() / 'driver.json').read_text())['pid']
+        self.pids.append(driver)
+        timeline = self.root / 'timeline'
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(self.dispatch, 'click', {'pid': pid, 'fixture_timeline': str(timeline),
+                                                           'delivery_mode': 'foreground'},
+                                  workDir=str(self.work))
+            wait_until(timeline.exists)
+            self.process.send_signal(signal.SIGINT)
+            self.assertEqual(self.process.wait(timeout=15), 0)
+            self.assertFalse(alive(driver))
+            pending.exception(timeout=15)
+        print('shutdown_in_flight=waited_for_driver_exit')
+
     def test_refuses_signature_failure_before_start(self):
         self.codesign.write_text('#!/bin/bash\nexit 1\n')
         self.assertFalse(self.call('start', workDir=str(self.work))['ok'])
@@ -1167,6 +1185,33 @@ open(sys.argv[2], 'w').write(reply.decode())
             reply = self.dispatch('click', args, worker='worker-b', workDir=str(other))['result']
             self.assertTrue(reply['dispatched'], reply)
         print('unconfirmed_stop=live_child_kept window_and_foreground=blocked_until_exit')
+
+    def test_failed_start_cleanup_in_dispatch_keeps_the_window(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        directory = self.lifecycle()
+        directory.mkdir(parents=True, mode=0o700)
+        directory.parent.chmod(0o700)
+        (directory / 'driver.json').mkdir()
+        hold = self.work / 'hold-stop'
+        hold.touch()
+        self.addCleanup(lambda: hold.unlink(missing_ok=True))
+        self.assertTrue(self.call('fixture-fail-start-cleanup')['ok'])
+        failed = self.dispatch('click', {'pid': pid}, workDir=str(self.work))
+        self.assertFalse(failed['ok'], failed)
+        self.assertIn('stop_unconfirmed', failed['error'])
+        old = int(next(self.work.glob('d-*/d.pid')).read_text())
+        self.pids.append(old)
+        other = self.work / 'other'
+        other.mkdir()
+        busy = self.dispatch('click', {'pid': pid, 'fixture_deadline': True}, worker='worker-b',
+                             workDir=str(other), todos=['todo-worker-b'])['result']
+        self.assertEqual(busy['reason'], 'window_busy')
+        self.assert_stop_waits_for(old, hold)
+        reply = self.dispatch('click', {'pid': pid}, worker='worker-b', workDir=str(other))['result']
+        self.assertTrue(reply['dispatched'], reply)
+        self.pids.append(json.loads((self.lifecycle('worker-b') / 'driver.json').read_text())['pid'])
+        print('dispatch_start_cleanup_failed=1 window_kept=1 released_after_stop=1')
 
     def test_failed_stop_keeps_the_live_driver_until_a_later_stop_confirms(self):
         pid = finder()

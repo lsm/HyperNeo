@@ -113,15 +113,16 @@ struct Drivers {
     /// Workers whose driver shutdown failed; they get no input until Stop confirms it.
     unconfirmed: StdMutex<std::collections::BTreeSet<String>>,
 }
+/// Settles a dispatch's leases when it ends, unless its worker's exit is unconfirmed.
 struct Settle<'a> {
-    leases: &'a StdMutex<leases::Leases>,
+    drivers: &'a Drivers,
     worker: &'a str,
-    keep: bool,
 }
 impl Drop for Settle<'_> {
     fn drop(&mut self) {
-        if !self.keep {
-            self.leases
+        if !self.drivers.unconfirmed.lock().unwrap().contains(self.worker) {
+            self.drivers
+                .leases
                 .lock()
                 .unwrap()
                 .settle(self.worker, Instant::now());
@@ -320,6 +321,11 @@ impl Control {
         }))
     }
     pub(crate) async fn shutdown(&self) {
+        // Hold every worker first, so requests cancelled below neither settle leases nor admit
+        // input; only a confirmed retirement releases a worker.
+        for id in self.drivers.workers.lock().await.keys() {
+            self.drivers.hold(id);
+        }
         let task = self.task.lock().unwrap().take();
         if let Some(task) = task {
             task.abort();
@@ -700,10 +706,9 @@ impl Drivers {
                             false,
                         )));
                     }
-                    let mut settle = Settle {
-                        leases: &self.leases,
+                    let _settle = Settle {
+                        drivers: self,
                         worker: &worker_id,
-                        keep: false,
                     };
                     if let Some(wanted) = leases::Target::of(&observed) {
                         let todo = request.todo.as_deref().unwrap_or_default();
@@ -837,7 +842,6 @@ impl Drivers {
                         }
                         if let Err(error) = self.retire(&worker_id, &mut worker).await {
                             reason = json!(error.to_string());
-                            settle.keep = true;
                             if let Some(guard) = screen.take() {
                                 self.stuck.lock().unwrap().insert(worker_id.clone(), guard);
                             }
@@ -928,6 +932,12 @@ impl Drivers {
     /// The only way a driver leaves its slot: its exit is confirmed, or the worker is marked
     /// unconfirmed and keeps the slot, its leases and any parked foreground lock until a Stop
     /// confirms it.
+    /// Marks a worker unconfirmed: no start or input, and its leases stay pinned.
+    fn hold(&self, worker_id: &str) {
+        self.unconfirmed.lock().unwrap().insert(worker_id.to_owned());
+        self.leases.lock().unwrap().pin(worker_id);
+    }
+
     async fn retire(&self, worker_id: &str, worker: &mut Option<Worker>) -> Result<()> {
         let confirmed: Result<()> = async {
             if let Some(active) = worker.as_mut() {
@@ -952,8 +962,7 @@ impl Drivers {
                 Ok(())
             }
             Err(error) => {
-                self.unconfirmed.lock().unwrap().insert(worker_id.to_owned());
-                self.leases.lock().unwrap().pin(worker_id);
+                self.hold(worker_id);
                 Err(format!("stop_unconfirmed: {error}").into())
             }
         }
