@@ -4,8 +4,10 @@ import { CopilotClient, RuntimeConnection, type SessionEvent } from '@github/cop
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { isAbsolute } from 'node:path';
 import { buildSafeProcessEnv } from '../safe-process-env.ts';
+import { workStartConfiguration } from './start-configuration.ts';
 import type { WorkDelivery } from './types.ts';
 export class CopilotModelUnavailableError extends Error {}
+export class CopilotEffortUnavailableError extends Error {}
 export const COPILOT_CLI_VERSION = '1.0.105';
 type WorkInputReceipt = NonNullable<WorkDelivery['receipt']>;
 
@@ -32,6 +34,7 @@ export interface CopilotWorkerConfig {
   cwd: string;
   stateDirectory: string;
   model: string;
+  effort?: string;
   env: NodeJS.ProcessEnv;
   timeoutMs?: number;
   resume?: boolean;
@@ -215,12 +218,22 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
       throw new Error('Unsupported Copilot worker runtime version');
     if (!(await bounded(client.getAuthStatus(), timeoutMs)).isAuthenticated)
       throw new Error('Copilot login required: run copilot login in your terminal.');
-    if (!(await bounded(client.listModels(), timeoutMs)).some((model) => model.id === config.model))
-      throw new CopilotModelUnavailableError('Unsupported Copilot model ID.');
+    const model = (await bounded(client.listModels(), timeoutMs)).find(
+      (model) => model.id === config.model
+    );
+    if (!model) throw new CopilotModelUnavailableError('Unsupported Copilot model ID.');
+    const effort = model.capabilities.supports.reasoningEffort
+      ? model.supportedReasoningEfforts?.find((effort) => effort === config.effort)
+      : undefined;
+    if (config.effort !== undefined && effort === undefined)
+      throw new CopilotEffortUnavailableError(
+        `Copilot model ${config.model} does not support reasoning effort ${JSON.stringify(config.effort)}.`
+      );
     const policy = {
       systemMessage: { content: workerWorkLocationsBrief(config.cwd) },
       workingDirectory: config.cwd,
       model: config.model,
+      reasoningEffort: effort,
       availableTools: [],
       onPermissionRequest: () => ({ kind: 'reject' as const }),
     };
@@ -230,6 +243,14 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
         : client.createSession({ ...policy, sessionId: config.sessionId }),
       timeoutMs
     );
+    if (effort !== undefined) {
+      const observed = await bounded(session.rpc.model.getCurrent(), timeoutMs);
+      const confirmed = workStartConfiguration.confirm(
+        { model: config.model, effort },
+        { model: observed.modelId, effort: observed.reasoningEffort }
+      );
+      if (!confirmed.ok) throw new Error(`${confirmed.detail} No prompt was sent.`);
+    }
     const receive = (event: SessionEvent) => {
       if (closed || state.status === 'unreachable' || !event.id || seen.has(event.id)) return;
       if (event.type === 'user.message' && !Object.hasOwn(state.inputs, event.data.messageId ?? ''))

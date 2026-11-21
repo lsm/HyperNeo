@@ -73,5 +73,10 @@ journal records it as applied before the test session is archived.
 
 The CLI also exposes start, send, queue, withdraw, stop, rename, and archive
 for daemon-owned sessions. Neo can compact an idle owned CLI worker kept for
-reuse. Strict same-turn steering remains unsupported. In the App, an
-immediate send after the original turn ends can start a new turn.
+reuse. In `cli` mode, start with an explicit model and `high` reasoning
+effort. Verify the SDK confirms both before the first prompt, and that start
+and status report the applied effort. Unsupported effort and a runtime
+configuration mismatch both prevent prompt delivery.
+
+Strict same-turn steering remains unsupported. In the App, an immediate send
+after the original turn ends can start a new turn.

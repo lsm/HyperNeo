@@ -6,11 +6,13 @@ import { basename, dirname, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import {
   COPILOT_CLI_VERSION,
+  CopilotEffortUnavailableError,
   CopilotModelUnavailableError,
   openCopilotWorker,
 } from './copilot-worker.ts';
 import { selectLocalStartFolder, type StartFolderDeps } from './start-folder.ts';
 import { workStartPreparation } from './start-preparation.ts';
+import { workStartConfiguration } from './start-configuration.ts';
 import { reject } from './work-operations.ts';
 import { errorMessage } from '../utils/error-message.ts';
 import { copilotOwnsSession, createCopilotFind } from './copilot-find.ts';
@@ -74,6 +76,7 @@ export function createCopilotAdapter(
       cwd: record.directory,
       stateDirectory: join(deps.directory, record.work.ref.id),
       model: record.work.model!,
+      effort: record.work.effort,
       env: deps.env,
       timeoutMs: deps.timeoutMs,
       resume,
@@ -107,8 +110,6 @@ export function createCopilotAdapter(
   };
   const admit = (request: W.StartRequest): Gate<W.StartRequest> => {
     if (closed) return { reason: reject('unreachable', 'Copilot owner is shutting down.') };
-    if (request.effort !== undefined)
-      return { reason: reject('unsupported_effort', 'Copilot effort is not wired yet.') };
     if (!request.model)
       return { reason: reject('unsupported_model', 'Choose an explicit Copilot model ID.') };
     const preparation = workStartPreparation.admit(request.preparation, false);
@@ -147,6 +148,9 @@ export function createCopilotAdapter(
         status: 'queued',
         lastActivityAt: Date.now(),
         model: request.model,
+        ...(request.effort === undefined
+          ? {}
+          : { effort: workStartConfiguration.normalize(request.effort) }),
         watchHint: 'Watch with work.status; app visibility is unverified.',
       },
       snapshot: { status: 'queued', inputs: {} },
@@ -176,6 +180,8 @@ export function createCopilotAdapter(
       live.delete(location.id);
       if (error instanceof CopilotModelUnavailableError && error.cause === undefined)
         return reject('unsupported_model', error.message);
+      if (error instanceof CopilotEffortUnavailableError && error.cause === undefined)
+        return reject('unsupported_effort', error.message);
       return reject(
         'unreachable',
         `copilot-cli:${location.id}: ${failures.map(String).join('; ')}. Check work.status; do not replay this start automatically.`
@@ -603,16 +609,21 @@ export function createCopilotAdapter(
   };
   return {
     ...discovery,
-    get supportsStartEffort() {
-      return deps.desktop?.supportsStartEffort === true;
-    },
+    supportsStartEffort: true,
     resolveStartConfiguration: async (request) => {
       if (deps.desktop?.capabilities.includes('start'))
         return { ok: true, value: { model: request.model, effort: request.effort } };
       const selected = admit(request);
       return 'reason' in selected
         ? selected.reason
-        : { ok: true, value: { model: selected.value.model } };
+        : {
+            ok: true,
+            value: {
+              model: selected.value.model,
+              effort:
+                selected.value.effort && workStartConfiguration.normalize(selected.value.effort),
+            },
+          };
     },
     find,
     readInput: async (id, marker) =>

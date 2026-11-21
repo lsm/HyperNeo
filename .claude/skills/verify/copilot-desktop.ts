@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { appendFileSync, chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
@@ -225,15 +225,39 @@ try {
   if (cli) {
     const folder = join(run, 'workspace');
     mkdirSync(folder);
-    const start = await rpc<Result<WorkStarted>>('work.start', {
+    const request = {
       adapter,
       place: { machine: hostname(), folder, name: 'Fixture' },
       title: 'Fixture',
       model: 'synthetic-model',
       message: 'hold',
-    });
+    };
+    const effort = { ...request, model: 'synthetic-effort-model', effort: 'high' };
+    const start = await rpc<Result<WorkStarted>>('work.start', mode === 'cli' ? effort : request);
     assert(start.ok, JSON.stringify(start));
     const { ref } = start.value;
+    if (mode === 'cli') {
+      assert.equal(start.value.model, effort.model);
+      assert.equal(start.value.effort, effort.effort);
+      const status = await rpc<Result<WorkDetail>>('work.status', { ref });
+      assert(status.ok && status.value.effort === effort.effort);
+      const before = readFileSync(join(folder, 'calls.jsonl'), 'utf8');
+      const unsupported = await rpc<Result<WorkStarted>>('work.start', { ...effort, effort: 'low' });
+      assert(!unsupported.ok && unsupported.reason === 'unsupported_effort');
+      const rejected = readFileSync(join(folder, 'calls.jsonl'), 'utf8').slice(before.length);
+      assert(!/session\.(create|send)/.test(rejected));
+      const mismatch = join(folder, 'copilot-effort-mismatch');
+      writeFileSync(mismatch, '');
+      try {
+        const refused = await rpc<Result<WorkStarted>>('work.start', effort);
+        assert(!refused.ok && /did not confirm effort/.test(refused.detail ?? ''));
+        const traffic = readFileSync(join(folder, 'calls.jsonl'), 'utf8').slice(before.length);
+        assert(traffic.includes('session.model.getCurrent') && !traffic.includes('session.send'));
+      } finally {
+        unlinkSync(mismatch);
+      }
+      console.log('PASS CLI confirmed high reasoning effort and declined unsupported or unconfirmed settings before sending.');
+    }
     const send = await rpc<Result<unknown>>('work.send', { ref, message: 'queued' });
     assert(send.ok, JSON.stringify(send));
     const stop = await rpc<Result<{ stopped: boolean }>>('work.stop', { ref });
