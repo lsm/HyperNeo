@@ -17,9 +17,10 @@ bash packages/desktop/locked-use/build.sh "$RUN"
 bash packages/desktop/locked-use/check-plugin.sh "$RUN"
 ```
 
-Pass prints `none=deny adhoc=deny other=deny guardian=allow` and `plugin check PASS`:
-no server, an ad-hoc signed server and a server signed with another identifier are
-refused; only the guardian identifier is allowed.
+Pass prints `none=deny adhoc=deny other=deny guardian-silent=deny guardian-hangup=deny
+guardian=allow` and `plugin check PASS`: no server, an ad-hoc signed server and a server
+signed with another identifier are refused; a guardian that never answers or hangs up
+is refused within about a second without crashing; only an answering guardian is allowed.
 
 Install and removal change the Mac's unlock rule and need the owner's admin
 password. Run them only on a test Mac or with the owner's explicit approval, and
@@ -34,6 +35,9 @@ diff <(plutil -extract rule xml1 -o - "$RUN/before.plist") <(plutil -extract rul
 ```
 
 Install prints the rule array `io.hyperneo.locked-use.unlock, use-login-window-ui`;
-uninstall prints the original array and the diff is empty. Install refuses a rule
-that already has more than one entry or a `k-of-n`. After install, lock the Mac and
+uninstall prints the original array and the diff is empty. Install refuses any rule
+other than the stock `class rule` with exactly `use-login-window-ui`, verifies the
+staged root-owned copy is the Developer ID plugin `io.hyperneo.locked-use.plugin`, and
+restores the stock rule if any later step fails. Uninstall restores the saved stock rule,
+refuses a rule changed by something else, and fails unless the right and bundle are gone. After install, lock the Mac and
 unlock it with the password once to confirm the normal path still works.

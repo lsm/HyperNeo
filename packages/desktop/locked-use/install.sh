@@ -1,37 +1,48 @@
 #!/bin/bash
 # Opt-in install for Locked Use. Run as root: install.sh <HyperNeoLockedUse.bundle>
-# Adds one alternative to the screen-unlock rule. The original rule, usually the
-# login window password prompt, stays in place and still unlocks on its own.
+# Adds one alternative to the stock screen-unlock rule. The login window password
+# prompt stays in place and still unlocks on its own. Any failure restores the stock rule.
 set -euo pipefail
 [[ $EUID == 0 ]] || { echo "run with sudo" >&2; exit 1; }
 source="${1:?HyperNeoLockedUse.bundle}"
-right=system.login.screensaver
-mine=io.hyperneo.locked-use.unlock
-plugin=/Library/Security/SecurityAgentPlugins/HyperNeoLockedUse.bundle
-backup="/Library/Application Support/HyperNeo/LockedUse/screensaver-rule.backup.plist"
+. "$(dirname "$0")/policy.sh"
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
-buddy() { /usr/libexec/PlistBuddy "$@"; }
+staged=""
+trap 'rm -rf "$work" ${staged:+"$staged"}' EXIT
 
-codesign --verify --strict -R='anchor apple generic and certificate leaf[subject.OU] = "P5R65T296V"' "$source"
-security authorizationdb read "$right" > "$work/rule.plist" 2>/dev/null
-if [[ "$(buddy -c 'Print :rule:0' "$work/rule.plist")" == "$mine" ]]; then
+read_rule "$work/rule.plist"
+if is_installed "$work/rule.plist" && security authorizationdb read "$mine" >/dev/null 2>&1 \
+    && codesign --verify --strict --test-requirement="=$plugin_requirement" "$plugin" 2>/dev/null; then
     echo "already installed"
     exit 0
 fi
-if buddy -c 'Print :rule:1' "$work/rule.plist" >/dev/null 2>&1 \
-    || buddy -c 'Print :k-of-n' "$work/rule.plist" >/dev/null 2>&1; then
-    echo "$right is not a single-rule policy; refusing to change it" >&2
+if ! is_stock "$work/rule.plist"; then
+    echo "$right is not the stock use-login-window-ui rule; refusing to change it" >&2
     exit 1
 fi
 
-mkdir -p "$(dirname "$backup")"
-[[ -e "$backup" ]] || cp "$work/rule.plist" "$backup"
-rm -rf "$plugin"
-ditto "$source" "$plugin"
-chown -R root:wheel "$plugin"
-codesign --verify --strict "$plugin"
+staged="$(mktemp -d /Library/Security/SecurityAgentPlugins/.HyperNeoLockedUse.XXXXXX)"
+ditto "$source" "$staged/HyperNeoLockedUse.bundle"
+chown -R root:wheel "$staged"
+chmod -R go-w "$staged"
+codesign --verify --strict --test-requirement="=$plugin_requirement" "$staged/HyperNeoLockedUse.bundle"
 
+mkdir -p "$(dirname "$backup")"
+cp "$work/rule.plist" "$backup"
+chown root:wheel "$backup"
+chmod 644 "$backup"
+
+rollback() {
+    security authorizationdb write "$right" < "$backup" || true
+    security authorizationdb remove "$mine" >/dev/null 2>&1 || true
+    rm -rf "$plugin"
+    echo "install failed; stock rule restored" >&2
+}
+trap rollback ERR
+
+rm -rf "$plugin"
+mv "$staged/HyperNeoLockedUse.bundle" "$plugin"
+codesign --verify --strict --test-requirement="=$plugin_requirement" "$plugin"
 cat > "$work/mine.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -44,8 +55,10 @@ cat > "$work/mine.plist" <<EOF
 </dict></plist>
 EOF
 security authorizationdb write "$mine" < "$work/mine.plist"
-buddy -c 'Add :k-of-n integer 1' -c "Add :rule:0 string $mine" "$work/rule.plist"
+/usr/libexec/PlistBuddy -c 'Add :k-of-n integer 1' -c "Add :rule:0 string $mine" "$work/rule.plist"
 security authorizationdb write "$right" < "$work/rule.plist"
-security authorizationdb read "$right" > "$work/after.plist" 2>/dev/null
-buddy -c 'Print :rule' "$work/after.plist"
-echo "installed; original rule backed up at $backup"
+read_rule "$work/after.plist"
+is_installed "$work/after.plist"
+trap - ERR
+rule_of "$work/after.plist"
+echo "installed; stock rule backed up at $backup"

@@ -1,4 +1,7 @@
 #include <CoreFoundation/CoreFoundation.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
 #include <Security/AuthorizationPlugin.h>
 #include <Security/Security.h>
 #include <bsm/libbsm.h>
@@ -41,6 +44,20 @@ static int signed_guardian(audit_token_t token) {
     return trusted;
 }
 
+static int connect_within(int channel, const struct sockaddr_un *address, int milliseconds) {
+    int flags = fcntl(channel, F_GETFL);
+    if (flags < 0 || fcntl(channel, F_SETFL, flags | O_NONBLOCK)) return 0;
+    int connected = !connect(channel, (const struct sockaddr *)address, sizeof *address);
+    if (!connected && errno == EINPROGRESS) {
+        struct pollfd ready = {.fd = channel, .events = POLLOUT};
+        int failure = 0;
+        socklen_t size = sizeof failure;
+        connected = poll(&ready, 1, milliseconds) == 1
+            && !getsockopt(channel, SOL_SOCKET, SO_ERROR, &failure, &size) && !failure;
+    }
+    return connected && !fcntl(channel, F_SETFL, flags);
+}
+
 static int guardian_unlocks(void) {
     struct stat console;
     if (stat("/dev/console", &console) || console.st_uid == 0) return 0;
@@ -50,11 +67,14 @@ static int guardian_unlocks(void) {
     int channel = socket(AF_UNIX, SOCK_STREAM, 0);
     if (channel < 0) return 0;
     struct timeval deadline = {.tv_sec = 1};
+    int on = 1;
     audit_token_t token;
     socklen_t size = sizeof token;
     char reply = 0;
-    int approved = !setsockopt(channel, SOL_SOCKET, SO_RCVTIMEO, &deadline, sizeof deadline)
-        && !connect(channel, (struct sockaddr *)&address, sizeof address)
+    int approved = !setsockopt(channel, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof on)
+        && !setsockopt(channel, SOL_SOCKET, SO_RCVTIMEO, &deadline, sizeof deadline)
+        && !setsockopt(channel, SOL_SOCKET, SO_SNDTIMEO, &deadline, sizeof deadline)
+        && connect_within(channel, &address, 1000)
         && !getsockopt(channel, SOL_LOCAL, LOCAL_PEERTOKEN, &token, &size)
         && audit_token_to_euid(token) == console.st_uid
         && signed_guardian(token)
