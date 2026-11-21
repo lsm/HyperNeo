@@ -99,6 +99,35 @@ describe('neo.conversation.read', () => {
     }
   });
 
+  test('projects publications only after admission and propagates projection failures', async () => {
+    publish(1);
+    let calls = 0;
+    let failure: Error | undefined;
+    const operation = createNeoConversationReadOperation(
+      repo,
+      reader,
+      undefined,
+      undefined,
+      async (items) => {
+        calls++;
+        if (failure) throw failure;
+        return items.map((item) => ({ ...item, shortText: 'Projected reply' }));
+      }
+    );
+    const page = operation.inputSchema.parse({ conversationId });
+    expect(await operation.execute(page, human)).toMatchObject({
+      ok: true,
+      items: [{ role: 'neo', publication: { shortText: 'Projected reply' } }],
+    });
+    expect(await operation.execute(page, { source: 'internal', role: 'neo' })).toEqual({
+      ok: false,
+      reason: 'reader_not_authorized',
+    });
+    expect(calls).toBe(1);
+    failure = new Error('projection failed');
+    await expect(operation.execute(page, human)).rejects.toBe(failure);
+  });
+
   test('pages both directions without losing equal-timestamp entries or mixing conversations', async () => {
     for (let n = 1; n <= 5; n++) {
       ask(n);
