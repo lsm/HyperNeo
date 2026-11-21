@@ -20,6 +20,7 @@ bun scripts/pipeline-verdict-report.ts --strict > "$run/verdicts.json"
 echo 'strict report exit=0'
 jq -er '
   [
+    "neo.todo.done",
     "evolution.scope.owner.set",
     "goal.owner.set",
     "space.audit.list",
