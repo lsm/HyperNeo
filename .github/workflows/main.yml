@@ -86,7 +86,14 @@ jobs:
       - name: Build production-admission host fixture
         run: cargo build --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml
       - name: Start a release-host driver and tolerate endpoint failures
-        run: python3 packages/desktop/tests/worker-drivers.py packages/desktop/tests/driver-host/target/debug/desktop-driver-fixture WorkerDrivers.test_release_host_starts_a_driver_only_it_can_reach WorkerDrivers.test_bind_failure_allows_desktop_setup_to_continue WorkerDrivers.test_missing_startup_paths_allow_desktop_setup_to_continue
+        run: |
+          python3 packages/desktop/tests/worker-drivers.py \
+            packages/desktop/tests/driver-host/target/debug/desktop-driver-fixture \
+            WorkerDrivers.test_release_host_starts_a_driver_only_it_can_reach \
+            WorkerDrivers.test_bind_failure_allows_desktop_setup_to_continue \
+            WorkerDrivers.test_missing_startup_paths_allow_desktop_setup_to_continue \
+            WorkerDrivers.test_restart_retires_leftover_driver_before_serving_requests \
+            WorkerDrivers.test_restart_leaves_reused_driver_pid_alone
       - name: Test daemon child lifetime
         run: "cargo test --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml -- peer_tests:: leases::"
       - name: Test desktop startup settings

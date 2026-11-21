@@ -1,10 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::{
-    fs::{DirBuilder, File, OpenOptions},
-    io::{Read, Write},
+    fs::{self, DirBuilder, File, OpenOptions},
+    io::{self, Read, Write},
     os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
 };
+use tokio::time::{sleep, timeout, Duration};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 #[derive(Deserialize, Serialize, PartialEq)]
@@ -37,18 +38,26 @@ pub(super) fn directory(base: &Path, worker: &str, create: bool) -> Result<PathB
                 })?;
             File::open(path.parent().ok_or("Invalid record directory")?)?.sync_all()?;
         }
-        let metadata = path.symlink_metadata()?;
-        if !metadata.is_dir()
-            || metadata.uid() != unsafe { libc::geteuid() }
-            || metadata.mode() & 0o777 != 0o700
-        {
-            return Err("Invalid driver record directory".into());
-        }
+        protected_directory(path)?;
     }
     Ok(directory)
 }
 
-fn protected_file(path: &Path) -> Result<File> {
+fn protected_directory(path: &Path) -> io::Result<()> {
+    let metadata = path.symlink_metadata()?;
+    if !metadata.is_dir()
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.mode() & 0o777 != 0o700
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "Invalid driver record directory",
+        ));
+    }
+    Ok(())
+}
+
+fn protected_file(path: &Path) -> io::Result<File> {
     let file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
@@ -59,7 +68,10 @@ fn protected_file(path: &Path) -> Result<File> {
         || metadata.mode() & 0o777 != 0o600
         || metadata.nlink() != 1
     {
-        return Err("Invalid driver record file".into());
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "Invalid driver record file",
+        ));
     }
     Ok(file)
 }
@@ -124,6 +136,14 @@ impl Drop for Starting {
 }
 
 pub(super) fn identity(pid: u32) -> Result<Identity> {
+    let info = process(pid)?;
+    if info.pbi_uid != unsafe { libc::geteuid() } {
+        return Err("driver process identity unavailable".into());
+    }
+    Ok(birth(&info))
+}
+
+fn process(pid: u32) -> Result<libc::proc_bsdinfo> {
     if pid <= 1 || pid > i32::MAX as u32 {
         return Err("Invalid driver PID".into());
     }
@@ -138,13 +158,17 @@ pub(super) fn identity(pid: u32) -> Result<Identity> {
             size,
         )
     };
-    if read != size || info.pbi_pid != pid || info.pbi_uid != unsafe { libc::geteuid() } {
+    if read != size || info.pbi_pid != pid {
         return Err("driver process identity unavailable".into());
     }
-    Ok(Identity {
+    Ok(info)
+}
+
+fn birth(info: &libc::proc_bsdinfo) -> Identity {
+    Identity {
         seconds: info.pbi_start_tvsec,
         microseconds: info.pbi_start_tvusec,
-    })
+    }
 }
 
 pub(super) fn publish(directory: &Path, pid: u32) -> Result<()> {
@@ -161,15 +185,78 @@ pub(super) fn publish(directory: &Path, pid: u32) -> Result<()> {
 }
 
 pub(super) fn verify(directory: &Path, pid: u32) -> Result<()> {
-    let mut bytes = Vec::new();
-    protected_file(&directory.join("driver.json"))?
-        .take(16384)
-        .read_to_end(&mut bytes)?;
-    let record: Record = serde_json::from_slice(&bytes)?;
+    let record = read(directory)?;
     if record.pid != pid || record.started_at != identity(pid)? {
         return Err("driver process identity changed".into());
     }
     Ok(())
+}
+
+fn read(directory: &Path) -> io::Result<Record> {
+    let mut bytes = Vec::new();
+    protected_file(&directory.join("driver.json"))?
+        .take(16384)
+        .read_to_end(&mut bytes)?;
+    let record: Record = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+    if record.pid <= 1 || record.pid > i32::MAX as u32 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Invalid driver PID",
+        ));
+    }
+    Ok(record)
+}
+
+pub(super) async fn retire_leftovers(base: &Path) -> Result<()> {
+    let workers = base.join("workers");
+    match protected_directory(&workers) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    }
+    for entry in fs::read_dir(workers)? {
+        let directory = entry?.path();
+        protected_directory(&directory)?;
+        let record = match read(&directory) {
+            Ok(record) => record,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
+        record.retire().await?;
+    }
+    Ok(())
+}
+
+impl Record {
+    fn still_running(&self) -> Result<bool> {
+        match process(self.pid) {
+            Ok(info) => {
+                Ok(info.pbi_uid == unsafe { libc::geteuid() } && self.started_at == birth(&info))
+            }
+            Err(_) if verify_gone(self.pid).is_ok() => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn retire(&self) -> Result<()> {
+        if !self.still_running()? {
+            return Ok(());
+        }
+        if unsafe { libc::kill(self.pid as i32, libc::SIGKILL) } == -1 {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() != Some(libc::ESRCH) {
+                return Err(error.into());
+            }
+        }
+        timeout(Duration::from_secs(2), async {
+            while self.still_running()? {
+                sleep(Duration::from_millis(20)).await;
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|_| "stop_unconfirmed: leftover driver did not exit")?
+    }
 }
 
 pub(super) fn verify_gone(pid: u32) -> Result<()> {

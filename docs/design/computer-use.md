@@ -53,6 +53,7 @@ The host keeps an in-memory lease table, because it resolves each target and sen
 - While input may be running, a lease never lapses: it settles after the call, and Stop or a failed shutdown keeps it until the driver is confirmed gone. A settled lease ends after 30 seconds without a call, or when the process or window is gone.
 - A `foreground` call also takes one machine-wide lock, before the target is checked again. A second foreground call waits, then gets `foreground_busy`. If the driver cannot be confirmed stopped, the lock stays held until Stop confirms it. Background calls need only the window lease.
 - A driver leaves its worker slot through one host function, and only once its exit is confirmed. Otherwise the worker is marked unconfirmed: it gets no start or input, and keeps its leases and any foreground lock, until a Stop confirms the exit. Dispatch, Stop, start checks, start cleanup and app shutdown all use it.
+- On restart, the host checks the saved driver records before opening its control socket. It retires each surviving driver after checking its PID, owner and start time. New leases and foreground input can begin once those drivers are gone.
 - Browser workers opening their own window comes later; until then, a busy window means waiting.
 
 ## Where it lives
