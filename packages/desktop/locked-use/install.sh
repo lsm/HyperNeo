@@ -6,10 +6,11 @@ set -euo pipefail
 [[ "$(id -u)" == 0 ]] || { echo "run with sudo" >&2; exit 1; }
 source="${1:?HyperNeoLockedUse.bundle}"
 . "$(dirname "$0")/policy.sh"
+work=""
+staged=""
+trap 'rm -rf ${work:+"$work"} ${staged:+"$staged"}; release_lock' EXIT
 take_lock
 work="$(mktemp -d)"
-staged=""
-trap 'rm -rf "$work" ${staged:+"$staged"}; release_lock' EXIT
 
 read_rule "$work/rule.plist"
 case "$(install_plan "$work/rule.plist")" in

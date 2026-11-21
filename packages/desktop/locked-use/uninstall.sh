@@ -6,7 +6,7 @@
 set -euo pipefail
 [[ "$(id -u)" == 0 ]] || { echo "run with sudo" >&2; exit 1; }
 . "$(dirname "$0")/policy.sh"
-take_lock
 trap release_lock EXIT
+take_lock
 uninstall_locked_use
 echo "removed"
