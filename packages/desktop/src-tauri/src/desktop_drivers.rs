@@ -5,6 +5,8 @@ pub(crate) use peer::wait_unreaped;
 mod channel;
 #[path = "desktop_grants.rs"]
 mod grants;
+#[path = "desktop_leases.rs"]
+mod leases;
 #[path = "desktop_driver_record.rs"]
 mod record;
 #[path = "desktop_target.rs"]
@@ -26,7 +28,7 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::UnixListener,
     process::Command,
-    sync::Mutex,
+    sync::{Mutex, OwnedMutexGuard},
     task::{JoinHandle, JoinSet},
     time::{timeout, timeout_at, Instant},
 };
@@ -46,6 +48,8 @@ static FAIL_NEXT_ACCEPT: AtomicBool = AtomicBool::new(false);
 static LATCH_ON_RESPONSE: AtomicBool = AtomicBool::new(false);
 #[cfg(test)]
 static FAIL_START_CLEANUP: AtomicBool = AtomicBool::new(false);
+#[cfg(test)]
+static FAIL_RETIRE: AtomicBool = AtomicBool::new(false);
 #[cfg(test)]
 pub(crate) fn inject_accept_failure() {
     FAIL_NEXT_ACCEPT.store(true, Ordering::Relaxed);
@@ -89,6 +93,7 @@ fn scoped_windows(mut body: Value, apps: &[String]) -> Value {
     body["content"] = json!([{ "type": "text", "text": text }]);
     body
 }
+const LEASE_POLL: Duration = Duration::from_millis(200);
 struct Worker {
     channel: channel::Channel,
     _directory: TempDir,
@@ -101,6 +106,43 @@ struct Drivers {
     descriptor: PathBuf,
     sidecar: peer::ChildSlot,
     desktop_ready: Arc<dyn Fn() -> bool + Send + Sync>,
+    leases: StdMutex<leases::Leases>,
+    foreground: Arc<Mutex<()>>,
+    /// The foreground lock, owned by the worker using it rather than by its request, so a
+    /// cancelled request cannot drop it; a held worker keeps it until retired.
+    foreground_owner: StdMutex<BTreeMap<String, OwnedMutexGuard<()>>>,
+    /// Set first at shutdown: no request may start a driver or send input after it.
+    closing: std::sync::atomic::AtomicBool,
+    /// Workers whose driver shutdown failed; they get no input until Stop confirms it.
+    unconfirmed: StdMutex<std::collections::BTreeSet<String>>,
+}
+/// Settles a dispatch's leases and gives back its foreground lock when it ends, unless its
+/// worker is held.
+struct Settle<'a> {
+    drivers: &'a Drivers,
+    worker: &'a str,
+}
+impl Drop for Settle<'_> {
+    fn drop(&mut self) {
+        if !self
+            .drivers
+            .unconfirmed
+            .lock()
+            .unwrap()
+            .contains(self.worker)
+        {
+            self.drivers
+                .leases
+                .lock()
+                .unwrap()
+                .settle(self.worker, Instant::now());
+            self.drivers
+                .foreground_owner
+                .lock()
+                .unwrap()
+                .remove(self.worker);
+        }
+    }
 }
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -114,6 +156,9 @@ struct Request {
     call_id: Option<String>,
     /// Bundle ids the daemon's human approved for this worker's todo. A dispatch may act only on these.
     apps: Option<Vec<String>>,
+    /// The todo this call works for, and every todo that may still use the desktop.
+    todo: Option<String>,
+    todos: Option<Vec<String>>,
 }
 pub(crate) struct Control {
     drivers: Arc<Drivers>,
@@ -206,6 +251,11 @@ impl Control {
             records: directory,
             sidecar,
             desktop_ready,
+            leases: StdMutex::default(),
+            foreground: Arc::default(),
+            foreground_owner: StdMutex::default(),
+            closing: Default::default(),
+            unconfirmed: StdMutex::default(),
         });
         let state = drivers.clone();
         let task = tokio::spawn(async move {
@@ -287,6 +337,15 @@ impl Control {
         }))
     }
     pub(crate) async fn shutdown(&self) {
+        // Close admission, then hold every worker, then cancel requests: a cancelled request
+        // can neither settle leases nor drop the foreground lock, and only a confirmed
+        // retirement releases a worker.
+        self.drivers
+            .closing
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        for id in self.drivers.workers.lock().await.keys() {
+            self.drivers.hold(id);
+        }
         let task = self.task.lock().unwrap().take();
         if let Some(task) = task {
             task.abort();
@@ -297,14 +356,12 @@ impl Control {
             .workers
             .lock()
             .await
-            .values()
-            .cloned()
+            .iter()
+            .map(|(id, slot)| (id.clone(), slot.clone()))
             .collect();
-        for slot in slots {
-            if let Some(mut worker) = slot.lock().await.take() {
-                if let Err(error) = worker.channel.close().await {
-                    log::error!("Driver shutdown failed: {error}");
-                }
+        for (id, slot) in slots {
+            if let Err(error) = self.drivers.retire(&id, &mut *slot.lock().await).await {
+                log::error!("Driver shutdown failed: {error}");
             }
         }
         let _ = std::fs::remove_file(&self.socket);
@@ -377,6 +434,11 @@ impl Drivers {
         };
         #[cfg(not(test))]
         let deadline = Instant::now() + Duration::from_secs(20);
+        if matches!(request.action.as_str(), "start" | "dispatch")
+            && self.closing.load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err("Desktop host is shutting down".into());
+        }
         if request.worker.is_empty()
             || request.worker.len() > 64
             || !request
@@ -389,6 +451,11 @@ impl Drivers {
         #[cfg(test)]
         if request.action == "fixture-fail-start-cleanup" {
             FAIL_START_CLEANUP.store(true, Ordering::Relaxed);
+            return Ok(json!({"armed": true}));
+        }
+        #[cfg(test)]
+        if request.action == "fixture-fail-retire" {
+            FAIL_RETIRE.store(true, Ordering::Relaxed);
             return Ok(json!({"armed": true}));
         }
         #[cfg(test)]
@@ -619,10 +686,17 @@ impl Drivers {
             if !matches!(request.action.as_str(), "start" | "dispatch")
                 && !slots.contains_key(&worker_id)
             {
+                if request.action == "stop" {
+                    self.retire(&worker_id, &mut None).await?;
+                }
                 return match request.action.as_str() {
                     "status" | "stop" => Ok(json!({"state": "stopped", "pid": null})),
                     _ => Err("Unknown Desktop control action".into()),
                 };
+            }
+            // Checked under the slot map lock, which shutdown's hold sweep also takes.
+            if self.closing.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err("Desktop host is shutting down".into());
             }
             slots.entry(worker_id.clone()).or_default().clone()
         };
@@ -645,13 +719,77 @@ impl Drivers {
         let result: Result<Option<Value>> = async {
             match request.action.as_str() {
                 "start" => {
-                    self.start_driver(&directory, &mut worker, request.work_dir.as_deref())
-                        .await?
+                    if self.unconfirmed.lock().unwrap().contains(&worker_id) {
+                        return Err(
+                            "stop_unconfirmed: Stop must confirm the old driver exited".into()
+                        );
+                    }
+                    self.start_driver(
+                        &worker_id,
+                        &directory,
+                        &mut worker,
+                        request.work_dir.as_deref(),
+                    )
+                    .await?
                 }
                 "dispatch" => {
+                    if self.closing.load(std::sync::atomic::Ordering::SeqCst)
+                        || self.unconfirmed.lock().unwrap().contains(&worker_id)
+                    {
+                        return Ok(Some(finish(
+                            bundle,
+                            class,
+                            "refused",
+                            json!("stop_unconfirmed"),
+                            false,
+                        )));
+                    }
+                    let _settle = Settle {
+                        drivers: self,
+                        worker: &worker_id,
+                    };
+                    if let Some(wanted) = leases::Target::of(&observed) {
+                        let todo = request.todo.as_deref().unwrap_or_default();
+                        let todos = request.todos.as_deref().unwrap_or_default();
+                        let live =
+                            |held: &leases::Target| target::alive(&held.instance, held.window);
+                        loop {
+                            let taken = self.leases.lock().unwrap().acquire(
+                                &worker_id,
+                                todo,
+                                todos,
+                                &wanted,
+                                Instant::now(),
+                                live,
+                            );
+                            match taken {
+                                Ok(()) => break,
+                                Err(_) if Instant::now() + LEASE_POLL < deadline => {
+                                    tokio::time::sleep(LEASE_POLL).await
+                                }
+                                Err(holder) => {
+                                    log::info!(
+                                        "Desktop dispatch {worker_id}: window held by {holder}"
+                                    );
+                                    return Ok(Some(finish(
+                                        bundle,
+                                        class,
+                                        "refused",
+                                        json!("window_busy"),
+                                        false,
+                                    )));
+                                }
+                            }
+                        }
+                    }
                     if worker.is_none() {
-                        self.start_driver(&directory, &mut worker, request.work_dir.as_deref())
-                            .await?;
+                        self.start_driver(
+                            &worker_id,
+                            &directory,
+                            &mut worker,
+                            request.work_dir.as_deref(),
+                        )
+                        .await?;
                     }
                     if screen_locked() {
                         return Ok(Some(finish(
@@ -659,6 +797,19 @@ impl Drivers {
                             class,
                             "refused",
                             json!("screen_locked"),
+                            false,
+                        )));
+                    }
+                    let foreground = request
+                        .arguments
+                        .as_ref()
+                        .is_some_and(|args| args["delivery_mode"] == "foreground");
+                    if foreground && !self.take_foreground(&worker_id, deadline).await {
+                        return Ok(Some(finish(
+                            bundle,
+                            class,
+                            "refused",
+                            json!("foreground_busy"),
                             false,
                         )));
                     }
@@ -688,7 +839,27 @@ impl Drivers {
                     #[cfg(not(test))]
                     let limit = Duration::from_secs(30);
                     #[cfg(test)]
-                    let limit = Duration::from_millis(100);
+                    let limit = if request
+                        .arguments
+                        .as_ref()
+                        .is_some_and(|args| args["fixture_timeline"].is_string())
+                    {
+                        Duration::from_secs(2)
+                    } else {
+                        Duration::from_millis(100)
+                    };
+                    // Lease and lock waits can end after shutdown began: check right before input.
+                    if self.closing.load(std::sync::atomic::Ordering::SeqCst)
+                        || self.unconfirmed.lock().unwrap().contains(&worker_id)
+                    {
+                        return Ok(Some(finish(
+                            bundle,
+                            class,
+                            "refused",
+                            json!("desktop_shutting_down"),
+                            false,
+                        )));
+                    }
                     let active = worker.as_mut().unwrap();
                     let call = timeout_at(
                         deadline.min(Instant::now() + limit),
@@ -709,8 +880,16 @@ impl Drivers {
                         Err(_) => json!("driver call timed out"),
                     };
                     if !reason.is_null() {
-                        if let Err(error) = active.channel.close().await {
-                            reason = json!(format!("stop_unconfirmed: {error}"));
+                        #[cfg(test)]
+                        if request
+                            .arguments
+                            .as_ref()
+                            .is_some_and(|args| args["fixture_close_fails"] == true)
+                        {
+                            FAIL_RETIRE.store(true, Ordering::Relaxed);
+                        }
+                        if let Err(error) = self.retire(&worker_id, &mut worker).await {
+                            reason = json!(error.to_string());
                         }
                     }
                     // The driver reports tool failures in its result, not on the channel.
@@ -741,26 +920,22 @@ impl Drivers {
                     return Ok(Some(reply));
                 }
                 "stop" => {
-                    if let Some(worker) = worker.as_mut() {
-                        let pid = worker.channel.pid;
-                        if worker.channel.running() {
-                            record::verify(&directory, pid)
-                                .map_err(|error| format!("stop_unconfirmed: {error}"))?;
+                    self.leases.lock().unwrap().pin(&worker_id);
+                    let running = worker
+                        .as_mut()
+                        .and_then(|active| active.channel.running().then_some(active.channel.pid));
+                    if let Some(pid) = running {
+                        if let Err(error) = record::verify(&directory, pid) {
+                            self.unconfirmed.lock().unwrap().insert(worker_id.clone());
+                            return Err(format!("stop_unconfirmed: {error}").into());
                         }
-                        worker
-                            .channel
-                            .close()
-                            .await
-                            .map_err(|error| format!("stop_unconfirmed: {error}"))?;
-                        record::verify_gone(pid)?;
                     }
-                    *worker = None;
+                    self.retire(&worker_id, &mut worker).await?;
                 }
                 "status" => {}
                 _ => return Err("Unknown Desktop control action".into()),
             }
-            if let Some(worker) = worker.as_mut() {
-                let pid = worker.channel.pid;
+            if let Some(pid) = worker.as_ref().map(|worker| worker.channel.pid) {
                 #[cfg(test)]
                 if request.action == "start" && LATCH_ON_RESPONSE.swap(false, Ordering::Relaxed) {
                     record::latch(&directory)?;
@@ -770,12 +945,7 @@ impl Drivers {
                     .and_then(|_| record::verify(&directory, pid));
                 if let Err(error) = valid {
                     if request.action == "start" {
-                        worker
-                            .channel
-                            .close()
-                            .await
-                            .map_err(|error| format!("stop_unconfirmed: {error}"))?;
-                        record::verify_gone(pid)?;
+                        self.retire(&worker_id, &mut worker).await?;
                     }
                     return Err(error);
                 }
@@ -783,11 +953,13 @@ impl Drivers {
             Ok(None)
         }
         .await;
-        if worker
-            .as_mut()
-            .is_some_and(|worker| !worker.channel.running())
+        // A driver whose exit is unconfirmed stays in its slot so Stop can confirm it.
+        if !self.unconfirmed.lock().unwrap().contains(&worker_id)
+            && worker
+                .as_mut()
+                .is_some_and(|worker| !worker.channel.running())
         {
-            *worker = None;
+            let _ = self.retire(&worker_id, &mut worker).await;
         }
         if worker.is_none() {
             let mut slots = self.workers.lock().await;
@@ -802,8 +974,62 @@ impl Drivers {
         }))
     }
 
+    /// The only way a driver leaves its slot: its exit is confirmed, or the worker is marked
+    /// unconfirmed and keeps the slot, its leases and any parked foreground lock until a Stop
+    /// confirms it.
+    async fn take_foreground(&self, worker_id: &str, deadline: Instant) -> bool {
+        let Ok(guard) = timeout_at(deadline, self.foreground.clone().lock_owned()).await else {
+            return false;
+        };
+        self.foreground_owner
+            .lock()
+            .unwrap()
+            .insert(worker_id.to_owned(), guard);
+        true
+    }
+
+    /// Marks a worker unconfirmed: no start or input, and its leases stay pinned.
+    fn hold(&self, worker_id: &str) {
+        self.unconfirmed
+            .lock()
+            .unwrap()
+            .insert(worker_id.to_owned());
+        self.leases.lock().unwrap().pin(worker_id);
+    }
+
+    async fn retire(&self, worker_id: &str, worker: &mut Option<Worker>) -> Result<()> {
+        let confirmed: Result<()> = async {
+            if let Some(active) = worker.as_mut() {
+                let pid = active.channel.pid;
+                #[cfg(test)]
+                if FAIL_RETIRE.swap(false, Ordering::Relaxed) {
+                    active.channel.drop_stream();
+                    return Err("fixture close failure".into());
+                }
+                active.channel.close().await?;
+                record::verify_gone(pid)?;
+            }
+            Ok(())
+        }
+        .await;
+        match confirmed {
+            Ok(()) => {
+                *worker = None;
+                self.leases.lock().unwrap().release(worker_id);
+                self.foreground_owner.lock().unwrap().remove(worker_id);
+                self.unconfirmed.lock().unwrap().remove(worker_id);
+                Ok(())
+            }
+            Err(error) => {
+                self.hold(worker_id);
+                Err(format!("stop_unconfirmed: {error}").into())
+            }
+        }
+    }
+
     async fn start_driver(
         &self,
+        worker_id: &str,
         directory: &std::path::Path,
         worker: &mut Option<Worker>,
         work_dir: Option<&std::path::Path>,
@@ -862,16 +1088,11 @@ impl Drivers {
             record::publish(directory, pid).and_then(|_| record::ensure_enabled(directory))
         {
             starting.preserve();
-            let _cleanup: Result<()> = async {
-                #[cfg(test)]
-                if FAIL_START_CLEANUP.swap(false, Ordering::Relaxed) {
-                    return Err("Fixture start cleanup failed".into());
-                }
-                worker.as_mut().unwrap().channel.close().await?;
-                Ok(())
+            #[cfg(test)]
+            if FAIL_START_CLEANUP.swap(false, Ordering::Relaxed) {
+                FAIL_RETIRE.store(true, Ordering::Relaxed);
             }
-            .await;
-            record::verify_gone(pid)?;
+            self.retire(worker_id, worker).await?;
             starting.cleanup_verified();
             return Err(error);
         }
@@ -895,11 +1116,64 @@ mod peer_tests {
             descriptor: directory.path().join("missing-runtime.json"),
             sidecar: Arc::new(StdMutex::new(Some(child))),
             desktop_ready: Arc::new(|| true),
+            leases: StdMutex::default(),
+            foreground: Arc::default(),
+            foreground_owner: StdMutex::default(),
+            closing: Default::default(),
+            unconfirmed: StdMutex::default(),
         };
         assert_eq!(wait_unreaped(pid).unwrap(), (Some(0), None));
         assert!(drivers.authorized(pid));
         let mut child = drivers.sidecar.lock().unwrap().take().unwrap();
         child.wait().unwrap();
         assert!(!drivers.authorized(pid));
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_request_cannot_drop_a_held_workers_foreground_lock() {
+        let directory = tempfile::tempdir().unwrap();
+        let drivers = Arc::new(Drivers {
+            workers: Mutex::new(BTreeMap::new()),
+            binary: PathBuf::new(),
+            verification_path: String::new(),
+            records: directory.path().into(),
+            descriptor: directory.path().join("missing-runtime.json"),
+            sidecar: Arc::new(StdMutex::new(None)),
+            desktop_ready: Arc::new(|| true),
+            leases: StdMutex::default(),
+            foreground: Arc::default(),
+            foreground_owner: StdMutex::default(),
+            closing: Default::default(),
+            unconfirmed: StdMutex::default(),
+        });
+        let request = |worker: &'static str| {
+            let drivers = drivers.clone();
+            tokio::spawn(async move {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                assert!(drivers.take_foreground(worker, deadline).await);
+                let _settle = Settle {
+                    drivers: &drivers,
+                    worker,
+                };
+                std::future::pending::<()>().await;
+            })
+        };
+        let task = request("held");
+        while drivers.foreground.try_lock().is_ok() {
+            tokio::task::yield_now().await;
+        }
+        drivers.hold("held");
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert!(drivers.foreground.try_lock().is_err());
+        drivers.retire("held", &mut None).await.unwrap();
+        assert!(drivers.foreground.try_lock().is_ok());
+        let task = request("free");
+        while drivers.foreground.try_lock().is_ok() {
+            tokio::task::yield_now().await;
+        }
+        task.abort();
+        let _ = task.await;
+        assert!(drivers.foreground.try_lock().is_ok());
     }
 }

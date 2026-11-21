@@ -29,7 +29,7 @@ if '/slow/' in home:
     while not os.path.exists(os.path.join(home, 'd.release')):
         time.sleep(0.01)
 log = open(os.path.join(os.path.dirname(home), 'log-' + os.path.basename(home)), 'a', buffering=1)
-with channel.makefile('rwb') as stream:
+with channel.makefile('rb') as stream:
     for line in stream:
         request = json.loads(line)
         name = request.get('name')
@@ -56,11 +56,18 @@ with channel.makefile('rwb') as stream:
             result = {'content': [{'type': 'image', 'data': 'A' * (3 << 20), 'mimeType': 'image/png'}]}
         if name is not None and request.get('arguments', {}).get('fixture_delay'):
             time.sleep(0.3)
+        timeline = name and request.get('arguments', {}).get('fixture_timeline')
+        if timeline:
+            open(timeline, 'a').write('begin\\n')
+            time.sleep(0.5)
+            open(timeline, 'a').write('end\\n')
         reply_id = request['request_id'] + int(bool(name and request.get('arguments', {}).get('fixture_bad_reply')))
-        stream.write((json.dumps({'protocol_version': 1, 'request_id': reply_id,
-            'generation': generation, 'ok': request['generation'] == generation,
-            'completion': 'completed', 'result': result}) + '\\n').encode())
-        stream.flush()
+        try:
+            channel.sendall((json.dumps({'protocol_version': 1, 'request_id': reply_id,
+                'generation': generation, 'ok': request['generation'] == generation,
+                'completion': 'completed', 'result': result}) + '\\n').encode())
+        except (BrokenPipeError, ConnectionResetError):
+            break
 log.write('eof\\n')
 hold = os.path.join(os.path.dirname(home), 'hold-stop')
 if os.path.exists(hold):
@@ -426,6 +433,9 @@ open(sys.argv[2], 'w').write(reply.decode())
         directory.mkdir(parents=True, mode=0o700)
         directory.parent.chmod(0o700)
         (directory / 'driver.json').mkdir()
+        hold = self.work / 'hold-stop'
+        hold.touch()
+        self.addCleanup(lambda: hold.unlink(missing_ok=True))
         self.assertTrue(self.call('fixture-fail-start-cleanup')['ok'])
         result = self.call('start', workDir=str(self.work))
         self.assertFalse(result['ok'], result)
@@ -440,7 +450,36 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertFalse(retry['ok'], retry)
         self.assertEqual(list(self.work.glob('d-*')), [path.parent])
         self.assertTrue((directory / 'starting').exists())
+        self.assert_stop_waits_for(pid, hold)
         print(f'publication_failed=1 cleanup_failed=1 pid={pid} incomplete_marker=1 retry_refused=1')
+
+    def assert_stop_waits_for(self, pid, hold):
+        self.assertTrue(alive(pid))
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            stopping = pool.submit(self.call, 'stop')
+            time.sleep(0.5)
+            self.assertFalse(stopping.done())
+            self.assertTrue(alive(pid))
+            hold.unlink()
+            self.assertTrue(stopping.result(timeout=15)['ok'])
+        self.assertFalse(alive(pid))
+
+    def test_failed_start_validation_keeps_the_live_driver_until_stop_confirms(self):
+        hold = self.work / 'hold-stop'
+        hold.touch()
+        self.addCleanup(lambda: hold.unlink(missing_ok=True))
+        self.assertTrue(self.call('fixture-latch-on-response')['ok'])
+        self.assertTrue(self.call('fixture-fail-retire')['ok'])
+        result = self.call('start', workDir=str(self.work))
+        self.assertFalse(result['ok'], result)
+        self.assertIn('stop_unconfirmed', result['error'])
+        pid = json.loads((self.lifecycle() / 'driver.json').read_text())['pid']
+        self.pids.append(pid)
+        wait_until(lambda: bool(list(self.work.glob('d-*/d.stopping'))))
+        self.assertEqual(self.call('fixture-slots')['result']['count'], 1)
+        self.assert_stop_waits_for(pid, hold)
+        self.assertEqual(self.call('fixture-slots')['result']['count'], 0)
+        print('start_validation_failed=1 live_child_kept=1 stop_confirmed=1')
 
     def test_two_workers_get_two_drivers_and_two_channels(self):
         first, second = self.start(), self.start('worker-b')
@@ -475,6 +514,38 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertEqual(self.process.wait(timeout=10), 0)
         wait_until(lambda: not alive(driver['pid']))
         self.assertFalse((self.root / 'desktop/control.sock').exists())
+
+    def test_failed_shutdown_retirement_is_logged(self):
+        driver = self.start()
+        hold = self.work / 'hold-stop'
+        hold.touch()
+        self.addCleanup(lambda: hold.unlink(missing_ok=True))
+        self.assertTrue(self.call('fixture-fail-retire')['ok'])
+        self.process.send_signal(signal.SIGINT)
+        self.assertEqual(self.process.wait(timeout=10), 0)
+        self.assertIn('Driver shutdown failed: stop_unconfirmed: fixture close failure',
+                      self.process.stderr.read())
+        hold.unlink()
+        wait_until(lambda: not alive(driver['pid']))
+        print('shutdown_retire_failed=1 failure_logged=1')
+
+    def test_app_shutdown_waits_for_a_driver_with_input_in_flight(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        self.assertTrue(self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']['dispatched'])
+        driver = json.loads((self.lifecycle() / 'driver.json').read_text())['pid']
+        self.pids.append(driver)
+        timeline = self.root / 'timeline'
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(self.dispatch, 'click', {'pid': pid, 'fixture_timeline': str(timeline),
+                                                           'delivery_mode': 'foreground'},
+                                  workDir=str(self.work))
+            wait_until(timeline.exists)
+            self.process.send_signal(signal.SIGINT)
+            self.assertEqual(self.process.wait(timeout=15), 0)
+            self.assertFalse(alive(driver))
+            pending.exception(timeout=15)
+        print('shutdown_in_flight=waited_for_driver_exit')
 
     def test_refuses_signature_failure_before_start(self):
         self.codesign.write_text('#!/bin/bash\nexit 1\n')
@@ -931,6 +1002,8 @@ open(sys.argv[2], 'w').write(reply.decode())
 
     def dispatch(self, tool, arguments, worker='worker-a', **params):
         params.setdefault('apps', ['com.apple.finder', 'com.apple.dock'])
+        params.setdefault('todo', 'todo-' + worker)
+        params.setdefault('todos', ['todo-worker-a', 'todo-worker-b'])
         return self.call('dispatch', worker, tool=tool, arguments=arguments,
                          callId='call-' + tool, **params)
 
@@ -1021,6 +1094,200 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertTrue(alive(record['pid']))
         print('dispatch=allowed started=1 call=click reused_slot=1')
 
+    def test_second_worker_waits_for_a_held_window_until_the_holder_stops(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        first = self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']
+        self.assertTrue(first['dispatched'], first)
+        self.pids.append(json.loads((self.lifecycle() / 'driver.json').read_text())['pid'])
+        other = self.work / 'other'
+        other.mkdir()
+        reply = self.dispatch('click', {'pid': pid, 'fixture_deadline': True}, worker='worker-b',
+                              workDir=str(other))['result']
+        self.assertEqual((reply['decision'], reply['reason'], reply['dispatched']),
+                         ('refused', 'window_busy', False))
+        self.assertFalse(list(other.glob('d-*')))
+        self.assertTrue(self.call('stop')['ok'])
+        reply = self.dispatch('click', {'pid': pid}, worker='worker-b', workDir=str(other))['result']
+        self.assertTrue(reply['dispatched'], reply)
+        self.pids.append(json.loads((self.lifecycle('worker-b') / 'driver.json').read_text())['pid'])
+        print('held_window=window_busy after_stop=dispatched')
+
+    def overlapping(self, first, second):
+        timeline = self.root / 'timeline'
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            held = pool.submit(first, str(timeline))
+            wait_until(timeline.exists)
+            replies = [held] + [pool.submit(call, str(timeline)) for call in second]
+            replies = [reply.result(timeout=25) for reply in replies]
+        return timeline.read_text().split(), replies
+
+    def test_reading_a_window_keeps_it_for_the_same_todos_input(self):
+        pid = finder()
+        for tool in ('get_window_state', 'click'):
+            self.call('fixture-admit', tool=tool, arguments={'pid': pid})
+        read = self.dispatch('get_window_state', {'pid': pid}, workDir=str(self.work))['result']
+        self.assertTrue(read['dispatched'], read)
+        self.pids.append(json.loads((self.lifecycle() / 'driver.json').read_text())['pid'])
+        other = self.work / 'other'
+        other.mkdir()
+        busy = self.dispatch('get_window_state', {'pid': pid, 'fixture_deadline': True},
+                             worker='worker-b', workDir=str(other))['result']
+        self.assertEqual(busy['reason'], 'window_busy')
+        act = self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']
+        self.assertTrue(act['dispatched'], act)
+        print('read_then_act=same_todo other_todo=window_busy')
+
+    def test_stop_keeps_the_window_until_the_running_input_ends(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        self.assertTrue(self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']['dispatched'])
+        self.pids.append(json.loads((self.lifecycle() / 'driver.json').read_text())['pid'])
+        other = self.work / 'other'
+        other.mkdir()
+        lines, replies = self.overlapping(
+            lambda timeline: self.dispatch('click', {'pid': pid, 'fixture_timeline': timeline},
+                                           workDir=str(self.work)),
+            [lambda timeline: self.call('stop'),
+             lambda timeline: self.dispatch('click', {'pid': pid, 'fixture_timeline': timeline},
+                                            worker='worker-b', workDir=str(other))])
+        self.assertTrue(replies[2]['result']['dispatched'], replies)
+        self.pids.append(json.loads((self.lifecycle('worker-b') / 'driver.json').read_text())['pid'])
+        self.assertEqual(lines, ['begin', 'end', 'begin', 'end'])
+        print('stop_in_flight=no_overlap')
+
+    def test_unconfirmed_shutdown_keeps_the_window_until_stop_confirms(self):
+        pid = finder()
+        dock = int(subprocess.check_output(['/usr/bin/pgrep', '-x', 'Dock']).split()[0])
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        self.call('fixture-admit', tool='click', arguments={'pid': dock})
+        other = self.work / 'other'
+        other.mkdir()
+        self.assertTrue(self.dispatch('click', {'pid': dock}, worker='worker-b',
+                                      workDir=str(other))['result']['dispatched'])
+        self.pids.append(json.loads((self.lifecycle('worker-b') / 'driver.json').read_text())['pid'])
+        hold = self.work / 'hold-stop'
+        hold.touch()
+        self.addCleanup(lambda: hold.unlink(missing_ok=True))
+        front = {'delivery_mode': 'foreground'}
+        failed = self.dispatch('click', {'pid': pid, 'fixture_delay': True, 'fixture_close_fails': True,
+                                         **front}, workDir=str(self.work))['result']
+        self.assertTrue(failed['reason'].startswith('stop_unconfirmed'), failed)
+        old = json.loads((self.lifecycle() / 'driver.json').read_text())['pid']
+        self.pids.append(old)
+        wait_until(lambda: bool(list(self.work.glob('d-*/d.stopping'))))
+        self.assertTrue(alive(old))
+        again = self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']
+        self.assertEqual((again['reason'], again['dispatched']), ('stop_unconfirmed', False))
+        blocked = lambda: (
+            self.dispatch('click', {'pid': pid, 'fixture_deadline': True}, worker='worker-b',
+                          workDir=str(other), todos=['todo-worker-b'])['result']['reason'],
+            self.dispatch('click', {'pid': dock, 'fixture_deadline': True, **front}, worker='worker-b',
+                          workDir=str(other))['result']['reason'])
+        self.assertEqual(blocked(), ('window_busy', 'foreground_busy'))
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            stopping = pool.submit(self.call, 'stop')
+            time.sleep(0.5)
+            self.assertFalse(stopping.done())
+            self.assertTrue(alive(old))
+            during = self.dispatch('click', {'pid': pid, 'fixture_deadline': True}, worker='worker-b',
+                                   workDir=str(other))['result']
+            self.assertEqual(during['reason'], 'window_busy')
+            self.assertFalse(stopping.done())
+            hold.unlink()
+            self.assertTrue(stopping.result(timeout=15)['ok'])
+        self.assertFalse(alive(old))
+        for args in ({'pid': pid}, {'pid': dock, **front}):
+            reply = self.dispatch('click', args, worker='worker-b', workDir=str(other))['result']
+            self.assertTrue(reply['dispatched'], reply)
+        print('unconfirmed_stop=live_child_kept window_and_foreground=blocked_until_exit')
+
+    def test_failed_start_cleanup_in_dispatch_keeps_the_window(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        directory = self.lifecycle()
+        directory.mkdir(parents=True, mode=0o700)
+        directory.parent.chmod(0o700)
+        (directory / 'driver.json').mkdir()
+        hold = self.work / 'hold-stop'
+        hold.touch()
+        self.addCleanup(lambda: hold.unlink(missing_ok=True))
+        self.assertTrue(self.call('fixture-fail-start-cleanup')['ok'])
+        failed = self.dispatch('click', {'pid': pid}, workDir=str(self.work))
+        self.assertFalse(failed['ok'], failed)
+        self.assertIn('stop_unconfirmed', failed['error'])
+        old = int(next(self.work.glob('d-*/d.pid')).read_text())
+        self.pids.append(old)
+        other = self.work / 'other'
+        other.mkdir()
+        busy = self.dispatch('click', {'pid': pid, 'fixture_deadline': True}, worker='worker-b',
+                             workDir=str(other), todos=['todo-worker-b'])['result']
+        self.assertEqual(busy['reason'], 'window_busy')
+        self.assert_stop_waits_for(old, hold)
+        reply = self.dispatch('click', {'pid': pid}, worker='worker-b', workDir=str(other))['result']
+        self.assertTrue(reply['dispatched'], reply)
+        self.pids.append(json.loads((self.lifecycle('worker-b') / 'driver.json').read_text())['pid'])
+        print('dispatch_start_cleanup_failed=1 window_kept=1 released_after_stop=1')
+
+    def test_failed_stop_keeps_the_live_driver_until_a_later_stop_confirms(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        self.assertTrue(self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']['dispatched'])
+        old = json.loads((self.lifecycle() / 'driver.json').read_text())['pid']
+        self.pids.append(old)
+        hold = self.work / 'hold-stop'
+        hold.touch()
+        self.addCleanup(lambda: hold.unlink(missing_ok=True))
+        self.call('fixture-fail-retire')
+        failed = self.call('stop')
+        self.assertFalse(failed['ok'], failed)
+        self.assertIn('stop_unconfirmed', failed['error'])
+        wait_until(lambda: bool(list(self.work.glob('d-*/d.stopping'))))
+        self.assertTrue(alive(old))
+        other = self.work / 'other'
+        other.mkdir()
+        busy = self.dispatch('click', {'pid': pid, 'fixture_deadline': True}, worker='worker-b',
+                             workDir=str(other), todos=['todo-worker-b'])['result']
+        self.assertEqual(busy['reason'], 'window_busy')
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            stopping = pool.submit(self.call, 'stop')
+            time.sleep(0.5)
+            self.assertFalse(stopping.done())
+            self.assertTrue(alive(old))
+            during = self.dispatch('click', {'pid': pid, 'fixture_deadline': True}, worker='worker-b',
+                                   workDir=str(other))['result']
+            self.assertEqual(during['reason'], 'window_busy')
+            self.assertFalse(stopping.done())
+            hold.unlink()
+            self.assertTrue(stopping.result(timeout=15)['ok'])
+        self.assertFalse(alive(old))
+        reply = self.dispatch('click', {'pid': pid}, worker='worker-b', workDir=str(other))['result']
+        self.assertTrue(reply['dispatched'], reply)
+        self.pids.append(json.loads((self.lifecycle('worker-b') / 'driver.json').read_text())['pid'])
+        print('failed_stop=live_child_kept window=blocked_until_exit')
+
+    def test_foreground_calls_on_different_apps_take_turns(self):
+        pid = finder()
+        dock = int(subprocess.check_output(['/usr/bin/pgrep', '-x', 'Dock']).split()[0])
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        self.call('fixture-admit', tool='click', arguments={'pid': dock})
+        other = self.work / 'other'
+        other.mkdir()
+        self.assertTrue(self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']['dispatched'])
+        self.assertTrue(self.dispatch('click', {'pid': dock}, worker='worker-b',
+                                      workDir=str(other))['result']['dispatched'])
+        for worker in ('worker-a', 'worker-b'):
+            self.pids.append(json.loads((self.lifecycle(worker) / 'driver.json').read_text())['pid'])
+        front = {'delivery_mode': 'foreground'}
+        lines, replies = self.overlapping(
+            lambda timeline: self.dispatch('click', {'pid': pid, 'fixture_timeline': timeline, **front},
+                                           workDir=str(self.work)),
+            [lambda timeline: self.dispatch('click', {'pid': dock, 'fixture_timeline': timeline, **front},
+                                            worker='worker-b', workDir=str(other))])
+        self.assertTrue(all(reply['result']['dispatched'] for reply in replies), replies)
+        self.assertEqual(lines, ['begin', 'end', 'begin', 'end'])
+        print('foreground=serialized')
+
     def test_busy_worker_returns_busy_instead_of_waiting_for_owner(self):
         pid = finder()
         self.call('fixture-admit', tool='click', arguments={'pid': pid})
@@ -1057,12 +1324,10 @@ open(sys.argv[2], 'w').write(reply.decode())
         print('slow_start=desktop_timeout no_input=1')
 
     def test_saturated_host_refuses_instead_of_stalling(self):
-        pid = finder()
-        self.call('fixture-admit', tool='click', arguments={'pid': pid})
         slow = self.work / 'slow'
         slow.mkdir()
         with ThreadPoolExecutor(max_workers=16) as pool:
-            pending = [pool.submit(self.dispatch, 'click', {'pid': pid}, worker=f'w-{i}', workDir=str(slow))
+            pending = [pool.submit(self.call, 'start', worker=f'w-{i}', workDir=str(slow))
                        for i in range(16)]
             try:
                 wait_until(lambda: len(list(slow.glob('d-*/d.starting'))) == 16)
@@ -1076,7 +1341,9 @@ open(sys.argv[2], 'w').write(reply.decode())
                 for marker in slow.glob('d-*/d.starting'):
                     marker.with_suffix('.release').touch()
                 for future in pending:
-                    future.result(timeout=15)
+                    result = future.result(timeout=15)
+                    self.assertTrue(result['ok'], result)
+                    self.pids.append(result['result']['pid'])
         print('saturated_host=desktop_busy')
 
     def test_owner_approval_covers_all_actions_for_the_app(self):

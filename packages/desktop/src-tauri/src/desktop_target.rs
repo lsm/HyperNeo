@@ -200,6 +200,28 @@ fn owner(window: u32) -> Option<i32> {
     })
 }
 
+pub(super) fn alive(instance: &Value, window: Option<u64>) -> bool {
+    let Some(pid) = instance["pid"]
+        .as_i64()
+        .and_then(|pid| i32::try_from(pid).ok())
+    else {
+        return false;
+    };
+    let born = started_at(pid).map(|(seconds, microseconds)| {
+        json!({"pid": pid, "startedAt": {"seconds": seconds, "microseconds": microseconds}})
+    });
+    if born.as_ref() != Some(instance) {
+        return false;
+    }
+    #[cfg(test)]
+    let _ = window;
+    #[cfg(not(test))]
+    if let Some(window) = window.and_then(|window| u32::try_from(window).ok()) {
+        return owner(window) == Some(pid);
+    }
+    true
+}
+
 pub(super) fn resolve(tool: &str, arguments: &Value, instance: Option<&Value>) -> Value {
     let Some(class) = class(tool) else {
         return json!({"reason": "tool_not_allowed"});
