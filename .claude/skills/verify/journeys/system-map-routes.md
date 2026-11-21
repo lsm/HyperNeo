@@ -7,7 +7,8 @@ also checks typed inline chains, expression preambles, early returns, optional
 calls, direct and re-entrant queue callbacks, and returned factory methods with identifier arguments through the strict classifier.
 The wrapper also runs the strict verdict CLI on the current source tree and
 checks that the seven operations from step 3 of the DB operation registry design
-and the todo completion operation appear exactly once with verdict `named`.
+and the done-todo page and todo completion operations appear exactly once with
+verdict `named`.
 The wrapper exits nonzero if a check fails.
 
 For the strict registry verdict on the real source tree, run
