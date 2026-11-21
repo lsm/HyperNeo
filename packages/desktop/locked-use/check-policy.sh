@@ -253,4 +253,22 @@ rm -f "$work/sqlite-calls"
 with sqlsecond rollback_install "$run" 2>/dev/null
 expect pass rollback_post_removal_lookup_error_keeps_plugin right_kept
 
+install_is() { [[ "$(install_plan "$2")" == "$1" ]]; }
+verified_plugin() { [[ -d "$1" ]]; }
+scenario "$work/backup.plist"
+expect pass reinstall_after_partial_uninstall_refuses install_is refuse "$work/backup.plist"
+expect pass reinstall_refusal_keeps_plugin right_kept
+expect pass reinstall_lookup_error_refuses with sqlfail install_is refuse "$work/backup.plist"
+sqlite3 "$authdb" "delete from rules;"
+expect pass fresh_install_when_right_absent install_is fresh "$work/backup.plist"
+expect pass fresh_install_refuses_custom_rule install_is refuse "$work/custom.plist"
+expect pass fresh_install_refuses_installed_without_right install_is refuse "$work/installed.plist"
+scenario "$work/installed.plist"
+cp "$work/right.plist" "$run/right.plist"
+expect pass already_installed install_is installed "$work/installed.plist"
+cp "$work/right-unprivileged.plist" "$run/right.plist"
+expect pass installed_with_wrong_right_refuses install_is refuse "$work/installed.plist"
+unset -f verified_plugin
+. "$here/policy.sh"
+
 [[ "$failed" == 0 ]] && echo "policy check PASS" || { echo "policy check FAIL"; exit 1; }

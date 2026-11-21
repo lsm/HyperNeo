@@ -129,6 +129,20 @@ uninstall_plan() {
     echo "$plan"
 }
 
+verified_plugin() {
+    clean_tree "$1" && codesign --verify --strict --test-requirement="=$plugin_requirement" "$1"
+}
+
+install_plan() {
+    local state
+    if [[ "$(uninstall_plan "$1")" == restore ]] && installed_right && verified_plugin "$plugin" 2>/dev/null; then
+        echo installed
+        return
+    fi
+    state="$(right_state)" || { echo refuse; return; }
+    if is_stock "$1" && [[ "$state" == absent ]]; then echo fresh; else echo refuse; fi
+}
+
 uninstall_locked_use() {
     local work plan state
     work="$(mktemp -d)" || return 1

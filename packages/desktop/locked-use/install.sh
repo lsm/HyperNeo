@@ -10,19 +10,16 @@ work="$(mktemp -d)"
 staged=""
 trap 'rm -rf "$work" ${staged:+"$staged"}' EXIT
 
-verified_plugin() {
-    clean_tree "$1" && codesign --verify --strict --test-requirement="=$plugin_requirement" "$1"
-}
-
 read_rule "$work/rule.plist"
-if [[ "$(uninstall_plan "$work/rule.plist")" == restore ]] && installed_right && verified_plugin "$plugin" 2>/dev/null; then
-    echo "already installed"
-    exit 0
-fi
-if ! is_stock "$work/rule.plist"; then
-    echo "$right is not the stock use-login-window-ui rule; refusing to change it" >&2
-    exit 1
-fi
+case "$(install_plan "$work/rule.plist")" in
+    installed) echo "already installed"; exit 0 ;;
+    fresh) ;;
+    *)
+        echo "$right is not the stock use-login-window-ui rule, or $mine is still defined or unknown;" >&2
+        echo "refusing to change anything. Run uninstall.sh first." >&2
+        exit 1
+        ;;
+esac
 
 staged="$(mktemp -d /Library/Security/SecurityAgentPlugins/.HyperNeoLockedUse.XXXXXX)"
 ditto --noacl --noextattr --noqtn "$source" "$staged/HyperNeoLockedUse.bundle"

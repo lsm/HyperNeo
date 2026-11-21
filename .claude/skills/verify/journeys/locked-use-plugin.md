@@ -46,7 +46,7 @@ diff <(plutil -extract rule xml1 -o - "$RUN/before.plist") <(plutil -extract rul
 ```
 
 Install prints the rule array `io.hyperneo.locked-use.unlock, use-login-window-ui`;
-uninstall prints the original array and the diff is empty. Install refuses any rule
+uninstall prints the original array and the diff is empty. Install refuses while the Locked Use right is still defined or its state is unknown (run uninstall first), and refuses any rule
 other than the stock `class rule` with exactly `use-login-window-ui`, copies the plugin
 without ACLs or extended attributes, verifies the tree is root-owned and writable only by
 root and is the Developer ID plugin `io.hyperneo.locked-use.plugin`, and restores the
