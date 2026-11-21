@@ -65,17 +65,19 @@ runtime paths CI job to check retained-child wiring and the release log filter.
 ## Host restart with a surviving driver
 
 Build the production-admission fixture with the release-host command above,
-then run these two cases:
+then run these cases on a macOS runner:
 
 ```bash
 python3 packages/desktop/tests/worker-drivers.py \
   packages/desktop/tests/driver-host/target/debug/desktop-driver-fixture \
   WorkerDrivers.test_restart_retires_leftover_driver_before_serving_requests \
-  WorkerDrivers.test_restart_leaves_reused_driver_pid_alone
+  WorkerDrivers.test_restart_leaves_reused_driver_pid_alone \
+  WorkerDrivers.test_restart_serves_requests_with_an_exited_driver_awaiting_reap
 ```
 
 The fixture kills its own host and holds the fake driver alive after its private
 channel closes. The replacement host must confirm the old driver has exited
 before answering status or starting a new driver. A record whose PID now belongs
 to a different process must leave that process alive and allow Desktop to start.
-Both cases use the real control socket and send no GUI input.
+An exited driver still awaiting reap must also allow Desktop to serve status.
+All three cases use the real control socket and send no GUI input.

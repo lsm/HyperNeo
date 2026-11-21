@@ -143,9 +143,12 @@ pub(super) fn identity(pid: u32) -> Result<Identity> {
     Ok(birth(&info))
 }
 
-fn process(pid: u32) -> Result<libc::proc_bsdinfo> {
+fn process(pid: u32) -> io::Result<libc::proc_bsdinfo> {
     if pid <= 1 || pid > i32::MAX as u32 {
-        return Err("Invalid driver PID".into());
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Invalid driver PID",
+        ));
     }
     let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
     let size = std::mem::size_of_val(&info) as i32;
@@ -158,8 +161,11 @@ fn process(pid: u32) -> Result<libc::proc_bsdinfo> {
             size,
         )
     };
+    if read == 0 {
+        return Err(io::Error::last_os_error());
+    }
     if read != size || info.pbi_pid != pid {
-        return Err("driver process identity unavailable".into());
+        return Err(io::Error::other("driver process identity unavailable"));
     }
     Ok(info)
 }
@@ -233,8 +239,9 @@ impl Record {
             Ok(info) => {
                 Ok(info.pbi_uid == unsafe { libc::geteuid() } && self.started_at == birth(&info))
             }
-            Err(_) if verify_gone(self.pid).is_ok() => Ok(false),
-            Err(error) => Err(error),
+            // This lookup excludes zombies. An exited driver cannot send input while awaiting reap.
+            Err(error) if error.raw_os_error() == Some(libc::ESRCH) => Ok(false),
+            Err(error) => Err(error.into()),
         }
     }
 
