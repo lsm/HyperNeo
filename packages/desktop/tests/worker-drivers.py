@@ -38,7 +38,7 @@ with channel.makefile('rwb') as stream:
             entry += ' ' + name + ' ' + json.dumps(request.get('arguments'))
         log.write(entry + '\\n')
         result = {'ready': True, 'pid': os.getpid(), 'metadata': {
-            'driver_version': '0.44.0', 'contract_version': '0.8.0'},
+            'driver_version': '0.55.0', 'contract_version': '0.9.0'},
             'name': request.get('name'), 'arguments': request.get('arguments')}
         if name is not None and request.get('arguments', {}).get('fixture_error'):
             result = {'isError': True, 'content': [{'type': 'text', 'text': 'Call get_window_state first'}],
@@ -478,7 +478,7 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertEqual(self.call('status')['result']['state'], 'stopped')
 
     def test_refuses_version_mismatch_before_start(self):
-        self.binary.write_text(FAKE.replace("'driver_version': '0.44.0'", "'driver_version': '0.0.0'"))
+        self.binary.write_text(FAKE.replace("'driver_version': '0.55.0'", "'driver_version': '0.0.0'"))
         result = self.call('start', workDir=str(self.work))
         self.assertFalse(result['ok'], result)
         self.assertIn('version', result['error'])
@@ -638,7 +638,7 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertEqual(self.call('fixture-slots')['result']['count'], 0)
 
     def test_failed_start_releases_worker_slot(self):
-        incompatible = FAKE.replace("'driver_version': '0.44.0'", "'driver_version': '0.43.0'")
+        incompatible = FAKE.replace("'driver_version': '0.55.0'", "'driver_version': '0.43.0'")
         for signature, binary in (('#!/bin/bash\nexit 1\n', FAKE), (CODESIGN, incompatible)):
             with self.subTest(signature=signature == CODESIGN):
                 self.codesign.write_text(signature)

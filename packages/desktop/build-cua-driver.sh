@@ -1,9 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
-tag=hyperneo-cua-driver-v0.44.0-1
-commit=3d680c2f659f4eddef76c5690c7311faede07aac
-name=hyperneo-cua-driver-0.44.0-1-darwin-universal
+tag=hyperneo-cua-driver-v0.55.0-1
+commit=a3320a58111cfb41fdcedb21bde43931dacfccf9
+name=hyperneo-cua-driver-0.55.0-1-darwin-universal
 requirement='identifier "io.hyperneo.app" and anchor apple generic and certificate leaf[subject.OU] = "P5R65T296V" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists'
 output="$(mkdir -p "${1:?Usage: build-cua-driver.sh <output-dir>}" && cd "$1" && pwd)"
 
@@ -31,5 +31,6 @@ lipo -create -output "$work/$name/cua-driver" \
     "$rust/target/x86_64-apple-darwin/release/cua-driver"
 install -m 644 "$work/src/LICENSE.md" "$work/$name/LICENSE"
 install -m 644 "$rust/THIRD_PARTY_NOTICES.md" "$work/$name/THIRD_PARTY_NOTICES.md"
-tar -czf "$output/$name.tar.gz" -C "$work" "$name"
+COPYFILE_DISABLE=1 tar --uid 0 --gid 0 --uname root --gname wheel \
+    -czf "$output/$name.tar.gz" -C "$work" "$name"
 shasum -a 256 "$work/$name/cua-driver" "$output/$name.tar.gz"
