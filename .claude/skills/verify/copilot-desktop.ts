@@ -318,6 +318,8 @@ try {
   }
   }
   assert.equal(listed[0].steerBehavior, cli || peer ? 'best_effort' : undefined);
+  const guidance = await rpc<{ description: string }>('operations.describe', { name: 'work.send' });
+  assert.match(guidance.description, /best-effort immediate input that may start a later turn/);
 } finally {
   socket?.close();
   await app.cleanup();

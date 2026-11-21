@@ -332,8 +332,7 @@ export function createCopilotAdapter(
         value: {
           delivered: observed,
           receipt,
-          ...(!observed &&
-            (mode === 'enqueue' ? { queuedSubmissionId: receipt.inputId } : { unconfirmed: true })),
+          ...(!observed && mode === 'enqueue' ? { queuedSubmissionId: receipt.inputId } : {}),
         },
       };
     } catch (error) {
@@ -665,6 +664,7 @@ export function createCopilotAdapter(
       'compact',
       'archive',
     ] as const,
+    steerBehavior: 'best_effort',
     start: (request, context) => {
       const pending = guard(() => startPreferred(request, context));
       starts.add(pending);

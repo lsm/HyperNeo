@@ -360,6 +360,7 @@ export interface WorkSessionFact {
 export interface WorkAdapter {
   readonly id: string;
   readonly capabilities: readonly WorkVerb[];
+  readonly steerBehavior?: 'best_effort';
   readonly unsupportedCapabilities?: Partial<Record<WorkVerb, string>>;
   readonly resolveStartConfiguration?: (
     request: StartRequest

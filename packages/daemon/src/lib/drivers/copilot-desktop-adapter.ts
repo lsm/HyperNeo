@@ -129,6 +129,7 @@ export function createCopilotDesktopAdapter(
   });
   return {
     id: COPILOT_CLIENT.id,
+    steerBehavior: 'best_effort',
     get capabilities(): WorkAdapter['capabilities'] {
       return controlAvailable?.()
         ? [

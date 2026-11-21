@@ -57013,6 +57013,10 @@
                     "id": {
                       "type": "string"
                     },
+                    "steerBehavior": {
+                      "const": "best_effort",
+                      "type": "string"
+                    },
                     "unsupportedCapabilities": {
                       "additionalProperties": {
                         "type": "string"

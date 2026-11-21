@@ -94,7 +94,7 @@ export function createCopilotDesktopControl(
       ok: true,
       value: {
         delivered: false,
-        ...(mode === 'enqueue' ? { queuedSubmissionId: sent.value } : { unconfirmed: true }),
+        ...(mode === 'enqueue' ? { queuedSubmissionId: sent.value } : {}),
         receipt: { executionId: ref.id, inputId: sent.value },
       },
     };
