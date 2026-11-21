@@ -24,6 +24,7 @@ jq -e '[.[] | select(.name == "work.health" and .verdict == "named")] | length =
 jq -er '
   [
     "neo.ask.doneTodos",
+    "neo.project.save",
     "neo.conversation.read",
     "neo.project.forget",
     "neo.todo.done",

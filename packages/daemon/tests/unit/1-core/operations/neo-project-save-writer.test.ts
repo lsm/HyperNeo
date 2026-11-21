@@ -48,7 +48,9 @@ test('project save admits one revision and notifies only durable committed state
       )
     );
     expect(results.filter((r) => r.ok)).toHaveLength(1);
-    expect(results.filter((r) => !r.ok)).toHaveLength(1);
+    expect(results.filter((r) => !r.ok)).toEqual([
+      { ok: false, reason: 'superseded: read the current project before saving again' },
+    ]);
     expect(published).toEqual([[1], [2]]);
     writer.exec(
       "CREATE TRIGGER reject_project_update BEFORE UPDATE ON neo_concerns BEGIN SELECT RAISE(ABORT,'synthetic project rejection'); END"

@@ -11,6 +11,7 @@ checks that the seven operations from step 3 of the DB operation registry design
 and the done-todo page, conversation reader, todo completion, Google connection
 start, and project forget appear exactly once with verdict `named`.
 The wrapper exits nonzero if a check fails.
+It also requires the project save operation to resolve to its named runner.
 
 For the strict registry verdict on the real source tree, run
 `bun scripts/pipeline-verdict-report.ts --strict > "$RUN/verdicts.json"` and
