@@ -360,6 +360,31 @@ test.each([
 });
 
 test.each([
+  ['execute', 'demo.read', 0, 0],
+  ['execute', 'demo.other', 0, 1],
+  ['execute, ...overrides', 'demo.read', 1, 0],
+  ['execute, [key]: fallback', 'demo.read', 1, 0],
+  ['execute, execute() { return fallback(); }', 'demo.read', 1, 0],
+  ["execute, 'execute': fallback", 'demo.read', 1, 0],
+])(
+  'regular checker resolves only an unambiguous shorthand: %s',
+  (property, pipeline, unreadable, misnamed) => {
+    const source = `
+    import superpipe from 'superpipe';
+    import { defineOperation } from './registry';
+    const execute = superpipe({})('${pipeline}').endAsync();
+    defineOperation({ name: 'demo.read', ${property} });
+  `;
+    expect(countPipelineRoutes(new Map([['packages/demo/src/operations.ts', source]]))).toEqual({
+      missing: 0,
+      misnamed,
+      dynamic: 0,
+      unreadable,
+    });
+  }
+);
+
+test.each([
   ['execute', 0],
   ['execute, ...overrides', 1],
   ['execute: execute, ...overrides', 1],
