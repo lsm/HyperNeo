@@ -4,10 +4,12 @@ import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { NEO_DRIVER_REFRESH } from '../../../packages/daemon/src/lib/neo/driver-refresh.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import type { FindWorkResultSchema } from '../../../packages/daemon/src/lib/drivers/find-operation.ts';
 import type { Result, WorkDetail, WorkStarted, WorkTurnFact } from '../../../packages/daemon/src/lib/drivers/types.ts';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
+import { readWorkCompaction } from '../../../packages/daemon/src/storage/repositories/work-started-sessions-worker.ts';
 import { copilotFolder, copilotSession, prepareCopilotFixture } from '../../../packages/daemon/tests/helpers/copilot-fixture.ts';
 import type { z } from 'zod';
 import { startCopilotDesktopPeer, verifyCopilotDesktopControl } from './copilot-desktop-control-peer.ts';
@@ -18,9 +20,9 @@ assert(run && Number.isInteger(port) && port > 0 && port !== 8399);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
-assert(['desktop', 'cli', 'both', 'cli-failure', 'control', 'both-control'].includes(mode));
+assert(['desktop', 'cli', 'both', 'cli-failure', 'control', 'both-control', 'compact-failure', 'compact-refused'].includes(mode));
 const home = join(run, 'home');
-const cli = mode !== 'desktop' && mode !== 'control';
+const cli = !['desktop', 'control', 'compact-failure', 'compact-refused'].includes(mode);
 const desktop = mode !== 'cli';
 writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
 if (cli) {
@@ -64,7 +66,10 @@ if (desktop) {
     JSON.stringify({ ...event, timestamp: `2026-11-19T15:00:0${i}Z` })).join('\n') + '\n');
 }
 const before = desktop ? readFileSync(state) : null;
-const peer = mode === 'control' || mode === 'both-control' ? await startCopilotDesktopPeer(home, state) : undefined;
+const compaction = mode === 'compact-failure' ? 'failed' : mode === 'compact-refused' ? 'refused' : 'applied';
+const peer = ['control', 'both-control', 'compact-failure', 'compact-refused'].includes(mode)
+  ? await startCopilotDesktopPeer(home, state, compaction)
+  : undefined;
 globalThis.fetch = (() => { throw new Error('External HTTP disabled'); }) as typeof fetch;
 process.chdir(run);
 const app = await createDaemonApp({
@@ -106,7 +111,34 @@ try {
   assert.equal(listed[0].id, adapter);
   assert.equal(listed[0].capabilities.includes('start'), cli || !!peer);
   if (peer) {
-    await verifyCopilotDesktopControl(rpc, run, peer);
+    await verifyCopilotDesktopControl(rpc, run, peer, async (work) => {
+      const db = app.db.getDatabase();
+      const now = Date.now();
+      db.prepare("INSERT INTO neo_asks (id, session_id, title, request, created_at, updated_at) VALUES ('compact-ask', 'fixture-neo', 'Reuse worker', 'Run the fixture', ?, ?)").run(now, now);
+      db.prepare("INSERT INTO neo_todos (id, ask_id, position, title, done_when, state, created_at, updated_at, finished_at) VALUES ('compact-todo', 'compact-ask', 1, 'Reuse worker', 'Settled', 'done', ?, ?, ?)").run(now, now, now);
+      db.prepare("INSERT INTO neo_todo_sessions (todo_id, target, ref) VALUES ('compact-todo', ?, ?)").run(
+        JSON.stringify({ verb: 'start', adapter: work.ref.adapter, place: work.place }),
+        JSON.stringify(work.ref)
+      );
+      assert.equal(readWorkCompaction(db, work.ref).compactedAt, null);
+      app.jobQueue.enqueue({ queue: NEO_DRIVER_REFRESH, payload: { scope: 'neo' }, runAt: now });
+      let receipt = readWorkCompaction(db, work.ref);
+      for (let attempt = 0; receipt.compactedAt === null && !receipt.failure && attempt < 240; attempt++) {
+        await Bun.sleep(50);
+        receipt = readWorkCompaction(db, work.ref);
+      }
+      assert.equal(peer.messages.filter(message => message === 'execute_session_command').length, 1);
+      if (compaction === 'applied') {
+        assert((receipt.compactedAt ?? 0) >= now, JSON.stringify(receipt));
+        assert.match(readFileSync(join(home, '.copilot/session-state', work.ref.id, 'events.jsonl'), 'utf8'), /session\.compaction_complete/);
+      } else {
+        assert.equal(receipt.compactedAt, null);
+        assert(receipt.failure, 'Neo must record the failed compaction attempt');
+        assert.equal(receipt.failure.count, 1);
+        assert(receipt.failure.retryAt > receipt.failure.attemptedAt);
+        console.log(`PASS Desktop compaction ${compaction} was counted once and backed off.`);
+      }
+    });
   } else {
   const query = { adapters: [adapter], localOnly: true };
   const found = await rpc<z.infer<typeof FindWorkResultSchema>>('work.find', query);

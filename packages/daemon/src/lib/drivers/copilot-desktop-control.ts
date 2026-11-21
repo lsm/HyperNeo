@@ -16,7 +16,7 @@ import { reject } from './work-operations.ts';
 
 type Controls = Pick<
   WorkAdapter,
-  'start' | 'send' | 'stop' | 'queue' | 'withdraw' | 'rename' | 'archive'
+  'start' | 'send' | 'stop' | 'compact' | 'queue' | 'withdraw' | 'rename' | 'archive'
 >;
 const Id = z.string().regex(/^[\w-]{1,128}$/);
 const Queue = z.array(z.object({ id: Id, message_id: Id.optional() }));
@@ -30,6 +30,15 @@ const CreatedSession = z.object({
 });
 const QueueSnapshot = z.object({ items: Queue });
 const Removal = z.object({ outcome: z.object({ changed: z.boolean() }), snapshot: QueueSnapshot });
+const Compaction = z.object({
+  type: z.enum(['session.compaction_start', 'session.compaction_complete']),
+  data: z.object({
+    compactionAttemptId: Id,
+    trigger: z.literal('manual'),
+    success: z.boolean().optional(),
+    outcome: z.string().optional(),
+  }),
+});
 
 export function createCopilotDesktopControl(
   deps: StartFolderDeps & {
@@ -41,11 +50,12 @@ export function createCopilotDesktopControl(
 ): Required<Controls> {
   const run = async <T>(
     request: CopilotDesktopFrame,
-    accept: (frame: CopilotDesktopFrame) => T | undefined
+    accept: (frame: CopilotDesktopFrame) => T | undefined,
+    timeoutMs?: number
   ): Promise<Result<T>> => {
     const endpoint = readCopilotDesktopEndpoint(deps.homeDir);
     return endpoint
-      ? callCopilotDesktop(endpoint, request, accept)
+      ? callCopilotDesktop(endpoint, request, accept, timeoutMs)
       : reject('unreachable', 'Open the signed-in Copilot Desktop app.', true);
   };
   const target = async (ref: WorkRef, closed = false) => {
@@ -203,6 +213,46 @@ export function createCopilotDesktopControl(
           ? { stopped: true }
           : undefined
       );
+    },
+    async compact(ref) {
+      const found = await target(ref);
+      if ('reason' in found) return found.reason!;
+      if (found.value.running) return reject('busy', 'Copilot Desktop session is active.', true);
+      const requestId = randomUUID();
+      let queued = false;
+      let attemptId: string | undefined;
+      const result = await run(
+        {
+          type: 'execute_session_command',
+          request_id: requestId,
+          session_id: ref.id,
+          command_name: 'compact',
+          args: '',
+          display_text: '/compact',
+        },
+        (frame) => {
+          if (frame.session_id !== ref.id) return;
+          if (frame.type === 'session_command_complete' && frame.request_id === requestId) {
+            if (frame.outcome !== 'queued') return false;
+            queued = true;
+          }
+          if (!queued || frame.type !== 'session_event') return;
+          const event = Compaction.safeParse(frame.event).data;
+          if (!event) return;
+          if (event.type === 'session.compaction_start')
+            attemptId ??= event.data.compactionAttemptId;
+          if (
+            event.type === 'session.compaction_complete' &&
+            event.data.compactionAttemptId === attemptId
+          )
+            return event.data.success === true && event.data.outcome === 'applied';
+        },
+        60_000
+      );
+      if (!result.ok) return result;
+      return result.value
+        ? { ok: true, value: { compacted: true } }
+        : reject('not_delivered', 'Copilot Desktop did not complete compaction.');
     },
     async rename(ref, title) {
       const found = await target(ref);
