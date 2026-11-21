@@ -15,8 +15,6 @@ import { createCopilotDesktopControl } from './copilot-desktop-control.ts';
 
 const DESKTOP_CONTROL =
   'Copilot Desktop exposes session links and history. Use the app to control Desktop-owned sessions.';
-const DESKTOP_STEER =
-  'Copilot Desktop cannot require a specific active turn. Immediate input can start a new turn.';
 
 export function copilotDesktopStatePath(home: string) {
   return join(home, '.copilot', 'data.db');
@@ -139,6 +137,7 @@ export function createCopilotDesktopAdapter(
             'turns',
             'start',
             'send',
+            'steer',
             'queue',
             'withdraw',
             'stop',
@@ -153,11 +152,11 @@ export function createCopilotDesktopAdapter(
     },
     get unsupportedCapabilities() {
       return controlAvailable?.()
-        ? { steer: DESKTOP_STEER }
+        ? {}
         : {
             start: DESKTOP_CONTROL,
             send: DESKTOP_CONTROL,
-            steer: DESKTOP_STEER,
+            steer: DESKTOP_CONTROL,
             queue: DESKTOP_CONTROL,
             withdraw: DESKTOP_CONTROL,
             stop: DESKTOP_CONTROL,

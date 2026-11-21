@@ -78,5 +78,6 @@ effort. Verify the SDK confirms both before the first prompt, and that start
 and status report the applied effort. Unsupported effort and a runtime
 configuration mismatch both prevent prompt delivery.
 
-Strict same-turn steering remains unsupported. In the App, an immediate send
-after the original turn ends can start a new turn.
+In `cli`, `control` and `both-control`, steer during active work. The peer
+must receive exactly one immediate send and return a receipt that can be
+observed via status. Copilot can start a later turn if the active one ends.

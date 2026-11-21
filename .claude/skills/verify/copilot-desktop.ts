@@ -7,7 +7,7 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { NEO_DRIVER_REFRESH } from '../../../packages/daemon/src/lib/neo/driver-refresh.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import type { FindWorkResultSchema } from '../../../packages/daemon/src/lib/drivers/find-operation.ts';
-import type { Result, WorkDetail, WorkStarted, WorkTurnFact } from '../../../packages/daemon/src/lib/drivers/types.ts';
+import type { Result, WorkDelivery, WorkDetail, WorkStarted, WorkTurnFact } from '../../../packages/daemon/src/lib/drivers/types.ts';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { readWorkCompaction } from '../../../packages/daemon/src/storage/repositories/work-started-sessions-worker.ts';
 import { copilotFolder, copilotSession, prepareCopilotFixture } from '../../../packages/daemon/tests/helpers/copilot-fixture.ts';
@@ -110,6 +110,7 @@ try {
   assert.equal(listed.length, 1);
   assert.equal(listed[0].id, adapter);
   assert.equal(listed[0].capabilities.includes('start'), cli || !!peer);
+  assert.equal(listed[0].capabilities.includes('steer'), cli || !!peer);
   if (peer) {
     await verifyCopilotDesktopControl(rpc, run, peer, async (work) => {
       const db = app.db.getDatabase();
@@ -258,8 +259,15 @@ try {
       }
       console.log('PASS CLI confirmed high reasoning effort and declined unsupported or unconfirmed settings before sending.');
     }
-    const send = await rpc<Result<unknown>>('work.send', { ref, message: 'queued' });
+    const steered = await rpc<Result<WorkDelivery>>('work.send', { ref, message: 'Adjust focus', mode: 'steer' });
+    assert(steered.ok && steered.value.receipt && !steered.value.steeredIntoTurnId, JSON.stringify(steered));
+    const observed = await rpc<Result<WorkDetail>>('work.status', { ref, receipt: steered.value.receipt });
+    assert(observed.ok && observed.value.inputEvidence?.state === 'observed', JSON.stringify(observed));
+    const send = await rpc<Result<WorkDelivery>>('work.send', { ref, message: 'queued', mode: 'queue' });
     assert(send.ok, JSON.stringify(send));
+    const traffic = readFileSync(join(folder, 'calls.jsonl'), 'utf8').trim().split('\n')
+      .map(line => JSON.parse(line)).filter(call => call.method === 'session.send');
+    assert.deepEqual(traffic.map(call => call.params.mode), ['enqueue', 'immediate', 'enqueue']);
     const stop = await rpc<Result<{ stopped: boolean }>>('work.stop', { ref });
     assert(stop.ok && stop.value.stopped, JSON.stringify(stop));
     const turns = await rpc<Result<{ turns: WorkTurnFact[] }>>('work.turns', { ref });

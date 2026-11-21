@@ -220,6 +220,10 @@ on this design before opening any implementation PR.
 
 ## Slice 6 decision: strict steer is explicitly unsupported
 
+The driver now exposes Copilot's native best-effort immediate send as
+`work.send mode: steer` on Desktop and CLI. The decision below records why
+the adapter cannot promise a specific destination turn.
+
 2026-10-21, approved question `0c7b70e3-81c0-4480-8515-3c97905dcc44`.
 The answer to “can Copilot take extra input while running?” is **yes**; the answer
 for HyperNeo's strict, no-fallback `work.send mode: steer` is **unsupported** on
