@@ -5,6 +5,8 @@ pub(crate) use peer::wait_unreaped;
 mod channel;
 #[path = "desktop_grants.rs"]
 mod grants;
+#[path = "desktop_leases.rs"]
+mod leases;
 #[path = "desktop_driver_record.rs"]
 mod record;
 #[path = "desktop_target.rs"]
@@ -89,6 +91,7 @@ fn scoped_windows(mut body: Value, apps: &[String]) -> Value {
     body["content"] = json!([{ "type": "text", "text": text }]);
     body
 }
+const LEASE_POLL: Duration = Duration::from_millis(200);
 struct Worker {
     channel: channel::Channel,
     _directory: TempDir,
@@ -101,6 +104,8 @@ struct Drivers {
     descriptor: PathBuf,
     sidecar: peer::ChildSlot,
     desktop_ready: Arc<dyn Fn() -> bool + Send + Sync>,
+    leases: StdMutex<leases::Leases>,
+    foreground: Mutex<()>,
 }
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -206,6 +211,8 @@ impl Control {
             records: directory,
             sidecar,
             desktop_ready,
+            leases: StdMutex::default(),
+            foreground: Mutex::new(()),
         });
         let state = drivers.clone();
         let task = tokio::spawn(async move {
@@ -602,12 +609,43 @@ impl Drivers {
                 );
                 return Ok(reply);
             }
+            if let Some(wanted) = leases::Target::of(&observed) {
+                let live = |held: &leases::Target| target::alive(&held.instance, held.window);
+                loop {
+                    let taken = self.leases.lock().unwrap().acquire(
+                        &request.worker,
+                        &wanted,
+                        Instant::now(),
+                        live,
+                    );
+                    match taken {
+                        Ok(()) => break,
+                        Err(_) if Instant::now() + LEASE_POLL < deadline => {
+                            tokio::time::sleep(LEASE_POLL).await
+                        }
+                        Err(holder) => {
+                            log::info!(
+                                "Desktop dispatch {worker}: window held by {holder}",
+                                worker = request.worker
+                            );
+                            return Ok(finish(
+                                bundle,
+                                class,
+                                "refused",
+                                json!("window_busy"),
+                                false,
+                            ));
+                        }
+                    }
+                }
+            }
         }
         let directory = self.records.join("workers").join(&request.worker);
         if matches!(request.action.as_str(), "start" | "stop" | "dispatch") {
             record::directory(&self.records, &request.worker, true)?;
         }
         if request.action == "stop" {
+            self.leases.lock().unwrap().release(&request.worker);
             record::latch(&directory)?;
         }
         if matches!(request.action.as_str(), "start" | "dispatch") {
@@ -662,6 +700,26 @@ impl Drivers {
                             false,
                         )));
                     }
+                    let foreground = request
+                        .arguments
+                        .as_ref()
+                        .is_some_and(|args| args["delivery_mode"] == "foreground");
+                    let _screen = if foreground {
+                        match timeout_at(deadline, self.foreground.lock()).await {
+                            Ok(guard) => Some(guard),
+                            Err(_) => {
+                                return Ok(Some(finish(
+                                    bundle,
+                                    class,
+                                    "refused",
+                                    json!("foreground_busy"),
+                                    false,
+                                )))
+                            }
+                        }
+                    } else {
+                        None
+                    };
                     let current = target::resolve(
                         request.tool.as_deref().unwrap_or_default(),
                         request.arguments.as_ref().unwrap_or(&Value::Null),
@@ -895,6 +953,8 @@ mod peer_tests {
             descriptor: directory.path().join("missing-runtime.json"),
             sidecar: Arc::new(StdMutex::new(Some(child))),
             desktop_ready: Arc::new(|| true),
+            leases: StdMutex::default(),
+            foreground: Mutex::new(()),
         };
         assert_eq!(wait_unreaped(pid).unwrap(), (Some(0), None));
         assert!(drivers.authorized(pid));

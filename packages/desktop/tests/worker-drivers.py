@@ -1021,6 +1021,25 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertTrue(alive(record['pid']))
         print('dispatch=allowed started=1 call=click reused_slot=1')
 
+    def test_second_worker_waits_for_a_held_window_until_the_holder_stops(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        first = self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']
+        self.assertTrue(first['dispatched'], first)
+        self.pids.append(json.loads((self.lifecycle() / 'driver.json').read_text())['pid'])
+        other = self.work / 'other'
+        other.mkdir()
+        reply = self.dispatch('click', {'pid': pid, 'fixture_deadline': True}, worker='worker-b',
+                              workDir=str(other))['result']
+        self.assertEqual((reply['decision'], reply['reason'], reply['dispatched']),
+                         ('refused', 'window_busy', False))
+        self.assertFalse(list(other.glob('d-*')))
+        self.assertTrue(self.call('stop')['ok'])
+        reply = self.dispatch('click', {'pid': pid}, worker='worker-b', workDir=str(other))['result']
+        self.assertTrue(reply['dispatched'], reply)
+        self.pids.append(json.loads((self.lifecycle('worker-b') / 'driver.json').read_text())['pid'])
+        print('held_window=window_busy after_stop=dispatched')
+
     def test_busy_worker_returns_busy_instead_of_waiting_for_owner(self):
         pid = finder()
         self.call('fixture-admit', tool='click', arguments={'pid': pid})

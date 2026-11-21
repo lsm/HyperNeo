@@ -43,6 +43,16 @@ A HyperNeo session already calls daemon operations in process: every session get
 - A process running as the daemon, or one that rewrites `runtime.json` before the host attaches, can act as the daemon. A worker with its sandbox off runs as the user and can already do that. The worker sandbox closes it; this design does not.
 - A grant covers all action classes for one verified app, across tasks.
 
+## Two todos on one Mac
+
+The host keeps an in-memory lease table, because it resolves each target and sends each action.
+
+- A call that names a window leases that window (verified process instance plus window id) to its worker. A call with only a pid leases the whole app instance and conflicts with every window lease on it.
+- Another worker waits for the lease until its call deadline, then gets `window_busy`. The target is resolved again before dispatch.
+- A lease ends after 30 seconds without a call from its worker, when the worker stops, or when the process or window is gone.
+- A `foreground` call also takes one machine-wide lock for the length of the call; a second foreground call waits, then gets `foreground_busy`. Background calls need only the window lease.
+- Browser workers opening their own window comes later; until then, a busy window means waiting.
+
 ## Where it lives
 
 - The mechanism is core: `packages/daemon/src/lib/desktop` (operation, pipeline, pure decision) and the desktop app (peer check, `dispatch`). A security boundary cannot sit in a pack, because packs can be turned off.
