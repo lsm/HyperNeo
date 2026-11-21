@@ -543,7 +543,7 @@ describe('owned Copilot lifecycle', () => {
     });
   });
 
-  test('steers with immediate delivery and keeps an unobserved receipt unconfirmed', async () => {
+  test('steers with immediate delivery and returns the accepted input receipt', async () => {
     const fixture = setup();
     const work = await start(fixture, 'hold');
     const result = await fixture.adapter.steer!(work.ref, 'queued', context);
@@ -551,7 +551,6 @@ describe('owned Copilot lifecycle', () => {
       ok: true,
       value: {
         delivered: false,
-        unconfirmed: true,
         receipt: { executionId: work.ref.id, inputId: 'input-2' },
       },
     });

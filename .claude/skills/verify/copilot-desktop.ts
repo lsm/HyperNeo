@@ -104,7 +104,7 @@ try {
     });
   }
   const adapter = 'copilot-cli';
-  const registered = await rpc<Result<{ id: string; capabilities: string[] }[]>>('work.adapters', {});
+  const registered = await rpc<Result<{ id: string; capabilities: string[]; steerBehavior?: string }[]>>('work.adapters', {});
   assert(registered.ok);
   const listed = registered.value.filter((entry) => entry.id.startsWith('copilot-'));
   assert.equal(listed.length, 1);
@@ -317,6 +317,7 @@ try {
     }
   }
   }
+  assert.equal(listed[0].steerBehavior, cli || peer ? 'best_effort' : undefined);
 } finally {
   socket?.close();
   await app.cleanup();

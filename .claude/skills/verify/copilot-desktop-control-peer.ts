@@ -171,7 +171,8 @@ export async function verifyCopilotDesktopControl(
   assert.equal(started.value.effort, request.effort);
   assert.equal(started.value.receipt?.inputId, 'kickoff');
   const steered = await rpc<Result<WorkDelivery>>('work.send', { ref, message: 'Adjust focus', mode: 'steer' });
-  assert(steered.ok && steered.value.receipt && !steered.value.delivered && steered.value.unconfirmed, JSON.stringify(steered));
+  assert(steered.ok && steered.value.receipt && !steered.value.delivered, JSON.stringify(steered));
+  assert.equal(steered.value.unconfirmed, undefined, 'The App already acknowledged the input');
   assert.equal(steered.value.steeredIntoTurnId, undefined);
   assert.equal(steered.value.queuedSubmissionId, undefined);
   assert.equal(peer.messages.filter(message => message === 'immediate').length, 1);

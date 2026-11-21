@@ -92,7 +92,8 @@ try {
     const active = await start('hold');
     const traffic = () => readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8');
     const steered = await rpc('work.send', { ref: active.ref, message: 'queued', mode: 'steer' }) as Result<WorkDelivery>;
-    assert(steered.ok && steered.value.receipt && !steered.value.delivered && steered.value.unconfirmed);
+    assert(steered.ok && steered.value.receipt && !steered.value.delivered);
+    assert.equal(steered.value.unconfirmed, undefined, 'The CLI already acknowledged the input');
     assert.equal(steered.value.steeredIntoTurnId, undefined);
     const sends = traffic().trim().split('\n').map(line => JSON.parse(line)).filter(call => call.method === 'session.send');
     assert.deepEqual(sends.map(call => call.params.mode), ['enqueue', 'immediate']);
