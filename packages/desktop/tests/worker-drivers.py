@@ -7,6 +7,7 @@ import select
 import shutil
 import signal
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -660,6 +661,34 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertIsNone(unrelated.poll())
         self.assertTrue(self.call('status')['ok'])
         print('reused_pid_preserved=1 desktop_available=1')
+
+    def test_restart_serves_requests_with_an_exited_driver_awaiting_reap(self):
+        driver = subprocess.Popen(['/bin/sleep', '60'], env={})
+        self.addCleanup(driver.wait)
+        self.addCleanup(driver.kill)
+        proc_pidinfo = ctypes.CDLL('/usr/lib/libproc.dylib').proc_pidinfo
+        proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+        # PROC_PIDTBSDINFO returns struct proc_bsdinfo, whose last fields are the birth timestamp.
+        info = ctypes.create_string_buffer(136)
+        self.assertEqual(proc_pidinfo(driver.pid, 3, 0, info, len(info)), len(info))
+        seconds, microseconds = struct.unpack_from('=QQ', info, 120)
+        directory = self.lifecycle()
+        directory.parent.mkdir(mode=0o700)
+        directory.mkdir(mode=0o700)
+        record = directory / 'driver.json'
+        record.write_text(json.dumps({'pid': driver.pid, 'startedAt': {
+            'seconds': seconds, 'microseconds': microseconds}}))
+        record.chmod(0o600)
+
+        def exit_without_reaping():
+            os.kill(driver.pid, signal.SIGKILL)
+            wait_until(lambda: subprocess.check_output(
+                ['/bin/ps', '-p', str(driver.pid), '-o', 'state='], text=True).strip().startswith('Z'))
+
+        self.crash_and_restart(exit_without_reaping)
+        self.assertEqual(self.call('status'), {'ok': True, 'result': {'state': 'stopped', 'pid': None}})
+        self.assertTrue(alive(driver.pid))
+        print('exited_driver_awaiting_reap=1 desktop_available=1')
 
     def test_rejects_oversize_frame_and_keeps_serving(self):
         with socket.socket(socket.AF_UNIX) as client:
