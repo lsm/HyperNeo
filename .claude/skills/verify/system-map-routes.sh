@@ -28,6 +28,8 @@ jq -er '
     "neo.conversation.read",
     "neo.project.forget",
     "neo.todo.done",
+    "neo.publication.publish",
+    "neo.publication.read",
     "evolution.scope.owner.set",
     "goal.owner.set",
     "space.audit.list",

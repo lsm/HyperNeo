@@ -2,10 +2,18 @@
 
 Use isolation and resource guards from SKILL.md. This helper needs no model or
 HTTP mock; its daemon owns a fresh HOME/data/TMPDIR and ephemeral non-8399 port.
-GitHub and external HTTP are refused. No simulator or credentials are used.
+GitHub and external HTTP are refused. WebSocket RPC authenticates with the
+isolated daemon's local credential. No simulator or live credentials are used.
 
 ```sh
 python3 .claude/skills/verify/lane-a-publication-page-db-run.py bun verify
+```
+
+To store the proof outside the checkout, use the shared metadata-only wrapper:
+
+```sh
+TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/evidence/publication-page \
+  .claude/skills/verify/lane-a-publication-page-db.ts verify
 ```
 
 The runner preserves evidence and removes all synthetic daemon data, including failed

@@ -9,7 +9,8 @@ TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evid
 ```
 
 The actual agent MCP door publishes complete text while another process holds
-BEGIN IMMEDIATE for 1500 ms. That process independently probes system.health.
+BEGIN IMMEDIATE for 1500 ms. That process authenticates with the isolated
+daemon's local credential and independently probes system.health.
 The publication must return a durable receipt and unchanged complete text;
 retrying its request ID must return the same sequence, with one stored row.
 Main publication INSERT preparation is forbidden. Health must remain below
