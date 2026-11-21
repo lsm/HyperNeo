@@ -56,6 +56,11 @@ with channel.makefile('rwb') as stream:
             result = {'content': [{'type': 'image', 'data': 'A' * (3 << 20), 'mimeType': 'image/png'}]}
         if name is not None and request.get('arguments', {}).get('fixture_delay'):
             time.sleep(0.3)
+        timeline = name and request.get('arguments', {}).get('fixture_timeline')
+        if timeline:
+            open(timeline, 'a').write('begin\\n')
+            time.sleep(0.5)
+            open(timeline, 'a').write('end\\n')
         reply_id = request['request_id'] + int(bool(name and request.get('arguments', {}).get('fixture_bad_reply')))
         stream.write((json.dumps({'protocol_version': 1, 'request_id': reply_id,
             'generation': generation, 'ok': request['generation'] == generation,
@@ -931,6 +936,8 @@ open(sys.argv[2], 'w').write(reply.decode())
 
     def dispatch(self, tool, arguments, worker='worker-a', **params):
         params.setdefault('apps', ['com.apple.finder', 'com.apple.dock'])
+        params.setdefault('todo', 'todo-' + worker)
+        params.setdefault('todos', ['todo-worker-a', 'todo-worker-b'])
         return self.call('dispatch', worker, tool=tool, arguments=arguments,
                          callId='call-' + tool, **params)
 
@@ -1039,6 +1046,71 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertTrue(reply['dispatched'], reply)
         self.pids.append(json.loads((self.lifecycle('worker-b') / 'driver.json').read_text())['pid'])
         print('held_window=window_busy after_stop=dispatched')
+
+    def overlapping(self, first, second):
+        timeline = self.root / 'timeline'
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            held = pool.submit(first, str(timeline))
+            wait_until(timeline.exists)
+            replies = [held] + [pool.submit(call, str(timeline)) for call in second]
+            replies = [reply.result(timeout=25) for reply in replies]
+        return timeline.read_text().split(), replies
+
+    def test_reading_a_window_keeps_it_for_the_same_todos_input(self):
+        pid = finder()
+        for tool in ('get_window_state', 'click'):
+            self.call('fixture-admit', tool=tool, arguments={'pid': pid})
+        read = self.dispatch('get_window_state', {'pid': pid}, workDir=str(self.work))['result']
+        self.assertTrue(read['dispatched'], read)
+        self.pids.append(json.loads((self.lifecycle() / 'driver.json').read_text())['pid'])
+        other = self.work / 'other'
+        other.mkdir()
+        busy = self.dispatch('get_window_state', {'pid': pid, 'fixture_deadline': True},
+                             worker='worker-b', workDir=str(other))['result']
+        self.assertEqual(busy['reason'], 'window_busy')
+        act = self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']
+        self.assertTrue(act['dispatched'], act)
+        print('read_then_act=same_todo other_todo=window_busy')
+
+    def test_stop_keeps_the_window_until_the_running_input_ends(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        self.assertTrue(self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']['dispatched'])
+        self.pids.append(json.loads((self.lifecycle() / 'driver.json').read_text())['pid'])
+        other = self.work / 'other'
+        other.mkdir()
+        lines, replies = self.overlapping(
+            lambda timeline: self.dispatch('click', {'pid': pid, 'fixture_timeline': timeline},
+                                           workDir=str(self.work)),
+            [lambda timeline: self.call('stop'),
+             lambda timeline: self.dispatch('click', {'pid': pid, 'fixture_timeline': timeline},
+                                            worker='worker-b', workDir=str(other))])
+        self.assertTrue(replies[2]['result']['dispatched'], replies)
+        self.pids.append(json.loads((self.lifecycle('worker-b') / 'driver.json').read_text())['pid'])
+        self.assertEqual(lines, ['begin', 'end', 'begin', 'end'])
+        print('stop_in_flight=no_overlap')
+
+    def test_foreground_calls_on_different_apps_take_turns(self):
+        pid = finder()
+        dock = int(subprocess.check_output(['/usr/bin/pgrep', '-x', 'Dock']).split()[0])
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        self.call('fixture-admit', tool='click', arguments={'pid': dock})
+        other = self.work / 'other'
+        other.mkdir()
+        self.assertTrue(self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']['dispatched'])
+        self.assertTrue(self.dispatch('click', {'pid': dock}, worker='worker-b',
+                                      workDir=str(other))['result']['dispatched'])
+        for worker in ('worker-a', 'worker-b'):
+            self.pids.append(json.loads((self.lifecycle(worker) / 'driver.json').read_text())['pid'])
+        front = {'delivery_mode': 'foreground'}
+        lines, replies = self.overlapping(
+            lambda timeline: self.dispatch('click', {'pid': pid, 'fixture_timeline': timeline, **front},
+                                           workDir=str(self.work)),
+            [lambda timeline: self.dispatch('click', {'pid': dock, 'fixture_timeline': timeline, **front},
+                                            worker='worker-b', workDir=str(other))])
+        self.assertTrue(all(reply['result']['dispatched'] for reply in replies), replies)
+        self.assertEqual(lines, ['begin', 'end', 'begin', 'end'])
+        print('foreground=serialized')
 
     def test_busy_worker_returns_busy_instead_of_waiting_for_owner(self):
         pid = finder()

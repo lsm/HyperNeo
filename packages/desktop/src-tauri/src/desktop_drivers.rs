@@ -28,7 +28,7 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::UnixListener,
     process::Command,
-    sync::Mutex,
+    sync::{Mutex, OwnedMutexGuard},
     task::{JoinHandle, JoinSet},
     time::{timeout, timeout_at, Instant},
 };
@@ -105,7 +105,24 @@ struct Drivers {
     sidecar: peer::ChildSlot,
     desktop_ready: Arc<dyn Fn() -> bool + Send + Sync>,
     leases: StdMutex<leases::Leases>,
-    foreground: Mutex<()>,
+    foreground: Arc<Mutex<()>>,
+    /// Foreground locks held by workers whose input could not be confirmed stopped.
+    stuck: StdMutex<BTreeMap<String, OwnedMutexGuard<()>>>,
+}
+struct Settle<'a> {
+    leases: &'a StdMutex<leases::Leases>,
+    worker: &'a str,
+    keep: bool,
+}
+impl Drop for Settle<'_> {
+    fn drop(&mut self) {
+        if !self.keep {
+            self.leases
+                .lock()
+                .unwrap()
+                .settle(self.worker, Instant::now());
+        }
+    }
 }
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -119,6 +136,9 @@ struct Request {
     call_id: Option<String>,
     /// Bundle ids the daemon's human approved for this worker's todo. A dispatch may act only on these.
     apps: Option<Vec<String>>,
+    /// The todo this call works for, and every todo that may still use the desktop.
+    todo: Option<String>,
+    todos: Option<Vec<String>>,
 }
 pub(crate) struct Control {
     drivers: Arc<Drivers>,
@@ -212,7 +232,8 @@ impl Control {
             sidecar,
             desktop_ready,
             leases: StdMutex::default(),
-            foreground: Mutex::new(()),
+            foreground: Arc::default(),
+            stuck: StdMutex::default(),
         });
         let state = drivers.clone();
         let task = tokio::spawn(async move {
@@ -609,43 +630,12 @@ impl Drivers {
                 );
                 return Ok(reply);
             }
-            if let Some(wanted) = leases::Target::of(&observed) {
-                let live = |held: &leases::Target| target::alive(&held.instance, held.window);
-                loop {
-                    let taken = self.leases.lock().unwrap().acquire(
-                        &request.worker,
-                        &wanted,
-                        Instant::now(),
-                        live,
-                    );
-                    match taken {
-                        Ok(()) => break,
-                        Err(_) if Instant::now() + LEASE_POLL < deadline => {
-                            tokio::time::sleep(LEASE_POLL).await
-                        }
-                        Err(holder) => {
-                            log::info!(
-                                "Desktop dispatch {worker}: window held by {holder}",
-                                worker = request.worker
-                            );
-                            return Ok(finish(
-                                bundle,
-                                class,
-                                "refused",
-                                json!("window_busy"),
-                                false,
-                            ));
-                        }
-                    }
-                }
-            }
         }
         let directory = self.records.join("workers").join(&request.worker);
         if matches!(request.action.as_str(), "start" | "stop" | "dispatch") {
             record::directory(&self.records, &request.worker, true)?;
         }
         if request.action == "stop" {
-            self.leases.lock().unwrap().release(&request.worker);
             record::latch(&directory)?;
         }
         if matches!(request.action.as_str(), "start" | "dispatch") {
@@ -687,6 +677,45 @@ impl Drivers {
                         .await?
                 }
                 "dispatch" => {
+                    let mut settle = Settle {
+                        leases: &self.leases,
+                        worker: &worker_id,
+                        keep: false,
+                    };
+                    if let Some(wanted) = leases::Target::of(&observed) {
+                        let todo = request.todo.as_deref().unwrap_or_default();
+                        let todos = request.todos.as_deref().unwrap_or_default();
+                        let live =
+                            |held: &leases::Target| target::alive(&held.instance, held.window);
+                        loop {
+                            let taken = self.leases.lock().unwrap().acquire(
+                                &worker_id,
+                                todo,
+                                todos,
+                                &wanted,
+                                Instant::now(),
+                                live,
+                            );
+                            match taken {
+                                Ok(()) => break,
+                                Err(_) if Instant::now() + LEASE_POLL < deadline => {
+                                    tokio::time::sleep(LEASE_POLL).await
+                                }
+                                Err(holder) => {
+                                    log::info!(
+                                        "Desktop dispatch {worker_id}: window held by {holder}"
+                                    );
+                                    return Ok(Some(finish(
+                                        bundle,
+                                        class,
+                                        "refused",
+                                        json!("window_busy"),
+                                        false,
+                                    )));
+                                }
+                            }
+                        }
+                    }
                     if worker.is_none() {
                         self.start_driver(&directory, &mut worker, request.work_dir.as_deref())
                             .await?;
@@ -704,8 +733,8 @@ impl Drivers {
                         .arguments
                         .as_ref()
                         .is_some_and(|args| args["delivery_mode"] == "foreground");
-                    let _screen = if foreground {
-                        match timeout_at(deadline, self.foreground.lock()).await {
+                    let mut screen = if foreground {
+                        match timeout_at(deadline, self.foreground.clone().lock_owned()).await {
                             Ok(guard) => Some(guard),
                             Err(_) => {
                                 return Ok(Some(finish(
@@ -746,7 +775,15 @@ impl Drivers {
                     #[cfg(not(test))]
                     let limit = Duration::from_secs(30);
                     #[cfg(test)]
-                    let limit = Duration::from_millis(100);
+                    let limit = if request
+                        .arguments
+                        .as_ref()
+                        .is_some_and(|args| args["fixture_timeline"].is_string())
+                    {
+                        Duration::from_secs(2)
+                    } else {
+                        Duration::from_millis(100)
+                    };
                     let active = worker.as_mut().unwrap();
                     let call = timeout_at(
                         deadline.min(Instant::now() + limit),
@@ -769,6 +806,10 @@ impl Drivers {
                     if !reason.is_null() {
                         if let Err(error) = active.channel.close().await {
                             reason = json!(format!("stop_unconfirmed: {error}"));
+                            settle.keep = true;
+                            if let Some(guard) = screen.take() {
+                                self.stuck.lock().unwrap().insert(worker_id.clone(), guard);
+                            }
                         }
                     }
                     // The driver reports tool failures in its result, not on the channel.
@@ -799,6 +840,7 @@ impl Drivers {
                     return Ok(Some(reply));
                 }
                 "stop" => {
+                    self.leases.lock().unwrap().pin(&worker_id);
                     if let Some(worker) = worker.as_mut() {
                         let pid = worker.channel.pid;
                         if worker.channel.running() {
@@ -813,6 +855,8 @@ impl Drivers {
                         record::verify_gone(pid)?;
                     }
                     *worker = None;
+                    self.leases.lock().unwrap().release(&worker_id);
+                    self.stuck.lock().unwrap().remove(&worker_id);
                 }
                 "status" => {}
                 _ => return Err("Unknown Desktop control action".into()),
@@ -954,7 +998,8 @@ mod peer_tests {
             sidecar: Arc::new(StdMutex::new(Some(child))),
             desktop_ready: Arc::new(|| true),
             leases: StdMutex::default(),
-            foreground: Mutex::new(()),
+            foreground: Arc::default(),
+            stuck: StdMutex::default(),
         };
         assert_eq!(wait_unreaped(pid).unwrap(), (Some(0), None));
         assert!(drivers.authorized(pid));

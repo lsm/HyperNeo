@@ -23,6 +23,8 @@ export function dispatchDesktopCall(
     worker: string;
     workDir: string;
     apps: string[];
+    todo: string;
+    todos: string[];
     tool: string;
     arguments: Record<string, unknown>;
     callId: string;

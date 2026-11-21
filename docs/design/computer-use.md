@@ -49,8 +49,9 @@ The host keeps an in-memory lease table, because it resolves each target and sen
 
 - A call that names a window leases that window (verified process instance plus window id) to its worker. A call with only a pid leases the whole app instance and conflicts with every window lease on it.
 - Another worker waits for the lease until its call deadline, then gets `window_busy`. The target is resolved again before dispatch.
-- A lease ends after 30 seconds without a call from its worker, when the worker stops, or when the process or window is gone.
-- A `foreground` call also takes one machine-wide lock for the length of the call; a second foreground call waits, then gets `foreground_busy`. Background calls need only the window lease.
+- A lease belongs to a todo. Each dispatch carries its todo and the todos that may still use the desktop, so a finished todo's lease lapses at the next conflict, and a reused worker drops its previous todo's leases.
+- While input may be running, a lease never lapses: it settles after the call, and Stop or a failed shutdown keeps it until the driver is confirmed gone. A settled lease ends after 30 seconds without a call, or when the process or window is gone.
+- A `foreground` call also takes one machine-wide lock, before the target is checked again. A second foreground call waits, then gets `foreground_busy`. If the driver cannot be confirmed stopped, the lock stays held until Stop confirms it. Background calls need only the window lease.
 - Browser workers opening their own window comes later; until then, a busy window means waiting.
 
 ## Where it lives

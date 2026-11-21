@@ -106,6 +106,10 @@ export function createDesktopCallOperation(
           worker: binding.worker,
           workDir: binding.workDir,
           apps: binding.apps,
+          todo: binding.todo,
+          todos: readDesktopTodos(db)
+            .filter(desktopAllowedRow)
+            .map((row) => row.id),
           tool: input.tool,
           arguments: input.args,
           callId: randomUUID(),
