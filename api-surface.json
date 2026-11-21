@@ -23872,6 +23872,11 @@
               }
             ]
           },
+          "noLabel": {
+            "maxLength": 24,
+            "minLength": 1,
+            "type": "string"
+          },
           "projectId": {
             "anyOf": [
               {
@@ -24178,6 +24183,11 @@
           },
           "topic": {
             "maxLength": 12,
+            "minLength": 1,
+            "type": "string"
+          },
+          "yesLabel": {
+            "maxLength": 24,
             "minLength": 1,
             "type": "string"
           }
@@ -41867,6 +41877,12 @@
             ]
           },
           "title": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "topic": {
+            "description": "The topic of the new ask this call opens for input. Ignored when the todo joins an existing ask; change that one with neo.ask.topic.",
+            "maxLength": 12,
             "minLength": 1,
             "type": "string"
           }

@@ -49,6 +49,8 @@ const Open = z.object({
   title: Text.max(200),
   topic: Topic.optional(),
   request: Text.max(4000),
+  yesLabel: Text.max(24).optional(),
+  noLabel: Text.max(24).optional(),
   projectId: Text.nullable().optional(),
   goalId: Text.nullable().optional(),
   todos: z.array(NeoTodoDraftSchema).max(20).default([]),
@@ -379,8 +381,8 @@ export function createNeoAskRecordOperations(
                 kind: 'yesno',
                 options: null,
                 multiple: false,
-                noLabel: "Don't",
-                yesLabel: 'Do it',
+                noLabel: input.noLabel ?? null,
+                yesLabel: input.yesLabel ?? null,
               },
               now
             );

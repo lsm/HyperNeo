@@ -245,10 +245,28 @@ describe('neo.ask.propose and neo.ask.settle', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(result.reason);
     expect(store.listQuestions(result.ask.id)).toMatchObject([
-      { state: 'open', kind: 'yesno', yesLabel: 'Do it', noLabel: "Don't" },
+      { state: 'open', kind: 'yesno', yesLabel: null, noLabel: null },
     ]);
     const retry = await call('neo.ask.propose', opening, turn('retry'));
     expect(retry.ok).toBe(false);
+  });
+
+  test('a proposal card shows the button labels Neo wrote', async () => {
+    const { call, store } = setup();
+    const result = await call(
+      'neo.ask.propose',
+      {
+        title: 'Send the reply',
+        request: 'Send the drafted reply',
+        yesLabel: '发出去',
+        noLabel: '先不做',
+      },
+      turn('labels')
+    );
+    if (!result.ok) throw new Error(result.reason);
+    expect(store.listQuestions(result.ask.id)).toMatchObject([
+      { kind: 'yesno', yesLabel: '发出去', noLabel: '先不做' },
+    ]);
   });
 
   test('a settled proposal retry records that no new todo was added', async () => {

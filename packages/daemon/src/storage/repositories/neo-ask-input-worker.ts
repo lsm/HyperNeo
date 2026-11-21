@@ -10,6 +10,7 @@ export type NeoAskInputClaim = {
   messageId: string;
   askId?: string;
   title: string;
+  topic?: string;
   request: string;
 };
 
@@ -114,6 +115,7 @@ class NeoAskInputs {
         sessionId: input.sessionId,
         originMessageId: input.messageId,
         title: input.title,
+        topic: input.topic ?? null,
         request: input.request,
         createdAt: now,
       }).id;

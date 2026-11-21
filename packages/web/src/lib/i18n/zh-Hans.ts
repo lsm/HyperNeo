@@ -205,6 +205,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'question.readAll': '阅读全文',
   'question.reply': '在聊天里回复',
   'question.confirm': '确定',
+  'question.cancel': '取消',
   'question.none': '都不要',
   'question.retired': '{question} — 不再需要',
   'status.separator': '；',

@@ -19,7 +19,7 @@ const card = (state: NeoQuestion['state']): NeoQuestion =>
   }) as unknown as NeoQuestion;
 
 describe('approval hints', () => {
-  test('a pending proposal names the open Do it card and says not to ask again', () => {
+  test('a pending proposal names the open card and says not to ask again', () => {
     const open = card('open');
     const result = requireAcceptedAsk(ask, open, [open], []);
     const reason = 'reason' in result ? result.reason.reason : '';
