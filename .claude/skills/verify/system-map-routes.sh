@@ -21,6 +21,7 @@ echo 'strict report exit=0'
 jq -er '
   [
     "neo.ask.doneTodos",
+    "neo.conversation.read",
     "evolution.scope.owner.set",
     "goal.owner.set",
     "space.audit.list",
