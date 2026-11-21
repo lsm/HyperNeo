@@ -1,0 +1,39 @@
+# Locked Use authorization plugin
+
+Locked Use adds one alternative to the screen-unlock right
+`system.login.screensaver`: the signed plugin's mechanism
+`HyperNeoLockedUse:unlock,privileged`. The rule becomes "any one of" that right
+and the original `use-login-window-ui`, so password and Touch ID unlock stay as
+they were. The mechanism allows only when a process signed as
+`io.hyperneo.locked-use` by team P5R65T296V, running as the console user, answers
+on `/private/tmp/io.hyperneo.locked-use.<uid>.sock`. Anything else denies.
+
+Plugin decision, on a Mac with the Developer ID identity in its keychain. No root,
+no lock, and no change to the authorization database:
+
+```bash
+RUN=$(mktemp -d)
+bash packages/desktop/locked-use/build.sh "$RUN"
+bash packages/desktop/locked-use/check-plugin.sh "$RUN"
+```
+
+Pass prints `none=deny adhoc=deny other=deny guardian=allow` and `plugin check PASS`:
+no server, an ad-hoc signed server and a server signed with another identifier are
+refused; only the guardian identifier is allowed.
+
+Install and removal change the Mac's unlock rule and need the owner's admin
+password. Run them only on a test Mac or with the owner's explicit approval, and
+save the rule first:
+
+```bash
+security authorizationdb read system.login.screensaver > "$RUN/before.plist"
+sudo bash packages/desktop/locked-use/install.sh "$RUN/HyperNeoLockedUse.bundle"
+sudo bash packages/desktop/locked-use/uninstall.sh
+security authorizationdb read system.login.screensaver > "$RUN/after.plist"
+diff <(plutil -extract rule xml1 -o - "$RUN/before.plist") <(plutil -extract rule xml1 -o - "$RUN/after.plist")
+```
+
+Install prints the rule array `io.hyperneo.locked-use.unlock, use-login-window-ui`;
+uninstall prints the original array and the diff is empty. Install refuses a rule
+that already has more than one entry or a `k-of-n`. After install, lock the Mac and
+unlock it with the password once to confirm the normal path still works.
