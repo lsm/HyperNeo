@@ -95,6 +95,12 @@ expect fail xattr_error_no_output with owner with xattrempty clean_tree "$work/t
 xattr -w io.hyperneo.test 1 "$work/tree/Contents/MacOS/plugin"
 expect fail tree_other_xattr with owner clean_tree "$work/tree"
 xattr -d io.hyperneo.test "$work/tree/Contents/MacOS/plugin"
+for name in $'com.apple.provenance\n' $'evil\ncom.apple.provenance' $'\n' com.apple.provenance2; do
+    xattr -w "$name" 1 "$work/tree/Contents/MacOS/plugin"
+    expect fail "tree_lookalike_xattr_$(printf %q "$name")" with owner clean_tree "$work/tree"
+    xattr -d "$name" "$work/tree/Contents/MacOS/plugin"
+done
+expect pass tree_clean_after_lookalikes with owner clean_tree "$work/tree"
 chmod +a "everyone allow write" "$work/tree/Contents"
 expect fail tree_acl with owner clean_tree "$work/tree"
 chmod -N "$work/tree/Contents"
@@ -137,7 +143,9 @@ scenario() {
 security() {
     echo "$*" >> "$run/calls"
     case "$1 $2" in
-        "authorizationdb read") cat "$run/live.plist" ;;
+        "authorizationdb read")
+            if [[ "$3" == "$mine" ]]; then cat "$run/right.plist" 2>/dev/null || return 1; else cat "$run/live.plist"; fi
+            ;;
         "authorizationdb write")
             [[ -e "$run/write-fails" ]] && return 1
             [[ -e "$run/write-garbles" ]] && { cat > /dev/null; cp "$work/drift.plist" "$run/live.plist"; return 0; }
@@ -187,5 +195,62 @@ expect pass right_still_present_keeps_plugin right_kept
 scenario "$work/installed.plist"
 with parse uninstall_locked_use 2>/dev/null
 expect pass parse_error_keeps_all kept
+
+fake sqlsecond sqlite3 "count=\$(cat \"$work/sqlite-calls\" 2>/dev/null || echo 0); echo \$((count + 1)) > \"$work/sqlite-calls\"; ((count == 0)) && exec /usr/bin/sqlite3 \"\$@\"; exit 1"
+scenario "$work/installed.plist"
+rm -f "$work/sqlite-calls"
+with sqlsecond uninstall_locked_use 2>/dev/null
+expect pass post_removal_lookup_error_keeps_plugin right_kept
+
+write_right_definition "$work/right.plist"
+cp "$work/right.plist" "$work/right-unprivileged.plist"
+plutil -replace mechanisms -json '["HyperNeoLockedUse:unlock"]' "$work/right-unprivileged.plist"
+cp "$work/right.plist" "$work/right-shared.plist"
+plutil -replace shared -bool true "$work/right-shared.plist"
+cp "$work/right.plist" "$work/right-no-tries.plist"
+plutil -remove tries "$work/right-no-tries.plist"
+cp "$work/right.plist" "$work/right-class.plist"
+plutil -replace class -string rule "$work/right-class.plist"
+scenario "$work/installed.plist"
+cp "$work/right.plist" "$run/right.plist"
+expect pass right_definition_ok installed_right
+for bad in unprivileged shared no-tries class; do
+    cp "$work/right-$bad.plist" "$run/right.plist"
+    expect fail "right_definition_$bad" installed_right
+done
+rm -f "$run/right.plist"
+expect fail right_definition_unreadable installed_right
+sqlite3 "$authdb" "delete from rules;"
+cp "$work/right.plist" "$run/right.plist"
+expect fail right_definition_without_row installed_right
+expect fail right_definition_lookup_error with sqlfail installed_right
+
+rolled_back() { [[ ! -e "$plugin" ]] && state_is absent && same_policy "$run/live.plist" "$backup"; }
+scenario "$work/installed.plist"
+rollback_install "$run" 2>/dev/null
+expect pass rollback_ok rolled_back
+scenario "$work/installed.plist"
+touch "$run/write-fails"
+expect fail rollback_restore_fails_reports rollback_install "$run" 2>/dev/null
+expect pass rollback_restore_fails_keeps_all kept
+scenario "$work/installed.plist"
+touch "$run/write-garbles"
+rollback_install "$run" 2>/dev/null
+expect pass rollback_unverified_restore_keeps_all kept
+scenario "$work/installed.plist"
+touch "$run/remove-fails"
+expect fail rollback_remove_fails_reports rollback_install "$run" 2>/dev/null
+expect pass rollback_remove_fails_keeps_plugin right_kept
+scenario "$work/installed.plist"
+touch "$run/remove-lies"
+rollback_install "$run" 2>/dev/null
+expect pass rollback_right_still_present_keeps_plugin right_kept
+scenario "$work/installed.plist"
+with sqlfail rollback_install "$run" 2>/dev/null
+expect pass rollback_lookup_error_keeps_plugin right_kept
+scenario "$work/installed.plist"
+rm -f "$work/sqlite-calls"
+with sqlsecond rollback_install "$run" 2>/dev/null
+expect pass rollback_post_removal_lookup_error_keeps_plugin right_kept
 
 [[ "$failed" == 0 ]] && echo "policy check PASS" || { echo "policy check FAIL"; exit 1; }

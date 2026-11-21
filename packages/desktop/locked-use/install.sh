@@ -15,7 +15,7 @@ verified_plugin() {
 }
 
 read_rule "$work/rule.plist"
-if [[ "$(uninstall_plan "$work/rule.plist")" == restore ]] && [[ "$(right_state)" == present ]] && verified_plugin "$plugin" 2>/dev/null; then
+if [[ "$(uninstall_plan "$work/rule.plist")" == restore ]] && installed_right && verified_plugin "$plugin" 2>/dev/null; then
     echo "already installed"
     exit 0
 fi
@@ -43,15 +43,7 @@ installed_from "$backup" "$work/expected.plist"
 rollback() {
     trap - ERR
     set +e
-    security authorizationdb write "$right" < "$backup"
-    if read_rule "$work/restored.plist" && same_policy "$work/restored.plist" "$backup"; then
-        security authorizationdb remove "$mine" >/dev/null 2>&1
-        rm -rf "$plugin"
-        echo "install failed; stock rule restored" >&2
-    else
-        echo "INSTALL FAILED AND THE STOCK RULE WAS NOT RESTORED." >&2
-        echo "The plugin and its right are left in place. Restore $right from $backup." >&2
-    fi
+    rollback_install "$work"
     exit 1
 }
 trap rollback ERR
@@ -59,18 +51,9 @@ trap rollback ERR
 rm -rf "$plugin"
 mv "$staged/HyperNeoLockedUse.bundle" "$plugin"
 verified_plugin "$plugin"
-cat > "$work/mine.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>class</key><string>evaluate-mechanisms</string>
-<key>comment</key><string>HyperNeo Locked Use: unlocks only for the signed HyperNeo guardian.</string>
-<key>mechanisms</key><array><string>HyperNeoLockedUse:unlock,privileged</string></array>
-<key>shared</key><false/>
-<key>tries</key><integer>1</integer>
-</dict></plist>
-EOF
+write_right_definition "$work/mine.plist"
 security authorizationdb write "$mine" < "$work/mine.plist"
+installed_right
 security authorizationdb write "$right" < "$work/expected.plist"
 read_rule "$work/after.plist"
 same_policy "$work/after.plist" "$work/expected.plist"

@@ -16,6 +16,56 @@ is_stock() { policy stock "$1"; }
 same_policy() { policy same "$1" "$2"; }
 installed_from() { rm -f "$2" && policy installed "$1" "$2"; }
 
+write_right_definition() {
+    cat > "$1" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>class</key><string>evaluate-mechanisms</string>
+<key>comment</key><string>HyperNeo Locked Use: unlocks only for the signed HyperNeo guardian.</string>
+<key>mechanisms</key><array><string>HyperNeoLockedUse:unlock,privileged</string></array>
+<key>shared</key><false/>
+<key>tries</key><integer>1</integer>
+</dict></plist>
+EOF
+}
+
+installed_right() {
+    local definition status=1
+    [[ "$(right_state)" == present ]] || return 1
+    definition="$(mktemp)" || return 1
+    security authorizationdb read "$mine" > "$definition" 2>/dev/null && policy right "$definition" && status=0
+    rm -f "$definition"
+    return "$status"
+}
+
+remove_right() {
+    local state
+    state="$(right_state)" || return 1
+    if [[ "$state" == present ]]; then
+        security authorizationdb remove "$mine" >/dev/null || return 1
+        state="$(right_state)" || return 1
+    fi
+    [[ "$state" == absent ]]
+}
+
+rollback_install() {
+    security authorizationdb write "$right" < "$backup"
+    if ! read_rule "$1/restored.plist" || ! same_policy "$1/restored.plist" "$backup"; then
+        echo "INSTALL FAILED AND THE STOCK RULE WAS NOT RESTORED." >&2
+        echo "The plugin and its right are left in place. Restore $right from $backup." >&2
+        return 1
+    fi
+    if ! remove_right; then
+        echo "Install failed; the stock rule is restored, but $mine could not be proven removed." >&2
+        echo "The plugin is left in place. Run uninstall.sh to finish." >&2
+        return 1
+    fi
+    rm -rf "$plugin"
+    [[ ! -e "$plugin" ]] || { echo "Install failed; the stock rule is restored, but $plugin remains." >&2; return 1; }
+    echo "install failed; stock rule restored and Locked Use removed" >&2
+}
+
 right_state() {
     local count
     count="$(sqlite3 -readonly "$authdb" "select count(*) from rules where name = '$mine';")" || return 1
@@ -27,11 +77,9 @@ right_state() {
 }
 
 only_provenance() {
-    local names name
-    names="$(xattr "$1")" || return 1
-    while IFS= read -r name; do
-        [[ -z "$name" || "$name" == com.apple.provenance ]] || return 1
-    done <<< "$names"
+    local names
+    names="$(xattr "$1" && echo end)" || return 1
+    [[ "$names" == end || "$names" == $'com.apple.provenance\nend' ]]
 }
 
 clean_entry() {
@@ -100,12 +148,7 @@ uninstall_locked_use() {
             return 1
             ;;
     esac
-    state="$(right_state)" || { echo "cannot tell whether $mine exists; leaving the plugin in place" >&2; return 1; }
-    if [[ "$state" == present ]]; then
-        security authorizationdb remove "$mine" || { echo "cannot remove $mine; leaving the plugin in place" >&2; return 1; }
-        state="$(right_state)" || state=unknown
-        [[ "$state" == absent ]] || { echo "$mine is still defined; leaving the plugin in place" >&2; return 1; }
-    fi
+    remove_right || { echo "$mine could not be proven removed; leaving the plugin in place" >&2; return 1; }
     rm -rf "$plugin"
     [[ ! -e "$plugin" ]] || { echo "$plugin is still present" >&2; return 1; }
     read_rule "$work/after.plist" && same_policy "$work/after.plist" "$backup" || {

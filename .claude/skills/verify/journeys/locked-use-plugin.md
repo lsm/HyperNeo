@@ -56,6 +56,9 @@ rule equal to the backup, with or without Locked Use; anything else, including a
 error, is refused unchanged. It verifies
 the restored rule before removing the right, and deletes the bundle only after the
 authorization database shows the right gone. The only extended attribute allowed on the
-plugin is `com.apple.provenance`, which macOS adds to every new file and does not let
-the installer remove; `check-policy.sh` shows both. After install, lock the Mac and
+plugin is the exact name `com.apple.provenance`, which macOS attaches to files written by
+tracked apps, including this copy, and which `xattr -d` does not remove; `check-policy.sh`
+shows both and rejects look-alike names. Install also verifies the right reads back with
+the privileged mechanism, and its rollback deletes the bundle only after the right is
+proven gone. After install, lock the Mac and
 unlock it with the password once to confirm the normal path still works.

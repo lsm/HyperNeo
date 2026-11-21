@@ -2,6 +2,7 @@
 //   policy.jxa stock <rule>              exit 0 when it is the stock use-login-window-ui rule
 //   policy.jxa same <a> <b>              exit 0 when both are equal apart from created/modified/version
 //   policy.jxa installed <stock> <out>   writes the stock rule with Locked Use added
+//   policy.jxa right <definition>        exit 0 when it is the Locked Use right install.sh writes
 ObjC.import("Foundation");
 
 function fail(reason) {
@@ -28,6 +29,17 @@ function isStock(rule) {
         && rule.objectForKey("k-of-n").isNil();
 }
 
+function isLockedUseRight(definition) {
+    const kind = definition.objectForKey("class");
+    const mechanisms = definition.objectForKey("mechanisms");
+    const shared = definition.objectForKey("shared");
+    const tries = definition.objectForKey("tries");
+    return !kind.isNil() && kind.isEqual($("evaluate-mechanisms"))
+        && !mechanisms.isNil() && mechanisms.isEqual($(["HyperNeoLockedUse:unlock,privileged"]))
+        && !shared.isNil() && shared.isKindOfClass($.NSNumber) && shared.boolValue === false
+        && !tries.isNil() && tries.isKindOfClass($.NSNumber) && tries.intValue === 1;
+}
+
 function stable(rule) {
     const copy = rule.mutableCopy;
     volatile.forEach((key) => copy.removeObjectForKey(key));
@@ -47,6 +59,8 @@ function run(argv) {
         out.setObjectForKey($(1), "k-of-n");
         out.setObjectForKey($([mine, "use-login-window-ui"]), "rule");
         if (!out.writeToFileAtomically(b, true)) fail("no");
+    } else if (mode === "right" && argv.length === 2) {
+        if (!isLockedUseRight(load(a))) fail("no");
     } else {
         fail("usage");
     }
