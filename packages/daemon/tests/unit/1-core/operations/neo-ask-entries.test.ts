@@ -562,6 +562,7 @@ describe('projectNeoAskEntries todo order and done todos', () => {
   test('neo.ask.doneTodos pages the done todos in list order', async () => {
     const { store, sessions } = seed(['done', 'done', 'doing', 'done', 'done']);
     let projections = 0;
+    let projectionError: Error | undefined;
     const op = createNeoDoneTodosOperation(
       store,
       sessions,
@@ -569,6 +570,7 @@ describe('projectNeoAskEntries todo order and done todos', () => {
       (caller) => ({ value: caller }),
       async (todos) => {
         projections++;
+        if (projectionError) throw projectionError;
         return todos.map((entry) => ({ ...entry, title: `Projected ${entry.title}` }));
       }
     );
@@ -597,6 +599,8 @@ describe('projectNeoAskEntries todo order and done todos', () => {
       reason: 'not_found: no such ask.',
     });
     expect(projections).toBe(2);
+    projectionError = new Error('projection failed');
+    await expect(read({ askId: 'ask' })).rejects.toBe(projectionError);
   });
 });
 
