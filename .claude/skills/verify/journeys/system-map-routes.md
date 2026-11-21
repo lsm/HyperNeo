@@ -15,3 +15,4 @@ For the strict registry verdict on the real source tree, run
 inspect the JSON. A registered DB operation may be named by its registry key;
 unregistered or ambiguous operations remain unreadable. This report does not
 prove that an opaque post-pipeline callback is only a projection.
+The regular verdict also checks the typed goal-session executor.

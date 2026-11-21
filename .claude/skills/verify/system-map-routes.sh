@@ -18,6 +18,8 @@ rg 'packages/web/src/neo/neo-file-question.ts neoFileQuestionText' "$run/list"
 tail -1 "$run/list"
 bun scripts/pipeline-verdict-report.ts --strict > "$run/verdicts.json"
 echo 'strict report exit=0'
+bun scripts/pipeline-verdict-report.ts > "$run/regular-verdicts.json"
+jq -e '[.[] | select(.name == "goal.session.create" and .verdict == "named")] | length == 1' "$run/regular-verdicts.json"
 jq -er '
   [
     "neo.ask.doneTodos",
