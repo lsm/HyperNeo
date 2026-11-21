@@ -404,11 +404,20 @@ export function createLocalPipelineResolver(
       (access.flags & ts.NodeFlags.OptionalChain) !== 0
     )
       return unknown;
-    const create = unwrap(access.expression);
+    const receiver = unwrap(access.expression);
+    const awaited = ts.isAwaitExpression(receiver);
+    const create = unwrap(awaited ? receiver.expression : receiver);
     if (
       !ts.isCallExpression(create) ||
       (create.flags & ts.NodeFlags.OptionalChain) !== 0 ||
-      create.arguments.length !== 0 ||
+      create.arguments.some((argument) => {
+        if (!ts.isIdentifier(argument)) return true;
+        const declarations = checker.getSymbolAtLocation(argument)?.declarations;
+        return (
+          declarations?.length !== 1 ||
+          !(ts.isParameter(declarations[0]) || ts.isVariableDeclaration(declarations[0]))
+        );
+      }) ||
       !ts.isIdentifier(create.expression)
     )
       return unknown;
@@ -425,8 +434,18 @@ export function createLocalPipelineResolver(
     const factory = unwrap(declaration.initializer);
     if (
       !ts.isArrowFunction(factory) ||
-      factory.parameters.length !== 0 ||
-      factory.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
+      factory.parameters.length !== create.arguments.length ||
+      factory.parameters.some(
+        (parameter) =>
+          !ts.isIdentifier(parameter.name) ||
+          parameter.initializer ||
+          parameter.dotDotDotToken ||
+          parameter.questionToken
+      ) ||
+      Boolean(
+        factory.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
+      ) !== awaited ||
+      (awaited && access.name.text === 'then')
     )
       return unknown;
     const body = factory.body;
