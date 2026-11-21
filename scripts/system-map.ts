@@ -533,9 +533,17 @@ export function countPipelineRoutes(
       const body = unwrapPipelineExpression(execute.body);
       if (!ts.isCallExpression(body) || body.questionDotToken) return false;
       const callee = unwrapPipelineExpression(body.expression);
+      const parameters = execute.parameters;
       return (
         ts.isIdentifier(callee) &&
-        body.arguments.every(ts.isIdentifier) &&
+        body.arguments.every(
+          (argument) =>
+            ts.isIdentifier(argument) &&
+            parameters.some(
+              (parameter) =>
+                ts.isIdentifier(parameter.name) && parameter.name.text === argument.text
+            )
+        ) &&
         (body !== execute.body || callee !== body.expression)
       );
     };

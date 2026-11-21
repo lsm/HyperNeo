@@ -341,6 +341,8 @@ test.each([
   ['async (input) => (execute as Run)(fallback()) as never', 1],
   ['async (execute) => (execute as Run)(input) as never', 1],
   ['async (input) => (execute as Run)(input) as never, ...overrides', 1],
+  ['async (input) => (somethingElse as Run)(input) as never', 1],
+  ['async (input) => (execute as Run)(other) as never', 1],
 ])('regular checker recognizes only proven typed calls: %s', (operation, unreadable) => {
   const source = `
     import superpipe from 'superpipe';
