@@ -268,8 +268,11 @@ machine, after migrating the hand-installed bridge:
    Codex use (or daemon startup with the driver enabled) surfaces the one
    question card and changes nothing before the answer. On yes, the steps run,
    the app is quit and reopened by HyperNeo, and messaging works without a
-   refusal; with Codex work in flight at the yes, the daemon restart and app
-   quit wait for idle and then happen on their own. On no, nothing changes and
+   refusal. On fresh setup, start a turn in the app's private server and verify
+   the approved app restart interrupts it. With a managed-server turn in flight,
+   verify the cutovers wait for idle and then happen on their own. Attempt a
+   HyperNeo send between the idle re-check and cutover completion and verify it
+   is held until the cutover finishes. On no, nothing changes and
    no further question appears on later daemon restarts or Codex use until a
    manual `codex-setup`. After `--undo`, the same silence holds until a manual
    `codex-setup`. With Codex work in flight, setup, migration and undo all
@@ -302,8 +305,8 @@ machine, after migrating the hand-installed bridge:
    `codex-setup`; no XPC helper (non-public launchd behaviour). The human
    confirms or rejects this at sign-off.
 2. Is port 47912 fine as the permanent default?
-3. Should the desktop app ever prompt to run this setup, or does the CLI stay
-   the only door?
+3. Should the desktop app offer its own setup prompt in addition to Neo's
+   question and the CLI command?
 4. Is the login-ordering caveat (an app instance restored before the HyperNeo
    daemon keeps its private server until quit and reopen) acceptable, or does
    setup need to warn about macOS session restore explicitly?
