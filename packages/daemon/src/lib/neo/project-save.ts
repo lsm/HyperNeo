@@ -27,7 +27,9 @@ export function requireNeoProjectSaveId(
   return { value: caller };
 }
 
-export const saveNeoProjectCommand = (superpipe({})('neo.project.save') as PipelineAPI)
+export const saveNeoProjectTransaction = (
+  superpipe({})('neo.project.save.transaction') as PipelineAPI
+)
   .input(['input', 'caller', 'repo'])
   .pipe(
     (caller: OperationCaller, repo: NeoRepository): Gate<OperationCaller> => {
@@ -77,3 +79,29 @@ export const saveNeoProjectCommand = (superpipe({})('neo.project.save') as Pipel
   caller: OperationCaller,
   repo: NeoRepository
 ) => Failure | { ok: true; project: NeoProject };
+
+type SaveRepository = Pick<NeoRepository, 'saveProjectReceipt'>;
+type SaveReceipt = Awaited<ReturnType<SaveRepository['saveProjectReceipt']>>;
+
+export function createNeoProjectSavePipeline(repo: SaveRepository, notify: () => void) {
+  return (superpipe({})('neo.project.save') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (input: NeoProjectSaveRequest, caller: OperationCaller) =>
+        repo.saveProjectReceipt(input, caller),
+      ['input', 'caller'],
+      'receipt'
+    )
+    .pipe(
+      (receipt: SaveReceipt) => {
+        if (receipt.changed) notify();
+        return receipt.result;
+      },
+      'receipt',
+      'result'
+    )
+    .endAsync('result') as (
+    input: NeoProjectSaveRequest,
+    caller: OperationCaller
+  ) => Promise<SaveReceipt['result']>;
+}

@@ -43,6 +43,7 @@ import { createNeoRetryOperation } from './retry-operation.ts';
 import { createNeoReorganizeOperation, type NeoReorganizeRuntime } from './reorganize-operation.ts';
 import { createNeoProjectListOperation } from './project-list-operation.ts';
 import { readNeoProjectIdentities } from './project-merge.ts';
+import { createNeoProjectSavePipeline } from './project-save.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import { createNeoConversationReadOperation } from './conversation-read-operation.ts';
 import { NeoConversationReader } from '../../storage/repositories/neo-conversation-reader.ts';
@@ -258,8 +259,6 @@ const Save = z.object({
   context: z.string().max(16000),
   expectedRevision: z.number().int().min(0),
 });
-type SaveRequest = z.infer<typeof Save>;
-
 export { requireNeoProjectSaveId } from './project-save.ts';
 const SessionMute = z.object({ key: z.string().trim().min(1).max(400), muted: z.boolean() });
 const SessionMuteResult = z.union([
@@ -358,6 +357,18 @@ export function neoReorganizeRuntime(
     },
     log: (line) => service.logReorganize(line),
   };
+}
+
+function createNeoProjectSaveOperation(service: NeoService) {
+  const execute = createNeoProjectSavePipeline(service.repo, service.notifyChanged);
+  return defineOperation({
+    name: 'neo.project.save',
+    description: neoToolDescription('neo.project.save'),
+    inputSchema: Save,
+    resultSchema: z.union([Failure, z.object({ ok: z.literal(true), project: Project })]),
+    policy: { safetyClass: 'mutate', roles: ['neo'] },
+    execute,
+  });
 }
 
 export function createNeoOperations(
@@ -694,8 +705,6 @@ export function createNeoOperations(
     );
     return { ...view, sessionId };
   });
-  const save = (input: SaveRequest, caller: OperationCaller) =>
-    service.repo.saveProjectCurrent(input, caller);
   const readPack = path('neo.pack.read', ({ id }: z.infer<typeof PackRead>) => {
     const pack = service.pack(id);
     if (!pack)
@@ -1061,13 +1070,6 @@ export function createNeoOperations(
           service.todoRunner.retarget(todoId, fromRef)
       ),
     }),
-    defineOperation({
-      name: 'neo.project.save',
-      description: neoToolDescription('neo.project.save'),
-      inputSchema: Save,
-      resultSchema: z.union([Failure, z.object({ ok: z.literal(true), project: Project })]),
-      policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: save,
-    }),
+    createNeoProjectSaveOperation(service),
   ];
 }

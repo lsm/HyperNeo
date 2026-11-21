@@ -2,6 +2,7 @@ import { expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createNeoProjectSavePipeline } from '../../../../src/lib/neo/project-save.ts';
 import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
@@ -27,41 +28,37 @@ test('project save admits one revision and notifies only durable committed state
   const gateway = new DbGateway(':memory:', writer);
   bindGateway(main, gateway);
   const published: number[][] = [];
-  const repository = new NeoRepository(main, () =>
+  const save = createNeoProjectSavePipeline(new NeoRepository(main), () =>
     published.push(new NeoRepository(observer).listProjects().map((p) => p.revision))
   );
   const guard = spyOn(main, 'prepare').mockImplementation(((sql: string) => {
     throw new Error(`Project SQL on main: ${sql}`);
   }) as typeof main.prepare);
   try {
-    const created = await repository.saveProjectCurrent(input, caller);
+    const created = await save(input, caller);
     expect(created.ok).toBe(true);
     if (!created.ok) throw new Error('Synthetic create failed');
     expect(created.project.context).toBe(input.context);
     expect(published).toEqual([[1]]);
     const results = await Promise.all(
       ['A', 'B'].map((title) =>
-        repository.saveProjectCurrent(
-          { ...input, id: created.project.id, title, expectedRevision: 1 },
-          caller
-        )
+        save({ ...input, id: created.project.id, title, expectedRevision: 1 }, caller)
       )
     );
     expect(results.filter((r) => r.ok)).toHaveLength(1);
-    expect(results.filter((r) => !r.ok)).toHaveLength(1);
+    expect(results.filter((r) => !r.ok)).toEqual([
+      { ok: false, reason: 'superseded: read the current project before saving again' },
+    ]);
     expect(published).toEqual([[1], [2]]);
     writer.exec(
       "CREATE TRIGGER reject_project_update BEFORE UPDATE ON neo_concerns BEGIN SELECT RAISE(ABORT,'synthetic project rejection'); END"
     );
     await expect(
-      repository.saveProjectCurrent(
-        { ...input, id: created.project.id, expectedRevision: 2 },
-        caller
-      )
+      save({ ...input, id: created.project.id, expectedRevision: 2 }, caller)
     ).rejects.toThrow('synthetic project rejection');
     expect(published).toEqual([[1], [2]]);
     expect(new NeoRepository(observer).getProject(created.project.id)?.revision).toBe(2);
-    const denied = await repository.saveProjectCurrent(input, {
+    const denied = await save(input, {
       source: 'mcp',
       sessionId: 'unbound',
     });
