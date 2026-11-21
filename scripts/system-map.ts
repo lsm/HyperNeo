@@ -515,6 +515,30 @@ export function countPipelineRoutes(
       else if (resolved.name !== name && !resolved.terminal) counts.misnamed++;
     };
     let parsedCalls: ts.SourceFile | undefined;
+    const hasTypedDirectCall = (start: number): boolean => {
+      const parsed = (parsedCalls ??= ts.createSourceFile(
+        file,
+        source,
+        ts.ScriptTarget.Latest,
+        true
+      ));
+      const offset = tokens[start].offset;
+      let execute: ts.ArrowFunction | undefined;
+      const find = (node: ts.Node) => {
+        if (node.getStart(parsed) === offset && ts.isArrowFunction(node)) execute = node;
+        else if (node.pos <= offset && node.end > offset) ts.forEachChild(node, find);
+      };
+      find(parsed);
+      if (!execute || ts.isBlock(execute.body)) return false;
+      const body = unwrapPipelineExpression(execute.body);
+      if (!ts.isCallExpression(body) || body.questionDotToken) return false;
+      const callee = unwrapPipelineExpression(body.expression);
+      return (
+        ts.isIdentifier(callee) &&
+        body.arguments.every(ts.isIdentifier) &&
+        (body !== execute.body || callee !== body.expression)
+      );
+    };
     const hasUnconditionalCall = (start: number, name: string, inlineOffset?: number): boolean => {
       const parsed = (parsedCalls ??= ts.createSourceFile(
         file,
@@ -829,6 +853,13 @@ export function countPipelineRoutes(
               )))
       );
       if (reached.length === 0) {
+        if (!strictCalls && hasTypedDirectCall(executeStart)) {
+          const resolved = createLocalPipelineResolver(source, file, true, sourceContext)(name);
+          if (resolved.kind === 'named' && resolved.name === name) {
+            i = end;
+            continue;
+          }
+        }
         const arrow = body.includes('=>') || (body.includes('=') && body.includes('>'));
         const call = body.some(
           (token, index) =>
