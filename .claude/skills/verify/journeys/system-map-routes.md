@@ -5,6 +5,7 @@ with Bun 1.4.4 and `jq` on PATH. It prints the real exported runner's ordered st
 checks an unavailable export, and lists the source-scan coverage. The wrapper
 also checks typed inline chains, expression preambles, early returns, optional
 calls, direct and re-entrant queue callbacks, and returned factory methods with identifier arguments through the strict classifier.
+It also checks awaited async factories with identifier arguments.
 The wrapper also runs the strict verdict CLI on the current source tree and
 checks that each of the seven operations from step 3 of the DB operation
 registry design appears exactly once with verdict `named`. This check covers
