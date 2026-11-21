@@ -81,6 +81,8 @@ export function registerSettingsHandlers(
     'settings.global.update',
     async (data: { updates: Partial<GlobalSettings> }) => {
       assertNoToolSelectionDefaults(data.updates);
+      if (Object.hasOwn(data.updates, 'codexAppServerBridge'))
+        throw new Error('Use the local hyperneo codex-setup command to change the Codex bridge.');
       const packs = data.updates.neo?.packs;
       const refusal = packs ? refuseSecondLineRanker(packs, installedPacks()) : null;
       if (refusal) throw new Error(refusal);
@@ -462,6 +464,10 @@ export function sanitizeGlobalSettings(
   credentialManager?: ProviderCredentialManager
 ): GlobalSettings {
   let sanitized = settings;
+  if (settings.codexAppServerBridge) {
+    sanitized = { ...settings };
+    delete sanitized.codexAppServerBridge;
+  }
   if (sanitized.voice) {
     const voice = { ...sanitized.voice };
     const hadInlineApiKey = !!voice.apiKey?.trim();

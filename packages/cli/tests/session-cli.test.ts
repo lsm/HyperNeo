@@ -67,6 +67,21 @@ describe('hyperneo send, question and build', () => {
     });
     expect(planSessionCommand(['reserve-restart', 'force'], 'cli')).toHaveProperty('reason');
   });
+  test('codex-setup uses the local operation and accepts exactly one optional flag', () => {
+    for (const [flags, undo, noRemoteControl] of [
+      [[], false, false],
+      [['--undo'], true, false],
+      [['--no-remote-control'], false, true],
+    ] as const) {
+      expect(planSessionCommand(['codex-setup', ...flags], 'cli')).toEqual({
+        value: { name: 'system.codex.setup', input: { undo, noRemoteControl } },
+      });
+    }
+    expect(
+      planSessionCommand(['codex-setup', '--undo', '--no-remote-control'], 'cli')
+    ).toHaveProperty('reason');
+    expect(planSessionCommand(['codex-setup', '--force'], 'cli')).toHaveProperty('reason');
+  });
 
   test('pair makes a code of the named kind, or reopens pairing after a lockout', () => {
     expect(planSessionCommand(['pair'], 'cli')).toEqual({
