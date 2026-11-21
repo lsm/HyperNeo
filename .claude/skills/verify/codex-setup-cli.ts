@@ -84,11 +84,17 @@ const cli = async (...flags: string[]) => {
   assert.equal(reply.ok, true);
   return reply;
 };
-const dial = async (url: string) => {
-  const socket = new WebSocket(url, { handshakeTimeout: 1500 });
-  try { await once(socket, 'open'); return true; } catch { return false; }
-  finally { socket.terminate(); }
-};
+const dial = (url: string) =>
+  new Promise<boolean>((done) => {
+    const socket = new WebSocket(url, { handshakeTimeout: 1500 });
+    let opened = false;
+    socket.on('error', () => {});
+    socket.once('open', () => {
+      opened = true;
+      socket.terminate();
+    });
+    socket.once('close', () => done(opened));
+  });
 let app: Awaited<ReturnType<typeof boot>> | undefined;
 try {
   const reservation = createServer().listen(0, '127.0.0.1');
