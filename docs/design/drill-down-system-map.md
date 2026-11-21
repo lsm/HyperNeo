@@ -49,49 +49,47 @@ Markdown to stdout. Redirect to a file, read it in a terminal or an editor. Gene
 
 A compact component index comes first — one line per component with its route count, a `(touched)` marker when marked, and an anchor link into the list below — so the overview is one screen; the full route lists follow.
 
-Anchors are explicit and package-qualified, because GitHub derives heading anchors from the full heading text (counts and touch markers would destabilize them). Every section starts with `<a id="pkg-area"></a>`, where the id is the package name, a hyphen, and the area with every non-alphanumeric run collapsed to a single hyphen (`(root)` becomes `root`). Index links target those ids; the ids change only when a component is renamed or moves.
-
-Slugs can collide — a real `space/root` directory slugs to the same `space-root` as `space/(root)`, and GitHub keeps duplicate ids rather than repairing them, which breaks both links. Uniqueness is therefore by construction. All bare slugs are reserved up front; then ids are assigned with components sorted bytewise by (package, area): a component takes its bare slug unless that id is already assigned, and otherwise takes the first `<bare>-2`, `-3`, … that is neither already assigned nor reserved by any component's bare slug — a suffix may never land on an id another component will take as its own. Since `(` sorts before letters, with `space/(root)`, `space/root` and `space/root-2` all present: `space/(root)` keeps `space-root`, `space/root-2` keeps its bare `space-root-2`, and `space/root` skips the reserved `space-root-2` and lands on `space-root-3`.
+Anchors are explicit and package-qualified, because GitHub derives heading anchors from the full heading text (counts and touch markers would destabilize them). Every section starts with `<a id="..."></a>`, where the id is a fixed encoding of the component key `package/area` — nothing is allocated, so an id can never depend on which other components exist: lowercase the key, keep `[a-z0-9]` bytes, and encode every other byte as `_` plus two hex digits (`_` itself is always an escape introducer, so the encoding is injective). `daemon/agents` becomes `daemon_2fagents`, `space/(root)` becomes `space_2f_28root_29`, and a real `space/root` (`space_2froot`) or `space/root-2` (`space_2froot_2d2`) can never collide with it or move it. Index links target those ids; an id changes only when a component is renamed or moves. The ids are opaque; readers click the index, they do not type fragments.
 
 Trimmed real example of the shape:
 
 ```markdown
 # System map — 271 routes, 271 named, 0 unreadable
 
-- [daemon/agents](#daemon-agents) — 16 routes (touched)
-- [daemon/connections](#daemon-connections) — 17 routes
-- [daemon/neo](#daemon-neo) — 79 routes (touched)
-- [web/components](#web-components) — 0 routes (touched)
-- [space/(root)](#space-root) — 2 routes
-- [space/evolution](#space-evolution) — 13 routes
+- [daemon/agents](#daemon_2fagents) — 16 routes (touched)
+- [daemon/connections](#daemon_2fconnections) — 17 routes
+- [daemon/neo](#daemon_2fneo) — 79 routes (touched)
+- [web/components](#web_2fcomponents) — 0 routes (touched)
+- [space/(root)](#space_2f_28root_29) — 2 routes
+- [space/evolution](#space_2fevolution) — 13 routes
 
 ## daemon — 237 routes
 
-<a id="daemon-agents"></a>
+<a id="daemon_2fagents"></a>
 ### agents — 16 routes (touched)
 - `evolution.scope.owner.set` — [assign-agent-operation.ts](packages/daemon/src/lib/agents/assign-agent-operation.ts)
 
-<a id="daemon-connections"></a>
+<a id="daemon_2fconnections"></a>
 ### connections — 17 routes
 - `gmail.search` — [google-read-operations.ts](packages/daemon/src/lib/connections/google-read-operations.ts)
 
-<a id="daemon-neo"></a>
+<a id="daemon_2fneo"></a>
 ### neo — 79 routes (touched)
 - `neo.ask.doneTodos` (touched) — [ask-entries.ts](packages/daemon/src/lib/neo/ask-entries.ts)
 - `neo.project.save` — [operations.ts](packages/daemon/src/lib/neo/operations.ts)
 
 ## web — 0 routes
 
-<a id="web-components"></a>
+<a id="web_2fcomponents"></a>
 ### components — 0 routes (touched)
 
 ## space — 34 routes
 
-<a id="space-root"></a>
+<a id="space_2f_28root_29"></a>
 ### (root) — 2 routes
 - `space.list` — [space-read-operations.ts](packages/space/src/space-read-operations.ts)
 
-<a id="space-evolution"></a>
+<a id="space_2fevolution"></a>
 ### evolution — 13 routes
 - `evolution.episode.create` — [episode-operations.ts](packages/space/src/evolution/episode-operations.ts)
 ```
@@ -110,7 +108,7 @@ In `scripts/system-map.ts`: a `map` case in `main` that calls the exported `repo
 
 ## Test plan
 
-Unit test in `scripts/system-map.test.ts` style, on fixture sources (as `pipeline-verdict-report.test.ts` already does): grouping counts per package and component, `(root)` placement for src-level files, the component index matching the lists below it, `--diff` marking a component whose changed file has no route row (helper-only change), a touched component with zero routes appearing as `0 routes (touched)` with an empty section and never appearing without `--diff`, anchor ids staying identical when counts or touch markers change, the three-component collision fixture (`space/(root)`, `space/root`, `space/root-2` → `space-root`, `space-root-3`, `space-root-2`, all unique) and suffixes skipping reserved bare ids, and every index link resolving to exactly one emitted anchor, exact-file route marks, stable output ordering, and the summary line matching the row count. `bun run check` passes.
+Unit test in `scripts/system-map.test.ts` style, on fixture sources (as `pipeline-verdict-report.test.ts` already does): grouping counts per package and component, `(root)` placement for src-level files, the component index matching the lists below it, `--diff` marking a component whose changed file has no route row (helper-only change), a touched component with zero routes appearing as `0 routes (touched)` with an empty section and never appearing without `--diff`, anchor ids being a pure injective function of the component key and staying identical when counts, touch markers or the set of other components change (fixture: `space/(root)`, `space/root`, `space/root-2` encode to three distinct ids, and adding `space/root-3` changes none of them), and every index link resolving to exactly one emitted anchor, exact-file route marks, stable output ordering, and the summary line matching the row count. `bun run check` passes.
 
 ## Non-goals
 
