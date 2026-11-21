@@ -501,7 +501,8 @@ function codexDesktopAdapters(
     fullTitles?: boolean
   ) => Promise<CodexSnapshot>,
   searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>,
-  prepareExecution: WorkExecutionPreparer
+  prepareExecution: WorkExecutionPreparer,
+  admitWork: FamilyOperationContext['deps']['admitCodexWork']
 ): WorkAdapter[] {
   const codexHome = codexWorkerHome();
   const statePath = codexStatePath(homedir());
@@ -512,6 +513,7 @@ function codexDesktopAdapters(
       readSnapshot,
       desktopSocketPath: join(codexHome, 'ipc', 'ipc.sock'),
       prepareExecution,
+      admitWork,
       worktreesDir: join(codexHome, 'worktrees'),
       machine: hostname(),
       now: Date.now,
@@ -613,7 +615,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       (statePath, includeClosed, idPrefix, fullTitles) =>
         context.deps.db.readCodexSnapshotAsync(statePath, includeClosed, idPrefix, fullTitles),
       searchChats,
-      prepareExecution
+      prepareExecution,
+      context.deps.admitCodexWork
     );
   const copilotDesktopPath = copilotDesktopStatePath(homedir());
   const copilotDesktop = createCopilotDesktopAdapter(
