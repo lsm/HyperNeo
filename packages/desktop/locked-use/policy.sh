@@ -10,17 +10,22 @@ lock_dir="/Library/Application Support/HyperNeo/LockedUse/install.lock"
 plugin_requirement='identifier "io.hyperneo.locked-use.plugin" and anchor apple generic and certificate leaf[subject.OU] = "P5R65T296V" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists'
 policy_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/policy.jxa"
 
+lock_owner=""
+export -n lock_owner
+
 take_lock() {
     mkdir -p "$(dirname "$lock_dir")" && mkdir "$lock_dir" 2>/dev/null || {
         echo "another Locked Use install or uninstall is running; if none is, remove $lock_dir" >&2
         return 1
     }
-    holding_lock=1
+    lock_owner="$$"
 }
 
 release_lock() {
-    if [[ -n "${holding_lock:-}" ]]; then rmdir "$lock_dir"; fi
-    holding_lock=
+    if [[ -n "$lock_owner" && "$lock_owner" == "$$" ]]; then
+        rmdir "$lock_dir" || echo "could not remove $lock_dir" >&2
+    fi
+    lock_owner=""
 }
 
 read_rule() { security authorizationdb read "$right" > "$1" 2>/dev/null; }

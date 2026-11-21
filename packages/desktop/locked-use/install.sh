@@ -8,7 +8,7 @@ source="${1:?HyperNeoLockedUse.bundle}"
 . "$(dirname "$0")/policy.sh"
 work=""
 staged=""
-trap 'rm -rf ${work:+"$work"} ${staged:+"$staged"}; release_lock' EXIT
+trap 'release_lock; rm -rf ${work:+"$work"} ${staged:+"$staged"} || true' EXIT
 take_lock
 work="$(mktemp -d)"
 

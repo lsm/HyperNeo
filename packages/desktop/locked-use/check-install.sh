@@ -25,6 +25,7 @@ sed -e "s|^plugin=.*|plugin=\"\$FIXTURE/plugins/HyperNeoLockedUse.bundle\"|" \
 fake() { printf '#!/bin/bash\n%s\n' "$2" > "$t/bin/$1"; chmod +x "$t/bin/$1"; }
 fake id '[[ "$1" == -u ]] && { echo 0; exit 0; }; exec /usr/bin/id "$@"'
 fake chown 'exit 0'
+fake rm '[[ -e "$FIXTURE/rm-fails" && "$1" == -rf ]] && exit 1; exec /bin/rm "$@"'
 fake mktemp '[[ -e "$FIXTURE/mktemp-fails" ]] && exit 1; exec /usr/bin/mktemp "$@"'
 fake codesign '[[ -e "$FIXTURE/codesign-slow" ]] && sleep 2; exit 0'
 fake stat "out=\"\$(/usr/bin/stat \"\$@\")\" || exit \$?; sed -e 's/^$user:$group:/root:wheel:/' -e 's/^$user:/root:/' <<< \"\$out\""
@@ -120,6 +121,19 @@ expect fail uninstall_mktemp_fails uninstall
 expect pass uninstall_mktemp_failure_releases_lock no_lock
 rm -f "$FIXTURE/mktemp-fails"
 expect pass install_after_mktemp_failure install
+
+reset
+mkdir "$FIXTURE/support/install.lock"
+inherited() { env holding_lock=1 lock_owner=1 "$@"; }
+expect fail install_with_inherited_owner inherited bash "$t/kit/install.sh" "$t/source/HyperNeoLockedUse.bundle"
+expect fail uninstall_with_inherited_owner inherited bash "$t/kit/uninstall.sh"
+expect pass inherited_owner_keeps_foreign_lock eval '[[ -d "$FIXTURE/support/install.lock" ]]'
+
+reset
+touch "$FIXTURE/rm-fails"
+install
+expect pass failing_cleanup_releases_lock no_lock
+rm -f "$FIXTURE/rm-fails"
 
 reset
 touch "$FIXTURE/rule-write-fails"
