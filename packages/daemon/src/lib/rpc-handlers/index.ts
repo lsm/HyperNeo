@@ -119,6 +119,7 @@ import {
 import type { ExternalEventExtensionContext } from '../external-events/types.ts';
 
 export interface RPCHandlerDependencies {
+  admitCodexWork?: <T>(send: () => Promise<T>) => Promise<T>;
   extensions: DaemonExtensions;
   watchSessionRepo?: (owner: string, repo: string) => Promise<string | null>;
   messageHub: MessageHub;

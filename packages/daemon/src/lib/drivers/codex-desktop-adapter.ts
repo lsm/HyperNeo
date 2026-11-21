@@ -126,6 +126,7 @@ export interface CodexSnapshot {
 const sendLog = new Logger('codex-send');
 
 export interface CodexDesktopAdapterDeps {
+  admitWork?: <T>(send: () => Promise<T>) => Promise<T>;
   prepareExecution?: WorkExecutionPreparer;
   statePath: string;
   readSnapshot?: (
@@ -1663,6 +1664,7 @@ const runCodexArchive = (superpipe({})('codex-archive-work') as PipelineAPI)
 
 export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAdapter {
   const compactions = new Map<string, Promise<Result<{ compacted: boolean }>>>();
+  const admit = deps.admitWork ?? (<T>(send: () => Promise<T>) => send());
   const deliver = async (
     ref: WorkRef,
     message: string,
@@ -1671,9 +1673,11 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
   ) => {
     await compactions.get(ref.id);
     const input = from === 'chat' ? message : `${message}\n${WORK_AGENT_INPUT}`;
-    return mode === 'steer'
-      ? runCodexSend(ref, input, deps, mode)
-      : runCodexQueue(ref, input, deps, mode);
+    return admit(() =>
+      mode === 'steer'
+        ? runCodexSend(ref, input, deps, mode)
+        : runCodexQueue(ref, input, deps, mode)
+    );
   };
   return {
     id: 'codex-desktop',
@@ -1710,7 +1714,7 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
       withCodexAppServer({ appServer: deps.bootstrapServer }, (server) =>
         selectCodexConfiguration({ model: request.model, effort: request.effort }, server)
       ),
-    start: (request) => runCodexStart(request, deps),
+    start: (request) => admit(() => runCodexStart(request, deps)),
     rename: (ref, title) => runCodexRename(ref, title, deps),
     send: (ref, message, context) => deliver(ref, message, context.from, 'auto'),
     steer: (ref, message, context) => deliver(ref, message, context.from, 'steer'),
@@ -1727,7 +1731,7 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
     compact: async (ref) => {
       if (compactions.has(ref.id))
         return reject('busy', 'Codex compaction is already in progress.');
-      const compaction = runCodexCompact(ref, deps);
+      const compaction = admit(() => runCodexCompact(ref, deps));
       compactions.set(ref.id, compaction);
       try {
         return await compaction;
