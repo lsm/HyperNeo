@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import type { Result, WorkDetail, WorkStarted } from '../../../packages/daemon/src/lib/drivers/types.ts';
 
 const [portText, runText, mode = 'all'] = process.argv.slice(2);
@@ -22,6 +23,7 @@ writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
 const fixture = fileURLToPath(new URL('../../../packages/daemon/tests/fixtures/copilot-sdk.ts', import.meta.url));
 const installFixture = (flag = '') => writeFileSync(join(run, 'bin/copilot'), `#!/usr/bin/env bun\nprocess.argv.push('--production-version', '--durable-inputs', ${JSON.stringify(flag)}); await import(${JSON.stringify(fixture)});\n`, { mode: 0o700 });
 installFixture('--idle-after-abort');
+process.env.COPILOT_CLI_PATH = join(run, 'bin/copilot');
 const observations: unknown[] = [];
 process.chdir(run);
 const config = getConfig({ port, host: '127.0.0.1', dbPath: ['relative', 'all'].includes(mode) ? 'data/daemon.db' : join(run, 'data/daemon.db') });
@@ -29,7 +31,7 @@ let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let ws: WebSocket | undefined;
 async function connect() {
   app = await createDaemonApp({ config, verbose: false });
-  ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+  ws = createLocalSocket(`ws://127.0.0.1:${port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('connection failed')); });
 }
 function rpc(name: string, input: unknown): Promise<unknown> {
@@ -226,7 +228,7 @@ try {
     assert.equal(orphan.ok, false); assert.equal(orphan.reason, 'unreachable');
   }
   const catalog = await rpc('work.adapters', {}) as { value: { id: string; capabilities: string[] }[] };
-  assert.deepEqual(catalog.value.find(adapter => adapter.id === 'copilot-cli')?.capabilities, ['find', 'start', 'rename', 'send', 'queue', 'withdraw', 'status', 'stop', 'archive']);
+  assert.deepEqual(catalog.value.find(adapter => adapter.id === 'copilot-cli')?.capabilities, ['find', 'start', 'rename', 'send', 'steer', 'queue', 'withdraw', 'status', 'turns', 'stop', 'archive']);
   ws!.close(); await app!.cleanup(); app = undefined;
   const traffic = calls();
   for (const pid of new Set<number>(traffic.map(call => call.pid))) assert.throws(() => process.kill(pid, 0));

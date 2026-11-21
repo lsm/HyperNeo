@@ -22,6 +22,7 @@ import type * as W from './types.ts';
 
 type Receipt = W.WorkStarted['receipt'];
 type Worker = Awaited<ReturnType<typeof openCopilotWorker>>;
+type InputMode = NonNullable<Parameters<Worker['submit']>[1]>;
 type Snapshot = Awaited<ReturnType<Worker['snapshot']>>;
 type Record = {
   work: W.WorkStarted;
@@ -303,7 +304,11 @@ export function createCopilotAdapter(
       return { reason: reject('busy', 'Copilot has 64 unsettled inputs.') };
     return { value: record };
   };
-  const deliver = async (record: Record, message: string): Promise<W.Result<W.WorkDelivery>> => {
+  const deliver = async (
+    record: Record,
+    message: string,
+    mode: InputMode
+  ): Promise<W.Result<W.WorkDelivery>> => {
     const id = record.work.ref.id;
     let owned = live.get(id);
     const resumed = !owned;
@@ -313,7 +318,7 @@ export function createCopilotAdapter(
       record.pendingSubmission = true;
       save(record);
       submitAttempted = true;
-      const receipt = await owned.submit(message);
+      const receipt = await owned.submit(message, mode);
       record.snapshot = await owned.snapshot();
       if (record.snapshot.status === 'unreachable') throw new Error('Copilot lost after input ACK');
       delete record.pendingSubmission;
@@ -327,7 +332,7 @@ export function createCopilotAdapter(
         value: {
           delivered: observed,
           receipt,
-          ...(!observed ? { queuedSubmissionId: receipt.inputId } : {}),
+          ...(!observed && mode === 'enqueue' ? { queuedSubmissionId: receipt.inputId } : {}),
         },
       };
     } catch (error) {
@@ -349,12 +354,16 @@ export function createCopilotAdapter(
     }
   };
   const send = (superpipe({})('copilot-send') as PipelineAPI)
-    .input(['ref', 'message'])
+    .input(['ref', 'message', 'mode'])
     .pipe(lookup, 'ref', 'result:delivery')
     .pipe(refresh, 'delivery', 'delivery')
     .pipe(admitSend, 'delivery', 'result:delivery')
-    .pipe(deliver, ['delivery', 'message'], 'delivery')
-    .endAsync('delivery') as (ref: W.WorkRef, message: string) => Promise<W.Result<W.WorkDelivery>>;
+    .pipe(deliver, ['delivery', 'message', 'mode'], 'delivery')
+    .endAsync('delivery') as (
+    ref: W.WorkRef,
+    message: string,
+    mode: InputMode
+  ) => Promise<W.Result<W.WorkDelivery>>;
   const admitRename = (record: Record, title: string): Gate<Record> => {
     if (record.archived) return { reason: reject('not_open', 'Copilot work is archived.', true) };
     if (title.length > 100)
@@ -646,6 +655,7 @@ export function createCopilotAdapter(
       'start',
       'rename',
       'send',
+      'steer',
       'queue',
       'withdraw',
       'status',
@@ -654,10 +664,7 @@ export function createCopilotAdapter(
       'compact',
       'archive',
     ] as const,
-    unsupportedCapabilities: {
-      steer:
-        'Copilot strict same-turn steering is unsupported: immediate input can fall back to a later turn; the pinned protocol has no expected-active-turn precondition. Use auto or queue for explicit enqueue delivery.',
-    },
+    steerBehavior: 'best_effort',
     start: (request, context) => {
       const pending = guard(() => startPreferred(request, context));
       starts.add(pending);
@@ -675,14 +682,21 @@ export function createCopilotAdapter(
       mutate(
         ref,
         'send',
-        () => send(ref, message),
+        () => send(ref, message, 'enqueue'),
         () => deps.desktop?.send?.(ref, message, context)
+      ),
+    steer: (ref, message, context) =>
+      mutate(
+        ref,
+        'steer',
+        () => send(ref, message, 'immediate'),
+        () => deps.desktop?.steer?.(ref, message, context)
       ),
     queue: (ref, message, context) =>
       mutate(
         ref,
         'queue',
-        () => send(ref, message),
+        () => send(ref, message, 'enqueue'),
         () => deps.desktop?.queue?.(ref, message, context)
       ),
     withdraw: (ref, inputId, context) =>

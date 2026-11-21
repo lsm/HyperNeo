@@ -179,6 +179,23 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
       const prompt = msg.params?.prompt;
       const id = prompt === 'hostile' ? '__proto__' : `input-${++input}`;
       if (process.argv.includes('--durable-inputs')) writeFileSync(fixtureState(), String(input));
+      if (prompt === 'steer-current') {
+        event('user.message', {
+          messageId: id,
+          interactionId: 'interaction-1',
+          content: prompt,
+          delivery: 'steering',
+        });
+        event('assistant.message', {
+          messageId: 'steered-reply',
+          interactionId: 'interaction-1',
+          content: 'ADJUSTED_REPLY',
+          phase: 'final_answer',
+        });
+        event('session.idle', {});
+        reply({ messageId: id });
+        break;
+      }
       if (String(prompt).startsWith('serial:')) {
         serial.push({ id, interaction: `interaction-${input}`, prompt: String(prompt) });
         if (serial.length === 1) {

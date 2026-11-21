@@ -24,7 +24,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
-import { createWorkVerbOperations, pickRoute } from '../../../../src/lib/drivers/work-operations';
+import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
 import { createCopilotAdapter } from '../../../../src/lib/drivers/copilot-adapter';
 import type { StartRequest, WorkCallContext } from '../../../../src/lib/drivers/types';
 import { neoAttentionNotes } from '../../helpers/neo-attention-notes';
@@ -543,14 +543,37 @@ describe('owned Copilot lifecycle', () => {
     });
   });
 
-  test('explains strict steering refusal without sending or starting a runtime', () => {
-    const { adapter, run } = setup();
-    expect(adapter.capabilities).not.toContain('steer');
-    const result = pickRoute('steer', { adapter: adapter.id }, [adapter]);
-    expect(result).toMatchObject({
-      reason: { ok: false, reason: 'unsupported', detail: expect.stringContaining('same-turn') },
+  test('steers with immediate delivery and returns the accepted input receipt', async () => {
+    const fixture = setup();
+    const work = await start(fixture, 'hold');
+    const result = await fixture.adapter.steer!(work.ref, 'queued', context);
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        delivered: false,
+        receipt: { executionId: work.ref.id, inputId: 'input-2' },
+      },
     });
-    expect(existsSync(join(run, 'calls.jsonl'))).toBe(false);
+    const sends = readFileSync(join(fixture.run, 'calls.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+      .filter((call) => call.method === 'session.send');
+    expect(sends.map((call) => call.params.mode)).toEqual(['enqueue', 'immediate']);
+  });
+  test('completes both receipts when steering shares the current interaction', async () => {
+    const fixture = setup();
+    const work = await start(fixture, 'hold');
+    const result = await fixture.adapter.steer!(work.ref, 'steer-current', context);
+    if (!result.ok) throw new Error(JSON.stringify(result));
+    expect(result.value.steeredIntoTurnId).toBeUndefined();
+    for (const receipt of [work.receipt, result.value.receipt]) {
+      expect(receipt).toBeDefined();
+      expect(await fixture.adapter.status!(work.ref, undefined, receipt)).toMatchObject({
+        ok: true,
+        value: { status: 'done', lastReply: 'ADJUSTED_REPLY' },
+      });
+    }
   });
   test.each(['settled', 'error', 'late-settled'])(
     'reaps %s runtime without a status or stop call',
@@ -775,6 +798,7 @@ describe('owned Copilot lifecycle', () => {
       'start',
       'rename',
       'send',
+      'steer',
       'queue',
       'withdraw',
       'status',

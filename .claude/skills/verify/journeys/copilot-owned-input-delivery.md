@@ -44,8 +44,8 @@ Observe these results:
   temporary path unwritable; restart cannot resume uncertain work. Accepted
   input intent is persisted before transport, and successful ACKs are persisted
   before returning. No automatic retries occur.
-- All fixture PIDs disappear on cleanup. Capabilities include send/queue and
-  exclude steer/withdraw. Explicit steer remains unsupported with no fallback.
+- All fixture PIDs disappear on cleanup. Capabilities include send, queue, steer, and withdraw. The Copilot steering
+  journey covers immediate delivery.
 
 Use the final argument `resume`, `queue`, `retention`, `unsafe` or `persist` to
 isolate a case; `receipt` checks unknown prototype-like IDs and model refusal

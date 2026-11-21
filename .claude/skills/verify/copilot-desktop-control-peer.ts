@@ -73,6 +73,12 @@ export async function startCopilotDesktopPeer(home: string, state: string, compa
         return reply('session_created', { workspace_id: workspace, model: message.model, reasoning_effort: 'high' });
       case 'send_message': {
         assert.equal(message.session_id, ref.id);
+        if (message.mode === 'immediate') {
+          messages.push('immediate');
+          const message_id = randomUUID();
+          observe(message.prompt, message_id);
+          return reply('session_message_sent', { message_id });
+        }
         assert.equal(message.mode, 'enqueue');
         if (kickoff) {
           kickoff = false;
@@ -164,6 +170,14 @@ export async function verifyCopilotDesktopControl(
   assert.equal(started.value.model, request.model);
   assert.equal(started.value.effort, request.effort);
   assert.equal(started.value.receipt?.inputId, 'kickoff');
+  const steered = await rpc<Result<WorkDelivery>>('work.send', { ref, message: 'Adjust focus', mode: 'steer' });
+  assert(steered.ok && steered.value.receipt && !steered.value.delivered, JSON.stringify(steered));
+  assert.equal(steered.value.unconfirmed, undefined, 'The App already acknowledged the input');
+  assert.equal(steered.value.steeredIntoTurnId, undefined);
+  assert.equal(steered.value.queuedSubmissionId, undefined);
+  assert.equal(peer.messages.filter(message => message === 'immediate').length, 1);
+  const observed = await rpc<Result<WorkDetail>>('work.status', { ref, receipt: steered.value.receipt });
+  assert(observed.ok && observed.value.inputEvidence?.state === 'observed', JSON.stringify(observed));
   const queued = await rpc<Result<WorkDelivery>>('work.queue', { ref, message: 'Withdraw this' });
   assert(queued.ok && queued.value.queuedSubmissionId && !queued.value.delivered, JSON.stringify(queued));
   const withdrawn = await rpc<Result<{ withdrawn: boolean }>>('work.withdraw', { ref, queuedSubmissionId: queued.value.queuedSubmissionId });

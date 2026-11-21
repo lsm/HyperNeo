@@ -229,7 +229,7 @@ describe('Copilot owned input delivery', () => {
         .filter((c) => c.method === 'session.send')
         .map((c) => c.params.mode)
     ).toEqual(['enqueue', 'enqueue', 'enqueue']);
-    expect(f.adapter.capabilities).not.toContain('steer');
+    expect(f.adapter.capabilities).toContain('steer');
   });
 
   test('streaming changes only the affected durable receipts', async () => {

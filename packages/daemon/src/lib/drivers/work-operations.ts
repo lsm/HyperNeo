@@ -325,6 +325,7 @@ export const WorkAdaptersResultSchema = workResultSchema(
     z.object({
       id: z.string(),
       capabilities: z.array(RoutedCapabilitySchema),
+      steerBehavior: z.literal('best_effort').optional(),
       health: WorkDriverHealthSchema.optional(),
       unsupportedCapabilities: z.partialRecord(RoutedCapabilitySchema, z.string()).optional(),
     })
@@ -1506,19 +1507,23 @@ async function listWorkAdapters(
     ok: true,
     value: [...ids].map((id) => {
       const adapter = adapters.find((entry) => entry.id === id);
+      const capabilities =
+        adapter?.capabilities.flatMap((capability) => {
+          const routed = RoutedCapabilitySchema.safeParse(capability);
+          return routed.success && (routed.data === 'find' || adapter[routed.data])
+            ? [routed.data]
+            : [];
+        }) ?? [];
       return {
         id,
+        capabilities,
+        ...(adapter?.steerBehavior && capabilities.includes('steer')
+          ? { steerBehavior: adapter.steerBehavior }
+          : {}),
         ...(health?.[id] ? { health: health[id] } : {}),
         ...(adapter?.unsupportedCapabilities
           ? { unsupportedCapabilities: adapter.unsupportedCapabilities }
           : {}),
-        capabilities:
-          adapter?.capabilities.flatMap((capability) => {
-            const routed = RoutedCapabilitySchema.safeParse(capability);
-            return routed.success && (routed.data === 'find' || adapter[routed.data])
-              ? [routed.data]
-              : [];
-          }) ?? [],
       };
     }),
   };

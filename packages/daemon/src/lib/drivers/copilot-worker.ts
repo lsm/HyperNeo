@@ -15,6 +15,7 @@ type InputState = {
   at?: number;
   text?: string;
   human?: boolean;
+  steering?: true;
   endedAt?: number;
   state: 'pending' | 'observed';
   interactionId?: string;
@@ -57,6 +58,7 @@ function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
           ...(input ?? { replyReport: '', replyAvailability: 'incomplete' }),
           state: 'observed',
           interactionId,
+          ...(event.data.delivery === 'steering' ? { steering: true } : {}),
           at,
           text: workInput(at, event.data.content)?.text ?? '',
           human: input?.human ?? true,
@@ -77,8 +79,11 @@ function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
       const matches = Object.values(next.inputs).filter(
         (input) => !input.outcome && input.interactionId === data.interactionId
       );
-      if (matches.length === 1 && typeof data.content === 'string')
-        matches[0].replyReport += data.content;
+      if (
+        typeof data.content === 'string' &&
+        matches.filter((input) => !input.steering).length <= 1
+      )
+        for (const input of matches) input.replyReport += data.content;
       break;
     }
     case 'session.idle':
@@ -307,7 +312,10 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
   };
   return {
     terminal: terminal.promise,
-    async submit(prompt: string): Promise<WorkInputReceipt> {
+    async submit(
+      prompt: string,
+      mode: 'enqueue' | 'immediate' = 'enqueue'
+    ): Promise<WorkInputReceipt> {
       requireOpen();
       if (state.status === 'needs_you') throw new Error('Copilot worker is awaiting permission');
       if (submitting + Object.values(state.inputs).filter((input) => !input.outcome).length >= 64)
@@ -315,7 +323,7 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
       if (['done', 'failed', 'stopped'].includes(state.status)) state.status = 'queued';
       submitting++;
       try {
-        const inputId = await bounded(session.send({ prompt, mode: 'enqueue' }), timeoutMs);
+        const inputId = await bounded(session.send({ prompt, mode }), timeoutMs);
         requireOpen();
         if (!inputId) throw new Error('Copilot did not return an input id');
         submitted.add(inputId);

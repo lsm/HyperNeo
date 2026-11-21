@@ -11,12 +11,12 @@ import type { CopilotDesktopSession } from './copilot-desktop-adapter.ts';
 import { selectLocalStartFolder, type StartFolderDeps } from './start-folder.ts';
 import { workStartConfiguration } from './start-configuration.ts';
 import { workStartPreparation } from './start-preparation.ts';
-import type { Result, WorkAdapter, WorkRef, WorkSummary } from './types.ts';
+import type { Result, WorkAdapter, WorkDelivery, WorkRef, WorkSummary } from './types.ts';
 import { reject } from './work-operations.ts';
 
 type Controls = Pick<
   WorkAdapter,
-  'start' | 'send' | 'stop' | 'compact' | 'queue' | 'withdraw' | 'rename' | 'archive'
+  'start' | 'send' | 'steer' | 'stop' | 'compact' | 'queue' | 'withdraw' | 'rename' | 'archive'
 >;
 const Id = z.string().regex(/^[\w-]{1,128}$/);
 const Queue = z.array(z.object({ id: Id, message_id: Id.optional() }));
@@ -66,7 +66,11 @@ export function createCopilotDesktopControl(
       return { reason: reject('not_open', 'Copilot Desktop session is archived.', true) };
     return { value: session };
   };
-  const submit: NonNullable<WorkAdapter['send']> = async (ref, message) => {
+  const submit = async (
+    ref: WorkRef,
+    message: string,
+    mode: 'enqueue' | 'immediate'
+  ): Promise<Result<WorkDelivery>> => {
     const found = await target(ref);
     if ('reason' in found) return found.reason!;
     const requestId = randomUUID();
@@ -76,7 +80,7 @@ export function createCopilotDesktopControl(
         type: 'send_message',
         session_id: ref.id,
         prompt: message,
-        mode: 'enqueue',
+        mode,
       },
       (frame) =>
         frame.type === 'session_message_sent' &&
@@ -90,13 +94,13 @@ export function createCopilotDesktopControl(
       ok: true,
       value: {
         delivered: false,
-        queuedSubmissionId: sent.value,
+        ...(mode === 'enqueue' ? { queuedSubmissionId: sent.value } : {}),
         receipt: { executionId: ref.id, inputId: sent.value },
       },
     };
   };
   return {
-    async start(request, context) {
+    async start(request) {
       const prep = workStartPreparation.admit(request.preparation, false);
       if ('reason' in prep) return prep.reason;
       const settings = { model: request.model, effort: request.effort };
@@ -168,7 +172,7 @@ export function createCopilotDesktopControl(
         session.folder !== canonical
       )
         return reject('unreachable', 'Copilot Desktop did not confirm the new session.');
-      const sent = await submit(deps.summarize(session).ref, request.message, context);
+      const sent = await submit(deps.summarize(session).ref, request.message, 'enqueue');
       if (!sent.ok) return { ...sent, notSent: undefined };
       const receipt = sent.value.receipt!;
       const deadline = Date.now() + 6000;
@@ -200,8 +204,9 @@ export function createCopilotDesktopControl(
         `Copilot Desktop session ${id} exists, but its settings or input are unconfirmed. Do not replay.`
       );
     },
-    send: submit,
-    queue: submit,
+    send: (ref, message) => submit(ref, message, 'enqueue'),
+    steer: (ref, message) => submit(ref, message, 'immediate'),
+    queue: (ref, message) => submit(ref, message, 'enqueue'),
     async stop(ref) {
       const found = await target(ref);
       if ('reason' in found) return found.reason!;
