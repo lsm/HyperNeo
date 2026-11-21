@@ -12,6 +12,48 @@ const imports = `
 const runner = `const run = superpipe({})('demo.read').input('input').endAsync('input');`;
 
 test.each([
+  [
+    'identifier argument',
+    'const make = () => ({ go: (input) => run(input) });',
+    'make().go(input)',
+    'named',
+  ],
+  [
+    'opaque argument',
+    'const make = () => ({ go: (input) => run(input) });',
+    'make().go(sideEffect())',
+    'unknown',
+  ],
+  [
+    'shadowed runner argument',
+    'const make = () => ({ go: (run) => run() });',
+    'make().go(input)',
+    'unknown',
+  ],
+  [
+    'default parameter',
+    'const make = () => ({ go: (input = sideEffect()) => run(input) });',
+    'make().go(input)',
+    'unknown',
+  ],
+  [
+    'destructured parameter',
+    'const make = () => ({ go: ({input}) => run(input) });',
+    'make().go(input)',
+    'unknown',
+  ],
+  [
+    'spread argument',
+    'const make = () => ({ go: (input) => run(input) });',
+    'make().go(...input)',
+    'unknown',
+  ],
+  [
+    'unbound global argument',
+    'const make = () => ({ go: (input) => run(input) });',
+    'make().go(globalInput)',
+    'unknown',
+  ],
   ['mutable factory', 'let make = () => ({ go: () => run() });', 'make().go()', 'unknown'],
   ['block body', 'const make = () => { return { go: () => run() }; };', 'make().go()', 'named'],
   ['async factory', 'const make = async () => ({ go: () => run() });', 'make().go()', 'unknown'],
@@ -69,7 +111,7 @@ test.each([
   ],
 ] as const)('strictly traces a %s', (_label, definition, execute, kind) => {
   const source = `${imports} ${runner} ${definition}
-    defineOperation({ name: 'demo.read', execute: () => ${execute} });`;
+    defineOperation({ name: 'demo.read', execute: (input) => ${execute} });`;
   expect(createLocalPipelineResolver(source, 'route.ts', true)('demo.read')).toEqual(
     kind === 'named' ? { kind, name: 'demo.read' } : { kind }
   );

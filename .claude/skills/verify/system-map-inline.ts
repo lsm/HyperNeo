@@ -12,6 +12,19 @@ const queue = `
 
 const cases = [
   [
+    '(input) => make().go(input)',
+    0,
+    `${queue}
+      const make = () => ({ go: (input) => serialize(() => run(input)) });`,
+  ],
+  [
+    '() => make().go(sideEffect())',
+    1,
+    `${queue}
+      const make = () => ({ go: (input) => serialize(() => run(input)) });`,
+  ],
+
+  [
     '() => make().go()',
     0,
     `const run = superpipe({})('demo.maybe').end();
