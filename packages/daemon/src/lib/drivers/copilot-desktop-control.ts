@@ -221,7 +221,7 @@ export function createCopilotDesktopControl(
       const requestId = randomUUID();
       let queued = false;
       let attemptId: string | undefined;
-      return run(
+      const result = await run(
         {
           type: 'execute_session_command',
           request_id: requestId,
@@ -233,7 +233,7 @@ export function createCopilotDesktopControl(
         (frame) => {
           if (frame.session_id !== ref.id) return;
           if (frame.type === 'session_command_complete' && frame.request_id === requestId) {
-            if (frame.outcome !== 'queued') return { compacted: false };
+            if (frame.outcome !== 'queued') return false;
             queued = true;
           }
           if (!queued || frame.type !== 'session_event') return;
@@ -245,10 +245,14 @@ export function createCopilotDesktopControl(
             event.type === 'session.compaction_complete' &&
             event.data.compactionAttemptId === attemptId
           )
-            return { compacted: event.data.success === true && event.data.outcome === 'applied' };
+            return event.data.success === true && event.data.outcome === 'applied';
         },
         60_000
       );
+      if (!result.ok) return result;
+      return result.value
+        ? { ok: true, value: { compacted: true } }
+        : reject('not_delivered', 'Copilot Desktop did not complete compaction.');
     },
     async rename(ref, title) {
       const found = await target(ref);

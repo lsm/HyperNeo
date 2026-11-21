@@ -51,6 +51,10 @@ to belong to the advertised PID before authenticating. The focused daemon
 tests cover stale advertisements, uncorrelated errors, uncertain sends and
 the pre-dispatch-only CLI fallback.
 
+Repeat with `compact-failure` and `compact-refused`. A failed completion or a
+refusal to queue must each record one failed attempt and a retry delay. The
+peer must receive one command and the prior reply must remain readable.
+
 The peer proves routing and receipt handling in an isolated daemon. With
 separate approval to use the signed-in macOS App's local connection credential
 for this run, verify the driver directly:
