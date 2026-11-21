@@ -11,8 +11,10 @@ env -i PATH="$PATH" HOME="$RUN/home" NODE_ENV=test \
 ```
 
 The helper owns an ephemeral non-8399 daemon and invokes the real
-`neo.project.forget` WebSocket RPC. Synthetic projects have separate coding
-repository watches; the forgotten project also owns a settled ask. A failing
+`neo.project.forget` WebSocket RPC. The WebSocket must authenticate using the
+isolated run's local credential after the test data-directory checks pass.
+Synthetic projects have separate coding repository watches; the forgotten
+project also owns a settled ask. A failing
 watch-update trigger must roll back the deletion, aliases and ask move. After
 removing that trigger, competing forget requests must admit exactly one winner,
 retain the unrelated watch, and move the settled ask to the root without changing
