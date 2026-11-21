@@ -33,7 +33,11 @@ import {
   createCopilotDesktopAdapter,
 } from '../../drivers/copilot-desktop-adapter.ts';
 import { copilotDesktopControlAvailable } from '../../drivers/copilot-desktop-channel.ts';
-import { codexWorkerHome, copilotWorkerDirectory } from '../../drivers/worker-directories.ts';
+import {
+  codexAppServerSocketPath,
+  codexWorkerHome,
+  copilotWorkerDirectory,
+} from '../../drivers/worker-directories.ts';
 import { ensureCodexDesktopProject } from '../../drivers/codex-desktop-project.ts';
 import { neoWorkerPermissionMode } from '@hyperneo/shared/types/settings';
 import { sleep } from '../../utils/sleep.ts';
@@ -512,8 +516,7 @@ function codexDesktopAdapters(
       machine: hostname(),
       now: Date.now,
       spawn: spawnProcess,
-      appServer: () =>
-        connectCodexAppServer(join(codexHome, 'app-server-control', 'app-server-control.sock')),
+      appServer: () => connectCodexAppServer(codexAppServerSocketPath(codexHome)),
       bootstrapServer: () => startCodexBootstrapServer(),
       prepareDesktopProject: (folder) => ensureCodexDesktopProject(folder, codexHome, spawnProcess),
       startDesktopTurn: (threadId, request) =>
