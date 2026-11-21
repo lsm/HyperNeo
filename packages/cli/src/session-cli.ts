@@ -63,6 +63,17 @@ export function planSessionCommand(
     return { value: { name: 'system.build', input: {} } };
   if (command === 'reserve-restart' && !target && !rest.length)
     return { value: { name: 'system.restart.reserve', input: {} } };
+  if (
+    command === 'codex-setup' &&
+    !rest.length &&
+    (!target || target === '--undo' || target === '--no-remote-control')
+  )
+    return {
+      value: {
+        name: 'system.codex.setup',
+        input: { undo: target === '--undo', noRemoteControl: target === '--no-remote-control' },
+      },
+    };
   if (command === 'pair') return planPairCommand(args.slice(1));
   if (command === 'devices' && !target) return { value: { name: 'device.list', input: {} } };
   if (command === 'devices' && target === 'reset-human' && !rest.length)
@@ -123,8 +134,13 @@ export async function runSessionCommand(args: string[], env: Env = process.env):
     return 0;
   }
   if (args[0] === 'read') return readCard(args.slice(1), env.HYPERNEO_DATA_DIR);
+  if (args[0] === 'codex-setup' && process.platform !== 'darwin') {
+    console.error('Codex setup requires macOS.');
+    return 1;
+  }
   const sender =
-    resolveSender(env) ?? (['pair', 'devices', 'reserve-restart'].includes(args[0]) ? 'cli' : null);
+    resolveSender(env) ??
+    (['pair', 'devices', 'reserve-restart', 'codex-setup'].includes(args[0]) ? 'cli' : null);
   if (!sender) {
     console.error(
       'hyperneo send: no sender. Run it inside a HyperNeo, Codex or Claude Code session (HYPERNEO_SESSION_ID, CODEX_THREAD_ID or CLAUDE_CODE_SESSION_ID).'

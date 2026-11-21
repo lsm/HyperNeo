@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { spawnProcess, type SpawnFn } from '../runtime-spawn/index.ts';
-import { startCodexAppServerBridge } from './codex-app-server-bridge.ts';
+import { loadCodexBridgeToken, startCodexAppServerBridge } from './codex-app-server-bridge.ts';
 import { codexCommand, connectCodexAppServer, type CodexAppServer } from './codex-app-server.ts';
 import { createCodexCutover } from './codex-cutover.ts';
 import { codexAppServerSocketPath } from './worker-directories.ts';
@@ -73,10 +73,12 @@ export function createCodexSetupHost(spawn: SpawnFn = spawnProcess, home = homed
   };
   const gate = createCodexCutover(async () => (await managed(managedIdle)) ?? true);
   let close: (() => Promise<void>) | undefined;
+  let token: Buffer;
   return {
     ...gate,
-    async startBridge(port?: number) {
-      close ??= await startCodexAppServerBridge(port);
+    async startBridge(port?: number, nextToken?: Buffer) {
+      token = nextToken ?? (await loadCodexBridgeToken());
+      close ??= await startCodexAppServerBridge(port, () => token);
     },
     async close() {
       await close?.();

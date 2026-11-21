@@ -1,15 +1,16 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { constants } from 'node:fs';
-import { link, mkdir, open, rm } from 'node:fs/promises';
+import { link, mkdir, open, rename, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { connect, type Socket } from 'node:net';
 import { join } from 'node:path';
 import { getDataDir } from '../data-dir.ts';
 import { codexAppServerSocketPath } from './worker-directories.ts';
 
-async function bridgeToken() {
-  const directory = join(getDataDir(), 'codex-app-server-bridge');
-  await mkdir(directory, { recursive: true, mode: 0o700 });
+export const CODEX_BRIDGE_PORT = 47912;
+const tokenDirectory = () => join(getDataDir(), 'codex-app-server-bridge');
+
+async function checkTokenDirectory(directory: string) {
   const parent = await open(
     directory,
     constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW
@@ -21,11 +22,26 @@ async function bridgeToken() {
   } finally {
     await parent.close();
   }
+}
+
+export async function removeCodexBridgeToken() {
+  const directory = tokenDirectory();
+  try {
+    await checkTokenDirectory(directory);
+    await rm(join(directory, 'token'), { force: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+}
+
+async function bridgeToken(rotate: boolean): Promise<Buffer> {
+  const directory = tokenDirectory();
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await checkTokenDirectory(directory);
 
   const path = join(directory, 'token');
   const read = () => open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  const file = await read().catch(async (error: NodeJS.ErrnoException) => {
-    if (error.code !== 'ENOENT') throw error;
+  const generate = async (replace: boolean) => {
     const temporary = join(directory, randomBytes(16).toString('hex'));
     const generated = await open(temporary, 'wx', 0o600);
     try {
@@ -34,37 +50,53 @@ async function bridgeToken() {
       } finally {
         await generated.close();
       }
-      await link(temporary, path).catch((error: NodeJS.ErrnoException) => {
-        if (error.code !== 'EEXIST') throw error;
-      });
+      if (replace) await rename(temporary, path);
+      else
+        await link(temporary, path).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== 'EEXIST') throw error;
+        });
     } finally {
-      await rm(temporary);
+      await rm(temporary, { force: true });
     }
+  };
+  const file = await read().catch(async (error: NodeJS.ErrnoException) => {
+    if (error.code !== 'ENOENT') throw error;
+    await generate(false);
     return read();
   });
+  let token: string;
   try {
     const stat = await file.stat();
     if (!stat.isFile() || stat.uid !== process.getuid?.() || stat.size !== 43) {
       throw new Error('Invalid bridge token file.');
     }
     if ((stat.mode & 0o777) !== 0o600) await file.chmod(0o600);
-    const token = await file.readFile('utf8');
+    token = await file.readFile('utf8');
     if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new Error('Invalid bridge token.');
-    return Buffer.from(token);
   } finally {
     await file.close();
   }
+  if (!rotate) return Buffer.from(token);
+  await generate(true);
+  return bridgeToken(false);
 }
 
-export async function startCodexAppServerBridge(port = 47912): Promise<() => Promise<void>> {
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error('Set a valid Codex bridge port before restarting HyperNeo.');
-  }
-  const token = await bridgeToken().catch(() => {
+export function loadCodexBridgeToken(rotate = false) {
+  return bridgeToken(rotate).catch(() => {
     throw new Error(
       'Check ownership and permissions of the Codex bridge token directory and file.'
     );
   });
+}
+
+export async function startCodexAppServerBridge(
+  port = CODEX_BRIDGE_PORT,
+  currentToken?: () => Buffer
+): Promise<() => Promise<void>> {
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error('Set a valid Codex bridge port before restarting HyperNeo.');
+  }
+  const stored = currentToken ? undefined : await loadCodexBridgeToken();
   const upstreamPath = codexAppServerSocketPath();
   const clients = new Set<Socket>();
   const server = createServer((_request, response) => response.writeHead(404).end());
@@ -74,7 +106,7 @@ export async function startCodexAppServerBridge(port = 47912): Promise<() => Pro
   });
   server.on('upgrade', (request, socket, head) => {
     const match = /^\/rpc\?token=([A-Za-z0-9_-]{43})$/.exec(request.url ?? '');
-    if (!match || !timingSafeEqual(Buffer.from(match[1]), token)) {
+    if (!match || !timingSafeEqual(Buffer.from(match[1]), currentToken?.() ?? stored!)) {
       socket.destroy();
       return;
     }
