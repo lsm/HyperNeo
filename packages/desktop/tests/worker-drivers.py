@@ -47,6 +47,11 @@ with channel.makefile('rwb') as stream:
             result = {'content': [{'type': 'text', 'text': 'every window'}], 'structuredContent': {'windows': [
                 {'pid': pid, 'app_name': 'App', 'title': f'Secret {pid}', 'window_id': pid}
                 for pid in request['arguments']['fixture_windows']]}}
+        if name is not None and request.get('arguments', {}).get('fixture_locked'):
+            if name == 'get_window_state':
+                result = {'structuredContent': {'degraded_reason': 'screen_locked: window is hidden'}}
+            else:
+                result = {'isError': True, 'structuredContent': {'code': 'screen_locked', 'effect': 'refused'}}
         if name is not None and request.get('arguments', {}).get('fixture_large'):
             result = {'content': [{'type': 'image', 'data': 'A' * (3 << 20), 'mimeType': 'image/png'}]}
         if name is not None and request.get('arguments', {}).get('fixture_delay'):
@@ -1149,6 +1154,25 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertEqual(reply['structuredContent'], {'code': 'no_screenshot'})
         self.assertEqual(self.call('status')['result']['state'], 'running')
         print('driver_error=reported body=returned driver_kept=1')
+
+    def test_screen_lock_reaches_the_caller_for_observation_and_input(self):
+        locked = self.dispatch('list_windows', {'fixture_screen_locked': True}, workDir=str(self.work))['result']
+        self.assertEqual((locked['decision'], locked['reason'], locked['dispatched']), ('refused', 'screen_locked', False))
+        self.assertEqual(self.call('status')['result']['state'], 'stopped')
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        for tool, expected in (
+            ('get_window_state', {'degraded_reason': 'screen_locked: window is hidden'}),
+            ('click', {'code': 'screen_locked', 'effect': 'refused'}),
+        ):
+            with self.subTest(tool=tool):
+                reply = self.dispatch(tool, {'pid': pid, 'fixture_locked': True}, workDir=str(self.work))['result']
+                self.assertEqual(reply['reason'], 'screen_locked')
+                self.assertTrue(reply['dispatched'])
+                self.assertEqual(reply['structuredContent'], expected)
+        reply = self.dispatch('get_window_state', {'pid': pid}, workDir=str(self.work))['result']
+        self.assertIsNone(reply['reason'])
+        print('screen_locked=3 resumed=1')
 
     def test_a_full_window_screenshot_reaches_the_caller(self):
         pid = finder()

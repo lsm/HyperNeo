@@ -30,10 +30,9 @@ try {
   new SettingsRepository(db).updateGlobalSettings({ language });
   const store = new NeoAskTodoRepository(db);
   const now = Date.now();
-  const open = (id: string, title: string, request: string) =>
-    store.openAsk({ id, title, topic: '其他', sessionId: root, projectId: null, originMessageId: null, request, createdAt: now });
-  open('proposal', 'Synthetic invoice lookup', 'Synthetic: find the March invoice in the browser?');
-  store.addAskDesktopApps('proposal', [chrome], now);
+  const open = (id: string, title: string, request: string, desktopApps?: (typeof chrome)[]) =>
+    store.openAsk({ id, title, topic: '其他', sessionId: root, projectId: null, originMessageId: null, request, createdAt: now, ...(desktopApps ? { desktopApps } : {}) });
+  open('proposal', 'Synthetic invoice lookup', 'Synthetic: find the March invoice in the browser?', [chrome]);
   store.askQuestion(proposalQuestionId('proposal'), 'proposal', { text: `Synthetic: find the March invoice in the browser?\n\n${desktopAppsLine([chrome])}`, kind: 'yesno', options: null, multiple: false, yesLabel: null, noLabel: null }, now);
   for (const [ask, title, apps] of [
     ['with-apps', 'Synthetic: use Chrome to check the order', [chrome]],

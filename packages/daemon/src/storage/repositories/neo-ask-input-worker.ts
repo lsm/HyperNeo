@@ -4,6 +4,17 @@ import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { getNeoPackPreference } from '../../lib/neo/preferences.ts';
 import { SESSION_REUSE_VALUES } from '../../lib/neo/session-reuse.ts';
+import type { NeoDesktopApp } from '@hyperneo/shared/types/neo-ask';
+
+export function mergeAskDesktopApps(
+  held: readonly NeoDesktopApp[],
+  apps: readonly NeoDesktopApp[]
+): NeoDesktopApp[] {
+  const scope = [...held];
+  for (const app of apps)
+    if (!scope.some(({ bundleId }) => bundleId === app.bundleId)) scope.push(app);
+  return scope;
+}
 
 export type NeoAskInputClaim = {
   sessionId: string;
@@ -126,6 +137,18 @@ class NeoAskInputs {
       .run(input.sessionId, input.messageId, askId, now);
     return askId;
   }
+
+  addAskDesktopApps(id: string, apps: readonly NeoDesktopApp[], now: number): boolean {
+    const ask = new NeoAskTodoRepository(this.db).getAsk(id);
+    if (!ask || ask.status !== 'open') return false;
+    const scope = mergeAskDesktopApps(ask.desktopApps ?? [], apps);
+    this.db
+      .prepare(
+        "UPDATE neo_asks SET desktop_apps = ?, updated_at = ? WHERE id = ? AND status = 'open'"
+      )
+      .run(JSON.stringify(scope), now, id);
+    return true;
+  }
 }
 
 export const neoAskInputReads = defineRepositoryOp('neo.askInputs.read', 'read', NeoAskInputs, [
@@ -136,4 +159,5 @@ export const neoAskInputReads = defineRepositoryOp('neo.askInputs.read', 'read',
 ]);
 export const neoAskInputWrites = defineRepositoryOp('neo.askInputs.write', 'write', NeoAskInputs, [
   'claimNeoInputAsk',
+  'addAskDesktopApps',
 ]);

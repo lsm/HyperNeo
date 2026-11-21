@@ -508,6 +508,24 @@ impl Drivers {
         {
             return Err("Desktop worker is stopped".into());
         }
+        #[cfg(not(test))]
+        let screen_locked = target::screen_locked;
+        #[cfg(test)]
+        let screen_locked = || {
+            request
+                .arguments
+                .as_ref()
+                .is_some_and(|args| args["fixture_screen_locked"] == true)
+        };
+        if request.action == "dispatch" && screen_locked() {
+            return Ok(finish(
+                bundle,
+                class,
+                "refused",
+                json!("screen_locked"),
+                false,
+            ));
+        }
         if request.action == "dispatch" && !(self.desktop_ready)() {
             return Ok(finish(
                 Value::Null,
@@ -635,6 +653,15 @@ impl Drivers {
                         self.start_driver(&directory, &mut worker, request.work_dir.as_deref())
                             .await?;
                     }
+                    if screen_locked() {
+                        return Ok(Some(finish(
+                            bundle,
+                            class,
+                            "refused",
+                            json!("screen_locked"),
+                            false,
+                        )));
+                    }
                     let current = target::resolve(
                         request.tool.as_deref().unwrap_or_default(),
                         request.arguments.as_ref().unwrap_or(&Value::Null),
@@ -687,7 +714,15 @@ impl Drivers {
                         }
                     }
                     // The driver reports tool failures in its result, not on the channel.
-                    if body["isError"] == true {
+                    let structured = &body["structuredContent"];
+                    if (body["isError"] == true && structured["code"] == "screen_locked")
+                        || (request.tool.as_deref() == Some("get_window_state")
+                            && structured["degraded_reason"]
+                                .as_str()
+                                .is_some_and(|reason| reason.starts_with("screen_locked:")))
+                    {
+                        reason = json!("screen_locked");
+                    } else if body["isError"] == true {
                         reason = json!("driver_error");
                     }
                     if unscoped_windows {

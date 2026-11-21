@@ -61,12 +61,13 @@ function setup(timeoutMs?: number) {
       await adapter.close();
       adapter = createCopilotAdapter(discovery, deps);
     },
-    async start(message: string) {
+    async start(message: string, effort?: 'high') {
       const result = await adapter.start!(
         {
           place: { machine: 'test', folder: run, name: 'fixture' },
           title: 'Inputs',
-          model: 'synthetic-model',
+          model: effort ? 'synthetic-effort-model' : 'synthetic-model',
+          effort,
           message,
         },
         context
@@ -104,6 +105,20 @@ async function settled(f: ReturnType<typeof setup>, work: WorkStarted, receipt =
 }
 
 describe('Copilot owned input delivery', () => {
+  test('keeps confirmed reasoning effort on a resumed session', async () => {
+    const f = fixture();
+    const work = await f.start('settled', 'high');
+    await settled(f, work);
+    await f.restart();
+    const result = await f.send(work, 'settled');
+    expect(result).toMatchObject({ ok: true, value: { delivered: true } });
+    if (!result.ok) throw new Error(JSON.stringify(result));
+    expect(await settled(f, work, result.value.receipt)).toMatchObject({
+      ok: true,
+      value: { model: 'synthetic-effort-model', effort: 'high', lastReply: 'REPLY_2' },
+    });
+  });
+
   test('resumes a reaped session for new input, preserving earlier receipt evidence across restart', async () => {
     const f = fixture();
     const work = await f.start('settled');

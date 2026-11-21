@@ -156,7 +156,7 @@ describe('neo ask binding from human input', () => {
         ok: false,
         reason: expect.stringContaining('desktop_app_not_approved'),
       });
-      f.store.addAskDesktopApps(askId, [chrome], 2);
+      await f.store.addAskDesktopApps(askId, [chrome], 2);
       const pooled = await f.add({
         askId,
         title: 'Pooled step',

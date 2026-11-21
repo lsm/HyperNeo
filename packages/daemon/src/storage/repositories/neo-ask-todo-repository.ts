@@ -37,6 +37,7 @@ import { neoInputText, type NeoUnansweredInput } from '../../lib/neo/plan-contex
 import type { Database } from '../sqlite-compat.ts';
 import { JobQueueRepository } from './job-queue-repository.ts';
 import {
+  mergeAskDesktopApps,
   type NeoAskInputClaim,
   neoAskInputReads,
   neoAskInputWrites,
@@ -533,8 +534,8 @@ export class NeoAskTodoRepository {
   ): NeoAsk {
     this.db
       .prepare(
-        `INSERT INTO neo_asks (id, goal_id, project_id, parent_id, session_id, origin_message_id, title, topic, request, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO neo_asks (id, goal_id, project_id, parent_id, session_id, origin_message_id, title, topic, request, created_at, updated_at, desktop_apps)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         ask.id,
@@ -547,7 +548,8 @@ export class NeoAskTodoRepository {
         ask.topic ?? null,
         ask.request,
         ask.createdAt,
-        ask.createdAt
+        ask.createdAt,
+        ask.desktopApps ? JSON.stringify(mergeAskDesktopApps([], ask.desktopApps)) : null
       );
     this.changed();
     return this.getAsk(ask.id)!;
@@ -611,15 +613,19 @@ export class NeoAskTodoRepository {
     ).map(toAsk);
   }
 
-  addAskDesktopApps(id: string, apps: readonly NeoDesktopApp[], now: number): NeoAsk | null {
-    const ask = this.getAsk(id);
-    if (!ask || ask.status !== 'open') return null;
-    const scope = [...(ask.desktopApps ?? [])];
-    for (const app of apps)
-      if (!scope.some((held) => held.bundleId === app.bundleId)) scope.push(app);
-    this.db
-      .prepare('UPDATE neo_asks SET desktop_apps = ?, updated_at = ? WHERE id = ?')
-      .run(JSON.stringify(scope), now, id);
+  async addAskDesktopApps(
+    id: string,
+    apps: readonly NeoDesktopApp[],
+    now: number
+  ): Promise<NeoAsk | null> {
+    const saved = await gatewayFor(this.db).call(
+      neoAskInputWrites,
+      'addAskDesktopApps',
+      id,
+      apps,
+      now
+    );
+    if (!saved) return null;
     this.changed();
     return this.getAsk(id);
   }
