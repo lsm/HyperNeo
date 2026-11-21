@@ -694,6 +694,10 @@ impl Drivers {
                     _ => Err("Unknown Desktop control action".into()),
                 };
             }
+            // Checked under the slot map lock, which shutdown's hold sweep also takes.
+            if self.closing.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err("Desktop host is shutting down".into());
+            }
             slots.entry(worker_id.clone()).or_default().clone()
         };
         let mut worker = if request.action == "dispatch" {
@@ -844,6 +848,18 @@ impl Drivers {
                     } else {
                         Duration::from_millis(100)
                     };
+                    // Lease and lock waits can end after shutdown began: check right before input.
+                    if self.closing.load(std::sync::atomic::Ordering::SeqCst)
+                        || self.unconfirmed.lock().unwrap().contains(&worker_id)
+                    {
+                        return Ok(Some(finish(
+                            bundle,
+                            class,
+                            "refused",
+                            json!("desktop_shutting_down"),
+                            false,
+                        )));
+                    }
                     let active = worker.as_mut().unwrap();
                     let call = timeout_at(
                         deadline.min(Instant::now() + limit),
