@@ -37,6 +37,7 @@ beforeEach(() => {
     title: 'Errands',
     request: '',
     createdAt: 1,
+    desktopApps: [{ bundleId: 'com.google.Chrome', name: 'Chrome' }],
   });
   for (const [index, [todo, worker, named]] of (
     [
@@ -50,7 +51,9 @@ beforeEach(() => {
       { title: todo, doneWhen: 'Observed', check: null, instruction: null, named },
       index
     );
-    db.prepare("UPDATE neo_todos SET state = 'doing', approved_at = 1 WHERE id = ?").run(todo);
+    db.prepare(
+      "UPDATE neo_todos SET state = 'doing', approved_at = 1, desktop_apps = ? WHERE id = ?"
+    ).run(JSON.stringify([{ bundleId: 'com.google.Chrome', name: 'Chrome' }]), todo);
     db.prepare('INSERT INTO neo_todo_sessions(todo_id, target, ref) VALUES(?, ?, ?)').run(
       todo,
       '{}',
@@ -69,8 +72,34 @@ function set(input: { todoId: string; on: boolean }, caller = human) {
   );
 }
 
-test('desktop control is on for every todo until the human turns it off', () => {
+test('desktop control is on for a todo with its own approved app', () => {
   expect([optedIn('worker-a'), optedIn('worker-b')]).toEqual(['dentist', 'taxes']);
+});
+
+test('an app approved for one todo does not reach its sibling', () => {
+  db.prepare("UPDATE neo_todos SET desktop_apps = NULL WHERE id = 'taxes'").run();
+  expect([optedIn('worker-a'), optedIn('worker-b')]).toEqual(['dentist', null]);
+});
+
+test('approved apps merge by bundle id and only on an open ask', async () => {
+  const todos = new NeoAskTodoRepository(db);
+  await todos.addAskDesktopApps('ask', [{ bundleId: 'com.google.Chrome', name: 'Chrome' }], 1);
+  const ask = await todos.addAskDesktopApps(
+    'ask',
+    [
+      { bundleId: 'com.google.Chrome', name: 'Google Chrome' },
+      { bundleId: 'com.apple.mail', name: 'Mail' },
+    ],
+    2
+  );
+  expect(ask?.desktopApps).toEqual([
+    { bundleId: 'com.google.Chrome', name: 'Chrome' },
+    { bundleId: 'com.apple.mail', name: 'Mail' },
+  ]);
+  db.prepare("UPDATE neo_asks SET status = 'done'").run();
+  expect(
+    await todos.addAskDesktopApps('ask', [{ bundleId: 'com.apple.Notes', name: 'Notes' }], 3)
+  ).toBeNull();
 });
 
 test('turning desktop control off is per todo, and it turns back on', async () => {

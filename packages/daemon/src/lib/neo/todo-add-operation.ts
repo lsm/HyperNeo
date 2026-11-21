@@ -1,12 +1,17 @@
 import { proposalQuestionId, requireAcceptedAsk } from './proposal.ts';
-import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAsk, NeoDesktopApp, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import {
+  type DesktopAppName,
+  resolveDesktopApps,
+  unnamedDesktopApp,
+} from '../desktop/app-scope.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { z } from 'zod';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import type { OperationCaller, OperationDefinition } from '../operations/registry.ts';
 import { neoUserFolder } from './folder.ts';
-import { type NeoInputReads, resolveNeoInputAsk } from './input-ask.ts';
+import { type NeoInputReads, neoInputWords, resolveNeoInputAsk } from './input-ask.ts';
 import type { NeoPack } from './pack-contract.ts';
 import type {
   NeoTodoControls,
@@ -18,14 +23,35 @@ type AddInput = z.infer<typeof NeoTodoDraftSchema> & {
   askId?: string;
   input?: string;
   topic?: string;
+  desktopApps?: string[];
 };
 type Result = { ok: false; reason: string } | { ok: true; todo?: NeoTodo; records?: string[] };
 
 export const DESKTOP_CONTROL_REFUSAL = {
   ok: false as const,
   reason:
-    'desktop_control_requires_permission: Leave desktopControl out. Workers may use this Mac by default; call desktop.access.request {app} first so the Mac asks the human for that app.',
+    'desktop_control_requires_permission: Leave desktopControl out. A todo uses only the apps in its own desktopApps; call desktop.access.request {app} first so the Mac asks the human for that app.',
 };
+
+export async function neoTodoDesktopScope(
+  bundleIds: readonly string[],
+  ask: NeoAsk,
+  message: string | null,
+  name?: DesktopAppName
+): Promise<{ value: NeoDesktopApp[] } | { reason: string }> {
+  const resolved = await resolveDesktopApps(bundleIds, name);
+  if ('missing' in resolved)
+    return {
+      reason: `app_not_found: no installed app has bundle id ${resolved.missing}. Use the bundleId desktop.access.request returned.`,
+    };
+  const approved = new Set(ask.desktopApps?.map((app) => app.bundleId));
+  const unapproved = resolved.value.filter((app) => !approved.has(app.bundleId));
+  const unnamed = message === null ? unapproved[0] : unnamedDesktopApp(message, unapproved);
+  if (!unnamed) return { value: resolved.value };
+  return {
+    reason: `desktop_app_not_approved: ${unnamed.name} is not on this ask's approved card, and the human message in input does not name it. Propose a new ask with desktopApps so the card asks.`,
+  };
+}
 
 export async function recordNeoTodoAdmission(
   store: NeoAskTodoRepository,
@@ -146,6 +172,28 @@ export function wireNeoTodoAdd(
           ? { reason: DESKTOP_CONTROL_REFUSAL }
           : { value: draft },
       'outcome',
+      'result:outcome'
+    )
+    .pipe(
+      async (
+        draft: ResolvedNeoTodoDraft,
+        ask: NeoAsk,
+        input: AddInput,
+        caller: OperationCaller
+      ) => {
+        if (!input.desktopApps) return { value: draft };
+        const human = input.input ? inputs.input(caller, input.input) : null;
+        const scope = await neoTodoDesktopScope(
+          input.desktopApps,
+          ask,
+          human ? neoInputWords(human.content) : null,
+          controls.desktopAppName
+        );
+        return 'reason' in scope
+          ? { reason: { ok: false as const, reason: scope.reason } }
+          : { value: { ...draft, desktopScope: scope.value } };
+      },
+      ['outcome', 'ask', 'input', 'caller'],
       'result:outcome'
     )
     .pipe(

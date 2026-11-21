@@ -10,6 +10,7 @@ import { DesktopDispatchReply, dispatchDesktopCall } from './host-dispatch.ts';
 import {
   desktopAllowed,
   desktopAllowedRow,
+  desktopApps,
   readDesktopTodos,
   type DesktopTodoRow,
 } from './opt-in.ts';
@@ -35,7 +36,7 @@ const Refusal = z.object({
 const refuse = (reason: string) => ({
   reason: { ok: false, decision: 'refused', reason, dispatched: false },
 });
-type Binding = { todo: string; worker: string; workDir: string };
+type Binding = { todo: string; worker: string; workDir: string; apps: string[] };
 type Facts = {
   todo: DesktopTodoRow | null;
   worker: string;
@@ -48,7 +49,14 @@ export function decideDesktopCall(facts: Facts) {
   if (!facts.todo && facts.ambiguous) return refuse('todo_ambiguous');
   if (!facts.todo && facts.finished) return refuse('todo_not_active');
   if (!facts.todo || !facts.workDir) return refuse('desktop_not_enabled');
-  return { value: { todo: facts.todo.id, worker: facts.worker, workDir: facts.workDir } };
+  return {
+    value: {
+      todo: facts.todo.id,
+      worker: facts.worker,
+      workDir: facts.workDir,
+      apps: desktopApps(facts.todo),
+    },
+  };
 }
 
 export function createDesktopCallOperation(
@@ -97,6 +105,7 @@ export function createDesktopCallOperation(
         dispatchDesktopCall(options.dataDir ?? getDataDir(), {
           worker: binding.worker,
           workDir: binding.workDir,
+          apps: binding.apps,
           tool: input.tool,
           arguments: input.args,
           callId: randomUUID(),
@@ -136,7 +145,7 @@ export function createDesktopCallOperation(
   return defineOperation({
     name: 'desktop.call',
     description:
-      'Run an allowed desktop action for this in-process session’s approved, opted-in todo. Only a worker session can call it; Neo gets desktop_worker_only and has no switch to turn it on.',
+      'Run a desktop action for this in-process session’s approved todo, on an app the human approved for its ask. Only a worker session can call it; Neo gets desktop_worker_only and has no switch to turn it on.',
     inputSchema: Input,
     resultSchema: z.union([DesktopDispatchReply.extend({ ok: z.boolean() }), Refusal]),
     policy: { safetyClass: 'mutate' },

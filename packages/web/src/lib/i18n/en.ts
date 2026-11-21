@@ -174,7 +174,7 @@ export const en = {
   'todo.desktopControl': 'Let the agent use this computer',
   'todo.desktopOn': 'Let it use this computer',
   'todo.desktopOff': 'Stop letting it use this computer',
-  'todo.desktopOnTitle': 'Using this computer. Click to stop.',
+  'todo.desktopOnTitle': 'Can use {apps} on this computer. Click to stop.',
   'todo.desktopOffConfirmTitle': 'Stop letting it use this computer?',
   'todo.desktopOffConfirmBody': '"{title}" will no longer be able to use this computer.',
   'todo.desktopOffConfirm': 'Stop allowing',

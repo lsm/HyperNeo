@@ -23,10 +23,10 @@ beforeEach(async () => {
   vi.stubEnv('HYPERNEO_DATA_DIR', root);
   vi.stubEnv('DB_PATH', join(root, 'daemon.db'));
   db = new Database(join(root, 'daemon.db'));
-  db.exec(`CREATE TABLE neo_asks(id TEXT, status TEXT);
-    CREATE TABLE neo_todos(id TEXT, ask_id TEXT, title TEXT, state TEXT, approved_at INTEGER, named TEXT);
+  db.exec(`CREATE TABLE neo_asks(id TEXT, status TEXT, desktop_apps TEXT);
+    CREATE TABLE neo_todos(id TEXT, ask_id TEXT, title TEXT, state TEXT, approved_at INTEGER, named TEXT, desktop_apps TEXT DEFAULT '[{"bundleId":"org.example.app","name":"app"}]');
     CREATE TABLE neo_todo_sessions(todo_id TEXT, ref TEXT);
-    INSERT INTO neo_asks VALUES('ask', 'open');`);
+    INSERT INTO neo_asks VALUES('ask', 'open', '[{"bundleId":"org.example.app","name":"app"}]');`);
   db.prepare('INSERT INTO neo_todos (id, ask_id, state, approved_at, named) VALUES(?,?,?,?,?)').run(
     'todo',
     'ask',

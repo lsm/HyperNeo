@@ -5,8 +5,14 @@ export type NeoAskStatus = 'open' | 'done' | 'dropped';
 
 export const NEO_OTHER_TOPIC = '其他';
 
+export interface NeoDesktopApp {
+  bundleId: string;
+  name: string;
+}
+
 export interface NeoAsk {
   focusedSession?: NeoQuestionSource;
+  desktopApps?: NeoDesktopApp[];
   id: string;
   goalId?: string | null;
   projectId: string | null;
@@ -46,6 +52,7 @@ export type NeoTodoBlocker =
 
 export interface NeoTodo extends ArtifactProjection {
   worker?: WorkerIdentity | null;
+  desktopApps?: NeoDesktopApp[];
   id: string;
   askId: string;
   position: number;

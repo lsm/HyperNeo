@@ -43,6 +43,10 @@ with channel.makefile('rwb') as stream:
         if name is not None and request.get('arguments', {}).get('fixture_error'):
             result = {'isError': True, 'content': [{'type': 'text', 'text': 'Call get_window_state first'}],
                       'structuredContent': {'code': 'no_screenshot'}}
+        if name == 'list_windows' and request.get('arguments', {}).get('fixture_windows'):
+            result = {'content': [{'type': 'text', 'text': 'every window'}], 'structuredContent': {'windows': [
+                {'pid': pid, 'app_name': 'App', 'title': f'Secret {pid}', 'window_id': pid}
+                for pid in request['arguments']['fixture_windows']]}}
         if name is not None and request.get('arguments', {}).get('fixture_locked'):
             if name == 'get_window_state':
                 result = {'structuredContent': {'degraded_reason': 'screen_locked: window is hidden'}}
@@ -926,8 +930,30 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertFalse(self.call('start', '../escape', workDir=str(self.work))['ok'])
 
     def dispatch(self, tool, arguments, worker='worker-a', **params):
+        params.setdefault('apps', ['com.apple.finder', 'com.apple.dock'])
         return self.call('dispatch', worker, tool=tool, arguments=arguments,
                          callId='call-' + tool, **params)
+
+    def test_unfiltered_window_listing_keeps_only_approved_apps(self):
+        dock = int(subprocess.check_output(['/usr/bin/pgrep', '-x', 'Dock']).split()[0])
+        pid = finder()
+        reply = self.dispatch('list_windows', {'fixture_windows': [pid, dock]}, workDir=str(self.work),
+                              apps=['com.apple.finder'])['result']
+        self.assertTrue(reply['dispatched'], reply)
+        self.assertEqual([w['pid'] for w in reply['structuredContent']['windows']], [pid])
+        self.assertNotIn(f'Secret {dock}', json.dumps(reply['content']))
+        print('window_listing=scoped other_titles=hidden')
+
+    def test_dispatch_refuses_an_app_outside_the_todo_scope(self):
+        pid = finder()
+        before = self.dialogs('mock-allow')
+        reply = self.dispatch('click', {'pid': pid}, workDir=str(self.work),
+                              apps=['com.apple.dock'])['result']
+        self.assertEqual((reply['decision'], reply['reason'], reply['bundle_id'], reply['dispatched']),
+                         ('refused', 'app_not_in_todo_scope', 'com.apple.finder', False))
+        self.assertEqual(self.dialogs(), before)
+        self.assertFalse(list(self.work.glob('d-*')))
+        print('todo_scope=refused no_dialog=1 no_driver=1')
 
     def test_permissions_are_requested_only_on_desktop_call(self):
         missing = self.root / 'permissions-missing'

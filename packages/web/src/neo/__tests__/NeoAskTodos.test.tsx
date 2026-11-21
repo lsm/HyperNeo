@@ -20,6 +20,7 @@ afterEach(() => {
 
 const todo = (id: string, patch: Partial<NeoTodoEntry> = {}): NeoTodoEntry => ({
   id,
+  desktopApps: [{ bundleId: 'com.google.Chrome', name: 'Chrome' }],
   askId: 'ask',
   position: 0,
   priority: 'normal',
@@ -717,6 +718,19 @@ describe('NeoAskTodos', () => {
       ),
     });
 
+  it('shows no computer switch on a todo without its own approved apps', () => {
+    locale.value = 'en';
+    const app = render(
+      <NeoAskTodos
+        entry={entry({ todos: [todo('b', { state: 'doing', desktopApps: undefined })] })}
+        onAnswer={vi.fn()}
+        onDesktopControl={vi.fn()}
+      />
+    );
+    expect(app.container.querySelector('[data-todo-desktop]')).toBeNull();
+    expect(app.queryByRole('button', { name: 'Step actions: Todo b' })).toBeNull();
+  });
+
   it('lights the computer unless the human turned it off and switches it from the menu', () => {
     locale.value = 'en';
     const onDesktopControl = vi.fn();
@@ -747,6 +761,7 @@ describe('NeoAskTodos', () => {
     expect(
       lit.map((icon) => icon.closest('[data-ask-todo]')?.getAttribute('data-ask-todo'))
     ).toEqual(['b']);
+    expect(lit[0].getAttribute('title')).toBe('Can use Chrome on this computer. Click to stop.');
     expect(app.queryByRole('checkbox')).toBeNull();
     fireEvent.click(lit[0]);
     expect(onDesktopControl).not.toHaveBeenCalled();

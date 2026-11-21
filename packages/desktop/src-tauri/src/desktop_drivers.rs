@@ -52,6 +52,43 @@ pub(crate) fn inject_accept_failure() {
 }
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+// An unfiltered listing names every app's windows; keep only the todo's approved apps.
+fn scoped_windows(mut body: Value, apps: &[String]) -> Value {
+    let mut owners = BTreeMap::new();
+    let mut allowed = |pid: i64| {
+        *owners.entry(pid).or_insert_with(|| {
+            target::resolve("list_windows", &json!({ "pid": pid }), None)["value"]["bundle_id"]
+                .as_str()
+                .is_some_and(|bundle| apps.iter().any(|app| app == bundle))
+        })
+    };
+    let windows: Vec<Value> = body["structuredContent"]["windows"]
+        .as_array()
+        .map(|all| {
+            all.iter()
+                .filter(|window| window["pid"].as_i64().is_some_and(&mut allowed))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    let text = windows
+        .iter()
+        .map(|window| {
+            format!(
+                "- {} (pid {}) \"{}\" [window_id: {}]",
+                window["app_name"].as_str().unwrap_or_default(),
+                window["pid"],
+                window["title"].as_str().unwrap_or_default(),
+                window["window_id"]
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    body["structuredContent"] = json!({ "windows": windows });
+    body["content"] = json!([{ "type": "text", "text": text }]);
+    body
+}
 struct Worker {
     channel: channel::Channel,
     _directory: TempDir,
@@ -75,6 +112,8 @@ struct Request {
     arguments: Option<Value>,
     instance: Option<Value>,
     call_id: Option<String>,
+    /// Bundle ids the daemon's human approved for this worker's todo. A dispatch may act only on these.
+    apps: Option<Vec<String>>,
 }
 pub(crate) struct Control {
     drivers: Arc<Drivers>,
@@ -503,10 +542,18 @@ impl Drivers {
             observed = resolved["value"].clone();
             bundle = observed["bundle_id"].clone();
             class = resolved["value"]["class"].clone();
+            let in_scope = bundle.as_str().is_some_and(|id| {
+                request
+                    .apps
+                    .as_ref()
+                    .is_some_and(|apps| apps.iter().any(|app| app == id))
+            });
             let reason = if let Some(reason) = resolved["reason"].as_str() {
                 json!(reason)
             } else if bundle == "io.hyperneo.app" {
                 json!("app_not_grantable")
+            } else if !in_scope {
+                json!("app_not_in_todo_scope")
             } else {
                 let requirement = resolved["value"]["requirement"]
                     .as_str()
@@ -677,6 +724,9 @@ impl Drivers {
                         reason = json!("screen_locked");
                     } else if body["isError"] == true {
                         reason = json!("driver_error");
+                    }
+                    if unscoped_windows {
+                        body = scoped_windows(body, request.apps.as_deref().unwrap_or_default());
                     }
                     let mut reply = finish(bundle, class, "allowed", reason, sent);
                     log::info!(

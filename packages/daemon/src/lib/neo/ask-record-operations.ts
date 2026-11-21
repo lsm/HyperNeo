@@ -24,6 +24,7 @@ import {
   requireNeoOpenAsk,
 } from './todo-operations.ts';
 import { DESKTOP_CONTROL_REFUSAL, recordNeoTodoAdmission } from './todo-add-operation.ts';
+import { DesktopAppsSchema, desktopAppsLine, resolveDesktopApps } from '../desktop/app-scope.ts';
 import type { NeoPack, NeoTodoPolicyScope } from './pack-contract.ts';
 import { neoTodoRepository } from './pack-contract.ts';
 import { neoTodoFollowUpRefusal } from './todo-follow-up.ts';
@@ -54,6 +55,9 @@ const Open = z.object({
   projectId: Text.nullable().optional(),
   goalId: Text.nullable().optional(),
   todos: z.array(NeoTodoDraftSchema).max(20).default([]),
+  desktopApps: DesktopAppsSchema.optional().describe(
+    'Bundle ids of the apps on this Mac the work will drive. The card lists their names; after yes, each todo you add may claim some of them in its own desktopApps.'
+  ),
 });
 
 const Outcome = z.object({ askId: Text, outcome: Text.max(4000) });
@@ -350,11 +354,25 @@ export function createNeoAskRecordOperations(
               policies
             );
         if (taken) return { ok: false, reason: taken };
+        if (current && input.desktopApps)
+          return {
+            ok: false,
+            reason:
+              'desktop_apps_need_new_card: this ask already has its card. Propose a new ask that lists the app.',
+          };
+        const desktop = input.desktopApps
+          ? await resolveDesktopApps(input.desktopApps, controls.desktopAppName)
+          : null;
+        if (desktop && 'missing' in desktop)
+          return {
+            ok: false,
+            reason: `app_not_found: no installed app has bundle id ${desktop.missing}. Use the bundleId desktop.access.request returned.`,
+          };
+        const cardText = desktop
+          ? `${input.request}\n\n${desktopAppsLine(desktop.value)}`
+          : input.request;
         if (!current) {
-          const card = requireHumanCard(
-            { text: input.request, kind: 'yesno' },
-            settlement.language?.()
-          );
+          const card = requireHumanCard({ text: cardText, kind: 'yesno' }, settlement.language?.());
           if ('reason' in card) return card.reason;
         }
         const ask =
@@ -371,13 +389,14 @@ export function createNeoAskRecordOperations(
               topic: input.topic ?? null,
               request: input.request,
               createdAt: now,
+              ...(desktop ? { desktopApps: desktop.value } : {}),
             });
             openHumanCard(
               store,
               proposalQuestionId(opened.id),
               opened.id,
               {
-                text: input.request,
+                text: cardText,
                 kind: 'yesno',
                 options: null,
                 multiple: false,

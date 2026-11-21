@@ -35,7 +35,11 @@ const question = (id: string, askId: string, patch: Partial<NeoQuestionEntry> = 
   }) as NeoQuestionEntry;
 
 const entry = (id: string, title: string, questions: NeoQuestionEntry[] = []) =>
-  ({ ask: { id, title, updatedAt: 1 }, todos: [], questions }) as unknown as NeoAskEntry;
+  ({
+    ask: { id, title, updatedAt: 1 },
+    todos: [],
+    questions,
+  }) as unknown as NeoAskEntry;
 
 const entries = [
   entry('trip', 'Plan the trip', [question('q1', 'trip'), question('q2', 'trip')]),

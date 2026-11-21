@@ -14,15 +14,17 @@ env -i HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test PATH="$PATH"
   bun .claude/skills/verify/desktop-call.ts "$RUN"
 ```
 
-Pass prints `desktop.call journey PASS host_requests=9 host_busy=1 host_timeout=1 host_locked=1 resumed=1 initial_audit_rows=2
-blocked_allowed=1 pending_allowed=1 current_preferred=1 ambiguous_refused=1 blocked_with_queued_refused=1 finished_refused=1 driver_error_body=1 refused_paths=5 described_tools=12`: operations.describe lists every catalog tool.
-The saturated host and expired request reach the worker as `desktop_busy` and
-`desktop_timeout` without input. A locked host returns `screen_locked` without input, audits the reason, and accepts a fresh call after the lock clears.
+Pass prints `desktop.call journey PASS host_requests=11 no_scope_refused=1 sibling_isolated=1 sibling_own_scope=1 host_busy=1 host_timeout=1 host_locked=1 resumed=1 initial_audit_rows=2
+blocked_allowed=1 pending_allowed=1 current_preferred=1 ambiguous_refused=1 blocked_with_queued_allowed=1 finished_refused=1 driver_error_body=1 refused_paths=5 described_tools=12`: operations.describe lists every catalog tool.
+The saturated host, expired request and locked screen reach the worker as
+`desktop_busy`, `desktop_timeout` and `screen_locked` without input; the next call after
+unlock dispatches.
 Approved unfinished todos remain enabled after a worker blocks or returns to todo;
 finished todos return `todo_not_active` without dispatching.
 An active doing todo takes precedence over a blocked todo, and multiple opted-in
 unfinished todos with none doing return `todo_ambiguous` without dispatching.
-A blocked todo and a queued todo with desktop control off are refused without dispatch when neither is doing.
+A queued todo without approved apps does not prevent dispatch for a blocked approved todo.
+A todo without approved apps is refused before dispatch. Each dispatch carries only its own todo's approved bundle ids. A sibling todo on the same ask without its own apps gets `desktop_not_enabled`; once it has its own app, its dispatch carries only that app.
 The press_key description gives shifted-symbol guidance and names driver_error for unknown keys.
 A driver result with isError must come back as an MCP tool error (`isError: true`)
 with `ok: false, reason: driver_error`

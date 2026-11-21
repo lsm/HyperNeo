@@ -265,10 +265,14 @@ function TodoRow({
   const desktopEditable =
     number === undefined &&
     !!onDesktopControl &&
+    !!todo.desktopApps?.length &&
     !todo.worker?.daemon &&
     ['todo', 'doing', 'blocked'].includes(todo.state);
   const desktopOn = desktopEditable && todo.named?.desktopControl !== false;
   const setDesktop = (on: boolean) => onDesktopControl?.(todo.id, on);
+  const desktopTitle = t('todo.desktopOnTitle', {
+    apps: (todo.desktopApps ?? []).map((app) => app.name).join(', '),
+  });
   const menu = [
     ...(desktopEditable
       ? [
@@ -444,8 +448,8 @@ function TodoRow({
             <button
               type="button"
               data-todo-desktop
-              title={t('todo.desktopOnTitle')}
-              aria-label={t('todo.desktopOnTitle')}
+              title={desktopTitle}
+              aria-label={desktopTitle}
               disabled={disabled}
               onClick={() => setConfirmDesktopOff(true)}
               class="inline-flex shrink-0 items-center rounded-lg border border-transparent px-1.5 py-1 text-[var(--neo-desktop-control)] hover:border-line focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"

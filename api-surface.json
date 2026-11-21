@@ -6911,7 +6911,7 @@
               },
               "tool": {
                 "const": "list_windows",
-                "description": "List one app's windows by its pid. With no pid, list windows across apps, including their titles and pids, without an app grant.",
+                "description": "List one app's windows by its pid. With no pid, list the windows of every app this todo may use, with titles and pids, without an app grant.",
                 "type": "string"
               }
             },
@@ -21939,6 +21939,25 @@
                         }
                       ]
                     },
+                    "desktopApps": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "bundleId": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "bundleId",
+                          "name"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
                     "doneWhen": {
                       "type": "string"
                     },
@@ -22225,6 +22244,25 @@
                       "properties": {
                         "createdAt": {
                           "type": "number"
+                        },
+                        "desktopApps": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "bundleId": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "bundleId",
+                              "name"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
                         },
                         "focusedSession": {
                           "additionalProperties": false,
@@ -23023,6 +23061,25 @@
                               }
                             ]
                           },
+                          "desktopApps": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "bundleId": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "bundleId",
+                                "name"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          },
                           "doneWhen": {
                             "type": "string"
                           },
@@ -23336,6 +23393,25 @@
                   "createdAt": {
                     "type": "number"
                   },
+                  "desktopApps": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "bundleId": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "bundleId",
+                        "name"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
                   "focusedSession": {
                     "additionalProperties": false,
                     "properties": {
@@ -23619,6 +23695,25 @@
                         }
                       ]
                     },
+                    "desktopApps": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "bundleId": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "bundleId",
+                          "name"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
                     "doneWhen": {
                       "type": "string"
                     },
@@ -23861,6 +23956,16 @@
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
+          "desktopApps": {
+            "description": "Bundle ids of the apps on this Mac the work will drive. The card lists their names; after yes, each todo you add may claim some of them in its own desktopApps.",
+            "items": {
+              "pattern": "^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$",
+              "type": "string"
+            },
+            "maxItems": 5,
+            "minItems": 1,
+            "type": "array"
+          },
           "goalId": {
             "anyOf": [
               {
@@ -24228,6 +24333,25 @@
                   "createdAt": {
                     "type": "number"
                   },
+                  "desktopApps": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "bundleId": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "bundleId",
+                        "name"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
                   "focusedSession": {
                     "additionalProperties": false,
                     "properties": {
@@ -24511,6 +24635,25 @@
                         }
                       ]
                     },
+                    "desktopApps": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "bundleId": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "bundleId",
+                          "name"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
                     "doneWhen": {
                       "type": "string"
                     },
@@ -24767,6 +24910,25 @@
                     "properties": {
                       "createdAt": {
                         "type": "number"
+                      },
+                      "desktopApps": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "bundleId": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "bundleId",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       },
                       "focusedSession": {
                         "additionalProperties": false,
@@ -25567,6 +25729,25 @@
                                 }
                               ]
                             },
+                            "desktopApps": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "bundleId": {
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "bundleId",
+                                  "name"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
                             "doneWhen": {
                               "type": "string"
                             },
@@ -26006,6 +26187,25 @@
                   "createdAt": {
                     "type": "number"
                   },
+                  "desktopApps": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "bundleId": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "bundleId",
+                        "name"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
                   "focusedSession": {
                     "additionalProperties": false,
                     "properties": {
@@ -26288,6 +26488,25 @@
                           "type": "null"
                         }
                       ]
+                    },
+                    "desktopApps": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "bundleId": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "bundleId",
+                          "name"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
                     },
                     "doneWhen": {
                       "type": "string"
@@ -26544,6 +26763,25 @@
                   "createdAt": {
                     "type": "number"
                   },
+                  "desktopApps": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "bundleId": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "bundleId",
+                        "name"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
                   "focusedSession": {
                     "additionalProperties": false,
                     "properties": {
@@ -26826,6 +27064,25 @@
                           "type": "null"
                         }
                       ]
+                    },
+                    "desktopApps": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "bundleId": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "bundleId",
+                          "name"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
                     },
                     "doneWhen": {
                       "type": "string"
@@ -31833,6 +32090,25 @@
                         "createdAt": {
                           "type": "number"
                         },
+                        "desktopApps": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "bundleId": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "bundleId",
+                              "name"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
                         "focusedSession": {
                           "additionalProperties": false,
                           "properties": {
@@ -32629,6 +32905,25 @@
                                 "type": "null"
                               }
                             ]
+                          },
+                          "desktopApps": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "bundleId": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "bundleId",
+                                "name"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
                           },
                           "doneWhen": {
                             "type": "string"
@@ -40080,6 +40375,25 @@
                         "createdAt": {
                           "type": "number"
                         },
+                        "desktopApps": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "bundleId": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "bundleId",
+                              "name"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
                         "focusedSession": {
                           "additionalProperties": false,
                           "properties": {
@@ -40877,6 +41191,25 @@
                               }
                             ]
                           },
+                          "desktopApps": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "bundleId": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "bundleId",
+                                "name"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          },
                           "doneWhen": {
                             "type": "string"
                           },
@@ -41650,6 +41983,16 @@
             ],
             "type": "object"
           },
+          "desktopApps": {
+            "description": "Bundle ids of the apps on this Mac this todo drives. Each must be on its ask’s approved proposal card, or named by the human message in input. Only this todo gets them. For any other app, propose a new ask with desktopApps.",
+            "items": {
+              "pattern": "^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$",
+              "type": "string"
+            },
+            "maxItems": 5,
+            "minItems": 1,
+            "type": "array"
+          },
           "input": {
             "description": "The id on the `<human-message>` tag of the human message this todo serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else its recorded follow-up binding, else a new one.",
             "minLength": 1,
@@ -42073,6 +42416,25 @@
                       }
                     ]
                   },
+                  "desktopApps": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "bundleId": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "bundleId",
+                        "name"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
                   "doneWhen": {
                     "type": "string"
                   },
@@ -42446,6 +42808,25 @@
                       }
                     ]
                   },
+                  "desktopApps": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "bundleId": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "bundleId",
+                        "name"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
                   "doneWhen": {
                     "type": "string"
                   },
@@ -42818,6 +43199,25 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "desktopApps": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "bundleId": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "bundleId",
+                        "name"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
                   },
                   "doneWhen": {
                     "type": "string"
@@ -43493,6 +43893,25 @@
                       }
                     ]
                   },
+                  "desktopApps": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "bundleId": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "bundleId",
+                        "name"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
                   "doneWhen": {
                     "type": "string"
                   },
@@ -43878,6 +44297,25 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "desktopApps": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "bundleId": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "bundleId",
+                        "name"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
                   },
                   "doneWhen": {
                     "type": "string"
@@ -44285,6 +44723,25 @@
                       }
                     ]
                   },
+                  "desktopApps": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "bundleId": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "bundleId",
+                        "name"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
                   "doneWhen": {
                     "type": "string"
                   },
@@ -44672,6 +45129,25 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "desktopApps": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "bundleId": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "bundleId",
+                        "name"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
                   },
                   "doneWhen": {
                     "type": "string"
@@ -45063,6 +45539,25 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "desktopApps": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "bundleId": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "bundleId",
+                        "name"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
                   },
                   "doneWhen": {
                     "type": "string"

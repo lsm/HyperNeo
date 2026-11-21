@@ -50,6 +50,7 @@ import { runMigration485 } from './m485-pair-requested-name.ts';
 import { runMigration484 } from './m484-todo-approval-question.ts';
 import { runMigration482 } from './m482-todo-bound-at.ts';
 import { runMigration531 } from './m531-todo-roles.ts';
+import { runMigration535 } from './m535-neo-ask-desktop-apps.ts';
 import { runMigration483 } from './m483-neo-session-seen-question.ts';
 import { runMigration481 } from './m481-agent-devices.ts';
 import { runMigration476 } from './m476-neo-todo-approved-at.ts';
@@ -1103,6 +1104,7 @@ export function runMigrations(
   run(migrationMarkerKey(532), () => runMigration532(db));
   run(migrationMarkerKey(533), () => runMigration533(db));
   run(migrationMarkerKey(534), () => runMigration534(db));
+  run(migrationMarkerKey(535), () => runMigration535(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

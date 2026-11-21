@@ -45,12 +45,12 @@ beforeEach(async () => {
   body = {};
   await mkdir(join(root, 'desktop'));
   db = new Database(':memory:');
-  db.exec(`CREATE TABLE neo_asks(id TEXT, status TEXT);
-    CREATE TABLE neo_todos(id TEXT, ask_id TEXT, title TEXT, state TEXT, approved_at INTEGER, named TEXT);
+  db.exec(`CREATE TABLE neo_asks(id TEXT, status TEXT, desktop_apps TEXT);
+    CREATE TABLE neo_todos(id TEXT, ask_id TEXT, title TEXT, state TEXT, approved_at INTEGER, named TEXT, desktop_apps TEXT DEFAULT '[{"bundleId":"org.example.app","name":"app"}]');
     CREATE TABLE neo_todo_sessions(todo_id TEXT, ref TEXT);
     CREATE TABLE mcp_audit_log(id TEXT, timestamp INTEGER, agent_name TEXT, session_id TEXT, tool_name TEXT, params_summary TEXT, space_id TEXT, task_id TEXT, workflow_run_id TEXT);
-    INSERT INTO neo_asks VALUES('ask','open');
-    INSERT INTO neo_todos VALUES('todo','ask','Synthetic action','doing',1,'{"desktopControl":true}');
+    INSERT INTO neo_asks VALUES('ask','open','[{"bundleId":"org.example.app","name":"app"}]');
+    INSERT INTO neo_todos(id, ask_id, title, state, approved_at, named) VALUES('todo','ask','Synthetic action','doing',1,'{"desktopControl":true}');
     INSERT INTO neo_todo_sessions VALUES('todo','{"adapter":"hyperneo","id":"worker-a"}');`);
   requests = [];
   reason = null;
@@ -260,7 +260,9 @@ test.each([
   `UPDATE neo_todos SET named='{"desktopControl":false}'`,
   'UPDATE neo_todos SET approved_at=NULL',
   "UPDATE neo_asks SET status='closed'",
-  `INSERT INTO neo_todos VALUES('second','ask','Other','doing',1,'{"desktopControl":true}'); INSERT INTO neo_todo_sessions VALUES('second','{"adapter":"hyperneo","id":"worker-a"}')`,
+  'UPDATE neo_todos SET desktop_apps=NULL',
+  "UPDATE neo_todos SET desktop_apps='[]'",
+  `INSERT INTO neo_todos(id, ask_id, title, state, approved_at, named) VALUES('second','ask','Other','doing',1,'{"desktopControl":true}'); INSERT INTO neo_todo_sessions VALUES('second','{"adapter":"hyperneo","id":"worker-a"}')`,
   `UPDATE neo_todo_sessions SET ref='{"adapter":"hyperneo","id":"worker-a","daemon":"remote"}'`,
 ])('refuses an uncovered or ambiguous binding before any host request', async (sql) => {
   db.exec(sql);
@@ -271,10 +273,10 @@ test.each([
   expect(requests).toHaveLength(0);
 });
 
-test('dispatches for a todo that never mentions desktop control', async () => {
+test('dispatches only the apps approved for the todo', async () => {
   db.exec("UPDATE neo_todos SET named='{}'");
   expect(await call()).toMatchObject({ kind: 'completed', value: { dispatched: true } });
-  expect(requests).toHaveLength(1);
+  expect(requests).toEqual([expect.objectContaining({ apps: ['org.example.app'] })]);
 });
 
 test.each(['todo', 'blocked'])('dispatches for an approved opted-in %s todo', async (state) => {
@@ -344,10 +346,11 @@ test('host refusal and a sent driver error each produce one truthful audit row',
 });
 
 test('the pure decision refuses a missing binding or workspace', () => {
-  const todo = { id: 'todo', worker: 'worker-a', title: 'Synthetic', named: '{}', active: 1 };
+  const apps = '[{"bundleId":"org.example.app","name":"app"}]';
+  const todo = { id: 'todo', worker: 'worker-a', title: 'Synthetic', named: '{}', apps, active: 1 };
   const facts = { todo, worker: 'worker-a', workDir: root };
   expect(decideDesktopCall(facts)).toEqual({
-    value: { todo: 'todo', worker: 'worker-a', workDir: root },
+    value: { todo: 'todo', worker: 'worker-a', workDir: root, apps: ['org.example.app'] },
   });
   expect(decideDesktopCall({ ...facts, todo: null })).toHaveProperty(
     'reason.reason',

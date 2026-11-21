@@ -3,6 +3,7 @@ import { queueNeoRequestReply, queueNeoRequestSettledReply } from '../../lib/neo
 import type {
   NeoAnswerProvenance,
   NeoAsk,
+  NeoDesktopApp,
   NeoQuestion,
   NeoQuestionAnswer,
   NeoTodo,
@@ -36,6 +37,7 @@ import { neoInputText, type NeoUnansweredInput } from '../../lib/neo/plan-contex
 import type { Database } from '../sqlite-compat.ts';
 import { JobQueueRepository } from './job-queue-repository.ts';
 import {
+  mergeAskDesktopApps,
   type NeoAskInputClaim,
   neoAskInputReads,
   neoAskInputWrites,
@@ -51,6 +53,7 @@ import { applyPackPreferenceAnswer } from './pack-preference-answer.ts';
 export type NeoTodoDraft = Pick<NeoTodo, 'title' | 'doneWhen' | 'check' | 'instruction' | 'named'> &
   Partial<Pick<NeoTodo, 'priority' | 'dependsOn' | 'approvedAt'>> & {
     producesFollowUp?: boolean;
+    desktopScope?: NeoDesktopApp[];
   };
 
 export type NeoTodoInsert = (
@@ -123,16 +126,20 @@ const TODO_COLUMNS: Record<keyof NeoTodoPatch, string> = {
 
 const ASK_SELECT = `SELECT id, goal_id AS goalId, project_id AS projectId, parent_id AS parentId, session_id AS sessionId,
   origin_message_id AS originMessageId, title, topic, request, status, outcome, focused_session_json AS focusedSessionJson,
-  created_at AS createdAt, updated_at AS updatedAt, settled_at AS settledAt FROM neo_asks`;
+  desktop_apps AS desktopAppsJson, created_at AS createdAt, updated_at AS updatedAt, settled_at AS settledAt FROM neo_asks`;
 
 const ASK_ATTENTION = `(status = 'open'
   OR EXISTS (SELECT 1 FROM neo_todos t WHERE t.ask_id = neo_asks.id
     AND t.state NOT IN ('done', 'removed'))
   OR EXISTS (SELECT 1 FROM neo_questions q WHERE q.ask_id = neo_asks.id AND q.state = 'open'))`;
 
-type AskRow = Omit<NeoAsk, 'focusedSession'> & { focusedSessionJson: string | null };
-const toAsk = ({ focusedSessionJson, ...row }: AskRow): NeoAsk => ({
+type AskRow = Omit<NeoAsk, 'focusedSession' | 'desktopApps'> & {
+  focusedSessionJson: string | null;
+  desktopAppsJson: string | null;
+};
+const toAsk = ({ focusedSessionJson, desktopAppsJson, ...row }: AskRow): NeoAsk => ({
   ...row,
+  ...(desktopAppsJson ? { desktopApps: JSON.parse(desktopAppsJson) as NeoDesktopApp[] } : {}),
   ...(focusedSessionJson
     ? { focusedSession: JSON.parse(focusedSessionJson) as NeoAsk['focusedSession'] }
     : {}),
@@ -145,7 +152,7 @@ const TODO_SELECT = `SELECT id, ask_id AS askId, position, title, done_when AS d
   added_after_start AS addedAfterStart, report, evidence, artifacts_json AS artifactsJson, priority, depends_on AS dependsOnJson, created_at AS createdAt,
   updated_at AS updatedAt, started_at AS startedAt, finished_at AS finishedAt,
   approved_at AS approvedAt, approval_question_id AS approvalQuestionId,
-  produces_follow_up AS producesFollowUp FROM neo_todos`;
+  produces_follow_up AS producesFollowUp, desktop_apps AS desktopAppsJson FROM neo_todos`;
 
 export type NeoQuestionDraft = Pick<
   NeoQuestion,
@@ -253,8 +260,15 @@ const toQuestion = ({
 
 type TodoRow = Omit<
   NeoTodo,
-  'check' | 'named' | 'addedAfterStart' | 'artifacts' | 'dependsOn' | 'producesFollowUp'
+  | 'check'
+  | 'named'
+  | 'addedAfterStart'
+  | 'artifacts'
+  | 'dependsOn'
+  | 'producesFollowUp'
+  | 'desktopApps'
 > & {
+  desktopAppsJson: string | null;
   checkJson: string | null;
   producesFollowUp: number;
   dependsOnJson: string | null;
@@ -270,9 +284,11 @@ const toTodo = ({
   named,
   addedAfterStart,
   producesFollowUp,
+  desktopAppsJson,
   ...row
 }: TodoRow): NeoTodo => ({
   ...row,
+  ...(desktopAppsJson ? { desktopApps: JSON.parse(desktopAppsJson) as NeoDesktopApp[] } : {}),
   ...(producesFollowUp === 1 ? { producesFollowUp: true as const } : {}),
   dependsOn: parsed<string[]>(dependsOnJson),
   ...(artifactsJson ? { artifacts: JSON.parse(artifactsJson) as NeoTodo['artifacts'] } : {}),
@@ -518,8 +534,8 @@ export class NeoAskTodoRepository {
   ): NeoAsk {
     this.db
       .prepare(
-        `INSERT INTO neo_asks (id, goal_id, project_id, parent_id, session_id, origin_message_id, title, topic, request, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO neo_asks (id, goal_id, project_id, parent_id, session_id, origin_message_id, title, topic, request, created_at, updated_at, desktop_apps)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         ask.id,
@@ -532,7 +548,8 @@ export class NeoAskTodoRepository {
         ask.topic ?? null,
         ask.request,
         ask.createdAt,
-        ask.createdAt
+        ask.createdAt,
+        ask.desktopApps ? JSON.stringify(mergeAskDesktopApps([], ask.desktopApps)) : null
       );
     this.changed();
     return this.getAsk(ask.id)!;
@@ -594,6 +611,23 @@ export class NeoAskTodoRepository {
         .prepare(`${ASK_SELECT} WHERE goal_id = ? ORDER BY created_at, id`)
         .all(goalId) as AskRow[]
     ).map(toAsk);
+  }
+
+  async addAskDesktopApps(
+    id: string,
+    apps: readonly NeoDesktopApp[],
+    now: number
+  ): Promise<NeoAsk | null> {
+    const saved = await gatewayFor(this.db).call(
+      neoAskInputWrites,
+      'addAskDesktopApps',
+      id,
+      apps,
+      now
+    );
+    if (!saved) return null;
+    this.changed();
+    return this.getAsk(id);
   }
 
   setAskTopic(id: string, topic: string, now: number): NeoAsk {
@@ -783,10 +817,10 @@ export class NeoAskTodoRepository {
     this.db
       .prepare(
         `INSERT INTO neo_todos (id, ask_id, position, title, done_when, check_json, instruction, named,
-           added_after_start, priority, depends_on, approved_at, produces_follow_up, created_at, updated_at)
+           added_after_start, priority, depends_on, approved_at, produces_follow_up, desktop_apps, created_at, updated_at)
          VALUES (?, ?, (SELECT COALESCE(MAX(position) + 1, 0) FROM neo_todos WHERE ask_id = ?), ?, ?, ?, ?, ?,
            EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = ? AND started_at IS NOT NULL), ?,
-           ?, ?, ?, ?, ?)`
+           ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -802,6 +836,7 @@ export class NeoAskTodoRepository {
         JSON.stringify(draft.dependsOn ?? []),
         draft.approvedAt ?? null,
         draft.producesFollowUp ? 1 : 0,
+        draft.desktopScope?.length ? JSON.stringify(draft.desktopScope) : null,
         now,
         now
       );
