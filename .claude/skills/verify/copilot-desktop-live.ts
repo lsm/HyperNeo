@@ -9,8 +9,9 @@ import {
 import type { Result, WorkCallContext } from '../../../packages/daemon/src/lib/drivers/types.ts';
 import { readCopilotDesktop } from '../../../packages/daemon/src/storage/copilot-desktop-read.ts';
 
-const [attended, model, effort] = process.argv.slice(2);
+const [attended, model, effort, mode] = process.argv.slice(2);
 assert(attended === '--attended' && model && effort, 'Use --attended MODEL EFFORT with approval for this App connection.');
+assert(mode === undefined || mode === 'compact');
 assert.notEqual(process.env.NODE_ENV, 'test', 'This proof does not run in the isolated daemon.');
 const home = homedir();
 const folder = mkdtempSync(join(realpathSync(tmpdir()), 'copilot-desktop-proof-'));
@@ -50,7 +51,7 @@ const { ref } = work;
 const file = join(home, '.copilot', 'session-state', ref.id, 'events.jsonl');
 interface Event {
   type: string;
-  data?: { selectedModel?: string; reasoningEffort?: string; messageId?: string };
+  data?: { selectedModel?: string; reasoningEffort?: string; messageId?: string; outcome?: string; trigger?: string };
 }
 function events() {
   if (!existsSync(file)) return [];
@@ -80,7 +81,10 @@ await wait(async () => {
   const status = await adapter.status!(ref);
   return status.ok && status.value.status !== 'running' && events().some((event) => event.type === 'abort');
 });
-const sent = pass(await adapter.send!(ref, 'Reply exactly HYPERNEO DESKTOP FOLLOWUP OK. Do not use tools.', context), 'send');
+const followup = mode === 'compact'
+  ? 'Do not use tools. Write 25 numbered sentences about clouds, then finish with HYPERNEO DESKTOP FOLLOWUP OK.'
+  : 'Reply exactly HYPERNEO DESKTOP FOLLOWUP OK. Do not use tools.';
+const sent = pass(await adapter.send!(ref, followup, context), 'send');
 assert(sent.receipt);
 await wait(async () => {
   const status = await adapter.status!(ref, undefined, sent.receipt);
@@ -88,6 +92,13 @@ await wait(async () => {
     status.value.lastReply?.includes('HYPERNEO DESKTOP FOLLOWUP OK');
 }, 45000);
 assert(!events().some((event) => event.type === 'user.message' && event.data?.messageId === queued.queuedSubmissionId));
+if (mode === 'compact') {
+  const before = events().filter((event) => event.type === 'session.compaction_complete').length;
+  assert.equal(pass(await adapter.compact!(ref, context), 'compact').compacted, true);
+  await wait(() => events().filter((event) => event.type === 'session.compaction_complete')
+    .slice(before).some((event) => event.data?.trigger === 'manual' && event.data.outcome === 'applied'));
+  console.log('PASS App journal recorded the applied manual compaction.');
+}
 pass(await adapter.rename!(ref, 'HyperNeo verified desktop test', context), 'rename');
 await wait(async () => {
   const status = await adapter.status!(ref);

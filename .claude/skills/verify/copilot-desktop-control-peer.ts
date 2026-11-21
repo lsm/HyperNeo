@@ -99,6 +99,24 @@ export async function startCopilotDesktopPeer(home: string, state: string) {
         journal('abort', { reason: 'user_initiated' });
         db.prepare('UPDATE sessions SET is_running = 0 WHERE id = ?').run(ref.id);
         return reply('session_event', { event: { type: 'abort' } });
+      case 'execute_session_command': {
+        assert.equal(active, false);
+        assert.equal(message.command_name, 'compact');
+        assert.equal(message.display_text, '/compact');
+        const attempt = randomUUID();
+        reply('session_command_complete', { outcome: 'queued' });
+        reply('session_event', {
+          event: { type: 'session.compaction_start', data: { trigger: 'manual', compactionAttemptId: attempt } },
+        });
+        reply('session_event', {
+          event: { type: 'session.compaction_complete', data: { trigger: 'manual', compactionAttemptId: randomUUID(), success: true, outcome: 'applied' } },
+        });
+        return setTimeout(() => {
+          const data = { trigger: 'manual', compactionAttemptId: attempt, success: true, outcome: 'applied' };
+          journal('session.compaction_complete', data);
+          reply('session_event', { event: { type: 'session.compaction_complete', data } });
+        }, 250);
+      }
       case 'rename_session':
         db.prepare('UPDATE sessions SET title = ? WHERE id = ?').run(message.title, ref.id);
         return reply('session_title_updated', { title: message.title });
@@ -125,7 +143,8 @@ export async function startCopilotDesktopPeer(home: string, state: string) {
 export async function verifyCopilotDesktopControl(
   rpc: <T>(name: string, input: object) => Promise<T>,
   run: string,
-  peer: Awaited<ReturnType<typeof startCopilotDesktopPeer>>
+  peer: Awaited<ReturnType<typeof startCopilotDesktopPeer>>,
+  verifyCompaction: (work: WorkStarted) => Promise<void>
 ) {
   const folder = join(run, 'desktop-workspace');
   mkdirSync(folder);
@@ -154,11 +173,14 @@ export async function verifyCopilotDesktopControl(
   assert(sent.ok && sent.value.receipt, JSON.stringify(sent));
   const status = await rpc<Result<WorkDetail>>('work.status', { ref, receipt: sent.value.receipt });
   assert(status.ok && status.value.lastReply === 'DESKTOP REPLY', JSON.stringify(status));
+  await verifyCompaction(started.value);
+  const afterCompaction = await rpc<Result<WorkDetail>>('work.status', { ref, receipt: sent.value.receipt });
+  assert(afterCompaction.ok && afterCompaction.value.lastReply === 'DESKTOP REPLY');
   const renamed = await rpc<Result<{ title: string }>>('work.rename', { ref, title: 'Renamed' });
   assert(renamed.ok && renamed.value.title === 'Renamed', JSON.stringify(renamed));
   const archived = await rpc<Result<{ archived: boolean }>>('neo.session.archive', { ref });
   assert(archived.ok && archived.value.archived, JSON.stringify(archived));
   const after = await rpc<Result<WorkDetail>>('work.status', { ref });
   assert(after.ok && after.value.archived && after.value.title === 'Renamed', JSON.stringify(after));
-  console.log('PASS Desktop model, effort, kickoff, queue, withdrawal, stop, follow-up, rename and archive.');
+  console.log('PASS Desktop model, effort, kickoff, queue, withdrawal, stop, follow-up, compaction, rename and archive.');
 }

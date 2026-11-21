@@ -696,12 +696,12 @@ export function createCopilotAdapter(
         () => stop(ref),
         () => deps.desktop?.stop?.(ref, context)
       ),
-    compact: (ref) =>
+    compact: (ref, context) =>
       mutate(
         ref,
         'compact',
         () => compact(ref),
-        () => undefined
+        () => deps.desktop?.compact?.(ref, context)
       ),
     turns: (ref, cursor, limit) =>
       guard(async () => {
