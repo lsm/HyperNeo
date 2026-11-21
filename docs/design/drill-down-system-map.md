@@ -51,6 +51,8 @@ A compact component index comes first — one line per component with its route 
 
 Anchors are explicit and package-qualified, because GitHub derives heading anchors from the full heading text (counts and touch markers would destabilize them). Every section starts with `<a id="pkg-area"></a>`, where the id is the package name, a hyphen, and the area with every non-alphanumeric run collapsed to a single hyphen (`(root)` becomes `root`). Index links target those ids; the ids change only when a component is renamed or moves.
 
+Slugs can collide — a real `space/root` directory slugs to the same `space-root` as `space/(root)`, and GitHub keeps duplicate ids rather than repairing them, which breaks both links. Uniqueness is therefore by construction: ids are assigned with components sorted bytewise by (package, area); the first component keeps the bare id and each further duplicate appends `-2`, `-3`, … in that order. Since `(` sorts before letters, `space/(root)` keeps `space-root` and a real `space/root` would take `space-root-2`.
+
 Trimmed real example of the shape:
 
 ```markdown
@@ -68,6 +70,10 @@ Trimmed real example of the shape:
 <a id="daemon-agents"></a>
 ### agents — 16 routes (touched)
 - `evolution.scope.owner.set` — [assign-agent-operation.ts](packages/daemon/src/lib/agents/assign-agent-operation.ts)
+
+<a id="daemon-connections"></a>
+### connections — 17 routes
+- `gmail.search` — [google-read-operations.ts](packages/daemon/src/lib/connections/google-read-operations.ts)
 
 <a id="daemon-neo"></a>
 ### neo — 79 routes (touched)
@@ -90,6 +96,8 @@ Trimmed real example of the shape:
 - `evolution.episode.create` — [episode-operations.ts](packages/space/src/evolution/episode-operations.ts)
 ```
 
+Every index link in the sample above was rendered through GitHub's Markdown API and resolves to exactly one emitted anchor (the renderer prefixes raw ids with `user-content-` uniformly; comparing after that strip, all six links match and no id repeats).
+
 (`evolution.scope.owner.set` really does live under `daemon/src/lib/agents/`; the map reports where code is, not where the name suggests it should be.)
 
 ### Strict and diff semantics
@@ -102,7 +110,7 @@ In `scripts/system-map.ts`: a `map` case in `main` that calls the exported `repo
 
 ## Test plan
 
-Unit test in `scripts/system-map.test.ts` style, on fixture sources (as `pipeline-verdict-report.test.ts` already does): grouping counts per package and component, `(root)` placement for src-level files, the component index matching the lists below it, `--diff` marking a component whose changed file has no route row (helper-only change), a touched component with zero routes appearing as `0 routes (touched)` with an empty section and never appearing without `--diff`, anchor ids staying identical when counts or touch markers change and every index link resolving to a emitted anchor, exact-file route marks, stable output ordering, and the summary line matching the row count. `bun run check` passes.
+Unit test in `scripts/system-map.test.ts` style, on fixture sources (as `pipeline-verdict-report.test.ts` already does): grouping counts per package and component, `(root)` placement for src-level files, the component index matching the lists below it, `--diff` marking a component whose changed file has no route row (helper-only change), a touched component with zero routes appearing as `0 routes (touched)` with an empty section and never appearing without `--diff`, anchor ids staying identical when counts or touch markers change, slug collisions getting ordered `-2`/`-3` suffixes, and every index link resolving to exactly one emitted anchor, exact-file route marks, stable output ordering, and the summary line matching the row count. `bun run check` passes.
 
 ## Non-goals
 
