@@ -12,6 +12,12 @@ const queue = `
 
 const cases = [
   [
+    'async (input) => (await make(input)).go(input)',
+    0,
+    `${queue}
+      const make = async (value) => ({ go: (item) => serialize(() => run(item)) });`,
+  ],
+  [
     '(input) => make().go(input)',
     0,
     `${queue}
