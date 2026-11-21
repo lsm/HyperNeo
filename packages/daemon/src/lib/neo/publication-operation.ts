@@ -158,7 +158,7 @@ export function requirePublicationLifetime(
 }
 
 const createNeoPublisher = (runtime: NeoPublicationRuntime) =>
-  (superpipe({})('neo.publication.publish') as PipelineAPI)
+  (superpipe({})('neo.publication.deliver') as PipelineAPI)
     .input(['input', 'caller', 'workOn'])
     .pipe(admitPublicationDraft, 'input', 'result:publication')
     .pipe(
@@ -401,20 +401,34 @@ export function createNeoPublicationOperation(
   present?: (items: NeoPublication[]) => Promise<NeoPublication[]>
 ) {
   const publish = createNeoPublisher(runtime);
+  const publishOperation = (superpipe({})('neo.publication.publish') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (input: Draft, caller: OperationCaller) => publish(input, caller),
+      ['input', 'caller'],
+      'receipt'
+    )
+    .pipe(
+      async (result: Receipt) =>
+        Result.parse(
+          result.accepted && present
+            ? { ...result, publication: (await present([result.publication]))[0] }
+            : result
+        ),
+      'receipt',
+      'result'
+    )
+    .endAsync('result') as (
+    input: Draft,
+    caller: OperationCaller
+  ) => Promise<z.infer<typeof Result>>;
   const operation = defineOperation({
     name: 'neo.publication.publish',
     description: neoToolDescription('neo.publication.publish'),
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     inputSchema: Draft,
     resultSchema: Result,
-    execute: async (input, caller) => {
-      const result = await publish(input, caller);
-      return Result.parse(
-        result.accepted && present
-          ? { ...result, publication: (await present([result.publication]))[0] }
-          : result
-      );
-    },
+    execute: (input, caller) => publishOperation(input, caller),
   });
   return { publish, operation };
 }

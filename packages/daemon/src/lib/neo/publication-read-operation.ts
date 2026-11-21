@@ -88,7 +88,9 @@ export function readNeoConversationPage<T extends { sequence: number }>(
   };
 }
 
-export const readNeoPublicationPage = (superpipe({})('neo.publication.read') as PipelineAPI)
+export const readNeoPublicationPage = (
+  superpipe({})('neo.publication.read.transaction') as PipelineAPI
+)
   .input(['page', 'caller', 'repo', 'ledger'])
   .pipe(
     (caller: OperationCaller, repo: NeoRepository) =>
@@ -118,6 +120,20 @@ export function createNeoPublicationReadOperation(
   ledger: NeoPublicationRepository,
   present: (items: NeoPublication[]) => Promise<NeoPublication[]> = async (items) => items
 ) {
+  const read = (superpipe({})('neo.publication.read') as PipelineAPI)
+    .input(['page', 'caller'])
+    .pipe(
+      (page: Page, caller: OperationCaller) => ledger.readPageCurrent(page, caller),
+      ['page', 'caller'],
+      'result'
+    )
+    .pipe(
+      async (result: Result) =>
+        result.ok ? { ...result, items: await present(result.items) } : result,
+      'result',
+      'result'
+    )
+    .endAsync('result') as (page: Page, caller: OperationCaller) => Promise<Result>;
   return defineOperation({
     name: 'neo.publication.read',
     description: neoToolDescription('neo.publication.read'),
@@ -132,9 +148,6 @@ export function createNeoPublicationReadOperation(
         nextAfter: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
       }),
     ]),
-    execute: async (page, caller) => {
-      const result = await ledger.readPageCurrent(page, caller);
-      return result.ok ? { ...result, items: await present(result.items) } : result;
-    },
+    execute: (page, caller) => read(page, caller),
   });
 }
