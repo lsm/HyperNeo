@@ -4,6 +4,7 @@ import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSy
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setImmediate } from 'node:timers/promises';
 import { vi } from 'vitest';
 import { WebSocketServer } from 'ws';
 import {
@@ -11,6 +12,7 @@ import {
   CodexRequestError,
   connectCodexAppServer,
 } from '../../../../src/lib/drivers/codex-app-server';
+import { createCodexCutover } from '../../../../src/lib/drivers/codex-cutover';
 import {
   admitCodexSteerTurn,
   codexExchange,
@@ -608,6 +610,7 @@ describe('codex-desktop adapter status and send', () => {
       realServer?: boolean;
       desktopRunning?: () => Promise<boolean>;
       desktopSocketPath?: string;
+      admitWork?: ReturnType<typeof createCodexCutover>['admit'];
     } = {}
   ) {
     const spawn: SpawnFn = (args) => {
@@ -628,6 +631,7 @@ describe('codex-desktop adapter status and send', () => {
         throw new Error('not used');
       },
       statePath,
+      admitWork: overrides.admitWork,
       ...(overrides.desktopSocketPath ? { desktopSocketPath: overrides.desktopSocketPath } : {}),
       desktopRunning: overrides.desktopRunning ?? (async () => false),
       worktreesDir,
@@ -653,6 +657,45 @@ describe('codex-desktop adapter status and send', () => {
   }
 
   const ref = (id: string) => ({ adapter: 'codex-desktop', id });
+
+  test('holds a desktop send until an idle cutover completes', async () => {
+    const gate = createCodexCutover(async () => true);
+    const started = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    const cutover = gate.atIdle(async () => {
+      started.resolve();
+      await finish.promise;
+    });
+    const calls: string[] = [];
+    const driver = adapter(
+      0,
+      '',
+      async () => ({
+        call: async (method) => {
+          calls.push(method);
+          return { queuedSubmission: { id: 'queue-after-cutover' } };
+        },
+        close: () => {},
+      }),
+      undefined,
+      '',
+      { admitWork: gate.admit }
+    );
+    await started.promise;
+    const result = driver.send!(ref('idle'), 'next task', user);
+    try {
+      await setImmediate();
+      expect(calls).toEqual([]);
+    } finally {
+      finish.resolve();
+      await cutover;
+      await expect(result).resolves.toMatchObject({
+        ok: true,
+        value: { queuedSubmissionId: 'queue-after-cutover' },
+      });
+    }
+    expect(calls).toEqual(['thread/queue/add']);
+  });
 
   test('work.start reuses an idle Codex worker using its real recorded status identity', async () => {
     writeFileSync(
