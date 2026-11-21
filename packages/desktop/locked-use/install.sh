@@ -15,7 +15,7 @@ verified_plugin() {
 }
 
 read_rule "$work/rule.plist"
-if [[ "$(uninstall_plan "$work/rule.plist")" == restore ]] && right_present && verified_plugin "$plugin" 2>/dev/null; then
+if [[ "$(uninstall_plan "$work/rule.plist")" == restore ]] && [[ "$(right_state)" == present ]] && verified_plugin "$plugin" 2>/dev/null; then
     echo "already installed"
     exit 0
 fi

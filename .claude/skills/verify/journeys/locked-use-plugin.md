@@ -23,7 +23,8 @@ signed with another identifier are refused; a guardian that never answers or han
 is refused within about a second without crashing; only an answering guardian is allowed.
 
 Install and removal checks, also without root or any change. They run on copies of the
-rule and inject tool failures; every injected failure must refuse:
+rule, a fixture rules database and a fixture plugin folder, and inject tool failures;
+every injected failure must refuse and leave the plugin and its right in place:
 
 ```bash
 security authorizationdb read system.login.screensaver > "$RUN/stock.plist"
@@ -53,5 +54,8 @@ stock rule if any later step fails; if that restore does not read back, it says 
 leaves the plugin and right in place. Uninstall needs the root-owned stock backup and a live
 rule equal to the backup, with or without Locked Use; anything else, including any tool
 error, is refused unchanged. It verifies
-the restored rule before removing the right and bundle, and fails unless both are gone. After install, lock the Mac and
+the restored rule before removing the right, and deletes the bundle only after the
+authorization database shows the right gone. The only extended attribute allowed on the
+plugin is `com.apple.provenance`, which macOS adds to every new file and does not let
+the installer remove; `check-policy.sh` shows both. After install, lock the Mac and
 unlock it with the password once to confirm the normal path still works.
