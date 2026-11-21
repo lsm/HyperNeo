@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import {
   DesktopAppsSchema,
+  macDesktopAppName,
   resolveDesktopApps,
   unnamedDesktopApp,
 } from '../../../../src/lib/desktop/app-scope.ts';
@@ -31,3 +32,23 @@ test('a human message names an app only by its system name or bundle name, as a 
   expect(unnamedDesktopApp('Email the March invoice', [mail])).toEqual(mail);
   expect(unnamedDesktopApp('Find the March invoice in Chrome', [chrome, mail])).toEqual(mail);
 });
+
+test.skipIf(process.platform !== 'darwin')(
+  'the real resolver names installed system apps without Spotlight and refuses unknown ids',
+  async () => {
+    expect(
+      await resolveDesktopApps(
+        ['com.apple.finder', 'com.apple.Terminal', 'com.apple.mail', 'com.apple.Notes'],
+        macDesktopAppName
+      )
+    ).toEqual({
+      value: [
+        { bundleId: 'com.apple.finder', name: 'Finder' },
+        { bundleId: 'com.apple.Terminal', name: 'Terminal' },
+        { bundleId: 'com.apple.mail', name: 'Mail' },
+        { bundleId: 'com.apple.Notes', name: 'Notes' },
+      ],
+    });
+    expect(await macDesktopAppName('com.example.missing')).toBeNull();
+  }
+);

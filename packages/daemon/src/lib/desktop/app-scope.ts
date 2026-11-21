@@ -11,13 +11,19 @@ export const DesktopAppsSchema = z.array(z.string().regex(BUNDLE_ID)).min(1).max
 
 export type DesktopAppName = (bundleId: string) => Promise<string | null>;
 
+const LAUNCH_SERVICES = `function run(argv) {
+  ObjC.import('AppKit');
+  const url = $.NSWorkspace.sharedWorkspace.URLForApplicationWithBundleIdentifier(argv[0]);
+  return url.isNil() ? '' : url.path.js;
+}`;
+
 export const macDesktopAppName: DesktopAppName = async (bundleId) => {
   if (process.platform !== 'darwin' || !BUNDLE_ID.test(bundleId)) return null;
-  const found = await run('mdfind', [`kMDItemCFBundleIdentifier == "${bundleId}"`], {
+  const found = await run('osascript', ['-l', 'JavaScript', '-e', LAUNCH_SERVICES, bundleId], {
     timeout: 5000,
   }).catch(() => null);
-  const path = found?.stdout.split('\n').find((line) => line.endsWith('.app'));
-  return path ? basename(path, '.app') : null;
+  const path = found?.stdout.trim() ?? '';
+  return path.endsWith('.app') ? basename(path, '.app') : null;
 };
 
 export async function resolveDesktopApps(
