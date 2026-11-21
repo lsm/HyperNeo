@@ -431,6 +431,9 @@ open(sys.argv[2], 'w').write(reply.decode())
         directory.mkdir(parents=True, mode=0o700)
         directory.parent.chmod(0o700)
         (directory / 'driver.json').mkdir()
+        hold = self.work / 'hold-stop'
+        hold.touch()
+        self.addCleanup(lambda: hold.unlink(missing_ok=True))
         self.assertTrue(self.call('fixture-fail-start-cleanup')['ok'])
         result = self.call('start', workDir=str(self.work))
         self.assertFalse(result['ok'], result)
@@ -445,7 +448,36 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertFalse(retry['ok'], retry)
         self.assertEqual(list(self.work.glob('d-*')), [path.parent])
         self.assertTrue((directory / 'starting').exists())
+        self.assert_stop_waits_for(pid, hold)
         print(f'publication_failed=1 cleanup_failed=1 pid={pid} incomplete_marker=1 retry_refused=1')
+
+    def assert_stop_waits_for(self, pid, hold):
+        self.assertTrue(alive(pid))
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            stopping = pool.submit(self.call, 'stop')
+            time.sleep(0.5)
+            self.assertFalse(stopping.done())
+            self.assertTrue(alive(pid))
+            hold.unlink()
+            self.assertTrue(stopping.result(timeout=15)['ok'])
+        self.assertFalse(alive(pid))
+
+    def test_failed_start_validation_keeps_the_live_driver_until_stop_confirms(self):
+        hold = self.work / 'hold-stop'
+        hold.touch()
+        self.addCleanup(lambda: hold.unlink(missing_ok=True))
+        self.assertTrue(self.call('fixture-latch-on-response')['ok'])
+        self.assertTrue(self.call('fixture-fail-retire')['ok'])
+        result = self.call('start', workDir=str(self.work))
+        self.assertFalse(result['ok'], result)
+        self.assertIn('stop_unconfirmed', result['error'])
+        pid = json.loads((self.lifecycle() / 'driver.json').read_text())['pid']
+        self.pids.append(pid)
+        wait_until(lambda: bool(list(self.work.glob('d-*/d.stopping'))))
+        self.assertEqual(self.call('fixture-slots')['result']['count'], 1)
+        self.assert_stop_waits_for(pid, hold)
+        self.assertEqual(self.call('fixture-slots')['result']['count'], 0)
+        print('start_validation_failed=1 live_child_kept=1 stop_confirmed=1')
 
     def test_two_workers_get_two_drivers_and_two_channels(self):
         first, second = self.start(), self.start('worker-b')
@@ -1145,7 +1177,7 @@ open(sys.argv[2], 'w').write(reply.decode())
         hold = self.work / 'hold-stop'
         hold.touch()
         self.addCleanup(lambda: hold.unlink(missing_ok=True))
-        self.call('fixture-fail-stop-close')
+        self.call('fixture-fail-retire')
         failed = self.call('stop')
         self.assertFalse(failed['ok'], failed)
         self.assertIn('stop_unconfirmed', failed['error'])

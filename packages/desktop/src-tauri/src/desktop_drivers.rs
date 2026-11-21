@@ -49,7 +49,7 @@ static LATCH_ON_RESPONSE: AtomicBool = AtomicBool::new(false);
 #[cfg(test)]
 static FAIL_START_CLEANUP: AtomicBool = AtomicBool::new(false);
 #[cfg(test)]
-static FAIL_STOP_CLOSE: AtomicBool = AtomicBool::new(false);
+static FAIL_RETIRE: AtomicBool = AtomicBool::new(false);
 #[cfg(test)]
 pub(crate) fn inject_accept_failure() {
     FAIL_NEXT_ACCEPT.store(true, Ordering::Relaxed);
@@ -330,14 +330,12 @@ impl Control {
             .workers
             .lock()
             .await
-            .values()
-            .cloned()
+            .iter()
+            .map(|(id, slot)| (id.clone(), slot.clone()))
             .collect();
-        for slot in slots {
-            if let Some(mut worker) = slot.lock().await.take() {
-                if let Err(error) = worker.channel.close().await {
-                    log::error!("Driver shutdown failed: {error}");
-                }
+        for (id, slot) in slots {
+            if let Err(error) = self.drivers.retire(&id, &mut *slot.lock().await).await {
+                log::error!("Driver shutdown failed: {error}");
             }
         }
         let _ = std::fs::remove_file(&self.socket);
@@ -425,8 +423,8 @@ impl Drivers {
             return Ok(json!({"armed": true}));
         }
         #[cfg(test)]
-        if request.action == "fixture-fail-stop-close" {
-            FAIL_STOP_CLOSE.store(true, Ordering::Relaxed);
+        if request.action == "fixture-fail-retire" {
+            FAIL_RETIRE.store(true, Ordering::Relaxed);
             return Ok(json!({"armed": true}));
         }
         #[cfg(test)]
@@ -658,9 +656,7 @@ impl Drivers {
                 && !slots.contains_key(&worker_id)
             {
                 if request.action == "stop" {
-                    self.leases.lock().unwrap().release(&worker_id);
-                    self.stuck.lock().unwrap().remove(&worker_id);
-                    self.unconfirmed.lock().unwrap().remove(&worker_id);
+                    self.retire(&worker_id, &mut None).await?;
                 }
                 return match request.action.as_str() {
                     "status" | "stop" => Ok(json!({"state": "stopped", "pid": null})),
@@ -688,7 +684,10 @@ impl Drivers {
         let result: Result<Option<Value>> = async {
             match request.action.as_str() {
                 "start" => {
-                    self.start_driver(&directory, &mut worker, request.work_dir.as_deref())
+                    if self.unconfirmed.lock().unwrap().contains(&worker_id) {
+                        return Err("stop_unconfirmed: Stop must confirm the old driver exited".into());
+                    }
+                    self.start_driver(&worker_id, &directory, &mut worker, request.work_dir.as_deref())
                         .await?
                 }
                 "dispatch" => {
@@ -741,7 +740,7 @@ impl Drivers {
                         }
                     }
                     if worker.is_none() {
-                        self.start_driver(&directory, &mut worker, request.work_dir.as_deref())
+                        self.start_driver(&worker_id, &directory, &mut worker, request.work_dir.as_deref())
                             .await?;
                     }
                     if screen_locked() {
@@ -829,22 +828,16 @@ impl Drivers {
                     };
                     if !reason.is_null() {
                         #[cfg(test)]
-                        let closed = if request
+                        if request
                             .arguments
                             .as_ref()
                             .is_some_and(|args| args["fixture_close_fails"] == true)
                         {
-                            active.channel.drop_stream();
-                            Err("fixture close failure".into())
-                        } else {
-                            active.channel.close().await
-                        };
-                        #[cfg(not(test))]
-                        let closed = active.channel.close().await;
-                        if let Err(error) = closed {
-                            reason = json!(format!("stop_unconfirmed: {error}"));
+                            FAIL_RETIRE.store(true, Ordering::Relaxed);
+                        }
+                        if let Err(error) = self.retire(&worker_id, &mut worker).await {
+                            reason = json!(error.to_string());
                             settle.keep = true;
-                            self.unconfirmed.lock().unwrap().insert(worker_id.clone());
                             if let Some(guard) = screen.take() {
                                 self.stuck.lock().unwrap().insert(worker_id.clone(), guard);
                             }
@@ -879,43 +872,21 @@ impl Drivers {
                 }
                 "stop" => {
                     self.leases.lock().unwrap().pin(&worker_id);
-                    let confirmed: Result<()> = async {
-                        if let Some(worker) = worker.as_mut() {
-                            let pid = worker.channel.pid;
-                            if worker.channel.running() {
-                                record::verify(&directory, pid)
-                                    .map_err(|error| format!("stop_unconfirmed: {error}"))?;
-                            }
-                            #[cfg(test)]
-                            if FAIL_STOP_CLOSE.swap(false, Ordering::Relaxed) {
-                                worker.channel.drop_stream();
-                                return Err("stop_unconfirmed: fixture close failure".into());
-                            }
-                            worker
-                                .channel
-                                .close()
-                                .await
-                                .map_err(|error| format!("stop_unconfirmed: {error}"))?;
-                            record::verify_gone(pid)?;
+                    let running = worker.as_mut().and_then(|active| {
+                        active.channel.running().then_some(active.channel.pid)
+                    });
+                    if let Some(pid) = running {
+                        if let Err(error) = record::verify(&directory, pid) {
+                            self.unconfirmed.lock().unwrap().insert(worker_id.clone());
+                            return Err(format!("stop_unconfirmed: {error}").into());
                         }
-                        Ok(())
                     }
-                    .await;
-                    if let Err(error) = confirmed {
-                        // Keep the slot, and with it the child, so a later Stop must confirm exit.
-                        self.unconfirmed.lock().unwrap().insert(worker_id.clone());
-                        return Err(error);
-                    }
-                    *worker = None;
-                    self.leases.lock().unwrap().release(&worker_id);
-                    self.stuck.lock().unwrap().remove(&worker_id);
-                    self.unconfirmed.lock().unwrap().remove(&worker_id);
+                    self.retire(&worker_id, &mut worker).await?;
                 }
                 "status" => {}
                 _ => return Err("Unknown Desktop control action".into()),
             }
-            if let Some(worker) = worker.as_mut() {
-                let pid = worker.channel.pid;
+            if let Some(pid) = worker.as_ref().map(|worker| worker.channel.pid) {
                 #[cfg(test)]
                 if request.action == "start" && LATCH_ON_RESPONSE.swap(false, Ordering::Relaxed) {
                     record::latch(&directory)?;
@@ -925,12 +896,7 @@ impl Drivers {
                     .and_then(|_| record::verify(&directory, pid));
                 if let Err(error) = valid {
                     if request.action == "start" {
-                        worker
-                            .channel
-                            .close()
-                            .await
-                            .map_err(|error| format!("stop_unconfirmed: {error}"))?;
-                        record::verify_gone(pid)?;
+                        self.retire(&worker_id, &mut worker).await?;
                     }
                     return Err(error);
                 }
@@ -944,7 +910,7 @@ impl Drivers {
                 .as_mut()
                 .is_some_and(|worker| !worker.channel.running())
         {
-            *worker = None;
+            let _ = self.retire(&worker_id, &mut worker).await;
         }
         if worker.is_none() {
             let mut slots = self.workers.lock().await;
@@ -959,8 +925,43 @@ impl Drivers {
         }))
     }
 
+    /// The only way a driver leaves its slot: its exit is confirmed, or the worker is marked
+    /// unconfirmed and keeps the slot, its leases and any parked foreground lock until a Stop
+    /// confirms it.
+    async fn retire(&self, worker_id: &str, worker: &mut Option<Worker>) -> Result<()> {
+        let confirmed: Result<()> = async {
+            if let Some(active) = worker.as_mut() {
+                let pid = active.channel.pid;
+                #[cfg(test)]
+                if FAIL_RETIRE.swap(false, Ordering::Relaxed) {
+                    active.channel.drop_stream();
+                    return Err("fixture close failure".into());
+                }
+                active.channel.close().await?;
+                record::verify_gone(pid)?;
+            }
+            Ok(())
+        }
+        .await;
+        match confirmed {
+            Ok(()) => {
+                *worker = None;
+                self.leases.lock().unwrap().release(worker_id);
+                self.stuck.lock().unwrap().remove(worker_id);
+                self.unconfirmed.lock().unwrap().remove(worker_id);
+                Ok(())
+            }
+            Err(error) => {
+                self.unconfirmed.lock().unwrap().insert(worker_id.to_owned());
+                self.leases.lock().unwrap().pin(worker_id);
+                Err(format!("stop_unconfirmed: {error}").into())
+            }
+        }
+    }
+
     async fn start_driver(
         &self,
+        worker_id: &str,
         directory: &std::path::Path,
         worker: &mut Option<Worker>,
         work_dir: Option<&std::path::Path>,
@@ -1019,16 +1020,11 @@ impl Drivers {
             record::publish(directory, pid).and_then(|_| record::ensure_enabled(directory))
         {
             starting.preserve();
-            let _cleanup: Result<()> = async {
-                #[cfg(test)]
-                if FAIL_START_CLEANUP.swap(false, Ordering::Relaxed) {
-                    return Err("Fixture start cleanup failed".into());
-                }
-                worker.as_mut().unwrap().channel.close().await?;
-                Ok(())
+            #[cfg(test)]
+            if FAIL_START_CLEANUP.swap(false, Ordering::Relaxed) {
+                FAIL_RETIRE.store(true, Ordering::Relaxed);
             }
-            .await;
-            record::verify_gone(pid)?;
+            self.retire(worker_id, worker).await?;
             starting.cleanup_verified();
             return Err(error);
         }
