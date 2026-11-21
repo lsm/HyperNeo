@@ -37,9 +37,9 @@ export function requireAcceptedAsk(
 
 export function notAcceptedReason(proposal: NeoQuestion | null): string {
   return proposal?.state === 'open'
-    ? `ask_not_accepted: the human has not answered Do it on this ask's card (question ${proposal.id}). Wait for that answer; do not open another card asking for approval.`
+    ? `ask_not_accepted: the human has not said yes on this ask's card (question ${proposal.id}). Wait for that answer; do not open another card asking for approval.`
     : 'ask_not_accepted: human approval is required before starting work.';
 }
 
 export const proposalCardRecord = (questionId: string) =>
-  `proposal_card: the human now sees a Do it / Don't card for this ask (question ${questionId}). Add todos after the human answers Do it; do not open another card asking for approval.`;
+  `proposal_card: the human now sees a yes/no card for this ask (question ${questionId}). Add todos after the human answers yes; do not open another card asking for approval.`;

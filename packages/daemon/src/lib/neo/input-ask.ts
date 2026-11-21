@@ -77,7 +77,7 @@ export async function resolveNeoInputAsk(
   store: NeoAskTodoRepository,
   reads: NeoInputReads,
   caller: OperationCaller,
-  request: { input?: string; askId?: string },
+  request: { input?: string; askId?: string; topic?: string },
   title: string
 ): Promise<Binding> {
   if (!request.input)
@@ -117,6 +117,7 @@ export async function resolveNeoInputAsk(
           .split('\n')[0]
           .replace(/^[#*\s]+|\*+/g, '')
           .slice(0, 120) || title,
+      ...(request.topic ? { topic: request.topic } : {}),
       request: words(human.content) || title,
     });
     if (typeof winner !== 'string') return { reason: { ok: false, reason: winner.reason } };

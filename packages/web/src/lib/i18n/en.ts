@@ -205,6 +205,7 @@ export const en = {
   'question.readAll': 'Read all',
   'question.reply': 'Reply in chat',
   'question.confirm': 'Confirm',
+  'question.cancel': 'Cancel',
   'question.none': 'None',
   'question.retired': '{question} — no longer needed',
   'status.separator': '; ',

@@ -127,6 +127,22 @@ describe('neo ask binding from human input', () => {
     }
   });
 
+  test('a direct request opens its ask with the topic and no card, and a follow-up keeps it', async () => {
+    const f = setup();
+    try {
+      const input = f.human('Book the dentist for Friday');
+      const first = await f.add({ input, topic: '健康' });
+      if (!first.ok || !first.todo) throw new Error('add failed');
+      expect(f.store.getAsk(first.todo.askId)).toMatchObject({ topic: '健康', status: 'open' });
+      expect(f.store.listQuestions(first.todo.askId)).toEqual([]);
+      const again = await f.add({ input, topic: '其他', title: 'Add it to the calendar' });
+      expect(again.ok && again.todo?.askId).toBe(first.todo.askId);
+      expect(f.store.getAsk(first.todo.askId)?.topic).toBe('健康');
+    } finally {
+      f.db.close();
+    }
+  });
+
   test.each(['settled', 'foreign', 'unknown'] as const)(
     'a %s target refuses binding without writing an ask or input link',
     async (kind) => {

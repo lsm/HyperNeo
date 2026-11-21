@@ -135,6 +135,11 @@ const Add = TodoDraft.extend({
   input: Text.optional().describe(
     'The id on the `<human-message>` tag of the human message this todo serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else its recorded follow-up binding, else a new one.'
   ),
+  topic: Text.max(12)
+    .optional()
+    .describe(
+      'The topic of the new ask this call opens for input. Ignored when the todo joins an existing ask; change that one with neo.ask.topic.'
+    ),
   after: z
     .array(Text)
     .max(20)

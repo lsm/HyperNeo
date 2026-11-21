@@ -102,7 +102,9 @@ export function neoQuestionAnswerLabel(question: NeoQuestionEntry, todos: readon
   const answer = question.answer;
   if (answer === null) return '';
   if (question.kind === 'yesno' && question.answeredBy === 'button')
-    return (answer === 'yes' ? question.yesLabel : question.noLabel) ?? String(answer);
+    return answer === 'yes'
+      ? (question.yesLabel ?? t('question.confirm'))
+      : (question.noLabel ?? t('question.cancel'));
   return Array.isArray(answer)
     ? answer
         .map((value) => todos.find((todo) => todo.id === value)?.title ?? value)
@@ -697,7 +699,7 @@ export function QuestionBox({
               disabled={disabled}
               onClick={() => onAnswer('no')}
             >
-              {question.noLabel}
+              {question.noLabel ?? t('question.cancel')}
             </button>
             <button
               type="button"
@@ -705,7 +707,7 @@ export function QuestionBox({
               disabled={disabled}
               onClick={() => onAnswer('yes')}
             >
-              {question.yesLabel}
+              {question.yesLabel ?? t('question.confirm')}
             </button>
           </>
         )}

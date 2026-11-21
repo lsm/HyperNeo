@@ -189,6 +189,24 @@ describe('NeoAskTodos', () => {
     fireEvent.click(app.getByRole('button', { name: 'Ship' }));
     expect(answer).toHaveBeenCalledWith('choice', ['Ship']);
   });
+  it('shows Confirm and Cancel on a yes/no card without labels', async () => {
+    locale.value = 'zh-Hans';
+    const summary = entry({
+      summary: { todoCount: 0, questionCount: 1, openQuestionCount: 1 },
+      todos: [],
+    });
+    const answer = vi.fn();
+    const load = vi.fn().mockResolvedValue({
+      ...summary,
+      summary: undefined,
+      questions: [question('propose', { kind: 'yesno' })],
+      todos: [],
+    });
+    const app = render(<NeoAskTodos entry={summary} onAnswer={answer} onLoadDetails={load} />);
+    await waitFor(() => expect(app.getByRole('button', { name: '确定' })).toBeTruthy());
+    fireEvent.click(app.getByRole('button', { name: '取消' }));
+    expect(answer).toHaveBeenCalledWith('propose', 'no');
+  });
   it('loads every open question above todos while the summary stays collapsed', async () => {
     locale.value = 'en';
     const summary = entry({
@@ -1385,6 +1403,12 @@ describe('neoQuestionAnswerLabel', () => {
         [todo('a')]
       )
     ).toBe('Todo a');
+    expect(
+      neoQuestionAnswerLabel(
+        question('q', { kind: 'yesno', answer: 'yes', answeredBy: 'button' }),
+        []
+      )
+    ).toBe('确定');
   });
 });
 

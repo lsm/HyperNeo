@@ -637,9 +637,12 @@ export function requireNeoQuestionAnswered(written: {
 
 export function neoQuestionAnsweredNote(question: NeoQuestion): string {
   const answer = question.answer ?? '';
+  const label = answer === 'yes' ? question.yesLabel : question.noLabel;
   const said =
     question.kind === 'yesno'
-      ? `${answer} (${answer === 'yes' ? question.yesLabel : question.noLabel})`
+      ? label
+        ? `${answer} (${label})`
+        : `${answer}`
       : neoLabelledOptions(question.options ?? [], [answer].flat()) || 'none';
   return isAgentResolvedQuestion(question)
     ? `Neo resolved "${question.text}": ${said}. ${question.retiredReason}`
