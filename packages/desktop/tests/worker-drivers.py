@@ -609,8 +609,13 @@ open(sys.argv[2], 'w').write(reply.decode())
             self.pids.append(result['result']['pid'])
 
     def test_recovers_control_endpoint_after_app_crash(self):
+        self.crash_and_restart()
+        self.start()
+
+    def crash_and_restart(self, after_crash=lambda: None):
         self.process.kill()
         self.process.wait(timeout=10)
+        after_crash()
         self.process.stdout.close()
         self.process.stderr.close()
         self.process = subprocess.Popen(
@@ -620,7 +625,41 @@ open(sys.argv[2], 'w').write(reply.decode())
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.assertTrue(select.select([self.process.stdout], [], [], 15)[0])
         self.assertEqual(self.process.stdout.readline().strip(), 'ready')
-        self.start()
+
+    def test_restart_retires_leftover_driver_before_serving_requests(self):
+        old = self.start()['pid']
+        hold = self.work / 'hold-stop'
+        hold.touch()
+        self.addCleanup(lambda: hold.unlink(missing_ok=True))
+
+        def survived_crash():
+            wait_until(lambda: bool(list(self.work.glob('d-*/d.stopping'))))
+            self.assertTrue(alive(old))
+
+        self.crash_and_restart(survived_crash)
+        self.assertEqual(self.call('status'), {'ok': True, 'result': {'state': 'stopped', 'pid': None}})
+        self.assertFalse(alive(old), 'restarted host reported stopped while old driver was still alive')
+        hold.unlink()
+        self.assertNotEqual(self.start()['pid'], old)
+        print('leftover_survived_crash=1 retired_before_serving=1 replacement_started=1')
+
+    def test_restart_leaves_reused_driver_pid_alone(self):
+        driver = self.start()
+        record = self.lifecycle() / 'driver.json'
+        saved = json.loads(record.read_text())
+        unrelated = subprocess.Popen(['/bin/sleep', '60'], env={})
+        self.addCleanup(unrelated.wait)
+        self.addCleanup(unrelated.kill)
+
+        def reuse_pid():
+            wait_until(lambda: not alive(driver['pid']))
+            saved['pid'] = unrelated.pid
+            record.write_text(json.dumps(saved))
+
+        self.crash_and_restart(reuse_pid)
+        self.assertIsNone(unrelated.poll())
+        self.assertTrue(self.call('status')['ok'])
+        print('reused_pid_preserved=1 desktop_available=1')
 
     def test_rejects_oversize_frame_and_keeps_serving(self):
         with socket.socket(socket.AF_UNIX) as client:
