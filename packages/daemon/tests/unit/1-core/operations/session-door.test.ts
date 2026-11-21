@@ -169,6 +169,7 @@ describe('the session door', () => {
       'message.send',
       'neo.question.get',
       'system.build',
+      'system.codex.setup',
       'system.restart.reserve',
       'device.pair.create',
       'device.pair.pending',
