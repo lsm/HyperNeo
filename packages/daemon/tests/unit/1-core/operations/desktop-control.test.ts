@@ -37,8 +37,8 @@ beforeEach(() => {
     title: 'Errands',
     request: '',
     createdAt: 1,
+    desktopApps: [{ bundleId: 'com.google.Chrome', name: 'Chrome' }],
   });
-  todos.addAskDesktopApps('ask', [{ bundleId: 'com.google.Chrome', name: 'Chrome' }], 1);
   for (const [index, [todo, worker, named]] of (
     [
       ['dentist', 'worker-a', null],
@@ -79,9 +79,9 @@ test('a todo whose ask has no approved app gets no desktop control', () => {
   expect([optedIn('worker-a'), optedIn('worker-b')]).toEqual([null, null]);
 });
 
-test('approved apps merge by bundle id and only on an open ask', () => {
+test('approved apps merge by bundle id and only on an open ask', async () => {
   const todos = new NeoAskTodoRepository(db);
-  const ask = todos.addAskDesktopApps(
+  const ask = await todos.addAskDesktopApps(
     'ask',
     [
       { bundleId: 'com.google.Chrome', name: 'Google Chrome' },
@@ -94,9 +94,9 @@ test('approved apps merge by bundle id and only on an open ask', () => {
     { bundleId: 'com.apple.mail', name: 'Mail' },
   ]);
   db.prepare("UPDATE neo_asks SET status = 'done'").run();
-  expect(todos.addAskDesktopApps('ask', [{ bundleId: 'com.apple.Notes', name: 'Notes' }], 3)).toBe(
-    null
-  );
+  expect(
+    await todos.addAskDesktopApps('ask', [{ bundleId: 'com.apple.Notes', name: 'Notes' }], 3)
+  ).toBeNull();
 });
 
 test('turning desktop control off is per todo, and it turns back on', async () => {

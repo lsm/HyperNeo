@@ -153,9 +153,9 @@ export function wireNeoTodoAdd(
       'result:outcome'
     )
     .pipe(
-      (ask: NeoAsk, input: AddInput) => ({
+      async (ask: NeoAsk, input: AddInput) => ({
         value: input.desktopApps
-          ? (store.addAskDesktopApps(ask.id, input.desktopApps, Date.now()) ?? ask)
+          ? ((await store.addAskDesktopApps(ask.id, input.desktopApps, Date.now())) ?? ask)
           : ask,
       }),
       ['outcome', 'input'],

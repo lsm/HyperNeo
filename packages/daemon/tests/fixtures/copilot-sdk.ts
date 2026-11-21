@@ -16,6 +16,8 @@ if (process.argv.includes('--disable-builtin-mcps')) {
 
 let buffer = Buffer.alloc(0);
 let sessionId = '';
+let sessionModel: unknown;
+let sessionEffort: unknown;
 let input = 0;
 let eventId = 0;
 let pendingAck: (() => void) | undefined;
@@ -101,6 +103,15 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
                   limits: { max_context_window_tokens: 10000 },
                 },
               },
+              {
+                id: 'synthetic-effort-model',
+                name: 'Synthetic with reasoning effort',
+                capabilities: {
+                  supports: { reasoningEffort: true },
+                  limits: { max_context_window_tokens: 10000 },
+                },
+                supportedReasoningEfforts: ['medium', 'high'],
+              },
             ],
       });
       break;
@@ -131,8 +142,18 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
     }
     case 'session.create':
       sessionId = String(msg.params?.sessionId);
+      sessionModel = msg.params?.model;
+      sessionEffort = msg.params?.reasoningEffort;
       if (process.argv.includes('--durable-inputs')) writeFileSync(fixtureState(), '0');
       reply({ sessionId });
+      break;
+    case 'session.model.getCurrent':
+      reply({
+        modelId: sessionModel,
+        reasoningEffort: existsSync(join(process.cwd(), 'copilot-effort-mismatch'))
+          ? 'medium'
+          : sessionEffort,
+      });
       break;
     case 'session.resume':
       sessionId = String(msg.params?.sessionId);
@@ -149,6 +170,8 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
         });
         break;
       }
+      sessionModel = msg.params?.model;
+      sessionEffort = msg.params?.reasoningEffort;
       input = Number(readFileSync(fixtureState(), 'utf8'));
       reply({ sessionId });
       break;

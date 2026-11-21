@@ -64,4 +64,8 @@ The script emits action results and the requested settings.
 
 The CLI also exposes start, send, queue, withdraw, stop, rename, and archive
 for daemon-owned sessions. Neo can compact an idle owned CLI worker kept for
-reuse. Strict same-turn steering remains unsupported.
+reuse. In `cli` mode, start with an explicit model and `high` reasoning
+effort. Verify the SDK confirms both before the first prompt, and that start
+and status report the applied effort. Unsupported effort and a runtime
+configuration mismatch both prevent prompt delivery. Strict same-turn
+steering remains unsupported.

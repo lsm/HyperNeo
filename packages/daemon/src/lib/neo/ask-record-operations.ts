@@ -381,6 +381,7 @@ export function createNeoAskRecordOperations(
               topic: input.topic ?? null,
               request: input.request,
               createdAt: now,
+              desktopApps: input.desktopApps,
             });
             openHumanCard(
               store,
@@ -396,9 +397,7 @@ export function createNeoAskRecordOperations(
               },
               now
             );
-            return input.desktopApps
-              ? (store.addAskDesktopApps(opened.id, input.desktopApps, now) ?? opened)
-              : opened;
+            return opened;
           });
         recorded.push(...family(ask));
         const records: string[] = [];
