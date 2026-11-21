@@ -4,7 +4,9 @@
 # rule equals it, with or without the Locked Use entry install.sh added. The plugin is
 # deleted only after its right is proven absent.
 set -euo pipefail
-[[ $EUID == 0 ]] || { echo "run with sudo" >&2; exit 1; }
+[[ "$(id -u)" == 0 ]] || { echo "run with sudo" >&2; exit 1; }
 . "$(dirname "$0")/policy.sh"
+take_lock
+trap release_lock EXIT
 uninstall_locked_use
 echo "removed"

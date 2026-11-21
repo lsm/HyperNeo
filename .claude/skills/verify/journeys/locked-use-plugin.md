@@ -29,9 +29,15 @@ every injected failure must refuse and leave the plugin and its right in place:
 ```bash
 security authorizationdb read system.login.screensaver > "$RUN/stock.plist"
 bash packages/desktop/locked-use/check-policy.sh "$RUN/stock.plist"
+bash packages/desktop/locked-use/check-install.sh "$RUN/stock.plist"
 ```
 
-Run it before installing, or pass a saved stock rule. Pass ends `policy check PASS`.
+Run them before installing, or pass a saved stock rule. Pass ends `policy check PASS` and
+`install check PASS`. The second runs the real install.sh and uninstall.sh with only their
+paths moved into a fixture: install, reinstall, uninstall, reinstall after an uninstall that
+could not remove the right (refused, nothing changed), a held lock (refused), two installs
+at once (the second is refused) and a failed install (rolled back). Install and uninstall
+hold one lock from the first read to the end, so they never run at the same time.
 
 Install and removal change the Mac's unlock rule and need the owner's admin
 password. Run them only on a test Mac or with the owner's explicit approval, and
