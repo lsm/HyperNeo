@@ -27,6 +27,10 @@ done
 
 if [[ "${2:-}" == --driver-only ]]; then exit 0; fi
 
+if ! verify_signature "$app/Contents/MacOS/hyperneo-locked-use" ' and identifier "io.hyperneo.locked-use"'; then
+    echo "hyperneo-locked-use signature verification failed" >&2
+    exit 1
+fi
 verify_signature "$app"
 codesign --display --entitlements - --xml "$app" > "$entitlements"
 security cms -D -i "$app/Contents/embedded.provisionprofile" > "$entitlements.profile"
