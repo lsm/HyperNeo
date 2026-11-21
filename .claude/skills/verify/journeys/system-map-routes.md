@@ -19,3 +19,5 @@ unregistered or ambiguous operations remain unreadable. This report does not
 prove that an opaque post-pipeline callback is only a projection.
 The regular verdict also checks the typed goal-session executor.
 The worker checks reject a returned runner with an effectful argument.
+The regular verdict also checks that the shorthand executor of `work.health`
+is recognized as a named pipeline.
