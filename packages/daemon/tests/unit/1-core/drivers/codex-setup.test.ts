@@ -44,6 +44,9 @@ async function fixture(
       async remoteEnabled() {
         return remote;
       },
+      async managedRunning() {
+        return true;
+      },
       async enableRemote() {
         remote = true;
         effects.push('enable');
@@ -157,5 +160,66 @@ test('only the paired local session door can run setup', async () => {
     expect(
       await invokeOperation(registry, 'system.codex.setup', { noRemoteControl: true }, local)
     ).toMatchObject({ kind: 'completed', value: { ok: true } });
+  });
+});
+
+test('an unanswered Codex question runs no host changes and decline survives repeated checks', async () => {
+  await fixture('ws://distinct.example/', async ({ setup, read, effects }) => {
+    const questions = new Set<string>();
+    let answer: boolean | undefined;
+    setup.bindQuestion({
+      async open(id) {
+        questions.add(id);
+      },
+      answer: () => answer,
+      retire() {},
+    });
+    setup.check();
+    setup.firstUse();
+    await vi.waitFor(() =>
+      expect(read()).toMatchObject({ decision: 'asked', questionId: expect.any(String) })
+    );
+    expect(effects).toEqual([]);
+    answer = false;
+    setup.check();
+    await vi.waitFor(() => expect(read()?.decision).toBe('declined'));
+    setup.check();
+    await setup.close();
+    expect(questions.size).toBe(1);
+    expect(effects).toEqual(['close']);
+  });
+});
+
+test('approval runs the shared setup once and keeps it configured on later checks', async () => {
+  await fixture('ws://distinct.example/', async ({ setup, read, effects }) => {
+    let answer: boolean | undefined;
+    const questions = new Set<string>();
+    setup.bindQuestion({
+      async open(id) {
+        questions.add(id);
+      },
+      answer: () => answer,
+      retire() {},
+    });
+    setup.check();
+    await vi.waitFor(() => expect(read()?.decision).toBe('asked'));
+    answer = true;
+    setup.check();
+    await vi.waitFor(() => {
+      expect(read()).toMatchObject({ enabled: true, remoteControl: 'enabled' });
+      expect(read()?.decision).toBeUndefined();
+    });
+    setup.firstUse();
+    await setup.close();
+    expect(questions.size).toBe(1);
+    expect(effects).toEqual([
+      'migrate',
+      'start',
+      'bridge',
+      'environment',
+      'enable',
+      'restart',
+      'close',
+    ]);
   });
 });

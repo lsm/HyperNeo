@@ -254,7 +254,8 @@ export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
     port?: number;
     originalUrl?: string | null;
     remoteControl?: 'enabled' | 'skipped';
-    decision?: 'declined';
+    decision?: 'asked' | 'approved' | 'declined';
+    questionId?: string;
   };
   oxapHub?: { path: string; version: string; sha256: string };
 }

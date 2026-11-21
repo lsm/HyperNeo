@@ -10,7 +10,7 @@ import { codexAppServerSocketPath } from './worker-directories.ts';
 export const CODEX_BRIDGE_PORT = 47912;
 const tokenDirectory = () => join(getDataDir(), 'codex-app-server-bridge');
 
-async function checkTokenDirectory(directory: string) {
+async function checkTokenDirectory(directory: string, repair = true) {
   const parent = await open(
     directory,
     constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW
@@ -18,7 +18,10 @@ async function checkTokenDirectory(directory: string) {
   try {
     const stat = await parent.stat();
     if (stat.uid !== process.getuid?.()) throw new Error('Invalid token directory owner.');
-    if ((stat.mode & 0o777) !== 0o700) await parent.chmod(0o700);
+    if ((stat.mode & 0o777) !== 0o700) {
+      if (!repair) throw new Error('Invalid token directory mode.');
+      await parent.chmod(0o700);
+    }
   } finally {
     await parent.close();
   }
@@ -34,10 +37,13 @@ export async function removeCodexBridgeToken() {
   }
 }
 
-async function bridgeToken(rotate: boolean): Promise<Buffer> {
+async function bridgeToken(
+  rotate: boolean,
+  mode: 'load' | 'existing' | 'inspect' = 'load'
+): Promise<Buffer> {
   const directory = tokenDirectory();
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  await checkTokenDirectory(directory);
+  if (mode === 'load') await mkdir(directory, { recursive: true, mode: 0o700 });
+  await checkTokenDirectory(directory, mode !== 'inspect');
 
   const path = join(directory, 'token');
   const read = () => open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -60,7 +66,7 @@ async function bridgeToken(rotate: boolean): Promise<Buffer> {
     }
   };
   const file = await read().catch(async (error: NodeJS.ErrnoException) => {
-    if (error.code !== 'ENOENT') throw error;
+    if (mode !== 'load' || error.code !== 'ENOENT') throw error;
     await generate(false);
     return read();
   });
@@ -70,7 +76,10 @@ async function bridgeToken(rotate: boolean): Promise<Buffer> {
     if (!stat.isFile() || stat.uid !== process.getuid?.() || stat.size !== 43) {
       throw new Error('Invalid bridge token file.');
     }
-    if ((stat.mode & 0o777) !== 0o600) await file.chmod(0o600);
+    if ((stat.mode & 0o777) !== 0o600) {
+      if (mode === 'inspect') throw new Error('Invalid bridge token mode.');
+      await file.chmod(0o600);
+    }
     token = await file.readFile('utf8');
     if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new Error('Invalid bridge token.');
   } finally {
@@ -87,6 +96,10 @@ export function loadCodexBridgeToken(rotate = false) {
       'Check ownership and permissions of the Codex bridge token directory and file.'
     );
   });
+}
+
+export function readCodexBridgeToken(repair = false) {
+  return bridgeToken(false, repair ? 'existing' : 'inspect').catch(() => undefined);
 }
 
 export async function startCodexAppServerBridge(

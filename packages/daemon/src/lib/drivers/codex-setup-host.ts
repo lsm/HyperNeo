@@ -101,6 +101,9 @@ export function createCodexSetupHost(spawn: SpawnFn = spawnProcess, home = homed
         [codexCommand(), 'app-server', 'daemon', 'start'],
         'Could not start the managed Codex daemon.'
       ),
+    async managedRunning() {
+      return (await managed(async () => true)) ?? false;
+    },
     async remoteEnabled() {
       return (
         (await managed(

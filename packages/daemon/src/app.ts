@@ -16,6 +16,8 @@ import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import { startSessionDoor } from './lib/messaging/session-door.ts';
 import { stampActiveAttempt } from './lib/tasks/direct-attempt-flag.ts';
 import { homedir } from 'os';
+import { existsSync } from 'node:fs';
+import { codexStatePath } from './storage/codex-desktop-read.ts';
 import { parsePositiveInt, type Config } from './config.ts';
 import type { WebSocketData } from './types/websocket.ts';
 import { createHttpWsServer, type ServerHandle } from './lib/runtime-server/index.ts';
@@ -1199,7 +1201,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         : undefined;
     const rpcHandlers = await setupRPCHandlers(
       {
-        admitCodexWork: codexHost?.admit,
+        admitCodexWork:
+          codexHost &&
+          ((send) => {
+            codexSetup?.firstUse();
+            return codexHost.admit(send);
+          }),
         codexSetup,
         extensions,
         purgeClaudeFeed: (sessionIds) => purgeWorkFeedSessions(db.gateway, 'claude', sessionIds),
@@ -1731,6 +1738,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       processWatchdog.start();
       logInfo('[Daemon] Process watchdog started');
     }
+    if (codexSetup && (existsSync(codexStatePath(homedir())) || codexBridge?.decision))
+      codexSetup.check();
 
     let isCleanedUp = false;
     const cleanup = async () => {
