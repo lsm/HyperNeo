@@ -21,7 +21,10 @@ owned lifecycle and input delivery journeys for CLI mutation proof.
 
 In `desktop` mode, discovery waits for a briefly locked App database, then
 reads a WAL database without writable sidecars and reports an unsupported
-schema after the fixture renames the session table. In `both` mode, schema
+schema after the fixture renames the session table. The adapter catalog must
+work with the App disconnected, and the source WAL database must stay intact.
+Use a proof directory with spaces and URI characters when checking the
+read-only fallback. In `both` mode, schema
 drift preserves CLI matches with an unavailable note. A search with no
 fallback matches reports the Desktop error as unreachable.
 

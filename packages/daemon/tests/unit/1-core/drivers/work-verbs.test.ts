@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
 import { RemoteDaemonRegistry } from '../../../../src/lib/remote-daemons/registry';
 import { describe, expect, test } from 'bun:test';
+import { createCopilotDesktopAdapter } from '../../../../src/lib/drivers/copilot-desktop-adapter';
 import {
   annotateUnreachable,
   SendWorkResultSchema,
@@ -354,6 +355,25 @@ describe('work verb operations', () => {
       value: [{ id: adapter.id, capabilities: ['find', 'send'] }],
     });
     expect(adapter.capabilities).toContain('steer');
+  });
+
+  test('lists a disconnected Copilot Desktop as read-only', async () => {
+    const adapter = createCopilotDesktopAdapter(
+      async () => [],
+      'imac',
+      '/fixture',
+      () => false
+    );
+    expect(await call('work.adapters', {}, undefined, { source: 'rpc' }, [adapter])).toEqual({
+      ok: true,
+      value: [
+        {
+          id: 'copilot-cli',
+          capabilities: ['find', 'status', 'turns'],
+          unsupportedCapabilities: expect.objectContaining({ steer: expect.any(String) }),
+        },
+      ],
+    });
   });
 
   test('queue/withdraw are discoverable routes and preserve the authoritative caller origin', async () => {

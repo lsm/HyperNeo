@@ -1,8 +1,9 @@
 import { describe, it, expect, afterEach } from 'bun:test';
-import { existsSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Database } from '../../../../src/storage/sqlite-compat';
+import { pathToFileURL } from 'node:url';
+import { Database, openReadonlyDatabaseUri } from '../../../../src/storage/sqlite-compat';
 
 describe('sqlite compat: readonly option (cross-runtime)', () => {
   const path = join(tmpdir(), `hyperneo-readonly-${process.pid}.db`);
@@ -41,5 +42,35 @@ describe('sqlite compat: readonly option (cross-runtime)', () => {
     );
     expect(() => ro.exec('INSERT INTO t VALUES (3)')).toThrow();
     ro.close();
+  });
+
+  it('opens an encoded immutable WAL database without creating sidecars', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hyperneo-readonly-uri-'));
+    const filename = 'Desktop ?#.db';
+    const file = join(dir, filename);
+    try {
+      const db = new Database(file);
+      db.exec('PRAGMA journal_mode = WAL; CREATE TABLE t(x INTEGER); INSERT INTO t VALUES (42);');
+      db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+      db.close();
+      rmSync(`${file}-wal`, { force: true });
+      rmSync(`${file}-shm`, { force: true });
+      const before = readFileSync(file);
+      chmodSync(dir, 0o555);
+      const uri = pathToFileURL(file);
+      uri.searchParams.set('immutable', '1');
+      const reader = openReadonlyDatabaseUri(uri);
+      try {
+        expect(reader.prepare('SELECT x FROM t').get()).toEqual({ x: 42 });
+        expect(() => reader.exec('INSERT INTO t VALUES (2)')).toThrow();
+      } finally {
+        reader.close();
+      }
+      expect(readdirSync(dir)).toEqual([filename]);
+      expect(readFileSync(file)).toEqual(before);
+    } finally {
+      chmodSync(dir, 0o700);
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -14,8 +14,9 @@ const isBun = typeof Bun !== 'undefined';
 const TRANSACTION_CONTROL_SQL_PATTERN = /^\s*(begin|commit|rollback|savepoint|release)\b/i;
 
 let Database: typeof NodeDatabase;
+let openReadonlyDatabaseUri: (uri: URL) => NodeDatabase;
 if (isBun) {
-  const { Database: BunDatabaseImpl } = await import('bun:sqlite');
+  const { Database: BunDatabaseImpl, constants } = await import('bun:sqlite');
   type BunStatement = ReturnType<InstanceType<typeof BunDatabaseImpl>['prepare']>;
   class CachedDatabase extends BunDatabaseImpl {
     private readonly statementCache = new StatementCache<BunStatement>(STATEMENT_CACHE_CAPACITY);
@@ -23,16 +24,19 @@ if (isBun) {
 
     constructor(
       path: string,
-      options?: ConstructorParameters<typeof BunDatabaseImpl>[1] & {
-        queryObservability?: SQLiteQueryObservabilityOptions;
-      }
+      options?:
+        | number
+        | (Extract<ConstructorParameters<typeof BunDatabaseImpl>[1], object> & {
+            queryObservability?: SQLiteQueryObservabilityOptions;
+          })
     ) {
-      const rest: Record<string, unknown> = {};
-      if (options) Object.assign(rest, options);
-      delete rest.queryObservability;
-      super(path, (Object.keys(rest).length > 0 ? rest : undefined) as never);
-      if (options?.queryObservability) {
-        this.queryObserver = new SQLiteQueryObserver(options.queryObservability);
+      const { queryObservability, ...rest } = typeof options === 'object' ? options : {};
+      super(
+        path,
+        typeof options === 'number' ? options : Object.keys(rest).length ? rest : undefined
+      );
+      if (queryObservability) {
+        this.queryObserver = new SQLiteQueryObserver(queryObservability);
       }
     }
 
@@ -116,9 +120,15 @@ if (isBun) {
     }
   }
   Database = CachedDatabase as unknown as typeof NodeDatabase;
+  openReadonlyDatabaseUri = (uri) =>
+    new CachedDatabase(
+      uri.href,
+      constants.SQLITE_OPEN_READONLY | constants.SQLITE_OPEN_URI
+    ) as unknown as NodeDatabase;
 } else {
   Database = (await import('./sqlite-node.ts')).Database;
+  openReadonlyDatabaseUri = (uri) => new Database(uri.href, { readonly: true });
 }
 
-export { Database };
+export { Database, openReadonlyDatabaseUri };
 export type Database = NodeDatabase;

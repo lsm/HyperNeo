@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { appendFileSync, chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
@@ -211,14 +211,19 @@ try {
       assert.deepEqual(afterLock.unreachable, []);
       assert(afterLock.places.some((place) => place.work.some((work) => work.ref.id === copilotSession)));
       db.exec('PRAGMA journal_mode = WAL');
+      db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     } finally {
       db.close();
     }
+    rmSync(`${state}-wal`, { force: true });
+    rmSync(`${state}-shm`, { force: true });
+    const original = readFileSync(state);
     chmodSync(dirname(state), 0o555);
     try {
       const wal = await rpc<z.infer<typeof FindWorkResultSchema>>('work.find', query);
       assert.deepEqual(wal.unreachable, []);
       assert(wal.places.some((place) => place.work.some((work) => work.ref.id === copilotSession)));
+      assert.deepEqual(readFileSync(state), original);
     } finally {
       chmodSync(dirname(state), 0o700);
     }
