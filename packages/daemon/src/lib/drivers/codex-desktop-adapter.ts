@@ -811,7 +811,7 @@ async function withCodexMessageServer<Value>(
 }
 
 const CODEX_APP_HOLDS_THREAD =
-  'The Codex app has this thread open on its own app-server, and HyperNeo cannot reach the app. Start new work, or close the thread in the Codex app and try again.';
+  'The Codex app has this thread open on its own app-server, and HyperNeo cannot reach the app. Start new work, or close the thread in the Codex app and try again. The app may have reverted after an update, so quit and reopen it or rerun `hyperneo codex-setup`.';
 
 function codexAppHoldsThread(error: unknown, threadId: string): boolean {
   const rejection = z
