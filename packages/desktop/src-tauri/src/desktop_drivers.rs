@@ -108,6 +108,8 @@ struct Drivers {
     foreground: Arc<Mutex<()>>,
     /// Foreground locks held by workers whose input could not be confirmed stopped.
     stuck: StdMutex<BTreeMap<String, OwnedMutexGuard<()>>>,
+    /// Workers whose driver shutdown failed; they get no input until Stop confirms it.
+    unconfirmed: StdMutex<std::collections::BTreeSet<String>>,
 }
 struct Settle<'a> {
     leases: &'a StdMutex<leases::Leases>,
@@ -234,6 +236,7 @@ impl Control {
             leases: StdMutex::default(),
             foreground: Arc::default(),
             stuck: StdMutex::default(),
+            unconfirmed: StdMutex::default(),
         });
         let state = drivers.clone();
         let task = tokio::spawn(async move {
@@ -647,6 +650,11 @@ impl Drivers {
             if !matches!(request.action.as_str(), "start" | "dispatch")
                 && !slots.contains_key(&worker_id)
             {
+                if request.action == "stop" {
+                    self.leases.lock().unwrap().release(&worker_id);
+                    self.stuck.lock().unwrap().remove(&worker_id);
+                    self.unconfirmed.lock().unwrap().remove(&worker_id);
+                }
                 return match request.action.as_str() {
                     "status" | "stop" => Ok(json!({"state": "stopped", "pid": null})),
                     _ => Err("Unknown Desktop control action".into()),
@@ -677,6 +685,15 @@ impl Drivers {
                         .await?
                 }
                 "dispatch" => {
+                    if self.unconfirmed.lock().unwrap().contains(&worker_id) {
+                        return Ok(Some(finish(
+                            bundle,
+                            class,
+                            "refused",
+                            json!("stop_unconfirmed"),
+                            false,
+                        )));
+                    }
                     let mut settle = Settle {
                         leases: &self.leases,
                         worker: &worker_id,
@@ -804,9 +821,21 @@ impl Drivers {
                         Err(_) => json!("driver call timed out"),
                     };
                     if !reason.is_null() {
-                        if let Err(error) = active.channel.close().await {
+                        let closed = active.channel.close().await;
+                        #[cfg(test)]
+                        let closed = if request
+                            .arguments
+                            .as_ref()
+                            .is_some_and(|args| args["fixture_close_fails"] == true)
+                        {
+                            Err("fixture close failure".into())
+                        } else {
+                            closed
+                        };
+                        if let Err(error) = closed {
                             reason = json!(format!("stop_unconfirmed: {error}"));
                             settle.keep = true;
+                            self.unconfirmed.lock().unwrap().insert(worker_id.clone());
                             if let Some(guard) = screen.take() {
                                 self.stuck.lock().unwrap().insert(worker_id.clone(), guard);
                             }
@@ -857,6 +886,7 @@ impl Drivers {
                     *worker = None;
                     self.leases.lock().unwrap().release(&worker_id);
                     self.stuck.lock().unwrap().remove(&worker_id);
+                    self.unconfirmed.lock().unwrap().remove(&worker_id);
                 }
                 "status" => {}
                 _ => return Err("Unknown Desktop control action".into()),
@@ -1000,6 +1030,7 @@ mod peer_tests {
             leases: StdMutex::default(),
             foreground: Arc::default(),
             stuck: StdMutex::default(),
+            unconfirmed: StdMutex::default(),
         };
         assert_eq!(wait_unreaped(pid).unwrap(), (Some(0), None));
         assert!(drivers.authorized(pid));
