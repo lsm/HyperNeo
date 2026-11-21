@@ -5,8 +5,8 @@ import type {
   CopilotDesktopSession,
 } from '../lib/drivers/copilot-desktop-adapter.ts';
 
-function readOnce({ statePath, id, query }: CopilotDesktopRead) {
-  const app = new Database(statePath, { readonly: true });
+function readOnce({ statePath, id, query }: CopilotDesktopRead, readonlyUri = false) {
+  const app = new Database(statePath, { readonly: true, readonlyUri });
   try {
     app.exec('PRAGMA busy_timeout = 2000');
     const columns = new Set(
@@ -72,6 +72,6 @@ export function readCopilotDesktop(args: CopilotDesktopRead) {
     if (!/unable to open database file|readonly database/.test(String(error))) throw error;
     const url = pathToFileURL(args.statePath);
     url.searchParams.set('immutable', '1');
-    return readOnce({ ...args, statePath: url.href });
+    return readOnce({ ...args, statePath: url.href }, true);
   }
 }
