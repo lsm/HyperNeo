@@ -1,11 +1,12 @@
 import { pathToFileURL } from 'node:url';
-import { Database, openReadonlyDatabaseUri } from './sqlite-compat.ts';
+import { Database } from './sqlite-compat.ts';
 import type {
   CopilotDesktopRead,
   CopilotDesktopSession,
 } from '../lib/drivers/copilot-desktop-adapter.ts';
 
-function readOnce(app: Database, { id, query }: CopilotDesktopRead) {
+function readOnce({ statePath, id, query }: CopilotDesktopRead, readonlyUri = false) {
+  const app = new Database(statePath, { readonly: true, readonlyUri });
   try {
     app.exec('PRAGMA busy_timeout = 2000');
     const columns = new Set(
@@ -66,11 +67,11 @@ function readOnce(app: Database, { id, query }: CopilotDesktopRead) {
 
 export function readCopilotDesktop(args: CopilotDesktopRead) {
   try {
-    return readOnce(new Database(args.statePath, { readonly: true }), args);
+    return readOnce(args);
   } catch (error) {
     if (!/unable to open database file|readonly database/.test(String(error))) throw error;
     const url = pathToFileURL(args.statePath);
     url.searchParams.set('immutable', '1');
-    return readOnce(openReadonlyDatabaseUri(url), args);
+    return readOnce({ ...args, statePath: url.href }, true);
   }
 }

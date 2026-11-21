@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync }
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { Database, openReadonlyDatabaseUri } from '../../../../src/storage/sqlite-compat';
+import { Database } from '../../../../src/storage/sqlite-compat';
 
 describe('sqlite compat: readonly option (cross-runtime)', () => {
   const path = join(tmpdir(), `hyperneo-readonly-${process.pid}.db`);
@@ -59,7 +59,7 @@ describe('sqlite compat: readonly option (cross-runtime)', () => {
       chmodSync(dir, 0o555);
       const uri = pathToFileURL(file);
       uri.searchParams.set('immutable', '1');
-      const reader = openReadonlyDatabaseUri(uri);
+      const reader = new Database(uri.href, { readonlyUri: true });
       try {
         expect(reader.prepare('SELECT x FROM t').get()).toEqual({ x: 42 });
         expect(() => reader.exec('INSERT INTO t VALUES (2)')).toThrow();
