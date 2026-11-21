@@ -41,7 +41,7 @@ try{
  await open();await app!.db.createSession({id:root,title:'Synthetic publication page',workspacePath:join(run,'workspace'),createdAt:new Date().toISOString(),lastActiveAt:new Date().toISOString(),status:'active',config:{queryMode:'manual'},metadata:{messageCount:0,totalTokens:0,inputTokens:0,totalCost:0,toolCallCount:0}});
  sql().exec("DELETE FROM neo_conversation; DELETE FROM neo_session_bindings WHERE kind='neo'");new NeoRepository(sql()).reserveBinding({sessionId:root,kind:'neo',projectId:null});
  const ledger=new NeoPublicationRepository(sql()),stored=[];
- for(let n=1;n<=7;n++){const result=ledger.append({conversationId,publicationId:id(n),verbatim:true,fullText:n===1?text:`Fictional reply ${n} 甲🙂`,links:[]});assert(result.accepted);stored.push(result.publication);}
+ for(let n=1;n<=7;n++){const result=ledger.append({conversationId,publicationId:id(n),verbatim:true,fullText:n===1?text:`Fictional reply ${n} 甲🙂`,links:[]});assert(result.accepted);stored.push(JSON.parse(JSON.stringify(result.publication)));}
  assert(ledger.append({conversationId:foreign,publicationId:id(8),verbatim:true,fullText:'Foreign row must stay private.',links:[]}).accepted);
  const payload=sql().prepare('SELECT payload_json AS value FROM neo_publications WHERE publication_id=?').get(id(1)) as {value:string};sql().prepare('UPDATE neo_publications SET payload_json=? WHERE publication_id=?').run('{}',id(1));
  await assert.rejects(read(),/Invalid stored Neo publication/);evidence.conversationAfterFailedRead=sql().prepare('SELECT id FROM neo_conversation').get()??null;

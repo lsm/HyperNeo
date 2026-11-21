@@ -25,6 +25,7 @@ while the legacy public-conversation identity is uninitialized. Decoding must
 fail without committing the identity. The baseline commits the identity before
 reporting failure. Two repaired concurrent reads initialize one identity and
 return the same authored bytes, including the full Unicode verbatim reply hash.
+Expected stored rows are serialized through JSON before comparing RPC replies.
 Forward, newest, earlier and empty pages preserve their cursor semantics and
 exclude a foreign conversation. Bound Neo MCP callers read the same page;
 unbound callers and a binding removed before queued command admission are refused.

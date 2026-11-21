@@ -10,7 +10,11 @@ TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evid
 
 The actual agent MCP door publishes complete text while another process holds
 BEGIN IMMEDIATE for 1500 ms. That process authenticates with the isolated
-daemon's local credential and independently probes system.health.
+daemon's local credential and independently probes system.health. The first
+health reply opens the read lane before the lock, after startup body copying
+has settled.
+The fixture initializes the conversation before taking the lock. Legacy
+conversation initialization is outside this writer-contention check.
 The publication must return a durable receipt and unchanged complete text;
 retrying its request ID must return the same sequence, with one stored row.
 Main publication INSERT preparation is forbidden. Health must remain below
