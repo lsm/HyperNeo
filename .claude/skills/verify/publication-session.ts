@@ -10,6 +10,7 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
 import { NeoSessionMessageRepository } from '../../../packages/daemon/src/storage/repositories/neo-session-message-repository.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
+import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 
 const run = process.argv[2];
 assert.equal(process.env.NODE_ENV, 'test');
@@ -48,7 +49,7 @@ try {
   app.sessionManager.getOperationRegistry = () => registry;
   const invoke = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: root, role: 'neo' }));
   const publish = async (requestId: string, session?: string) => JSON.parse((await invoke({ name: 'neo.publication.publish', input: { requestId, text: 'Session update', details: 'This is the requested session.', session } })).content[0].text);
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`, { headers: { authorization: `Bearer ${await readLocalCredential()}` } } as never);
   await new Promise((resolve, reject) => { ws!.onopen = resolve; ws!.onerror = reject; });
   const read = (name = 'neo.publication.read') => new Promise<{ ok: boolean; items: { session?: string; role?: string; publication?: { session?: string } }[] }>((resolve, reject) => {
     const id = crypto.randomUUID();
