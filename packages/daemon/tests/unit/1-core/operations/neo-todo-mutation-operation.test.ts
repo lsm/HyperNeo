@@ -22,6 +22,7 @@ describe('Writer-backed todo operation activation', () => {
   let gateway: DbGateway;
   let order: string[];
   let stopFailure: string | null;
+  let projectionCalls: number;
   let duringStop: (() => void) | null;
   let beforeWrite: (() => void) | null;
   let checkDone: boolean;
@@ -36,6 +37,7 @@ describe('Writer-backed todo operation activation', () => {
     gateway = new DbGateway(':memory:', db);
     order = [];
     stopFailure = null;
+    projectionCalls = 0;
     duringStop = null;
     beforeWrite = null;
     checkDone = true;
@@ -118,7 +120,10 @@ describe('Writer-backed todo operation activation', () => {
         changed: () => {
           order.push('announce');
         },
-        project: async (todos) => todos.map((todo) => ({ ...todo, worker: null })),
+        project: async (todos) => {
+          projectionCalls++;
+          return todos.map((todo) => ({ ...todo, worker: null }));
+        },
       })
     );
     call = async (name, input, role = 'neo') => {
@@ -553,6 +558,7 @@ describe('Writer-backed todo operation activation', () => {
     });
     expect(store.getTodo('first')!.state).toBe('todo');
     expect(order).toEqual(['stop']);
+    expect(projectionCalls).toBe(0);
   });
 
   test('remove commits the retired todo only after its stop succeeds', async () => {
@@ -572,6 +578,7 @@ describe('Writer-backed todo operation activation', () => {
       records: [expect.stringContaining('ask_settled:')],
     });
     expect(order).toEqual([]);
+    expect(projectionCalls).toBe(1);
   });
 
   test('a SQL failure never announces a successful mutation', async () => {
