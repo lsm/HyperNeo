@@ -157,10 +157,11 @@ the daemon re-applies setup. There is no public mechanism that avoids this:
 the alternatives are a helper speaking launchd's undocumented XPC protocol
 (fragile across macOS releases) or launching the app only through HyperNeo so
 the token rides the spawn environment (breaks every normal Dock/Finder launch).
-Decision, accepted by the human (2026-11-21): the window is a known residual
-risk, stated here plainly for sign-off. A stolen token works only until the
-next `codex-setup` regenerates it; rotation is the manual redress. No XPC
-helper will be built — it would rely on non-public launchd behaviour.
+Proposed: accept the window as a known residual risk (Neo, 2026-11-21); the
+human confirms or rejects at sign-off — see Open questions. A stolen token
+works only until the next `codex-setup` regenerates it; rotation is the manual
+redress. No XPC helper will be built — it would rely on non-public launchd
+behaviour.
 
 Logging: the token never appears in logs. The forwarder logs connection
 counts and JSON-RPC method names only, never URLs or request targets; anything
@@ -227,11 +228,17 @@ machine, after migrating the hand-installed bridge:
 
 ## Open questions
 
-1. Is port 47912 fine as the permanent default?
-2. Remote control inside setup (skippable with a flag) versus a separate
+1. Token delivery residual risk: the only public session-env mechanism
+   (`launchctl setenv`) exposes the token in that process's arguments for the
+   milliseconds it runs, once per login. Proposed: accept as a known residual
+   risk (Neo, 2026-11-21) — a stolen token works only until the next
+   `codex-setup`; no XPC helper (non-public launchd behaviour). The human
+   confirms or rejects this at sign-off.
+2. Is port 47912 fine as the permanent default?
+3. Remote control inside setup (skippable with a flag) versus a separate
    explicit step, given it restarts the managed daemon once?
-3. Should the desktop app ever prompt to run this setup, or does the CLI stay
+4. Should the desktop app ever prompt to run this setup, or does the CLI stay
    the only door?
-4. Is the login-ordering caveat (an app instance restored before the HyperNeo
+5. Is the login-ordering caveat (an app instance restored before the HyperNeo
    daemon keeps its private server until quit and reopen) acceptable, or does
    setup need to warn about macOS session restore explicitly?
