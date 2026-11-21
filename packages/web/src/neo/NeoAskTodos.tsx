@@ -223,8 +223,10 @@ function TodoRow({
   onControl,
   disabled,
   onDesktopControl,
+  desktopApps = [],
 }: {
   todo: NeoTodoEntry;
+  desktopApps?: readonly { name: string }[];
   onControl?: (control: NeoTodoControl) => Promise<void>;
   disabled?: boolean;
   onDesktopControl?: (todoId: string, on: boolean) => void;
@@ -265,10 +267,14 @@ function TodoRow({
   const desktopEditable =
     number === undefined &&
     !!onDesktopControl &&
+    desktopApps.length > 0 &&
     !todo.worker?.daemon &&
     ['todo', 'doing', 'blocked'].includes(todo.state);
   const desktopOn = desktopEditable && todo.named?.desktopControl !== false;
   const setDesktop = (on: boolean) => onDesktopControl?.(todo.id, on);
+  const desktopTitle = t('todo.desktopOnTitle', {
+    apps: desktopApps.map((app) => app.name).join(', '),
+  });
   const menu = [
     ...(desktopEditable
       ? [
@@ -444,8 +450,8 @@ function TodoRow({
             <button
               type="button"
               data-todo-desktop
-              title={t('todo.desktopOnTitle')}
-              aria-label={t('todo.desktopOnTitle')}
+              title={desktopTitle}
+              aria-label={desktopTitle}
               disabled={disabled}
               onClick={() => setConfirmDesktopOff(true)}
               class="inline-flex shrink-0 items-center rounded-lg border border-transparent px-1.5 py-1 text-[var(--neo-desktop-control)] hover:border-line focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
@@ -977,6 +983,7 @@ export function NeoAskTodos({
       }
       expanded={expanded.includes(todo.id)}
       onDesktopControl={onDesktopControl}
+      desktopApps={entry.ask.desktopApps}
       onToggle={
         entry.summary || neoTodoHasMore(todo)
           ? () =>
@@ -1110,6 +1117,7 @@ export function NeoAskTodos({
               onControl={onControl && ((control) => onControl(todo, control))}
               expanded={expanded.includes(todo.id)}
               onDesktopControl={onDesktopControl}
+              desktopApps={entry.ask.desktopApps}
               onToggle={
                 entry.summary || neoTodoHasMore(todo)
                   ? () =>

@@ -24,6 +24,7 @@ import {
   requireNeoOpenAsk,
 } from './todo-operations.ts';
 import { DESKTOP_CONTROL_REFUSAL, recordNeoTodoAdmission } from './todo-add-operation.ts';
+import { DesktopAppsSchema, desktopAppsLine } from '../desktop/app-scope.ts';
 import type { NeoPack, NeoTodoPolicyScope } from './pack-contract.ts';
 import { neoTodoRepository } from './pack-contract.ts';
 import { neoTodoFollowUpRefusal } from './todo-follow-up.ts';
@@ -54,6 +55,9 @@ const Open = z.object({
   projectId: Text.nullable().optional(),
   goalId: Text.nullable().optional(),
   todos: z.array(NeoTodoDraftSchema).max(20).default([]),
+  desktopApps: DesktopAppsSchema.optional().describe(
+    'The apps on this Mac the work will drive. The card lists them, and answering yes lets this ask’s todos use only these apps.'
+  ),
 });
 
 const Outcome = z.object({ askId: Text, outcome: Text.max(4000) });
@@ -350,11 +354,17 @@ export function createNeoAskRecordOperations(
               policies
             );
         if (taken) return { ok: false, reason: taken };
+        if (current && input.desktopApps)
+          return {
+            ok: false,
+            reason:
+              'desktop_apps_need_new_card: this ask already has its card. Propose a new ask that lists the app.',
+          };
+        const cardText = input.desktopApps
+          ? `${input.request}\n\n${desktopAppsLine(input.desktopApps)}`
+          : input.request;
         if (!current) {
-          const card = requireHumanCard(
-            { text: input.request, kind: 'yesno' },
-            settlement.language?.()
-          );
+          const card = requireHumanCard({ text: cardText, kind: 'yesno' }, settlement.language?.());
           if ('reason' in card) return card.reason;
         }
         const ask =
@@ -377,7 +387,7 @@ export function createNeoAskRecordOperations(
               proposalQuestionId(opened.id),
               opened.id,
               {
-                text: input.request,
+                text: cardText,
                 kind: 'yesno',
                 options: null,
                 multiple: false,
@@ -386,7 +396,9 @@ export function createNeoAskRecordOperations(
               },
               now
             );
-            return opened;
+            return input.desktopApps
+              ? (store.addAskDesktopApps(opened.id, input.desktopApps, now) ?? opened)
+              : opened;
           });
         recorded.push(...family(ask));
         const records: string[] = [];

@@ -174,7 +174,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'todo.desktopControl': '允许智能体使用这台电脑',
   'todo.desktopOn': '允许用这台电脑',
   'todo.desktopOff': '不再允许用这台电脑',
-  'todo.desktopOnTitle': '正在用这台电脑，点一下可以关掉',
+  'todo.desktopOnTitle': '可以用这台电脑上的 {apps}，点一下可以关掉',
   'todo.desktopOffConfirmTitle': '不再允许用这台电脑？',
   'todo.desktopOffConfirmBody': '「{title}」之后就不能再用这台电脑了。',
   'todo.desktopOffConfirm': '不再允许',

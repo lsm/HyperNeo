@@ -3,6 +3,7 @@ import { queueNeoRequestReply, queueNeoRequestSettledReply } from '../../lib/neo
 import type {
   NeoAnswerProvenance,
   NeoAsk,
+  NeoDesktopApp,
   NeoQuestion,
   NeoQuestionAnswer,
   NeoTodo,
@@ -123,16 +124,20 @@ const TODO_COLUMNS: Record<keyof NeoTodoPatch, string> = {
 
 const ASK_SELECT = `SELECT id, goal_id AS goalId, project_id AS projectId, parent_id AS parentId, session_id AS sessionId,
   origin_message_id AS originMessageId, title, topic, request, status, outcome, focused_session_json AS focusedSessionJson,
-  created_at AS createdAt, updated_at AS updatedAt, settled_at AS settledAt FROM neo_asks`;
+  desktop_apps AS desktopAppsJson, created_at AS createdAt, updated_at AS updatedAt, settled_at AS settledAt FROM neo_asks`;
 
 const ASK_ATTENTION = `(status = 'open'
   OR EXISTS (SELECT 1 FROM neo_todos t WHERE t.ask_id = neo_asks.id
     AND t.state NOT IN ('done', 'removed'))
   OR EXISTS (SELECT 1 FROM neo_questions q WHERE q.ask_id = neo_asks.id AND q.state = 'open'))`;
 
-type AskRow = Omit<NeoAsk, 'focusedSession'> & { focusedSessionJson: string | null };
-const toAsk = ({ focusedSessionJson, ...row }: AskRow): NeoAsk => ({
+type AskRow = Omit<NeoAsk, 'focusedSession' | 'desktopApps'> & {
+  focusedSessionJson: string | null;
+  desktopAppsJson: string | null;
+};
+const toAsk = ({ focusedSessionJson, desktopAppsJson, ...row }: AskRow): NeoAsk => ({
   ...row,
+  ...(desktopAppsJson ? { desktopApps: JSON.parse(desktopAppsJson) as NeoDesktopApp[] } : {}),
   ...(focusedSessionJson
     ? { focusedSession: JSON.parse(focusedSessionJson) as NeoAsk['focusedSession'] }
     : {}),
@@ -594,6 +599,19 @@ export class NeoAskTodoRepository {
         .prepare(`${ASK_SELECT} WHERE goal_id = ? ORDER BY created_at, id`)
         .all(goalId) as AskRow[]
     ).map(toAsk);
+  }
+
+  addAskDesktopApps(id: string, apps: readonly NeoDesktopApp[], now: number): NeoAsk | null {
+    const ask = this.getAsk(id);
+    if (!ask || ask.status !== 'open') return null;
+    const scope = [...(ask.desktopApps ?? [])];
+    for (const app of apps)
+      if (!scope.some((held) => held.bundleId === app.bundleId)) scope.push(app);
+    this.db
+      .prepare('UPDATE neo_asks SET desktop_apps = ?, updated_at = ? WHERE id = ?')
+      .run(JSON.stringify(scope), now, id);
+    this.changed();
+    return this.getAsk(id);
   }
 
   setAskTopic(id: string, topic: string, now: number): NeoAsk {

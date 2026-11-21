@@ -73,6 +73,7 @@ const question = (id: string, patch: Partial<NeoQuestionEntry>): NeoQuestionEntr
 const entry = (patch: Partial<NeoAskEntry>): NeoAskEntry => ({
   ask: {
     id: 'ask',
+    desktopApps: [{ bundleId: 'com.google.Chrome', name: 'Chrome' }],
     projectId: null,
     parentId: null,
     sessionId: 'neo',
@@ -717,6 +718,20 @@ describe('NeoAskTodos', () => {
       ),
     });
 
+  it('shows no computer switch on an ask without approved apps', () => {
+    locale.value = 'en';
+    const shown = entry({ todos: [todo('b', { state: 'doing' })] });
+    const app = render(
+      <NeoAskTodos
+        entry={{ ...shown, ask: { ...shown.ask, desktopApps: undefined } }}
+        onAnswer={vi.fn()}
+        onDesktopControl={vi.fn()}
+      />
+    );
+    expect(app.container.querySelector('[data-todo-desktop]')).toBeNull();
+    expect(app.queryByRole('button', { name: 'Step actions: Todo b' })).toBeNull();
+  });
+
   it('lights the computer unless the human turned it off and switches it from the menu', () => {
     locale.value = 'en';
     const onDesktopControl = vi.fn();
@@ -747,6 +762,7 @@ describe('NeoAskTodos', () => {
     expect(
       lit.map((icon) => icon.closest('[data-ask-todo]')?.getAttribute('data-ask-todo'))
     ).toEqual(['b']);
+    expect(lit[0].getAttribute('title')).toBe('Can use Chrome on this computer. Click to stop.');
     expect(app.queryByRole('checkbox')).toBeNull();
     fireEvent.click(lit[0]);
     expect(onDesktopControl).not.toHaveBeenCalled();

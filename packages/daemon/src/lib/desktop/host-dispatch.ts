@@ -22,6 +22,7 @@ export function dispatchDesktopCall(
   request: {
     worker: string;
     workDir: string;
+    apps: string[];
     tool: string;
     arguments: Record<string, unknown>;
     callId: string;

@@ -1,12 +1,13 @@
 import { proposalQuestionId, requireAcceptedAsk } from './proposal.ts';
-import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAsk, NeoDesktopApp, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import { unnamedDesktopApp } from '../desktop/app-scope.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { z } from 'zod';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import type { OperationCaller, OperationDefinition } from '../operations/registry.ts';
 import { neoUserFolder } from './folder.ts';
-import { type NeoInputReads, resolveNeoInputAsk } from './input-ask.ts';
+import { type NeoInputReads, neoInputWords, resolveNeoInputAsk } from './input-ask.ts';
 import type { NeoPack } from './pack-contract.ts';
 import type {
   NeoTodoControls,
@@ -18,13 +19,14 @@ type AddInput = z.infer<typeof NeoTodoDraftSchema> & {
   askId?: string;
   input?: string;
   topic?: string;
+  desktopApps?: NeoDesktopApp[];
 };
 type Result = { ok: false; reason: string } | { ok: true; todo?: NeoTodo; records?: string[] };
 
 export const DESKTOP_CONTROL_REFUSAL = {
   ok: false as const,
   reason:
-    'desktop_control_requires_permission: Leave desktopControl out. Workers may use this Mac by default; call desktop.access.request {app} first so the Mac asks the human for that app.',
+    'desktop_control_requires_permission: Leave desktopControl out. A todo uses only the apps in its ask’s desktopApps; call desktop.access.request {app} first so the Mac asks the human for that app.',
 };
 
 export async function recordNeoTodoAdmission(
@@ -83,6 +85,24 @@ export function wireNeoTodoAdd(
   const add = (superpipe({})('neo.todo.add-through-writer') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
+      (input: AddInput, caller: OperationCaller) => {
+        if (!input.desktopApps) return { value: null };
+        const human = input.input ? inputs.input(caller, input.input) : null;
+        const unnamed = human && unnamedDesktopApp(neoInputWords(human.content), input.desktopApps);
+        if (human && !unnamed) return { value: null };
+        return {
+          reason: {
+            ok: false as const,
+            reason: unnamed
+              ? `desktop_app_not_named: the human's message does not name ${unnamed.name}. Propose a new ask with desktopApps so the card asks.`
+              : 'desktop_apps_need_card: only the human message in input can name apps without a card. Propose a new ask with desktopApps.',
+          },
+        };
+      },
+      ['input', 'caller'],
+      'result:outcome'
+    )
+    .pipe(
       (input: AddInput, caller: OperationCaller) =>
         resolveNeoInputAsk(store, inputs, caller, input, input.title),
       ['input', 'caller'],
@@ -130,6 +150,15 @@ export function wireNeoTodoAdd(
           facts.todos
         ),
       'facts',
+      'result:outcome'
+    )
+    .pipe(
+      (ask: NeoAsk, input: AddInput) => ({
+        value: input.desktopApps
+          ? (store.addAskDesktopApps(ask.id, input.desktopApps, Date.now()) ?? ask)
+          : ask,
+      }),
+      ['outcome', 'input'],
       'result:outcome'
     )
     .pipe(

@@ -368,6 +368,7 @@ function QueueItem({
     const desktop =
       onDesktopControl &&
       todo &&
+      [entry, listed].some((ask) => ask?.ask.desktopApps?.length) &&
       !todo.worker?.daemon &&
       ['todo', 'doing', 'blocked'].includes(todo.state)
         ? todo

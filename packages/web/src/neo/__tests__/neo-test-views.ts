@@ -49,6 +49,7 @@ export function testAskEntry(
       topic: null,
       title,
       request: title,
+      desktopApps: [{ bundleId: 'com.google.Chrome', name: 'Chrome' }],
       status: 'open',
       outcome: null,
       createdAt: 1,

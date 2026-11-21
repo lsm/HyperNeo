@@ -29,10 +29,10 @@ beforeEach(async () => {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   alive = true;
   db = new Database(':memory:');
-  db.exec(`CREATE TABLE neo_asks(id TEXT, status TEXT);
+  db.exec(`CREATE TABLE neo_asks(id TEXT, status TEXT, desktop_apps TEXT);
     CREATE TABLE neo_todos(id TEXT, ask_id TEXT, title TEXT, state TEXT, approved_at INTEGER, named TEXT);
     CREATE TABLE neo_todo_sessions(todo_id TEXT, ref TEXT);
-    INSERT INTO neo_asks VALUES('ask', 'open');`);
+    INSERT INTO neo_asks VALUES('ask', 'open', '[{"bundleId":"org.example.app","name":"app"}]');`);
   db.prepare('INSERT INTO neo_todos VALUES(?,?,?,?,?,?)').run(
     'todo',
     'ask',

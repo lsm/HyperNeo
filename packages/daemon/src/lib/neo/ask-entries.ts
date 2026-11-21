@@ -300,6 +300,7 @@ export const NeoAskEntrySchema = z.object({
     title: z.string(),
     topic: Nullable,
     topicKey: z.string().optional(),
+    desktopApps: z.array(z.object({ bundleId: z.string(), name: z.string() })).optional(),
     request: z.string(),
     status: z.enum(['open', 'done', 'dropped']),
     outcome: Nullable,

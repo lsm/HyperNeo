@@ -15,7 +15,7 @@ export const noNeoInputReads: NeoInputReads = { input: () => null, publication: 
 
 type Binding = { value: { askId: string } } | { reason: { ok: false; reason: string } };
 
-const words = (content: NeoConversationAsk['content']) =>
+export const neoInputWords = (content: NeoConversationAsk['content']) =>
   typeof content === 'string'
     ? content
     : content
@@ -118,7 +118,7 @@ export async function resolveNeoInputAsk(
           .replace(/^[#*\s]+|\*+/g, '')
           .slice(0, 120) || title,
       ...(request.topic ? { topic: request.topic } : {}),
-      request: words(human.content) || title,
+      request: neoInputWords(human.content) || title,
     });
     if (typeof winner !== 'string') return { reason: { ok: false, reason: winner.reason } };
     if ('bind' in plan && winner !== plan.bind)

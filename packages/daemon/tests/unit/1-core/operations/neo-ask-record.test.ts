@@ -269,6 +269,38 @@ describe('neo.ask.propose and neo.ask.settle', () => {
     ]);
   });
 
+  test('a proposal card lists the apps it would drive and the ask keeps them', async () => {
+    const { call, store } = setup();
+    const desktopApps = [{ bundleId: 'com.google.Chrome', name: 'Chrome' }];
+    const result = await call(
+      'neo.ask.propose',
+      { title: 'Find the invoice', request: 'Find the March invoice', desktopApps },
+      turn('apps')
+    );
+    if (!result.ok) throw new Error(result.reason);
+    expect(store.getAsk(result.ask.id)).toMatchObject({
+      request: 'Find the March invoice',
+      desktopApps,
+    });
+    expect(store.listQuestions(result.ask.id)).toMatchObject([
+      { text: 'Find the March invoice\n\n🖥 Chrome' },
+    ]);
+    const later = await call(
+      'neo.ask.propose',
+      {
+        title: 'Find the invoice',
+        request: 'Find the March invoice',
+        desktopApps: [{ bundleId: 'com.apple.mail', name: 'Mail' }],
+      },
+      turn('apps-again')
+    );
+    expect(later).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('desktop_apps_need_new_card'),
+    });
+    expect(store.getAsk(result.ask.id)?.desktopApps).toEqual(desktopApps);
+  });
+
   test('a settled proposal retry records that no new todo was added', async () => {
     const { call, store } = setup();
     const input = { title: 'Settled proposal', request: 'Review the finished work' };

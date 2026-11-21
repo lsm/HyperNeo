@@ -127,6 +127,33 @@ describe('neo ask binding from human input', () => {
     }
   });
 
+  test('apps the human named join the ask; other apps and askId-only adds are refused', async () => {
+    const f = setup();
+    try {
+      const chrome = { bundleId: 'com.google.Chrome', name: 'Chrome' };
+      const mail = { bundleId: 'com.apple.mail', name: 'Mail' };
+      const input = f.human('Use Chrome to find the March invoice');
+      const refused = await f.add({ input, desktopApps: [chrome, mail] });
+      expect(refused).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('does not name Mail'),
+      });
+      expect(f.store.listOpenAsks()).toHaveLength(1);
+      const added = await f.add({ input, desktopApps: [chrome] });
+      if (!added.ok || !added.todo) throw new Error('add failed');
+      expect(f.store.getAsk(added.todo.askId)?.desktopApps).toEqual([chrome]);
+      expect(f.store.listQuestions(added.todo.askId)).toEqual([]);
+      const followUp = await f.add({ askId: added.todo.askId, desktopApps: [mail] });
+      expect(followUp).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('desktop_apps_need_card'),
+      });
+      expect(f.store.getAsk(added.todo.askId)?.desktopApps).toEqual([chrome]);
+    } finally {
+      f.db.close();
+    }
+  });
+
   test('a direct request opens its ask with the topic and no card, and a follow-up keeps it', async () => {
     const f = setup();
     try {

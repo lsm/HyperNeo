@@ -921,8 +921,20 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertFalse(self.call('start', '../escape', workDir=str(self.work))['ok'])
 
     def dispatch(self, tool, arguments, worker='worker-a', **params):
+        params.setdefault('apps', ['com.apple.finder', 'com.apple.dock'])
         return self.call('dispatch', worker, tool=tool, arguments=arguments,
                          callId='call-' + tool, **params)
+
+    def test_dispatch_refuses_an_app_outside_the_todo_scope(self):
+        pid = finder()
+        before = self.dialogs('mock-allow')
+        reply = self.dispatch('click', {'pid': pid}, workDir=str(self.work),
+                              apps=['com.apple.dock'])['result']
+        self.assertEqual((reply['decision'], reply['reason'], reply['bundle_id'], reply['dispatched']),
+                         ('refused', 'app_not_in_todo_scope', 'com.apple.finder', False))
+        self.assertEqual(self.dialogs(), before)
+        self.assertFalse(list(self.work.glob('d-*')))
+        print('todo_scope=refused no_dialog=1 no_driver=1')
 
     def test_permissions_are_requested_only_on_desktop_call(self):
         missing = self.root / 'permissions-missing'

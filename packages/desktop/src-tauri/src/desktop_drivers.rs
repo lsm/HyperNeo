@@ -75,6 +75,8 @@ struct Request {
     arguments: Option<Value>,
     instance: Option<Value>,
     call_id: Option<String>,
+    /// Bundle ids the daemon's human approved for this worker's todo. A dispatch may act only on these.
+    apps: Option<Vec<String>>,
 }
 pub(crate) struct Control {
     drivers: Arc<Drivers>,
@@ -485,10 +487,18 @@ impl Drivers {
             observed = resolved["value"].clone();
             bundle = observed["bundle_id"].clone();
             class = resolved["value"]["class"].clone();
+            let in_scope = bundle.as_str().is_some_and(|id| {
+                request
+                    .apps
+                    .as_ref()
+                    .is_some_and(|apps| apps.iter().any(|app| app == id))
+            });
             let reason = if let Some(reason) = resolved["reason"].as_str() {
                 json!(reason)
             } else if bundle == "io.hyperneo.app" {
                 json!("app_not_grantable")
+            } else if !in_scope {
+                json!("app_not_in_todo_scope")
             } else {
                 let requirement = resolved["value"]["requirement"]
                     .as_str()
