@@ -419,11 +419,16 @@ export function createLocalPipelineResolver(
     if (
       !ts.isArrowFunction(factory) ||
       factory.parameters.length !== 0 ||
-      factory.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ||
-      ts.isBlock(factory.body)
+      factory.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
     )
       return unknown;
-    const object = unwrap(factory.body);
+    const body = factory.body;
+    const statement = ts.isBlock(body) && body.statements.length === 1 ? body.statements[0] : null;
+    const returned = ts.isBlock(body)
+      ? statement && ts.isReturnStatement(statement) && statement.expression
+      : body;
+    if (!returned) return unknown;
+    const object = unwrap(returned);
     if (
       !ts.isObjectLiteralExpression(object) ||
       object.properties.length !== 1 ||

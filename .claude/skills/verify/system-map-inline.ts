@@ -11,6 +11,18 @@ const queue = `
 `;
 
 const cases = [
+  [
+    '() => make().go()',
+    0,
+    `const run = superpipe({})('demo.maybe').end();
+     const make = () => { return { go: () => run() }; };`,
+  ],
+  [
+    '() => make().go()',
+    1,
+    `const run = superpipe({})('demo.maybe').end();
+     const make = () => { if (skip) return {}; return { go: () => run() }; };`,
+  ],
   [`() => superpipe({})('demo.maybe').input(f as G).end()()`, 0],
   [`() => ((superpipe({})('demo.maybe') as Builder).input(f as G).end() as Runner)()`, 0],
   [`() => (superpipe({})('demo.maybe').input?.(f) as Builder).end()()`, 1],
