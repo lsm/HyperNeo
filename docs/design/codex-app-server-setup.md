@@ -51,22 +51,31 @@ message). Per the issue, setup is opt-in, never automatic. Steps, each idempoten
    login.
 2. Ensure the managed daemon runs: `codex app-server daemon start`. Returns
    `alreadyRunning` when up; safe to repeat.
-3. Record the bridge in daemon settings (including the prior value of
-   `CODEX_APP_SERVER_WS_URL` from `launchctl getenv`, if any) and ask the running
-   daemon (over RPC) to start the forwarder now.
-4. `launchctl setenv CODEX_APP_SERVER_WS_URL ws://127.0.0.1:47912/rpc`.
+3. Record the bridge in daemon settings and ask the running daemon (over RPC)
+   to start the forwarder now.
+4. `launchctl setenv CODEX_APP_SERVER_WS_URL` to the bridge URL, which embeds
+   the per-user token described under Forwarder inside the daemon.
 5. `codex app-server daemon enable-remote-control`. Persists across daemon
    starts, but restarts the running daemon once, interrupting Codex work in
    flight, so setup warns first; `--no-remote-control` skips it.
 6. Tell the user to quit and reopen the Codex app (a running app reads the var
    only at launch).
 
-`hyperneo codex-setup --undo` reverses only what setup owns: restore the recorded
-prior env value (or `launchctl unsetenv` if there was none), clear the setting
-(the daemon stops the forwarder), quit and reopen the app. The managed daemon
-and its remote-control flag are the codex CLI's own state and are left alone;
-undo prints the separate command to disable remote control. Undo never
-reinstalls migrated launchd agents.
+The setting also holds the one recorded original env value, written before any
+`launchctl setenv` runs so a partial failure leaves consistent state. Recording
+is ownership-aware and happens only once: on first setup, the current value of
+`CODEX_APP_SERVER_WS_URL` is recorded if — and only if — it is not the bridge
+URL (the migrated installation's value is the bridge URL of the removed
+forwarder, which undo must never restore). A repeated setup keeps the existing
+record untouched, so the original survives any number of reruns.
+
+`hyperneo codex-setup --undo` reverses only what setup owns: restore the
+recorded original (or `launchctl unsetenv` if none was recorded), consume the
+record, clear the setting (the daemon stops the forwarder), quit and reopen the
+app. The managed daemon and its remote-control flag are the codex CLI's own
+state and are left alone; undo prints the separate command to disable remote
+control. Undo never reinstalls migrated launchd agents and never restores a
+bridge URL.
 
 ### Login lifecycle
 
@@ -87,13 +96,15 @@ message (below) names that fix. No watcher force-quits the app.
 
 Setup detects the previously documented hand-installed agents (the forwarder
 agent and the login setup agent) by label: `launchctl bootout` each, delete
-their plists, and report what was removed. The built-in forwarder deliberately
-reuses the same port, so the env var the old login job set keeps pointing at a
-working bridge; the old forwarder must be gone first or the port is busy.
-Remote control is not re-enabled if `remoteControl/status/read` already reports
-enabled. Undo does not restore the removed agents; if the user wants the old
-hand-installed setup back, undo says so and points at the launchd documentation
-rather than reinstalling anything.
+their plists, and report what was removed. The old forwarder must be gone first
+or the port is busy, which is why migration runs before the forwarder starts.
+Setup then replaces the old login job's env var with the tokened bridge URL;
+the app picks that up on its next launch (step 6). The value the old job had
+set is the bridge URL of the removed forwarder, so it is not recorded as an
+original. Remote control is not re-enabled if `remoteControl/status/read`
+already reports enabled. Undo does not restore the removed agents; if the user
+wants the old hand-installed setup back, undo says so and points at the launchd
+documentation rather than reinstalling anything.
 
 ### Forwarder inside the daemon
 
@@ -111,19 +122,21 @@ reads the env var at launch, so a drifting port would strand every
 already-configured app.
 
 Access control: a TCP listener is not equivalent to the Unix socket it fronts.
-The socket sits in `~/.codex` behind user-only file permissions; a loopback
-WebSocket is reachable by any local process and, without countermeasures, by
-JavaScript in any web page in any browser (browsers happily open
-`ws://127.0.0.1`). The forwarder therefore rejects any connection that presents
-an `Origin` header: browsers always send one, so pages cannot connect, while
-non-browser local clients (the app, the CLI) do not send one. This is a
-behavioral guess about the app until the verification pass confirms the app
-connects without an `Origin`; if it does send one, the setting carries an
-allowlist holding exactly that origin. Local processes without an `Origin` can
-still drive the bridge, but they can already reach the daemon socket itself, so
-no local boundary is crossed. Daemon-side auth (for example
-`--ws-auth capability-token`) is out of scope: the app's token support is
-unverified and the env var carries a static URL.
+The socket sits in `~/.codex` behind user-only file permissions; a bare
+loopback listener would be reachable by every local user and by JavaScript in
+any web page. The bridge therefore requires a per-user token: setup generates a
+random token, stores it in the setting, and the bridge URL is
+`ws://127.0.0.1:47912/rpc?token=<token>`. The forwarder closes any connection
+whose token does not match, before any byte reaches the daemon socket. The app
+presents the token without cooperation — it connects to exactly the URL the env
+var gives it. The token is readable only where the env var and HyperNeo's
+settings are readable, which is the same user-session boundary the daemon
+socket already has, so the bridge preserves the existing local permission
+boundary instead of widening it. This one mechanism also keeps browsers out
+(a page cannot guess the token), so no separate origin handling is needed.
+Daemon-side auth on the Codex server itself (for example `--ws-auth
+capability-token`) stays out of scope: the app's support for it is unverified,
+while the token-in-URL form needs none.
 
 ### Version drift
 
@@ -163,15 +176,18 @@ machine, after migrating the hand-installed bridge:
    repeat checks 1 and 2 — covering daemon startup re-application, the env var
    being set before the app launches, and the migration having left no old
    agent re-setting state.
-4. Browser rejection: a page in a browser cannot open the bridge socket
-   (connection refused by the `Origin` rule); the app still connects.
-5. Undo: `--undo` unsets the var, stops the forwarder, restores the prior env
-   value, and a reboot after undo leaves nothing behind.
+4. Token gate: a connection with a missing or wrong token is refused before any
+   frame is forwarded; the app still connects with the URL it was given.
+5. Undo: from the migrated installation, `--undo` unsets the var (it does not
+   restore the dead bridge URL of the removed forwarder); from an installation
+   where the var held a distinct pre-existing value, `--undo` restores that
+   value. Repeated setup before undo preserves the recorded original each time.
+   A reboot after undo leaves nothing behind.
 
 ## Slices
 
 1. Forwarder module plus daemon startup wiring behind the setting, including the
-   `Origin` rule (build and wire in one slice; a few lines over budget is
+   token gate (build and wire in one slice; a few lines over budget is
    acceptable).
 2. `hyperneo codex-setup` with `--undo`, `--no-remote-control` and migration of
    the hand-installed agents.
