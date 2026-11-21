@@ -513,6 +513,19 @@ open(sys.argv[2], 'w').write(reply.decode())
         wait_until(lambda: not alive(driver['pid']))
         self.assertFalse((self.root / 'desktop/control.sock').exists())
 
+    def test_failed_shutdown_retirement_is_not_reported_as_stopped(self):
+        driver = self.start()
+        hold = self.work / 'hold-stop'
+        hold.touch()
+        self.addCleanup(lambda: hold.unlink(missing_ok=True))
+        self.assertTrue(self.call('fixture-fail-retire')['ok'])
+        self.process.send_signal(signal.SIGINT)
+        self.assertEqual(self.process.wait(timeout=10), 0)
+        self.assertTrue(alive(driver['pid']))
+        hold.unlink()
+        wait_until(lambda: not alive(driver['pid']))
+        print('shutdown_retire_failed=1 driver_left_running=1')
+
     def test_app_shutdown_waits_for_a_driver_with_input_in_flight(self):
         pid = finder()
         self.call('fixture-admit', tool='click', arguments={'pid': pid})
