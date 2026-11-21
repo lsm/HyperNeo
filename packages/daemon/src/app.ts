@@ -3,7 +3,7 @@ import { NEO_FRONT_INFERENCE } from './lib/job-queue-constants.ts';
 import { NEO_DRIVER_REFRESH } from './lib/neo/driver-refresh.ts';
 import { createPeerPairRoute } from './routes/neo-peer.ts';
 import { collectDaemonScratch } from './lib/drivers/daemon-scratch.ts';
-import { startCodexAppServerBridge } from './lib/drivers/codex-app-server-bridge.ts';
+import { createCodexSetupHost } from './lib/drivers/codex-setup-host.ts';
 import {
   GitHubWatchInventory,
   reportGitHubWatchHealth,
@@ -1183,8 +1183,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     }
 
     startupTimer.start('rpc handlers + space runtime provision');
+    const codexHost = process.platform === 'darwin' ? createCodexSetupHost() : undefined;
     const rpcHandlers = await setupRPCHandlers(
       {
+        admitCodexWork: codexHost?.admit,
         extensions,
         purgeClaudeFeed: (sessionIds) => purgeWorkFeedSessions(db.gateway, 'claude', sessionIds),
         deviceOf: (clientId) => transport.deviceOf(clientId),
@@ -1328,7 +1330,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     let server: ServerHandle | undefined;
     let removeRuntimeDescriptorFile = () => {};
     let sessionDoor: Awaited<ReturnType<typeof startSessionDoor>> | null = null;
-    let stopCodexBridge: (() => Promise<void>) | undefined;
     failedStartupCleanup = async () => {
       startupAborted = true;
       const extensionsStopped = extensions.stop();
@@ -1336,7 +1337,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         () => server?.stop(true),
         () => removeRuntimeDescriptorFile(),
         () => sessionDoor?.close(),
-        () => stopCodexBridge?.(),
+        () => codexHost?.close(),
         () => {
           for (const timer of cooldownResumeTimers) clearTimeout(timer);
         },
@@ -1377,10 +1378,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       await releaseFailedStartup([() => db.close()]);
     };
     const codexBridge = settingsManager.getGlobalSettings().codexAppServerBridge;
-    if (process.platform === 'darwin' && codexBridge?.enabled === true) {
-      stopCodexBridge = await startCodexAppServerBridge(codexBridge.port).catch((error: Error) => {
+    if (codexHost && codexBridge?.enabled === true) {
+      await codexHost.startBridge(codexBridge.port).catch((error: Error) => {
         logError(`[Daemon] Codex bridge unavailable: ${error.message}`);
-        return undefined;
       });
     }
     server = await createHttpWsServer({
@@ -1727,7 +1727,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       for (const timer of cooldownResumeTimers) clearTimeout(timer);
 
       removeRuntimeDescriptorFile();
-      await stopCodexBridge?.();
+      await codexHost?.close();
       await sessionDoor?.close();
 
       logExtensionStopFailures(await extensions.stop());

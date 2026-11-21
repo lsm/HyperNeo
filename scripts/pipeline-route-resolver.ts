@@ -392,7 +392,14 @@ export function createLocalPipelineResolver(
   function returnedMethod(call: ts.CallExpression, seen: Set<ts.Node>): LocalPipelineResolution {
     const access = unwrap(call.expression);
     if (
-      call.arguments.length !== 0 ||
+      !call.arguments.every((argument) => {
+        if (!ts.isIdentifier(argument)) return false;
+        const declarations = checker.getSymbolAtLocation(argument)?.declarations;
+        return (
+          declarations?.length === 1 &&
+          (ts.isParameter(declarations[0]) || ts.isVariableDeclaration(declarations[0]))
+        );
+      }) ||
       !ts.isPropertyAccessExpression(access) ||
       (access.flags & ts.NodeFlags.OptionalChain) !== 0
     )
@@ -447,7 +454,18 @@ export function createLocalPipelineResolver(
     );
     if (properties.length !== 1 || !ts.isPropertyAssignment(properties[0])) return unknown;
     const method = unwrap(properties[0].initializer);
-    if (!ts.isArrowFunction(method) || method.parameters.length !== 0) return unknown;
+    if (
+      !ts.isArrowFunction(method) ||
+      method.parameters.length !== call.arguments.length ||
+      method.parameters.some(
+        (parameter) =>
+          !ts.isIdentifier(parameter.name) ||
+          parameter.initializer ||
+          parameter.dotDotDotToken ||
+          parameter.questionToken
+      )
+    )
+      return unknown;
     seen.add(declaration);
     return callable(method, seen);
   }
