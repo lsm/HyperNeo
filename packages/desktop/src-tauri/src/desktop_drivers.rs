@@ -821,17 +821,19 @@ impl Drivers {
                         Err(_) => json!("driver call timed out"),
                     };
                     if !reason.is_null() {
-                        let closed = active.channel.close().await;
                         #[cfg(test)]
                         let closed = if request
                             .arguments
                             .as_ref()
                             .is_some_and(|args| args["fixture_close_fails"] == true)
                         {
+                            active.channel.drop_stream();
                             Err("fixture close failure".into())
                         } else {
-                            closed
+                            active.channel.close().await
                         };
+                        #[cfg(not(test))]
+                        let closed = active.channel.close().await;
                         if let Err(error) = closed {
                             reason = json!(format!("stop_unconfirmed: {error}"));
                             settle.keep = true;
@@ -915,9 +917,11 @@ impl Drivers {
             Ok(None)
         }
         .await;
-        if worker
-            .as_mut()
-            .is_some_and(|worker| !worker.channel.running())
+        // A driver whose exit is unconfirmed stays in its slot so Stop can confirm it.
+        if !self.unconfirmed.lock().unwrap().contains(&worker_id)
+            && worker
+                .as_mut()
+                .is_some_and(|worker| !worker.channel.running())
         {
             *worker = None;
         }

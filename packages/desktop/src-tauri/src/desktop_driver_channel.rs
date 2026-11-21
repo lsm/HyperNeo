@@ -152,6 +152,11 @@ impl Channel {
         self.stream.is_some() && matches!(self.child.try_wait(), Ok(None))
     }
 
+    #[cfg(test)]
+    pub(super) fn drop_stream(&mut self) {
+        self.stream.take();
+    }
+
     pub(super) async fn close(&mut self) -> Result<()> {
         self.stream.take();
         if timeout(Duration::from_secs(2), self.child.wait())
