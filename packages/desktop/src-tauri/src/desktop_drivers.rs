@@ -242,6 +242,7 @@ impl Control {
             }
             std::fs::remove_file(&socket)?;
         }
+        record::retire_leftovers(&directory).await?;
         let listener = UnixListener::bind(&socket)?;
         let drivers = Arc::new(Drivers {
             workers: Mutex::new(BTreeMap::new()),
