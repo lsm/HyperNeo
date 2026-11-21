@@ -8,7 +8,8 @@ calls, direct and re-entrant queue callbacks, and returned factory methods with 
 It also checks awaited async factories with identifier arguments.
 The wrapper also runs the strict verdict CLI on the current source tree and
 checks that the seven operations from step 3 of the DB operation registry design
-and the done-todo page and conversation reader appear exactly once with verdict `named`.
+and the done-todo page, conversation reader, and todo completion appear exactly
+once with verdict `named`.
 The wrapper exits nonzero if a check fails.
 
 For the strict registry verdict on the real source tree, run

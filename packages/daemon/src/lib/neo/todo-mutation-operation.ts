@@ -97,7 +97,7 @@ function buildTodoMutation(deps: Dependencies, pipeline: ReturnType<SuperPipeFac
           Date.now(),
           registered
         );
-        return 'patch' in plan ? { value: plan } : { reason: plan };
+        return 'patch' in plan ? { value: plan } : { reason: await presentMutation(deps, plan) };
       },
       ['input', 'registered'],
       'result:outcome'
@@ -189,6 +189,7 @@ function buildTodoMutation(deps: Dependencies, pipeline: ReturnType<SuperPipeFac
       ['outcome', 'input'],
       'outcome'
     )
+    .pipe((result: Result) => presentMutation(deps, result), 'outcome', 'outcome')
     .endAsync('outcome') as (input: Input, caller: OperationCaller) => Promise<Result>;
 }
 
@@ -198,16 +199,15 @@ export function wireNeoTodoMutations(
 ): OperationDefinition[] {
   const mutate = buildTodoMutation(deps, superpipe({})('neo.todo.mutate-through-writer'));
   const done = buildTodoMutation(deps, superpipe({})('neo.todo.done'));
-  const definitions = createDefinitions(async ({ todoId, reason }, caller) =>
-    presentMutation(deps, await mutate({ todoId, hold: reason, kind: 'edit' }, caller))
+  const definitions = createDefinitions(({ todoId, reason }, caller) =>
+    mutate({ todoId, hold: reason, kind: 'edit' }, caller)
   );
   const operations = definitions.map<OperationDefinition>((entry) => {
     const kind = kinds.get(entry.name);
     return kind
       ? {
           ...entry,
-          execute: async (input, caller) =>
-            presentMutation(deps, await mutate({ ...(input as object), kind } as Input, caller)),
+          execute: (input, caller) => mutate({ ...(input as object), kind } as Input, caller),
         }
       : entry;
   });
@@ -219,10 +219,7 @@ export function wireNeoTodoMutations(
       inputSchema: NeoTodoDoneInput,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => {
-        const result = await done({ ...input, kind: 'done' }, caller);
-        return presentMutation(deps, result);
-      },
+      execute: (input, caller) => done({ ...input, kind: 'done' }, caller),
     }),
   ];
 }
