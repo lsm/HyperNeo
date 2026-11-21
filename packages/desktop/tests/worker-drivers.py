@@ -1136,6 +1136,43 @@ open(sys.argv[2], 'w').write(reply.decode())
             self.assertTrue(reply['dispatched'], reply)
         print('unconfirmed_stop=live_child_kept window_and_foreground=blocked_until_exit')
 
+    def test_failed_stop_keeps_the_live_driver_until_a_later_stop_confirms(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        self.assertTrue(self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']['dispatched'])
+        old = json.loads((self.lifecycle() / 'driver.json').read_text())['pid']
+        self.pids.append(old)
+        hold = self.work / 'hold-stop'
+        hold.touch()
+        self.addCleanup(lambda: hold.unlink(missing_ok=True))
+        self.call('fixture-fail-stop-close')
+        failed = self.call('stop')
+        self.assertFalse(failed['ok'], failed)
+        self.assertIn('stop_unconfirmed', failed['error'])
+        wait_until(lambda: bool(list(self.work.glob('d-*/d.stopping'))))
+        self.assertTrue(alive(old))
+        other = self.work / 'other'
+        other.mkdir()
+        busy = self.dispatch('click', {'pid': pid, 'fixture_deadline': True}, worker='worker-b',
+                             workDir=str(other), todos=['todo-worker-b'])['result']
+        self.assertEqual(busy['reason'], 'window_busy')
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            stopping = pool.submit(self.call, 'stop')
+            time.sleep(0.5)
+            self.assertFalse(stopping.done())
+            self.assertTrue(alive(old))
+            during = self.dispatch('click', {'pid': pid, 'fixture_deadline': True}, worker='worker-b',
+                                   workDir=str(other))['result']
+            self.assertEqual(during['reason'], 'window_busy')
+            self.assertFalse(stopping.done())
+            hold.unlink()
+            self.assertTrue(stopping.result(timeout=15)['ok'])
+        self.assertFalse(alive(old))
+        reply = self.dispatch('click', {'pid': pid}, worker='worker-b', workDir=str(other))['result']
+        self.assertTrue(reply['dispatched'], reply)
+        self.pids.append(json.loads((self.lifecycle('worker-b') / 'driver.json').read_text())['pid'])
+        print('failed_stop=live_child_kept window=blocked_until_exit')
+
     def test_foreground_calls_on_different_apps_take_turns(self):
         pid = finder()
         dock = int(subprocess.check_output(['/usr/bin/pgrep', '-x', 'Dock']).split()[0])

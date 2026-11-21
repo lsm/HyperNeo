@@ -49,6 +49,8 @@ static LATCH_ON_RESPONSE: AtomicBool = AtomicBool::new(false);
 #[cfg(test)]
 static FAIL_START_CLEANUP: AtomicBool = AtomicBool::new(false);
 #[cfg(test)]
+static FAIL_STOP_CLOSE: AtomicBool = AtomicBool::new(false);
+#[cfg(test)]
 pub(crate) fn inject_accept_failure() {
     FAIL_NEXT_ACCEPT.store(true, Ordering::Relaxed);
 }
@@ -420,6 +422,11 @@ impl Drivers {
         #[cfg(test)]
         if request.action == "fixture-fail-start-cleanup" {
             FAIL_START_CLEANUP.store(true, Ordering::Relaxed);
+            return Ok(json!({"armed": true}));
+        }
+        #[cfg(test)]
+        if request.action == "fixture-fail-stop-close" {
+            FAIL_STOP_CLOSE.store(true, Ordering::Relaxed);
             return Ok(json!({"armed": true}));
         }
         #[cfg(test)]
@@ -872,18 +879,32 @@ impl Drivers {
                 }
                 "stop" => {
                     self.leases.lock().unwrap().pin(&worker_id);
-                    if let Some(worker) = worker.as_mut() {
-                        let pid = worker.channel.pid;
-                        if worker.channel.running() {
-                            record::verify(&directory, pid)
+                    let confirmed: Result<()> = async {
+                        if let Some(worker) = worker.as_mut() {
+                            let pid = worker.channel.pid;
+                            if worker.channel.running() {
+                                record::verify(&directory, pid)
+                                    .map_err(|error| format!("stop_unconfirmed: {error}"))?;
+                            }
+                            #[cfg(test)]
+                            if FAIL_STOP_CLOSE.swap(false, Ordering::Relaxed) {
+                                worker.channel.drop_stream();
+                                return Err("stop_unconfirmed: fixture close failure".into());
+                            }
+                            worker
+                                .channel
+                                .close()
+                                .await
                                 .map_err(|error| format!("stop_unconfirmed: {error}"))?;
+                            record::verify_gone(pid)?;
                         }
-                        worker
-                            .channel
-                            .close()
-                            .await
-                            .map_err(|error| format!("stop_unconfirmed: {error}"))?;
-                        record::verify_gone(pid)?;
+                        Ok(())
+                    }
+                    .await;
+                    if let Err(error) = confirmed {
+                        // Keep the slot, and with it the child, so a later Stop must confirm exit.
+                        self.unconfirmed.lock().unwrap().insert(worker_id.clone());
+                        return Err(error);
                     }
                     *worker = None;
                     self.leases.lock().unwrap().release(&worker_id);
