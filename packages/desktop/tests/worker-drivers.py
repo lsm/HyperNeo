@@ -29,7 +29,7 @@ if '/slow/' in home:
     while not os.path.exists(os.path.join(home, 'd.release')):
         time.sleep(0.01)
 log = open(os.path.join(os.path.dirname(home), 'log-' + os.path.basename(home)), 'a', buffering=1)
-with channel.makefile('rwb') as stream:
+with channel.makefile('rb') as stream:
     for line in stream:
         request = json.loads(line)
         name = request.get('name')
@@ -62,10 +62,12 @@ with channel.makefile('rwb') as stream:
             time.sleep(0.5)
             open(timeline, 'a').write('end\\n')
         reply_id = request['request_id'] + int(bool(name and request.get('arguments', {}).get('fixture_bad_reply')))
-        stream.write((json.dumps({'protocol_version': 1, 'request_id': reply_id,
-            'generation': generation, 'ok': request['generation'] == generation,
-            'completion': 'completed', 'result': result}) + '\\n').encode())
-        stream.flush()
+        try:
+            channel.sendall((json.dumps({'protocol_version': 1, 'request_id': reply_id,
+                'generation': generation, 'ok': request['generation'] == generation,
+                'completion': 'completed', 'result': result}) + '\\n').encode())
+        except (BrokenPipeError, ConnectionResetError):
+            break
 log.write('eof\\n')
 hold = os.path.join(os.path.dirname(home), 'hold-stop')
 if os.path.exists(hold):
@@ -513,7 +515,7 @@ open(sys.argv[2], 'w').write(reply.decode())
         wait_until(lambda: not alive(driver['pid']))
         self.assertFalse((self.root / 'desktop/control.sock').exists())
 
-    def test_failed_shutdown_retirement_is_not_reported_as_stopped(self):
+    def test_failed_shutdown_retirement_is_logged(self):
         driver = self.start()
         hold = self.work / 'hold-stop'
         hold.touch()
@@ -521,10 +523,11 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertTrue(self.call('fixture-fail-retire')['ok'])
         self.process.send_signal(signal.SIGINT)
         self.assertEqual(self.process.wait(timeout=10), 0)
-        self.assertTrue(alive(driver['pid']))
+        self.assertIn('Driver shutdown failed: stop_unconfirmed: fixture close failure',
+                      self.process.stderr.read())
         hold.unlink()
         wait_until(lambda: not alive(driver['pid']))
-        print('shutdown_retire_failed=1 driver_left_running=1')
+        print('shutdown_retire_failed=1 failure_logged=1')
 
     def test_app_shutdown_waits_for_a_driver_with_input_in_flight(self):
         pid = finder()
@@ -1321,12 +1324,10 @@ open(sys.argv[2], 'w').write(reply.decode())
         print('slow_start=desktop_timeout no_input=1')
 
     def test_saturated_host_refuses_instead_of_stalling(self):
-        pid = finder()
-        self.call('fixture-admit', tool='click', arguments={'pid': pid})
         slow = self.work / 'slow'
         slow.mkdir()
         with ThreadPoolExecutor(max_workers=16) as pool:
-            pending = [pool.submit(self.dispatch, 'click', {'pid': pid}, worker=f'w-{i}', workDir=str(slow))
+            pending = [pool.submit(self.call, 'start', worker=f'w-{i}', workDir=str(slow))
                        for i in range(16)]
             try:
                 wait_until(lambda: len(list(slow.glob('d-*/d.starting'))) == 16)
@@ -1340,7 +1341,9 @@ open(sys.argv[2], 'w').write(reply.decode())
                 for marker in slow.glob('d-*/d.starting'):
                     marker.with_suffix('.release').touch()
                 for future in pending:
-                    future.result(timeout=15)
+                    result = future.result(timeout=15)
+                    self.assertTrue(result['ok'], result)
+                    self.pids.append(result['result']['pid'])
         print('saturated_host=desktop_busy')
 
     def test_owner_approval_covers_all_actions_for_the_app(self):
