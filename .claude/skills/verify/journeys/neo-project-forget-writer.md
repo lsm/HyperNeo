@@ -1,13 +1,10 @@
 # Project forget on the DB writer
 
-Run from the repository root with fresh synthetic directories:
+Run from the repository root with the shared metadata-only wrapper:
 
 ```sh
-RUN=$(mktemp -d /private/tmp/neo-forget-writer-XXXXXX)
-mkdir -p "$RUN/home"
-env -i PATH="$PATH" HOME="$RUN/home" NODE_ENV=test \
-  HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=warn \
-  bun .claude/skills/verify/neo-project-forget-writer.ts verify "$RUN"
+TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/evidence/project-forget \
+  .claude/skills/verify/neo-project-forget-writer.ts verify
 ```
 
 The helper owns an ephemeral non-8399 daemon and invokes the real
@@ -24,8 +21,8 @@ from the main connection. Each completed request is one whole writer command.
 A separate process holds a synthetic WAL writer lock for 1.2 seconds during
 another forget RPC. Health must remain below 250 ms and main-loop lag below one
 second. The affected write still waits for the lock and misses 250 ms; the report
-records that limitation. Evidence is `evidence/project-forget-writer.json` within
-the run directory. The helper closes its socket, lock process and daemon. No
+records that limitation. The wrapper retains `project-forget-writer.json` in
+the selected evidence directory. The helper closes its socket, lock process and daemon. No
 provider, model, GitHub, browser, existing database or credentials are used.
 
 To compare the regression-only checkout, copy the proof helper there and run its `before`
