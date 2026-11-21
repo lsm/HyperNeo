@@ -1,673 +1,115 @@
-# Release - Build, publish to npm, and create GitHub Release
-#
-# Triggered by version tags (v*). Requires a successful dev CI run for the
-# tagged commit before building platform binaries and publishing to npm.
-#
-# Also triggerable manually (workflow_dispatch) as a build-only dry run:
-# with the `publish` input off, the build/package jobs run (validating new
-# targets like Windows) but nothing reaches npm or the GitHub Release.
-#
-# Flow:
-# 1. Verify the completed dev CI run for this commit and tag ratchets
-# 2. Build binaries for all platforms (5 targets)
-# 3. Package into platform-specific npm packages
-# 4. Publish to npm registry (Trusted Publishing via OIDC)
-# 5. Create GitHub Release with auto-generated notes
-
-name: Release
+name: Release candidate proof
 
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
     inputs:
-      publish:
-        description: 'Publish to npm and create the GitHub Release (off = build-only dry run)'
-        required: false
-        type: boolean
-        default: false
+      candidate:
+        description: Exact commit to build and verify
+        required: true
+        type: string
 
 permissions:
   contents: read
-  actions: read
+  statuses: write
 
 jobs:
-  # ============================================
-  # WAIT FOR CI
-  # Ensure the tagged commit has passed all CI checks.
-  # Missing or unfinished CI evidence blocks publication.
-  # ============================================
-
-  wait-for-ci:
-    name: Wait for CI
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    outputs:
-      version: ${{ steps.version.outputs.version }}
+  macos-intel:
+    name: Intel macOS fresh install
+    runs-on: macos-15-intel
+    timeout-minutes: 35
 
     steps:
+      - name: Validate candidate
+        env:
+          CANDIDATE: ${{ inputs.candidate }}
+        run: '[[ "$CANDIDATE" =~ ^[0-9a-f]{40}$ ]]'
+
+      - name: Mark proof pending
+        uses: actions/github-script@v8
+        env:
+          CANDIDATE: ${{ inputs.candidate }}
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              ...context.repo,
+              sha: process.env.CANDIDATE,
+              state: 'pending',
+              context: 'release-proof/macos-intel',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
+
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          ref: ${{ inputs.candidate }}
+          persist-credentials: false
 
-      - name: Extract version from tag
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            VERSION="${GITHUB_REF_NAME#v}"
-          else
-            VERSION=$(node -p "require('./packages/cli/package.json').version")
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Release version: $VERSION"
-
-      - name: Verify package versions match tag
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          echo "Checking package versions match tag version: $VERSION"
-          MISMATCHES=()
-          for pkg in npm/hyperneo npm/hyperneod packages/cli packages/daemon packages/prompts packages/shared packages/web packages/desktop; do
-            PKG_VERSION=$(node -p "require('./$pkg/package.json').version")
-            if [ "$PKG_VERSION" != "$VERSION" ]; then
-              MISMATCHES+=("$pkg/package.json: $PKG_VERSION (expected $VERSION)")
-            fi
-          done
-          TAURI_VERSION=$(node -p "require('./packages/desktop/src-tauri/tauri.conf.json').version")
-          if [ "$TAURI_VERSION" != "$VERSION" ]; then
-            MISMATCHES+=("packages/desktop/src-tauri/tauri.conf.json: $TAURI_VERSION (expected $VERSION)")
-          fi
-          DESKTOP_CARGO_VERSION=$(awk -F'"' '/^version = / { print $2; exit }' packages/desktop/src-tauri/Cargo.toml)
-          if [ "$DESKTOP_CARGO_VERSION" != "$VERSION" ]; then
-            MISMATCHES+=("packages/desktop/src-tauri/Cargo.toml: $DESKTOP_CARGO_VERSION (expected $VERSION)")
-          fi
-          if [ ${#MISMATCHES[@]} -gt 0 ]; then
-            echo "ERROR: Version mismatches found!"
-            printf '  %s\n' "${MISMATCHES[@]}"
-            echo ""
-            echo "All package and desktop bundle versions must match the release tag (v$VERSION)."
-            echo "Bump all package and desktop bundle versions to $VERSION before tagging."
-            exit 1
-          fi
-          echo "All package and desktop bundle versions match v$VERSION"
-
-      - name: Verify commit is on dev branch
-        if: github.event_name == 'push'
-        run: |
-          if ! git branch -r --contains "$GITHUB_SHA" | grep -q 'origin/dev'; then
-            echo "ERROR: Tagged commit $GITHUB_SHA is not on the dev branch"
-            echo "Releases must be tagged on commits that exist on dev"
-            exit 1
-          fi
-          echo "Commit $GITHUB_SHA is on dev branch"
-
-      - name: Verify dispatched publish targets the tagged commit
-        if: github.event_name == 'workflow_dispatch' && inputs.publish == true
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          TAG=$(git describe --exact-match --tags "$GITHUB_SHA" 2>/dev/null || true)
-          if [ "$TAG" != "v$VERSION" ]; then
-            echo "::error::workflow_dispatch with publish=true must run from the commit tagged v$VERSION (this commit carries '${TAG:-no tag}'). Use publish=false for build-only dry runs, or dispatch from the v$VERSION tag to retry a release."
-            exit 1
-          fi
-          echo "Dispatched publish anchored to tag $TAG"
-
-      - name: Verify exact-commit dev CI
-        if: github.event_name == 'push' || inputs.publish == true
-        run: bash scripts/release-ci-gate.sh "$GITHUB_SHA"
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Setup Bun for tag ratchets
-        if: github.event_name == 'push' || inputs.publish == true
-        uses: ./.github/actions/setup-bun
+      - uses: ./.github/actions/setup-bun
         with:
           bun-version: 1.4.4
 
-      - name: Install dependencies for tag ratchets
-        if: github.event_name == 'push' || inputs.publish == true
-        run: bun install --frozen-lockfile
-
-      - name: Verify tag ratchets against the first parent
-        if: github.event_name == 'push' || inputs.publish == true
-        env:
-          DB_RATCHET_BASE: ${{ github.sha }}^1
-        run: |
-          bun run check:db-main-thread
-          bun run check:get-database
-          bun run check:pipeline-ratchet
-
-  # ============================================
-  # RELEASE BUILD
-  # Build binaries for all platforms
-  # ============================================
-
-  release-build:
-    name: Release Build ${{ matrix.binary }}
-    runs-on: ${{ matrix.runner }}
-    needs: wait-for-ci
-    timeout-minutes: 20
-    defaults:
-      run:
+      - name: Build candidate
         shell: bash
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-latest
-            target: bun-darwin-arm64
-            binary: hyperneo-darwin-arm64
-            entry: packages/cli/prod-entry.ts
-            smoke: true
-            daemon: false
-          - runner: macos-15-intel
-            target: bun-darwin-x64
-            binary: hyperneo-darwin-x64
-            # onnxruntime-node ships no darwin-x64 binding; see scripts/build-binary.ts.
-            external: --external '*onnxruntime_binding.node'
-            entry: packages/cli/prod-entry.ts
-            smoke: true
-            daemon: false
-          - runner: ubuntu-latest
-            target: bun-linux-x64
-            binary: hyperneo-linux-x64
-            entry: packages/cli/prod-entry.ts
-            smoke: true
-            daemon: false
-          - runner: ubuntu-latest
-            target: bun-linux-arm64
-            binary: hyperneo-linux-arm64
-            entry: packages/cli/prod-entry.ts
-            smoke: false
-            daemon: false
-          - runner: windows-latest
-            target: bun-windows-x64
-            binary: hyperneo-windows-x64.exe
-            entry: packages/cli/prod-entry.ts
-            smoke: true
-            daemon: false
-          - runner: macos-latest
-            target: bun-darwin-arm64
-            binary: hyperneod-darwin-arm64
-            entry: packages/cli/daemon-entry.ts
-            smoke: true
-            daemon: true
-          - runner: macos-15-intel
-            target: bun-darwin-x64
-            binary: hyperneod-darwin-x64
-            # onnxruntime-node ships no darwin-x64 binding; see scripts/build-binary.ts.
-            external: --external '*onnxruntime_binding.node'
-            entry: packages/cli/daemon-entry.ts
-            smoke: true
-            daemon: true
-          - runner: ubuntu-latest
-            target: bun-linux-x64
-            binary: hyperneod-linux-x64
-            entry: packages/cli/daemon-entry.ts
-            smoke: true
-            daemon: true
-          - runner: ubuntu-latest
-            target: bun-linux-arm64
-            binary: hyperneod-linux-arm64
-            entry: packages/cli/daemon-entry.ts
-            smoke: false
-            daemon: true
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Setup Bun
-        uses: ./.github/actions/setup-bun
-        with:
-          bun-version: 1.4.4
-
-      - name: Install sandbox dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo find /etc/apt/sources.list.d/ \( -name "*microsoft*" -o -name "*azure*" \) -delete 2>/dev/null || true
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap socat ripgrep
-
-      - name: Install dependencies
-        run: bun install
-
-      - name: Build web frontend
-        run: cd packages/web && bun run build
-
-      - name: Generate embedded assets
-        run: bun run scripts/generate-embedded-assets.ts
-
-      - name: Compile binary
-        run: bun build --compile --compile-autoload-package-json --root=packages --target=${{ matrix.target }} --define 'process.env.HYPERNEO_BUILD_COMMIT="${{ github.sha }}"' ${{ matrix.external }} --outfile=dist/bin/${{ matrix.binary }} ${{ matrix.entry }} $(bun scripts/compiled-worker-entrypoints.ts)
-
-      - name: Smoke test
-        if: matrix.smoke
-        run: bun run scripts/smoke-test.ts ./dist/bin/${{ matrix.binary }} ${{ matrix.daemon && '--daemon' || '' }}
         env:
-          GLM_API_KEY: smoke-test
+          CANDIDATE: ${{ inputs.candidate }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE"
+          bash .claude/skills/verify/resource-check.sh
+          bun install --frozen-lockfile
+          bash .claude/skills/verify/resource-check.sh
+          GITHUB_SHA="$CANDIDATE" bun scripts/build-binary.ts --target bun-darwin-x64
+          printf 'candidate_build_exit=0\n'
 
-      - name: Start Claude and Copilot from a folder with no node_modules
-        if: matrix.smoke
-        run: bun scripts/sdk-runtime-check.ts ./dist/bin/${{ matrix.binary }} --network
-
-      - name: Upload binary artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.binary }}
-          path: dist/bin/${{ matrix.binary }}
-
-  # ============================================
-  # DESKTOP RELEASE BUILD
-  # Build, sign, and notarize macOS desktop artifacts; build unsigned Linux and Windows artifacts
-  # ============================================
-
-  desktop-release-build:
-    name: Desktop Release ${{ matrix.arch }}
-    runs-on: ${{ matrix.runner }}
-    needs: wait-for-ci
-    timeout-minutes: ${{ matrix.arch == 'darwin-x64' && 90 || 45 }}
-    defaults:
-      run:
+      - name: Run compiled fresh install
         shell: bash
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-15-intel
-            rust-target: x86_64-apple-darwin
-            arch: darwin-x64
-          - runner: macos-latest
-            rust-target: aarch64-apple-darwin
-            arch: darwin-arm64
-          - runner: ubuntu-latest
-            rust-target: x86_64-unknown-linux-gnu
-            arch: linux-x64
-          - runner: windows-latest
-            rust-target: x86_64-pc-windows-msvc
-            arch: windows-x64
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Setup Bun
-        uses: ./.github/actions/setup-bun
-        with:
-          bun-version: 1.4.4
-
-      - name: Verify Apple signing secrets
-        if: runner.os == 'macOS'
-        run: |
-          missing=0
-          for name in \
-            APPLE_CERTIFICATE \
-            APPLE_CERTIFICATE_PASSWORD \
-            APPLE_SIGNING_IDENTITY \
-            APPLE_API_ISSUER \
-            APPLE_API_KEY \
-            APPLE_API_PRIVATE_KEY \
-            APPLE_DESKTOP_PROVISIONING_PROFILE; do
-            if [ -z "${!name:-}" ]; then
-              echo "::error::Missing required Actions secret: $name"
-              missing=1
-            fi
-          done
-          exit "$missing"
         env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
-          APPLE_DESKTOP_PROVISIONING_PROFILE: ${{ secrets.APPLE_DESKTOP_PROVISIONING_PROFILE }}
-
-      - name: Configure App Store Connect API key
-        if: runner.os == 'macOS'
+          CANDIDATE: ${{ inputs.candidate }}
         run: |
-          KEY_DIR="$RUNNER_TEMP/appstoreconnect"
-          KEY_PATH="$KEY_DIR/AuthKey_${APPLE_API_KEY}.p8"
-          mkdir -p "$KEY_DIR"
-          printf '%s' "$APPLE_API_PRIVATE_KEY" > "$KEY_PATH"
-          chmod 600 "$KEY_PATH"
-          echo "APPLE_API_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
+          bash .claude/skills/verify/resource-check.sh
+          PROOF_DIR="$(mktemp -d /private/tmp/hn-intel.XXXXXX)"
+          trap 'bun -e "import {rmSync} from \"node:fs\"; rmSync(process.argv[1], {recursive: true})" "$PROOF_DIR"' EXIT
+          mkdir "$PROOF_DIR/home"
+          proof_exit=0
+          env -i HOME="$PROOF_DIR/home" NODE_ENV=test HYPERNEO_DATA_DIR="$PROOF_DIR/data" \
+            PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin" \
+            bun .claude/skills/verify/release-candidate.ts "$PWD/dist/bin/hyperneo-darwin-x64" "$PROOF_DIR" "$CANDIDATE" || proof_exit="$?"
+          printf 'fresh_install_exit=%s\n' "$proof_exit"
+          bun -e '
+            const proof = await Bun.file(process.argv[1]).json();
+            const steps = Object.entries(proof.steps).filter(([, result]) => result.pass);
+            console.log(JSON.stringify({commit: proof.expectedCommit, count: steps.length, checks: steps.map(([name]) => name), stopped: proof.cleanup?.stopped}));
+            if (!proof.passed || !proof.cleanup?.stopped) process.exit(1);
+          ' "$PROOF_DIR/evidence/steps.json"
+          exit "$proof_exit"
+
+      - name: Verify standalone daemon
+        shell: bash
+        run: |
+          bash .claude/skills/verify/resource-check.sh
+          bun scripts/smoke-test.ts "$PWD/dist/bin/hyperneod-darwin-x64" --daemon
+          printf 'standalone_daemon_smoke_exit=0\n'
+
+      - name: Verify compiled numerical embeddings
+        shell: bash
+        run: |
+          bash .claude/skills/verify/resource-check.sh
+          PROOF_DIR="$(mktemp -d /private/tmp/hn-embed-intel.XXXXXX)"
+          trap 'bun -e "import {rmSync} from \"node:fs\"; rmSync(process.argv[1], {recursive: true})" "$PROOF_DIR"' EXIT
+          bun .claude/skills/verify/compiled-embedding-load.ts "$PROOF_DIR/proof" bun-darwin-x64
+          printf 'compiled_embedding_load_exit=0\n'
+
+      - name: Report candidate result
+        if: always()
+        uses: actions/github-script@v8
         env:
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
-
-      - name: Install Linux desktop dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo find /etc/apt/sources.list.d/ \( -name "*microsoft*" -o -name "*azure*" \) -delete 2>/dev/null || true
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            curl \
-            file \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libssl-dev \
-            libwebkit2gtk-4.1-dev \
-            libxdo-dev \
-            patchelf \
-            rpm \
-            wget
-
-      - name: Install dependencies
-        run: bun install
-
-      # apple-metal uses macOS 26 Metal APIs, so the Intel runner needs a
-      # macOS 26 SDK instead of its default Xcode 16.
-      - name: Select Xcode 26 on Intel
-        if: matrix.arch == 'darwin-x64'
-        run: echo "DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer" >> "$GITHUB_ENV"
-
-      - name: Setup Rust target
-        run: rustup target add ${{ matrix.rust-target }}
-
-      - name: Cache Cargo
-        uses: actions/cache@v4
+          CANDIDATE: ${{ inputs.candidate }}
+          JOB_RESULT: ${{ job.status }}
         with:
-          path: |
-            ~/.cargo/bin/cargo-tauri*
-            ~/.cargo/registry
-            ~/.cargo/git
-            packages/desktop/src-tauri/target
-          key: desktop-cargo-${{ runner.os }}-${{ matrix.rust-target }}-${{ hashFiles('packages/desktop/src-tauri/Cargo.lock') }}
-          restore-keys: |
-            desktop-cargo-${{ runner.os }}-${{ matrix.rust-target }}-
-
-      - name: Install Tauri CLI
-        run: |
-          if ! cargo tauri --version >/dev/null 2>&1; then
-            cargo install tauri-cli --version "^2" --locked
-          fi
-
-      - name: Build desktop app
-        run: |
-          cd packages/desktop
-          bash build-sidecar.sh
-          BUNDLES_FLAG=""
-          if [ "${{ runner.os }}" = "Linux" ]; then
-            BUNDLES_FLAG="--bundles deb,rpm"
-          fi
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            BUNDLES_FLAG="--bundles msi,nsis"
-          fi
-          bash build-bundle.sh ${{ matrix.rust-target }} $BUNDLES_FLAG
-        env:
-          HYPERNEO_SIGNED_DESKTOP: ${{ runner.os == 'macOS' && '1' || '0' }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_DESKTOP_PROVISIONING_PROFILE: ${{ secrets.APPLE_DESKTOP_PROVISIONING_PROFILE }}
-
-      - name: Check macOS bundle runtime paths
-        if: runner.os == 'macOS'
-        run: |
-          python3 packages/desktop/check-macos-rpaths.py \
-            "packages/desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle/macos/HyperNeo.app"
-
-      - name: Collect desktop artifacts
-        run: |
-          VERSION="${{ needs.wait-for-ci.outputs.version }}"
-          ARTIFACT_DIR="$PWD/dist/desktop/${{ matrix.arch }}"
-          BUNDLE_ROOT="$PWD/packages/desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle"
-          mkdir -p "$ARTIFACT_DIR"
-
-          find "$BUNDLE_ROOT" -maxdepth 4 -type f -print
-
-          for dmg in "$BUNDLE_ROOT"/dmg/*.dmg; do
-            [ -e "$dmg" ] || continue
-            cp "$dmg" "$ARTIFACT_DIR/HyperNeo_${VERSION}_${{ matrix.arch }}.dmg"
-          done
-
-          for deb in "$BUNDLE_ROOT"/deb/*.deb; do
-            [ -e "$deb" ] || continue
-            cp "$deb" "$ARTIFACT_DIR/HyperNeo_${VERSION}_${{ matrix.arch }}.deb"
-          done
-
-          for rpm in "$BUNDLE_ROOT"/rpm/*.rpm; do
-            [ -e "$rpm" ] || continue
-            cp "$rpm" "$ARTIFACT_DIR/HyperNeo_${VERSION}_${{ matrix.arch }}.rpm"
-          done
-
-          for msi in "$BUNDLE_ROOT"/msi/*.msi; do
-            [ -e "$msi" ] || continue
-            cp "$msi" "$ARTIFACT_DIR/HyperNeo_${VERSION}_${{ matrix.arch }}.msi"
-          done
-
-          for nsis_exe in "$BUNDLE_ROOT"/nsis/*-setup.exe; do
-            [ -e "$nsis_exe" ] || continue
-            cp "$nsis_exe" "$ARTIFACT_DIR/HyperNeo_${VERSION}_${{ matrix.arch }}_setup.exe"
-          done
-
-          if [ -d "$BUNDLE_ROOT/macos" ]; then
-            APP_PATH=$(find "$BUNDLE_ROOT/macos" -maxdepth 1 -name '*.app' -type d -print -quit)
-          else
-            APP_PATH=""
-          fi
-          if [ -n "$APP_PATH" ]; then
-            ditto -c -k --keepParent "$APP_PATH" "$ARTIFACT_DIR/HyperNeo_${VERSION}_${{ matrix.arch }}.app.zip"
-          fi
-
-          if ! compgen -G "$ARTIFACT_DIR/*" > /dev/null; then
-            echo "::error::No desktop artifacts were produced"
-            exit 1
-          fi
-
-          if command -v sha256sum >/dev/null 2>&1; then
-            (cd "$ARTIFACT_DIR" && sha256sum * > "HyperNeo_${VERSION}_${{ matrix.arch }}_SHA256SUMS.txt")
-          elif command -v shasum >/dev/null 2>&1; then
-            (cd "$ARTIFACT_DIR" && shasum -a 256 * > "HyperNeo_${VERSION}_${{ matrix.arch }}_SHA256SUMS.txt")
-          else
-            SUMS_FILE="HyperNeo_${VERSION}_${{ matrix.arch }}_SHA256SUMS.txt"
-            SUMS_TMP="$RUNNER_TEMP/sums.txt"
-            : > "$SUMS_TMP"
-            for f in "$ARTIFACT_DIR"/*; do
-              HASH=$(certutil -hashfile "$f" SHA256 | sed -n 2p | tr -d ' \r')
-              printf '%s  %s\n' "$HASH" "$(basename "$f")" >> "$SUMS_TMP"
-            done
-            mv "$SUMS_TMP" "$ARTIFACT_DIR/$SUMS_FILE"
-          fi
-
-      - name: Upload desktop artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: desktop-${{ matrix.arch }}
-          path: dist/desktop/${{ matrix.arch }}/*
-
-  # ============================================
-  # PACKAGE
-  # Create npm packages from built binaries
-  # ============================================
-
-  package:
-    name: Package npm
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    needs: [wait-for-ci, release-build]
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Setup Bun
-        uses: ./.github/actions/setup-bun
-        with:
-          bun-version: 1.4.4
-
-      - name: Install dependencies
-        run: bun install
-
-      - name: Download release binary artifacts
-        uses: actions/download-artifact@v8
-        with:
-          pattern: hyperneo*
-          path: dist/bin/
-
-      - name: Move binaries to expected locations
-        run: |
-          mkdir -p dist/bin-flat
-          for dir in dist/bin/hyperneo*; do
-            mv "$dir"/* "dist/bin-flat/"
-          done
-          chmod +x dist/bin-flat/* 2>/dev/null || true
-          rm -rf dist/bin
-          mv dist/bin-flat dist/bin
-
-      - name: Package npm packages
-        run: bun run scripts/package-npm.ts --version ${{ needs.wait-for-ci.outputs.version }}
-
-      - name: Upload npm packages
-        uses: actions/upload-artifact@v7
-        with:
-          name: npm-packages
-          path: dist/npm/
-
-  # ============================================
-  # PUBLISH
-  # Publish packages to npm registry
-  # ============================================
-
-  publish:
-    name: Publish to npm
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    needs: [wait-for-ci, package, desktop-release-build]
-    if: github.event_name == 'push' || inputs.publish == true
-    permissions:
-      contents: read
-      id-token: write
-
-    steps:
-      - name: Download npm packages
-        uses: actions/download-artifact@v8
-        with:
-          name: npm-packages
-          path: dist/npm/
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: Upgrade npm for Trusted Publishing support
-        run: npm install -g npm@latest
-
-      - name: Publish platform packages
-        run: |
-          FAILED=0
-          for pkg in dist/npm/cli-* dist/npm/hyperneod-*; do
-            PKG_NAME=$(basename "$pkg")
-            echo "Publishing $PKG_NAME..."
-            if OUTPUT=$(cd "$pkg" && npm publish --access public --provenance 2>&1); then
-              echo "$OUTPUT"
-              echo "$PKG_NAME published successfully"
-            else
-              echo "$OUTPUT"
-              if echo "$OUTPUT" | grep -qiE "previously published|cannot publish over|EPUBLISHCONFLICT"; then
-                echo "::warning::$PKG_NAME already published, skipping"
-              else
-                echo "::error::Failed to publish $PKG_NAME"
-                FAILED=1
-              fi
-            fi
-          done
-          if [ "$FAILED" -eq 1 ]; then
-            echo "One or more platform packages failed to publish"
-            exit 1
-          fi
-
-      - name: Publish main package
-        run: |
-          if OUTPUT=$(cd dist/npm/hyperneo && npm publish --access public --provenance 2>&1); then
-            echo "$OUTPUT"
-            echo "hyperneo published successfully"
-          else
-            echo "$OUTPUT"
-            if echo "$OUTPUT" | grep -qiE "previously published|cannot publish over|EPUBLISHCONFLICT"; then
-              echo "::warning::hyperneo already published, skipping"
-            else
-              echo "::error::Failed to publish hyperneo"
-              exit 1
-            fi
-          fi
-
-      - name: Publish daemon main package
-        run: |
-          if OUTPUT=$(cd dist/npm/hyperneod && npm publish --access public --provenance 2>&1); then
-            echo "$OUTPUT"
-            echo "hyperneod published successfully"
-          else
-            echo "$OUTPUT"
-            if echo "$OUTPUT" | grep -qiE "previously published|cannot publish over|EPUBLISHCONFLICT"; then
-              echo "::warning::hyperneod already published, skipping"
-            else
-              echo "::error::Failed to publish hyperneod"
-              exit 1
-            fi
-          fi
-
-  # ============================================
-  # GITHUB RELEASE
-  # Create a GitHub Release with auto-generated notes
-  # ============================================
-
-  github-release:
-    name: Create GitHub Release
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: [wait-for-ci, publish, desktop-release-build]
-    if: github.event_name == 'push' || inputs.publish == true
-    permissions:
-      contents: write
-
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Download desktop artifacts
-        uses: actions/download-artifact@v8
-        with:
-          pattern: desktop-*
-          path: dist/desktop/
-          merge-multiple: true
-
-      - name: Download CLI and daemon binary artifacts
-        uses: actions/download-artifact@v8
-        with:
-          pattern: hyperneo*
-          path: dist/bin/
-          merge-multiple: true
-
-      - name: Create GitHub Release
-        run: |
-          VERSION="${{ needs.wait-for-ci.outputs.version }}"
-          echo "Creating GitHub Release for v$VERSION..."
-          NOTES=$(sed -n "/^## \[${VERSION#v}\]/,/^## \[/p" CHANGELOG.md | sed '$d')
-          echo "$NOTES" > /tmp/release-notes.md
-
-          ASSETS=()
-          while IFS= read -r asset; do
-            ASSETS+=("$asset")
-          done < <(find dist/desktop dist/bin -type f | sort)
-
-          if gh release view "v$VERSION" &>/dev/null; then
-            echo "::warning::Release v$VERSION already exists, skipping creation"
-            if [ ${#ASSETS[@]} -gt 0 ]; then
-              echo "Uploading assets to existing release..."
-              gh release upload "v$VERSION" "${ASSETS[@]}" --clobber
-            fi
-          else
-            gh release create "v$VERSION" \
-              "${ASSETS[@]}" \
-              --title "v$VERSION" \
-              --notes-file /tmp/release-notes.md
-          fi
-          echo "GitHub Release ready: v$VERSION"
-        env:
-          GH_TOKEN: ${{ github.token }}
+          script: |
+            if (!/^[0-9a-f]{40}$/.test(process.env.CANDIDATE)) return;
+            await github.rest.repos.createCommitStatus({
+              ...context.repo,
+              sha: process.env.CANDIDATE,
+              state: process.env.JOB_RESULT === 'success' ? 'success' : 'failure',
+              context: 'release-proof/macos-intel',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
