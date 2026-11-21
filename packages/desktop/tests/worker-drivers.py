@@ -107,6 +107,11 @@ def alive(pid):
         return False
 
 
+def process_state(pid):
+    return subprocess.run(['/bin/ps', '-p', str(pid), '-o', 'state='],
+                          capture_output=True, text=True).stdout.strip()
+
+
 def same_user_add(account, value):
     security = ctypes.CDLL('/System/Library/Frameworks/Security.framework/Security')
     cf = ctypes.CDLL('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation')
@@ -639,7 +644,9 @@ open(sys.argv[2], 'w').write(reply.decode())
 
         self.crash_and_restart(survived_crash)
         self.assertEqual(self.call('status'), {'ok': True, 'result': {'state': 'stopped', 'pid': None}})
-        self.assertFalse(alive(old), 'restarted host reported stopped while old driver was still alive')
+        state = process_state(old)
+        self.assertTrue(not state or state.startswith('Z'),
+                        f'restarted host reported stopped while old driver was in state {state}')
         hold.unlink()
         self.assertNotEqual(self.start()['pid'], old)
         print('leftover_survived_crash=1 retired_before_serving=1 replacement_started=1')
@@ -682,8 +689,7 @@ open(sys.argv[2], 'w').write(reply.decode())
 
         def exit_without_reaping():
             os.kill(driver.pid, signal.SIGKILL)
-            wait_until(lambda: subprocess.check_output(
-                ['/bin/ps', '-p', str(driver.pid), '-o', 'state='], text=True).strip().startswith('Z'))
+            wait_until(lambda: process_state(driver.pid).startswith('Z'))
 
         self.crash_and_restart(exit_without_reaping)
         self.assertEqual(self.call('status'), {'ok': True, 'result': {'state': 'stopped', 'pid': None}})
