@@ -109,15 +109,21 @@ export async function compactCodexThread(
   }
 }
 
-export async function startCodexBootstrapServer(
-  command = process.env.CODEX_CLI_PATH ??
+export function codexCommand() {
+  return (
+    process.env.CODEX_CLI_PATH ??
     [homedir(), '']
       .flatMap((root) => [
         join(root, '/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex'),
         join(root, '/Applications/Codex.app/Contents/Resources/codex'),
       ])
       .find(existsSync) ??
-    'codex',
+    'codex'
+  );
+}
+
+export async function startCodexBootstrapServer(
+  command = codexCommand(),
   onNotification?: (notification: JsonRpcNotification) => void,
   onExit?: () => void
 ): Promise<CodexAppServer> {
