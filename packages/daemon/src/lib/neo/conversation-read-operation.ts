@@ -65,6 +65,38 @@ export function createNeoConversationReadOperation(
       ['page', 'caller'],
       'page'
     )
+    .pipe(
+      async (
+        result: { ok: true; conversationId: string } & Awaited<
+          ReturnType<NeoConversationReader['read']>
+        >,
+        caller: OperationCaller
+      ) => {
+        const publications = new Map(
+          (
+            await presentPublications(
+              result.items.flatMap((item) => (item.role === 'neo' ? [item.publication] : []))
+            )
+          ).map((item) => [item.publicationId, item])
+        );
+        return {
+          ...result,
+          items: await Promise.all(
+            result.items.map(async (item) =>
+              item.role === 'session'
+                ? { ...item, message: await present(item.message) }
+                : item.role === 'human' && database
+                  ? { ...item, ask: await presentNeoPreviewAsk(item.ask, database, caller) }
+                  : item.role === 'neo'
+                    ? { ...item, publication: publications.get(item.publication.publicationId)! }
+                    : item
+            )
+          ),
+        };
+      },
+      ['page', 'caller'],
+      'page'
+    )
     .endAsync('page') as (
     page: NeoConversationPage,
     caller: OperationCaller
@@ -130,32 +162,6 @@ export function createNeoConversationReadOperation(
     policy: { safetyClass: 'read', roles: ['neo'] },
     inputSchema: NeoConversationReadInput,
     resultSchema,
-    execute: async (page, caller) => {
-      const result = await read(page, caller);
-      const publications = new Map(
-        (result.ok
-          ? await presentPublications(
-              result.items.flatMap((item) => (item.role === 'neo' ? [item.publication] : []))
-            )
-          : []
-        ).map((item) => [item.publicationId, item])
-      );
-      return result.ok
-        ? {
-            ...result,
-            items: await Promise.all(
-              result.items.map(async (item) =>
-                item.role === 'session'
-                  ? { ...item, message: await present(item.message) }
-                  : item.role === 'human' && database
-                    ? { ...item, ask: await presentNeoPreviewAsk(item.ask, database, caller) }
-                    : item.role === 'neo'
-                      ? { ...item, publication: publications.get(item.publication.publicationId)! }
-                      : item
-              )
-            ),
-          }
-        : result;
-    },
+    execute: read,
   });
 }
