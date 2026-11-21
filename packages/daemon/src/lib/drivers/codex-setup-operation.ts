@@ -13,7 +13,7 @@ const Result = z.discriminatedUnion('ok', [
 ]);
 
 export function createCodexSetupOperation(setup: ReturnType<typeof createCodexSetup> | undefined) {
-  const execute = (superpipe({})('system.codex.setup') as PipelineAPI)
+  const runCodexSetup = (superpipe({})('system.codex.setup') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
       (caller: OperationCaller) => {
@@ -43,6 +43,6 @@ export function createCodexSetupOperation(setup: ReturnType<typeof createCodexSe
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'human_only' },
-    execute,
+    execute: async (input, caller) => runCodexSetup(input, caller),
   });
 }
