@@ -25,6 +25,7 @@ jq -er '
   [
     "neo.ask.doneTodos",
     "neo.conversation.read",
+    "neo.project.forget",
     "neo.todo.done",
     "evolution.scope.owner.set",
     "goal.owner.set",
