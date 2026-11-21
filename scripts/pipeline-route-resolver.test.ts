@@ -13,7 +13,7 @@ const runner = `const run = superpipe({})('demo.read').input('input').endAsync('
 
 test.each([
   ['mutable factory', 'let make = () => ({ go: () => run() });', 'make().go()', 'unknown'],
-  ['block body', 'const make = () => { return { go: () => run() }; };', 'make().go()', 'unknown'],
+  ['block body', 'const make = () => { return { go: () => run() }; };', 'make().go()', 'named'],
   ['async factory', 'const make = async () => ({ go: () => run() });', 'make().go()', 'unknown'],
   [
     'method shorthand',
