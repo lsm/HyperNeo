@@ -1,7 +1,7 @@
 #!/bin/bash
 # Removes Locked Use and restores the stock screen-unlock rule from install.sh's backup.
-# Run as root. Refuses, changing nothing, unless the rule is exactly what install.sh
-# wrote or already the stock rule.
+# Run as root. Changes nothing unless the root-owned stock backup is valid and the live
+# rule equals it, with or without the Locked Use entry install.sh added.
 set -euo pipefail
 [[ $EUID == 0 ]] || { echo "run with sudo" >&2; exit 1; }
 . "$(dirname "$0")/policy.sh"
@@ -9,26 +9,30 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 read_rule "$work/rule.plist"
-if [[ -f "$backup" ]] && is_stock "$backup" && installed_from "$backup" "$work/expected.plist" \
-    && same_policy "$work/rule.plist" "$work/expected.plist"; then
-    security authorizationdb write "$right" < "$backup"
-    read_rule "$work/restored.plist"
-    same_policy "$work/restored.plist" "$backup" || {
-        echo "$right did not match the backup after restoring; leaving the plugin in place" >&2
+plan="$(uninstall_plan "$work/rule.plist")"
+case "$plan" in
+    restore)
+        security authorizationdb write "$right" < "$backup"
+        read_rule "$work/restored.plist"
+        if ! same_policy "$work/restored.plist" "$backup"; then
+            echo "$right did not read back as the backup; leaving the plugin and its right in place" >&2
+            exit 1
+        fi
+        ;;
+    clean) ;;
+    *)
+        echo "$right is not the stock backup or the rule install.sh wrote, or the backup is not valid; refusing" >&2
         exit 1
-    }
-elif ! is_stock "$work/rule.plist"; then
-    echo "$right is not the rule install.sh wrote, or its backup is missing; refusing to change it" >&2
-    exit 1
-fi
-if security authorizationdb read "$mine" >/dev/null 2>&1; then
+        ;;
+esac
+if right_present; then
     security authorizationdb remove "$mine"
 fi
 rm -rf "$plugin"
 
 read_rule "$work/after.plist"
-is_stock "$work/after.plist" || { echo "$right is not the stock rule after removal" >&2; exit 1; }
-! security authorizationdb read "$mine" >/dev/null 2>&1 || { echo "$mine is still defined" >&2; exit 1; }
+same_policy "$work/after.plist" "$backup" || { echo "$right is not the stock rule after removal" >&2; exit 1; }
+right_absent || { echo "$mine is still defined or could not be read" >&2; exit 1; }
 [[ ! -e "$plugin" ]] || { echo "$plugin is still present" >&2; exit 1; }
 rule_of "$work/after.plist"
 echo "removed"

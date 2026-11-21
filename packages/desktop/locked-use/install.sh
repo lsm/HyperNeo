@@ -11,13 +11,11 @@ staged=""
 trap 'rm -rf "$work" ${staged:+"$staged"}' EXIT
 
 verified_plugin() {
-    root_only_tree "$1" && codesign --verify --strict --test-requirement="=$plugin_requirement" "$1"
+    clean_tree "$1" && codesign --verify --strict --test-requirement="=$plugin_requirement" "$1"
 }
 
 read_rule "$work/rule.plist"
-if [[ -f "$backup" ]] && is_stock "$backup" && installed_from "$backup" "$work/expected.plist" \
-    && same_policy "$work/rule.plist" "$work/expected.plist" \
-    && security authorizationdb read "$mine" >/dev/null 2>&1 && verified_plugin "$plugin" 2>/dev/null; then
+if [[ "$(uninstall_plan "$work/rule.plist")" == restore ]] && right_present && verified_plugin "$plugin" 2>/dev/null; then
     echo "already installed"
     exit 0
 fi
@@ -36,7 +34,10 @@ verified_plugin "$staged/HyperNeoLockedUse.bundle"
 mkdir -p "$(dirname "$backup")"
 cp "$work/rule.plist" "$backup"
 chown root:wheel "$backup"
+chmod -N "$backup"
 chmod 644 "$backup"
+valid_backup
+same_policy "$backup" "$work/rule.plist"
 installed_from "$backup" "$work/expected.plist"
 
 rollback() {
