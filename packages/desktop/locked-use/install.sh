@@ -10,9 +10,14 @@ work="$(mktemp -d)"
 staged=""
 trap 'rm -rf "$work" ${staged:+"$staged"}' EXIT
 
+verified_plugin() {
+    root_only_tree "$1" && codesign --verify --strict --test-requirement="=$plugin_requirement" "$1"
+}
+
 read_rule "$work/rule.plist"
-if is_installed "$work/rule.plist" && security authorizationdb read "$mine" >/dev/null 2>&1 \
-    && codesign --verify --strict --test-requirement="=$plugin_requirement" "$plugin" 2>/dev/null; then
+if [[ -f "$backup" ]] && is_stock "$backup" && installed_from "$backup" "$work/expected.plist" \
+    && same_policy "$work/rule.plist" "$work/expected.plist" \
+    && security authorizationdb read "$mine" >/dev/null 2>&1 && verified_plugin "$plugin" 2>/dev/null; then
     echo "already installed"
     exit 0
 fi
@@ -22,27 +27,37 @@ if ! is_stock "$work/rule.plist"; then
 fi
 
 staged="$(mktemp -d /Library/Security/SecurityAgentPlugins/.HyperNeoLockedUse.XXXXXX)"
-ditto "$source" "$staged/HyperNeoLockedUse.bundle"
+ditto --noacl --noextattr --noqtn "$source" "$staged/HyperNeoLockedUse.bundle"
+chmod -R -N "$staged"
 chown -R root:wheel "$staged"
-chmod -R go-w "$staged"
-codesign --verify --strict --test-requirement="=$plugin_requirement" "$staged/HyperNeoLockedUse.bundle"
+chmod -R u=rwX,go=rX "$staged"
+verified_plugin "$staged/HyperNeoLockedUse.bundle"
 
 mkdir -p "$(dirname "$backup")"
 cp "$work/rule.plist" "$backup"
 chown root:wheel "$backup"
 chmod 644 "$backup"
+installed_from "$backup" "$work/expected.plist"
 
 rollback() {
-    security authorizationdb write "$right" < "$backup" || true
-    security authorizationdb remove "$mine" >/dev/null 2>&1 || true
-    rm -rf "$plugin"
-    echo "install failed; stock rule restored" >&2
+    trap - ERR
+    set +e
+    security authorizationdb write "$right" < "$backup"
+    if read_rule "$work/restored.plist" && same_policy "$work/restored.plist" "$backup"; then
+        security authorizationdb remove "$mine" >/dev/null 2>&1
+        rm -rf "$plugin"
+        echo "install failed; stock rule restored" >&2
+    else
+        echo "INSTALL FAILED AND THE STOCK RULE WAS NOT RESTORED." >&2
+        echo "The plugin and its right are left in place. Restore $right from $backup." >&2
+    fi
+    exit 1
 }
 trap rollback ERR
 
 rm -rf "$plugin"
 mv "$staged/HyperNeoLockedUse.bundle" "$plugin"
-codesign --verify --strict --test-requirement="=$plugin_requirement" "$plugin"
+verified_plugin "$plugin"
 cat > "$work/mine.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -55,10 +70,9 @@ cat > "$work/mine.plist" <<EOF
 </dict></plist>
 EOF
 security authorizationdb write "$mine" < "$work/mine.plist"
-/usr/libexec/PlistBuddy -c 'Add :k-of-n integer 1' -c "Add :rule:0 string $mine" "$work/rule.plist"
-security authorizationdb write "$right" < "$work/rule.plist"
+security authorizationdb write "$right" < "$work/expected.plist"
 read_rule "$work/after.plist"
-is_installed "$work/after.plist"
+same_policy "$work/after.plist" "$work/expected.plist"
 trap - ERR
 rule_of "$work/after.plist"
 echo "installed; stock rule backed up at $backup"

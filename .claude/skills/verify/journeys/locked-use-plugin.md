@@ -36,8 +36,11 @@ diff <(plutil -extract rule xml1 -o - "$RUN/before.plist") <(plutil -extract rul
 
 Install prints the rule array `io.hyperneo.locked-use.unlock, use-login-window-ui`;
 uninstall prints the original array and the diff is empty. Install refuses any rule
-other than the stock `class rule` with exactly `use-login-window-ui`, verifies the
-staged root-owned copy is the Developer ID plugin `io.hyperneo.locked-use.plugin`, and
-restores the stock rule if any later step fails. Uninstall restores the saved stock rule,
-refuses a rule changed by something else, and fails unless the right and bundle are gone. After install, lock the Mac and
+other than the stock `class rule` with exactly `use-login-window-ui`, copies the plugin
+without ACLs or extended attributes, verifies the tree is root-owned and writable only by
+root and is the Developer ID plugin `io.hyperneo.locked-use.plugin`, and restores the
+stock rule if any later step fails; if that restore does not read back, it says so and
+leaves the plugin and right in place. Uninstall needs the saved stock backup and a live
+rule equal to the backup plus Locked Use; anything else is refused unchanged. It verifies
+the restored rule before removing the right and bundle, and fails unless both are gone. After install, lock the Mac and
 unlock it with the password once to confirm the normal path still works.

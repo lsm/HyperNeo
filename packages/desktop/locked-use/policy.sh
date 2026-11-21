@@ -14,8 +14,25 @@ is_stock() {
     [[ "$(class_of "$1")" == rule && "$(rule_of "$1")" == '["use-login-window-ui"]' ]] && ! k_of_n "$1" >/dev/null
 }
 
-is_installed() {
-    [[ "$(class_of "$1")" == rule && "$(rule_of "$1")" == "[\"$mine\",\"use-login-window-ui\"]" && "$(k_of_n "$1")" == 1 ]]
+read_rule() { security authorizationdb read "$right" > "$1" 2>/dev/null; }
+
+normalized() {
+    local copy
+    copy="$(mktemp)"
+    cp "$1" "$copy"
+    for key in created modified version; do /usr/libexec/PlistBuddy -c "Delete :$key" "$copy" >/dev/null 2>&1 || true; done
+    plutil -convert xml1 -o - "$copy"
+    rm -f "$copy"
 }
 
-read_rule() { security authorizationdb read "$right" > "$1" 2>/dev/null; }
+same_policy() { [[ "$(normalized "$1")" == "$(normalized "$2")" ]]; }
+
+installed_from() {
+    cp "$1" "$2"
+    /usr/libexec/PlistBuddy -c 'Add :k-of-n integer 1' -c "Add :rule:0 string $mine" "$2"
+}
+
+root_only_tree() {
+    [[ -z "$(find "$1" \( ! -user root -o ! -group wheel -o -perm -g+w -o -perm -o+w -o -type l \) -print)" ]] \
+        && ! find "$1" -exec ls -lde {} + | grep -qE '^ [0-9]+: '
+}
