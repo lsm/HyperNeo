@@ -1,6 +1,10 @@
 import { proposalQuestionId, requireAcceptedAsk } from './proposal.ts';
 import type { NeoAsk, NeoDesktopApp, NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import { unnamedDesktopApp } from '../desktop/app-scope.ts';
+import {
+  type DesktopAppName,
+  resolveDesktopApps,
+  unnamedDesktopApp,
+} from '../desktop/app-scope.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { z } from 'zod';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
@@ -19,15 +23,35 @@ type AddInput = z.infer<typeof NeoTodoDraftSchema> & {
   askId?: string;
   input?: string;
   topic?: string;
-  desktopApps?: NeoDesktopApp[];
+  desktopApps?: string[];
 };
 type Result = { ok: false; reason: string } | { ok: true; todo?: NeoTodo; records?: string[] };
 
 export const DESKTOP_CONTROL_REFUSAL = {
   ok: false as const,
   reason:
-    'desktop_control_requires_permission: Leave desktopControl out. A todo uses only the apps in its ask’s desktopApps; call desktop.access.request {app} first so the Mac asks the human for that app.',
+    'desktop_control_requires_permission: Leave desktopControl out. A todo uses only the apps in its own desktopApps; call desktop.access.request {app} first so the Mac asks the human for that app.',
 };
+
+export async function neoTodoDesktopScope(
+  bundleIds: readonly string[],
+  ask: NeoAsk,
+  message: string | null,
+  name?: DesktopAppName
+): Promise<{ value: NeoDesktopApp[] } | { reason: string }> {
+  const resolved = await resolveDesktopApps(bundleIds, name);
+  if ('missing' in resolved)
+    return {
+      reason: `app_not_found: no installed app has bundle id ${resolved.missing}. Use the bundleId desktop.access.request returned.`,
+    };
+  const approved = new Set(ask.desktopApps?.map((app) => app.bundleId));
+  const unapproved = resolved.value.filter((app) => !approved.has(app.bundleId));
+  const unnamed = message === null ? unapproved[0] : unnamedDesktopApp(message, unapproved);
+  if (!unnamed) return { value: resolved.value };
+  return {
+    reason: `desktop_app_not_approved: ${unnamed.name} is not on this ask's approved card, and the human message in input does not name it. Propose a new ask with desktopApps so the card asks.`,
+  };
+}
 
 export async function recordNeoTodoAdmission(
   store: NeoAskTodoRepository,
@@ -85,24 +109,6 @@ export function wireNeoTodoAdd(
   const add = (superpipe({})('neo.todo.add-through-writer') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
-      (input: AddInput, caller: OperationCaller) => {
-        if (!input.desktopApps) return { value: null };
-        const human = input.input ? inputs.input(caller, input.input) : null;
-        const unnamed = human && unnamedDesktopApp(neoInputWords(human.content), input.desktopApps);
-        if (human && !unnamed) return { value: null };
-        return {
-          reason: {
-            ok: false as const,
-            reason: unnamed
-              ? `desktop_app_not_named: the human's message does not name ${unnamed.name}. Propose a new ask with desktopApps so the card asks.`
-              : 'desktop_apps_need_card: only the human message in input can name apps without a card. Propose a new ask with desktopApps.',
-          },
-        };
-      },
-      ['input', 'caller'],
-      'result:outcome'
-    )
-    .pipe(
       (input: AddInput, caller: OperationCaller) =>
         resolveNeoInputAsk(store, inputs, caller, input, input.title),
       ['input', 'caller'],
@@ -153,15 +159,6 @@ export function wireNeoTodoAdd(
       'result:outcome'
     )
     .pipe(
-      (ask: NeoAsk, input: AddInput) => ({
-        value: input.desktopApps
-          ? (store.addAskDesktopApps(ask.id, input.desktopApps, Date.now()) ?? ask)
-          : ask,
-      }),
-      ['outcome', 'input'],
-      'result:outcome'
-    )
-    .pipe(
       async (_ask: NeoAsk, input: AddInput) => {
         const { resolveNeoTodoDraft } = await import('./todo-operations.ts');
         return resolveNeoTodoDraft(input, controls.resolveTarget);
@@ -175,6 +172,28 @@ export function wireNeoTodoAdd(
           ? { reason: DESKTOP_CONTROL_REFUSAL }
           : { value: draft },
       'outcome',
+      'result:outcome'
+    )
+    .pipe(
+      async (
+        draft: ResolvedNeoTodoDraft,
+        ask: NeoAsk,
+        input: AddInput,
+        caller: OperationCaller
+      ) => {
+        if (!input.desktopApps) return { value: draft };
+        const human = input.input ? inputs.input(caller, input.input) : null;
+        const scope = await neoTodoDesktopScope(
+          input.desktopApps,
+          ask,
+          human ? neoInputWords(human.content) : null,
+          controls.desktopAppName
+        );
+        return 'reason' in scope
+          ? { reason: { ok: false as const, reason: scope.reason } }
+          : { value: { ...draft, desktopScope: scope.value } };
+      },
+      ['outcome', 'ask', 'input', 'caller'],
       'result:outcome'
     )
     .pipe(

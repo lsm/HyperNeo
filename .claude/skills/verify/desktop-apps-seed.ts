@@ -18,7 +18,7 @@ assert(!existsSync(path), 'seed only a fresh synthetic database');
 mkdirSync(join(run, 'data'), { recursive: true });
 mkdirSync(join(run, 'evidence'), { recursive: true });
 const db = new Database(path);
-const chrome = { bundleId: 'com.google.Chrome', name: 'Chrome' };
+const chrome = { bundleId: 'com.google.Chrome', name: 'Google Chrome' };
 try {
   runMigrations(db, () => {});
   createTables(db);
@@ -40,9 +40,8 @@ try {
     ['no-apps', 'Synthetic: summarize the attached notes', null],
   ] as const) {
     open(ask, title, title);
-    if (apps) store.addAskDesktopApps(ask, apps, now);
     const todo = `${ask}-todo`;
-    store.addTodo(todo, ask, { title: `${title} (step)`, doneWhen: 'Observed', check: null, instruction: null, named: null }, 0);
+    store.addTodo(todo, ask, { title: `${title} (step)`, doneWhen: 'Observed', check: null, instruction: null, named: null, ...(apps ? { desktopScope: [...apps] } : {}) }, 0);
     db.prepare("UPDATE neo_todos SET state = 'doing', approved_at = ?, started_at = ? WHERE id = ?").run(now, now, todo);
     db.prepare('INSERT INTO neo_todo_sessions(todo_id, target, ref) VALUES(?, ?, ?)').run(todo, '{}', JSON.stringify({ adapter: 'hyperneo', id: `worker-${ask}` }));
   }

@@ -223,10 +223,8 @@ function TodoRow({
   onControl,
   disabled,
   onDesktopControl,
-  desktopApps = [],
 }: {
   todo: NeoTodoEntry;
-  desktopApps?: readonly { name: string }[];
   onControl?: (control: NeoTodoControl) => Promise<void>;
   disabled?: boolean;
   onDesktopControl?: (todoId: string, on: boolean) => void;
@@ -267,13 +265,13 @@ function TodoRow({
   const desktopEditable =
     number === undefined &&
     !!onDesktopControl &&
-    desktopApps.length > 0 &&
+    !!todo.desktopApps?.length &&
     !todo.worker?.daemon &&
     ['todo', 'doing', 'blocked'].includes(todo.state);
   const desktopOn = desktopEditable && todo.named?.desktopControl !== false;
   const setDesktop = (on: boolean) => onDesktopControl?.(todo.id, on);
   const desktopTitle = t('todo.desktopOnTitle', {
-    apps: desktopApps.map((app) => app.name).join(', '),
+    apps: (todo.desktopApps ?? []).map((app) => app.name).join(', '),
   });
   const menu = [
     ...(desktopEditable
@@ -983,7 +981,6 @@ export function NeoAskTodos({
       }
       expanded={expanded.includes(todo.id)}
       onDesktopControl={onDesktopControl}
-      desktopApps={entry.ask.desktopApps}
       onToggle={
         entry.summary || neoTodoHasMore(todo)
           ? () =>
@@ -1117,7 +1114,6 @@ export function NeoAskTodos({
               onControl={onControl && ((control) => onControl(todo, control))}
               expanded={expanded.includes(todo.id)}
               onDesktopControl={onDesktopControl}
-              desktopApps={entry.ask.desktopApps}
               onToggle={
                 entry.summary || neoTodoHasMore(todo)
                   ? () =>

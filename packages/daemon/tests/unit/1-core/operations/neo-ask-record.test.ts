@@ -49,6 +49,8 @@ function setup(language?: 'en' | 'zh-Hans') {
       sessions,
       {
         resolveTarget: existingTodoTarget,
+        desktopAppName: async (bundleId: string) =>
+          ({ 'com.google.Chrome': 'Google Chrome', 'com.apple.mail': 'Mail' })[bundleId] ?? null,
         advance: async () => {
           if (refuse.value) return;
           for (const ask of store.listOpenAsks())
@@ -269,28 +271,32 @@ describe('neo.ask.propose and neo.ask.settle', () => {
     ]);
   });
 
-  test('a proposal card lists the apps it would drive and the ask keeps them', async () => {
+  test('a proposal card lists the system names of the apps and the ask keeps them', async () => {
     const { call, store } = setup();
-    const desktopApps = [{ bundleId: 'com.google.Chrome', name: 'Chrome' }];
     const result = await call(
       'neo.ask.propose',
-      { title: 'Find the invoice', request: 'Find the March invoice', desktopApps },
+      {
+        title: 'Find the invoice',
+        request: 'Find the March invoice',
+        desktopApps: ['com.google.Chrome'],
+      },
       turn('apps')
     );
     if (!result.ok) throw new Error(result.reason);
+    const chrome = { bundleId: 'com.google.Chrome', name: 'Google Chrome' };
     expect(store.getAsk(result.ask.id)).toMatchObject({
       request: 'Find the March invoice',
-      desktopApps,
+      desktopApps: [chrome],
     });
     expect(store.listQuestions(result.ask.id)).toMatchObject([
-      { text: 'Find the March invoice\n\n🖥 Chrome' },
+      { text: 'Find the March invoice\n\n🖥 Google Chrome' },
     ]);
     const later = await call(
       'neo.ask.propose',
       {
         title: 'Find the invoice',
         request: 'Find the March invoice',
-        desktopApps: [{ bundleId: 'com.apple.mail', name: 'Mail' }],
+        desktopApps: ['com.apple.mail'],
       },
       turn('apps-again')
     );
@@ -298,7 +304,13 @@ describe('neo.ask.propose and neo.ask.settle', () => {
       ok: false,
       reason: expect.stringContaining('desktop_apps_need_new_card'),
     });
-    expect(store.getAsk(result.ask.id)?.desktopApps).toEqual(desktopApps);
+    const unknown = await call(
+      'neo.ask.propose',
+      { title: 'Other', request: 'Something else', desktopApps: ['com.example.missing'] },
+      turn('apps-unknown')
+    );
+    expect(unknown).toMatchObject({ ok: false, reason: expect.stringContaining('app_not_found') });
+    expect(store.getAsk(result.ask.id)?.desktopApps).toEqual([chrome]);
   });
 
   test('a settled proposal retry records that no new todo was added', async () => {

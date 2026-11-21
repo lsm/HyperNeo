@@ -1,37 +1,51 @@
 import type { NeoDesktopApp } from '@hyperneo/shared/types/neo-ask';
+import { execFile } from 'node:child_process';
+import { basename } from 'node:path';
+import { promisify } from 'node:util';
 import { z } from 'zod';
 
-const words = (text: string) =>
-  text
-    .toLowerCase()
-    .split(/[^\p{L}\p{N}]+/u)
-    .filter(Boolean);
+const run = promisify(execFile);
+const BUNDLE_ID = /^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
 
-export const nameFitsBundle = ({ bundleId, name }: NeoDesktopApp) =>
-  words(name).every((word) => bundleId.toLowerCase().includes(word));
+export const DesktopAppsSchema = z.array(z.string().regex(BUNDLE_ID)).min(1).max(5);
 
-export const DesktopAppsSchema = z
-  .array(
-    z
-      .object({
-        bundleId: z.string().regex(/^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/),
-        name: z.string().trim().min(1).max(60),
-      })
-      .strict()
-      .refine(nameFitsBundle, {
-        message:
-          'name must be the app’s English name, every word of it inside bundleId (Chrome for com.google.Chrome).',
-      })
-  )
-  .min(1)
-  .max(5);
+export type DesktopAppName = (bundleId: string) => Promise<string | null>;
+
+export const macDesktopAppName: DesktopAppName = async (bundleId) => {
+  if (process.platform !== 'darwin' || !BUNDLE_ID.test(bundleId)) return null;
+  const found = await run('mdfind', [`kMDItemCFBundleIdentifier == "${bundleId}"`], {
+    timeout: 5000,
+  }).catch(() => null);
+  const path = found?.stdout.split('\n').find((line) => line.endsWith('.app'));
+  return path ? basename(path, '.app') : null;
+};
+
+export async function resolveDesktopApps(
+  bundleIds: readonly string[],
+  name: DesktopAppName = macDesktopAppName
+): Promise<{ value: NeoDesktopApp[] } | { missing: string }> {
+  const apps: NeoDesktopApp[] = [];
+  for (const bundleId of new Set(bundleIds)) {
+    const found = await name(bundleId);
+    if (!found) return { missing: bundleId };
+    apps.push({ bundleId, name: found });
+  }
+  return { value: apps };
+}
+
+const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const spoken = (app: NeoDesktopApp) => [app.name, app.bundleId.split('.').at(-1) ?? app.name];
 
 export function unnamedDesktopApp(
   message: string,
   apps: readonly NeoDesktopApp[]
 ): NeoDesktopApp | undefined {
-  const said = message.toLowerCase();
-  return apps.find((app) => !said.includes(app.name.toLowerCase()));
+  return apps.find(
+    (app) =>
+      !spoken(app).some((name) =>
+        new RegExp(`(^|[^\\p{L}\\p{N}])${escape(name)}($|[^\\p{L}\\p{N}])`, 'iu').test(message)
+      )
+  );
 }
 
 export const desktopAppsLine = (apps: readonly NeoDesktopApp[]) =>

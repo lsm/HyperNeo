@@ -46,11 +46,11 @@ beforeEach(async () => {
   await mkdir(join(root, 'desktop'));
   db = new Database(':memory:');
   db.exec(`CREATE TABLE neo_asks(id TEXT, status TEXT, desktop_apps TEXT);
-    CREATE TABLE neo_todos(id TEXT, ask_id TEXT, title TEXT, state TEXT, approved_at INTEGER, named TEXT);
+    CREATE TABLE neo_todos(id TEXT, ask_id TEXT, title TEXT, state TEXT, approved_at INTEGER, named TEXT, desktop_apps TEXT DEFAULT '[{"bundleId":"org.example.app","name":"app"}]');
     CREATE TABLE neo_todo_sessions(todo_id TEXT, ref TEXT);
     CREATE TABLE mcp_audit_log(id TEXT, timestamp INTEGER, agent_name TEXT, session_id TEXT, tool_name TEXT, params_summary TEXT, space_id TEXT, task_id TEXT, workflow_run_id TEXT);
     INSERT INTO neo_asks VALUES('ask','open','[{"bundleId":"org.example.app","name":"app"}]');
-    INSERT INTO neo_todos VALUES('todo','ask','Synthetic action','doing',1,'{"desktopControl":true}');
+    INSERT INTO neo_todos(id, ask_id, title, state, approved_at, named) VALUES('todo','ask','Synthetic action','doing',1,'{"desktopControl":true}');
     INSERT INTO neo_todo_sessions VALUES('todo','{"adapter":"hyperneo","id":"worker-a"}');`);
   requests = [];
   reason = null;
@@ -260,9 +260,9 @@ test.each([
   `UPDATE neo_todos SET named='{"desktopControl":false}'`,
   'UPDATE neo_todos SET approved_at=NULL',
   "UPDATE neo_asks SET status='closed'",
-  'UPDATE neo_asks SET desktop_apps=NULL',
-  "UPDATE neo_asks SET desktop_apps='[]'",
-  `INSERT INTO neo_todos VALUES('second','ask','Other','doing',1,'{"desktopControl":true}'); INSERT INTO neo_todo_sessions VALUES('second','{"adapter":"hyperneo","id":"worker-a"}')`,
+  'UPDATE neo_todos SET desktop_apps=NULL',
+  "UPDATE neo_todos SET desktop_apps='[]'",
+  `INSERT INTO neo_todos(id, ask_id, title, state, approved_at, named) VALUES('second','ask','Other','doing',1,'{"desktopControl":true}'); INSERT INTO neo_todo_sessions VALUES('second','{"adapter":"hyperneo","id":"worker-a"}')`,
   `UPDATE neo_todo_sessions SET ref='{"adapter":"hyperneo","id":"worker-a","daemon":"remote"}'`,
 ])('refuses an uncovered or ambiguous binding before any host request', async (sql) => {
   db.exec(sql);
@@ -273,7 +273,7 @@ test.each([
   expect(requests).toHaveLength(0);
 });
 
-test('dispatches only the apps approved for the ask', async () => {
+test('dispatches only the apps approved for the todo', async () => {
   db.exec("UPDATE neo_todos SET named='{}'");
   expect(await call()).toMatchObject({ kind: 'completed', value: { dispatched: true } });
   expect(requests).toEqual([expect.objectContaining({ apps: ['org.example.app'] })]);

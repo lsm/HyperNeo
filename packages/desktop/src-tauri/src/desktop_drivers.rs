@@ -52,6 +52,43 @@ pub(crate) fn inject_accept_failure() {
 }
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+// An unfiltered listing names every app's windows; keep only the todo's approved apps.
+fn scoped_windows(mut body: Value, apps: &[String]) -> Value {
+    let mut owners = BTreeMap::new();
+    let mut allowed = |pid: i64| {
+        *owners.entry(pid).or_insert_with(|| {
+            target::resolve("list_windows", &json!({ "pid": pid }), None)["value"]["bundle_id"]
+                .as_str()
+                .is_some_and(|bundle| apps.iter().any(|app| app == bundle))
+        })
+    };
+    let windows: Vec<Value> = body["structuredContent"]["windows"]
+        .as_array()
+        .map(|all| {
+            all.iter()
+                .filter(|window| window["pid"].as_i64().is_some_and(&mut allowed))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    let text = windows
+        .iter()
+        .map(|window| {
+            format!(
+                "- {} (pid {}) \"{}\" [window_id: {}]",
+                window["app_name"].as_str().unwrap_or_default(),
+                window["pid"],
+                window["title"].as_str().unwrap_or_default(),
+                window["window_id"]
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    body["structuredContent"] = json!({ "windows": windows });
+    body["content"] = json!([{ "type": "text", "text": text }]);
+    body
+}
 struct Worker {
     channel: channel::Channel,
     _directory: TempDir,
@@ -652,6 +689,9 @@ impl Drivers {
                     // The driver reports tool failures in its result, not on the channel.
                     if body["isError"] == true {
                         reason = json!("driver_error");
+                    }
+                    if unscoped_windows {
+                        body = scoped_windows(body, request.apps.as_deref().unwrap_or_default());
                     }
                     let mut reply = finish(bundle, class, "allowed", reason, sent);
                     log::info!(

@@ -38,7 +38,6 @@ beforeEach(() => {
     request: '',
     createdAt: 1,
   });
-  todos.addAskDesktopApps('ask', [{ bundleId: 'com.google.Chrome', name: 'Chrome' }], 1);
   for (const [index, [todo, worker, named]] of (
     [
       ['dentist', 'worker-a', null],
@@ -51,7 +50,9 @@ beforeEach(() => {
       { title: todo, doneWhen: 'Observed', check: null, instruction: null, named },
       index
     );
-    db.prepare("UPDATE neo_todos SET state = 'doing', approved_at = 1 WHERE id = ?").run(todo);
+    db.prepare(
+      "UPDATE neo_todos SET state = 'doing', approved_at = 1, desktop_apps = ? WHERE id = ?"
+    ).run(JSON.stringify([{ bundleId: 'com.google.Chrome', name: 'Chrome' }]), todo);
     db.prepare('INSERT INTO neo_todo_sessions(todo_id, target, ref) VALUES(?, ?, ?)').run(
       todo,
       '{}',
@@ -70,17 +71,18 @@ function set(input: { todoId: string; on: boolean }, caller = human) {
   );
 }
 
-test('desktop control is on for every todo of an ask with an approved app', () => {
+test('desktop control is on for a todo with its own approved app', () => {
   expect([optedIn('worker-a'), optedIn('worker-b')]).toEqual(['dentist', 'taxes']);
 });
 
-test('a todo whose ask has no approved app gets no desktop control', () => {
-  db.prepare('UPDATE neo_asks SET desktop_apps = NULL').run();
-  expect([optedIn('worker-a'), optedIn('worker-b')]).toEqual([null, null]);
+test('an app approved for one todo does not reach its sibling', () => {
+  db.prepare("UPDATE neo_todos SET desktop_apps = NULL WHERE id = 'taxes'").run();
+  expect([optedIn('worker-a'), optedIn('worker-b')]).toEqual(['dentist', null]);
 });
 
 test('approved apps merge by bundle id and only on an open ask', () => {
   const todos = new NeoAskTodoRepository(db);
+  todos.addAskDesktopApps('ask', [{ bundleId: 'com.google.Chrome', name: 'Chrome' }], 1);
   const ask = todos.addAskDesktopApps(
     'ask',
     [

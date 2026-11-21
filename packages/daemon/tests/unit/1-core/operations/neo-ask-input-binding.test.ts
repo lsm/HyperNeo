@@ -78,6 +78,8 @@ function setup() {
     )) as { ok: true; question: NeoQuestion; records?: string[] } | { ok: false; reason: string };
   const controls = {
     resolveTarget: async (ref) => ({ value: ref }),
+    desktopAppName: async (bundleId: string) =>
+      ({ 'com.google.Chrome': 'Google Chrome', 'com.apple.mail': 'Mail' })[bundleId] ?? null,
     advance: async () => {},
   } as unknown as NeoTodoControls;
   const todoOps = createNeoTodoOperations(
@@ -127,28 +129,49 @@ describe('neo ask binding from human input', () => {
     }
   });
 
-  test('apps the human named join the ask; other apps and askId-only adds are refused', async () => {
+  test('an app reaches only the todo whose human message names it or whose ask card approved it', async () => {
     const f = setup();
     try {
-      const chrome = { bundleId: 'com.google.Chrome', name: 'Chrome' };
-      const mail = { bundleId: 'com.apple.mail', name: 'Mail' };
+      const chrome = { bundleId: 'com.google.Chrome', name: 'Google Chrome' };
       const input = f.human('Use Chrome to find the March invoice');
-      const refused = await f.add({ input, desktopApps: [chrome, mail] });
+      const refused = await f.add({ input, desktopApps: ['com.google.Chrome', 'com.apple.mail'] });
       expect(refused).toMatchObject({
         ok: false,
-        reason: expect.stringContaining('does not name Mail'),
+        reason: expect.stringContaining('Mail is not on'),
       });
-      expect(f.store.listOpenAsks()).toHaveLength(1);
-      const added = await f.add({ input, desktopApps: [chrome] });
+      const added = await f.add({ input, desktopApps: ['com.google.Chrome'] });
       if (!added.ok || !added.todo) throw new Error('add failed');
-      expect(f.store.getAsk(added.todo.askId)?.desktopApps).toEqual([chrome]);
-      expect(f.store.listQuestions(added.todo.askId)).toEqual([]);
-      const followUp = await f.add({ askId: added.todo.askId, desktopApps: [mail] });
-      expect(followUp).toMatchObject({
-        ok: false,
-        reason: expect.stringContaining('desktop_apps_need_card'),
+      const askId = added.todo.askId;
+      expect(f.store.listTodos(askId).map((todo) => todo.desktopApps ?? null)).toEqual([[chrome]]);
+      expect(f.store.getAsk(askId)?.desktopApps).toBeUndefined();
+      expect(f.store.listQuestions(askId)).toEqual([]);
+      const sibling = await f.add({ askId, title: 'Sibling step' });
+      expect(sibling.ok).toBe(true);
+      const claimed = await f.add({
+        askId,
+        title: 'Claim step',
+        desktopApps: ['com.google.Chrome'],
       });
-      expect(f.store.getAsk(added.todo.askId)?.desktopApps).toEqual([chrome]);
+      expect(claimed).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('desktop_app_not_approved'),
+      });
+      f.store.addAskDesktopApps(askId, [chrome], 2);
+      const pooled = await f.add({
+        askId,
+        title: 'Pooled step',
+        desktopApps: ['com.google.Chrome'],
+      });
+      expect(pooled.ok).toBe(true);
+      expect(
+        Object.fromEntries(
+          f.store.listTodos(askId).map((todo) => [todo.title, todo.desktopApps ?? null])
+        )
+      ).toEqual({
+        'Fix the two Open buttons': [chrome],
+        'Sibling step': null,
+        'Pooled step': [chrome],
+      });
     } finally {
       f.db.close();
     }

@@ -24,7 +24,7 @@ import {
   requireNeoOpenAsk,
 } from './todo-operations.ts';
 import { DESKTOP_CONTROL_REFUSAL, recordNeoTodoAdmission } from './todo-add-operation.ts';
-import { DesktopAppsSchema, desktopAppsLine } from '../desktop/app-scope.ts';
+import { DesktopAppsSchema, desktopAppsLine, resolveDesktopApps } from '../desktop/app-scope.ts';
 import type { NeoPack, NeoTodoPolicyScope } from './pack-contract.ts';
 import { neoTodoRepository } from './pack-contract.ts';
 import { neoTodoFollowUpRefusal } from './todo-follow-up.ts';
@@ -56,7 +56,7 @@ const Open = z.object({
   goalId: Text.nullable().optional(),
   todos: z.array(NeoTodoDraftSchema).max(20).default([]),
   desktopApps: DesktopAppsSchema.optional().describe(
-    'The apps on this Mac the work will drive. The card lists them, and answering yes lets this ask’s todos use only these apps.'
+    'Bundle ids of the apps on this Mac the work will drive. The card lists their names; after yes, each todo you add may claim some of them in its own desktopApps.'
   ),
 });
 
@@ -360,8 +360,16 @@ export function createNeoAskRecordOperations(
             reason:
               'desktop_apps_need_new_card: this ask already has its card. Propose a new ask that lists the app.',
           };
-        const cardText = input.desktopApps
-          ? `${input.request}\n\n${desktopAppsLine(input.desktopApps)}`
+        const desktop = input.desktopApps
+          ? await resolveDesktopApps(input.desktopApps, controls.desktopAppName)
+          : null;
+        if (desktop && 'missing' in desktop)
+          return {
+            ok: false,
+            reason: `app_not_found: no installed app has bundle id ${desktop.missing}. Use the bundleId desktop.access.request returned.`,
+          };
+        const cardText = desktop
+          ? `${input.request}\n\n${desktopAppsLine(desktop.value)}`
           : input.request;
         if (!current) {
           const card = requireHumanCard({ text: cardText, kind: 'yesno' }, settlement.language?.());
@@ -396,8 +404,8 @@ export function createNeoAskRecordOperations(
               },
               now
             );
-            return input.desktopApps
-              ? (store.addAskDesktopApps(opened.id, input.desktopApps, now) ?? opened)
+            return desktop
+              ? (store.addAskDesktopApps(opened.id, desktop.value, now) ?? opened)
               : opened;
           });
         recorded.push(...family(ask));

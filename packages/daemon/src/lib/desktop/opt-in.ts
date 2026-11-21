@@ -14,7 +14,7 @@ export type DesktopTodoRow = {
 export function readDesktopTodos(db: Pick<Database, 'prepare'>, worker?: string) {
   return db
     .prepare(
-      `SELECT * FROM (SELECT json_extract(s.ref, '$.id') AS worker, t.id, t.title, t.named, a.desktop_apps AS apps,
+      `SELECT * FROM (SELECT json_extract(s.ref, '$.id') AS worker, t.id, t.title, t.named, t.desktop_apps AS apps,
         (t.state IN ('todo', 'doing', 'blocked') AND t.approved_at IS NOT NULL AND a.status = 'open') AS active,
         (t.state IN ('done', 'removed')) AS finished,
         (t.state = 'doing') AS doing
@@ -34,6 +34,6 @@ export const desktopAllowedRow = (row: DesktopTodoRow) =>
 export function desktopAllowed(rows: readonly DesktopTodoRow[], worker: string) {
   const own = rows.filter((row) => row.worker === worker && row.active);
   const doing = own.filter((row) => row.doing);
-  const candidates = doing.length ? doing : own;
+  const candidates = doing.length ? doing : own.filter(desktopAllowedRow);
   return candidates.length === 1 && desktopAllowedRow(candidates[0]) ? candidates[0] : null;
 }

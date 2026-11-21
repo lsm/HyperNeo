@@ -12,12 +12,12 @@ HYPERNEO_DATA_DIR="$RUN/data" NODE_PATH=<playwright> node .claude/skills/verify/
 ```
 
 Pass `en` to both for English. The seed opens three synthetic asks: a proposal whose card
-lists Chrome, a running todo on an ask approved for Chrome, and a running todo on an ask
-with no approved app. No key or model is used.
+lists Google Chrome, a running todo approved for Google Chrome, and a running todo with no
+approved app. No key or model is used.
 
 - `desktop-apps-<language>.json` has `passed: true` and four views (desktop and phone,
   light and dark), two shots each.
-- The proposal card ends with the line `🖥 Chrome`.
-- The Chrome todo shows the computer icon, titled "Can use Chrome on this computer. Click to
-  stop." (可以用这台电脑上的 Chrome，点一下可以关掉).
-- The todo whose ask has no approved app shows no computer icon.
+- The proposal card ends with the line `🖥 Google Chrome`.
+- The Chrome todo shows the computer icon, titled "Can use Google Chrome on this computer.
+  Click to stop." (可以用这台电脑上的 Google Chrome，点一下可以关掉).
+- The todo with no approved app of its own shows no computer icon.

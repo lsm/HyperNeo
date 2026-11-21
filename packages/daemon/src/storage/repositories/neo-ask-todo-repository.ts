@@ -52,6 +52,7 @@ import { applyPackPreferenceAnswer } from './pack-preference-answer.ts';
 export type NeoTodoDraft = Pick<NeoTodo, 'title' | 'doneWhen' | 'check' | 'instruction' | 'named'> &
   Partial<Pick<NeoTodo, 'priority' | 'dependsOn' | 'approvedAt'>> & {
     producesFollowUp?: boolean;
+    desktopScope?: NeoDesktopApp[];
   };
 
 export type NeoTodoInsert = (
@@ -150,7 +151,7 @@ const TODO_SELECT = `SELECT id, ask_id AS askId, position, title, done_when AS d
   added_after_start AS addedAfterStart, report, evidence, artifacts_json AS artifactsJson, priority, depends_on AS dependsOnJson, created_at AS createdAt,
   updated_at AS updatedAt, started_at AS startedAt, finished_at AS finishedAt,
   approved_at AS approvedAt, approval_question_id AS approvalQuestionId,
-  produces_follow_up AS producesFollowUp FROM neo_todos`;
+  produces_follow_up AS producesFollowUp, desktop_apps AS desktopAppsJson FROM neo_todos`;
 
 export type NeoQuestionDraft = Pick<
   NeoQuestion,
@@ -258,8 +259,15 @@ const toQuestion = ({
 
 type TodoRow = Omit<
   NeoTodo,
-  'check' | 'named' | 'addedAfterStart' | 'artifacts' | 'dependsOn' | 'producesFollowUp'
+  | 'check'
+  | 'named'
+  | 'addedAfterStart'
+  | 'artifacts'
+  | 'dependsOn'
+  | 'producesFollowUp'
+  | 'desktopApps'
 > & {
+  desktopAppsJson: string | null;
   checkJson: string | null;
   producesFollowUp: number;
   dependsOnJson: string | null;
@@ -275,9 +283,11 @@ const toTodo = ({
   named,
   addedAfterStart,
   producesFollowUp,
+  desktopAppsJson,
   ...row
 }: TodoRow): NeoTodo => ({
   ...row,
+  ...(desktopAppsJson ? { desktopApps: JSON.parse(desktopAppsJson) as NeoDesktopApp[] } : {}),
   ...(producesFollowUp === 1 ? { producesFollowUp: true as const } : {}),
   dependsOn: parsed<string[]>(dependsOnJson),
   ...(artifactsJson ? { artifacts: JSON.parse(artifactsJson) as NeoTodo['artifacts'] } : {}),
@@ -801,10 +811,10 @@ export class NeoAskTodoRepository {
     this.db
       .prepare(
         `INSERT INTO neo_todos (id, ask_id, position, title, done_when, check_json, instruction, named,
-           added_after_start, priority, depends_on, approved_at, produces_follow_up, created_at, updated_at)
+           added_after_start, priority, depends_on, approved_at, produces_follow_up, desktop_apps, created_at, updated_at)
          VALUES (?, ?, (SELECT COALESCE(MAX(position) + 1, 0) FROM neo_todos WHERE ask_id = ?), ?, ?, ?, ?, ?,
            EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = ? AND started_at IS NOT NULL), ?,
-           ?, ?, ?, ?, ?)`
+           ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -820,6 +830,7 @@ export class NeoAskTodoRepository {
         JSON.stringify(draft.dependsOn ?? []),
         draft.approvedAt ?? null,
         draft.producesFollowUp ? 1 : 0,
+        draft.desktopScope?.length ? JSON.stringify(draft.desktopScope) : null,
         now,
         now
       );

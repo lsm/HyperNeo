@@ -20,6 +20,7 @@ afterEach(() => {
 
 const todo = (id: string, patch: Partial<NeoTodoEntry> = {}): NeoTodoEntry => ({
   id,
+  desktopApps: [{ bundleId: 'com.google.Chrome', name: 'Chrome' }],
   askId: 'ask',
   position: 0,
   priority: 'normal',
@@ -73,7 +74,6 @@ const question = (id: string, patch: Partial<NeoQuestionEntry>): NeoQuestionEntr
 const entry = (patch: Partial<NeoAskEntry>): NeoAskEntry => ({
   ask: {
     id: 'ask',
-    desktopApps: [{ bundleId: 'com.google.Chrome', name: 'Chrome' }],
     projectId: null,
     parentId: null,
     sessionId: 'neo',
@@ -718,12 +718,11 @@ describe('NeoAskTodos', () => {
       ),
     });
 
-  it('shows no computer switch on an ask without approved apps', () => {
+  it('shows no computer switch on a todo without its own approved apps', () => {
     locale.value = 'en';
-    const shown = entry({ todos: [todo('b', { state: 'doing' })] });
     const app = render(
       <NeoAskTodos
-        entry={{ ...shown, ask: { ...shown.ask, desktopApps: undefined } }}
+        entry={entry({ todos: [todo('b', { state: 'doing', desktopApps: undefined })] })}
         onAnswer={vi.fn()}
         onDesktopControl={vi.fn()}
       />

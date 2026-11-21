@@ -16,7 +16,7 @@ const pair = () =>
     encoding: 'utf8',
     env: { ...process.env, VERIFY_PORT: port, HYPERNEO_DATA_DIR: join(run, 'data') },
   }).match(/"code":\s*"([^"]+)"/)?.[1];
-const title = language === 'en' ? 'Can use Chrome on this computer. Click to stop.' : '可以用这台电脑上的 Chrome，点一下可以关掉';
+const title = language === 'en' ? 'Can use Google Chrome on this computer. Click to stop.' : '可以用这台电脑上的 Google Chrome，点一下可以关掉';
 const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}) });
 const result = { language, views: [], passed: false };
@@ -44,7 +44,7 @@ try {
         await page.locator('[data-ask]:visible').first().waitFor({ timeout: 15000 });
       }
       const proposal = (await revealAsk(page, 'proposal')).first();
-      await proposal.getByText('🖥 Chrome').waitFor({ timeout: 15000 });
+      await proposal.getByText('🖥 Google Chrome').waitFor({ timeout: 15000 });
       await page.waitForTimeout(800);
       const card = join(evidence, `desktop-apps-card-${language}-${view.name}-${colorScheme}.png`);
       await page.screenshot({ path: card });
@@ -55,7 +55,7 @@ try {
       const noApps = (await revealAsk(page, 'no-apps')).first();
       await noApps.locator('[data-ask-todo]').first().waitFor({ timeout: 15000 });
       assert.equal(await noApps.locator('[data-todo-desktop]').count(), 0);
-      const labels = { proposal: '🖥 Chrome', withApps: title, noApps: 'no icon' };
+      const labels = { proposal: '🖥 Google Chrome', withApps: title, noApps: 'no icon' };
       await page.waitForTimeout(1000);
       const shot = join(evidence, `desktop-apps-${language}-${view.name}-${colorScheme}.png`);
       await page.screenshot({ path: shot });

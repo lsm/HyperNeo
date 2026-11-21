@@ -16,7 +16,7 @@ import { type Place, type WorkRef } from '../drivers/types.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { getDataDir } from '../data-dir.ts';
-import { DesktopAppsSchema } from '../desktop/app-scope.ts';
+import { type DesktopAppName, DesktopAppsSchema } from '../desktop/app-scope.ts';
 import { neoEvidencePathRefusal } from './core-todo-checks.ts';
 import { planNeoHoldCard } from './daemon-cards.ts';
 import { openHumanCard } from './human-card.ts';
@@ -69,6 +69,7 @@ export interface NeoTodoControls {
     Gate<WorkRef> & { place?: Pick<Place, 'folder' | 'remotes'>; workerRemotes?: readonly string[] }
   >;
   refreshIdentity?(todoId: string): Promise<void>;
+  desktopAppName?: DesktopAppName;
   advance(): Promise<unknown>;
   recompute(todo: NeoTodo, patch: NeoTodoPatch): Promise<NeoTodo>;
   proceed(todoId: string, message: string): Ran;
@@ -142,7 +143,7 @@ const Add = TodoDraft.extend({
       'The topic of the new ask this call opens for input. Ignored when the todo joins an existing ask; change that one with neo.ask.topic.'
     ),
   desktopApps: DesktopAppsSchema.optional().describe(
-    'The apps on this Mac this todo drives, only when the human message in input names each one. They join the ask’s desktop scope. For any other app, propose a new ask with desktopApps.'
+    'Bundle ids of the apps on this Mac this todo drives. Each must be on its ask’s approved proposal card, or named by the human message in input. Only this todo gets them. For any other app, propose a new ask with desktopApps.'
   ),
   after: z
     .array(Text)
@@ -360,6 +361,7 @@ const Remove = z.object({
 
 export const NeoTodoSchema = z.object({
   worker: WorkerIdentitySchema.nullable().optional(),
+  desktopApps: z.array(z.object({ bundleId: z.string(), name: z.string() })).optional(),
   id: z.string(),
   askId: z.string(),
   position: z.number(),

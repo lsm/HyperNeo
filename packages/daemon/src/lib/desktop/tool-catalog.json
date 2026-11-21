@@ -1,7 +1,7 @@
 [
   {
     "name": "list_windows",
-    "description": "List one app's windows by its pid. With no pid, list windows across apps, including their titles and pids, without an app grant.",
+    "description": "List one app's windows by its pid. With no pid, list the windows of every app this todo may use, with titles and pids, without an app grant.",
     "inputSchema": {
       "type": "object",
       "properties": {

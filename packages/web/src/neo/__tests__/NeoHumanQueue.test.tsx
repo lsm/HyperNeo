@@ -36,12 +36,7 @@ const question = (id: string, askId: string, patch: Partial<NeoQuestionEntry> = 
 
 const entry = (id: string, title: string, questions: NeoQuestionEntry[] = []) =>
   ({
-    ask: {
-      id,
-      title,
-      updatedAt: 1,
-      desktopApps: [{ bundleId: 'com.google.Chrome', name: 'Chrome' }],
-    },
+    ask: { id, title, updatedAt: 1 },
     todos: [],
     questions,
   }) as unknown as NeoAskEntry;

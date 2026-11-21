@@ -52,6 +52,7 @@ export type NeoTodoBlocker =
 
 export interface NeoTodo extends ArtifactProjection {
   worker?: WorkerIdentity | null;
+  desktopApps?: NeoDesktopApp[];
   id: string;
   askId: string;
   position: number;
