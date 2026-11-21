@@ -41,10 +41,23 @@ CLI fallback), replacing or wrapping the managed daemon, non-macOS support.
 
 ## Design
 
-### Opt-in setup command
+### Setup, automatic and manual
 
-`hyperneo codex-setup`, macOS only (the CLI refuses elsewhere with a clear
-message). Per the issue, setup is opt-in, never automatic. Steps, each idempotent:
+macOS only; elsewhere the driver skips the check and the CLI refuses with a
+clear message. The same idempotent steps run in two ways:
+
+- Automatically, by the Codex driver: at daemon startup with the driver
+  enabled, and again on first Codex use, the driver checks whether the shared
+  setup is in place — bridge setting, token file, env var (via
+  `launchctl getenv`), managed daemon running, remote control enabled. If
+  anything is missing and no opt-out is recorded (below), the driver runs the
+  steps itself and tells the user on the existing notice surface (the notice
+  groups the web UI already renders) in plain words what it set up and that
+  the Codex app must be quit and reopened once. No new UI.
+- Manually, via `hyperneo codex-setup`, which runs the same steps and prints
+  the same information for someone at a terminal.
+
+Steps, each idempotent:
 
 1. Migrate any hand-installed bridge (see Migration below): boot out and delete
    the old launchd agents so they cannot fight the built-in one at the next
@@ -52,13 +65,15 @@ message). Per the issue, setup is opt-in, never automatic. Steps, each idempoten
 2. Ensure the managed daemon runs: `codex app-server daemon start`. Returns
    `alreadyRunning` when up; safe to repeat.
 3. Record the bridge in daemon settings, generate the per-user token into its
-   own storage file (see Forwarder inside the daemon), and ask the running
-   daemon (over RPC) to start the forwarder now.
+   own storage file (see Forwarder inside the daemon), and start the forwarder.
 4. `launchctl setenv CODEX_APP_SERVER_WS_URL` to the bridge URL, which embeds
    the per-user token described under Forwarder inside the daemon.
 5. `codex app-server daemon enable-remote-control`. Persists across daemon
    starts, but restarts the running daemon once, interrupting Codex work in
-   flight, so setup warns first; `--no-remote-control` skips it.
+   flight. The automatic run defers this single step while any Codex work is
+   in flight and retries it at the next check (next daemon start or next Codex
+   use); the notice says remote control is still pending and why. The CLI
+   warns instead; `--no-remote-control` skips it in both paths.
 6. Tell the user to quit and reopen the Codex app (a running app reads the var
    only at launch).
 
@@ -73,10 +88,12 @@ record untouched, so the original survives any number of reruns.
 `hyperneo codex-setup --undo` reverses only what setup owns: restore the
 recorded original (or `launchctl unsetenv` if none was recorded), consume the
 record, clear the setting and delete the token file (the daemon stops the
-forwarder), quit and reopen the app. The managed daemon and its remote-control flag are the codex CLI's own
-state and are left alone; undo prints the separate command to disable remote
-control. Undo never reinstalls migrated launchd agents and never restores a
-bridge URL.
+forwarder), and record an opt-out so the driver never sets the bridge up again
+on its own; a later manual `hyperneo codex-setup` clears the opt-out. Quit and
+reopen the app. The managed daemon and its remote-control flag are the codex
+CLI's own state and are left alone; undo prints the separate command to
+disable remote control. Undo never reinstalls migrated launchd agents and
+never restores a bridge URL.
 
 ### Login lifecycle
 
@@ -211,7 +228,12 @@ machine, after migrating the hand-installed bridge:
    token file is mode 0600 with a 0700 parent, and the bridge refuses to start
    on looser permissions. After a full pass, the token appears in no HyperNeo
    or forwarder log.
-5. Undo: from the migrated installation, `--undo` unsets the var (it does not
+5. Automatic setup: on a machine with no setup and no opt-out, first Codex use
+   (or daemon startup with the driver enabled) completes the setup and posts
+   the plain-words notice; with Codex work in flight, remote control is
+   deferred and the notice says so. After `--undo`, a daemon restart and Codex
+   use do not set anything up again; a manual `codex-setup` does.
+6. Undo: from the migrated installation, `--undo` unsets the var (it does not
    restore the dead bridge URL of the removed forwarder); from an installation
    where the var held a distinct pre-existing value, `--undo` restores that
    value. Repeated setup before undo preserves the recorded original each time.
@@ -222,8 +244,9 @@ machine, after migrating the hand-installed bridge:
 1. Forwarder module plus daemon startup wiring behind the setting, including
    the token gate, token file storage and log redaction (build and wire in one
    slice; a few lines over budget is acceptable).
-2. `hyperneo codex-setup` with `--undo`, `--no-remote-control` and migration of
-   the hand-installed agents.
+2. Shared setup steps as one code path: the driver's automatic check at daemon
+   startup and first Codex use, and `hyperneo codex-setup` with `--undo`,
+   `--no-remote-control` and migration of the hand-installed agents.
 3. Active-writer message extension.
 
 ## Open questions
@@ -235,10 +258,8 @@ machine, after migrating the hand-installed bridge:
    `codex-setup`; no XPC helper (non-public launchd behaviour). The human
    confirms or rejects this at sign-off.
 2. Is port 47912 fine as the permanent default?
-3. Remote control inside setup (skippable with a flag) versus a separate
-   explicit step, given it restarts the managed daemon once?
-4. Should the desktop app ever prompt to run this setup, or does the CLI stay
+3. Should the desktop app ever prompt to run this setup, or does the CLI stay
    the only door?
-5. Is the login-ordering caveat (an app instance restored before the HyperNeo
+4. Is the login-ordering caveat (an app instance restored before the HyperNeo
    daemon keeps its private server until quit and reopen) acceptable, or does
    setup need to warn about macOS session restore explicitly?
