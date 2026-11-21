@@ -4,6 +4,22 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.61.0] - 2026-11-21
+
+- Open and control GitHub Copilot Desktop sessions, including when the CLI is unavailable. Compact idle Copilot Desktop and CLI workers, steer active Copilot turns, and pass the selected reasoning effort to Copilot CLI (#11398, #11439, #11387, #11425, #11431, #11422).
+- Approve desktop access in a macOS dialog and limit a worker to the apps you approved. Workers reserve their own windows, take turns using the foreground, report when the screen is locked, and release leftover desktop drivers after a daemon restart (#11356, #11394, #11423, #11432, #11420, #11435).
+- Add the Codex app-server bridge and its setup runtime. Use the shared app-server to create, resume and archive threads when appropriate, and explain when Codex Desktop already owns the thread (#11437, #11448, #11359, #11367, #11416, #11390).
+- Organize Neo work into Inbox, Scheduled and Goals tabs. Show queued asks as full cards and let people request work directly without a proposal card (#11371, #11375, #11364, #11414).
+- Configure voice providers in settings and manage voice keys separately for each host (#11347, #11152).
+- Restore Claude sign-in recovery, improve project grouping in the sidebar, and support the first message in OXAP DeepSeek sessions (#11381, #11368, #11408).
+
+### API compatibility
+
+Compared with v0.60.3, the pinned phone source inventory reports 4 breaking, 0 risky, and 2 safe methods. Across all schema changes, the report lists 21 breaking, 2 risky, and 38 safe changes.
+
+- Desktop app approvals move to the macOS dialog. Question results from `neo.ask.read`, `neo.open`, `neo.question.answer`, and `neo.snapshot` drop the `desktop_control` kind and its `app` and `todoTitle` fields.
+- API callers that propose work now use `neo.ask.propose` in place of `neo.ask.open`.
+
 ## [0.60.3] - 2026-11-19
 
 - Let people allow desktop control from a todo card and wait for app-wide desktop approval (#11168, #11165).
