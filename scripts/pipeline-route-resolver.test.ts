@@ -492,6 +492,18 @@ test.each([
     ['read.ts', 'return runQuery(input)', 'return fn(input)'],
     'unknown',
   ],
+  [
+    'effectful runner argument',
+    'db(database).call(query, "read", input)',
+    ['read.ts', 'return runQuery(input)', 'return runQuery(sideEffect())'],
+    'unknown',
+  ],
+  [
+    'unbound runner argument',
+    'db(database).call(query, "read", input)',
+    ['read.ts', 'return runQuery(input)', 'return runQuery(other)'],
+    'unknown',
+  ],
 ])('strictly resolves a database worker with %s', (_title, execute, edit, kind) => {
   const sources = new Map(workerSource);
   if (edit) {
