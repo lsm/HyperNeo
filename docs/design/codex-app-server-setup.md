@@ -52,7 +52,8 @@ setting, the token file, the env var (via `launchctl getenv`), the managed
 daemon running and remote control enabled — it changes nothing yet. Neo asks
 the user once, on the existing question card, in plain words: HyperNeo needs
 to set up the shared Codex server and restart the Codex app (and, for remote
-control, restart the managed Codex daemon) — is that OK? No new UI.
+control, restart the managed Codex daemon), which interrupts anything running
+in them at that moment — is that OK? No new UI.
 
 - On yes, HyperNeo runs the steps below and then quits and reopens the Codex
   app itself; the user does nothing.
@@ -63,14 +64,22 @@ control, restart the managed Codex daemon) — is that OK? No new UI.
 Idle gate: every disruptive cutover — stopping the old hand-installed
 forwarder (migration), `enable-remote-control`'s daemon restart, stopping the
 built-in forwarder and quitting/reopening the app (undo) — happens only when
-no Codex turn is running in the managed daemon. Post-setup, HyperNeo, desktop
-and phone turns all execute there, so one idle check covers all three. Between
-the idle check and the completed cutover, HyperNeo holds its own new Codex
-sends (the work admission gate), and the cutover itself takes seconds; a
-message typed into the app or phone in that window reconnects on its own, as
-observed. If Codex work is in flight when the user says yes, HyperNeo runs
-every non-disruptive step at once and holds the cutovers, re-checking as each
-turn completes. The question says this, so the yes is informed.
+no Codex turn is running in the managed daemon, re-checked immediately before
+each cutover step. Post-setup, HyperNeo, desktop and phone turns all execute
+there, so one check covers all three. Between the check and the finished
+cutover, HyperNeo holds its own new Codex sends (the work admission gate) and
+the cutover takes seconds; a turn started from the app or phone inside that
+seconds-wide window is the one residual race, disclosed in the question text
+(it reconnects on its own after setup, as observed) and listed as an open
+question for the human. If Codex work is in flight when the user says yes,
+HyperNeo runs every non-disruptive step at once and holds the cutovers,
+re-checking as each turn completes.
+
+Fresh machine: before setup, the app runs its own private server, so its turns
+are invisible to the daemon-side idle check. The simplest safe rule applies:
+on fresh setup the app quit/reopen is itself the user-approved interruption —
+the question says plainly that restarting the Codex app interrupts anything
+running in it — and no further detection of in-app turns is attempted.
 
 The question's state is durable, in the daemon settings beside the bridge
 setting: `asked` (a pending, unanswered question is reused after a restart,
@@ -298,3 +307,8 @@ machine, after migrating the hand-installed bridge:
 4. Is the login-ordering caveat (an app instance restored before the HyperNeo
    daemon keeps its private server until quit and reopen) acceptable, or does
    setup need to warn about macOS session restore explicitly?
+5. Cutover race: a turn started from the Codex app or phone in the
+   seconds-wide window between the idle re-check and a cutover step is
+   interrupted (post-setup it reconnects on its own; on fresh setup it is the
+   user-approved app restart). Disclosed in the question text; accept, or is a
+   stronger bound wanted?
