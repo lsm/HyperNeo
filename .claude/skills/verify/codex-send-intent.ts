@@ -289,6 +289,9 @@ try {
     assert.equal(result.ok, false);
     assert.equal(result.reason, 'not_delivered');
     assert.equal(result.notSent, fault === 'refused' ? true : undefined, 'Only a definite refusal permits automatic retry');
+    if (fault === 'refused') {
+      assert.match(result.detail, /The app may have reverted after an update, so quit and reopen it or rerun `hyperneo codex-setup`\./);
+    }
     assert.equal(calls.slice(before).filter(call => (call as { server?: string }).server === 'thread/queue/add').length, 1);
   }
   queueFault = '';

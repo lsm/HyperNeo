@@ -44,6 +44,8 @@ not start another writer or prove OS containment; use the worker-sandbox journey
 for that separate boundary.
 The queue fixture then explicitly rejects an input with the typed active-writer
 precondition response. work.send must return notSent true so callers can retry.
+The refusal must say that Codex may have reverted after an update and suggest
+quitting and reopening it or rerunning `hyperneo codex-setup`.
 A later queue request loses its acknowledgment after dispatch: that response
 must remain uncertain, without notSent or a second queue submission. Explicit
 steering retains the same distinction between pre-send failure and a lost reply.
