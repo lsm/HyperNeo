@@ -805,13 +805,18 @@ export function countPipelineRoutes(
       let executeStart = -1;
       let executeEnd = -1;
       let ambiguousProperties = false;
+      let shorthandExecute = false;
+      let executorProperties = 0;
       for (let j = i + 3; j < end; j++) {
         if (
-          strictCalls &&
           (j === i + 3 || tokens[j - 1]?.text === ',') &&
           (tokens[j].text === '.' || tokens[j].text === '[')
         )
           ambiguousProperties = true;
+        if (tokens[j].text === 'execute' && (j === i + 3 || tokens[j - 1]?.text === ',')) {
+          executorProperties++;
+          if (j + 1 === end || tokens[j + 1]?.text === ',') shorthandExecute = true;
+        }
         if (tokens[j].text === 'name' && tokens[j + 1]?.text === ':')
           name = stringToken(tokens[j + 2]?.text);
         if (tokens[j].text === 'execute' && tokens[j + 1]?.text === ':') {
@@ -832,7 +837,20 @@ export function countPipelineRoutes(
           j = close;
         }
       }
-      if (ambiguousProperties || !name || executeStart < 0 || executeEnd < 0) {
+      if (
+        !strictCalls &&
+        name &&
+        shorthandExecute &&
+        executorProperties === 1 &&
+        !ambiguousProperties
+      ) {
+        const resolved = createLocalPipelineResolver(source, file, true, sourceContext)(name);
+        if (resolved.kind !== 'named') counts.unreadable++;
+        else if (resolved.name !== name) counts.misnamed++;
+        i = end;
+        continue;
+      }
+      if ((strictCalls && ambiguousProperties) || !name || executeStart < 0 || executeEnd < 0) {
         if (strictCalls && name && !ambiguousProperties) countResolved(name);
         else counts.unreadable++;
         i = end;
