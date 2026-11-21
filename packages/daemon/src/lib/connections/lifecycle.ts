@@ -1,12 +1,20 @@
 import { createGoogleHttp } from './google-http.ts';
 import { randomUUID } from 'node:crypto';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { z } from 'zod';
+import { defineOperation } from '../operations/registry.ts';
 import type { LoginOutcome } from './loopback-login.ts';
 import type { ConnectionVault } from './vault.ts';
-import type { ConnectionStatus, GoogleConnectionAttempt as View } from './status.ts';
+import {
+  googleClient,
+  googleConnectionAttempt,
+  type ConnectionStatus,
+  type GoogleConnectionAttempt as View,
+} from './status.ts';
 import { createGoogleTokenAccess } from './token-access.ts';
 
 type Client = { clientId: string; clientSecret?: string };
+type ConnectInput = Partial<Client> & { connectionId?: string };
 type Login = { authorizeUrl: string; result: Promise<LoginOutcome>; cancel: () => void };
 export type StartLogin = (client: Client) => Promise<Login>;
 type Outcome = LoginOutcome;
@@ -208,9 +216,7 @@ export function createConnectionLifecycle(deps: {
       );
     return { ...flow.view, authorizeUrl: login.authorizeUrl };
   };
-  const startConnection = async (
-    input: Partial<Client> & { connectionId?: string }
-  ): Promise<View> => {
+  const startConnection = async (input: ConnectInput): Promise<View> => {
     if (deps.closed.aborted) return { state: 'failed', reason: 'cancelled' };
     const account = (await deps.read()).find((record) => record.id === input.connectionId);
     if (input.connectionId && !account) return { state: 'failed', reason: 'unknown_connection' };
@@ -228,86 +234,32 @@ export function createConnectionLifecycle(deps: {
     }
     return trackConnection(account, client, login);
   };
-  const startConnectionPipeline = (superpipe({})('connections.google.connect') as PipelineAPI)
-    .input('input')
-    .pipe((_input: Partial<Client>) => deps.closed.aborted, 'input', 'closed')
-    .pipe(
-      (closed: boolean): { value: true } | { reason: View } =>
-        closed ? { reason: { state: 'failed', reason: 'cancelled' } } : { value: true },
-      'closed',
-      'result:outcome'
-    )
-    .pipe((_admitted: true) => deps.read(), 'outcome', 'records')
-    .pipe(
-      (
-        input: Partial<Client> & { connectionId?: string },
-        records: ConnectionStatus[]
-      ): { value: { account: ConnectionStatus | null } } | { reason: View } => {
-        const account = records.find((record) => record.id === input.connectionId) ?? null;
-        return input.connectionId && !account
-          ? { reason: { state: 'failed', reason: 'unknown_connection' } }
-          : { value: { account } };
-      },
-      ['input', 'records'],
-      'result:outcome'
-    )
-    .pipe(
-      (selected: { account: ConnectionStatus | null }) => selected.account,
-      'outcome',
-      'account'
-    )
-    .pipe(
-      async (input: Partial<Client>, account: ConnectionStatus | null) =>
-        input.clientId
-          ? { clientId: input.clientId, clientSecret: input.clientSecret }
-          : account
-            ? ((await deps.vault.read(account))?.client ?? null)
-            : null,
-      ['input', 'account'],
-      'candidate'
-    )
-    .pipe(
-      (client: Client | null): { value: Client } | { reason: View } =>
-        client
-          ? { value: client }
-          : { reason: { state: 'failed', reason: 'client_not_configured' } },
-      'candidate',
-      'result:outcome'
-    )
-    .pipe((client: Client) => client, 'outcome', 'client')
-    .pipe(
-      async (client: Client) => {
+  return {
+    token: access.token,
+    http,
+    connect: (input: ConnectInput) => serial(() => startConnection(input)),
+    googleConnect: {
+      closed: deps.closed,
+      read: deps.read,
+      readClient: async (account: ConnectionStatus) => (await deps.vault.read(account))?.client,
+      startLogin: async (client: Client) => {
         cancel();
         const login = await deps.startLogin(client);
         const closed = deps.closed.aborted;
         if (closed) login.cancel();
         return { login, closed };
       },
-      'client',
-      'started'
-    )
-    .pipe(
-      (started: { login: Login; closed: boolean }): { value: Login } | { reason: View } =>
-        started.closed
-          ? { reason: { state: 'failed', reason: 'cancelled' } }
-          : { value: started.login },
-      'started',
-      'result:outcome'
-    )
-    .pipe(
-      (login: Login, account: ConnectionStatus | null, client: Client) =>
-        trackConnection(account ?? undefined, client, login),
-      ['outcome', 'account', 'client'],
-      'outcome'
-    )
-    .endAsync('outcome') as (input: Partial<Client> & { connectionId?: string }) => Promise<View>;
-  return {
-    token: access.token,
-    http,
-    connect: (input: Partial<Client> & { connectionId?: string }) =>
-      serial(() => startConnection(input)),
-    connectPipeline: (input: Partial<Client> & { connectionId?: string }) =>
-      serial(() => startConnectionPipeline(input)),
+      trackConnection,
+      reserve: () => {
+        const ready = Promise.withResolvers<() => void>();
+        const done = Promise.withResolvers<void>();
+        void serial(() => {
+          ready.resolve(done.resolve);
+          return done.promise;
+        });
+        return ready.promise;
+      },
+    },
     statusFacts,
     status: (loginId?: string): View => selectLoginStatus(statusFacts(), { loginId }),
     disconnect: async (connectionId: string) => {
@@ -324,4 +276,113 @@ export function createConnectionLifecycle(deps: {
       });
     },
   };
+}
+
+type GoogleConnect = ReturnType<typeof createConnectionLifecycle>['googleConnect'];
+
+export function createGoogleConnectOperation(
+  service: () => Promise<{ googleConnect: GoogleConnect }>
+) {
+  const startConnectionPipeline = (superpipe({})('connections.google.connect') as PipelineAPI)
+    .input('input')
+    .pipe(
+      async () => {
+        const { googleConnect } = await service();
+        return { googleConnect, release: await googleConnect.reserve() };
+      },
+      undefined,
+      '{googleConnect, release}'
+    )
+    .pipe((googleConnect: GoogleConnect) => googleConnect.closed.aborted, 'googleConnect', 'closed')
+    .pipe(
+      (closed: boolean): { value: true } | { reason: View } =>
+        closed ? { reason: { state: 'failed', reason: 'cancelled' } } : { value: true },
+      'closed',
+      'result:outcome'
+    )
+    .pipe((googleConnect: GoogleConnect) => googleConnect.read(), 'googleConnect', 'records')
+    .pipe(
+      (
+        input: ConnectInput,
+        records: ConnectionStatus[]
+      ): { value: { account: ConnectionStatus | null } } | { reason: View } => {
+        const account = records.find((record) => record.id === input.connectionId) ?? null;
+        return input.connectionId && !account
+          ? { reason: { state: 'failed', reason: 'unknown_connection' } }
+          : { value: { account } };
+      },
+      ['input', 'records'],
+      'result:outcome'
+    )
+    .pipe(
+      (selected: { account: ConnectionStatus | null }) => selected.account,
+      'outcome',
+      'account'
+    )
+    .pipe(
+      async (
+        input: ConnectInput,
+        account: ConnectionStatus | null,
+        googleConnect: GoogleConnect
+      ) =>
+        input.clientId
+          ? { clientId: input.clientId, clientSecret: input.clientSecret }
+          : account
+            ? ((await googleConnect.readClient(account)) ?? null)
+            : null,
+      ['input', 'account', 'googleConnect'],
+      'candidate'
+    )
+    .pipe(
+      (client: Client | null): { value: Client } | { reason: View } =>
+        client
+          ? { value: client }
+          : { reason: { state: 'failed', reason: 'client_not_configured' } },
+      'candidate',
+      'result:outcome'
+    )
+    .pipe((client: Client) => client, 'outcome', 'client')
+    .pipe(
+      (client: Client, googleConnect: GoogleConnect) => googleConnect.startLogin(client),
+      ['client', 'googleConnect'],
+      'started'
+    )
+    .pipe(
+      (started: { login: Login; closed: boolean }): { value: Login } | { reason: View } =>
+        started.closed
+          ? { reason: { state: 'failed', reason: 'cancelled' } }
+          : { value: started.login },
+      'started',
+      'result:outcome'
+    )
+    .pipe(
+      (
+        login: Login,
+        account: ConnectionStatus | null,
+        client: Client,
+        googleConnect: GoogleConnect
+      ) => googleConnect.trackConnection(account ?? undefined, client, login),
+      ['outcome', 'account', 'client', 'googleConnect'],
+      'outcome'
+    )
+    .onExit((_exit, { release }) => {
+      if (typeof release === 'function') release();
+    })
+    .endAsync('outcome') as (input: ConnectInput) => Promise<View>;
+  return defineOperation({
+    name: 'connections.google.connect',
+    description:
+      'Connect Google or reconnect the named account. Returns a one-use consent URL, never credentials.',
+    policy: { safetyClass: 'human_only', caller: 'local_user' },
+    inputSchema: googleClient
+      .partial()
+      .extend({ connectionId: z.string().min(1).max(200).optional() })
+      .strict()
+      .refine(
+        (input) => input.clientId || (input.connectionId && !input.clientSecret),
+        'Provide clientId, or connectionId to reuse saved client details.'
+      ),
+    resultSchema: googleConnectionAttempt,
+    execute: (input) => startConnectionPipeline(input),
+  });
 }
