@@ -60,20 +60,36 @@ control, restart the managed Codex daemon) — is that OK? No new UI.
   driver does not ask again until the user runs `hyperneo codex-setup`, which
   clears the decline and runs the same steps.
 
-If Codex work is in flight when the user says yes, HyperNeo runs every step
-that disturbs nothing at once, and holds the two disruptive ones — the
-daemon-restarting `enable-remote-control` and the app quit/reopen — until no
-Codex work is in flight, checking as each turn completes. The question says
-this, so the yes is informed.
+Idle gate: every disruptive cutover — stopping the old hand-installed
+forwarder (migration), `enable-remote-control`'s daemon restart, stopping the
+built-in forwarder and quitting/reopening the app (undo) — happens only when
+no Codex turn is running in the managed daemon. Post-setup, HyperNeo, desktop
+and phone turns all execute there, so one idle check covers all three. Between
+the idle check and the completed cutover, HyperNeo holds its own new Codex
+sends (the work admission gate), and the cutover itself takes seconds; a
+message typed into the app or phone in that window reconnects on its own, as
+observed. If Codex work is in flight when the user says yes, HyperNeo runs
+every non-disruptive step at once and holds the cutovers, re-checking as each
+turn completes. The question says this, so the yes is informed.
 
-Manually, `hyperneo codex-setup` runs the same steps and prints the same
-information for someone at a terminal.
+The question's state is durable, in the daemon settings beside the bridge
+setting: `asked` (a pending, unanswered question is reused after a restart,
+never duplicated), `approved` (an approved but deferred setup resumes on the
+next daemon start or Codex use, at idle), `declined` (no further question
+until a manual `codex-setup`), or unset. The same settings record holds
+whether remote control is `enabled` or `skipped`: after an explicit
+`--no-remote-control`, the missing-setup check treats remote control as a
+configured choice and never prompts about it again.
+
+The same idle gate applies to both manual commands: `hyperneo codex-setup`
+waits for idle before the cutovers instead of only warning, and so does
+`--undo`.
 
 Steps, each idempotent:
 
-1. Migrate any hand-installed bridge (see Migration below): boot out and delete
-   the old launchd agents so they cannot fight the built-in one at the next
-   login.
+1. Migrate any hand-installed bridge (see Migration below): at idle, boot out
+   and delete the old launchd agents so they cannot fight the built-in one at
+   the next login; until then the old forwarder keeps serving the app.
 2. Ensure the managed daemon runs: `codex app-server daemon start`. Returns
    `alreadyRunning` when up; safe to repeat.
 3. Record the bridge in daemon settings, generate the per-user token into its
@@ -82,10 +98,10 @@ Steps, each idempotent:
    the per-user token described under Forwarder inside the daemon.
 5. `codex app-server daemon enable-remote-control`. Persists across daemon
    starts, but restarts the running daemon once, interrupting Codex work in
-   flight — hence the hold rule above. The CLI warns instead;
-   `--no-remote-control` skips it in both paths.
+   flight — hence the idle gate above. `--no-remote-control` skips it in both
+   paths and records the skip as the configured choice.
 6. Quit and reopen the Codex app (a running app reads the var only at launch);
-   HyperNeo does this itself after the steps, subject to the same hold rule.
+   HyperNeo does this itself after the steps, subject to the same idle gate.
 
 The setting also holds the one recorded original env value, written before any
 `launchctl setenv` runs so a partial failure leaves consistent state. Recording
@@ -95,16 +111,16 @@ URL (the migrated installation's value is the bridge URL of the removed
 forwarder, which undo must never restore). A repeated setup keeps the existing
 record untouched, so the original survives any number of reruns.
 
-`hyperneo codex-setup --undo` reverses only what setup owns: restore the
+`hyperneo codex-setup --undo` reverses only what setup owns, with the same
+idle gate covering the forwarder stop and the app quit/reopen: restore the
 recorded original (or `launchctl unsetenv` if none was recorded), consume the
 record, clear the setting and delete the token file (the daemon stops the
 forwarder), record an opt-out so the driver never sets the bridge up again or
-asks on its own, and quit and reopen the Codex app itself (same hold rule: not
-while Codex work is in flight). A later manual `hyperneo codex-setup` clears
-the opt-out. The managed daemon and its remote-control flag are the codex
-CLI's own state and are left alone; undo prints the separate command to
-disable remote control. Undo never reinstalls migrated launchd agents and
-never restores a bridge URL.
+asks on its own, and quit and reopen the Codex app itself. A later manual
+`hyperneo codex-setup` clears the opt-out. The managed daemon and its
+remote-control flag are the codex CLI's own state and are left alone; undo
+prints the separate command to disable remote control. Undo never reinstalls
+migrated launchd agents and never restores a bridge URL.
 
 ### Login lifecycle
 
@@ -247,7 +263,11 @@ machine, after migrating the hand-installed bridge:
    quit wait for idle and then happen on their own. On no, nothing changes and
    no further question appears on later daemon restarts or Codex use until a
    manual `codex-setup`. After `--undo`, the same silence holds until a manual
-   `codex-setup`.
+   `codex-setup`. With Codex work in flight, setup, migration and undo all
+   defer their cutovers and no active connection drops; a pending question
+   survives a daemon restart without being asked twice; an approved but
+   deferred setup resumes on its own; and after `--no-remote-control` the
+   missing-setup check never prompts about remote control again.
 6. Undo: from the migrated installation, `--undo` unsets the var (it does not
    restore the dead bridge URL of the removed forwarder); from an installation
    where the var held a distinct pre-existing value, `--undo` restores that
