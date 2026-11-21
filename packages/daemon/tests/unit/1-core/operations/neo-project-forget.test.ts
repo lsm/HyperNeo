@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { hostname } from 'node:os';
 import { createNeoProjectForgetOperation } from '../../../../src/lib/neo/project-forget-operation.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -54,10 +54,13 @@ describe('neo.project.forget', () => {
   });
 
   test('concurrent forget requests admit only one winner', async () => {
-    const afterForget = mock(async (_repos: readonly string[]) => {
-      expect(repo.getProject(atlas)).toBeNull();
-    });
-    const registry = createOperationRegistry([createNeoProjectForgetOperation(repo, afterForget)]);
+    const cleaned: string[][] = [];
+    const registry = createOperationRegistry([
+      createNeoProjectForgetOperation(repo, async (repos) => {
+        expect(repo.getProject(atlas)).toBeNull();
+        cleaned.push([...repos]);
+      }),
+    ]);
     const call = () => invokeOperation(registry, 'neo.project.forget', { projectId: atlas }, human);
     const results = await Promise.all([call(), call()]);
     expect(results).toContainEqual({
@@ -68,7 +71,7 @@ describe('neo.project.forget', () => {
       kind: 'completed',
       value: { ok: false, reason: 'project_missing' },
     });
-    expect(afterForget).toHaveBeenCalledExactlyOnceWith(['lsm/neo-atlas']);
+    expect(cleaned).toEqual([['lsm/neo-atlas']]);
   });
 
   test('an external callback failure cannot roll back a committed forget', async () => {
