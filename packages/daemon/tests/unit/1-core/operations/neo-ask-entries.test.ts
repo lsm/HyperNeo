@@ -561,11 +561,16 @@ describe('projectNeoAskEntries todo order and done todos', () => {
 
   test('neo.ask.doneTodos pages the done todos in list order', async () => {
     const { store, sessions } = seed(['done', 'done', 'doing', 'done', 'done']);
+    let projections = 0;
     const op = createNeoDoneTodosOperation(
       store,
       sessions,
       () => [],
-      (caller) => ({ value: caller })
+      (caller) => ({ value: caller }),
+      async (todos) => {
+        projections++;
+        return todos.map((entry) => ({ ...entry, title: `Projected ${entry.title}` }));
+      }
     );
     type Page =
       | { ok: true; todos: NeoTodoEntry[]; doneCount: number; nextOffset: number | null }
@@ -578,6 +583,7 @@ describe('projectNeoAskEntries todo order and done todos', () => {
       })) as Page;
     const first = await read({ askId: 'ask', limit: 3 });
     expect(first).toMatchObject({ ok: true, doneCount: 4, nextOffset: 3 });
+    expect(first.ok && first.todos.every((todo) => todo.title.startsWith('Projected '))).toBe(true);
     expect(first.ok && first.todos.map((todo) => [todo.id, todo.status])).toEqual([
       ['t0', 'Done'],
       ['t1', 'Done'],
@@ -590,6 +596,7 @@ describe('projectNeoAskEntries todo order and done todos', () => {
       ok: false,
       reason: 'not_found: no such ask.',
     });
+    expect(projections).toBe(2);
   });
 });
 
