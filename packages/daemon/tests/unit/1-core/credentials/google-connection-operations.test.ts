@@ -14,6 +14,10 @@ let db: Awaited<ReturnType<typeof createTestDb>>;
 let store: DatabaseCredentialStore;
 let attempts: Array<ReturnType<typeof Promise.withResolvers<Outcome>>>;
 let registry: ReturnType<typeof createOperationRegistry>;
+let pauseStart: {
+  entered: ReturnType<typeof Promise.withResolvers<void>>;
+  release: ReturnType<typeof Promise.withResolvers<void>>;
+} | null;
 const client = { clientId: 'synthetic-client', clientSecret: 'synthetic-client-secret' };
 const success = {
   ok: true as const,
@@ -31,10 +35,17 @@ beforeEach(async () => {
   db = await createTestDb();
   store = new DatabaseCredentialStore(db.getDatabase(), 'synthetic-key');
   attempts = [];
+  pauseStart = null;
   registry = createOperationRegistry(
     createGoogleConnectionOperations(() => db.getDatabase(), {
       createStore: () => store,
       startLogin: async () => {
+        if (pauseStart) {
+          const pause = pauseStart;
+          pauseStart = null;
+          pause.entered.resolve();
+          await pause.release.promise;
+        }
         const attempt = Promise.withResolvers<Outcome>();
         attempts.push(attempt);
         return {
@@ -71,6 +82,31 @@ async function settle(loginId: string) {
   });
   return status(loginId);
 }
+
+test('overlapping connections start in order without blocking status reads', async () => {
+  const pause = {
+    entered: Promise.withResolvers<void>(),
+    release: Promise.withResolvers<void>(),
+  };
+  pauseStart = pause;
+  const firstPending = call('connections.google.connect', client);
+  try {
+    await pause.entered.promise;
+    const secondPending = call('connections.google.connect', client);
+    expect((await status('not-started')).state).toBe('missing');
+    expect(attempts).toHaveLength(0);
+    pause.release.resolve();
+    const [first, second] = await Promise.all([firstPending, secondPending]);
+    expect(attempts).toHaveLength(2);
+    expect(first.state).toBe('pending');
+    expect(second.state).toBe('pending');
+    expect(first.loginId).not.toBe(second.loginId);
+    expect((await status(first.loginId)).state).toBe('missing');
+    expect((await status(second.loginId)).state).toBe('pending');
+  } finally {
+    pause.release.resolve();
+  }
+});
 
 test('connect stores a verified grant and returns no credentials in operation responses', async () => {
   const start = await call('connections.google.connect', client);
