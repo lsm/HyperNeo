@@ -29,6 +29,7 @@ jq -er '
     "evolution.scope.owner.set",
     "goal.owner.set",
     "space.audit.list",
+    "connections.google.connect",
     "gmail.search",
     "google.accounts",
     "work.queue",

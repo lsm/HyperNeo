@@ -15,10 +15,14 @@ import {
 import { createCredentialStore } from '../credentials/credential-store.ts';
 import { defineOperation } from '../operations/registry.ts';
 import { ConnectionVault } from './vault.ts';
-import { googleClient, googleConnectionAttempt, type ConnectionStatus } from './status.ts';
+import { googleConnectionAttempt, type ConnectionStatus } from './status.ts';
 import { startGoogleLogin } from './google-login.ts';
 import { startMicrosoftLogin } from './microsoft-login.ts';
-import { createConnectionLifecycle, selectLoginStatus } from './lifecycle.ts';
+import {
+  createConnectionLifecycle,
+  createGoogleConnectOperation,
+  selectLoginStatus,
+} from './lifecycle.ts';
 
 const policy = { safetyClass: 'human_only' as const, caller: 'local_user' as const };
 
@@ -114,22 +118,7 @@ export function createGoogleConnectionOperations(
     ...createGoogleThreadOperations(service),
     ...createGoogleDraftOperations(db, service),
     ...createGoogleCalendarOperations(service),
-    defineOperation({
-      name: 'connections.google.connect',
-      description:
-        'Connect Google or reconnect the named account. Returns a one-use consent URL, never credentials.',
-      policy,
-      inputSchema: googleClient
-        .partial()
-        .extend({ connectionId: z.string().min(1).max(200).optional() })
-        .strict()
-        .refine(
-          (input) => input.clientId || (input.connectionId && !input.clientSecret),
-          'Provide clientId, or connectionId to reuse saved client details.'
-        ),
-      resultSchema: googleConnectionAttempt,
-      execute: async (input) => (await service()).connectPipeline(input),
-    }),
+    createGoogleConnectOperation(service),
     defineOperation({
       name: 'connections.google.login',
       description: 'Read the status of this instance’s current Google consent attempt.',
