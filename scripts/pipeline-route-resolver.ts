@@ -671,7 +671,19 @@ export function createLocalPipelineResolver(
     if (
       !ts.isCallExpression(returned) ||
       !ts.isIdentifier(returned.expression) ||
-      (returned.flags & ts.NodeFlags.OptionalChain) !== 0
+      (returned.flags & ts.NodeFlags.OptionalChain) !== 0 ||
+      returned.arguments.some((argument) => {
+        if (!ts.isIdentifier(argument)) return true;
+        const binding = checker.getSymbolAtLocation(argument);
+        return (
+          !binding ||
+          !candidate.parameters.some(
+            (parameter) =>
+              ts.isIdentifier(parameter.name) &&
+              checker.getSymbolAtLocation(parameter.name) === binding
+          )
+        );
+      })
     )
       return unknown;
     const ref = importedReference(returned.expression);
