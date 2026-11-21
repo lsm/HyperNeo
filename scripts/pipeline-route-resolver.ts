@@ -389,6 +389,64 @@ export function createLocalPipelineResolver(
     );
   }
 
+  function returnedMethod(call: ts.CallExpression, seen: Set<ts.Node>): LocalPipelineResolution {
+    const access = unwrap(call.expression);
+    if (
+      call.arguments.length !== 0 ||
+      !ts.isPropertyAccessExpression(access) ||
+      (access.flags & ts.NodeFlags.OptionalChain) !== 0
+    )
+      return unknown;
+    const create = unwrap(access.expression);
+    if (
+      !ts.isCallExpression(create) ||
+      (create.flags & ts.NodeFlags.OptionalChain) !== 0 ||
+      create.arguments.length !== 0 ||
+      !ts.isIdentifier(create.expression)
+    )
+      return unknown;
+    const declarations = checker.getSymbolAtLocation(create.expression)?.declarations;
+    const declaration = declarations?.length === 1 ? declarations[0] : undefined;
+    if (
+      !declaration ||
+      !ts.isVariableDeclaration(declaration) ||
+      (declaration.parent.flags & ts.NodeFlags.BlockScoped) !== ts.NodeFlags.Const ||
+      !declaration.initializer ||
+      seen.has(declaration)
+    )
+      return unknown;
+    const factory = unwrap(declaration.initializer);
+    if (
+      !ts.isArrowFunction(factory) ||
+      factory.parameters.length !== 0 ||
+      factory.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ||
+      ts.isBlock(factory.body)
+    )
+      return unknown;
+    const object = unwrap(factory.body);
+    if (
+      !ts.isObjectLiteralExpression(object) ||
+      object.properties.length !== 1 ||
+      object.properties.some(
+        (property) =>
+          ts.isSpreadAssignment(property) ||
+          (property.name && ts.isComputedPropertyName(property.name))
+      )
+    )
+      return unknown;
+    const properties = object.properties.filter(
+      (property) =>
+        property.name &&
+        (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+        property.name.text === access.name.text
+    );
+    if (properties.length !== 1 || !ts.isPropertyAssignment(properties[0])) return unknown;
+    const method = unwrap(properties[0].initializer);
+    if (!ts.isArrowFunction(method) || method.parameters.length !== 0) return unknown;
+    seen.add(declaration);
+    return callable(method, seen);
+  }
+
   function action(expression: ts.Expression, seen: Set<ts.Node>): LocalPipelineResolution {
     expression = unwrap(expression);
     if (ts.isAwaitExpression(expression)) return action(expression.expression, seen);
@@ -408,7 +466,9 @@ export function createLocalPipelineResolver(
     if (ts.isIdentifier(callee)) return callable(callee, seen);
     if (!strictCalls) return unknown;
     const inline = pipeline(callee);
-    return inline.kind === 'named' ? inline : gatewayCall(expression);
+    if (inline.kind === 'named') return inline;
+    const method = returnedMethod(expression, seen);
+    return method.kind === 'named' ? method : gatewayCall(expression);
   }
 
   const matches = new Map<string, ts.Expression[]>();

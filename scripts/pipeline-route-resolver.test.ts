@@ -11,6 +11,70 @@ const imports = `
 `;
 const runner = `const run = superpipe({})('demo.read').input('input').endAsync('input');`;
 
+test.each([
+  ['mutable factory', 'let make = () => ({ go: () => run() });', 'make().go()', 'unknown'],
+  ['block body', 'const make = () => { return { go: () => run() }; };', 'make().go()', 'unknown'],
+  ['async factory', 'const make = async () => ({ go: () => run() });', 'make().go()', 'unknown'],
+  [
+    'method shorthand',
+    'const make = () => ({ go() { return run(); } });',
+    'make().go()',
+    'unknown',
+  ],
+  ['getter', 'const make = () => ({ get go() { return run; } });', 'make().go()', 'unknown'],
+  ['shadowed runner', 'const make = () => ({ go: (run) => run() });', 'make().go()', 'unknown'],
+  [
+    'extra property',
+    'const make = () => ({ go: () => run(), other: sideEffect() });',
+    'make().go()',
+    'unknown',
+  ],
+  ['direct returned method', 'const make = () => ({ go: () => run() });', 'make().go()', 'named'],
+  [
+    'conditional factory',
+    'const make = () => condition ? { go: () => run() } : {};',
+    'make().go()',
+    'unknown',
+  ],
+  [
+    'spread method',
+    'const make = () => ({ go: () => run(), ...other });',
+    'make().go()',
+    'unknown',
+  ],
+  [
+    'computed method',
+    'const make = () => ({ go: () => run(), [key]: fallback });',
+    'make().go()',
+    'unknown',
+  ],
+  [
+    'duplicate method',
+    'const make = () => ({ go: () => run(), go: () => fallback() });',
+    'make().go()',
+    'unknown',
+  ],
+  [
+    'parameterized factory',
+    'const make = (run) => ({ go: () => run() });',
+    'make().go()',
+    'unknown',
+  ],
+  ['optional method', 'const make = () => ({ go: () => run() });', 'make()?.go()', 'unknown'],
+  [
+    'recursive factory method',
+    'const make = () => ({ go: () => make().go() });',
+    'make().go()',
+    'unknown',
+  ],
+] as const)('strictly traces a %s', (_label, definition, execute, kind) => {
+  const source = `${imports} ${runner} ${definition}
+    defineOperation({ name: 'demo.read', execute: () => ${execute} });`;
+  expect(createLocalPipelineResolver(source, 'route.ts', true)('demo.read')).toEqual(
+    kind === 'named' ? { kind, name: 'demo.read' } : { kind }
+  );
+});
+
 const serialQueue = `
  let pending = Promise.resolve();
  const serialize = (action) => {
