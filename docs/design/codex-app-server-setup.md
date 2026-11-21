@@ -41,21 +41,33 @@ CLI fallback), replacing or wrapping the managed daemon, non-macOS support.
 
 ## Design
 
-### Setup, automatic and manual
+### Setup flow: ask once, then do it
 
 macOS only; elsewhere the driver skips the check and the CLI refuses with a
-clear message. The same idempotent steps run in two ways:
+clear message.
 
-- Automatically, by the Codex driver: at daemon startup with the driver
-  enabled, and again on first Codex use, the driver checks whether the shared
-  setup is in place — bridge setting, token file, env var (via
-  `launchctl getenv`), managed daemon running, remote control enabled. If
-  anything is missing and no opt-out is recorded (below), the driver runs the
-  steps itself and tells the user on the existing notice surface (the notice
-  groups the web UI already renders) in plain words what it set up and that
-  the Codex app must be quit and reopened once. No new UI.
-- Manually, via `hyperneo codex-setup`, which runs the same steps and prints
-  the same information for someone at a terminal.
+When the Codex driver finds the shared setup missing — at daemon startup with
+the driver enabled, and again on first Codex use, it checks the bridge
+setting, the token file, the env var (via `launchctl getenv`), the managed
+daemon running and remote control enabled — it changes nothing yet. Neo asks
+the user once, on the existing question card, in plain words: HyperNeo needs
+to set up the shared Codex server and restart the Codex app (and, for remote
+control, restart the managed Codex daemon) — is that OK? No new UI.
+
+- On yes, HyperNeo runs the steps below and then quits and reopens the Codex
+  app itself; the user does nothing.
+- On no, nothing changes, the decline is recorded in the setting, and the
+  driver does not ask again until the user runs `hyperneo codex-setup`, which
+  clears the decline and runs the same steps.
+
+If Codex work is in flight when the user says yes, HyperNeo runs every step
+that disturbs nothing at once, and holds the two disruptive ones — the
+daemon-restarting `enable-remote-control` and the app quit/reopen — until no
+Codex work is in flight, checking as each turn completes. The question says
+this, so the yes is informed.
+
+Manually, `hyperneo codex-setup` runs the same steps and prints the same
+information for someone at a terminal.
 
 Steps, each idempotent:
 
@@ -70,12 +82,10 @@ Steps, each idempotent:
    the per-user token described under Forwarder inside the daemon.
 5. `codex app-server daemon enable-remote-control`. Persists across daemon
    starts, but restarts the running daemon once, interrupting Codex work in
-   flight. The automatic run defers this single step while any Codex work is
-   in flight and retries it at the next check (next daemon start or next Codex
-   use); the notice says remote control is still pending and why. The CLI
-   warns instead; `--no-remote-control` skips it in both paths.
-6. Tell the user to quit and reopen the Codex app (a running app reads the var
-   only at launch).
+   flight — hence the hold rule above. The CLI warns instead;
+   `--no-remote-control` skips it in both paths.
+6. Quit and reopen the Codex app (a running app reads the var only at launch);
+   HyperNeo does this itself after the steps, subject to the same hold rule.
 
 The setting also holds the one recorded original env value, written before any
 `launchctl setenv` runs so a partial failure leaves consistent state. Recording
@@ -88,9 +98,10 @@ record untouched, so the original survives any number of reruns.
 `hyperneo codex-setup --undo` reverses only what setup owns: restore the
 recorded original (or `launchctl unsetenv` if none was recorded), consume the
 record, clear the setting and delete the token file (the daemon stops the
-forwarder), and record an opt-out so the driver never sets the bridge up again
-on its own; a later manual `hyperneo codex-setup` clears the opt-out. Quit and
-reopen the app. The managed daemon and its remote-control flag are the codex
+forwarder), record an opt-out so the driver never sets the bridge up again or
+asks on its own, and quit and reopen the Codex app itself (same hold rule: not
+while Codex work is in flight). A later manual `hyperneo codex-setup` clears
+the opt-out. The managed daemon and its remote-control flag are the codex
 CLI's own state and are left alone; undo prints the separate command to
 disable remote control. Undo never reinstalls migrated launchd agents and
 never restores a bridge URL.
@@ -228,11 +239,15 @@ machine, after migrating the hand-installed bridge:
    token file is mode 0600 with a 0700 parent, and the bridge refuses to start
    on looser permissions. After a full pass, the token appears in no HyperNeo
    or forwarder log.
-5. Automatic setup: on a machine with no setup and no opt-out, first Codex use
-   (or daemon startup with the driver enabled) completes the setup and posts
-   the plain-words notice; with Codex work in flight, remote control is
-   deferred and the notice says so. After `--undo`, a daemon restart and Codex
-   use do not set anything up again; a manual `codex-setup` does.
+5. Ask-first setup: on a machine with no setup and no decline on record, first
+   Codex use (or daemon startup with the driver enabled) surfaces the one
+   question card and changes nothing before the answer. On yes, the steps run,
+   the app is quit and reopened by HyperNeo, and messaging works without a
+   refusal; with Codex work in flight at the yes, the daemon restart and app
+   quit wait for idle and then happen on their own. On no, nothing changes and
+   no further question appears on later daemon restarts or Codex use until a
+   manual `codex-setup`. After `--undo`, the same silence holds until a manual
+   `codex-setup`.
 6. Undo: from the migrated installation, `--undo` unsets the var (it does not
    restore the dead bridge URL of the removed forwarder); from an installation
    where the var held a distinct pre-existing value, `--undo` restores that
