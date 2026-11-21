@@ -20,9 +20,9 @@ assert(run && Number.isInteger(port) && port > 0 && port !== 8399);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
-assert(['desktop', 'cli', 'both', 'cli-failure', 'control', 'both-control'].includes(mode));
+assert(['desktop', 'cli', 'both', 'cli-failure', 'control', 'both-control', 'compact-failure', 'compact-refused'].includes(mode));
 const home = join(run, 'home');
-const cli = mode !== 'desktop' && mode !== 'control';
+const cli = !['desktop', 'control', 'compact-failure', 'compact-refused'].includes(mode);
 const desktop = mode !== 'cli';
 writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
 if (cli) {
@@ -66,7 +66,10 @@ if (desktop) {
     JSON.stringify({ ...event, timestamp: `2026-11-19T15:00:0${i}Z` })).join('\n') + '\n');
 }
 const before = desktop ? readFileSync(state) : null;
-const peer = mode === 'control' || mode === 'both-control' ? await startCopilotDesktopPeer(home, state) : undefined;
+const compaction = mode === 'compact-failure' ? 'failed' : mode === 'compact-refused' ? 'refused' : 'applied';
+const peer = ['control', 'both-control', 'compact-failure', 'compact-refused'].includes(mode)
+  ? await startCopilotDesktopPeer(home, state, compaction)
+  : undefined;
 globalThis.fetch = (() => { throw new Error('External HTTP disabled'); }) as typeof fetch;
 process.chdir(run);
 const app = await createDaemonApp({
@@ -124,9 +127,17 @@ try {
         await Bun.sleep(50);
         receipt = readWorkCompaction(db, work.ref);
       }
-      assert((receipt.compactedAt ?? 0) >= now, JSON.stringify(receipt));
       assert.equal(peer.messages.filter(message => message === 'execute_session_command').length, 1);
-      assert.match(readFileSync(join(home, '.copilot/session-state', work.ref.id, 'events.jsonl'), 'utf8'), /session\.compaction_complete/);
+      if (compaction === 'applied') {
+        assert((receipt.compactedAt ?? 0) >= now, JSON.stringify(receipt));
+        assert.match(readFileSync(join(home, '.copilot/session-state', work.ref.id, 'events.jsonl'), 'utf8'), /session\.compaction_complete/);
+      } else {
+        assert.equal(receipt.compactedAt, null);
+        assert(receipt.failure, 'Neo must record the failed compaction attempt');
+        assert.equal(receipt.failure.count, 1);
+        assert(receipt.failure.retryAt > receipt.failure.attemptedAt);
+        console.log(`PASS Desktop compaction ${compaction} was counted once and backed off.`);
+      }
     });
   } else {
   const query = { adapters: [adapter], localOnly: true };

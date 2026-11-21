@@ -7,7 +7,7 @@ import { WebSocketServer } from 'ws';
 import type { Result, WorkDetail, WorkStarted, WorkDelivery } from '../../../packages/daemon/src/lib/drivers/types.ts';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 
-export async function startCopilotDesktopPeer(home: string, state: string) {
+export async function startCopilotDesktopPeer(home: string, state: string, compaction: 'applied' | 'failed' | 'refused' = 'applied') {
   const dir = join(home, '.copilot/run');
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const secret = randomUUID();
@@ -103,6 +103,7 @@ export async function startCopilotDesktopPeer(home: string, state: string) {
         assert.equal(active, false);
         assert.equal(message.command_name, 'compact');
         assert.equal(message.display_text, '/compact');
+        if (compaction === 'refused') return reply('session_command_complete', { outcome: 'ignored' });
         const attempt = randomUUID();
         reply('session_command_complete', { outcome: 'queued' });
         reply('session_event', {
@@ -112,7 +113,7 @@ export async function startCopilotDesktopPeer(home: string, state: string) {
           event: { type: 'session.compaction_complete', data: { trigger: 'manual', compactionAttemptId: randomUUID(), success: true, outcome: 'applied' } },
         });
         return setTimeout(() => {
-          const data = { trigger: 'manual', compactionAttemptId: attempt, success: true, outcome: 'applied' };
+          const data = { trigger: 'manual', compactionAttemptId: attempt, success: compaction === 'applied', outcome: compaction };
           journal('session.compaction_complete', data);
           reply('session_event', { event: { type: 'session.compaction_complete', data } });
         }, 250);
