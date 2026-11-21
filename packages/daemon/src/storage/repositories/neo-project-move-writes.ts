@@ -1,4 +1,7 @@
-import { saveNeoProjectCommand, type NeoProjectSaveRequest } from '../../lib/neo/project-save.ts';
+import {
+  saveNeoProjectTransaction,
+  type NeoProjectSaveRequest,
+} from '../../lib/neo/project-save.ts';
 import type { OperationCaller } from '../../lib/operations/registry.ts';
 import { neoProjectMoveReason } from '@hyperneo/shared/types/neo-project-tree';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
@@ -13,7 +16,7 @@ class NeoProjectMoveCommands {
     const repo = new NeoRepository(this.db, () => {
       changed = true;
     });
-    return { result: saveNeoProjectCommand(input, caller, repo), changed };
+    return { result: saveNeoProjectTransaction(input, caller, repo), changed };
   }
 
   getProject(id: string) {

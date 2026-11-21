@@ -213,14 +213,12 @@ export class NeoRepository {
       .get(id) as NeoProject | null;
   }
 
-  async saveProjectCurrent(input: NeoProjectSaveRequest, caller: OperationCaller) {
-    const reply = await gatewayFor(this.db).call(neoProjectMoveWrites, 'save', input, {
+  saveProjectReceipt(input: NeoProjectSaveRequest, caller: OperationCaller) {
+    return gatewayFor(this.db).call(neoProjectMoveWrites, 'save', input, {
       source: caller.source,
       principal: caller.principal,
       sessionId: caller.sessionId,
     });
-    if (reply.changed) this.notify();
-    return reply.result;
   }
 
   saveProject(input: NeoProjectInput, expectedRevision: number): NeoProject | null {
