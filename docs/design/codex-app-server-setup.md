@@ -51,8 +51,9 @@ message). Per the issue, setup is opt-in, never automatic. Steps, each idempoten
    login.
 2. Ensure the managed daemon runs: `codex app-server daemon start`. Returns
    `alreadyRunning` when up; safe to repeat.
-3. Record the bridge in daemon settings and ask the running daemon (over RPC)
-   to start the forwarder now.
+3. Record the bridge in daemon settings, generate the per-user token into its
+   own storage file (see Forwarder inside the daemon), and ask the running
+   daemon (over RPC) to start the forwarder now.
 4. `launchctl setenv CODEX_APP_SERVER_WS_URL` to the bridge URL, which embeds
    the per-user token described under Forwarder inside the daemon.
 5. `codex app-server daemon enable-remote-control`. Persists across daemon
@@ -71,8 +72,8 @@ record untouched, so the original survives any number of reruns.
 
 `hyperneo codex-setup --undo` reverses only what setup owns: restore the
 recorded original (or `launchctl unsetenv` if none was recorded), consume the
-record, clear the setting (the daemon stops the forwarder), quit and reopen the
-app. The managed daemon and its remote-control flag are the codex CLI's own
+record, clear the setting and delete the token file (the daemon stops the
+forwarder), quit and reopen the app. The managed daemon and its remote-control flag are the codex CLI's own
 state and are left alone; undo prints the separate command to disable remote
 control. Undo never reinstalls migrated launchd agents and never restores a
 bridge URL.
@@ -82,9 +83,10 @@ bridge URL.
 Nothing here survives a reboot on its own: `launchctl setenv` is per login
 session and no login job starts the managed daemon. The HyperNeo daemon is the
 persistent anchor. Whenever it starts with the bridge setting on, it re-applies
-the whole setup: `launchctl setenv`, `codex app-server daemon start`, then the
-forwarder. So reboot behavior reduces to "the HyperNeo daemon runs at login",
-which is already the product's assumption; setup states that requirement.
+the whole setup: `launchctl setenv` (rebuilding the URL from the token file),
+`codex app-server daemon start`, then the forwarder. So reboot behavior reduces
+to "the HyperNeo daemon runs at login", which is already the product's
+assumption; setup states that requirement.
 
 Ordering caveat, accepted rather than engineered around: if the Codex app
 launches before the HyperNeo daemon at login (for example macOS session restore),
@@ -124,19 +126,45 @@ already-configured app.
 Access control: a TCP listener is not equivalent to the Unix socket it fronts.
 The socket sits in `~/.codex` behind user-only file permissions; a bare
 loopback listener would be reachable by every local user and by JavaScript in
-any web page. The bridge therefore requires a per-user token: setup generates a
-random token, stores it in the setting, and the bridge URL is
-`ws://127.0.0.1:47912/rpc?token=<token>`. The forwarder closes any connection
-whose token does not match, before any byte reaches the daemon socket. The app
-presents the token without cooperation — it connects to exactly the URL the env
-var gives it. The token is readable only where the env var and HyperNeo's
-settings are readable, which is the same user-session boundary the daemon
-socket already has, so the bridge preserves the existing local permission
-boundary instead of widening it. This one mechanism also keeps browsers out
-(a page cannot guess the token), so no separate origin handling is needed.
-Daemon-side auth on the Codex server itself (for example `--ws-auth
-capability-token`) stays out of scope: the app's support for it is unverified,
-while the token-in-URL form needs none.
+any web page. The bridge therefore requires a per-user token: the bridge URL is
+`ws://127.0.0.1:47912/rpc?token=<token>`, and the forwarder closes any
+connection whose token does not match, before any byte reaches the daemon
+socket. The app presents the token without cooperation — it connects to
+exactly the URL the env var gives it — and a browser page cannot guess it, so
+this one mechanism keeps both other local users and browsers out. Daemon-side
+auth on the Codex server itself (for example `--ws-auth capability-token`)
+stays out of scope: the app's support for it is unverified, while the
+token-in-URL form needs none.
+
+Token storage: the token lives in a dedicated file inside the daemon's data
+directory, never in the settings record or the database (a custom database
+location can point anywhere). The file is written with mode 0600 and its
+parent directory with 0700; the daemon re-checks both at every startup and
+refuses to start the bridge if either is more permissive and cannot be
+tightened. The setting holds only `enabled`, the port and the recorded
+original env value.
+
+Token delivery: the URL reaches the app through its process environment, and
+the app offers no other input — the bundle reads
+`process.env.CODEX_APP_SERVER_WS_URL ?? hostConfig.websocket_url`, and for
+local hosts `websocket_url` has no local config-file source, so the env var is
+the only lever. Session-wide env for user-launched apps is settable only
+through `launchctl setenv`, which takes the value as a command-line argument
+(reading subcommands from stdin is not supported), and process arguments are
+visible to other local users. So the token crosses a process argument list for
+the lifetime of each `launchctl setenv` run — milliseconds, once per login when
+the daemon re-applies setup. There is no public mechanism that avoids this:
+the alternatives are a helper speaking launchd's undocumented XPC protocol
+(fragile across macOS releases) or launching the app only through HyperNeo so
+the token rides the spawn environment (breaks every normal Dock/Finder launch).
+The design therefore accepts the window as a documented residual risk and puts
+that acceptance to the human as an open question; a stolen token is valid
+until `codex-setup` regenerates it, and rotation is a manual redress.
+
+Logging: the token never appears in logs. The forwarder logs connection
+counts and JSON-RPC method names only, never URLs or request targets; anything
+in HyperNeo that logs the bridge URL strips the query first. Verification
+includes a log scan for the token.
 
 ### Version drift
 
@@ -177,7 +205,10 @@ machine, after migrating the hand-installed bridge:
    being set before the app launches, and the migration having left no old
    agent re-setting state.
 4. Token gate: a connection with a missing or wrong token is refused before any
-   frame is forwarded; the app still connects with the URL it was given.
+   frame is forwarded; the app still connects with the URL it was given. The
+   token file is mode 0600 with a 0700 parent, and the bridge refuses to start
+   on looser permissions. After a full pass, the token appears in no HyperNeo
+   or forwarder log.
 5. Undo: from the migrated installation, `--undo` unsets the var (it does not
    restore the dead bridge URL of the removed forwarder); from an installation
    where the var held a distinct pre-existing value, `--undo` restores that
@@ -186,20 +217,25 @@ machine, after migrating the hand-installed bridge:
 
 ## Slices
 
-1. Forwarder module plus daemon startup wiring behind the setting, including the
-   token gate (build and wire in one slice; a few lines over budget is
-   acceptable).
+1. Forwarder module plus daemon startup wiring behind the setting, including
+   the token gate, token file storage and log redaction (build and wire in one
+   slice; a few lines over budget is acceptable).
 2. `hyperneo codex-setup` with `--undo`, `--no-remote-control` and migration of
    the hand-installed agents.
 3. Active-writer message extension.
 
 ## Open questions
 
-1. Is port 47912 fine as the permanent default?
-2. Remote control inside setup (skippable with a flag) versus a separate
+1. Token delivery residual risk: the only public session-env mechanism
+   (`launchctl setenv`) exposes the token in that process's arguments for the
+   milliseconds it runs, once per login. Accept this documented window, or pay
+   for a helper speaking launchd's undocumented XPC protocol to avoid it?
+   Recommended: accept.
+2. Is port 47912 fine as the permanent default?
+3. Remote control inside setup (skippable with a flag) versus a separate
    explicit step, given it restarts the managed daemon once?
-3. Should the desktop app ever prompt to run this setup, or does the CLI stay
+4. Should the desktop app ever prompt to run this setup, or does the CLI stay
    the only door?
-4. Is the login-ordering caveat (an app instance restored before the HyperNeo
+5. Is the login-ordering caveat (an app instance restored before the HyperNeo
    daemon keeps its private server until quit and reopen) acceptable, or does
    setup need to warn about macOS session restore explicitly?
