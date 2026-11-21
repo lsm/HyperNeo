@@ -110,7 +110,7 @@ Cross-target builds use the `build:macos`, `build:macos-intel`, `build:macos-uni
 ### Signed macOS builds
 
 Set `HYPERNEO_SIGNED_DESKTOP=1` for the macOS release path. It downloads the
-pinned Cua driver v0.44.0 from GitHub, checks its SHA-256 and version, and bundles
+pinned Cua driver v0.55.0 from GitHub, checks its SHA-256 and version, and bundles
 the executable and its license notices. Configure Tauri with the Developer ID
 Application identity for team P5R65T296V and Apple notarization credentials.
 The build requires the app and nested driver signatures and a stapled ticket.

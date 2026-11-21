@@ -1,10 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-release=hyperneo-cua-driver-v0.44.0-1
-archive=hyperneo-cua-driver-0.44.0-1-darwin-universal
-archive_sha256=abb0bea595b80b095fb2b20e91f2c2ffca73f736a6e7df6c931bba333151975d
-driver_sha256=8efa276026a3bd7e5117da2e18891309314f32734ada4ece116665c498b63b06
+release=hyperneo-cua-driver-v0.55.0-1
+archive=hyperneo-cua-driver-0.55.0-1-darwin-universal
+archive_sha256=454bac022e61d39e6fc1bc7560b2f2af8f24e6675efb7ffcfdcfe12447bcde21
+driver_sha256=ea03d77126003144a6c4864633b09ab591414acb32cb2c1dd1e3d8c05c98f341
 
 verify_driver() {
     local driver="$1" digest

@@ -85,7 +85,7 @@ impl Channel {
         .await
         .unwrap_or_else(|_| Err("Driver startup timed out".into()));
         let ready = ready.and_then(|ready| {
-            if ready["metadata"]["driver_version"] == "0.44.0" {
+            if ready["metadata"]["driver_version"] == "0.55.0" {
                 Ok(())
             } else {
                 Err("Driver version validation failed".into())

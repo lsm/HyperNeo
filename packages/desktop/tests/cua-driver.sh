@@ -17,7 +17,7 @@ refuses() {
 
 mkdir -p "$fixture/HyperNeo.app/Contents/MacOS"
 driver="$fixture/HyperNeo.app/Contents/MacOS/cua-driver"
-printf '#!/bin/sh\necho "cua-driver 0.44.0"\n' > "$driver"
+printf '#!/bin/sh\necho "cua-driver 0.55.0"\n' > "$driver"
 chmod +x "$driver"
 
 failed=0
