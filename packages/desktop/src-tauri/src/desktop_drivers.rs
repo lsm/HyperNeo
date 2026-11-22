@@ -1406,6 +1406,19 @@ mod peer_tests {
     }
 
     #[tokio::test]
+    async fn locked_use_waits_until_an_unsettled_call_is_confirmed_stopped() {
+        let directory = tempfile::tempdir().unwrap();
+        let drivers = locked_use_drivers(
+            &directory,
+            Some("echo 'covered 1'; echo unlocked; while read line; do :; done; echo 'ended owner_gone'"),
+        );
+        drop(drivers.may_act("other").await.unwrap());
+        assert!(!drivers.locked_use("owner", true).await);
+        drivers.retire("other", &mut None).await.unwrap();
+        assert!(drivers.locked_use("owner", true).await);
+    }
+
+    #[tokio::test]
     async fn locked_use_ends_when_the_screen_locks_again() {
         let directory = tempfile::tempdir().unwrap();
         let drivers = locked_use_drivers(
