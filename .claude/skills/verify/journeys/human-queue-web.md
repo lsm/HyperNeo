@@ -6,7 +6,7 @@ Build the web bundle at the checked-out head, then run the desktop web journey:
 ```sh
 VERIFY_BROWSER=<chromium> VERIFY_PLAYWRIGHT=<playwright-package> VERIFY_MOCK_PORT=29347 \
   bash .claude/skills/verify/with-run.sh bash .claude/skills/verify/human-queue-web.sh \
-  29346 <before-or-after> <absolute-evidence-directory>
+  29346 <before-topic-before-or-after> <absolute-evidence-directory>
 ```
 
 This seeds five asks across two projects in a fresh synthetic DB. A trip has one
@@ -20,3 +20,9 @@ the file picker, with a 32px circular hover face centered in its 44px target.
 
 Inspect the individual light and dark PNGs for each phase. The screenshots and
 geometry receipts are captured from the paired desktop-width web UI.
+
+Use `topic-before` on the head that first hid the standalone row. The helper
+loads a saved Travel topic, captures the missing Finance work in both themes
+and exits 1 with In progress 1. The `after` phase repeats that check and requires
+In progress 2 with both asks visible and topic badges read-only. The saved-topic
+PNGs show the counts immediately after reloading.

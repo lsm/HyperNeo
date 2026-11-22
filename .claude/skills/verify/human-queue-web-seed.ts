@@ -32,7 +32,7 @@ try {
     store.askQuestion(id, askId, { text, kind: 'yesno', options: null, multiple: false, noLabel: 'Not now', yesLabel: 'Agree', ...(todoId ? { todoId } : {}) }, now);
   ask('trip', 'Synthetic trip plan', 'Travel');
   ask('tax', 'Synthetic tax filing', 'Finance');
-  ask('car', 'Synthetic car service', 'Travel');
+  ask('car', 'Synthetic car service', 'Finance');
   ask('tickets', 'Synthetic railway tickets', 'Travel');
   ask('budget', 'Synthetic budget', 'Finance');
   card('tickets-card', 'tickets', 'Take the morning train?');

@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 
 const [port, directory, phase] = process.argv.slice(2);
-assert(port && port !== '8399' && directory && ['before', 'after'].includes(phase));
+assert(port && port !== '8399' && directory && ['before', 'topic-before', 'after'].includes(phase));
 const run = resolve(directory);
 const evidence = join(run, 'evidence');
 const base = `http://127.0.0.1:${port}`;
@@ -36,6 +36,29 @@ try {
     const queue = page.locator('[data-human-queue]');
     const hotel = queue.locator('#neo-ref-question-hotel-card');
     await hotel.getByRole('button', { name: 'Hold', exact: true }).waitFor();
+    const checkSavedTopic = async () => {
+      await page.evaluate(() => localStorage.setItem('neo:topic-filter', 'pick:travel'));
+      await page.reload();
+      const state = queue.getByRole('button', { name: /^In progress / });
+      await state.waitFor();
+      assert.equal(await chips.count(), 0);
+      const badge = queue.locator('[data-ask="trip"]').getByRole('button', { name: 'Travel', exact: true });
+      await badge.waitFor();
+      const savedTopic = { state: await state.innerText(), badgeDisabled: await badge.isDisabled() };
+      await page.screenshot({ path: join(evidence, `saved-topic-${theme}.png`), animations: 'disabled' });
+      if (phase === 'after') {
+        assert.deepEqual(savedTopic, { state: 'In progress 2', badgeDisabled: true });
+        await state.click();
+        await queue.getByText('Call the garage', { exact: true }).waitFor();
+        await queue.getByText('Pack the bags', { exact: true }).waitFor();
+      }
+      return savedTopic;
+    };
+    if (phase === 'topic-before') {
+      observations.push({ theme, savedTopic: await checkSavedTopic() });
+      await context.close();
+      continue;
+    }
     const form = page.locator('form.neo-composer-input.is-collapsed');
     const attach = form.getByRole('button', { name: 'Attach photos or files' });
     await attach.hover();
@@ -68,7 +91,8 @@ try {
       more: await more.count(),
     };
     await page.screenshot({ path: join(evidence, `${phase}-${theme}.png`), animations: 'disabled' });
-    observations.push({ theme, rows, hover });
+    const observation = { theme, rows, hover };
+    observations.push(observation);
     assert.deepEqual(rows.state, ['Waiting on you 4', 'Held 1', 'In progress 2']);
     assert.equal(rows.ask[0], 'All 4');
     assert.equal(rows.more, 1);
@@ -99,6 +123,7 @@ try {
     const chooser = page.waitForEvent('filechooser');
     await attach.click();
     assert.equal(await (await chooser).isMultiple(), true);
+    observation.savedTopic = await checkSavedTopic();
     assert.deepEqual(errors, []);
     await context.close();
   }
@@ -113,5 +138,10 @@ if (phase === 'before') {
     return [`${theme}: a duplicate standalone filter row and a 44 px hover face`];
   });
   assert.fail(failures.join('\n'));
+}
+if (phase === 'topic-before') {
+  for (const { savedTopic } of observations)
+    assert.deepEqual(savedTopic, { state: 'In progress 1', badgeDisabled: false });
+  assert.fail(`${observations.length} themes: the saved topic silently narrowed In progress to 1`);
 }
 console.log(`PASS: ${observations.length} themes, state and ask filters, Hold and Take back, and centered attachment hover`);

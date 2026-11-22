@@ -203,6 +203,7 @@ export function NeoLive() {
   const lastScrollTop = useRef(0);
   const scrollProgress = useRef(1);
   const view = neo.snapshot;
+  const inboxQueue = view?.humanQueue;
   const modelHold = shownModelHold(view?.working ?? []);
   const publicConversation =
     neo.viewPublicConversation?.conversationId || publicationConversationId(neo.sessionId)
@@ -353,8 +354,9 @@ export function NeoLive() {
       onSettle={(status) => neo.settleAsk(entry.ask.id, status)}
       onDesktopControl={(todoId, on) => void neo.setDesktopControl(todoId, on)}
       onTopic={
-        workQuery.trim() &&
-        !sceneEntries.some((loaded) => loaded.ask.topicKey === entry.ask.topicKey)
+        inboxQueue ||
+        (workQuery.trim() &&
+          !sceneEntries.some((loaded) => loaded.ask.topicKey === entry.ask.topicKey))
           ? undefined
           : (next) => {
               if (!workQuery.trim()) return chooseTopic(next === topic ? null : next);
@@ -385,7 +387,10 @@ export function NeoLive() {
       return null;
     }
   });
-  const topic = sceneEntries.some((entry) => entry.ask.topicKey === savedTopic) ? savedTopic : null;
+  const topic =
+    !inboxQueue && sceneEntries.some((entry) => entry.ask.topicKey === savedTopic)
+      ? savedTopic
+      : null;
   const openCards = neoOpenCards(
     sceneGroups[0].entries
       .filter((entry) => !topic || entry.ask.topicKey === topic)
@@ -506,21 +511,7 @@ export function NeoLive() {
     sheet: sceneSheet,
   });
   const attentionCount = view?.needsYou ?? 0;
-  const fullQueue = workQuery.trim() ? undefined : view?.humanQueue;
-  const topicAsks = topic
-    ? workEntries
-        .filter((entry) => entry.ask.topicKey === topic)
-        .map((entry) => entry.ask.id)
-        .join()
-    : '';
-  const humanQueue = useMemo(() => {
-    if (!fullQueue || !topic) return fullQueue;
-    const asks = new Set(topicAsks.split(','));
-    return {
-      items: fullQueue.items.filter((item) => asks.has(item.askId)),
-      counts: Object.fromEntries(Object.entries(fullQueue.counts).filter(([id]) => asks.has(id))),
-    };
-  }, [fullQueue, topic, topicAsks]);
+  const fullQueue = workQuery.trim() ? undefined : inboxQueue;
   const outsideQueue =
     fullQueue && cardTarget && !neoHumanQueueHolds(fullQueue, cardTarget) ? cardTarget.askId : null;
   const withoutQueued = (entry: NeoAskEntry): NeoAskEntry =>
@@ -1247,9 +1238,9 @@ export function NeoLive() {
               {!fullQueue && !workQuery.trim() && (
                 <NeoTopicChips entries={sceneEntries} selected={topic} onSelect={chooseTopic} />
               )}
-              {humanQueue && (
+              {fullQueue && (
                 <NeoHumanQueue
-                  queue={humanQueue}
+                  queue={fullQueue}
                   entries={workEntries}
                   disabled={!connected || !!neo.busyWork}
                   onAnswer={(questionId, answer) => void neo.answerQuestion(questionId, answer)}

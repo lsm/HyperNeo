@@ -18,7 +18,7 @@ const code = execFileSync('bun', ['.claude/skills/verify/rpc.ts', 'device.pair.c
 assert(code, 'no pairing code');
 const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}) });
-const result = { views: [] };
+const result = {};
 try {
   const context = await browser.newContext({ viewport: { width: 1280, height: 1000 }, locale: 'zh-CN' });
   await context.route('**/*', (route) => (route.request().url().startsWith(base) ? route.continue() : route.abort()));
@@ -40,63 +40,40 @@ try {
   const cards = () => listedAsks(page);
   const card = (id) => revealAsk(page, id);
   await open();
+  assert.equal((await cards()).length, 11);
   const header = await (await card('screen-time')).locator('[data-ask-status] > span').first().innerText();
   assert.equal(header.trim(), '在做');
-  const tags = page.locator('article[data-ask]:visible [data-topic-swatch]');
-  assert.equal(await tags.count(), await page.locator('article[data-ask]:visible').count(), 'every card shows one topic tag');
-  assert.equal((await (await card('plain')).getByRole('button', { name: '其他' }).count()), 1);
-  const shopSets = [];
-  for (const id of ['shop-a', 'shop-b']) {
-    const tag = (await card(id)).getByRole('button', { name: 'Shop', exact: true });
-    await tag.click();
-    shopSets.push(await cards());
-    await tag.click();
+  const labels = [
+    ['plain', '其他'],
+    ['shop-a', 'Shop'],
+    ['shop-b', 'Shop'],
+    ['kids-lower', 'kids'],
+    ['kids-upper', 'Kids'],
+    ['protocol', 'OAP'],
+  ];
+  for (const [id, label] of labels) {
+    const tag = (await card(id)).getByRole('button', { name: label, exact: true });
+    assert.equal(await tag.isDisabled(), true);
   }
-  result.shopTagCards = shopSets;
-  assert.deepEqual(shopSets, [['shop-a'], ['shop-b']], 'each Shop tag shows only its own project');
-  await (await card('kids-lower')).getByRole('button', { name: 'kids', exact: true }).click();
-  assert.deepEqual((await cards()).sort(), ['kids-lower', 'kids-upper']);
-  await page.waitForTimeout(800);
-  await page.screenshot({ path: join(evidence, 'topics-1280-kids.png') });
-  await page.reload();
-  await queue.waitFor();
-  assert.deepEqual((await cards()).sort(), ['kids-lower', 'kids-upper'], 'the folded filter survives reload');
-  await (await card('kids-upper')).getByRole('button', { name: 'Kids' }).click();
-  assert((await cards()).length > 2, 'the card button toggles the same folded key off');
-  await (await card('shop-b')).getByRole('button', { name: 'Shop' }).click();
-  assert.deepEqual(await cards(), ['shop-b'], 'the card button selects its own project');
-  await (await card('shop-b')).getByRole('button', { name: 'Shop' }).click();
-  result.topicKeys = true;
-  await page.waitForTimeout(800);
+  result.readOnlyTags = labels;
   for (const scheme of ['light', 'dark']) {
     await page.emulateMedia({ colorScheme: scheme });
     await page.screenshot({ path: join(evidence, `topics-1280-${scheme}.png`), fullPage: true });
   }
-  await (await card('screen-time')).getByRole('button', { name: '家长控制', exact: true }).click();
-  assert.deepEqual((await cards()).sort(), ['app-approvals', 'screen-time']);
-  await page.reload();
-  await queue.waitFor();
-  assert.deepEqual((await cards()).sort(), ['app-approvals', 'screen-time'], 'the filter survives reload');
-  await (await card('screen-time')).getByRole('button', { name: '家长控制', exact: true }).click();
-  assert((await cards()).length > 2, 'a second tap clears the filter');
-  await (await card('protocol')).getByRole('button', { name: 'OAP' }).click();
-  assert.deepEqual(await cards(), ['protocol']);
-  await page.screenshot({ path: join(evidence, 'topics-1280-filtered.png') });
-  await (await card('protocol')).getByRole('button', { name: 'OAP' }).click();
-  assert((await cards()).length > 1, 'tapping the card topic again clears it');
   await page.getByRole('button', { name: /search work|搜索/i }).first().click();
-  await page.getByRole('searchbox').fill('Synthetic protocol');
-  await page.locator('article[data-ask="protocol"]').waitFor();
-  assert.equal(await page.locator('[data-topic-chips]').count(), 0, 'chips hide while searching');
-  await page.locator('article[data-ask="protocol"]').getByRole('button', { name: 'OAP' }).click();
-  await queue.waitFor();
-  assert.equal(await page.getByRole('searchbox').inputValue(), '', 'the topic tap clears the search');
-  assert.deepEqual(await cards(), ['protocol'], 'and applies the filter');
-  result.searchTopicTap = true;
-  await (await card('protocol')).getByRole('button', { name: 'OAP', exact: true }).click();
+  const search = page.getByRole('searchbox');
+  await search.fill('Synthetic protocol');
+  const match = page.locator('article[data-ask="protocol"]');
+  await match.waitFor();
+  assert.equal(await match.getByRole('button', { name: 'OAP' }).isDisabled(), true);
+  assert.equal(await search.inputValue(), 'Synthetic protocol');
+  result.searchTagReadOnly = true;
   await page.setViewportSize({ width: 390, height: 844 });
   await open();
-  await page.waitForTimeout(800);
+  await page.waitForFunction(() => {
+    const row = document.querySelector('[data-queue-state]')?.parentElement?.getBoundingClientRect();
+    return row && row.width > 0 && row.left >= 0 && row.right <= innerWidth + 1;
+  });
   const row = await queue.locator('[data-queue-state]').first().locator('..').boundingBox();
   result.phoneRow = row;
   await page.screenshot({ path: join(evidence, 'topics-390-check.png') });

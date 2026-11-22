@@ -1154,13 +1154,16 @@ describe('card reply notice navigation', () => {
         snapshot: {
           ...model.value.snapshot,
           todoAsks: [trip, tax],
-          humanQueue: {
-            items: [progress('trip'), progress('tax')],
-            counts: {
-              trip: { waiting: 0, held: 0, progress: 1 },
-              tax: { waiting: 0, held: 0, progress: 1 },
-            },
-          },
+          humanQueue:
+            hider === 'topic'
+              ? undefined
+              : {
+                  items: [progress('trip'), progress('tax')],
+                  counts: {
+                    trip: { waiting: 0, held: 0, progress: 1 },
+                    tax: { waiting: 0, held: 0, progress: 1 },
+                  },
+                },
         } as never,
         viewPublicConversation: {
           ...model.value.viewPublicConversation!,
@@ -1182,13 +1185,11 @@ describe('card reply notice navigation', () => {
         },
       };
     });
-    if (hider === 'topic') {
-      fireEvent.click(screen.getByRole('button', { name: 'In progress 2' }));
-      fireEvent.click(screen.getByRole('button', { name: 'Travel', exact: true }));
-    } else fireEvent.click(screen.getByRole('button', { name: 'Goals' }));
+    const hide = hider === 'topic' ? 'Travel 1' : 'Goals';
+    fireEvent.click(screen.getByRole('button', { name: hide }));
     fireEvent.click(screen.getByRole('button', { name: /Quoted tax target/ }));
     await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-todo-tax-step'));
-    expect(screen.getByRole('button', { name: 'In progress 2' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: hide }).getAttribute('aria-pressed')).toBe('false');
   });
 
   it.each([
@@ -1197,8 +1198,11 @@ describe('card reply notice navigation', () => {
     ['Money', true],
     ['Travel', true],
   ])(
-    'opens a child todo quote on its own full todo, topic %s, searching %s',
+    'opens a child todo quote on its own full todo, saved topic %s, searching %s',
     async (topic, searching) => {
+      vi.spyOn(localStorage, 'getItem').mockImplementation((key) =>
+        key === 'neo:topic-filter' ? topic : null
+      );
       const { model } = mount();
       const card = {
         id: 'qp',
@@ -1280,13 +1284,10 @@ describe('card reply notice navigation', () => {
           },
         };
       });
-      if (topic) fireEvent.click(screen.getByRole('button', { name: topic, exact: true }));
-      if (topic !== 'Travel') {
-        const child = document.querySelector('article[data-ask="hotel-ask"]') as HTMLElement;
-        expect(
-          within(child).getByRole('button', { name: 'Step actions: Fictional hotel' })
-        ).toBeTruthy();
-      }
+      const child = document.querySelector('article[data-ask="hotel-ask"]') as HTMLElement;
+      expect(
+        within(child).getByRole('button', { name: 'Step actions: Fictional hotel' })
+      ).toBeTruthy();
       if (searching) {
         fireEvent.click(screen.getByRole('button', { name: 'Search work', exact: true }));
         fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'Fictional' } });
@@ -1295,7 +1296,6 @@ describe('card reply notice navigation', () => {
       await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-todo-hotel'));
       expect(document.activeElement?.closest('[data-ask="hotel-ask"]')).toBeTruthy();
       expect(document.querySelectorAll('[id="neo-ref-todo-hotel"]')).toHaveLength(1);
-      if (topic === 'Money') expect(screen.queryByText('Parent card?')).toBeNull();
     }
   );
 
@@ -1501,7 +1501,10 @@ describe('card reply notice navigation', () => {
     expect(document.querySelector('article[data-ask="tax"]')).toBeNull();
   });
 
-  it('shows the queue filters without a standalone topic row', () => {
+  it('ignores a saved topic and makes topic badges read-only when queue filters are shown', () => {
+    vi.spyOn(localStorage, 'getItem').mockImplementation((key) =>
+      key === 'neo:topic-filter' ? 'Travel' : null
+    );
     const { model, container } = mount();
     const trip = testAskEntry('trip', 'Fictional trip', { state: 'doing' });
     trip.ask.topic = 'Travel';
@@ -1536,6 +1539,9 @@ describe('card reply notice navigation', () => {
     const states = within(screen.getByRole('group', { name: 'State' }));
     const asks = within(screen.getByRole('group', { name: 'Ask' }));
     fireEvent.click(states.getByRole('button', { name: 'In progress 2' }));
+    const badge = screen.getByRole('button', { name: 'Travel', exact: true }) as HTMLButtonElement;
+    expect(badge.disabled).toBe(true);
+    expect(screen.getByRole('region', { name: 'Fictional tax' })).toBeTruthy();
     fireEvent.click(asks.getByRole('button', { name: 'Fictional trip 1' }));
     expect(screen.getByRole('region', { name: 'Fictional trip' })).toBeTruthy();
     expect(screen.queryByRole('region', { name: 'Fictional tax' })).toBeNull();

@@ -1,4 +1,4 @@
-## Neo cards show their topic, and the list filters by it (card topics PR 2)
+# Neo cards show their topic in the Inbox
 
 Build the web bundle (`cd packages/web && bun run build`). Seed a fresh synthetic run,
 launch per SKILL.md on a free port (never 8399), then drive headless Chromium:
@@ -19,9 +19,7 @@ End state, in `$RUN/evidence/`:
 
 - `card-topics.json` has `passed: true`. Each card displays a topic tag with a colored
   border and its state below the title. The untopiced card shows 其他.
-- Each Shop tag selects only its own project. Tapping either kids card's tag shows both
-  picks. The selection survives reload. Tapping the tag again clears it.
-- Tapping a card's topic during work search clears the search and applies the topic.
-- The Inbox shows the queue filter rows. The standalone topic chips are absent when the
-  daemon supplies the queue. At 390 px the state row fits without sideways page scrolling.
-- Inspect the unfiltered and filtered desktop captures and both mobile themes.
+- The topic labels are read-only when the queue is available, including in search
+  results. The standalone topic chips are absent. At 390 px the state row fits
+  without sideways page scrolling.
+- Inspect the desktop and mobile captures in both themes.
