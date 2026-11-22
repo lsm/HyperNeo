@@ -90,8 +90,12 @@ another identifier), then `ended not_locked accessibility_required
 input_monitoring_required` (with `not_installed` first when the plugin is absent) from a
 copy that holds no privacy grants, and `guardian check PASS`.
 
-Crash relock, with no GUI: Desktop starts the guardian and relocks the Mac when it exits
-uncleanly after covering, such as when it is killed:
+Desktop gate and crash relock, with no GUI. A desktop-control call on a locked screen makes
+Desktop start the bundled guardian and wait up to 15 seconds for `unlocked`. That worker
+then owns the Mac: each of its calls keeps the guardian alive (idle 120 seconds), and every
+other worker gets `screen_locked` until the owner stops, the guardian ends or the screen
+locks again. Desktop relocks when the guardian exits uncleanly after covering, such as when
+it is killed:
 
 ```bash
 mkdir -p packages/desktop/src-tauri/binaries
@@ -99,8 +103,9 @@ touch "packages/desktop/src-tauri/binaries/hyperneo-$(rustc --print host-tuple)"
 cargo test --locked --manifest-path packages/desktop/src-tauri/Cargo.toml --lib locked_use::
 ```
 
-Pass runs 5 tests: killed or relock-failed after covering relocks once; a clean end or a
-start-gate refusal does not.
+Pass runs 8 tests: killed or relock-failed after covering relocks once; a clean end or a
+start-gate refusal does not; a second worker is refused while the owner holds the Mac and
+admitted once it stops; a refusing or missing guardian leaves the call refused.
 
 Live run, on a Mac with the plugin installed and the owner present. Start it, then lock
 the Mac with Control-Command-Q within 20 seconds:

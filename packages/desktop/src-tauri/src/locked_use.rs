@@ -1,7 +1,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{ChildStdin, Command, Stdio};
-use std::thread::JoinHandle;
+use std::sync::mpsc::{channel, Receiver};
 
 pub(crate) struct LockedUse {
     stdin: ChildStdin,
@@ -11,17 +11,13 @@ impl LockedUse {
     pub(crate) fn keep_alive(&mut self) -> std::io::Result<()> {
         writeln!(self.stdin, "alive")
     }
-
-    pub(crate) fn stop(&mut self) -> std::io::Result<()> {
-        writeln!(self.stdin, "stop")
-    }
 }
 
 pub(crate) fn start(
     guardian: &Path,
     idle_seconds: u32,
     relock: fn(),
-) -> std::io::Result<(LockedUse, JoinHandle<String>)> {
+) -> std::io::Result<(LockedUse, Receiver<String>)> {
     let mut child = Command::new(guardian)
         .arg(idle_seconds.to_string())
         .stdin(Stdio::piped())
@@ -29,18 +25,17 @@ pub(crate) fn start(
         .spawn()?;
     let stdin = child.stdin.take().expect("piped stdin");
     let stdout = child.stdout.take().expect("piped stdout");
-    let watch = std::thread::spawn(move || {
+    let (lines, watch) = channel();
+    std::thread::spawn(move || {
         let mut covered = false;
-        let mut last = String::new();
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
             covered |= line.starts_with("covered ");
-            last = line;
+            let _ = lines.send(line);
         }
         let ended = child.wait().is_ok_and(|status| status.success());
         if covered && !ended {
             relock();
         }
-        last
     });
     Ok((LockedUse { stdin }, watch))
 }
@@ -86,7 +81,7 @@ mod tests {
         .unwrap();
         let before = RELOCKS.load(Ordering::SeqCst);
         let (_use, watch) = start(&guardian, 60, count).unwrap();
-        let last = watch.join().unwrap();
+        let last = watch.iter().last().unwrap_or_default();
         (RELOCKS.load(Ordering::SeqCst) - before, last)
     }
 
@@ -123,13 +118,13 @@ mod tests {
     }
 
     #[test]
-    fn stop_reaches_the_guardian() {
+    fn keep_alive_reaches_the_guardian_and_dropping_ends_it() {
         let _serial = SERIAL.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let guardian = dir.path().join("guardian");
         std::fs::write(
             &guardian,
-            "#!/bin/sh\necho 'covered 1'\nread line\nread line\necho \"ended $line\"\n",
+            "#!/bin/sh\necho 'covered 1'\nread line\necho \"got $line\"\nread line || echo 'ended owner_gone'\n",
         )
         .unwrap();
         std::fs::set_permissions(
@@ -139,7 +134,9 @@ mod tests {
         .unwrap();
         let (mut use_, watch) = start(&guardian, 60, count).unwrap();
         use_.keep_alive().unwrap();
-        use_.stop().unwrap();
-        assert_eq!(watch.join().unwrap(), "ended stop");
+        assert_eq!(watch.recv().unwrap(), "covered 1");
+        assert_eq!(watch.recv().unwrap(), "got alive");
+        drop(use_);
+        assert_eq!(watch.iter().last().unwrap(), "ended owner_gone");
     }
 }
