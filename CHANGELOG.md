@@ -4,6 +4,17 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.62.0] - 2026-11-22
+
+- Add Locked Use support on macOS. HyperNeo Desktop starts the guardian that works with the lock-screen plugin (#11471, #11500, #11503).
+- Add a drill-down system map and simplify the Neo Inbox (#11495, #11501).
+- Add a Codex setup command for the shared app server, ask before enabling it, and explain recovery when Codex Desktop already controls a thread (#11462, #11477, #11480).
+- Restore desktop control after the driver exits and improve screenshot sharing in Neo (#11476, #11491).
+
+### API compatibility
+
+Compared with v0.61.0, the pinned phone source inventory reports 0 breaking, 0 risky, and 0 safe changes. The full report adds one safe operation, `system.codex.setup`.
+
 ## [0.61.0] - 2026-11-21
 
 - Open and control GitHub Copilot Desktop sessions, including when the CLI is unavailable. Compact idle Copilot Desktop and CLI workers, steer active Copilot turns, and pass the selected reasoning effort to Copilot CLI (#11398, #11439, #11387, #11425, #11431, #11422).
