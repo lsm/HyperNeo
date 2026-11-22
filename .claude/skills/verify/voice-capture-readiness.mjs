@@ -37,9 +37,15 @@ try {
     });
     await context.addInitScript(() => {
       const connect = MediaStreamAudioSourceNode.prototype.connect;
+      const heldConnections = [];
+      window.discardCapture = () => {
+        heldConnections.length = 0;
+        delete window.releaseCapture;
+      };
       MediaStreamAudioSourceNode.prototype.connect = function (...args) {
+        heldConnections.push(() => connect.apply(this, args));
         window.releaseCapture = () => {
-          connect.apply(this, args);
+          for (const resume of heldConnections.splice(0)) resume();
           return performance.now();
         };
         return args[0];
@@ -69,6 +75,8 @@ try {
       const draft = form.locator('textarea');
       await draft.fill('Typed first');
       await call('arm', { id: name, text: 'Spoken after startup' });
+      const mic = await start.boundingBox();
+      assert(mic);
       await press(start);
       await page.waitForFunction(() => typeof window.releaseCapture === 'function');
       await page.waitForTimeout(500);
@@ -76,20 +84,29 @@ try {
       assert.equal(await bars.count(), 0, 'Waveform must stay hidden without microphone samples');
       assert.equal(await stop.count(), 0);
       assert.equal(await cancel.getAttribute('aria-busy'), 'true');
+      const spinner = await cancel.boundingBox();
+      assert(spinner && Math.abs(spinner.x - mic.x) < 1, 'Spinner must stay in the mic position');
+      assert.equal(await form.getByText('Listening. Your words appear here.').count(), 0);
       await press(cancel);
       await start.waitFor();
       assert.equal((await call('stats')).received, 0);
       assert.equal(await draft.inputValue(), 'Typed first');
-      await page.evaluate(() => {
-        delete window.releaseCapture;
-      });
+      await page.evaluate(() => window.discardCapture());
 
       await press(start);
       await page.waitForFunction(() => typeof window.releaseCapture === 'function');
       const releasedAt = await page.evaluate(() => window.releaseCapture());
-      await bars.waitFor();
-      result.delayMs = await page.evaluate((start) => performance.now() - start, releasedAt);
+      const visibleAt = await page.waitForFunction(
+        () => document.querySelector('[data-testid="voice-bars"]') && performance.now()
+      );
+      result.delayMs = (await visibleAt.jsonValue()) - releasedAt;
       assert(result.delayMs >= 200, 'Waveform must give the microphone time to stabilize');
+      await page.waitForFunction(() =>
+        [...document.querySelectorAll('[data-testid="voice-bars"] > div')].some(
+          (bar) => Number(bar.style.transform.match(/scaleY\(([^)]+)\)/)?.[1]) > 0.1
+        )
+      );
+      await page.screenshot({ path: `${run}/evidence/${name}-recording.png` });
       await press(stop);
       const deadline = Date.now() + 12_000;
       do {
