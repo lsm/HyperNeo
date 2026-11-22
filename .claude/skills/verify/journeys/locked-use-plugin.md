@@ -69,6 +69,12 @@ the privileged mechanism, and its rollback deletes the bundle only after the rig
 proven gone. After install, lock the Mac and
 unlock it with the password once to confirm the normal path still works.
 
+Signed Desktop builds ship the plugin and these four scripts in
+`HyperNeo.app/Contents/Resources/locked-use/`, so the same install runs from the app:
+`sudo bash <app>/Contents/Resources/locked-use/install.sh <app>/Contents/Resources/locked-use/HyperNeoLockedUse.bundle`.
+`verify-macos-bundle.sh` fails the release build unless the shipped plugin is the Developer ID
+`io.hyperneo.locked-use.plugin` with the hardened runtime and every script matches the repo copy.
+
 ## Guardian
 
 The guardian `hyperneo-locked-use` (identifier `io.hyperneo.locked-use`) is the only
