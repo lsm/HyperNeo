@@ -90,17 +90,28 @@ another identifier), then `ended not_locked accessibility_required
 input_monitoring_required` (with `not_installed` first when the plugin is absent) from a
 copy that holds no privacy grants, and `guardian check PASS`.
 
-Crash relock, with no GUI: Desktop starts the guardian and relocks the Mac when it exits
-uncleanly after covering, such as when it is killed:
+Desktop gate and crash relock, with no GUI. One task owns Locked Use and handles every
+event in order: Idle, Starting (guardian spawned, waiting up to 15 seconds for `unlocked`),
+Owned (only that worker may act; each of its calls keeps the guardian alive, idle 120
+seconds) and Releasing (guardian input closed, until the guardian process exits). Other
+workers get `screen_locked` outside Idle. A start is refused while any call is acting, after
+an unsettled call or unconfirmed stop, or for a stopped worker. Stopping the owner returns
+only after its guardian has exited. Desktop relocks when the guardian exits uncleanly after
+covering, such as when it is killed:
 
 ```bash
 mkdir -p packages/desktop/src-tauri/binaries
 touch "packages/desktop/src-tauri/binaries/hyperneo-$(rustc --print host-tuple)"
-cargo test --locked --manifest-path packages/desktop/src-tauri/Cargo.toml --lib locked_use::
+cargo test --locked --manifest-path packages/desktop/src-tauri/Cargo.toml --lib locked_use
 ```
 
-Pass runs 5 tests: killed or relock-failed after covering relocks once; a clean end or a
-start-gate refusal does not.
+Pass runs 19 tests: killed or relock-failed after covering relocks once; a clean end or a
+start-gate refusal does not; a second worker is refused while the owner holds the Mac, even
+when its call was admitted earlier, and is admitted only after the guardian has exited; no
+start while a call is acting, and retiring an acting worker never waits on a start; an
+unsettled call blocks starts until its driver is confirmed stopped; a stop or a cancel during
+startup releases only after the guardian exits, a call cancelled while being admitted or ending after its worker retired never blocks a start, a start cancelled after the unlock releases the Mac, and a stopped worker never takes the Mac; a
+refusing or missing guardian leaves the call refused.
 
 Live run, on a Mac with the plugin installed and the owner present. Start it, then lock
 the Mac with Control-Command-Q within 20 seconds:
