@@ -21,3 +21,8 @@ mailbox turn to Neo listing `Kids 2, 孩子 1, 家 1` and naming
 changes nothing. The bound session's `neo.topic.merge {from: "kids", to: "孩子"}`
 answers `merged: 2` and rewrites both the open and the settled ask; `家` stays.
 Evidence is `$RUN/evidence/topic-merge.json`.
+
+A rejected 13-cell destination leaves the matched asks unchanged. Merge a
+synthetic over-width legacy pick through `HyperNeo`, `neo-ios`, `支付` and a
+12-cell pick made of five CJK characters and a family emoji. Merge from that
+12-cell pick to `家庭` and check the stored result.

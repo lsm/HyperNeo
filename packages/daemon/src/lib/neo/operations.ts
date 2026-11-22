@@ -75,6 +75,7 @@ import { resolveNeoTodoTarget } from './todo-target.ts';
 import { wireNeoTodoMutations } from './todo-mutation-operation.ts';
 import { createArtifactRefReader } from '../artifacts/read-operations.ts';
 import { createNeoAskRecordOperations } from './ask-record-operations.ts';
+import { NeoTopicLabelSchema } from './ask-topic.ts';
 import { SessionGoalRepository } from '../../storage/repositories/session-goal-repository.ts';
 import {
   createNeoDoneTodosOperation,
@@ -168,6 +169,7 @@ const SnapshotOk = z.object({
         ])
       ),
       counts: z.record(z.string(), z.record(NeoHumanQueueState, z.number().int().nonnegative())),
+      topics: z.record(z.string(), NeoTopicLabelSchema).optional(),
     })
     .optional()
     .describe(
@@ -422,13 +424,16 @@ export function createNeoOperations(
       ? (service.repo.projectMerges.resolve(requested) ?? requested)
       : undefined;
     const detailed = caller.source === 'rpc';
-    const { asks, unlisted, openWork, facts, historyCursor } = await service.todos.read(
-      'snapshot',
-      scope,
-      10,
-      true
-    );
     const humanQueue = detailed ? await service.humanQueue() : null;
+    const { asks, unlisted, openWork, facts, historyCursor, queueTopics } =
+      await service.todos.read(
+        'snapshot',
+        scope,
+        10,
+        true,
+        undefined,
+        Object.keys(humanQueue?.counts ?? {})
+      );
     const { todoAsks, pinned } = neoSnapshotAskEntries(
       projectNeoAskEntries(asks, facts, service.installedPacks()),
       detailed ? 20 : undefined
@@ -543,7 +548,7 @@ export function createNeoOperations(
       preferences: service.modelPreference(),
       ...(detailed ? { packPreferences: service.packPreferences() } : {}),
       todoAsks: entries.map(summarizeNeoAskEntry),
-      ...(humanQueue ? { humanQueue } : {}),
+      ...(humanQueue ? { humanQueue: { ...humanQueue, topics: queueTopics } } : {}),
       ...counts,
       historyCursor,
       ...(!detailed && Object.keys(more).length ? { more } : {}),

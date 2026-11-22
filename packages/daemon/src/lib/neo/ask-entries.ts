@@ -8,6 +8,7 @@ import type {
   NeoTodoEntry,
 } from '@hyperneo/shared/types/neo-ask';
 import { neoOptionLabels } from '@hyperneo/shared/types/neo-ask';
+import { NeoTopicLabelSchema } from './ask-topic.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
@@ -300,6 +301,7 @@ export const NeoAskEntrySchema = z.object({
     title: z.string(),
     topic: Nullable,
     topicKey: z.string().optional(),
+    topicSource: NeoTopicLabelSchema.shape.topicSource,
     desktopApps: z.array(z.object({ bundleId: z.string(), name: z.string() })).optional(),
     request: z.string(),
     status: z.enum(['open', 'done', 'dropped']),

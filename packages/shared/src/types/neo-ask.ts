@@ -1,9 +1,49 @@
+import { eastAsianWidth } from 'get-east-asian-width';
 import type { ArtifactProjection, ArtifactRef, PublicHandoffReference } from './artifact-file.ts';
 import type { WorkerIdentity } from './worker-identity.ts';
 
 export type NeoAskStatus = 'open' | 'done' | 'dropped';
 
 export const NEO_OTHER_TOPIC = '其他';
+export const NEO_OTHER_TOPIC_KEY = `pick:${NEO_OTHER_TOPIC}`;
+export const NEO_TOPIC_CELLS = 12;
+
+const topicGraphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+function topicGraphemeWidth(grapheme: string): number {
+  const base = grapheme.match(/[^\p{Mark}]/u)?.[0]?.codePointAt(0);
+  if (base === undefined) return 0;
+  return /\p{Emoji_Presentation}|\uFE0F|\u20E3/u.test(grapheme)
+    ? 2
+    : eastAsianWidth(base, { ambiguousAsWide: false });
+}
+
+export function neoTopicFits(label: string): boolean {
+  let width = 0;
+  for (const { segment } of topicGraphemes.segment(label)) {
+    width += topicGraphemeWidth(segment);
+    if (width > NEO_TOPIC_CELLS) return false;
+  }
+  return !!label;
+}
+
+export function shortenNeoTopic(label: string): string {
+  if (neoTopicFits(label)) return label;
+  let width = 0;
+  let prefix = '';
+  for (const { segment } of topicGraphemes.segment(label)) {
+    width += topicGraphemeWidth(segment);
+    if (width >= NEO_TOPIC_CELLS) break;
+    prefix += segment;
+  }
+  return `${prefix}…`;
+}
+
+export interface NeoTopicLabel {
+  topic: string;
+  topicKey: string;
+  topicSource?: 'project' | 'repository';
+}
 
 export interface NeoDesktopApp {
   bundleId: string;
@@ -22,6 +62,7 @@ export interface NeoAsk {
   title: string;
   topic: string | null;
   topicKey?: string;
+  topicSource?: NeoTopicLabel['topicSource'];
   request: string;
   status: NeoAskStatus;
   outcome: string | null;

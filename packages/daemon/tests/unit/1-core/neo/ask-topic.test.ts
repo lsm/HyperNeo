@@ -45,6 +45,7 @@ describe('neoAskTopic', () => {
     expect(neoAskTopic(facts({ ask: ask({ topic: 'X' }), todos: [sent('s1')] }))).toEqual({
       topic: 'Shop',
       topicKey: 'p',
+      topicSource: 'project',
     });
   });
 
@@ -69,6 +70,7 @@ describe('neoAskTopic', () => {
     expect(neoAskTopic(facts({ todos: [request('claude-code:s1')] }))).toEqual({
       topic: 'Shop',
       topicKey: 'p',
+      topicSource: 'project',
     });
     expect(neoAskTopic(facts({ todos: [request('h1')] })).topicKey).toBe('q');
     expect(
@@ -122,6 +124,7 @@ describe('neoAskTopic', () => {
     expect(neoAskTopic(facts({ ask: ask({ projectId: 'q', topic: 'X' }) }))).toEqual({
       topic: 'Shop',
       topicKey: 'q',
+      topicSource: 'project',
     });
     expect(neoAskTopic(facts({ ask: ask({ projectId: 'inbox', topic: 'X' }) })).topicKey).toBe(
       'pick:x'

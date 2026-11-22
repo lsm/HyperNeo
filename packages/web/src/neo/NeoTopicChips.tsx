@@ -1,18 +1,23 @@
 import { t } from '../lib/i18n/index.ts';
-import { NEO_OTHER_TOPIC } from '@hyperneo/shared/types/neo-ask';
+import { NEO_OTHER_TOPIC_KEY, type NeoAsk } from '@hyperneo/shared/types/neo-ask';
 import { neoTopicColor } from './topic-color.ts';
+import { neoTopicLabel } from './topic-label.ts';
 
-type Topical = { ask: { topic: string | null; topicKey?: string | null } };
+type Topical = { ask: Pick<NeoAsk, 'topic' | 'topicSource'> & { topicKey?: string | null } };
 
 export function neoTopicCounts(entries: readonly Topical[]): [string, string, number][] {
   const counts = new Map<string, [string, string, number]>();
   for (const { ask } of entries)
     if (ask.topicKey && ask.topic) {
       const known = counts.get(ask.topicKey);
-      counts.set(ask.topicKey, [ask.topicKey, known?.[1] ?? ask.topic, (known?.[2] ?? 0) + 1]);
+      counts.set(ask.topicKey, [
+        ask.topicKey,
+        known?.[1] ?? neoTopicLabel(ask)!,
+        (known?.[2] ?? 0) + 1,
+      ]);
     }
   return [...counts.values()].sort(
-    ([, a, x], [, b, y]) => +(a === NEO_OTHER_TOPIC) - +(b === NEO_OTHER_TOPIC) || y - x
+    ([a, , x], [b, , y]) => +(a === NEO_OTHER_TOPIC_KEY) - +(b === NEO_OTHER_TOPIC_KEY) || y - x
   );
 }
 

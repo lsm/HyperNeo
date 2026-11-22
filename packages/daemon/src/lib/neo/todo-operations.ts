@@ -4,6 +4,7 @@ import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
+import { NeoTopicPick } from './ask-topic.ts';
 import type {
   NeoAskTodoRepository,
   NeoQuestionDraft,
@@ -137,11 +138,9 @@ const Add = TodoDraft.extend({
   input: Text.optional().describe(
     'The id on the `<human-message>` tag of the human message this todo serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else its recorded follow-up binding, else a new one.'
   ),
-  topic: Text.max(12)
-    .optional()
-    .describe(
-      'The topic of the new ask this call opens for input. Ignored when the todo joins an existing ask; change that one with neo.ask.topic.'
-    ),
+  topic: NeoTopicPick.optional().describe(
+    'The topic of a new ask, up to 12 display cells. Joining an existing ask keeps its topic.'
+  ),
   desktopApps: DesktopAppsSchema.optional().describe(
     'Bundle ids of the apps on this Mac this todo drives. Each must be on its ask’s approved proposal card, or named by the human message in input. Only this todo gets them. For any other app, propose a new ask with desktopApps.'
   ),

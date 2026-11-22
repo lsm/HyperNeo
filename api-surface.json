@@ -22370,6 +22370,13 @@
                         "topicKey": {
                           "type": "string"
                         },
+                        "topicSource": {
+                          "enum": [
+                            "project",
+                            "repository"
+                          ],
+                          "type": "string"
+                        },
                         "updatedAt": {
                           "type": "number"
                         }
@@ -23518,6 +23525,13 @@
                   "topicKey": {
                     "type": "string"
                   },
+                  "topicSource": {
+                    "enum": [
+                      "project",
+                      "repository"
+                    ],
+                    "type": "string"
+                  },
                   "updatedAt": {
                     "type": "number"
                   }
@@ -24287,7 +24301,6 @@
             "type": "array"
           },
           "topic": {
-            "maxLength": 12,
             "minLength": 1,
             "type": "string"
           },
@@ -24456,6 +24469,13 @@
                     ]
                   },
                   "topicKey": {
+                    "type": "string"
+                  },
+                  "topicSource": {
+                    "enum": [
+                      "project",
+                      "repository"
+                    ],
                     "type": "string"
                   },
                   "updatedAt": {
@@ -25034,6 +25054,13 @@
                         ]
                       },
                       "topicKey": {
+                        "type": "string"
+                      },
+                      "topicSource": {
+                        "enum": [
+                          "project",
+                          "repository"
+                        ],
                         "type": "string"
                       },
                       "updatedAt": {
@@ -26312,6 +26339,13 @@
                   "topicKey": {
                     "type": "string"
                   },
+                  "topicSource": {
+                    "enum": [
+                      "project",
+                      "repository"
+                    ],
+                    "type": "string"
+                  },
                   "updatedAt": {
                     "type": "number"
                   }
@@ -26722,7 +26756,6 @@
             "type": "string"
           },
           "topic": {
-            "maxLength": 12,
             "minLength": 1,
             "type": "string"
           }
@@ -26886,6 +26919,13 @@
                     ]
                   },
                   "topicKey": {
+                    "type": "string"
+                  },
+                  "topicSource": {
+                    "enum": [
+                      "project",
+                      "repository"
+                    ],
                     "type": "string"
                   },
                   "updatedAt": {
@@ -31339,6 +31379,35 @@
                       ]
                     },
                     "type": "array"
+                  },
+                  "topics": {
+                    "additionalProperties": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "topic": {
+                          "type": "string"
+                        },
+                        "topicKey": {
+                          "type": "string"
+                        },
+                        "topicSource": {
+                          "enum": [
+                            "project",
+                            "repository"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "topic",
+                        "topicKey"
+                      ],
+                      "type": "object"
+                    },
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "type": "object"
                   }
                 },
                 "required": [
@@ -32213,6 +32282,13 @@
                           ]
                         },
                         "topicKey": {
+                          "type": "string"
+                        },
+                        "topicSource": {
+                          "enum": [
+                            "project",
+                            "repository"
+                          ],
                           "type": "string"
                         },
                         "updatedAt": {
@@ -39624,6 +39700,35 @@
                       ]
                     },
                     "type": "array"
+                  },
+                  "topics": {
+                    "additionalProperties": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "topic": {
+                          "type": "string"
+                        },
+                        "topicKey": {
+                          "type": "string"
+                        },
+                        "topicSource": {
+                          "enum": [
+                            "project",
+                            "repository"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "topic",
+                        "topicKey"
+                      ],
+                      "type": "object"
+                    },
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "type": "object"
                   }
                 },
                 "required": [
@@ -40498,6 +40603,13 @@
                           ]
                         },
                         "topicKey": {
+                          "type": "string"
+                        },
+                        "topicSource": {
+                          "enum": [
+                            "project",
+                            "repository"
+                          ],
                           "type": "string"
                         },
                         "updatedAt": {
@@ -42224,8 +42336,7 @@
             "type": "string"
           },
           "topic": {
-            "description": "The topic of the new ask this call opens for input. Ignored when the todo joins an existing ask; change that one with neo.ask.topic.",
-            "maxLength": 12,
+            "description": "The topic of a new ask, up to 12 display cells. Joining an existing ask keeps its topic.",
             "minLength": 1,
             "type": "string"
           }
@@ -45740,12 +45851,10 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
           "from": {
-            "maxLength": 12,
             "minLength": 1,
             "type": "string"
           },
           "to": {
-            "maxLength": 12,
             "minLength": 1,
             "type": "string"
           }

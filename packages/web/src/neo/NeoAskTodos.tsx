@@ -49,6 +49,7 @@ import {
   neoTodoStatus,
 } from './todo-status.ts';
 import { neoTopicColor } from './topic-color.ts';
+import { neoTopicLabel } from './topic-label.ts';
 import { neoSessionKind } from './work-driver.ts';
 
 const states = {
@@ -808,6 +809,7 @@ export function NeoAskTodos({
     }
   };
   const { ask, todos } = entry;
+  const topicLabel = neoTopicLabel(ask);
   const { expanded, setExpanded } = useExpandedTodos(ask.sessionId, ask.id);
   const readingDetails =
     open ||
@@ -1016,7 +1018,7 @@ export function NeoAskTodos({
           <h3 class="line-clamp-3 min-w-0 break-words text-lg font-semibold leading-snug">
             {ask.title}
           </h3>
-          {ask.topic && (
+          {ask.topic && topicLabel && (
             <button
               type="button"
               disabled={!onTopic || !ask.topicKey}
@@ -1025,7 +1027,7 @@ export function NeoAskTodos({
               class="mt-0.5 max-w-[40%] shrink-0 rounded-full border px-2.5 py-0.5 text-xs font-medium enabled:hover:opacity-80"
               style={{ borderColor: neoTopicColor(ask.topic), color: neoTopicColor(ask.topic) }}
             >
-              <span class="block truncate">{ask.topic}</span>
+              <span class="block truncate">{topicLabel}</span>
             </button>
           )}
         </div>

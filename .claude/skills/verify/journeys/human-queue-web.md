@@ -14,7 +14,7 @@ waiting card, one held card and uncovered work. No provider or model turn is use
 
 Before must exit 1 with both themes reporting the duplicate standalone filter
 row and the oversized attachment hover. After must exit 0. The Inbox retains
-its state and ask rows, including More. Hold moves a question to Held, Take back
+its state and topic rows, including More. Hold moves a question to Held, Take back
 returns it, and In progress shows uncovered work. The attachment button opens
 the file picker, with a 32px circular hover face centered in its 44px target.
 
@@ -32,3 +32,14 @@ themes and exits 1 when the header gap is at least 20px and the ask controls wra
 After requires an 8–16px gap and a single line at desktop and 390px widths.
 The More icon stays at the right edge when the narrow chip strip scrolls.
 Check keyboard focus and pick an overflowing ask through the native select.
+
+Use `short-topics` for the 12-cell topic contract. The paired Chinese Inbox
+uses a project-scoped snapshot with one linked request outside the returned
+card page. Both asks share the same topic key and count in the chip and More.
+Select two identical shortened labels by project ID. Confirm a long request
+title stays on its card and an unlinked legacy pick appears under Other and
+All. Check the localized Payments label, the HyperNeo and API names, and the
+fallback for another English title. Repeat with `VERIFY_THEME=light` and
+`VERIFY_THEME=dark` in separate fresh runs and evidence directories.
+The scoped RPC receipt and read-only SQLite output confirm the missing card
+page entry and the original stored pick and project title.

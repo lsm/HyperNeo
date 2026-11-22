@@ -1,4 +1,11 @@
-import { NEO_OTHER_TOPIC, type NeoAsk } from '@hyperneo/shared/types/neo-ask';
+import {
+  NEO_OTHER_TOPIC,
+  NEO_TOPIC_CELLS,
+  neoTopicFits,
+  type NeoAsk,
+  type NeoTopicLabel,
+} from '@hyperneo/shared/types/neo-ask';
+import { z } from 'zod';
 import { placeKey } from '../drivers/places.ts';
 import type { Place, WorkRef } from '../drivers/types.ts';
 import { NEO_INBOX_ID } from './inbox.ts';
@@ -11,7 +18,7 @@ export type NeoAskTopicTodo = {
 };
 
 type TopicAsk = Pick<NeoAsk, 'projectId' | 'parentId' | 'topic'>;
-type Project = { id: string; title: string };
+type Project = { id: string; title: string; repositoryName?: boolean };
 
 export type NeoAskTopicFacts = {
   ask: TopicAsk;
@@ -22,7 +29,18 @@ export type NeoAskTopicFacts = {
   projects: ReadonlyMap<string, Project>;
 };
 
-export type NeoAskTopic = { topic: string; topicKey: string };
+const topicMessage = `Topic must fit within ${NEO_TOPIC_CELLS} display cells.`;
+const topicText = z.string().trim().min(1);
+export const NeoTopicPick = topicText.refine(neoTopicFits, topicMessage);
+export const NeoTopicFrom = topicText.refine(
+  (value) => value.length <= 12 || neoTopicFits(value),
+  topicMessage
+);
+export const NeoTopicLabelSchema = z.object({
+  topic: z.string(),
+  topicKey: z.string(),
+  topicSource: z.enum(['project', 'repository']).optional(),
+});
 
 const workAlias = (machine: string, adapter: string, id: string) =>
   `work:${machine}\u0000${adapter}\u0000${id}`;
@@ -82,14 +100,23 @@ function ownProject(
 
 export const neoTopicPickKey = (topic: string) => `pick:${topic.toLowerCase().replace(/\s+/g, '')}`;
 
-const pick = (topic: string): NeoAskTopic => ({ topic, topicKey: neoTopicPickKey(topic) });
+const pick = (topic: string): NeoTopicLabel => ({ topic, topicKey: neoTopicPickKey(topic) });
 
-const stored = (ask: TopicAsk) => (ask.topic?.trim() ? pick(ask.topic) : null);
+function stored(ask: TopicAsk) {
+  const topic = ask.topic?.trim();
+  return topic && neoTopicFits(topic) ? pick(topic) : null;
+}
 
-const fromProject = (found: Project | null) =>
-  found ? { topic: found.title, topicKey: found.id } : null;
+const fromProject = (found: Project | null): NeoTopicLabel | null =>
+  found
+    ? {
+        topic: found.title,
+        topicKey: found.id,
+        topicSource: found.repositoryName ? 'repository' : 'project',
+      }
+    : null;
 
-export function neoAskTopic(facts: NeoAskTopicFacts): NeoAskTopic {
+export function neoAskTopic(facts: NeoAskTopicFacts): NeoTopicLabel {
   const sender = facts.todos.find((todo) => todo.requestFrom)?.requestFrom;
   return (
     fromProject(ownProject(facts, facts.ask, facts.todos)) ??

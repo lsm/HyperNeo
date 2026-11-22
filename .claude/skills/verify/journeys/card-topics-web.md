@@ -18,7 +18,8 @@ done and dropped. No key or model is used.
 End state, in `$RUN/evidence/`:
 
 - `card-topics.json` has `passed: true`. Each card displays a topic tag with a colored
-  border and its state below the title. The untopiced card shows 其他.
+  border and its state below the title. The untopiced card shows 其他 and the
+  two generic project badges show 项目.
 - The topic labels are read-only when the queue is available, including in search
   results. The standalone topic chips are absent. At 390 px the state row fits
   without sideways page scrolling.
