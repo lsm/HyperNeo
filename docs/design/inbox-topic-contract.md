@@ -41,9 +41,11 @@ one-ask navigation and leaves the Inbox without a topic filter.
    for emoji graphemes and one for other narrow or ambiguous-width text,
    including the ellipsis. Apply the rule to picks from `neo.ask.propose`,
    `neo.ask.topic`, `neo.todo.add` with input, and the `to` of `neo.topic.merge`.
-   Reject invalid picks with a field error before any write. Keep the existing
-   `from` rules so it can identify legacy picks. Update the prompt and tool
-   guidance to the same budget and keep established names and acronyms.
+   Reject invalid picks with a field error before any write. For `from`, accept
+   either a valid new pick or a legacy pick within the old 1–12 UTF-16 code-unit
+   range. Match either source using the existing case and spacing rules.
+   Update the prompt and tool guidance to the same budget and keep established
+   names and acronyms.
 2. Reuse the resolver and its existing source order. Keep a resolved project
    as the source regardless of title width, using its project ID as the key.
    Shorten an over-width project title to the longest prefix that fits with a
@@ -69,7 +71,9 @@ and the [Inbox queue proof](../../.claude/skills/verify/journeys/human-queue-web
 Through all four write paths, accept `HyperNeo`, `neo-ios`, a two-character
 CJK label and a 12-cell label. Reject a 13-cell label. Check that a rejected
 merge leaves its matches untouched and that `from` still accepts a legacy
-pick.
+pick over 12 cells. Save five CJK characters followed by a family emoji
+joined with zero-width joiners (12 cells, 16 UTF-16 code units), then use that
+label as `from` in a merge and verify the saved ask receives the destination.
 
 In the real Inbox, open More with a long session-request title, two projects
 that shorten to the same label, and an unlinked request with an over-width
