@@ -249,9 +249,14 @@ impl Control {
         record::retire_leftovers(&directory).await?;
         let listener = UnixListener::bind(&socket)?;
         let workers = directory.join("workers");
+        #[cfg(not(test))]
+        let lock_state = Some(target::screen_lock_state as fn() -> Option<bool>);
+        #[cfg(test)]
+        let lock_state = None;
         let (locked, gatekeeper) = locked_use::Gatekeeper::new(
             binary.with_file_name("hyperneo-locked-use"),
             move |worker| record::ensure_enabled(&workers.join(worker)).is_ok(),
+            lock_state,
         );
         tokio::spawn(gatekeeper);
         let drivers = Arc::new(Drivers {
@@ -1169,7 +1174,7 @@ mod peer_tests {
     }
 
     fn idle_gatekeeper() -> locked_use::Gatekeeper {
-        let (locked, gatekeeper) = locked_use::Gatekeeper::new(PathBuf::new(), |_| true);
+        let (locked, gatekeeper) = locked_use::Gatekeeper::new(PathBuf::new(), |_| true, None);
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             runtime.spawn(gatekeeper);
         }
@@ -1179,9 +1184,11 @@ mod peer_tests {
     fn locked_use_drivers(directory: &TempDir, guardian: Option<&str>) -> Drivers {
         let path = directory.path().join("hyperneo-locked-use");
         let workers = directory.path().join("workers");
-        let (locked, gatekeeper) = locked_use::Gatekeeper::new(path.clone(), move |worker| {
-            record::ensure_enabled(&workers.join(worker)).is_ok()
-        });
+        let (locked, gatekeeper) = locked_use::Gatekeeper::new(
+            path.clone(),
+            move |worker| record::ensure_enabled(&workers.join(worker)).is_ok(),
+            None,
+        );
         tokio::spawn(gatekeeper);
         if let Some(script) = guardian {
             std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
@@ -1244,7 +1251,7 @@ mod peer_tests {
         let directory = tempfile::tempdir().unwrap();
         let drivers = locked_use_drivers(
             &directory,
-            Some("echo 'covered 1'; echo unlocked; while read line; do :; done; echo 'ended local_input'"),
+            Some("echo 'covered 1'; echo unlocked; while read line; do :; done; echo owner_input; echo 'ended owner_gone'"),
         );
         assert!(drivers.locked_use("owner", true).await);
         drivers.retire("owner", &mut None).await.unwrap();

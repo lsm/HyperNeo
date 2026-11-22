@@ -4,14 +4,22 @@
 #include <string.h>
 
 static BOOL locked = YES;
+static NSTimeInterval stopping;
 
 static CFDictionaryRef fixtureSession(void) {
     return CFBridgingRetain(@{@"CGSSessionScreenIsLocked": @(locked)});
 }
 
 static void fixtureLock(void) {
+    if (locked && NSProcessInfo.processInfo.systemUptime - stopping < 4.5) exit(5);
     puts("lock requested");
-    locked = YES;
+    if (!locked) {
+        [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:NO block:^(NSTimer *timer) {
+            (void)timer;
+            locked = YES;
+            puts("relock observed");
+        }];
+    }
 }
 
 static void *fixtureFramework(const char *path, int mode) {
@@ -36,9 +44,7 @@ int main(int argc, const char *argv[]) {
     @autoreleasepool {
         Guardian *guardian = [Guardian new];
         guardian.socketPath = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
-        if ([guardian respondsToSelector:@selector(setAllowAnswered:)]) {
-            [guardian setValue:@YES forKey:@"allowAnswered"];
-        }
+        guardian.allowAnswered = YES;
         if (argc == 2 && strcmp(argv[1], "delayed") == 0) {
             [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:NO block:^(NSTimer *timer) {
                 (void)timer;
@@ -50,6 +56,7 @@ int main(int argc, const char *argv[]) {
             (void)timer;
             exit(4);
         }];
+        stopping = NSProcessInfo.processInfo.systemUptime;
         [guardian end:@"stopped"];
         [NSRunLoop.currentRunLoop run];
         return 4;

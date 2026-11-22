@@ -21,6 +21,12 @@ static BOOL screenLocked(void) {
     return [session[@"CGSSessionScreenIsLocked"] boolValue];
 }
 
+static void lockScreen(void) {
+    void *login = dlopen("/System/Library/PrivateFrameworks/login.framework/Versions/Current/login", RTLD_LAZY);
+    void (*lock)(void) = login ? (void (*)(void))dlsym(login, "SACLockScreenImmediate") : NULL;
+    if (lock) lock();
+}
+
 static BOOL pluginInstalled(void) {
     CFDictionaryRef definition = NULL;
     if (AuthorizationRightGet("system.login.screensaver", &definition) != errAuthorizationSuccess) return NO;
@@ -142,7 +148,7 @@ static void clickPrompt(CGPoint point) {
 
 @interface Guardian : NSObject
 @property(nonatomic) NSMutableArray<NSWindow *> *covers;
-@property(nonatomic) BOOL armed, unlocked, ending;
+@property(nonatomic) BOOL armed, allowAnswered, unlocked, ending;
 @property BOOL ownerInput;
 @property(nonatomic) BOOL axTrusted, pluginRequestSeen;
 @property(nonatomic) int listener;
@@ -207,10 +213,11 @@ static void clickPrompt(CGPoint point) {
         char request = 0;
         struct timeval deadline = {.tv_sec = 1};
         setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &deadline, sizeof deadline);
-        BOOL grant = read(client, &request, 1) == 1 && request == '?' && self.armed && !self.ending;
+        BOOL grant = read(client, &request, 1) == 1 && request == '?' && self.armed && !self.ending && !self.allowAnswered && !self.ownerInput;
         if (request == '?') self.pluginRequestSeen = YES;
         self.armed = NO;
-        (void)write(client, grant ? "1" : "0", 1);
+        if (grant) self.allowAnswered = YES;
+        if (write(client, grant ? "1" : "0", 1) == 1 && grant) say(@"allow_answered");
         close(client);
     });
     dispatch_resume(source);
@@ -255,7 +262,7 @@ static void clickPrompt(CGPoint point) {
             CFRelease(app);
             return [self end:@"unlock_failed"];
         }
-        if (tries % 10 != 1) return;
+        if (self.allowAnswered || tries % 10 != 1) return;
         [trace appendFormat:@" try=%d field=[", tries];
         AXUIElementRef field = find(app, @"UserPasswordTextField", 0, trace);
         [trace appendFormat:@"] field_found=%d", field != NULL];
@@ -269,7 +276,7 @@ static void clickPrompt(CGPoint point) {
         if (field) {
             AXError setError = AXUIElementSetAttributeValue(field, kAXValueAttribute, CFSTR("hyperneo-locked-use"));
             [trace appendFormat:@" set=%d", setError];
-            if (setError == kAXErrorSuccess) {
+            if (setError == kAXErrorSuccess && !self.ownerInput) {
                 self.armed = YES;
                 [trace appendString:@" go=["];
                 AXUIElementRef go = find(app, @"LUIBUTTON_GO", 0, trace);
@@ -287,18 +294,24 @@ static void clickPrompt(CGPoint point) {
     self.ending = YES;
     self.armed = NO;
     unlink(self.socketPath.fileSystemRepresentation);
-    if (!screenLocked()) {
-        void *login = dlopen("/System/Library/PrivateFrameworks/login.framework/Versions/Current/login", RTLD_LAZY);
-        void (*lock)(void) = login ? (void (*)(void))dlsym(login, "SACLockScreenImmediate") : NULL;
-        if (lock) lock();
-    }
-    __block int waited = 0;
+    BOOL locked = screenLocked();
+    __block BOOL awaitingUnlock = self.allowAnswered && !self.unlocked && locked;
+    NSTimeInterval started = NSProcessInfo.processInfo.systemUptime;
+    if (!locked) lockScreen();
     [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *timer) {
-        if (screenLocked() || ++waited > 100) {
+        NSTimeInterval elapsed = NSProcessInfo.processInfo.systemUptime - started;
+        BOOL locked = screenLocked();
+        if (awaitingUnlock) {
+            if (locked && elapsed < 5) return;
+            lockScreen();
+            awaitingUnlock = NO;
+            return;
+        }
+        if (locked || elapsed >= 10) {
             [timer invalidate];
             [self reportUnlockDiagnostics];
-            say([NSString stringWithFormat:@"ended %@%@", reason, screenLocked() ? @"" : @" relock_failed"]);
-            exit(screenLocked() ? 0 : 3);
+            say([NSString stringWithFormat:@"ended %@%@", reason, locked ? @"" : @" relock_failed"]);
+            exit(locked ? 0 : 3);
         }
     }];
 }
@@ -342,14 +355,20 @@ int main(int argc, const char *argv[]) {
         IOPMAssertionID awake = 0;
         IOPMAssertionCreateWithName(kIOPMAssertPreventUserIdleDisplaySleep, kIOPMAssertionLevelOn,
                                     CFSTR("HyperNeo Locked Use cover"), &awake);
-        CGEventMask mask = CGEventMaskBit(kCGEventKeyDown) | CGEventMaskBit(kCGEventFlagsChanged)
+        CGEventMask mask = CGEventMaskBit(kCGEventKeyDown) | CGEventMaskBit(kCGEventKeyUp) | CGEventMaskBit(kCGEventFlagsChanged)
             | CGEventMaskBit(kCGEventLeftMouseDown) | CGEventMaskBit(kCGEventRightMouseDown)
             | CGEventMaskBit(kCGEventOtherMouseDown) | CGEventMaskBit(kCGEventMouseMoved)
-            | CGEventMaskBit(kCGEventLeftMouseDragged) | CGEventMaskBit(kCGEventScrollWheel);
+            | CGEventMaskBit(kCGEventLeftMouseUp) | CGEventMaskBit(kCGEventRightMouseUp) | CGEventMaskBit(kCGEventOtherMouseUp)
+            | CGEventMaskBit(kCGEventLeftMouseDragged) | CGEventMaskBit(kCGEventRightMouseDragged)
+            | CGEventMaskBit(kCGEventOtherMouseDragged) | CGEventMaskBit(kCGEventScrollWheel);
         CFMachPortRef tap = CGEventTapCreate(kCGHIDEventTap, kCGHeadInsertEventTap, kCGEventTapOptionListenOnly,
                                              mask, onInput, (__bridge void *)guardian);
         if (!tap) return say(@"ended input_monitoring_required"), 2;
-        CFRunLoopAddSource(CFRunLoopGetMain(), CFMachPortCreateRunLoopSource(NULL, tap, 0), kCFRunLoopCommonModes);
+        CFRunLoopSourceRef tapSource = CFMachPortCreateRunLoopSource(NULL, tap, 0);
+        [NSThread detachNewThreadWithBlock:^{
+            CFRunLoopAddSource(CFRunLoopGetCurrent(), tapSource, kCFRunLoopCommonModes);
+            CFRunLoopRun();
+        }];
         if (![guardian listen]) return say(@"ended socket_failed"), 2;
         [guardian cover];
         [NSNotificationCenter.defaultCenter addObserverForName:NSApplicationDidChangeScreenParametersNotification object:nil
