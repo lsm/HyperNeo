@@ -124,6 +124,26 @@ struct Drivers {
     acting: tokio::sync::RwLock<()>,
     /// Set from a session's start until its guardian has exited; no guardian once it is ending.
     locked_owner: StdMutex<Option<LockedOwner>>,
+    /// Workers whose call ended without a result or a confirmed driver stop; Locked Use waits.
+    unsettled: StdMutex<std::collections::BTreeSet<String>>,
+}
+/// A call's admission to act. Dropped unsettled, it marks its worker until a confirmed stop.
+struct Acting<'a> {
+    _guard: tokio::sync::RwLockReadGuard<'a, ()>,
+    drivers: &'a Drivers,
+    worker: String,
+    settled: bool,
+}
+impl Drop for Acting<'_> {
+    fn drop(&mut self) {
+        if !self.settled {
+            self.drivers
+                .unsettled
+                .lock()
+                .unwrap()
+                .insert(self.worker.clone());
+        }
+    }
 }
 struct LockedOwner {
     worker: String,
@@ -276,6 +296,7 @@ impl Control {
             locked_use: Mutex::default(),
             acting: Default::default(),
             locked_owner: StdMutex::default(),
+            unsettled: StdMutex::default(),
         });
         let state = drivers.clone();
         let task = tokio::spawn(async move {
@@ -881,7 +902,7 @@ impl Drivers {
                             false,
                         )));
                     }
-                    let Some(acting) = self.may_act(&worker_id).await else {
+                    let Some(mut acting) = self.may_act(&worker_id).await else {
                         return Ok(Some(finish(
                             bundle,
                             class,
@@ -899,12 +920,12 @@ impl Drivers {
                         ),
                     )
                     .await;
-                    drop(acting);
                     let sent = active.channel.sent;
                     let mut body = Value::Null;
                     let mut reason = match call {
                         Ok(Ok(result)) => {
                             body = result;
+                            acting.settled = true;
                             Value::Null
                         }
                         Ok(Err(error)) => json!(error.to_string()),
@@ -919,10 +940,12 @@ impl Drivers {
                         {
                             FAIL_RETIRE.store(true, Ordering::Relaxed);
                         }
-                        if let Err(error) = self.retire(&worker_id, &mut worker).await {
-                            reason = json!(error.to_string());
+                        match self.retire(&worker_id, &mut worker).await {
+                            Ok(()) => acting.settled = true,
+                            Err(error) => reason = json!(error.to_string()),
                         }
                     }
+                    drop(acting);
                     // The driver reports tool failures in its result, not on the channel.
                     let structured = &body["structuredContent"];
                     if (body["isError"] == true && structured["code"] == "screen_locked")
@@ -1058,6 +1081,11 @@ impl Drivers {
         }
         {
             let _quiet = self.acting.write().await;
+            if !self.unsettled.lock().unwrap().is_empty()
+                || !self.unconfirmed.lock().unwrap().is_empty()
+            {
+                return false;
+            }
             *self.locked_owner.lock().unwrap() = Some(LockedOwner {
                 worker: worker.to_owned(),
                 guardian: None,
@@ -1096,13 +1124,18 @@ impl Drivers {
     }
 
     /// Admits a call right before it acts, and holds that admission until the call ends.
-    async fn may_act(&self, worker: &str) -> Option<tokio::sync::RwLockReadGuard<'_, ()>> {
-        let acting = self.acting.read().await;
+    async fn may_act(&self, worker: &str) -> Option<Acting<'_>> {
+        let guard = self.acting.read().await;
         let owner = self.locked_owner.lock().unwrap();
         owner
             .as_ref()
             .is_none_or(|owner| owner.worker == worker && owner.guardian.is_some())
-            .then_some(acting)
+            .then(|| Acting {
+                _guard: guard,
+                drivers: self,
+                worker: worker.to_owned(),
+                settled: false,
+            })
     }
 
     /// Marks a worker unconfirmed: no start or input, and its leases stay pinned.
@@ -1144,6 +1177,7 @@ impl Drivers {
                 self.leases.lock().unwrap().release(worker_id);
                 self.foreground_owner.lock().unwrap().remove(worker_id);
                 self.unconfirmed.lock().unwrap().remove(worker_id);
+                self.unsettled.lock().unwrap().remove(worker_id);
                 Ok(())
             }
             Err(error) => {
@@ -1251,6 +1285,7 @@ mod peer_tests {
             locked_use: Mutex::default(),
             acting: Default::default(),
             locked_owner: StdMutex::default(),
+            unsettled: StdMutex::default(),
         };
         assert_eq!(wait_unreaped(pid).unwrap(), (Some(0), None));
         assert!(drivers.authorized(pid));
@@ -1282,6 +1317,7 @@ mod peer_tests {
             locked_use: Mutex::default(),
             acting: Default::default(),
             locked_owner: StdMutex::default(),
+            unsettled: StdMutex::default(),
         }
     }
 
@@ -1355,13 +1391,14 @@ mod peer_tests {
             &directory,
             Some("echo 'covered 1'; echo unlocked; while read line; do :; done; echo 'ended owner_gone'"),
         ));
-        let acting = drivers.may_act("other").await.unwrap();
+        let mut acting = drivers.may_act("other").await.unwrap();
         let starting = tokio::spawn({
             let drivers = drivers.clone();
             async move { drivers.locked_use("owner", true).await }
         });
         tokio::time::sleep(Duration::from_millis(200)).await;
         assert!(!starting.is_finished());
+        acting.settled = true;
         drop(acting);
         assert!(starting.await.unwrap());
         assert!(drivers.may_act("other").await.is_none());
@@ -1374,7 +1411,7 @@ mod peer_tests {
             &directory,
             Some("echo 'covered 1'; echo unlocked; while read line; do :; done; echo 'ended owner_gone'"),
         ));
-        let acting = drivers.may_act("other").await.unwrap();
+        let mut acting = drivers.may_act("other").await.unwrap();
         let starting = tokio::spawn({
             let drivers = drivers.clone();
             async move { drivers.locked_use("owner", true).await }
@@ -1384,6 +1421,7 @@ mod peer_tests {
             .await
             .expect("retire waited on a starting Locked Use session")
             .unwrap();
+        acting.settled = true;
         drop(acting);
         assert!(starting.await.unwrap());
     }
@@ -1450,6 +1488,7 @@ mod peer_tests {
             locked_use: Mutex::default(),
             acting: Default::default(),
             locked_owner: StdMutex::default(),
+            unsettled: StdMutex::default(),
         });
         let request = |worker: &'static str| {
             let drivers = drivers.clone();
