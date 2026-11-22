@@ -50,7 +50,13 @@ one-ask navigation and leaves the Inbox without a topic filter.
    names and acronyms.
 2. Reuse the resolver and its existing source order. Keep a resolved project
    as the source regardless of title width, using its project ID as the key.
-   Shorten an over-width project title to the longest prefix that fits with a
+   Choose the project label at render time using the Inbox locale. In a
+   Chinese Inbox, translate generic English titles such as `Payments` using
+   a small case-insensitive glossary in the existing locale catalog. For
+   titles outside the glossary, keep Chinese labels, titles that match an
+   existing repository name, and uppercase acronyms. Use localized `Project`
+   for other English titles. The full title is available in the project view.
+   Shorten an over-width project label to the longest prefix that fits with a
    one-cell ellipsis within the 12-cell budget. For over-width legacy picks,
    continue to the next eligible source at read time. Session requests reuse
    existing links, including the sender's project. When no source fits, use
@@ -85,3 +91,8 @@ project, with one outside the loaded card page. Check that the chips and More
 use the same labels and counts, and selection includes both asks in the
 chosen state. Verify that the unlinked request appears under localized
 `Other` and **All**, with its stored legacy pick intact.
+
+In a Chinese Inbox, link a session request to a project titled `Payments`.
+Check that the chip and More use the Chinese label for payments and filter
+by that project's ID. Verify that `HyperNeo` and `API` still display as names
+and that the stored `Payments` title remains identical.
