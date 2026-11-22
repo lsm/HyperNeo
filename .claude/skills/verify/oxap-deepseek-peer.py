@@ -16,16 +16,21 @@ for line in sys.stdin:
     method = request["method"]
     if method == "initialize":
         assert request["params"]["provider"] == "deepseek-official"
-        assert request["params"]["model"] == "deepseek-v4-pro"
+        model = request["params"]["model"]
         assert request["params"]["cwd"] == os.getcwd()
         emit(id=request["id"], result={
             "serverInfo": {"name": "deepseek-harness-sdk-runtime", "version": "0.0.1"}
         })
+    elif method == "session/resume":
+        emit(id=request["id"], result={})
     elif method == "session/prompt":
         session_id = request["params"]["sessionId"]
+        blocks = request["params"]["contentBlocks"]
+        after_restart = {"type": "text", "text": "Message after hub restart"} in blocks
+        turn_id = 2 if after_restart else 1
         user_message = {
-            "id": "user-1", "role": "user", "source": {"kind": "user"},
-            "content": request["params"]["contentBlocks"],
+            "id": f"user-{turn_id}", "role": "user", "source": {"kind": "user"},
+            "content": blocks,
         }
 
         def status(value):
@@ -39,17 +44,20 @@ for line in sys.stdin:
         event(1, "agent/inbox/spliced", {
             "inserted": [user_message], "start": 0, "target": "next-turn",
         })
-        emit(id=request["id"], result={"messageId": "user-1"})
+        emit(id=request["id"], result={"messageId": user_message["id"]})
         status("running")
         event(2, "turn/start", {"turn": 1})
         event(3, "step/start", {"step": 1, "turn": 1})
         event(4, "user/message", user_message, surfaceOp="append")
-        reply = "Synthetic DeepSeek reply"
+        reply = "Synthetic DeepSeek reply after restart" if after_restart else "Synthetic DeepSeek reply"
+        if any(block.get("text", "").startswith("Verify model") for block in user_message["content"]):
+            images = [block for block in user_message["content"] if block["type"] == "image"]
+            reply = json.dumps({"model": model, "images": images}, separators=(",", ":"))
         event(5, "assistant/message", {
             "message": {
-                "id": "assistant-1", "role": "assistant",
+                "id": f"assistant-{turn_id}", "role": "assistant",
                 "source": {
-                    "kind": "model", "model": "deepseek-v4-pro", "provider": "deepseek-official",
+                    "kind": "model", "model": model, "provider": "deepseek-official",
                 },
                 "content": [{"type": "text", "text": reply}],
             },

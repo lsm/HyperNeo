@@ -42,6 +42,7 @@ import { admitUpdateSessionConfig } from '../session/create-session-config.ts';
 import {
   codexSessionRefusal,
   engineForProvider,
+  oxapModelSwitchRefusal,
   thinkingRefusal,
 } from '../agent/session-engine.ts';
 import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
@@ -363,10 +364,19 @@ export function setupSessionHandlers(
 
     const agentSessionForUpdate = sessionManager.getSession(targetSessionId);
 
-    const existingConfig = updates.config
-      ? (agentSessionForUpdate?.getSessionData().config ??
-        sessionManager.getSessionFromDB(targetSessionId)?.config)
+    const existing = updates.config
+      ? (agentSessionForUpdate?.getSessionData() ??
+        sessionManager.getSessionFromDB(targetSessionId))
       : undefined;
+    const existingConfig = existing?.config;
+    if (existing) {
+      const locked = oxapModelSwitchRefusal(
+        existing.config,
+        existing.sdkSessionId,
+        updates.config?.model
+      );
+      if (locked) throw new Error(locked);
+    }
     const currentSelection =
       updates.config?.toolSelection === undefined ? undefined : existingConfig?.toolSelection;
     const configUpdate = admitUpdateSessionConfig(

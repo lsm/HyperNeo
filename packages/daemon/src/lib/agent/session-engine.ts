@@ -1,6 +1,7 @@
 import type { GlobalSettings, ProviderRecord, SessionConfig } from '@hyperneo/shared';
 import {
   isOxapHarness,
+  isOxapModelLocked,
   OXAP_HARNESSES,
   oxapHarness,
   type OxapHarness,
@@ -184,4 +185,18 @@ export function thinkingRefusal(
     return undefined;
   const row = oxapHarness(harness);
   return row.thinking ? undefined : `${row.label} does not take a thinking level.`;
+}
+
+export function oxapModelSwitchRefusal(
+  config: Pick<SessionConfig, 'harness' | 'model'>,
+  nativeSessionId: string | null | undefined,
+  model: string | undefined
+): string | undefined {
+  if (
+    model !== undefined &&
+    model !== config.model &&
+    isOxapModelLocked(config.harness, nativeSessionId)
+  )
+    return 'This DeepSeek thread has a fixed model. Start a new chat to use another model.';
+  return undefined;
 }

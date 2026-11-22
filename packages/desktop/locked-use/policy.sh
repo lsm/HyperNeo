@@ -31,7 +31,7 @@ release_lock() {
 read_rule() { security authorizationdb read "$right" > "$1" 2>/dev/null; }
 rule_of() { plutil -extract rule json -o - "$1"; }
 policy() { osascript -l JavaScript "$policy_script" "$@" >/dev/null 2>&1; }
-is_stock() { policy stock "$1"; }
+is_supported() { policy supported "$1"; }
 same_policy() { policy same "$1" "$2"; }
 installed_from() { rm -f "$2" && policy installed "$1" "$2"; }
 
@@ -71,18 +71,18 @@ remove_right() {
 rollback_install() {
     security authorizationdb write "$right" < "$backup"
     if ! read_rule "$1/restored.plist" || ! same_policy "$1/restored.plist" "$backup"; then
-        echo "INSTALL FAILED AND THE STOCK RULE WAS NOT RESTORED." >&2
+        echo "INSTALL FAILED AND THE ORIGINAL RULE WAS NOT RESTORED." >&2
         echo "The plugin and its right are left in place. Restore $right from $backup." >&2
         return 1
     fi
     if ! remove_right; then
-        echo "Install failed; the stock rule is restored, but $mine could not be proven removed." >&2
+        echo "Install failed; the original rule is restored, but $mine could not be proven removed." >&2
         echo "The plugin is left in place. Run uninstall.sh to finish." >&2
         return 1
     fi
     rm -rf "$plugin"
-    [[ ! -e "$plugin" ]] || { echo "Install failed; the stock rule is restored, but $plugin remains." >&2; return 1; }
-    echo "install failed; stock rule restored and Locked Use removed" >&2
+    [[ ! -e "$plugin" ]] || { echo "Install failed; the original rule is restored, but $plugin remains." >&2; return 1; }
+    echo "install failed; original rule restored and Locked Use removed" >&2
 }
 
 right_state() {
@@ -131,7 +131,7 @@ root_file() {
     only_provenance "$1"
 }
 
-valid_backup() { [[ -f "$backup" ]] && root_file "$backup" && is_stock "$backup"; }
+valid_backup() { [[ -f "$backup" ]] && root_file "$backup" && is_supported "$backup"; }
 
 uninstall_plan() {
     local expected plan=refuse
@@ -159,7 +159,7 @@ install_plan() {
         return
     fi
     state="$(right_state)" || { echo refuse; return; }
-    if is_stock "$1" && [[ "$state" == absent ]]; then echo fresh; else echo refuse; fi
+    if is_supported "$1" && [[ "$state" == absent ]]; then echo fresh; else echo refuse; fi
 }
 
 uninstall_locked_use() {
@@ -177,7 +177,7 @@ uninstall_locked_use() {
             ;;
         clean) ;;
         *)
-            echo "$right is not the stock backup or the rule install.sh wrote, or the backup is not valid; refusing" >&2
+            echo "$right is not the original backup or the rule install.sh wrote, or the backup is not valid; refusing" >&2
             return 1
             ;;
     esac
@@ -185,7 +185,7 @@ uninstall_locked_use() {
     rm -rf "$plugin"
     [[ ! -e "$plugin" ]] || { echo "$plugin is still present" >&2; return 1; }
     read_rule "$work/after.plist" && same_policy "$work/after.plist" "$backup" || {
-        echo "$right is not the stock rule after removal" >&2
+        echo "$right is not the original rule after removal" >&2
         return 1
     }
     rule_of "$work/after.plist"

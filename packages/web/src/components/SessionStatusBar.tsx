@@ -21,6 +21,7 @@ interface SessionStatusBarProps {
   currentModelInfo: ModelInfo | null;
   availableModels: ModelInfo[];
   modelSwitching: boolean;
+  modelLocked?: boolean;
   modelLoading: boolean;
   onModelSwitch: (model: ModelInfo) => void;
   harness?: SessionConfig['harness'];
@@ -43,6 +44,7 @@ export default function SessionStatusBar({
   currentModelInfo,
   availableModels,
   modelSwitching,
+  modelLocked,
   modelLoading,
   onModelSwitch,
   harness,
@@ -100,7 +102,7 @@ export default function SessionStatusBar({
           harness={harness ?? 'sdk'}
           provider={provider}
           loading={modelLoading}
-          disabled={modelSwitching || coordinatorSwitching || isRecovering}
+          disabled={modelLocked || modelSwitching || coordinatorSwitching || isRecovering}
           busy={modelSwitching}
           thinkingLevel={thinkingLevel}
           showThinking={!isOxapHarness(harness) || oxapHarness(harness).thinking}

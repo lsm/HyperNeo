@@ -218,7 +218,7 @@ import { RemoteDaemonSecretRepository } from './storage/repositories/remote-daem
 import { OxapEngine } from './lib/oxap/oxap-engine.ts';
 import { createOxapRuntime } from './lib/oxap/oxap-query.ts';
 import { readHubOptions, type OxapSettingsDeps } from './lib/oxap/oxap-settings.ts';
-import { installOxapHub } from './lib/oxap/oxap-install.ts';
+import { installOxapHub, type OxapHubBinary } from './lib/oxap/oxap-install.ts';
 import { getDataDir } from './lib/data-dir.ts';
 import { providerRpcWrites, providerWriter } from './storage/repositories/provider-rpc-writes.ts';
 
@@ -831,6 +831,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     }
 
     const oxapStateDirectory = join(getDataDir(), 'oap');
+    let installingOxap: Promise<OxapHubBinary> | undefined;
     const oxapSettings: OxapSettingsDeps = {
       settings: () => settingsManager.getGlobalSettings(),
       writeHub: (oxapHub) => settingsManager.updateGlobalSettings({ oxapHub }),
@@ -844,7 +845,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         const credentials = await credentialManager.getCredentials(providerId);
         return credentials?.type === 'api_key' ? credentials.apiKey : undefined;
       },
-      install: (installed) => installOxapHub(join(oxapStateDirectory, 'install'), installed),
+      install: (installed) => {
+        installingOxap ??= installOxapHub(join(oxapStateDirectory, 'install'), installed).finally(
+          () => {
+            installingOxap = undefined;
+          }
+        );
+        return installingOxap;
+      },
       engine: oxapEngine,
       stateDirectory: oxapStateDirectory,
       environment: process.env,

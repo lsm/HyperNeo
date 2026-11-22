@@ -6,13 +6,19 @@ pinned OXAP release archive for the host, check it against the release's
 
 ```sh
 bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
-  .claude/skills/verify/oxap-deepseek-first-message.ts /absolute/oxap RELEASE-NAME SHA256
+  .claude/skills/verify/oxap-deepseek-first-message.ts /absolute/oxap RELEASE-NAME SHA256 MODE
 ```
 
-The proof selects OXAP DeepSeek in the isolated daemon through the settings
-RPC, opens a new DeepSeek chat, and sends its first message. It runs the real
-OXAP hub with a synthetic dsh SDK peer. The chat's live feed must deliver the
-assistant reply, and the hub must report `deepseek://sessions/<session_id>`
-with the same ID the daemon saved. The hub must also advertise
-`session.model.switch` as emulated. No live DeepSeek or OpenCode Go endpoint
-is used.
+Use a fresh evidence directory for each mode. With `first`, a Pro chat delivers
+its first reply. With `flash`, the reply confirms Flash receives the first
+turn. With `image`, the inline PNG reaches Flash with its original bytes and
+MIME type. The daemon saves the native ID reported by the hub and refuses a
+model change after the first turn.
+
+Build the web bundle and set `VERIFY_BROWSER` and `NODE_PATH` as described in
+`../SKILL.md` before running `flash-web` and `pro-web`. These modes verify
+attach, paste, drop, and the locked model picker in the real chat composer.
+The Flash run sends the pasted image. Both modes capture the attachment menu
+and the delivered reply.
+
+The fixture runs the published OXAP hub with a local dsh peer.

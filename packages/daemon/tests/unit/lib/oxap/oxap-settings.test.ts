@@ -5,13 +5,14 @@ import {
   readHubOptions,
   type OxapSettingsDeps,
 } from '../../../../src/lib/oxap/oxap-settings';
+import { releaseName } from '../../../../src/lib/oxap/oxap-install';
 import { withProviderLock } from '../../../../src/lib/rpc-handlers/provider-mutation-lock';
 
 vi.mock('@hyperneo/shared/types/oxap-harnesses', async (importOriginal) =>
   (await import('../../../helpers/synthetic-oxap-harness')).withSyntheticOxapRow(importOriginal)
 );
 
-const binary = { path: '/synthetic/oxap', version: 'oxap-synthetic', sha256: 'a'.repeat(64) };
+const binary = { path: '/synthetic/oxap', version: releaseName(), sha256: 'a'.repeat(64) };
 
 function host(
   options: { failWrite?: boolean; failRestart?: boolean; keys?: Record<string, string> } = {}
@@ -74,7 +75,7 @@ describe('oxap.settings.save', () => {
     const next = await readHubOptions(h.deps);
     expect(next).toMatchObject({
       binaryPath: '/synthetic/oxap',
-      identity: { version: 'oxap-synthetic', sha256: 'a'.repeat(64) },
+      identity: { version: releaseName(), sha256: 'a'.repeat(64) },
       stateDirectory: '/synthetic/state',
       hub: {
         adapters: { 'anthropic-codex': { type: 'codex', executable: '/synthetic/codex' } },
@@ -215,6 +216,15 @@ describe('oxap.settings.save', () => {
     expect(await withProviderLock(async () => 'provider edit ran')).toBe('provider edit ran');
     finish(binary);
     expect(await saving).toEqual({ accepted: true });
+  });
+
+  it('upgrades a previously installed hub before using it', async () => {
+    const h = host();
+    const old = { ...binary, version: 'oxap-0.1.0-alpha.39-macos-arm64' };
+    h.deps.writeHub(old);
+    expect((await readHubOptions(h.deps)).identity.version).toBe(releaseName());
+    expect(h.deps.settings().oxapHub).toEqual(binary);
+    expect(h.install).toHaveBeenCalledWith(old);
   });
 
   it('refuses to start a hub before one is installed', async () => {

@@ -28,7 +28,7 @@ fake() {
 }
 with() { PATH="$work/bin-$1:$PATH" "${@:2}"; }
 
-is_stock "$stock" || { echo "not a stock rule: $stock" >&2; exit 2; }
+is_supported "$stock" || { echo "not a stock rule: $stock" >&2; exit 2; }
 cp "$stock" "$work/backup.plist"
 installed_from "$work/backup.plist" "$work/installed.plist"
 cp "$work/installed.plist" "$work/drift.plist"
@@ -41,16 +41,16 @@ cp "$work/backup.plist" "$work/k-of-n.plist"
 plutil -insert k-of-n -integer 1 "$work/k-of-n.plist"
 echo 'not a plist' > "$work/broken.plist"
 
-expect pass stock is_stock "$work/backup.plist"
-expect fail custom_rule is_stock "$work/custom.plist"
-expect fail stock_with_k_of_n is_stock "$work/k-of-n.plist"
-expect fail broken_rule is_stock "$work/broken.plist"
-expect fail missing_rule is_stock "$work/missing.plist"
+expect pass stock is_supported "$work/backup.plist"
+expect fail custom_rule is_supported "$work/custom.plist"
+expect fail stock_with_k_of_n is_supported "$work/k-of-n.plist"
+expect fail broken_rule is_supported "$work/broken.plist"
+expect fail missing_rule is_supported "$work/missing.plist"
 expect pass installed_matches same_policy "$work/installed.plist" "$work/installed.plist"
 expect fail drift_differs same_policy "$work/drift.plist" "$work/installed.plist"
 expect fail broken_never_equal same_policy "$work/broken.plist" "$work/broken.plist"
 fake parse osascript 'exit 1'
-expect fail parse_error_not_stock with parse is_stock "$work/backup.plist"
+expect fail parse_error_not_stock with parse is_supported "$work/backup.plist"
 expect fail parse_error_never_equal with parse same_policy "$work/installed.plist" "$work/installed.plist"
 expect fail parse_error_no_installed with parse installed_from "$work/backup.plist" "$work/out.plist"
 

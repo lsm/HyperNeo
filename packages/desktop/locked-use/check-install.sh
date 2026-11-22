@@ -47,11 +47,12 @@ esac'
 export PATH="$t/bin:$PATH"
 
 reset() {
+    local original="${1:-$stock}"
     rm -rf "$FIXTURE" && mkdir -p "$FIXTURE/plugins" "$FIXTURE/support" || return
     sqlite3 "$FIXTURE/auth.db" "create table rules (id integer primary key, name text not null unique);" || return
     (
         . "$t/kit/policy.sh"
-        cp "$stock" "$backup" || exit
+        cp "$original" "$backup" || exit
         chmod 644 "$backup" || exit
         installed_from "$backup" "$FIXTURE/live.plist" || exit
         write_right_definition "$FIXTURE/legacy-right.plist" || exit
@@ -79,13 +80,22 @@ no_lock() { [[ ! -e "$FIXTURE/support/install.lock" ]]; }
 
 removed_state() {
     ! right_row && [[ ! -e "$FIXTURE/plugins/HyperNeoLockedUse.bundle" ]] &&
-        cmp -s "$stock" "$FIXTURE/live.plist" && no_lock
+        cmp -s "${1:-$stock}" "$FIXTURE/live.plist" && no_lock
 }
 
 reset || exit 2
 expect pass installed_fixture installed_state
 expect pass uninstall uninstall
 expect pass stock_restored removed_state
+
+openai_rule=com.openai.sky.CUAService.AuthorizationPlugin.remote
+cp "$stock" "$t/openai.plist" &&
+    plutil -replace rule -json "[\"$openai_rule\",\"use-login-window-ui\"]" "$t/openai.plist" &&
+    plutil -insert k-of-n -integer 1 "$t/openai.plist" || exit 2
+reset "$t/openai.plist" || exit 2
+expect pass coexist_uninstall uninstall
+expect pass coexist_restores_original removed_state "$t/openai.plist"
+expect pass coexist_leaves_other_right eval '! grep -Fq "$openai_rule" "$FIXTURE/calls"'
 
 reset || exit 2
 touch "$FIXTURE/remove-fails"

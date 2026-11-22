@@ -6,7 +6,7 @@ import { defineOperation, type OperationDefinition } from '../operations/registr
 import { withProviderLock } from '../rpc-handlers/provider-mutation-lock.ts';
 import type { OxapEngine, OxapEngineOptions } from './oxap-engine.ts';
 import { buildHubConfig, harnessOf, missingSetting } from './oxap-hub-config.ts';
-import type { OxapHubBinary } from './oxap-install.ts';
+import { releaseName, type OxapHubBinary } from './oxap-install.ts';
 
 export interface OxapSettingsDeps {
   readonly settings: () => Pick<GlobalSettings, 'oxapHub'>;
@@ -32,13 +32,21 @@ async function readKeys(records: Records, deps: OxapSettingsDeps) {
   return keys;
 }
 
+async function currentBinary(deps: OxapSettingsDeps): Promise<OxapHubBinary> {
+  const installed = deps.settings().oxapHub;
+  if (!installed) throw new Error('OXAP hub is not installed; choose an OXAP harness in Settings');
+  if (installed.version === releaseName()) return installed;
+  const updated = await deps.install(installed);
+  deps.writeHub(updated);
+  return updated;
+}
+
 function hubOptions(
   deps: OxapSettingsDeps,
   records: Records,
-  keys: Record<string, string | undefined>
+  keys: Record<string, string | undefined>,
+  binary: OxapHubBinary
 ): OxapEngineOptions {
-  const binary = deps.settings().oxapHub;
-  if (!binary) throw new Error('OXAP hub is not installed; choose an OXAP harness in Settings');
   const hub = buildHubConfig(records, OXAP_HARNESSES, deps.environment, keys);
   if ('reason' in hub) throw new Error(hub.reason);
   return {
@@ -53,7 +61,8 @@ export const readHubOptions = (superpipe({})('oxap.hub.inputs') as PipelineAPI)
   .input('deps')
   .pipe((deps: OxapSettingsDeps) => deps.records(), 'deps', 'records')
   .pipe(readKeys, ['records', 'deps'], 'keys')
-  .pipe(hubOptions, ['deps', 'records', 'keys'], 'options')
+  .pipe(currentBinary, 'deps', 'binary')
+  .pipe(hubOptions, ['deps', 'records', 'keys', 'binary'], 'options')
   .endAsync('options') as (deps: OxapSettingsDeps) => Promise<OxapEngineOptions>;
 
 const SaveInput = z.object({

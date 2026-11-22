@@ -28,9 +28,10 @@ bash packages/desktop/locked-use/check-install.sh "$RUN/stock.plist"
 ```
 
 The fixture uses the real uninstaller with an isolated fake authorization
-database. It must restore the stock rule, remove the legacy right and plugin,
-and preserve the plugin if removing the legacy right or restoring the rule
-fails. Pass ends with `uninstall check PASS`.
+database. It must restore the original rule, including the supported OpenAI
+and macOS login alternatives when present, and remove the HyperNeo right and
+plugin. If removal or restoration fails, the plugin must stay in place.
+Pass ends with `uninstall check PASS`.
 
 ## Attended smoke
 
