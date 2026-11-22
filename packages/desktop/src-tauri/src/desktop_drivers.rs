@@ -1457,6 +1457,29 @@ mod peer_tests {
     }
 
     #[tokio::test]
+    async fn a_stop_during_locked_use_startup_cancels_the_unlock() {
+        let directory = tempfile::tempdir().unwrap();
+        let drivers = Arc::new(locked_use_drivers(
+            &directory,
+            Some("echo 'covered 1'; sleep 0.5; echo unlocked; while read line; do :; done; echo 'ended owner_gone'"),
+        ));
+        let starting = tokio::spawn({
+            let drivers = drivers.clone();
+            async move { drivers.locked_use("owner", true).await }
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let record = directory.path().join("workers").join("owner");
+        std::fs::create_dir_all(&record).unwrap();
+        std::fs::write(record.join("stopped"), "").unwrap();
+        drivers.retire("owner", &mut None).await.unwrap();
+        assert!(!starting.await.unwrap());
+        assert!(drivers.may_act("owner").await.is_none());
+        assert!(released(&drivers, "other").await);
+        assert!(!drivers.locked_use("owner", true).await);
+        assert!(drivers.may_act("other").await.is_some());
+    }
+
+    #[tokio::test]
     async fn locked_use_ends_when_the_screen_locks_again() {
         let directory = tempfile::tempdir().unwrap();
         let drivers = locked_use_drivers(
