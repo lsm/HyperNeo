@@ -16,7 +16,7 @@ import { answerCodexProbeLocally, serveLocalRelease } from './oxap-codex-provide
 const [binary, version, sha256, ...args] = process.argv.slice(2);
 const mode = args.length === 2 ? args[0] : 'first';
 const runArgument = args.at(-1)!;
-assert(['first', 'recovery', 'pending'].includes(mode));
+assert(['first', 'recovery', 'pending', 'flash', 'image'].includes(mode));
 const run = resolve(runArgument);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -70,10 +70,13 @@ try {
   evidence.harnessSave = saved;
   assert.deepEqual(saved, { accepted: true });
   assert.deepEqual(releaseRequests, ['SHA256SUMS.txt', `${version}.tar.gz`]);
+  const flash = mode === 'flash' || mode === 'image';
+  const model = flash ? 'deepseek-v4-flash' : 'deepseek-v4-pro';
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a4NEAAAAASUVORK5CYII=';
   const { sessionId } = await hub.request<{ sessionId: string }>('session.create', {
     workspacePath: workspace,
     title: 'Synthetic DeepSeek first message',
-    config: { provider: 'deepseek', model: 'deepseek-v4-pro' },
+    config: { provider: 'deepseek', model },
   });
   const errors: string[] = [];
   app.internalEventBus.subscribe('session.errorObserved', ({ details }) => {
@@ -102,7 +105,11 @@ try {
     params: [sessionId, 50],
     subscriptionId: 'deepseek-chat',
   });
-  await hub.request('message.send', { sessionId, content: 'Synthetic DeepSeek prompt' });
+  await hub.request('message.send', {
+    sessionId,
+    content: flash ? 'Verify model and images' : 'Synthetic DeepSeek prompt',
+    ...(mode === 'image' ? { images: [{ data: png, media_type: 'image/png' }] } : {}),
+  });
   const client = await app.oxapEngine.getHub(() => readHubOptions(app.oxapSettings));
   const deadline = Date.now() + 20_000;
   while (![...rows.values()].some((row) => row.type === 'result')) {
@@ -111,8 +118,9 @@ try {
     await new Promise((done) => setTimeout(done, 25));
   }
   const status = await client.request('work.status', { session_id: sessionId });
-  assert.equal((status as { link?: string }).link, `deepseek://sessions/${sessionId}`);
-  assert.equal(app.db.getSession(sessionId)?.sdkSessionId, sessionId);
+  const nativeId = app.db.getSession(sessionId)?.sdkSessionId;
+  assert(nativeId);
+  assert.equal((status as { link?: string }).link, `deepseek://sessions/${nativeId}`);
   const capabilities = (await client.request('capabilities', { adapter: 'deepseek' })) as {
     payload?: { features?: Record<string, { level?: string }> };
   };
@@ -124,9 +132,13 @@ try {
     [false]
   );
   const replies = [...rows.values()].filter((row) => row.type === 'assistant');
+  const replyText = replies.flatMap((row) => (row.message?.content ?? []).map((block) => block.text));
+  evidence.reply = replyText;
   assert.deepEqual(
-    replies.flatMap((row) => (row.message?.content ?? []).map((block) => block.text)),
-    ['Synthetic DeepSeek reply']
+    replyText,
+    flash
+      ? [JSON.stringify({ model, images: mode === 'image' ? [{ type: 'image', data: png, mimeType: 'image/png' }] : [] })]
+      : ['Synthetic DeepSeek reply']
   );
   if (mode === 'recovery' || mode === 'pending') {
     while (app.sessionManager.getCachedSession(sessionId)?.queryPromise) {
