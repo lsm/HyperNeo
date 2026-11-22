@@ -1,5 +1,7 @@
 # Short topics for the Neo Inbox
 
+Status: proposal, 2026-11-22. Design only.
+
 ## Current behavior
 
 The Inbox queue's chips and More menu filter by ask ID. `NeoHumanQueue` labels
