@@ -82,14 +82,14 @@ function show(onHold = vi.fn(), onAnswer = vi.fn()) {
 }
 
 describe('NeoHumanQueue', () => {
-  it('shows waiting cards, held cards and in-progress work together without legacy filters', () => {
+  it('shows waiting cards, held cards and in-progress work together without legacy filters', async () => {
     const { view } = show();
     expect(view.queryByRole('group', { name: 'State' })).toBeNull();
     expect(view.queryByRole('group', { name: 'Ask' })).toBeNull();
     const trip = within(view.getByRole('region', { name: 'Plan the trip' }));
-    expect(trip.getByText('Question q1')).toBeTruthy();
+    expect(await trip.findByText('Question q1')).toBeTruthy();
     expect(trip.getByText('Book hotel')).toBeTruthy();
-    expect(trip.getByText('Question q2')).toBeTruthy();
+    expect(await trip.findByText('Question q2')).toBeTruthy();
     expect(trip.getByText('Pack bags')).toBeTruthy();
     expect(view.getByRole('region', { name: 'File taxes' })).toBeTruthy();
     expect(view.getByRole('region', { name: 'Service the car' })).toBeTruthy();
@@ -97,7 +97,7 @@ describe('NeoHumanQueue', () => {
 
   it('answers a card and holds it with one button', () => {
     const { view, onHold, onAnswer } = show();
-    const card = within(view.getByText('Question q1').closest('#neo-ref-question-q1')!);
+    const card = within(view.container.querySelector<HTMLElement>('#neo-ref-question-q1')!);
     fireEvent.click(card.getByRole('button', { name: 'Agree' }));
     expect(onAnswer).toHaveBeenCalledWith('q1', 'yes');
     fireEvent.click(card.getByRole('button', { name: 'Hold' }));
@@ -516,7 +516,6 @@ describe('NeoHumanQueue', () => {
         onDesktopControl={vi.fn()}
       />
     );
-    fireEvent.click(view.getByRole('button', { name: 'In progress 1' }));
     fireEvent.click(view.getByRole('button', { name: 'Show details: Call the garage' }));
     const box = view.getByRole('checkbox', {
       name: 'Let the agent use this computer',
@@ -551,7 +550,6 @@ describe('NeoHumanQueue', () => {
         onDesktopControl={vi.fn()}
       />
     );
-    fireEvent.click(view.getByRole('button', { name: 'In progress 1' }));
     fireEvent.click(view.getByRole('button', { name: 'Show details: Call the garage' }));
     expect((await view.findByRole('alert')).textContent).toContain('Couldn’t load this step.');
     const box = view.getByRole('checkbox', { name: 'Let the agent use this computer' });
@@ -732,14 +730,13 @@ describe('NeoHumanQueue', () => {
         onDesktopControl={vi.fn()}
       />
     );
-    fireEvent.click(view.getByRole('button', { name: 'In progress 1' }));
     expect((await view.findByRole('alert')).textContent).toContain('Couldn’t load this step.');
     fireEvent.click(view.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(view.queryByRole('alert')).toBeNull());
     expect(onLoadDetails).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps cards in the queue order across asks, in runs labelled by ask', () => {
+  it('groups cards under each ask in the order its first card is queued', () => {
     const props = {
       queue: {
         items: [
@@ -757,17 +754,16 @@ describe('NeoHumanQueue', () => {
       onAnswer: vi.fn(),
     };
     const view = render(<NeoHumanQueue {...props} />);
-    const runs = [...view.container.querySelectorAll('[data-queue-ask]')];
-    expect(runs.map((run) => run.getAttribute('aria-label'))).toEqual([
+    const groups = [...view.container.querySelectorAll('[data-queue-ask]')];
+    expect(groups.map((group) => group.getAttribute('aria-label'))).toEqual([
       'Plan the trip',
       'File taxes',
-      'Plan the trip',
     ]);
     expect(
       [...view.container.querySelectorAll('[data-queue-card]')].map((card) =>
         card.getAttribute('data-queue-card')
       )
-    ).toEqual(['q1', 'q3', 'q2']);
+    ).toEqual(['q1', 'q2', 'q3']);
     expect(view.container.querySelectorAll('[id="neo-ref-ask-trip"]')).toHaveLength(1);
     view.rerender(
       <NeoHumanQueue {...props} renderAsk={(shown) => <p>Full ask {shown.ask.title}</p>} />
@@ -889,34 +885,5 @@ describe('NeoHumanQueue', () => {
       />
     );
     expect(view.container.textContent).toBe('');
-  });
-
-  it('puts asks that do not fit under More', () => {
-    const many: Queue = {
-      items: Array.from({ length: 6 }, (_, i) => ({
-        state: 'waiting' as const,
-        askId: `a${i}`,
-        questionId: `q${i}`,
-        text: `Question ${i}`,
-        todos: [],
-      })),
-      counts: Object.fromEntries(
-        Array.from({ length: 6 }, (_, i) => [`a${i}`, { waiting: 1, held: 0, progress: 0 }])
-      ),
-    };
-    const view = render(
-      <NeoHumanQueue
-        queue={many}
-        entries={Array.from({ length: 6 }, (_, i) => entry(`a${i}`, `Ask ${i}`))}
-        onHold={vi.fn()}
-        onAnswer={vi.fn()}
-      />
-    );
-    const asks = within(view.getByRole('group', { name: 'Ask' }));
-    expect(asks.getAllByRole('button')).toHaveLength(4);
-    const more = asks.getByRole('combobox', { name: 'More' });
-    fireEvent.change(more, { target: { value: 'a5' } });
-    expect(view.getAllByRole('region')).toHaveLength(1);
-    expect(view.getByRole('region', { name: 'Ask 5' })).toBeTruthy();
   });
 });

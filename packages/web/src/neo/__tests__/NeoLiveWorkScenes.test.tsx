@@ -660,7 +660,7 @@ describe('Neo public work scenes', () => {
     todos: [],
   });
 
-  it('lists each ask once per state as its full card, in its newest-card order', () => {
+  it('lists each ask once as its full card, in its newest-card order', () => {
     const { container, model } = mount(true, true);
     const a = testAskEntry('ask-a', 'Ask A', {
       state: 'waiting',
@@ -709,21 +709,10 @@ describe('Neo public work scenes', () => {
         } as never,
       };
     });
-    const queue = container.querySelector('[data-human-queue]') as HTMLElement;
-    const seen: string[] = [];
-    for (const name of [/^Waiting on you/, /^Held/, /^In progress/]) {
-      fireEvent.click(within(queue).getByRole('button', { name }));
-      seen.push(
-        ...[...container.querySelectorAll('[id^="neo-ref-question-"], [data-ask-todo]')].map(
-          (node) => node.getAttribute('data-ask-todo') ?? node.id.replace('neo-ref-question-', '')
-        )
-      );
-    }
-    expect(seen).toEqual([
-      ...['a100', 'a10', 'a-held', 'a-step', 'b80'],
-      ...['a100', 'a10', 'a-held', 'a-step'],
-      ...['a100', 'a10', 'a-held', 'a-step', 'run-step'],
-    ]);
+    const seen = [...container.querySelectorAll('[id^="neo-ref-question-"], [data-ask-todo]')].map(
+      (node) => node.getAttribute('data-ask-todo') ?? node.id.replace('neo-ref-question-', '')
+    );
+    expect(seen).toEqual(['a100', 'a10', 'a-held', 'a-step', 'b80', 'run-step']);
   });
 
   it('shows the full document of a queued card once its ask is read', async () => {
@@ -994,9 +983,9 @@ describe('card reply notice navigation', () => {
   });
 
   it.each([
-    ['an uncovered todo in progress', 'garage', 'In progress 1'],
-    ['a finished todo of an open ask', 'oil', null],
-  ])('opens a quoted reference to %s from the queue', async (_name, todoId, chip) => {
+    ['an uncovered todo in progress', 'garage'],
+    ['a finished todo of an open ask', 'oil'],
+  ])('opens a quoted reference to %s from the queue', async (_name, todoId) => {
     const { model } = mount();
     const oil = testTodo('oil', { title: 'Fictional oil', state: 'done' });
     vi.spyOn(connectionManager, 'getHub').mockResolvedValue({
@@ -1065,13 +1054,6 @@ describe('card reply notice navigation', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: /Quoted step target/ }));
     await waitFor(() => expect(document.activeElement?.id).toBe(`neo-ref-todo-${todoId}`));
-    if (chip)
-      expect(screen.getByRole('button', { name: chip }).getAttribute('aria-pressed')).toBe('true');
-    fireEvent.click(
-      within(screen.getByRole('group', { name: 'State' })).getByRole('button', {
-        name: 'In progress 1',
-      })
-    );
     for (const id of ['neo-ref-ask-car', 'neo-ref-todo-garage', `neo-ref-todo-${todoId}`])
       expect(document.querySelectorAll(`[id="${id}"]`)).toHaveLength(1);
   });
@@ -1464,7 +1446,6 @@ describe('card reply notice navigation', () => {
         } as never,
       };
     });
-    fireEvent.click(screen.getByRole('button', { name: 'In progress 1' }));
     const queue = screen.getByRole('region', { name: 'Fictional trip' });
     expect(within(queue).getByRole('button', { name: 'Ask actions' })).toBeTruthy();
     expect(
@@ -1499,7 +1480,8 @@ describe('card reply notice navigation', () => {
       };
     });
     expect(document.querySelector('[data-ask="empty"]')).toBeTruthy();
-    expect(document.querySelector('article[data-ask="tax"]')).toBeNull();
+    expect(document.querySelectorAll('article[data-ask="tax"]')).toHaveLength(1);
+    expect(document.querySelector('[data-human-queue] article[data-ask="tax"]')).toBeTruthy();
   });
 
   it('applies the chosen topic to the queue', () => {
@@ -1534,8 +1516,6 @@ describe('card reply notice navigation', () => {
       };
     });
     fireEvent.click(screen.getByRole('button', { name: 'Travel 1' }));
-    const states = within(screen.getByRole('group', { name: 'State' }));
-    fireEvent.click(states.getByRole('button', { name: 'In progress 1' }));
     expect(screen.getByRole('region', { name: 'Fictional trip' })).toBeTruthy();
     expect(screen.queryByRole('region', { name: 'Fictional tax' })).toBeNull();
   });
