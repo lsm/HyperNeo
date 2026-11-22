@@ -43,3 +43,9 @@ fallback for another English title. Repeat with `VERIFY_THEME=light` and
 `VERIFY_THEME=dark` in separate fresh runs and evidence directories.
 The scoped RPC receipt and read-only SQLite output confirm the missing card
 page entry and the original stored pick and project title.
+
+Use `late-reference` to open a chat link to a held question while its item is
+missing from the browser's queue snapshot. A second hold refreshes the queue.
+Verify that the Inbox clears the conflicting topic filter, selects Held, and
+focuses the linked question when it arrives. The browser captures
+`late-reference.png` and records the selected state in `human-queue-web.json`.

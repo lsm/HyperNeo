@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 
 const [port, directory, phase] = process.argv.slice(2);
-assert(port && port !== '8399' && directory && ['before', 'topic-before', 'layout-before', 'after', 'short-topics'].includes(phase));
+assert(port && port !== '8399' && directory && ['before', 'topic-before', 'layout-before', 'after', 'short-topics', 'late-reference'].includes(phase));
 const run = resolve(directory);
 const evidence = join(run, 'evidence');
 const base = `http://127.0.0.1:${port}`;
@@ -15,6 +16,49 @@ const pair = JSON.parse(execFileSync('bun', [
 const { chromium } = createRequire(import.meta.url)(process.env.VERIFY_PLAYWRIGHT || 'playwright');
 const browser = await chromium.launch({ headless: true, executablePath: process.env.VERIFY_BROWSER });
 const observations = [];
+async function checkLateReference(context) {
+  const page = await context.newPage();
+  page.setDefaultTimeout(8000);
+  let hideHeldCard = true;
+  await page.routeWebSocket(`ws://127.0.0.1:${port}/ws`, (socket) => {
+    const server = socket.connectToServer();
+    server.onMessage((message) => {
+      const response = JSON.parse(String(message));
+      const queue = response.data?.humanQueue;
+      if (hideHeldCard && queue) {
+        queue.items = queue.items.filter((item) => item.questionId !== 'trip-card');
+        queue.counts.trip.held = 0;
+        socket.send(JSON.stringify(response));
+      } else {
+        socket.send(message);
+      }
+    });
+  });
+  await page.goto(`${base}/neo`);
+  const queue = page.locator('[data-human-queue]');
+  await queue.getByRole('button', { name: 'Finance 2', exact: true }).click();
+  await page.getByRole('button', { name: /I replied · View card/ }).click();
+  await page.getByRole('button', { name: 'Back to chat', exact: true }).waitFor();
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await queue.getByRole('button', { name: 'Held 0' }).getAttribute('aria-pressed'), 'false');
+  hideHeldCard = false;
+  const { reply } = JSON.parse(execFileSync('bun', [
+    '.claude/skills/verify/rpc.ts', 'neo.question.hold',
+    JSON.stringify({ questionId: 'budget-card', held: true, requestId: randomUUID() }),
+  ], { encoding: 'utf8' }));
+  assert.equal(reply.ok, true);
+  const held = queue.getByRole('button', { name: 'Held 2' });
+  await held.waitFor();
+  const result = { heldSelected: false, target: 'neo-ref-question-trip-card' };
+  try {
+    await queue.getByRole('button', { name: 'Held 2', pressed: true }).waitFor({ timeout: 2000 });
+    result.heldSelected = true;
+    await page.waitForFunction(id => document.activeElement?.id === id, result.target, { timeout: 5000 });
+  } finally {
+    await page.screenshot({ path: join(evidence, 'late-reference.png'), animations: 'disabled' });
+    observations.push(result);
+  }
+}
 async function checkShortTopics(context, theme) {
   await context.addInitScript(() => {
     const send = WebSocket.prototype.send;
@@ -96,12 +140,18 @@ try {
   assert.equal(response.status(), 200);
   const storageState = await pairing.storageState();
   await pairing.close();
-  const themes = phase === 'short-topics' ? [process.env.VERIFY_THEME ?? 'light'] : ['light', 'dark'];
+  const themes = phase === 'short-topics' ? [process.env.VERIFY_THEME ?? 'light'] :
+    phase === 'late-reference' ? ['light'] : ['light', 'dark'];
   for (const theme of themes) {
     assert(['light', 'dark'].includes(theme));
     const context = await browser.newContext({ storageState, viewport: { width: 1440, height: 900 }, colorScheme: theme, locale: phase === 'short-topics' ? 'zh-CN' : 'en-US' });
     await context.route('**/*', (route) => route.request().url().startsWith(base) ? route.continue() : route.abort());
     await context.addInitScript((value) => localStorage.setItem('theme', value), theme);
+    if (phase === 'late-reference') {
+      await checkLateReference(context);
+      await context.close();
+      continue;
+    }
     if (phase === 'short-topics') {
       await checkShortTopics(context, theme);
       await context.close();
@@ -283,4 +333,4 @@ if (phase === 'topic-before') {
     assert.deepEqual(savedTopic, { state: 'In progress 1', badgeDisabled: false });
   assert.fail(`${observations.length} themes: the saved topic silently narrowed In progress to 1`);
 }
-console.log(`PASS: ${observations.length} themes, ${phase === 'short-topics' ? 'localized topic chips, overflow and grouped queue cards' : 'state and topic filters, Hold and Take back, and centered attachment hover'}`);
+console.log(`PASS: ${observations.length} themes, ${phase === 'late-reference' ? 'late queue reference selects Held and receives focus' : phase === 'short-topics' ? 'localized topic chips, overflow and grouped queue cards' : 'state and topic filters, Hold and Take back, and centered attachment hover'}`);

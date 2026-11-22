@@ -2,7 +2,7 @@
 set -euo pipefail
 : "${RUN:?run through with-run.sh}"
 PORT=${1:?supply a free verification port}
-PHASE=${2:?supply before, topic-before, layout-before, after, or short-topics}
+PHASE=${2:?supply a phase from the human-queue-web journey}
 EVIDENCE=${3:?supply an absolute evidence directory}
 export HYPERNEO_DATA_DIR="$RUN/data" VERIFY_PORT="$PORT"
 trap 'bash .claude/skills/verify/stop.sh "$RUN"; test ! -f "$RUN/daemon.log" || cp "$RUN/daemon.log" "$RUN/evidence/"; cp -R "$RUN/evidence/." "$EVIDENCE/"' EXIT

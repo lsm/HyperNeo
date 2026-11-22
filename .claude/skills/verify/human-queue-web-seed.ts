@@ -83,6 +83,18 @@ try {
     card('hotel-card', 'trip', 'Book the hotel by the station for three nights?', 'hotel');
     card('tax-card', 'tax', 'File jointly this year?', 'receipts');
     assert(store.holdQuestion('trip-card', true, crypto.randomUUID(), now), 'the seed holds one card');
+    if (phase === 'late-reference') {
+      const conversationId = projects.conversationId();
+      assert(conversationId);
+      const publicationId = crypto.randomUUID();
+      const payload = {
+        conversationId, publicationId, shortText: 'I replied · View card · Held trip question',
+        fullText: 'Synthetic reference', links: [],
+        cardReply: { askId: 'trip', questionId: 'trip-card', mutationId: crypto.randomUUID(), sourceMessageIds: [crypto.randomUUID()] },
+      };
+      db.prepare('INSERT INTO neo_publications (conversation_id, publication_id, payload_json, created_at) VALUES (?, ?, ?, ?)')
+        .run(conversationId, publicationId, JSON.stringify(payload), new Date().toISOString());
+    }
   }
   writeFileSync(join(run, 'evidence/seed.json'), JSON.stringify({ root, synthetic: true }, null, 2));
 } finally {
