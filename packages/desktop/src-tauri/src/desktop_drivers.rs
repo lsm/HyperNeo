@@ -120,6 +120,9 @@ struct Drivers {
     guardian: PathBuf,
     /// The one Locked Use session on this Mac; only the worker that started it may act.
     locked_use: Mutex<Option<LockedSession>>,
+    /// Held for reading while a call acts; a Locked Use start waits for those calls to end.
+    acting: tokio::sync::RwLock<()>,
+    locked_owner: StdMutex<Option<String>>,
 }
 struct LockedSession {
     worker: String,
@@ -271,6 +274,8 @@ impl Control {
             unconfirmed: StdMutex::default(),
             guardian: binary.with_file_name("hyperneo-locked-use"),
             locked_use: Mutex::default(),
+            acting: Default::default(),
+            locked_owner: StdMutex::default(),
         });
         let state = drivers.clone();
         let task = tokio::spawn(async move {
@@ -876,6 +881,15 @@ impl Drivers {
                             false,
                         )));
                     }
+                    let Some(_acting) = self.may_act(&worker_id).await else {
+                        return Ok(Some(finish(
+                            bundle,
+                            class,
+                            "refused",
+                            json!("screen_locked"),
+                            false,
+                        )));
+                    };
                     let active = worker.as_mut().unwrap();
                     let call = timeout_at(
                         deadline.min(Instant::now() + limit),
@@ -1066,6 +1080,11 @@ impl Drivers {
         true
     }
 
+    /// Admits a call right before it acts, and holds that admission until the call ends.
+    async fn may_act(&self, _worker: &str) -> Option<tokio::sync::RwLockReadGuard<'_, ()>> {
+        Some(self.acting.read().await)
+    }
+
     /// Marks a worker unconfirmed: no start or input, and its leases stay pinned.
     fn hold(&self, worker_id: &str) {
         self.unconfirmed
@@ -1209,6 +1228,8 @@ mod peer_tests {
             unconfirmed: StdMutex::default(),
             guardian: PathBuf::new(),
             locked_use: Mutex::default(),
+            acting: Default::default(),
+            locked_owner: StdMutex::default(),
         };
         assert_eq!(wait_unreaped(pid).unwrap(), (Some(0), None));
         assert!(drivers.authorized(pid));
@@ -1238,6 +1259,8 @@ mod peer_tests {
             unconfirmed: StdMutex::default(),
             guardian: path,
             locked_use: Mutex::default(),
+            acting: Default::default(),
+            locked_owner: StdMutex::default(),
         }
     }
 
@@ -1280,6 +1303,40 @@ mod peer_tests {
     }
 
     #[tokio::test]
+    async fn a_call_admitted_before_a_locked_use_session_cannot_act_during_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let drivers = locked_use_drivers(
+            &directory,
+            Some("echo 'covered 1'; echo unlocked; while read line; do :; done; echo 'ended owner_gone'"),
+        );
+        assert!(drivers.locked_use("other", false).await);
+        assert!(drivers.locked_use("owner", true).await);
+        assert!(drivers.may_act("other").await.is_none());
+        assert!(drivers.may_act("owner").await.is_some());
+        drivers.retire("owner", &mut None).await.unwrap();
+        assert!(drivers.may_act("other").await.is_some());
+    }
+
+    #[tokio::test]
+    async fn locked_use_waits_for_a_call_already_acting() {
+        let directory = tempfile::tempdir().unwrap();
+        let drivers = Arc::new(locked_use_drivers(
+            &directory,
+            Some("echo 'covered 1'; echo unlocked; while read line; do :; done; echo 'ended owner_gone'"),
+        ));
+        let acting = drivers.may_act("other").await.unwrap();
+        let starting = tokio::spawn({
+            let drivers = drivers.clone();
+            async move { drivers.locked_use("owner", true).await }
+        });
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(!starting.is_finished());
+        drop(acting);
+        assert!(starting.await.unwrap());
+        assert!(drivers.may_act("other").await.is_none());
+    }
+
+    #[tokio::test]
     async fn locked_use_ends_when_the_screen_locks_again() {
         let directory = tempfile::tempdir().unwrap();
         let drivers = locked_use_drivers(
@@ -1309,6 +1366,8 @@ mod peer_tests {
             unconfirmed: StdMutex::default(),
             guardian: PathBuf::new(),
             locked_use: Mutex::default(),
+            acting: Default::default(),
+            locked_owner: StdMutex::default(),
         });
         let request = |worker: &'static str| {
             let drivers = drivers.clone();
