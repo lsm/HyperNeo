@@ -57,7 +57,10 @@ enum Message {
     Gate {
         worker: String,
         locked: bool,
-        reply: oneshot::Sender<bool>,
+        reply: oneshot::Sender<Option<Grant>>,
+    },
+    Unclaimed {
+        session: u64,
     },
     Act {
         worker: String,
@@ -65,6 +68,7 @@ enum Message {
     },
     Done {
         worker: String,
+        id: u64,
         settled: bool,
     },
     Hold {
@@ -82,13 +86,15 @@ enum State {
     Idle,
     Starting {
         worker: String,
+        session: u64,
         guardian: LockedUse,
         lines: Lines,
         until: Instant,
-        reply: oneshot::Sender<bool>,
+        reply: oneshot::Sender<Option<Grant>>,
     },
     Owned {
         worker: String,
+        session: u64,
         guardian: LockedUse,
         lines: Lines,
     },
@@ -105,6 +111,7 @@ enum State {
 pub(crate) struct Acting {
     messages: mpsc::UnboundedSender<Message>,
     worker: String,
+    id: u64,
     pub(crate) settled: bool,
 }
 
@@ -112,10 +119,26 @@ impl Drop for Acting {
     fn drop(&mut self) {
         let _ = self.messages.send(Message::Done {
             worker: std::mem::take(&mut self.worker),
+            id: self.id,
             settled: self.settled,
         });
     }
 }
+
+/// A yes to a gate. One that hands over the Mac returns it to the actor unless received.
+pub(crate) struct Grant {
+    handback: Option<(mpsc::UnboundedSender<Message>, u64)>,
+}
+
+impl Drop for Grant {
+    fn drop(&mut self) {
+        if let Some((messages, session)) = self.handback.take() {
+            let _ = messages.send(Message::Unclaimed { session });
+        }
+    }
+}
+
+const YES: Option<Grant> = Some(Grant { handback: None });
 
 impl Gatekeeper {
     pub(crate) fn new(
@@ -134,7 +157,14 @@ impl Gatekeeper {
             locked,
             reply,
         };
-        self.messages.send(gate).is_ok() && answer.await.unwrap_or(false)
+        if self.messages.send(gate).is_err() {
+            return false;
+        }
+        let Ok(Some(mut grant)) = answer.await else {
+            return false;
+        };
+        grant.handback = None;
+        true
     }
 
     pub(crate) async fn act(&self, worker: &str) -> Option<Acting> {
@@ -177,7 +207,7 @@ fn release(state: State) -> State {
             reply,
             ..
         } => {
-            let _ = reply.send(false);
+            let _ = reply.send(None);
             State::Releasing { worker, lines }
         }
         State::Owned { worker, lines, .. } => State::Releasing { worker, lines },
@@ -204,7 +234,8 @@ async fn run(
 ) {
     let mut state = State::Idle;
     let mut blocked = BTreeSet::new();
-    let mut acting: BTreeMap<String, usize> = BTreeMap::new();
+    let mut acting: BTreeMap<String, BTreeSet<u64>> = BTreeMap::new();
+    let mut ids = 0u64;
     let mut waiting: Vec<oneshot::Sender<()>> = Vec::new();
     loop {
         let (message, line) = match &mut state {
@@ -230,6 +261,7 @@ async fn run(
                 (
                     State::Starting {
                         worker,
+                        session,
                         guardian,
                         lines,
                         until,
@@ -238,18 +270,28 @@ async fn run(
                     Some(line),
                 ) => {
                     if line == "unlocked" {
-                        if enabled(&worker) && reply.send(true).is_ok() {
-                            State::Owned {
+                        let grant = own.upgrade().filter(|_| enabled(&worker)).map(|messages| Grant {
+                            handback: Some((messages, session)),
+                        });
+                        match grant.map(|grant| reply.send(Some(grant))) {
+                            Some(Ok(())) => State::Owned {
                                 worker,
+                                session,
                                 guardian,
                                 lines,
+                            },
+                            Some(Err(mut back)) => {
+                                if let Some(grant) = back.as_mut() {
+                                    grant.handback = None;
+                                }
+                                State::Releasing { worker, lines }
                             }
-                        } else {
-                            State::Releasing { worker, lines }
+                            None => State::Releasing { worker, lines },
                         }
                     } else {
                         let starting = State::Starting {
                             worker,
+                            session,
                             guardian,
                             lines,
                             until,
@@ -283,7 +325,7 @@ async fn run(
                 reply,
             } => match state {
                 State::Idle if !locked => {
-                    let _ = reply.send(true);
+                    let _ = reply.send(YES);
                     State::Idle
                 }
                 State::Idle => {
@@ -294,31 +336,37 @@ async fn run(
                     match started {
                         Some((guardian, lines)) => State::Starting {
                             worker,
+                            session: {
+                                ids += 1;
+                                ids
+                            },
                             guardian,
                             lines,
                             until: Instant::now() + UNLOCK,
                             reply,
                         },
                         None => {
-                            let _ = reply.send(false);
+                            let _ = reply.send(None);
                             State::Idle
                         }
                     }
                 }
                 State::Owned {
                     worker: owner,
+                    session,
                     mut guardian,
                     lines,
                 } if owner == worker => {
                     if !locked && guardian.keep_alive().is_ok() {
-                        let _ = reply.send(true);
+                        let _ = reply.send(YES);
                         State::Owned {
                             worker: owner,
+                            session,
                             guardian,
                             lines,
                         }
                     } else {
-                        let _ = reply.send(false);
+                        let _ = reply.send(None);
                         State::Releasing {
                             worker: owner,
                             lines,
@@ -326,9 +374,15 @@ async fn run(
                     }
                 }
                 state => {
-                    let _ = reply.send(false);
+                    let _ = reply.send(None);
                     state
                 }
+            },
+            Message::Unclaimed { session } => match state {
+                State::Owned {
+                    session: owned, ..
+                } if owned == session => release(state),
+                state => state,
             },
             Message::Act { worker, reply } => {
                 let allowed = match &state {
@@ -337,24 +391,28 @@ async fn run(
                     _ => false,
                 };
                 let admission = allowed.then(|| own.upgrade()).flatten().map(|messages| {
-                    *acting.entry(worker.clone()).or_default() += 1;
+                    ids += 1;
+                    acting.entry(worker.clone()).or_default().insert(ids);
                     Acting {
                         messages,
                         worker,
+                        id: ids,
                         settled: true,
                     }
                 });
                 let _ = reply.send(admission);
                 state
             }
-            Message::Done { worker, settled } => {
-                if let Some(count) = acting.get_mut(&worker) {
-                    *count -= 1;
-                    if *count == 0 {
-                        acting.remove(&worker);
-                    }
+            Message::Done {
+                worker,
+                id,
+                settled,
+            } => {
+                let live = acting.get_mut(&worker).is_some_and(|calls| calls.remove(&id));
+                if acting.get(&worker).is_some_and(BTreeSet::is_empty) {
+                    acting.remove(&worker);
                 }
-                if !settled {
+                if live && !settled {
                     blocked.insert(worker);
                 }
                 state
