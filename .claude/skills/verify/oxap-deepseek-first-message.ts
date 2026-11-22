@@ -129,6 +129,10 @@ try {
   Object.assign(evidence, { expectedModel, replyText });
   assert.deepEqual(replyText, [`Synthetic DeepSeek reply from ${expectedModel}`]);
   if (mode === 'recovery' || mode === 'pending') {
+    while (app.sessionManager.getCachedSession(sessionId)?.queryPromise) {
+      assert(Date.now() < deadline, 'The first query did not finish shutting down');
+      await Bun.sleep(25);
+    }
     const original = app.db.getSession(sessionId)!;
     const excerpt = 'Saved conversation excerpt';
     if (mode === 'pending') {
@@ -152,7 +156,15 @@ try {
     const deliveryStatus = () =>
       [...rows.values()].find((row) => row.uuid === messageId)?.deliveryStatus;
     while (errors.length === 0 || (!job()?.retryCount && deliveryStatus() !== 'failed')) {
-      assert(Date.now() < retryDeadline, 'The failed delivery did not settle');
+      if (Date.now() >= retryDeadline) {
+        Object.assign(evidence, {
+          deliveryStatus: deliveryStatus(),
+          deliveryJob: { status: job()?.status, retryCount: job()?.retryCount, error: job()?.error },
+          storedSendStatus: app.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageId)
+            ?.sendStatus,
+        });
+        assert.fail('The failed delivery did not settle');
+      }
       await Bun.sleep(25);
     }
     const saved = app.db.getSession(sessionId)!;
