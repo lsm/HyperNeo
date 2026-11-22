@@ -4,6 +4,14 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.62.1] - 2026-11-22
+
+- Install or remove Locked Use from the HyperNeo Desktop tray on macOS (#11515).
+
+### API compatibility
+
+Compared with v0.62.0, there are no API surface changes. The pinned phone source inventory reports 0 breaking, 0 risky, and 0 safe changes.
+
 ## [0.62.0] - 2026-11-22
 
 - Locked Use on macOS. HyperNeo Desktop starts the guardian so authorized desktop control can continue while the Mac is locked (#11500, #11503).
