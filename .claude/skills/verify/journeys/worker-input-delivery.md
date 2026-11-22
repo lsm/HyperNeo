@@ -9,9 +9,10 @@ bash .claude/skills/verify/proof-run.sh "$EVIDENCE" .claude/skills/verify/worker
 The helper sends two ordinary notices through the daemon's registered work.send
 operation to a busy synthetic HyperNeo session. It requires durable input rows,
 parked jobs, retained message text and deferred deadlines, then restarts its own
-daemon against that synthetic database. Once the worker becomes idle it observes
-both messages, in order and once each, through the real SDK input reader and
-retains the native adapter outcomes. It also recovers a persisted dispatch marker,
+daemon against that synthetic database. It interrupts the worker through
+`client.interrupt` and observes both messages, in order and once each, through
+the real SDK input reader before the previous retry deadline. The daemon retains
+both native adapter outcomes. It also recovers a persisted dispatch marker,
 records its failure while the originating Neo is unavailable, then requires one
 uncertainty report in that Neo’s SDK inbox after its receiver is created. It proves the uncertain text
 stays retained while the worker receives no replay. The session uses manual query mode.
@@ -45,8 +46,9 @@ one waiting-reason notice. The proof restarts the isolated daemon and observes
 continued waiting with one notice and no settled input outcome. Unit fixtures
 cover unreachable and malformed status, notification recovery and later delivery.
 
-Waiting inputs use the existing driver's 60-second refresh cadence. The synthetic
-proof advances only its disposable job deadlines after fixture state changes.
+Waiting inputs have a 60-second retry. An idle HyperNeo session wakes its queued
+inputs ahead of that retry. For other synthetic scenarios this helper advances
+only its disposable job deadlines after fixture state changes.
 Repeated attempts for one answer share a report identity, so a persistent refusal
 leaves one blocked notice in Neo's inbox. The proof checks two refused attempts.
 
