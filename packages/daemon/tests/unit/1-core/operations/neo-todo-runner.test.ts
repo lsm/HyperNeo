@@ -826,9 +826,10 @@ describe('neo todo runner', () => {
     }
   });
 
-  test('Codex identity-silent follow-ups retain the pair confirmed at start', async () => {
+  test('Codex follow-ups deliver only the instruction and keep the recorded identity', async () => {
     const h = setup();
     try {
+      h.packs.push(createDelegationPack(() => h.db));
       const todo = h.add();
       await h.runner.start(todo.id);
       const worker = { adapter: 'codex-desktop', id: 'codex-thread' };
@@ -839,9 +840,11 @@ describe('neo todo runner', () => {
       });
       await h.runner.proceed(todo.id, 'Continue coding.');
       expect(h.sessions.readCard(todo.id)).toMatchObject({ model: 'gpt-6.1-sol', effort: 'high' });
-      expect(h.calls.findLast((call) => call.name === 'work.send')!.input.message).toContain(
-        'Agent: gpt-6.1-sol (effort: high) via Codex'
-      );
+      const message = String(h.calls.findLast((call) => call.name === 'work.send')!.input.message);
+      expect(message.split('\n')).toEqual([
+        expect.stringMatching(/^Worker delivery: [\da-f-]{36}$/),
+        'Continue coding.',
+      ]);
     } finally {
       h.db.close();
     }
