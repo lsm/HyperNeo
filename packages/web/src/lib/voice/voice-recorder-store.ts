@@ -4,6 +4,7 @@ import { bytesToBase64, downsampleChunks, encodeWav } from '../wav.ts';
 
 const TARGET_SAMPLE_RATE = 16_000;
 const MAX_RECORDING_MS = 240_000;
+const CAPTURE_READY_MS = 250;
 
 type RecorderNode = AudioWorkletNode | ScriptProcessorNode;
 
@@ -132,14 +133,30 @@ class VoiceRecorderStore {
       const maxContextSamples = Math.floor(
         maxDataSamples * (context.sampleRate / TARGET_SAMPLE_RATE)
       );
+      const tracks = stream.getTracks();
+      const readySamples = Math.ceil((CAPTURE_READY_MS / 1000) * context.sampleRate);
       let totalSamples = 0;
+      let liveSamples = 0;
 
       const hitLimit = () => {
         if (this.stoppedByLimit) return;
         this.stoppedByLimit = true;
         this.durationLimitHit.value = true;
         this.isRecording.value = false;
+        this.isStarting.value = false;
         void this.teardown();
+      };
+
+      const collect = (data: Float32Array) => {
+        if (discarded() || this.stoppedByLimit) return;
+        chunks.push(data);
+        this.pcmTap?.(data, context.sampleRate);
+        totalSamples += data.length;
+        if (this.isStarting.value) {
+          liveSamples = tracks.some((track) => track.muted) ? 0 : liveSamples + data.length;
+          if (liveSamples >= readySamples) this.isStarting.value = false;
+        }
+        if (totalSamples >= maxContextSamples) hitLimit();
       };
 
       let node: RecorderNode;
@@ -158,32 +175,20 @@ class VoiceRecorderStore {
           return;
         }
         node = new AudioWorkletNode(context, 'hyperneo-voice-recorder');
-        node.port.onmessage = (event: MessageEvent<Float32Array>) => {
-          if (this.stoppedByLimit) return;
-          chunks.push(event.data);
-          this.pcmTap?.(event.data, context.sampleRate);
-          totalSamples += event.data.length;
-          if (totalSamples >= maxContextSamples) hitLimit();
-        };
+        node.port.onmessage = (event: MessageEvent<Float32Array>) => collect(event.data);
       } catch {
         if (discarded()) {
           await teardownDiscarded(context, stream, source);
           return;
         }
         node = context.createScriptProcessor(4096, 1, 1);
-        node.onaudioprocess = (event) => {
-          if (this.stoppedByLimit) return;
-          const data = new Float32Array(event.inputBuffer.getChannelData(0));
-          chunks.push(data);
-          this.pcmTap?.(data, context.sampleRate);
-          totalSamples += data.length;
-          if (totalSamples >= maxContextSamples) hitLimit();
-        };
+        node.onaudioprocess = (event) =>
+          collect(new Float32Array(event.inputBuffer.getChannelData(0)));
       }
       this.node = node;
 
       source.connect(analyser);
-      analyser.connect(node);
+      source.connect(node);
       node.connect(context.destination);
 
       this.chunks = chunks;
@@ -194,10 +199,10 @@ class VoiceRecorderStore {
         this.trackEnded = true;
         hitLimit();
       };
-      for (const track of stream.getTracks()) track.onended = onTrackEnded;
+      for (const track of tracks) track.onended = onTrackEnded;
       this.recordingStartedAt.value = Date.now();
       this.isRecording.value = true;
-      if (stream.getTracks().some((track) => track.readyState === 'ended')) onTrackEnded();
+      if (tracks.some((track) => track.readyState === 'ended')) onTrackEnded();
     } catch (error) {
       if (this.startGeneration !== generation) return;
       await this.teardown();
@@ -205,7 +210,7 @@ class VoiceRecorderStore {
     } finally {
       if (this.startGeneration === generation) {
         this.starting = false;
-        this.isStarting.value = false;
+        if (!this.isRecording.value) this.isStarting.value = false;
       }
     }
   };
@@ -232,6 +237,7 @@ class VoiceRecorderStore {
     const hitDurationLimit = this.stoppedByLimit && !this.trackEnded;
     this.durationLimitHit.value = false;
     this.isRecording.value = false;
+    this.isStarting.value = false;
     this.stopping = true;
     const chunks = this.chunks;
     try {

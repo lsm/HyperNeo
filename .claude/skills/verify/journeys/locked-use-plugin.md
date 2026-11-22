@@ -32,10 +32,16 @@ database. It must restore the stock rule, remove the legacy right and plugin,
 and preserve the plugin if removing the legacy right or restoring the rule
 fails. Pass ends with `uninstall check PASS`.
 
-Attended smoke on an authorized test Mac with the updated signed Desktop:
-use **Remove Locked Use…** if the old plugin is present and let the owner
-handle the administrator prompt. Read `system.login.screensaver` before and
-after removal and confirm the result matches the saved stock rule. With
-the screen locked, request a Desktop action and verify that it returns
-`screen_locked` without dispatching. Stop the worker and have the owner
-confirm the Mac remains locked until their normal macOS authentication succeeds.
+## Attended smoke
+
+On an authorized test Mac, start a single copy of the updated signed Desktop.
+Confirm that there is one HyperNeo menu bar icon. Open its menu and confirm
+that **Remove Locked Use…** appears if the old plugin is present, then dismiss
+the menu. Leave the installed authorization rule in place for the lock test.
+
+Have the owner lock the Mac. Request a Desktop action and record that it
+returns `screen_locked` without dispatching. Stop that worker and confirm with
+the owner that the Mac remains locked. Have the owner enter the first few
+characters of their password without submitting it and confirm it remains
+locked. The owner then clears the field and authenticates normally. Record
+only the lock states, dispatch result and whether normal unlock succeeded.

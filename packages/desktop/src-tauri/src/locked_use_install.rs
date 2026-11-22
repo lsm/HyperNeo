@@ -70,11 +70,7 @@ fn admin_command(app: &Path) -> Command {
     for line in SCRIPT {
         command.args(["-e", line]);
     }
-    command
-        .arg(BODY)
-        .arg(app)
-        .arg(SIGNER)
-        .args(SCRIPTS);
+    command.arg(BODY).arg(app).arg(SIGNER).args(SCRIPTS);
     command
 }
 
@@ -92,6 +88,19 @@ pub(crate) fn remove(app: &Path) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn tray_does_not_show_a_second_icon_without_the_locked_use_menu() {
+        use tauri::utils::{config, platform::Target};
+
+        let (config, _) =
+            config::parse::read_from(Target::MacOS, Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let config: config::Config = serde_json::from_value(config).unwrap();
+        assert!(
+            config.app.tray_icon.is_none(),
+            "Tauri creates an extra menu-less status item when app.trayIcon is set"
+        );
+    }
+
     fn args(command: &Command) -> Vec<String> {
         command
             .get_args()
@@ -104,7 +113,7 @@ mod tests {
     }
 
     #[test]
-    fn locked_use_removal_passes_paths_and_scripts_as_arguments {
+    fn locked_use_removal_passes_paths_and_scripts_as_arguments() {
         let app = Path::new("/Applications/Hyper \"Neo\" $(x).app");
         let command = admin_command(app);
         assert_eq!(command.get_program(), "/usr/bin/osascript");

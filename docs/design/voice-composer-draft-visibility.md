@@ -147,13 +147,13 @@ The transcript replaces the selection (`MessageInput.tsx` builds `before + trans
 
 Unless a row says otherwise, it applies to all three surfaces. "Neo" means Neo web and iOS, which behave the same.
 
-### Starting (mic permission or warm-up: "Waiting for mic…")
+### Starting (microphone permission and warm-up)
 
-| Draft | Attachments | User sees | Treatment | Reason |
-|---|---|---|---|---|
-| Empty | any | Final recording layout with "Waiting for mic…" in place of the timer | hint only | Show the recording layout straight away so the layout only changes once. |
-| One line | any | Draft muted above the bar; chips unchanged | muted | Same frame as recording; no second jump when the mic opens. |
-| Multi-line | any | Draft capped at 3 lines, scrolled to the insertion point | muted | Same as recording. |
+Neo web and Chat keep the draft and attachments in place and show a cancellable
+spinner in the microphone button. The waveform and timer appear after the recorder
+receives 250 ms of unmuted audio. That audio stays in the recording.
+
+The iOS composer shows the recording layout during startup.
 
 ### Recording
 

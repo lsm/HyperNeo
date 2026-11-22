@@ -12,7 +12,6 @@ interface VoiceWaveformProps {
   getLevel: () => number;
   isRecording: boolean;
   isTranscribing: boolean;
-  isStarting?: boolean;
   onCancel: () => void;
   startedAt?: number | null;
   appearance?: 'neo';
@@ -27,7 +26,6 @@ export function VoiceWaveform({
   getLevel,
   isRecording,
   isTranscribing,
-  isStarting = false,
   onCancel,
   startedAt,
   appearance,
@@ -193,13 +191,6 @@ export function VoiceWaveform({
             {!isNarrow && t('composer.transcribing')}
           </span>
         )
-      ) : isStarting && !isRecording ? (
-        <span
-          class={`inline-flex flex-none animate-pulse items-center gap-1.5 text-fg-muted motion-reduce:animate-none ${isNarrow ? 'text-2xs' : 'text-xs'}`}
-          data-testid="voice-starting"
-        >
-          {isNarrow ? 'Mic…' : 'Waiting for mic…'}
-        </span>
       ) : (
         <span
           class={`flex-none tabular-nums text-fg ${isNarrow ? 'text-2xs' : 'text-xs'}`}
