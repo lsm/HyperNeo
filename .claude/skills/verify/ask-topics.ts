@@ -53,6 +53,9 @@ try {
         const tooLong = await handler({ name: 'neo.ask.propose', input: { title: 'Synthetic long', request: 'Synthetic request', topic: 'Thirteen char' } });
         evidence.push({ phase, name: 'neo.ask.propose', refused: tooLong.content[0].text });
         assert.equal(tooLong.isError, true);
+        const wide = await handler({ name: 'neo.ask.propose', input: { title: 'Synthetic wide topic', request: 'Synthetic request', topic: '甲乙丙丁戊己A' } });
+        evidence.push({ phase, name: 'neo.ask.propose', wide: wide.content[0].text });
+        assert.equal(wide.isError, true, 'reject a 13-cell pick even when it fits in 12 code units');
         assert.equal((await call('neo.ask.topic', { askId: plain.ask.id, topic: '邮件' })).ask.topic, '邮件');
         await call('neo.ask.settle', { askId: labelled.ask.id, status: 'dropped', outcome: 'Synthetic drop' });
         const settled = await call('neo.ask.topic', { askId: labelled.ask.id, topic: 'OAP' });
