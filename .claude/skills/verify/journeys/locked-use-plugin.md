@@ -20,11 +20,18 @@ should return `screen_locked`.
 Desktop exposes **Remove Locked Use…** for existing installs. Without an
 installed plugin it shows **Locked Use unavailable** as a disabled menu item.
 
-Run the removal fixtures on macOS with a representative stock rule that has
-class `rule`, the sole entry `use-login-window-ui`, and no `k-of-n` key:
+Run the removal fixtures on macOS with a synthetic stock rule. This also
+works on Macs whose live authorization rule already contains Locked Use.
 
 ```bash
-bash packages/desktop/locked-use/check-install.sh "$RUN/stock.plist"
+(
+  RUN=$(mktemp -d) || exit 1
+  trap 'rm -rf "$RUN"' EXIT
+  plutil -create xml1 "$RUN/stock.plist" &&
+    plutil -insert class -string rule "$RUN/stock.plist" &&
+    plutil -insert rule -json '["use-login-window-ui"]' "$RUN/stock.plist" &&
+    bash packages/desktop/locked-use/check-install.sh "$RUN/stock.plist"
+)
 ```
 
 The fixture uses the real uninstaller with an isolated fake authorization
