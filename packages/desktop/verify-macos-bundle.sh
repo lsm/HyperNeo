@@ -1,14 +1,30 @@
 #!/bin/bash
 set -euo pipefail
 
-app="$1"
-driver="$app/Contents/MacOS/cua-driver"
 requirement='anchor apple generic and certificate leaf[subject.OU] = "P5R65T296V" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists'
+
+hardened_slices() {
+    local arch flags present=0
+    for arch in arm64 arm64e x86_64 x86_64h; do
+        flags="$(codesign --display --verbose=2 --arch "$arch" "$1" 2>&1)" || continue
+        grep -E 'flags=0x[0-9a-f]+\([^)]*runtime' >/dev/null <<< "$flags" || return 1
+        present=1
+    done
+    [[ "$present" == 1 ]]
+}
 
 verify_signature() {
     codesign --verify --strict --all-architectures --test-requirement "=$requirement${2:-}" "$1" &&
-        bash "$(dirname "$0")/hardened-slices.sh" "$1"
+        hardened_slices "$1"
 }
+
+if [[ "${1:-}" == --hardened ]]; then
+    hardened_slices "$2"
+    exit
+fi
+
+app="$1"
+driver="$app/Contents/MacOS/cua-driver"
 
 if ! verify_signature "$driver" ' and identifier "cua-driver"'; then
     echo "cua-driver signature verification failed" >&2
