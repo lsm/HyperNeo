@@ -656,7 +656,7 @@ describe('neo todo runner', () => {
     }
   });
 
-  test('supplies recorded identity to follow-ups without guessing missing start metadata', async () => {
+  test('requests provenance at start and refreshes recorded identity on follow-ups', async () => {
     const h = setup();
     try {
       const todo = h.add({ pack: 'coding', kind: 'pr', params: {} });
@@ -684,8 +684,7 @@ describe('neo todo runner', () => {
       await h.runner.proceed(todo.id, 'Write the PR body.');
       const followup = h.calls.findLast((call) => call.name === 'work.send')!.input
         .message as string;
-      expect(followup).toContain('Agent: claude-opus-5-5 (effort: medium) via HyperNeo');
-      expect(followup).not.toContain('<effort>');
+      expect(followup.split('\n').slice(1)).toEqual(['Write the PR body.']);
       expect(h.sessions.readCard(todo.id)).toMatchObject({
         model: 'claude-opus-5-5',
         effort: 'medium',
@@ -732,8 +731,7 @@ describe('neo todo runner', () => {
       });
       await h.runner.proceed(todo.id, 'Continue coding.');
       const next = h.calls.findLast((call) => call.name === 'work.send')!.input.message as string;
-      expect(next).toContain('Agent: claude-sonnet-5 (effort: unknown) via Claude');
-      expect(next).not.toContain('effort: medium');
+      expect(next.split('\n').slice(1)).toEqual(['Continue coding.']);
       expect(h.sessions.readCard(todo.id)).toMatchObject({
         model: 'claude-sonnet-5',
         effort: null,
@@ -785,9 +783,6 @@ describe('neo todo runner', () => {
           model: 'claude-opus-5-5',
           effort: 'medium',
         });
-        expect(h.calls.findLast((call) => call.name === 'work.send')!.input.message).toContain(
-          'Agent: claude-opus-5-5 (effort: medium) via HyperNeo'
-        );
       } finally {
         h.db.close();
       }
@@ -867,9 +862,6 @@ describe('neo todo runner', () => {
       });
       await h.runner.proceed(todo.id, 'Continue.');
       expect(h.sessions.readCard(todo.id)).toMatchObject({ model: null, effort: null });
-      expect(h.calls.findLast((call) => call.name === 'work.send')!.input.message).toContain(
-        'Agent: unknown (effort: unknown) via HyperNeo'
-      );
     } finally {
       h.db.close();
     }

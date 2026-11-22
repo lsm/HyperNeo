@@ -5,9 +5,11 @@ import { NeoRepository } from '../../../packages/daemon/src/storage/repositories
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import { createNeoTodoRunner } from '../../../packages/daemon/src/lib/neo/todo-runner.ts';
+import { readWorkspaceIdentity } from '../../../packages/daemon/src/lib/drivers/code-identity.ts';
 import { gatewayFor } from '../../../packages/daemon/src/storage/db-gateway/db-gateway.ts';
 import { strict as assert } from 'node:assert';
 import { createServer } from 'node:net';
+import { EventEmitter, once } from 'node:events';
 import { chmodSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -17,6 +19,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import type { Result, WorkDelivery, WorkDetail, WorkStarted } from '../../../packages/daemon/src/lib/drivers/types.ts';
 
 const portText = process.argv[2], runText = process.argv.at(-1)!;
@@ -67,7 +70,10 @@ const app = await createDaemonApp({ config: getConfig({ port, host: '127.0.0.1',
 assert.notEqual(app.server.port, 8399);
 let ws: WebSocket | undefined;
 try {
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  await app.spaceRuntimeService.ready();
+  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`, {
+    headers: { authorization: `Bearer ${readLocalCredential(join(run, 'data/local-rpc.credential'))}` },
+  } as unknown as string[]);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('connection failed')); });
   const rpc = <T>(name: string, input: unknown) => new Promise<T>((done, fail) => {
     const id = crypto.randomUUID();
@@ -137,6 +143,7 @@ try {
   writeFileSync(registration, JSON.stringify({ ...JSON.parse(readFileSync(registration, 'utf8')), messagingSocketPath: socketPath }));
   const transcript = join(run, 'home/.claude/projects', record.cwd.replace(/[/.]/g, '-'), `${target.id}.jsonl`);
   let changeMode: string | undefined;
+  const nativeDelivery = new EventEmitter();
   const peer = createServer(socket => {
     let buffer = '';
     socket.setEncoding('utf8');
@@ -155,6 +162,7 @@ try {
       }
       appendFileSync(transcript, JSON.stringify({ type: 'user', uuid: frame.uuid, timestamp: new Date().toISOString(), message: frame.message }) + '\n');
       appendFileSync(transcript, JSON.stringify({ type: 'assistant', uuid: crypto.randomUUID(), timestamp: new Date().toISOString(), message: { content: [{ type: 'text', text: 'Direct completion' }], stop_reason: 'end_turn' } }) + '\n');
+      nativeDelivery.emit('input', frame.message.content);
     });
   });
   await new Promise<void>(resolve => peer.listen(socketPath, resolve));
@@ -206,7 +214,7 @@ try {
       assert(result.ok, JSON.stringify(result));
       const lines = readFileSync(transcript, 'utf8').trim().split('\n').map(line => JSON.parse(line));
       const task = lines.findLast(entry => entry.type === 'user').message.content;
-      assert(task.includes(`Agent: ${model} (effort: ${effort ?? 'unknown'}) via Claude`), task);
+      assert.match(task, /^<cross-session-message [^\n]*>\nWorker delivery: [\da-f-]{36}\nContinue the programming task\.\n<\/cross-session-message>$/);
       const opening = sessions.readSent(todo.id)?.opening;
       assert(opening && task.includes(opening), 'stored opening must occur in the native task input');
       assert(!openings.has(opening), 'native follow-ups must have distinct delivery openings');
@@ -218,18 +226,25 @@ try {
       evidence.push({ deliveredTask: task, card });
     }
     if (process.argv.includes('--merge-facts')) {
+      for (const args of [['init', '-q'], ['remote', 'add', 'origin', 'https://github.com/synthetic/reviewed.git']]) {
+        const result = spawnSync('git', args, { cwd: record.cwd, encoding: 'utf8' });
+        assert.equal(result.status, 0, result.stderr);
+      }
+      await readWorkspaceIdentity(record.cwd, true);
+      const finishFixtureTodo = (id: string) => store.updateTodo(store.getTodo(id)!, { state: 'done' }, Date.now());
+      for (const id of [boundId, added.todo.id, todo.id]) finishFixtureTodo(id);
       for (const [key, value] of Object.entries({ mergePolicy: 'review_bot', reviewBot: 'hyperneo-ai-test', humanSignoff: ['docs/design/**'] }))
         assert.deepEqual(await rpc('pack.preferences.set', { pack: 'coding', scope: { kind: 'repo', key: 'synthetic/reviewed' }, key, value }), { ok: true });
-      const codingTodo = await invokeTodo('neo.todo.add', { after: [], askId: opened.todos[0].askId, title: 'Coding merge facts', check: { pack: 'coding', kind: 'pr_approved', params: { url: 'https://github.com/synthetic/reviewed/pull/78' } }, target: { verb: 'bind', ref } });
-      await invokeTodo('neo.todo.continue', { todoId: codingTodo.todo.id, message: 'Continue https://github.com/synthetic/reviewed/pull/78.' });
-      const inputs = readFileSync(transcript, 'utf8').trim().split('\n').map(line => JSON.parse(line));
-      const deliveredMergeFacts = inputs.findLast(entry => entry.type === 'user').message.content;
+      const startCodingTodo = (instruction: string) => Promise.all([
+        once(nativeDelivery, 'input', { signal: AbortSignal.timeout(15_000) }),
+        invokeTodo('neo.todo.add', { after: [], askId: opened.todos[0].askId, title: 'Coding merge facts', instruction, check: { pack: 'coding', kind: 'pr_approved', params: { url: 'https://github.com/synthetic/reviewed/pull/78' } }, target: { verb: 'send', ref } }),
+      ]);
+      const [[deliveredMergeFacts], firstCodingTodo] = await startCodingTodo('Review https://github.com/synthetic/reviewed/pull/78.');
       evidence.push({ deliveredMergeFacts });
       assert(deliveredMergeFacts.includes('synthetic/reviewed merge policy: review_bot; review bot: hyperneo-ai-test; human sign-off: docs/design/**; merge by: owner'), deliveredMergeFacts);
+      finishFixtureTodo(firstCodingTodo.todo.id);
       assert.deepEqual(await rpc('pack.preferences.set', { pack: 'coding', scope: { kind: 'repo', key: 'synthetic/reviewed' }, key: 'mergeBy', value: 'daemon' }), { ok: true });
-      await invokeTodo('neo.todo.continue', { todoId: codingTodo.todo.id, message: 'Continue the PR task.' });
-      const nextInputs = readFileSync(transcript, 'utf8').trim().split('\n').map(line => JSON.parse(line));
-      const goalOnlyMergeFacts = nextInputs.findLast(entry => entry.type === 'user').message.content;
+      const [[goalOnlyMergeFacts]] = await startCodingTodo('Review the PR.');
       evidence.push({ goalOnlyMergeFacts });
       assert(goalOnlyMergeFacts.includes('synthetic/reviewed merge policy: review_bot; review bot: hyperneo-ai-test; human sign-off: docs/design/**; merge by: daemon'), goalOnlyMergeFacts);
 
@@ -248,7 +263,7 @@ try {
     sessions.bind(todo.id, { ...ref, id: 'replacement' }, Date.now());
     assert.equal(sessions.readCard(todo.id)?.model, null);
     assert.equal(sessions.readCard(todo.id)?.effort, null);
-    console.log('PASS: public RPC first input has observed identity; todo continue refreshes real Claude status before native inbox delivery, including changed and unknown effort; bind preserves or clears identity.');
+    console.log('PASS: the start input contains observed identity; three native follow-ups carry only their instructions and distinct IDs. Status tracks changed and unknown effort; bind preserves or clears identity.');
   } finally {
     await new Promise<void>(resolve => peer.close(() => resolve()));
   }

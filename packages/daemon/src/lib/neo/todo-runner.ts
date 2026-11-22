@@ -4,7 +4,7 @@ import { Logger } from '../logger.ts';
 import { neoTrackerReads } from '../../storage/repositories/neo-tracker-mirror.ts';
 import { planNeoTrackerStarts } from './tracker-start-gate.ts';
 import { workerSandboxOn } from '../drivers/worker-sandbox.ts';
-import { withWorkerProvenance } from '../drivers/worker-provenance.ts';
+import { withWorkerDeliveryId, withWorkerProvenance } from '../drivers/worker-provenance.ts';
 import { createWorkQueue } from '../work-queue/sweep.ts';
 import { NEO_TODO_FAILURE_NEXT, neoQuestionCoversTodo, neoTodoAwaitsHuman } from './todo-state.ts';
 import { neoStartRetryDue } from './daemon-cards.ts';
@@ -25,7 +25,7 @@ import {
   type NeoTodoSessionRepository,
 } from '../../storage/repositories/neo-todo-session-repository.ts';
 import type { Place, WorkRef, WorkTurnQuestion } from '../drivers/types.ts';
-import { isBusyWork } from '../drivers/work-operations.ts';
+import { isBusyWork, WORK_MESSAGE_MAX } from '../drivers/work-operations.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import {
@@ -1591,12 +1591,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     if ('reason' in gate) return gate.reason;
     const { todo, ask, ref } = gate.value;
     const status = await refreshIdentity(todo.id, ref, ask);
-    const text = formatGoal(workerBrief(todo, message, ref.adapter), {
-      workId: todo.id,
-      goal: null,
-      doneWhen: todo.doneWhen,
-      checkKind: todo.check?.kind ?? null,
-    });
+    const text = withWorkerDeliveryId(message).slice(0, WORK_MESSAGE_MAX);
     const live = readDriverLive(status);
     if (live && isWaitingOnPrompt(live))
       return fail(
