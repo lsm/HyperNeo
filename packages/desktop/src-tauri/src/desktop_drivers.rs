@@ -1481,6 +1481,55 @@ mod peer_tests {
         assert!(drivers.may_act("other").await.is_some());
     }
 
+    fn slow_exit_guardian(directory: &TempDir) -> (Drivers, PathBuf) {
+        let exited = directory.path().join("exited");
+        let drivers = locked_use_drivers(
+            directory,
+            Some(&format!(
+                "echo 'covered 1'; sleep 0.3; echo unlocked; while read line; do :; done; sleep 0.3; touch '{}'; echo 'ended owner_gone'",
+                exited.display()
+            )),
+        );
+        (drivers, exited)
+    }
+
+    #[tokio::test]
+    async fn a_stop_during_locked_use_startup_returns_after_the_guardian_exits() {
+        let directory = tempfile::tempdir().unwrap();
+        let (drivers, exited) = slow_exit_guardian(&directory);
+        let drivers = Arc::new(drivers);
+        let starting = tokio::spawn({
+            let drivers = drivers.clone();
+            async move { drivers.locked_use("owner", true).await }
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let record = directory.path().join("workers").join("owner");
+        std::fs::create_dir_all(&record).unwrap();
+        std::fs::write(record.join("stopped"), "").unwrap();
+        drivers.retire("owner", &mut None).await.unwrap();
+        assert!(exited.exists(), "stop returned before the guardian exited");
+        assert!(!starting.await.unwrap());
+        assert!(drivers.locked_use("other", false).await);
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_locked_use_start_releases_only_after_the_guardian_exits() {
+        let directory = tempfile::tempdir().unwrap();
+        let (drivers, exited) = slow_exit_guardian(&directory);
+        let drivers = Arc::new(drivers);
+        let starting = tokio::spawn({
+            let drivers = drivers.clone();
+            async move { drivers.locked_use("owner", true).await }
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        starting.abort();
+        let _ = starting.await;
+        assert!(!drivers.locked_use("other", true).await);
+        assert!(released(&drivers, "other").await);
+        assert!(exited.exists(), "released before the guardian exited");
+        assert!(drivers.may_act("other").await.is_some());
+    }
+
     #[tokio::test]
     async fn locked_use_ends_when_the_screen_locks_again() {
         let directory = tempfile::tempdir().unwrap();
