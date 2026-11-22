@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
+import { NEO_OTHER_TOPIC, NEO_OTHER_TOPIC_KEY } from '@hyperneo/shared/types/neo-ask';
 import { createNeoService, createNeoOperations } from '../../helpers/neo-service.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
@@ -350,6 +351,10 @@ test('the RPC snapshot carries the human queue with each in-progress todo owner'
       'index-0': { waiting: 1, held: 0, progress: 0 },
       'index-1': { waiting: 1, held: 0, progress: 0 },
     },
+    topics: {
+      'index-0': { topic: NEO_OTHER_TOPIC, topicKey: NEO_OTHER_TOPIC_KEY },
+      'index-1': { topic: NEO_OTHER_TOPIC, topicKey: NEO_OTHER_TOPIC_KEY },
+    },
   });
   expect(await snapshot(mcp)).not.toHaveProperty('humanQueue');
 });
@@ -379,6 +384,10 @@ test('a project-scoped snapshot still carries the whole human queue, like needsY
   expect(scoped.humanQueue?.counts).toEqual({
     'index-0': { waiting: 1, held: 0, progress: 0 },
     'index-1': { waiting: 1, held: 0, progress: 0 },
+  });
+  expect(scoped.humanQueue?.topics).toEqual({
+    'index-0': { topic: 'Scoped', topicKey: 'scoped', topicSource: 'project' },
+    'index-1': { topic: NEO_OTHER_TOPIC, topicKey: NEO_OTHER_TOPIC_KEY },
   });
 });
 

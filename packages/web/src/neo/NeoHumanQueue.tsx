@@ -128,9 +128,10 @@ export function NeoHumanQueue({
   const revealed = useRef<{ reveal: number; done: boolean } | null>(null);
   useEffect(() => {
     if (!focus || revealed.current?.reveal === reveal) return;
-    revealed.current = { reveal, done: false };
-    if (focused) setState(focused.state);
     if (!queue.topics || topic !== topicKey(focus.askId)) setTopic(null);
+    if (!focused) return;
+    revealed.current = { reveal, done: false };
+    setState(focused.state);
   }, [reveal, focus, focused]);
   useEffect(() => {
     const request = revealed.current;
