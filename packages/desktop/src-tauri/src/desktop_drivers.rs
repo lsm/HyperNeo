@@ -1083,6 +1083,7 @@ impl Drivers {
             let _quiet = self.acting.write().await;
             if !self.unsettled.lock().unwrap().is_empty()
                 || !self.unconfirmed.lock().unwrap().is_empty()
+                || record::ensure_enabled(&self.records.join("workers").join(worker)).is_err()
             {
                 return false;
             }
@@ -1115,12 +1116,13 @@ impl Drivers {
             }
         };
         *slot = Some(lines);
-        if unlocked {
-            if let Some(owner) = self.locked_owner.lock().unwrap().as_mut() {
-                owner.guardian = Some(guardian);
-            }
+        let mut owner = self.locked_owner.lock().unwrap();
+        let kept =
+            unlocked && record::ensure_enabled(&self.records.join("workers").join(worker)).is_ok();
+        if let Some(owner) = owner.as_mut().filter(|_| kept) {
+            owner.guardian = Some(guardian);
         }
-        unlocked
+        kept
     }
 
     /// Admits a call right before it acts, and holds that admission until the call ends.
