@@ -1,42 +1,41 @@
-# Locked Use interrupted-unlock safety
+# Locked Use: limits and interrupted-authorization design
 
-Locked Use keeps OpenAI's shipped model: a signed guardian briefly unlocks behind the blue cover, then relocks. This design changes only the incident race. It does not add tokens, read passwords, or change the authorization rule.
+**No documented macOS mechanism we have found lets a worker drive arbitrary existing GUI apps while the login session remains locked.** The working Locked Use flow performs a real unlock behind the blue cover. Authorization Services also does not document the ordering of physical input, loginwindow submission and mechanism completion. Therefore this design cannot promise “works with no hole.” If zero credential-less unlock is a hard requirement, Locked Use must remain disabled.
 
-The guardian currently has `armed`, `unlocked` and `ending`. An authorization approval can still be in flight when `ending` sees the screen locked and exits. A later guardian can then arm immediately, including while the owner is touching the machine. The incident's second approval and subsequent unlock fit that gap.
+The safest workable option is below. It closes the identified transaction, overlap and upgrade gaps where the OS provides signals, and states the remaining risk instead of hiding it.
 
-Read-only inspection of OpenAI's installed x86_64 build found explicit `beginUnlockGuard` / `completeUnlockGuard` handling, a `pendingUnlockPhysicalInputHandler`, `interruptedUnlockThreadIDs`, `relockAfterUnlock`, and `suppressedUntilManualUnlock`. These are static symbols, not a runtime proof; they show the state transitions to copy and verify below.
+## Transaction design
 
-## Invariant
-
-Once the plugin has answered Allow, that attempt has a live owner until its outcome is observed. If the session is ending or physical input interrupted it, an observed unlock is followed immediately by relock; the automatic attempt finishes only after macOS reports locked. After physical input, the guardian removes the cover but remains alive and disarmed until a normal unlock with no HyperNeo attempt outstanding. A second worker never starts a guardian while the first attempt, guardian or suppressed watcher still exists.
-
-## Threat cases
-
-1. **Owner input before or during authorization.** The input monitor is active before the first login-window action. Input disarms immediately, marks the attempt interrupted, and sets manual-unlock-required. If Allow was already returned, the guardian does not exit on the still-locked observation: it waits for the outcome and relocks after a late unlock. No deadline counts as proof that authorization went away.
-2. **Owner input under the cover or during relock.** The guardian relocks, removes the cover, reports manual-unlock-required, and stays as a disarmed watcher. It cannot grant again, and Desktop refuses later automatic starts. The watcher exits only when a normal unlock occurs with no HyperNeo grant outstanding, so input between sessions cannot be missed.
-3. **Session end with authorization outstanding.** Stop, EOF and idle take the same interrupted path. The guardian stays alive through a late Allow and relock. Desktop remains in Releasing, so the next worker is refused until the guardian has actually exited.
-4. **Overlapping and back-to-back workers.** The existing Desktop gate admits one owner and spawns at most one guardian. An overlapping worker gets `screen_locked`. A clean back-to-back session may start only after the prior guardian exited with no attempt outstanding. After owner input, Desktop stays in a new Suppressed state with the disarmed guardian until normal unlock; it cannot spawn a replacement.
-5. **Owner's full password.** HyperNeo never reads the field. With no HyperNeo Allow outstanding, the stock `use-login-window-ui` branch handles the password normally and clears suppression.
+1. **Name the authorization transaction.** The plugin uses the documented `GetSessionId` callback and includes that session ID and protocol version 2 in its socket request. It sends no password or field content. The guardian accepts only one request while armed, disarms before replying, and records Allow as outstanding before writing the reply.
+2. **Track completion, not a timeout.** The plugin retains the connection and reports the same session ID from `MechanismDeactivate`; `MechanismDestroy` is the fallback if deactivation did not occur. These are documented lifecycle callbacks. The guardian keeps the attempt outstanding until that completion arrives. A missing callback leaves Locked Use stuck and refuses later starts; it never treats a deadline as cancellation.
+3. **Do not release the worker early.** The guardian reports `unlocked` only after both the session's completion and the screen unlock. Until then the cover stays up and Desktop refuses worker actions. If interrupted, an unlock observed before completion is conservatively treated as a possible late HyperNeo Allow: keep the cover, refuse worker access, then relock after completion. If completion arrives while still locked, a later full-password or OpenAI unlock is not HyperNeo's late completion and is preserved.
+4. **Suppress after physical input.** Input disarms immediately and marks the attempt interrupted. After any required late relock, the guardian exits and Desktop enters Suppressed. New automatic sessions stay refused until the owner explicitly chooses **Resume Locked Use** while unlocked. This avoids guessing whether a password or OpenAI cleared suppression.
+5. **Overlap and upgrade.** Desktop's existing single-owner gate plus one outstanding session ID prevents a second guardian from inheriting a grant. Legacy plugins send the old request and are denied; the executing protocol, not a bundle version on disk, determines eligibility. A clean back-to-back session with no input and no outstanding attempt remains allowed.
 
 ## Changes
 
-**Guardian** (`packages/desktop/locked-use/guardian.m`): add explicit `grantOutstanding`, `interrupted` and `relockAfterUnlock` state. Set `grantOutstanding` when the socket decides to answer Allow, before replying. On physical input or session end, disarm and interrupt; after an outstanding grant, wait for unlock and then relock before exiting. After physical input, remove the cover once locked and remain as a disarmed watcher until normal unlock. Report `manual_unlock_required` when entering that state.
+**Plugin:** add protocol 2, the session ID, and deactivate/destroy completion on the retained connection. Deny malformed, duplicate or mismatched requests. Log request, Allow/Deny and completion with the session ID. No credential values enter IPC.
 
-**Desktop** (`packages/desktop/src-tauri/src/locked_use.rs`): keep the existing single-owner gate. Add Suppressed for the relocked, disarmed watcher: the worker has released the Mac, but no automatic start is allowed. Return to Idle only when the watcher observes normal unlock and exits. No second socket or lock file.
+**Guardian:** add the outstanding session ID, interrupted and relock-after-unlock states described above. Keep physical-input monitoring active before the first login-window action. Never exit while an Allow is outstanding; after completion, either preserve a legitimate later unlock or finish the required relock.
 
-**Plugin, authorization rule and installer:** no changes. The existing one-of rule keeps HyperNeo, OpenAI and `use-login-window-ui` in their current order; #11527 remains intact.
+**Desktop:** keep one owner. Add Suppressed and the explicit Resume control; normal unlocked desktop operation and OpenAI remain available while automatic HyperNeo unlock is suppressed.
+
+**Installer and authorization rule:** the one-of rule is unchanged, including OpenAI and `use-login-window-ui`. The installer upgrades an older verified plugin in place through the existing verified install/rollback path, leaving the rule and backup untouched. An old plugin still loaded by macOS speaks protocol 1 and fails closed with the new guardian; a new plugin with an old guardian is also denied. No claim is made from the bundle version on disk.
 
 ## Attended signed-build acceptance
 
-Record lock state and `io.hyperneo.locked-use` approval/denial logs for every case. Run on a Developer-ID build with the owner present.
+Record lock state and session-ID logs for every step. A missing required sequence is inconclusive, not a pass.
 
-1. **Worker works and relocks.** Lock, start a worker, perform and read back a real Calculator action behind the cover, then stop. The Mac is locked afterwards and the session has ended.
-2. **Owner input cannot unlock.** Repeat during startup, under the cover, and immediately after relock: move the mouse, type one or two password characters without Return, then repeat with Return. The Mac never unlocks without the full password; after the first physical input there are no further HyperNeo approvals until normal unlock.
-3. **Overlap and back-to-back.** A second worker is refused while the first owns or is releasing the Mac. End with owner input and immediately request another session while continuing the partial-entry sequence: no guardian grant and no unlock. Also run a clean back-to-back session with no owner input to prove the feature still works.
-4. **Normal and OpenAI unlock.** With Locked Use idle, and again after owner input suppressed it, the full password unlocks normally. Separately exercise OpenAI's own remote Locked Use before and after a HyperNeo session; both relock, and the authorization rule is unchanged. There is no HyperNeo installer upgrade or rollback in this design.
+1. **Worker works and relocks.** Starting locked, the worker performs and reads back a real Calculator action only after Allow, completion and unlock for one session ID. Stop leaves the Mac locked.
+2. **Owner input cannot complete an automatic attempt.** During startup, under the cover, and immediately after relock, move the mouse and enter one or two password characters without Return; repeat with Return. There must be no further HyperNeo Allow after input. Finish with the full password and confirm normal unlock; Resume only afterwards.
+3. **Delayed and abandoned attempts.** Repeat startup interruption until the log proves Allow was outstanding while physical input or stop arrived with the screen still locked. The cover must remain, no worker action may run, completion must precede exit, and the late outcome must be relocked. Also capture completion without a HyperNeo unlock, then confirm full-password unlock is preserved. If either sequence cannot be produced on the signed build, its safety remains unverified.
+4. **Overlap and back-to-back.** A second worker is refused while the first owns, has an outstanding session, or is suppressed; it produces zero HyperNeo approvals. A clean back-to-back session without owner input still works and relocks.
+5. **OpenAI coexistence and upgrade.** Exercise OpenAI's own remote unlock before upgrade, after upgrade, and while HyperNeo is suppressed; preserve each legitimate OpenAI unlock and its relock. Verify the rule is unchanged. Exercise a failed upgrade/rollback and a legacy-protocol request: OpenAI still works and HyperNeo denies.
 
-The implementing PR adds these cases to the existing native checks and `.claude/skills/verify/journeys/locked-use-plugin.md`.
+The implementing PR adds deterministic delayed/completed-session fixtures to the native checks and this sequence to the Locked Use verify journey.
 
-## Rejected alternative
+## Residual risk and rejected alternative
 
-The previous one-time-token design depended on an undocumented password-hint path and still could not distinguish a person pressing Return with the token present. Timeout-only pending grants and socket preflights likewise cannot prove an approval was discarded or ownership is exclusive. The interrupted-attempt state above closes the actual race without changing the shipped authorization model.
+macOS does not document that a physical-input event must reach the guardian before loginwindow invokes the mechanism. A person's submission could therefore win that ordering race despite immediate disarm. The current immediate-relock call and loginwindow accessibility identifiers are also private SPI, and no userspace design can guarantee relock if every responsible process dies after Allow but before relock. These risks cannot be tested away; accepting them is a product decision, not a proof of safety.
+
+The rejected token design depended on an undocumented password-hint path and still could not identify who pressed Return. Timeout-only grants and socket preflights do not supply transaction completion or exclusive ownership.
