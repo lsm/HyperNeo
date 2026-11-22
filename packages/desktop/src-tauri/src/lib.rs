@@ -3,6 +3,8 @@ mod desktop_permissions;
 mod permissions_page;
 #[cfg(target_os = "macos")]
 mod desktop_drivers;
+#[cfg(target_os = "macos")]
+mod locked_use_install;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -416,12 +418,31 @@ pub fn run() {
 			let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
 			let menu = Menu::with_items(app, &[&show_item, &hide_item, &quit_item])?;
+			#[cfg(target_os = "macos")]
+			let locked_use = match locked_use_install::app_bundle() {
+				Some(bundle) => {
+					let label = locked_use_install::label(locked_use_install::installed());
+					let item = MenuItem::with_id(app, "locked_use", label, true, None::<&str>)?;
+					menu.insert(&item, 2)?;
+					Some((item, bundle))
+				}
+				None => None,
+			};
 
 			let _tray = TrayIconBuilder::new()
 				.icon(app.default_window_icon().unwrap().clone())
 				.menu(&menu)
 				.show_menu_on_left_click(false)
-				.on_menu_event(|app, event| match event.id.as_ref() {
+				.on_menu_event(move |app, event| match event.id.as_ref() {
+					#[cfg(target_os = "macos")]
+					"locked_use" => {
+						if let Some((item, bundle)) = locked_use.clone() {
+							std::thread::spawn(move || {
+								let installed = locked_use_install::toggle(&bundle);
+								let _ = item.set_text(locked_use_install::label(installed));
+							});
+						}
+					}
 					"show" => {
 						if let Some(window) = app.get_webview_window("main") {
 							let _ = window.show();
