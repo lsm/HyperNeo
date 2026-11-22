@@ -3,6 +3,9 @@ mod desktop_permissions;
 mod permissions_page;
 #[cfg(target_os = "macos")]
 mod desktop_drivers;
+#[cfg(target_os = "macos")]
+#[allow(dead_code)]
+mod locked_use;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

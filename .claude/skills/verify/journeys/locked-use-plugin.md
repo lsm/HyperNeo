@@ -68,3 +68,49 @@ shows both and rejects look-alike names. Install also verifies the right reads b
 the privileged mechanism, and its rollback deletes the bundle only after the right is
 proven gone. After install, lock the Mac and
 unlock it with the password once to confirm the normal path still works.
+
+## Guardian
+
+The guardian `hyperneo-locked-use` (identifier `io.hyperneo.locked-use`) is the only
+process the plugin answers. It ships as `HyperNeo.app/Contents/MacOS/hyperneo-locked-use`
+and starts only when its parent is signed `io.hyperneo.app` by team P5R65T296V, the
+plugin is installed, the screen is locked and it has Accessibility. While running it
+covers every display with "HyperNeo is using this Mac", keeps the display awake, and
+locks again on keyboard, mouse or trackpad input, on "stop" or EOF on stdin, or when no
+stdin line arrives for its idle seconds (first argument, default 60).
+
+Start gates, with the screen unlocked. Nothing is covered or unlocked:
+
+```bash
+bash packages/desktop/locked-use/check-guardian.sh "$RUN"
+```
+
+Pass prints `ended untrusted_owner` twice (no launcher, and a launcher signed with
+another identifier), then `ended not_locked accessibility_required
+input_monitoring_required` (with `not_installed` first when the plugin is absent) from a
+copy that holds no privacy grants, and `guardian check PASS`.
+
+Crash relock, with no GUI: Desktop starts the guardian and relocks the Mac when it exits
+uncleanly after covering, such as when it is killed:
+
+```bash
+mkdir -p packages/desktop/src-tauri/binaries
+touch "packages/desktop/src-tauri/binaries/hyperneo-$(rustc --print host-tuple)"
+cargo test --locked --manifest-path packages/desktop/src-tauri/Cargo.toml --lib locked_use::
+```
+
+Pass runs 5 tests: killed or relock-failed after covering relocks once; a clean end or a
+start-gate refusal does not.
+
+Live run, on a Mac with the plugin installed and the owner present. Start it, then lock
+the Mac with Control-Command-Q within 20 seconds:
+
+```bash
+{ sleep 50; echo stop; } | { sleep 20; "$RUN/launch-app" "$RUN/hyperneo-locked-use" 120; } > "$RUN/live.log" &
+```
+
+Within a few seconds of the lock the Mac unlocks behind a blue cover on every display
+that reads "HyperNeo is using this Mac" and the start time. `pmset -g assertions` over ssh
+lists `HyperNeo Locked Use cover` under PreventUserIdleDisplaySleep. About 30 seconds
+later the Mac locks again and `live.log` ends `ended stopped`. Repeat and touch the
+trackpad while covered: the Mac locks at once and the log ends `ended local_input`.

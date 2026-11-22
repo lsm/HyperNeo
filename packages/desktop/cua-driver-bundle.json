@@ -4,6 +4,7 @@
       "entitlements": "SignedEntitlements.plist",
       "files": {
         "MacOS/cua-driver": "binaries/cua-driver",
+        "MacOS/hyperneo-locked-use": "binaries/hyperneo-locked-use",
         "Resources/cua-driver-LICENSE": "binaries/cua-driver-LICENSE",
         "Resources/cua-driver-THIRD_PARTY_NOTICES.md": "binaries/cua-driver-THIRD_PARTY_NOTICES.md",
         "embedded.provisionprofile": "embedded.provisionprofile"

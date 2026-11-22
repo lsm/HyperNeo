@@ -104,6 +104,7 @@ jobs:
           mkdir -p packages/desktop/src-tauri/binaries
           touch "packages/desktop/src-tauri/binaries/hyperneo-$(rustc --print host-tuple)"
           cargo test --locked --manifest-path packages/desktop/src-tauri/Cargo.toml --lib startup_config_tests::attach_uses_configured_data_directory -- --exact
+          cargo test --locked --manifest-path packages/desktop/src-tauri/Cargo.toml --lib locked_use::
       - name: Build isolated embedded-host fixture
         run: cargo rustc --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml --bin desktop-driver-fixture -- --cfg test
       - name: Check macOS Tauri wiring with an inert sidecar
