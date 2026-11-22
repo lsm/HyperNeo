@@ -24,15 +24,19 @@ try {
   new NeoRepository(db).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
   const store = new NeoAskTodoRepository(db);
   const now = Date.now();
-  const ask = (id: string, title: string) =>
-    store.openAsk({ id, title, sessionId: root, projectId: null, originMessageId: null, request: 'Synthetic inbox proof only.', createdAt: now });
+  const ask = (id: string, title: string, topic: string) =>
+    store.openAsk({ id, title, topic, sessionId: root, projectId: null, originMessageId: null, request: 'Synthetic inbox proof only.', createdAt: now });
   const todo = (id: string, askId: string, title: string) =>
     store.addTodo(id, askId, { title, doneWhen: 'Observed', check: null, instruction: 'Synthetic', named: null, approvedAt: now }, now);
   const card = (id: string, askId: string, text: string, todoId?: string) =>
     store.askQuestion(id, askId, { text, kind: 'yesno', options: null, multiple: false, noLabel: 'Not now', yesLabel: 'Agree', ...(todoId ? { todoId } : {}) }, now);
-  ask('trip', 'Synthetic trip plan');
-  ask('tax', 'Synthetic tax filing');
-  ask('car', 'Synthetic car service');
+  ask('trip', 'Synthetic trip plan', 'Travel');
+  ask('tax', 'Synthetic tax filing', 'Finance');
+  ask('car', 'Synthetic car service', 'Travel');
+  ask('tickets', 'Synthetic railway tickets', 'Travel');
+  ask('budget', 'Synthetic budget', 'Finance');
+  card('tickets-card', 'tickets', 'Take the morning train?');
+  card('budget-card', 'budget', 'Use the revised total?');
   card('trip-card', 'trip', 'Keep the trip to one week?');
   todo('hotel', 'trip', 'Book the hotel');
   todo('bags', 'trip', 'Pack the bags');

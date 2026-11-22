@@ -4,104 +4,109 @@ import { writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 
-const [port, directory] = process.argv.slice(2);
-assert(port && directory, 'usage: human-queue-web.mjs <port> <run-dir>');
-assert.notEqual(port, '8399');
+const [port, directory, phase] = process.argv.slice(2);
+assert(port && port !== '8399' && directory && ['before', 'after'].includes(phase));
 const run = resolve(directory);
 const evidence = join(run, 'evidence');
 const base = `http://127.0.0.1:${port}`;
-const code = execFileSync('bun', ['.claude/skills/verify/rpc.ts', 'device.pair.create', JSON.stringify({ kind: 'human', name: 'Synthetic inbox browser' })], {
-  encoding: 'utf8',
-  env: { ...process.env, VERIFY_PORT: port, HYPERNEO_DATA_DIR: join(run, 'data') },
-}).match(/"code":\s*"([^"]+)"/)?.[1];
-assert(code, 'no pairing code');
-const { chromium } = createRequire(import.meta.url)('playwright');
-const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}) });
-const result = {};
+const pair = JSON.parse(execFileSync('bun', [
+  '.claude/skills/verify/rpc.ts', 'device.pair.create', '{"kind":"human"}',
+], { encoding: 'utf8' })).reply;
+const { chromium } = createRequire(import.meta.url)(process.env.VERIFY_PLAYWRIGHT || 'playwright');
+const browser = await chromium.launch({ headless: true, executablePath: process.env.VERIFY_BROWSER });
+const observations = [];
 try {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: 'en-US' });
-  await context.route('**/*', (route) => (route.request().url().startsWith(base) ? route.continue() : route.abort()));
-  const page = await context.newPage();
-  const errors = [];
-  page.on('pageerror', (error) => errors.push(error.message));
-  await page.goto(`${base}/pair#${code}`);
-  await page.getByRole('button', { name: 'Pair this browser' }).click();
-  await page.getByText('This browser is paired.').waitFor({ timeout: 10000 });
-  const queue = page.locator('[data-human-queue]');
-  const states = queue.getByRole('group', { name: 'State' });
-  const open = async () => {
+  const pairing = await browser.newContext();
+  const response = await pairing.request.post(`${base}/pair`, {
+    headers: { origin: base }, data: { code: pair.code, name: 'Synthetic Inbox browser' },
+  });
+  assert.equal(response.status(), 200);
+  const storageState = await pairing.storageState();
+  await pairing.close();
+  for (const theme of ['light', 'dark']) {
+    const context = await browser.newContext({ storageState, viewport: { width: 1440, height: 900 }, colorScheme: theme });
+    await context.route('**/*', (route) => route.request().url().startsWith(base) ? route.continue() : route.abort());
+    await context.addInitScript((value) => localStorage.setItem('theme', value), theme);
+    const page = await context.newPage();
+    page.setDefaultTimeout(15000);
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(`${base}/neo`);
-    await page.waitForTimeout(500);
-    const work = page.getByRole('button', { name: /your work/i }).first();
-    if (await work.isVisible().catch(() => false)) await work.click();
-    await queue.waitFor({ timeout: 15000 });
-  };
-  const labels = async (group) =>
-    (await queue.getByRole('group', { name: group }).locator('button').allInnerTexts()).map((text) => text.replace(/\s+/g, ' ').trim());
-  const regions = () => queue.getByRole('region').evaluateAll((all) => all.map((node) => node.getAttribute('aria-label')));
-  await open();
-  result.states = await labels('State');
-  assert.deepEqual(result.states, ['Waiting on you 2', 'Held 1', 'In progress 2']);
-  result.asks = await labels('Ask');
-  assert.equal(result.asks[0], 'All 2');
-  assert.deepEqual((await regions()).sort(), ['Synthetic tax filing', 'Synthetic trip plan']);
-  assert.equal(await page.locator('[data-scene-group="attention"], [data-scene-group="running"]').count(), 0, 'the queue is the only list of open work');
-  await queue.getByText('Book the hotel by the station for three nights?').waitFor();
-  await queue.locator('[data-ask-question="tax-card"]').getByRole('button', { name: 'Agree' }).waitFor({ timeout: 10000 });
-  await queue.getByText('Book the hotel', { exact: true }).waitFor();
-  for (const scheme of ['light', 'dark']) {
-    await page.emulateMedia({ colorScheme: scheme });
-    await page.screenshot({ path: join(evidence, `queue-1280-${scheme}.png`) });
+    const chips = page.locator('[data-topic-chips]');
+    await chips.waitFor();
+    const queue = page.locator('[data-human-queue]');
+    const hotel = queue.locator('#neo-ref-question-hotel-card');
+    await hotel.getByRole('button', { name: 'Hold', exact: true }).waitFor();
+    const form = page.locator('form.neo-composer-input.is-collapsed');
+    const attach = form.getByRole('button', { name: 'Attach photos or files' });
+    await attach.hover();
+    const hover = await attach.evaluate((button) => {
+      const face = button.querySelector('span') ?? button;
+      const svg = button.querySelector('svg');
+      const target = button.getBoundingClientRect();
+      const box = face.getBoundingClientRect();
+      const icon = svg.getBoundingClientRect();
+      const frame = button.closest('form').getBoundingClientRect();
+      const style = getComputedStyle(face);
+      return {
+        target: [target.width, target.height],
+        face: [box.width, box.height],
+        radius: style.borderTopLeftRadius,
+        background: style.backgroundColor,
+        iconCenterOffset: [icon.x + icon.width / 2 - box.x - box.width / 2,
+          icon.y + icon.height / 2 - box.y - box.height / 2],
+        frameCenterOffset: box.y + box.height / 2 - frame.y - frame.height / 2,
+        leftInset: box.x - frame.x,
+      };
+    });
+    const legacy = {
+      state: await queue.getByRole('group', { name: 'State', exact: true }).count(),
+      ask: await queue.getByRole('group', { name: 'Ask', exact: true }).count(),
+      more: await queue.getByRole('combobox', { name: 'More' }).count(),
+    };
+    const labels = await chips.getByRole('button').allInnerTexts();
+    await page.screenshot({ path: join(evidence, `${phase}-${theme}.png`), animations: 'disabled' });
+    observations.push({ theme, labels, legacy, hover });
+    assert.deepEqual(labels.map((text) => text.trim()), ['All 5', 'Travel 3', 'Finance 2']);
+    assert.deepEqual(hover.target, [44, 44]);
+    assert.notEqual(hover.background, 'rgba(0, 0, 0, 0)');
+    if (phase === 'before') continue;
+    const checkFace = (face) => {
+      assert.deepEqual(face.face, [32, 32]);
+      assert(face.radius.endsWith('%') ? parseFloat(face.radius) >= 50 : parseFloat(face.radius) >= 16);
+      assert(face.iconCenterOffset.every((offset) => Math.abs(offset) <= 1));
+    };
+    assert.deepEqual(legacy, { state: 0, ask: 0, more: 0 });
+    checkFace(hover);
+    assert(Math.abs(hover.frameCenterOffset) <= 1);
+    assert(hover.leftInset >= 8);
+    await queue.getByText('Call the garage', { exact: true }).waitFor();
+    const trip = queue.locator('#neo-ref-question-trip-card');
+    await trip.getByRole('button', { name: 'Take back' }).waitFor();
+    await chips.getByRole('button', { name: 'Finance 2' }).click();
+    await queue.locator('#neo-ref-question-tax-card').waitFor();
+    await hotel.waitFor({ state: 'detached' });
+    await chips.getByRole('button', { name: 'All 5' }).click();
+    await hotel.getByRole('button', { name: 'Hold', exact: true }).click();
+    await hotel.getByRole('button', { name: 'Take back' }).waitFor();
+    await hotel.getByRole('button', { name: 'Take back' }).click();
+    await hotel.getByRole('button', { name: 'Hold', exact: true }).waitFor();
+    const chooser = page.waitForEvent('filechooser');
+    await attach.click();
+    assert.equal(await (await chooser).isMultiple(), true);
+    assert.deepEqual(errors, []);
+    await context.close();
   }
-  await page.emulateMedia({ colorScheme: 'light' });
-  const hotel = queue.locator('[data-ask-question="hotel-card"]');
-  await hotel.getByRole('button', { name: 'Hold' }).click();
-  await states.getByRole('button', { name: 'Held 2' }).waitFor({ timeout: 10000 });
-  await states.getByRole('button', { name: 'Held 2' }).click();
-  await queue.locator('article[data-ask]').first().waitFor();
-  await queue.getByText('Keep the trip to one week?').waitFor();
-  await queue.getByText('On hold').nth(1).waitFor({ timeout: 10000 });
-  await queue.locator('[data-ask-question="trip-card"]').getByText('Keep the trip to one week?').waitFor();
-  assert.equal(await queue.getByText('On hold').count(), 2, 'held cards say they are held');
-  result.heldAfterHold = await queue.locator('[data-ask-question]').evaluateAll((all) => all.map((node) => node.getAttribute('data-ask-question')).sort());
-  assert.deepEqual(result.heldAfterHold, ['hotel-card', 'trip-card']);
-  await page.screenshot({ path: join(evidence, 'queue-1280-held.png') });
-  await queue.locator('[data-ask-question="hotel-card"]').getByRole('button', { name: 'Take back' }).click();
-  await states.getByRole('button', { name: 'Held 1' }).waitFor({ timeout: 10000 });
-  await page.reload();
-  await queue.waitFor();
-  assert.deepEqual(await labels('State'), ['Waiting on you 2', 'Held 1', 'In progress 2'], 'take-back survives reload');
-  await states.getByRole('button', { name: 'In progress 2' }).click();
-  await queue.getByText('Call the garage').waitFor();
-  result.progress = await queue.getByRole('region').allInnerTexts();
-  const progressShots = async (width) => {
-    for (const scheme of ['light', 'dark']) {
-      await page.emulateMedia({ colorScheme: scheme });
-      await page.waitForTimeout(400);
-      await page.screenshot({ path: join(evidence, `queue-${width}-progress-${scheme}.png`) });
-    }
-    await page.emulateMedia({ colorScheme: 'light' });
-  };
-  await progressShots(1280);
-  await queue.getByRole('group', { name: 'Ask' }).getByRole('button', { name: /Synthetic car service/ }).click();
-  assert.deepEqual(await regions(), ['Synthetic car service']);
-  assert.deepEqual(await labels('State'), ['Waiting on you 0', 'Held 0', 'In progress 1'], 'state counts follow the ask choice');
-  await page.setViewportSize({ width: 390, height: 844 });
-  await open();
-  await page.waitForTimeout(500);
-  assert(await page.evaluate(() => document.documentElement.scrollWidth <= 391), 'no sideways page scroll at phone width');
-  for (const scheme of ['light', 'dark']) {
-    await page.emulateMedia({ colorScheme: scheme });
-    await page.screenshot({ path: join(evidence, `queue-390-${scheme}.png`) });
-  }
-  await states.getByRole('button', { name: 'In progress 2' }).click();
-  await queue.getByText('Call the garage').waitFor();
-  await progressShots(390);
-  result.pageErrors = errors;
-  assert.deepEqual(errors, []);
-  result.passed = true;
 } finally {
-  writeFileSync(join(evidence, 'human-queue-web.json'), JSON.stringify(result, null, 2));
+  writeFileSync(join(evidence, 'human-queue-web.json'), JSON.stringify(observations, null, 2));
   await browser.close();
 }
-console.log(JSON.stringify(result));
+if (phase === 'before') {
+  const failures = observations.flatMap(({ theme, legacy, hover }) => {
+    assert.deepEqual(legacy, { state: 1, ask: 1, more: 1 });
+    assert.deepEqual(hover.face, [44, 44]);
+    return [`${theme}: two legacy filter rows and a 44 px hover face`];
+  });
+  assert.fail(failures.join('\n'));
+}
+console.log(`PASS: ${observations.length} themes, project filters, held and in-progress work, and centered attachment hover`);

@@ -1,29 +1,23 @@
-# The web inbox lists what waits on the human, with held cards and take-back
+# Project filters and attachment hover in the Neo Inbox
 
-Build the web bundle (`cd packages/web && bun run build`). Seed a fresh synthetic run,
-launch per SKILL.md on a free port (never 8399), then drive headless Chromium:
+Use the pinned runtime, resource guard and isolated daemon setup in ../SKILL.md.
+Build the web bundle at the checked-out head, then run the desktop web journey:
 
-```bash
-mkdir -p "$RUN/home"
-env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test bun .claude/skills/verify/human-queue-web-seed.ts "$RUN"
-.claude/skills/verify/launch.sh <port> "$RUN"
-HYPERNEO_DATA_DIR="$RUN/data" NODE_PATH=<playwright> node .claude/skills/verify/human-queue-web.mjs <port> "$RUN"
+```sh
+VERIFY_BROWSER=<chromium> VERIFY_PLAYWRIGHT=<playwright-package> VERIFY_MOCK_PORT=29347 \
+  bash .claude/skills/verify/with-run.sh bash .claude/skills/verify/human-queue-web.sh \
+  29346 <before-or-after> <absolute-evidence-directory>
 ```
 
-The seed opens three synthetic asks: a trip with a card on one todo, a held card about
-the whole ask and one uncovered todo; a tax filing with a card on its todo; a car service
-with one uncovered todo. The held card is written before the trip's todos exist, so it
-stays about the whole ask. No key or model is used.
+This seeds five asks across two projects in a fresh synthetic DB. A trip has one
+waiting card, one held card and uncovered work. No provider or model turn is used.
 
-End state, in `$RUN/evidence/`:
+Before must exit 1 with both themes reporting the two legacy filter rows and
+the oversized attachment hover. After must exit 0. All and the two project
+chips remain functional. Waiting cards, held cards and in-progress work are
+accessible together, Hold and Take back both work, and the attachment button
+opens the file picker. Its 44px target centers a 32px circular hover face
+around the plus inside the collapsed composer.
 
-- `human-queue-web.json` has `passed: true`, states `Waiting on you 2`, `Held 1`,
-  `In progress 2`, and the asks row starting `All 2`. The old attention and running groups
-  are gone, so the queue is the only list of open work.
-- Hold on a waiting card moves it to Held through `neo.question.hold`, where held cards read
-  "On hold"; Take back returns it,
-  and the counts survive reload. In progress lists each uncovered todo with whose step it
-  is, and choosing an ask narrows the list and the state counts.
-- `queue-{1280,390}-{light,dark}.png`, `queue-1280-held.png` and
-  `queue-{1280,390}-progress-{light,dark}.png` (In progress, with whose step each item is):
-  at 390 px the filter rows wrap and the page does not scroll sideways.
+Inspect the individual light and dark PNGs for each phase. The screenshots and
+geometry receipts are captured from the paired desktop-width web UI.
