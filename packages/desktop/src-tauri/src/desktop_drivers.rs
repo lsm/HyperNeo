@@ -1286,6 +1286,47 @@ mod peer_tests {
     }
 
     #[tokio::test]
+    async fn a_locked_use_start_cancelled_after_unlock_releases_the_mac() {
+        let directory = tempfile::tempdir().unwrap();
+        let drivers = locked_use_drivers(
+            &directory,
+            Some("echo 'covered 1'; echo unlocked; while read line; do :; done; echo 'ended owner_gone'"),
+        );
+        let mut start = Box::pin(drivers.locked_use("owner", true));
+        std::future::poll_fn(|context| {
+            assert!(std::future::Future::poll(start.as_mut(), context).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        let mut owned = None;
+        for _ in 0..150 {
+            owned = drivers.may_act("owner").await;
+            if owned.is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let mut owned = owned.expect("the guardian never unlocked");
+        owned.settled = true;
+        drop(owned);
+        drop(start);
+        assert!(released(&drivers, "other").await);
+    }
+
+    #[tokio::test]
+    async fn a_locked_use_call_ending_after_its_worker_retired_never_blocks_a_start() {
+        let directory = tempfile::tempdir().unwrap();
+        let drivers = locked_use_drivers(
+            &directory,
+            Some("echo 'covered 1'; echo unlocked; while read line; do :; done; echo 'ended owner_gone'"),
+        );
+        let acting = drivers.may_act("other").await.unwrap();
+        assert!(drivers.locked.retired("other").await);
+        drop(acting);
+        assert!(drivers.locked_use("owner", true).await);
+    }
+
+    #[tokio::test]
     async fn locked_use_refuses_to_start_while_a_call_is_acting() {
         let directory = tempfile::tempdir().unwrap();
         let drivers = locked_use_drivers(
