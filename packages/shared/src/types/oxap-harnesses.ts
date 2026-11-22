@@ -3,7 +3,6 @@ export type OxapHarness = {
   adapter: string;
   providers: readonly string[];
   thinking: boolean;
-  input: 'text' | 'multimodal';
   settings: readonly string[];
   environment: readonly string[];
   key?: string;
@@ -22,7 +21,6 @@ export const OXAP_HARNESSES = {
     adapter: 'codex',
     providers: ['anthropic-codex'],
     thinking: false,
-    input: 'text',
     settings: ['executable'],
     environment: ['HOME', 'CODEX_HOME'],
     entry: (settings: Readonly<Record<string, string>>, environment: readonly string[]) => ({
@@ -40,7 +38,6 @@ export const OXAP_HARNESSES = {
     adapter: 'deepseek',
     providers: ['deepseek'],
     thinking: false,
-    input: 'text',
     settings: ['executable'],
     environment: ['HOME', 'PATH', 'DSH_HOME'],
     key: 'DEEPSEEK_API_KEY',
@@ -68,4 +65,20 @@ export function isOxapHarness(harness: unknown): harness is OxapHarnessId {
 
 export function oxapHarness(harness: OxapHarnessId): OxapHarness {
   return OXAP_HARNESSES[harness];
+}
+
+export function oxapSupportsImages(harness: OxapHarnessId, model: string | undefined): boolean {
+  return (
+    harness === 'oxap-deepseek' &&
+    (model === 'deepseek-flash' ||
+      model === 'deepseek-v4-flash' ||
+      model === 'deepseek-v4-flash-vision-exp')
+  );
+}
+
+export function isOxapModelLocked(
+  harness: unknown,
+  nativeSessionId: string | null | undefined
+): boolean {
+  return harness === 'oxap-deepseek' && !!nativeSessionId;
 }

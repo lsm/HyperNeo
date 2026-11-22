@@ -1,5 +1,6 @@
 import { EventEmitter, on } from 'node:events';
 import { generateUUID } from '@hyperneo/shared';
+import { oxapSupportsImages } from '@hyperneo/shared/types/oxap-harnesses';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { OxapHubRequestError, type OxapHubClient } from './oxap-hub-client.ts';
@@ -15,18 +16,40 @@ type Stream = {
   release(): Promise<void>;
 };
 
-function textContent(message: SDKUserMessage): string {
-  const content = message.message.content;
+type SubmitBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; image: { data: string; media_type: string } };
+
+function messageContent(message: SDKUserMessage, images: boolean): string | SubmitBlock[] {
+  const content: unknown = message.message.content;
   if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) throw new Error('OAP currently supports text input only');
-  return content
-    .map((part) => {
-      if (part.type !== 'text' || typeof part.text !== 'string') {
-        throw new Error('OAP currently supports text input only');
+  const invalidContent = () =>
+    new OxapHubRequestError('invalid_submission', 'OAP currently supports text input only');
+  if (!Array.isArray(content)) throw invalidContent();
+  const blocks = content.map((part: unknown): SubmitBlock => {
+    if (!part || typeof part !== 'object' || !('type' in part)) throw invalidContent();
+    if (part.type === 'text' && 'text' in part && typeof part.text === 'string')
+      return { type: 'text', text: part.text };
+    if (images && part.type === 'image' && 'source' in part) {
+      const source = part.source as
+        | { type?: unknown; data?: unknown; media_type?: unknown }
+        | undefined;
+      if (
+        source?.type === 'base64' &&
+        typeof source.data === 'string' &&
+        typeof source.media_type === 'string'
+      ) {
+        return { type: 'image', image: { data: source.data, media_type: source.media_type } };
       }
-      return part.text;
-    })
-    .join('');
+    }
+    throw invalidContent();
+  });
+  return blocks.some((part) => part.type === 'image')
+    ? blocks
+    : blocks
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text)
+        .join('');
 }
 
 function envelope(
@@ -48,7 +71,12 @@ function envelope(
   };
 }
 
-function submitParameters(sessionId: string, id: string, content: string, modelId?: string) {
+function submitParameters(
+  sessionId: string,
+  id: string,
+  content: ReturnType<typeof messageContent>,
+  modelId: string | undefined
+) {
   return {
     session_id: sessionId,
     request: envelope(id, 'session.message.submit.request', sessionId, {
@@ -61,15 +89,34 @@ function submitParameters(sessionId: string, id: string, content: string, modelI
 }
 
 const prepareSubmit = (superpipe({})('oap.query.submit') as PipelineAPI)
-  .input(['sessionId', 'id', 'message', 'modelId'])
-  .pipe(textContent, 'message', 'content')
+  .input(['sessionId', 'id', 'message', 'modelId', 'images'])
+  .pipe(messageContent, ['message', 'images'], 'content')
   .pipe(submitParameters, ['sessionId', 'id', 'content', 'modelId'], 'request')
   .end('request') as (
   sessionId: string,
   id: string,
   message: SDKUserMessage,
-  modelId?: string
+  modelId: string | undefined,
+  images: boolean
 ) => ReturnType<typeof submitParameters>;
+
+async function bindDeepSeekModel(client: OxapHubClient, sessionId: string, modelId: string) {
+  const response = (await client.request('session.model.switch', {
+    session_id: sessionId,
+    request: envelope(generateUUID(), 'session.model.switch.request', sessionId, {
+      session_id: sessionId,
+      model_id: modelId,
+    }),
+  })) as { type?: unknown; payload?: { session_id?: unknown; model_id?: unknown } };
+  if (
+    response?.type !== 'session.model.switch.response' ||
+    response.payload?.session_id !== sessionId ||
+    response.payload.model_id !== modelId
+  ) {
+    throw new Error('OXAP did not confirm the selected DeepSeek model');
+  }
+  return modelId;
+}
 
 function selectsModel(response: unknown): boolean {
   const level = (response as { payload?: { features?: Record<string, { level?: unknown }> } })
@@ -186,13 +233,20 @@ export function createOxapQueryHub(
           }
           uncertainSessions.delete(sessionId);
         }
-        if (model && selects === undefined)
+        const selectedModel = model?.id();
+        const deepSeek = model?.adapter === 'deepseek';
+        let boundModel: string | undefined;
+        if (deepSeek && selectedModel) {
+          boundModel = await bindDeepSeekModel(client, sessionId, selectedModel);
+        } else if (model && selects === undefined) {
           selects = selectsModel(await client.request('capabilities', { adapter: model.adapter }));
+        }
         const parameters = prepareSubmit(
           sessionId,
           generateUUID(),
           message,
-          selects ? model?.id() : undefined
+          selects ? selectedModel : undefined,
+          deepSeek && oxapSupportsImages('oxap-deepseek', boundModel)
         );
         const emitter = new EventEmitter();
         const events = on(emitter, 'event') as AsyncIterableIterator<[Event | Error]>;

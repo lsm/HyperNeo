@@ -7,7 +7,12 @@ import type {
   RuntimeSettingsPatch,
 } from '../../storage/repositories/session-runtime-settings-write.ts';
 import { snapshotProcessingStatus } from '../agent/model-switch-handler.ts';
-import { decideSwitch, thinkingRefusal, type SessionEngine } from '../agent/session-engine.ts';
+import {
+  decideSwitch,
+  oxapModelSwitchRefusal,
+  thinkingRefusal,
+  type SessionEngine,
+} from '../agent/session-engine.ts';
 import { resolveHyperneoThinking } from '../drivers/start-configuration.ts';
 import { matchModelIdOrName, usableModels } from '../usable-models.ts';
 import { getAvailableModels, isCuratedOutModel } from '../model-service.ts';
@@ -187,7 +192,10 @@ function gateHarness(target: ResolvedTarget, deps: RuntimeSettingsDependencies) 
       : undefined;
   const switched = provider ? decideSwitch(current, provider, deps.engineOf(provider)) : true;
   const reason =
-    switched === true ? thinkingRefusal(current.harness, input.thinkingLevel) : switched;
+    switched === true
+      ? (oxapModelSwitchRefusal(current, target.snapshot.sdkSessionId, input.model) ??
+        thinkingRefusal(current.harness, input.thinkingLevel))
+      : switched;
   return reason ? { reason: { ok: false, reason } as Failure } : { value: target };
 }
 

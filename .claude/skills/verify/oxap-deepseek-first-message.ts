@@ -5,6 +5,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { checkOxapBinary } from '../../../packages/daemon/src/lib/oxap/oxap-binary.ts';
 import { readHubOptions } from '../../../packages/daemon/src/lib/oxap/oxap-settings.ts';
+import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import {
   type LiveQueryDeltaEvent,
@@ -16,7 +17,7 @@ import { answerCodexProbeLocally, serveLocalRelease } from './oxap-codex-provide
 const [binary, version, sha256, ...args] = process.argv.slice(2);
 const mode = args.length === 2 ? args[0] : 'first';
 const runArgument = args.at(-1)!;
-assert(['first', 'recovery', 'pending', 'flash', 'image'].includes(mode));
+assert(['first', 'recovery', 'pending', 'flash', 'image', 'flash-web', 'pro-web', 'flash-recovery'].includes(mode));
 const run = resolve(runArgument);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -70,7 +71,9 @@ try {
   evidence.harnessSave = saved;
   assert.deepEqual(saved, { accepted: true });
   assert.deepEqual(releaseRequests, ['SHA256SUMS.txt', `${version}.tar.gz`]);
-  const flash = mode === 'flash' || mode === 'image';
+  const flash = ['flash', 'image', 'flash-web', 'flash-recovery'].includes(mode);
+  const web = mode.endsWith('-web');
+  const withImage = mode === 'image' || mode === 'flash-web';
   const model = flash ? 'deepseek-v4-flash' : 'deepseek-v4-pro';
   const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a4NEAAAAASUVORK5CYII=';
   const { sessionId } = await hub.request<{ sessionId: string }>('session.create', {
@@ -105,11 +108,44 @@ try {
     params: [sessionId, 50],
     subscriptionId: 'deepseek-chat',
   });
-  await hub.request('message.send', {
-    sessionId,
-    content: flash ? 'Verify model and images' : 'Synthetic DeepSeek prompt',
-    ...(mode === 'image' ? { images: [{ data: png, media_type: 'image/png' }] } : {}),
-  });
+  if (web) {
+    const dist = resolve('packages/web/dist');
+    const preview = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      async fetch(request, server) {
+        const refusal = await app.guardRequest(request);
+        if (refusal) return refusal;
+        const url = new URL(request.url);
+        if (url.pathname === '/pair' && request.method === 'POST') return app.handlePair(request);
+        if (url.pathname === '/ws') {
+          const device = await app.authenticateUpgrade(request, '127.0.0.1');
+          if (server.upgrade(request, { data: { connectionSessionId: 'global', device } })) return;
+          return new Response('Upgrade failed', { status: 500 });
+        }
+        const file = Bun.file(join(dist, url.pathname.startsWith('/session/') ? 'index.html' : url.pathname));
+        return await file.exists() ? new Response(file) : new Response('Not found', { status: 404 });
+      },
+      websocket: createWebSocketHandlers(app.transport, app.sessionManager),
+    });
+    try {
+      const pairing = await hub.request<{ ok: boolean; code: string }>('operation.invoke', {
+        name: 'device.pair.create', input: { kind: 'human', name: 'Synthetic DeepSeek browser' },
+      });
+      assert(pairing.ok);
+      const browser = Bun.spawn([process.execPath, '.claude/skills/verify/oxap-deepseek-images-web.mjs',
+        String(preview.port), pairing.code, sessionId, mode, png, run], { stdout: 'inherit', stderr: 'inherit' });
+      assert.equal(await browser.exited, 0, 'The browser journey failed');
+    } finally {
+      preview.stop(true);
+    }
+  } else {
+    await hub.request('message.send', {
+      sessionId,
+      content: flash ? 'Verify model and images' : 'Synthetic DeepSeek prompt',
+      ...(withImage ? { images: [{ data: png, media_type: 'image/png' }] } : {}),
+    });
+  }
   const client = await app.oxapEngine.getHub(() => readHubOptions(app.oxapSettings));
   const deadline = Date.now() + 20_000;
   while (![...rows.values()].some((row) => row.type === 'result')) {
@@ -137,21 +173,33 @@ try {
   assert.deepEqual(
     replyText,
     flash
-      ? [JSON.stringify({ model, images: mode === 'image' ? [{ type: 'image', data: png, mimeType: 'image/png' }] : [] })]
+      ? [JSON.stringify({ model, images: withImage ? [{ type: 'image', data: png, mimeType: 'image/png' }] : [] })]
       : ['Synthetic DeepSeek reply']
   );
-  if (mode === 'recovery' || mode === 'pending') {
+  if (flash) {
+    const switching = await hub.request<{ success: boolean; error: string }>('session.model.switch', {
+      sessionId, provider: 'deepseek', model: 'deepseek-v4-pro',
+    });
+    assert.equal(switching.success, false);
+    assert.match(switching.error, /fixed model/);
+    await assert.rejects(
+      hub.request('session.update', { sessionId, config: { model: 'deepseek-v4-pro' } }),
+      /fixed model/
+    );
+    evidence.existingSwitchRefused = true;
+  }
+  if (mode === 'recovery' || mode === 'pending' || mode === 'flash-recovery') {
     while (app.sessionManager.getCachedSession(sessionId)?.queryPromise) {
       assert(Date.now() < deadline, 'The first query did not finish shutting down');
       await Bun.sleep(25);
     }
+    const pending = mode === 'pending';
     const original = app.db.getSession(sessionId)!;
-    const excerpt = 'Saved conversation excerpt';
-    if (mode === 'pending') {
+    if (pending) {
       await app.sessionManager.updateSession(sessionId, {
         metadata: {
           ...original.metadata,
-          oapRecovery: { previous: sessionId, text: excerpt, pendingOpen: true },
+          oapRecovery: { previous: nativeId, text: '', pendingOpen: true },
         },
       });
     }
@@ -161,48 +209,28 @@ try {
       content: 'Message after hub restart',
     });
     const retryDeadline = Date.now() + 20_000;
-    const job = () =>
-      app.jobQueue
-        .listJobs({ queue: 'message_delivery', limit: 20 })
-        .find((entry) => entry.payload.messageUuid === messageId);
     const deliveryStatus = () =>
       [...rows.values()].find((row) => row.uuid === messageId)?.deliveryStatus;
-    while (errors.length === 0 || (!job()?.retryCount && deliveryStatus() !== 'failed')) {
-      if (Date.now() >= retryDeadline) {
-        Object.assign(evidence, {
-          deliveryStatus: deliveryStatus(),
-          deliveryJob: { status: job()?.status, retryCount: job()?.retryCount, error: job()?.error },
-          storedSendStatus: app.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageId)
-            ?.sendStatus,
-        });
-        assert.fail('The failed delivery did not settle');
-      }
+    const replyLines = () => [...rows.values()]
+      .filter((row) => row.type === 'assistant')
+      .flatMap((row) => (row.message?.content ?? []).map((block) => block.text));
+    while (!replyLines().includes('Synthetic DeepSeek reply after restart') || deliveryStatus() !== 'delivered') {
+      assert.deepEqual(errors, [], 'The message after restart failed');
+      assert(Date.now() < retryDeadline, `Restart delivery state: ${deliveryStatus()}, replies: ${replyLines()}`);
       await Bun.sleep(25);
     }
     const saved = app.db.getSession(sessionId)!;
-    const notices = (app.db.getSDKMessages(sessionId, 50).messages as ChatRow[])
-      .filter((row) => row.type === 'assistant')
-      .flatMap((row) => (row.message?.content ?? []).map((block) => block.text))
-      .filter((line) => line?.includes('new thread'));
-    Object.assign(evidence, {
-      deliveryStatus: deliveryStatus(),
-      deliveryJob: { status: job()?.status, retryCount: job()?.retryCount },
-      notices,
-      pendingOpen: saved.metadata.oapRecovery?.pendingOpen,
-      recoveryFailure: saved.metadata.oapRecovery?.failure,
-      previousThreadPreserved: saved.sdkSessionId === original.sdkSessionId,
-      excerptPreserved: mode !== 'pending' || saved.metadata.oapRecovery?.text === excerpt,
-    });
-    assert.deepEqual(errors, ['OXAP DeepSeek opened the previous thread again. Start a new chat.']);
-    assert.equal(deliveryStatus(), 'failed');
-    assert.equal(job()?.status, 'dead');
-    assert.equal(job()?.retryCount, 0);
-    assert.deepEqual(notices, []);
-    assert.equal(saved.metadata.oapRecovery?.pendingOpen, false);
-    assert.equal(saved.metadata.oapRecovery?.failure, 'same_native_thread');
-    assert.equal(saved.sdkSessionId, original.sdkSessionId);
-    if (mode === 'pending') assert.equal(saved.metadata.oapRecovery?.text, excerpt);
+    const reopenedClient = await app.oxapEngine.getHub(() => readHubOptions(app.oxapSettings));
+    const state = await reopenedClient.request('state', { session_id: sessionId }) as {
+      payload?: { current_model_id?: string };
+    };
+    assert.equal(state.payload?.current_model_id, model);
+    assert(saved.sdkSessionId);
+    assert.equal(saved.sdkSessionId === nativeId, !pending);
+    assert.equal(replyLines().filter((line) => line?.includes('new thread')).length, pending ? 1 : 0);
+    Object.assign(evidence, { resumedSameThread: !pending, deliveryStatus: deliveryStatus(), restartReplies: 1 });
   }
+
   Object.assign(evidence, { opened: 1, firstMessageReplies: replies.length, modelSwitch, pass: true });
   console.log(JSON.stringify(evidence));
 } finally {

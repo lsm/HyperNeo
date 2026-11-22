@@ -1,19 +1,17 @@
-# OXAP DeepSeek recovery fails once when the hub returns the old thread
+# OXAP DeepSeek continues after a hub restart
 
-Follow the isolation and pinned OXAP release instructions in
+Follow the isolation and pinned release instructions in
 [First message in an OXAP DeepSeek chat](oxap-deepseek-first-message.md).
-Run the proof twice with fresh evidence directories and the mode argument
-shown below. Use `pending` for the second run.
+Run each mode with fresh evidence directories.
 
 ```sh
 bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
   .claude/skills/verify/oxap-deepseek-first-message.ts /absolute/oxap RELEASE-NAME SHA256 recovery
 ```
 
-Both runs send a first message through the daemon and real hub with a
-synthetic dsh peer, restart the hub, and send another message. The second run
-also seeds a recovery already waiting for a new thread. The chat's public
-message feed must show a failed delivery, with zero retries and a DeepSeek
-error directing the user to a new chat. The saved transcript must have no
-notice promising a replacement thread. The original thread ID and saved
-recovery excerpt must survive.
+In `recovery` mode the second message follows a hub restart. The synthetic dsh
+peer accepts native resume and the chat receives a reply on the same thread
+without a new-thread notice. Use `flash-recovery` to confirm that a Flash thread
+keeps its model after resume. In `pending` mode a replacement was already
+requested before restart. The next reply arrives on a different thread and the
+chat shows one replacement notice.
