@@ -47,7 +47,11 @@ cat > "$fixture/bin/xcrun" <<'XCRUN'
 #!/bin/bash
 exit 0
 XCRUN
-chmod +x "$fixture/bin/xcrun"
+cat > "$fixture/bin/lipo" <<'LIPO'
+#!/bin/bash
+echo arm64
+LIPO
+chmod +x "$fixture/bin/xcrun" "$fixture/bin/lipo"
 
 refuses 'refuses a signed driver missing required entitlements' 'cua-driver entitlement missing: com.apple.security.device.screen-capture' \
     env PATH="$fixture/bin:$PATH" bash "$desktop/verify-macos-bundle.sh" "$fixture/HyperNeo.app" || failed=1
