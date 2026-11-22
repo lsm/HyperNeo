@@ -1240,6 +1240,21 @@ mod peer_tests {
     }
 
     #[tokio::test]
+    async fn locked_use_refuses_the_next_worker_after_owner_input_during_release() {
+        let directory = tempfile::tempdir().unwrap();
+        let drivers = locked_use_drivers(
+            &directory,
+            Some("echo 'covered 1'; echo unlocked; while read line; do :; done; echo 'ended local_input'"),
+        );
+        assert!(drivers.locked_use("owner", true).await);
+        drivers.retire("owner", &mut None).await.unwrap();
+        assert!(!drivers.locked_use("other", true).await);
+        assert!(drivers.locked_use("other", false).await);
+        assert!(drivers.locked_use("other", true).await);
+        drivers.retire("other", &mut None).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn locked_use_stays_refused_when_the_guardian_refuses_or_is_missing() {
         let directory = tempfile::tempdir().unwrap();
         let refusing = locked_use_drivers(&directory, Some("echo 'ended not_installed'; exit 2"));
