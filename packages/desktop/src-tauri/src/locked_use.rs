@@ -498,6 +498,11 @@ mod tests {
     }
 
     #[test]
+    fn relocks_when_the_guardian_is_killed_before_covering() {
+        assert_eq!(run("kill -9 $$"), (1, String::new()));
+    }
+
+    #[test]
     fn relocks_when_the_guardian_fails_to_relock() {
         assert_eq!(
             run("echo 'covered 1'; echo 'ended idle relock_failed'; exit 3"),
