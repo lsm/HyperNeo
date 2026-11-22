@@ -16,7 +16,8 @@ for line in sys.stdin:
     method = request["method"]
     if method == "initialize":
         assert request["params"]["provider"] == "deepseek-official"
-        assert request["params"]["model"] == "deepseek-v4-pro"
+        model = request["params"]["model"]
+        assert model in ("deepseek-v4-pro", "deepseek-v4-flash")
         assert request["params"]["cwd"] == os.getcwd()
         emit(id=request["id"], result={
             "serverInfo": {"name": "deepseek-harness-sdk-runtime", "version": "0.0.1"}
@@ -44,12 +45,12 @@ for line in sys.stdin:
         event(2, "turn/start", {"turn": 1})
         event(3, "step/start", {"step": 1, "turn": 1})
         event(4, "user/message", user_message, surfaceOp="append")
-        reply = "Synthetic DeepSeek reply"
+        reply = f"Synthetic DeepSeek reply from {model}"
         event(5, "assistant/message", {
             "message": {
                 "id": "assistant-1", "role": "assistant",
                 "source": {
-                    "kind": "model", "model": "deepseek-v4-pro", "provider": "deepseek-official",
+                    "kind": "model", "model": model, "provider": "deepseek-official",
                 },
                 "content": [{"type": "text", "text": reply}],
             },

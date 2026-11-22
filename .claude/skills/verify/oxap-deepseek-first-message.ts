@@ -13,7 +13,10 @@ import {
 } from '../../../packages/shared/src/mod.ts';
 import { answerCodexProbeLocally, serveLocalRelease } from './oxap-codex-provider.ts';
 
-const [binary, version, sha256, runArgument] = process.argv.slice(2);
+const [binary, version, sha256, ...args] = process.argv.slice(2);
+const mode = args.length === 2 ? args[0] : 'first';
+const runArgument = args.at(-1)!;
+assert(['first', 'flash', 'recovery', 'pending'].includes(mode));
 const run = resolve(runArgument);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -44,7 +47,7 @@ const transport = new WebSocketClientTransport({
   autoReconnect: false,
   createSocket: createLocalSocket,
 });
-const evidence: Record<string, unknown> = { version, sha256 };
+const evidence: Record<string, unknown> = { version, sha256, mode };
 try {
   const hub = new MessageHub({ defaultSessionId: 'global' });
   hub.registerTransport(transport);
@@ -70,7 +73,7 @@ try {
   const { sessionId } = await hub.request<{ sessionId: string }>('session.create', {
     workspacePath: workspace,
     title: 'Synthetic DeepSeek first message',
-    config: { provider: 'deepseek', model: 'deepseek-v4-pro' },
+    config: { provider: 'deepseek', model: mode === 'flash' ? 'deepseek-v4-flash' : 'deepseek-v4-pro' },
   });
   const errors: string[] = [];
   app.internalEventBus.subscribe('session.errorObserved', ({ details }) => {
@@ -80,8 +83,10 @@ try {
   evidence.errors = errors;
   type ChatRow = {
     id: string;
+    uuid?: string;
     type: string;
     is_error?: boolean;
+    deliveryStatus?: string;
     message?: { content?: { type: string; text?: string }[] };
   };
   const rows = new Map<string, ChatRow>();
@@ -119,10 +124,59 @@ try {
     [false]
   );
   const replies = [...rows.values()].filter((row) => row.type === 'assistant');
+  const replyText = replies.flatMap((row) => (row.message?.content ?? []).map((block) => block.text));
   assert.deepEqual(
-    replies.flatMap((row) => (row.message?.content ?? []).map((block) => block.text)),
-    ['Synthetic DeepSeek reply']
+    replyText,
+    ['Synthetic DeepSeek reply from deepseek-v4-' + (mode === 'flash' ? 'flash' : 'pro')]
   );
+  if (mode === 'recovery' || mode === 'pending') {
+    const original = app.db.getSession(sessionId)!;
+    const excerpt = 'Saved conversation excerpt';
+    if (mode === 'pending') {
+      await app.sessionManager.updateSession(sessionId, {
+        metadata: {
+          ...original.metadata,
+          oapRecovery: { previous: sessionId, text: excerpt, pendingOpen: true },
+        },
+      });
+    }
+    await app.oxapEngine.restart();
+    const { messageId } = await hub.request<{ messageId: string }>('message.send', {
+      sessionId,
+      content: 'Message after hub restart',
+    });
+    const retryDeadline = Date.now() + 20_000;
+    const job = () =>
+      app.jobQueue
+        .listJobs({ queue: 'message_delivery', limit: 20 })
+        .find((entry) => entry.payload.messageUuid === messageId);
+    const deliveryStatus = () =>
+      [...rows.values()].find((row) => row.uuid === messageId)?.deliveryStatus;
+    while (errors.length === 0 || (!job()?.retryCount && deliveryStatus() !== 'failed')) {
+      assert(Date.now() < retryDeadline, 'The failed delivery did not settle');
+      await Bun.sleep(25);
+    }
+    const saved = app.db.getSession(sessionId)!;
+    const notices = (app.db.getSDKMessages(sessionId, 50).messages as ChatRow[])
+      .filter((row) => row.type === 'assistant')
+      .flatMap((row) => (row.message?.content ?? []).map((block) => block.text))
+      .filter((line) => line?.includes('new thread'));
+    Object.assign(evidence, {
+      deliveryStatus: deliveryStatus(),
+      deliveryJob: { status: job()?.status, retryCount: job()?.retryCount },
+      notices,
+      pendingOpen: saved.metadata.oapRecovery?.pendingOpen,
+      previousThreadPreserved: saved.sdkSessionId === original.sdkSessionId,
+      excerptPreserved: mode !== 'pending' || saved.metadata.oapRecovery?.text === excerpt,
+    });
+    assert.deepEqual(errors, ['OXAP DeepSeek opened the previous thread again. Start a new chat.']);
+    assert.equal(deliveryStatus(), 'failed');
+    assert.equal(job()?.retryCount, 0);
+    assert.deepEqual(notices, []);
+    assert.equal(saved.metadata.oapRecovery?.pendingOpen, false);
+    assert.equal(saved.sdkSessionId, original.sdkSessionId);
+    if (mode === 'pending') assert.equal(saved.metadata.oapRecovery?.text, excerpt);
+  }
   Object.assign(evidence, { opened: 1, firstMessageReplies: replies.length, modelSwitch, pass: true });
   console.log(JSON.stringify(evidence));
 } finally {
