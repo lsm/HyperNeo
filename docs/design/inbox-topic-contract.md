@@ -35,10 +35,12 @@ is to relabel the row as **Asks** and shorten its title labels. That preserves
 one-ask navigation and leaves the Inbox without a topic filter.
 
 1. Share a rule that trims labels and allows 2–6 grapheme clusters. Apply it
-   to picks submitted by `neo.ask.propose`, `neo.ask.topic` and `neo.todo.add`
-   with input. Return a field error with the allowed range for invalid picks.
-   Guide Neo to reuse labels in the human's language and allow established
-   names and acronyms. Localize the shared `Other` label at rendering time.
+   to picks submitted by `neo.ask.propose`, `neo.ask.topic`, `neo.todo.add`
+   with input, and the destination (`to`) of `neo.topic.merge`. Return a field
+   error with the allowed range before any write. Keep the existing rules for
+   `from` so it can still identify legacy picks. Guide Neo to reuse labels in
+   the human's language and allow established names and acronyms. Localize
+   the shared `Other` label at rendering time.
 2. Reuse the resolver and its existing source order. At read time, skip
    project titles and stored picks outside the range and continue to the next
    eligible source. A project title within range keeps the project ID as its
@@ -55,13 +57,15 @@ one-ask navigation and leaves the Inbox without a topic filter.
 
 ## Acceptance
 
-Extend the [ask-topic proof](../../.claude/skills/verify/journeys/ask-topics.md)
+Extend the [ask-topic proof](../../.claude/skills/verify/journeys/ask-topics.md),
+the [topic merge proof](../../.claude/skills/verify/journeys/topic-merge.md),
 and the [Inbox queue proof](../../.claude/skills/verify/journeys/human-queue-web.md).
-Reject seven-character picks through the three input operations. In the real
-Inbox, open More with a long session-request title, an ask whose project title
-is too long but whose pick fits, and an unlinked request with a legacy pick
-outside the range. Seed two asks in one topic, with one outside the loaded card
-page. Check that chips and More use the same short labels and counts, selection
-includes both matching asks in the chosen state, and the unlinked request
-appears under `Other` and **All**. Confirm the stored legacy pick remains
-identical after the Inbox displays its fallback.
+Reject seven-character picks through all four write paths. Check that a
+rejected merge leaves its matches untouched and that `from` still accepts a
+legacy pick. In the real Inbox, open More with a long session-request title,
+an ask with a long project title and a valid pick, and an unlinked request with
+an out-of-range legacy pick. Seed two asks in one topic, with one outside the
+loaded card page. Check that chips and More use the same short labels and
+counts, selection includes both matching asks in the chosen state, and the
+unlinked request appears under `Other` and **All**. Confirm the stored legacy
+pick remains identical after the Inbox displays its fallback.
