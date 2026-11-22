@@ -81,6 +81,26 @@ expect pass second_install_is_noop install
 expect pass uninstall uninstall
 expect pass uninstall_state eval '! right_row && [[ ! -e "$FIXTURE/plugins/HyperNeoLockedUse.bundle" ]] && ! grep -q io.hyperneo.locked-use.unlock "$FIXTURE/live.plist"'
 
+openai_rule=com.openai.sky.CUAService.AuthorizationPlugin.remote
+reset
+plutil -replace rule -json "[\"$openai_rule\",\"use-login-window-ui\"]" "$FIXTURE/live.plist"
+plutil -insert k-of-n -integer 1 "$FIXTURE/live.plist"
+cp "$FIXTURE/live.plist" "$t/openai.plist"
+expect pass coexist_install install
+expect pass coexist_keeps_alternatives eval '[[ "$(plutil -extract rule json -o - "$FIXTURE/live.plist")" == "[\"io.hyperneo.locked-use.unlock\",\"$openai_rule\",\"use-login-window-ui\"]" ]]'
+expect pass coexist_keeps_threshold eval '[[ "$(plutil -extract k-of-n raw -o - "$FIXTURE/live.plist")" == 1 ]]'
+expect pass coexist_reinstall_is_noop install
+expect pass coexist_uninstall uninstall
+expect pass coexist_restores_original /usr/bin/cmp -s "$t/openai.plist" "$FIXTURE/live.plist"
+expect pass coexist_leaves_other_right eval '! grep -Fq "$openai_rule" "$FIXTURE/calls"'
+
+reset
+cp "$t/openai.plist" "$FIXTURE/live.plist"
+plutil -replace k-of-n -integer 2 "$FIXTURE/live.plist"
+before="$(snapshot)"
+expect fail coexist_refuses_stricter_rule install
+expect pass coexist_refusal_changed_nothing eval '[[ "$(snapshot)" == "$before" ]] && ! grep -q write "$FIXTURE/calls"'
+
 reset
 install
 touch "$FIXTURE/remove-fails"
