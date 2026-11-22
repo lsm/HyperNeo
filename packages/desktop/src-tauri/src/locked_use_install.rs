@@ -4,17 +4,15 @@ use std::process::Command;
 const PLUGIN: &str = "/Library/Security/SecurityAgentPlugins/HyperNeoLockedUse.bundle";
 const SIGNER: &str = "anchor apple generic and identifier \"io.hyperneo.app\" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"P5R65T296V\"";
 const BODY: &str = r#"set -eu
-/usr/bin/codesign --verify --strict --deep --test-requirement "=$3" "$1"
+/usr/bin/codesign --verify --strict --deep --test-requirement "=$2" "$1"
 d="$(/usr/bin/mktemp -d /private/tmp/hyperneo-locked-use.XXXXXX)"
 trap '/bin/rm -rf "$d"' EXIT
-printf %s "$5" > "$d/install.sh"
-printf %s "$6" > "$d/uninstall.sh"
-printf %s "$7" > "$d/policy.sh"
-printf %s "$8" > "$d/policy.jxa"
-/bin/bash "$d/$4.sh" "$2"
+printf %s "$3" > "$d/uninstall.sh"
+printf %s "$4" > "$d/policy.sh"
+printf %s "$5" > "$d/policy.jxa"
+/bin/bash "$d/uninstall.sh"
 "#;
-const SCRIPTS: [&str; 4] = [
-    include_str!("../../locked-use/install.sh"),
+const SCRIPTS: [&str; 3] = [
     include_str!("../../locked-use/uninstall.sh"),
     include_str!("../../locked-use/policy.sh"),
     include_str!("../../locked-use/policy.jxa"),
@@ -42,7 +40,7 @@ pub(crate) fn label(installed: bool) -> &'static str {
     if installed {
         "Remove Locked Use…"
     } else {
-        "Install Locked Use…"
+        "Locked Use unavailable"
     }
 }
 
@@ -67,7 +65,7 @@ fn available(app: &Path) -> bool {
             .is_ok_and(|status| status.success())
 }
 
-fn admin_command(app: &Path, install: bool) -> Command {
+fn admin_command(app: &Path) -> Command {
     let mut command = Command::new("/usr/bin/osascript");
     for line in SCRIPT {
         command.args(["-e", line]);
@@ -75,18 +73,17 @@ fn admin_command(app: &Path, install: bool) -> Command {
     command
         .arg(BODY)
         .arg(app)
-        .arg(app.join("Contents/Resources/locked-use/HyperNeoLockedUse.bundle"))
         .arg(SIGNER)
-        .arg(if install { "install" } else { "uninstall" })
         .args(SCRIPTS);
     command
 }
 
-/// Installs or removes Locked Use behind the macOS admin prompt; true when it is installed after.
-pub(crate) fn toggle(app: &Path) -> bool {
-    let install = !installed();
-    if let Err(error) = admin_command(app, install).status() {
-        log::error!("Could not run the Locked Use installer: {error}");
+/// Removes Locked Use behind the macOS admin prompt; true if it remains installed.
+pub(crate) fn remove(app: &Path) -> bool {
+    if installed() {
+        if let Err(error) = admin_command(app).status() {
+            log::error!("Could not run the Locked Use uninstaller: {error}");
+        }
     }
     installed()
 }
@@ -107,22 +104,16 @@ mod tests {
     }
 
     #[test]
-    fn locked_use_install_passes_paths_and_scripts_as_arguments_not_script_text() {
+    fn locked_use_removal_passes_paths_and_scripts_as_arguments {
         let app = Path::new("/Applications/Hyper \"Neo\" $(x).app");
-        let command = admin_command(app, true);
+        let command = admin_command(app);
         assert_eq!(command.get_program(), "/usr/bin/osascript");
         assert_eq!(
             payload(&command),
             [
                 BODY.to_owned(),
                 app.display().to_string(),
-                format!(
-                    "{}/Contents/Resources/locked-use/HyperNeoLockedUse.bundle",
-                    app.display()
-                ),
                 SIGNER.to_owned(),
-                "install".to_owned(),
-                include_str!("../../locked-use/install.sh").to_owned(),
                 include_str!("../../locked-use/uninstall.sh").to_owned(),
                 include_str!("../../locked-use/policy.sh").to_owned(),
                 include_str!("../../locked-use/policy.jxa").to_owned(),
@@ -147,7 +138,7 @@ mod tests {
             .find("/usr/bin/codesign --verify --strict --deep")
             .unwrap();
         let copy = BODY.find("/usr/bin/mktemp -d /private/tmp/").unwrap();
-        let run = BODY.find("/bin/bash \"$d/$4.sh\" \"$2\"").unwrap();
+        let run = BODY.find("/bin/bash \"$d/uninstall.sh\"").unwrap();
         assert!(verify < copy && copy < run);
         assert!(!BODY.contains("Resources"));
         assert!(SCRIPT.join("\n").contains("with administrator privileges"));
@@ -160,23 +151,13 @@ mod tests {
         let status = Command::new("/bin/bash")
             .args(["-c", BODY, "locked-use"])
             .arg(dir.path())
-            .arg("plugin")
             .arg(SIGNER)
-            .arg("install")
             .arg(format!("touch '{}'", marker.display()))
-            .args(["", "", ""])
+            .args(["", ""])
             .status()
             .unwrap();
         assert!(!status.success());
         assert!(!marker.exists());
-    }
-
-    #[test]
-    fn locked_use_removal_runs_the_uninstaller() {
-        assert_eq!(
-            payload(&admin_command(Path::new("/A.app"), false))[4],
-            "uninstall"
-        );
     }
 
     #[test]
@@ -187,7 +168,7 @@ mod tests {
         std::fs::create_dir_all(&scripts).unwrap();
         std::fs::write(scripts.join("install.sh"), "").unwrap();
         assert!(!available(dir.path()));
-        assert_eq!(label(false), "Install Locked Use…");
+        assert_eq!(label(false), "Locked Use unavailable");
         assert_eq!(label(true), "Remove Locked Use…");
     }
 }

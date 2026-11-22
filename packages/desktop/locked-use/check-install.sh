@@ -1,5 +1,5 @@
 #!/bin/bash
-# Runs the real install.sh and uninstall.sh entry points against fixtures, without root and
+# Runs the real uninstall.sh entry point against fixtures, without root and
 # without touching the Mac's authorization database. Only the paths in a copy of policy.sh
 # are rewritten; security, id, chown, codesign and stat are fakes that act on the fixture.
 # Usage: check-install.sh <stock rule plist>   (a saved `security authorizationdb read system.login.screensaver`)
@@ -14,7 +14,7 @@ group="$(id -gn)"
 export FIXTURE="$t/fixture"
 
 mkdir -p "$t/kit" "$t/bin"
-cp "$here/install.sh" "$here/uninstall.sh" "$here/policy.jxa" "$t/kit/"
+cp "$here/uninstall.sh" "$here/policy.jxa" "$t/kit/"
 sed -e "s|^plugin=.*|plugin=\"\$FIXTURE/plugins/HyperNeoLockedUse.bundle\"|" \
     -e "s|^backup=.*|backup=\"\$FIXTURE/support/screensaver-rule.backup.plist\"|" \
     -e "s|^authdb=.*|authdb=\"\$FIXTURE/auth.db\"|" \
@@ -27,7 +27,6 @@ fake id '[[ "$1" == -u ]] && { echo 0; exit 0; }; exec /usr/bin/id "$@"'
 fake chown 'exit 0'
 fake rm '[[ -e "$FIXTURE/rm-fails" && "$1" == -rf ]] && exit 1; exec /bin/rm "$@"'
 fake mktemp '[[ -e "$FIXTURE/mktemp-fails" ]] && exit 1; exec /usr/bin/mktemp "$@"'
-fake codesign '[[ -e "$FIXTURE/codesign-slow" ]] && sleep 2; exit 0'
 fake stat "out=\"\$(/usr/bin/stat \"\$@\")\" || exit \$?; sed -e 's/^$user:$group:/root:wheel:/' -e 's/^$user:/root:/' <<< \"\$out\""
 fake security 'f="$FIXTURE"; mine=io.hyperneo.locked-use.unlock
 echo "$*" >> "$f/calls"
@@ -47,16 +46,21 @@ case "$1 $2" in
 esac'
 export PATH="$t/bin:$PATH"
 
-mkdir -p "$t/source/HyperNeoLockedUse.bundle/Contents/MacOS"
-echo plugin > "$t/source/HyperNeoLockedUse.bundle/Contents/MacOS/HyperNeoLockedUse"
-
 reset() {
-    rm -rf "$FIXTURE" && mkdir -p "$FIXTURE/plugins" "$FIXTURE/support"
-    sqlite3 "$FIXTURE/auth.db" "create table rules (id integer primary key, name text not null unique);"
-    cp "$stock" "$FIXTURE/live.plist"
-    : > "$FIXTURE/calls"
+    rm -rf "$FIXTURE" && mkdir -p "$FIXTURE/plugins" "$FIXTURE/support" || return
+    sqlite3 "$FIXTURE/auth.db" "create table rules (id integer primary key, name text not null unique);" || return
+    (
+        . "$t/kit/policy.sh"
+        cp "$stock" "$backup" || exit
+        chmod 644 "$backup" || exit
+        installed_from "$backup" "$FIXTURE/live.plist" || exit
+        write_right_definition "$FIXTURE/legacy-right.plist" || exit
+        mkdir -p "$plugin/Contents/MacOS" || exit
+        echo fixture > "$plugin/Contents/MacOS/HyperNeoLockedUse" || exit
+        security authorizationdb write "$mine" < "$FIXTURE/legacy-right.plist" || exit
+        : > "$FIXTURE/calls"
+    )
 }
-install() { bash "$t/kit/install.sh" "$t/source/HyperNeoLockedUse.bundle" > "$FIXTURE/out" 2>&1; }
 uninstall() { bash "$t/kit/uninstall.sh" > "$FIXTURE/out" 2>&1; }
 expect() {
     local want="$1" name="$2" got
@@ -73,71 +77,40 @@ installed_state() {
 snapshot() { (cd "$FIXTURE" && find plugins support -print | sort && cat live.plist && sqlite3 auth.db "select name from rules;") 2>/dev/null; }
 no_lock() { [[ ! -e "$FIXTURE/support/install.lock" ]]; }
 
-reset
-expect pass fresh_install install
-expect pass fresh_install_state installed_state
-expect pass fresh_install_releases_lock no_lock
-expect pass second_install_is_noop install
-expect pass uninstall uninstall
-expect pass uninstall_state eval '! right_row && [[ ! -e "$FIXTURE/plugins/HyperNeoLockedUse.bundle" ]] && ! grep -q io.hyperneo.locked-use.unlock "$FIXTURE/live.plist"'
+removed_state() {
+    ! right_row && [[ ! -e "$FIXTURE/plugins/HyperNeoLockedUse.bundle" ]] &&
+        cmp -s "$stock" "$FIXTURE/live.plist" && no_lock
+}
 
-reset
-install
+reset || exit 2
+expect pass installed_fixture installed_state
+expect pass uninstall uninstall
+expect pass stock_restored removed_state
+
+reset || exit 2
 touch "$FIXTURE/remove-fails"
 expect fail partial_uninstall uninstall
-expect pass partial_uninstall_keeps_plugin eval '[[ -d "$FIXTURE/plugins/HyperNeoLockedUse.bundle" ]] && right_row'
+expect pass partial_uninstall_keeps_plugin eval '[[ -d "$FIXTURE/plugins/HyperNeoLockedUse.bundle" ]] && right_row && cmp -s "$stock" "$FIXTURE/live.plist"'
 rm -f "$FIXTURE/remove-fails"
-before="$(snapshot)"
-: > "$FIXTURE/calls"
-expect fail reinstall_after_partial_uninstall install
-expect pass reinstall_changed_nothing eval '[[ "$(snapshot)" == "$before" ]] && ! grep -q write "$FIXTURE/calls"'
-expect pass reinstall_releases_lock no_lock
+expect pass retry_uninstall uninstall
+expect pass retry_restores_stock removed_state
 
-reset
+reset || exit 2
 mkdir "$FIXTURE/support/install.lock"
 before="$(snapshot)"
-expect fail install_while_locked install
 expect fail uninstall_while_locked uninstall
 expect pass locked_changed_nothing eval '[[ "$(snapshot)" == "$before" && ! -s "$FIXTURE/calls" ]]'
 expect pass foreign_lock_kept eval '[[ -d "$FIXTURE/support/install.lock" ]]'
 
-reset
-touch "$FIXTURE/codesign-slow"
-bash "$t/kit/install.sh" "$t/source/HyperNeoLockedUse.bundle" > "$FIXTURE/first" 2>&1 &
-first=$!
-for _ in $(seq 50); do [[ -e "$FIXTURE/support/install.lock" ]] && break; sleep 0.05; done
-bash "$t/kit/install.sh" "$t/source/HyperNeoLockedUse.bundle" > "$FIXTURE/second" 2>&1
-second=$?
-wait "$first"
-first=$?
-expect pass concurrent_second_refused eval "[[ $second != 0 ]] && grep -q 'another Locked Use install' \"\$FIXTURE/second\""
-expect pass concurrent_first_installed eval "[[ $first == 0 ]] && installed_state"
-
-reset
+reset || exit 2
 touch "$FIXTURE/mktemp-fails"
-expect fail install_mktemp_fails install
-expect pass mktemp_failure_releases_lock no_lock
 expect fail uninstall_mktemp_fails uninstall
-expect pass uninstall_mktemp_failure_releases_lock no_lock
-rm -f "$FIXTURE/mktemp-fails"
-expect pass install_after_mktemp_failure install
+expect pass mktemp_failure_releases_lock no_lock
+expect pass mktemp_failure_keeps_install installed_state
 
-reset
-mkdir "$FIXTURE/support/install.lock"
-inherited() { env holding_lock=1 lock_owner=1 "$@"; }
-expect fail install_with_inherited_owner inherited bash "$t/kit/install.sh" "$t/source/HyperNeoLockedUse.bundle"
-expect fail uninstall_with_inherited_owner inherited bash "$t/kit/uninstall.sh"
-expect pass inherited_owner_keeps_foreign_lock eval '[[ -d "$FIXTURE/support/install.lock" ]]'
-
-reset
-touch "$FIXTURE/rm-fails"
-install
-expect pass failing_cleanup_releases_lock no_lock
-rm -f "$FIXTURE/rm-fails"
-
-reset
+reset || exit 2
 touch "$FIXTURE/rule-write-fails"
-expect fail failed_install_rolls_back install
-expect pass rollback_cleaned eval '! right_row && [[ ! -e "$FIXTURE/plugins/HyperNeoLockedUse.bundle" ]] && no_lock'
+expect fail restore_write_fails uninstall
+expect pass restore_failure_keeps_install installed_state
 
-[[ "$failed" == 0 ]] && echo "install check PASS" || { echo "install check FAIL"; exit 1; }
+[[ "$failed" == 0 ]] && echo "uninstall check PASS" || { echo "uninstall check FAIL"; exit 1; }

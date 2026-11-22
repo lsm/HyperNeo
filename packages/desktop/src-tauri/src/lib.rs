@@ -421,8 +421,9 @@ pub fn run() {
 			#[cfg(target_os = "macos")]
 			let locked_use = match locked_use_install::app_bundle() {
 				Some(bundle) => {
-					let label = locked_use_install::label(locked_use_install::installed());
-					let item = MenuItem::with_id(app, "locked_use", label, true, None::<&str>)?;
+					let installed = locked_use_install::installed();
+					let label = locked_use_install::label(installed);
+					let item = MenuItem::with_id(app, "locked_use", label, installed, None::<&str>)?;
 					menu.insert(&item, 2)?;
 					Some((item, bundle))
 				}
@@ -438,8 +439,9 @@ pub fn run() {
 					"locked_use" => {
 						if let Some((item, bundle)) = locked_use.clone() {
 							std::thread::spawn(move || {
-								let installed = locked_use_install::toggle(&bundle);
+								let installed = locked_use_install::remove(&bundle);
 								let _ = item.set_text(locked_use_install::label(installed));
+								let _ = item.set_enabled(installed);
 							});
 						}
 					}

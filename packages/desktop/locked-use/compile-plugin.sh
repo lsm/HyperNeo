@@ -8,5 +8,4 @@ rm -rf "$bundle"
 mkdir -p "$bundle/Contents/MacOS"
 cp Info.plist "$bundle/Contents/Info.plist"
 clang -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -bundle -O2 -Wall -Werror \
-    -framework CoreFoundation -framework Security -lbsm \
     -o "$bundle/Contents/MacOS/HyperNeoLockedUse" plugin.c

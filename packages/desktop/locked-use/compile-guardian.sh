@@ -4,6 +4,5 @@ set -euo pipefail
 out="${1:?output file}"
 [[ "$out" == /* ]] || out="$PWD/$out"
 cd "$(dirname "$0")"
-clang -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -fobjc-arc -O2 -Wall -Werror \
-    -framework AppKit -framework ApplicationServices -framework IOKit -framework Security \
+clang -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -O2 -Wall -Werror \
     -o "$out" guardian.m
