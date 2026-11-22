@@ -1268,6 +1268,24 @@ mod peer_tests {
     }
 
     #[tokio::test]
+    async fn a_locked_use_admission_cancelled_before_its_guard_never_blocks_a_start() {
+        let directory = tempfile::tempdir().unwrap();
+        let drivers = locked_use_drivers(
+            &directory,
+            Some("echo 'covered 1'; echo unlocked; while read line; do :; done; echo 'ended owner_gone'"),
+        );
+        let mut admission = Box::pin(drivers.may_act("other"));
+        std::future::poll_fn(|context| {
+            assert!(std::future::Future::poll(admission.as_mut(), context).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        drop(admission);
+        assert!(drivers.locked_use("owner", true).await);
+    }
+
+    #[tokio::test]
     async fn locked_use_refuses_to_start_while_a_call_is_acting() {
         let directory = tempfile::tempdir().unwrap();
         let drivers = locked_use_drivers(
