@@ -2,12 +2,31 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const PLUGIN: &str = "/Library/Security/SecurityAgentPlugins/HyperNeoLockedUse.bundle";
-const SIGNER: &str = "anchor apple generic and certificate leaf[subject.OU] = \"P5R65T296V\"";
+const SIGNER: &str = "anchor apple generic and identifier \"io.hyperneo.app\" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"P5R65T296V\"";
+const BODY: &str = r#"set -eu
+/usr/bin/codesign --verify --strict --deep --test-requirement "=$3" "$1"
+d="$(/usr/bin/mktemp -d /private/tmp/hyperneo-locked-use.XXXXXX)"
+trap '/bin/rm -rf "$d"' EXIT
+printf %s "$5" > "$d/install.sh"
+printf %s "$6" > "$d/uninstall.sh"
+printf %s "$7" > "$d/policy.sh"
+printf %s "$8" > "$d/policy.jxa"
+/bin/bash "$d/$4.sh" "$2"
+"#;
+const SCRIPTS: [&str; 4] = [
+    include_str!("../../locked-use/install.sh"),
+    include_str!("../../locked-use/uninstall.sh"),
+    include_str!("../../locked-use/policy.sh"),
+    include_str!("../../locked-use/policy.jxa"),
+];
 const SCRIPT: &[&str] = &[
     "on run argv",
-    "set {appPath, installerPath, pluginPath, signerRequirement} to argv",
+    "set command to \"/bin/bash -c \" & quoted form of item 1 of argv & \" locked-use\"",
+    "repeat with value in rest of argv",
+    "set command to command & \" \" & quoted form of (value as text)",
+    "end repeat",
     "try",
-    "set output to do shell script \"/usr/bin/codesign --verify --strict --deep --test-requirement \" & quoted form of (\"=\" & signerRequirement) & \" \" & quoted form of appPath & \" && /bin/bash \" & quoted form of installerPath & \" \" & quoted form of pluginPath with prompt \"HyperNeo wants to change who can unlock this Mac.\" with administrator privileges",
+    "set output to do shell script command with prompt \"HyperNeo wants to change who can unlock this Mac.\" with administrator privileges",
     "display notification output with title \"Locked Use\"",
     "on error errorText number errorNumber",
     "if errorNumber is not -128 then display alert \"Locked Use\" message errorText",
@@ -28,25 +47,38 @@ pub(crate) fn label(installed: bool) -> &'static str {
 }
 
 pub(crate) fn app_bundle() -> Option<PathBuf> {
-    let app = std::env::current_exe().ok()?.parent()?.parent()?.parent()?.to_path_buf();
-    shipped(&app).then_some(app)
+    let app = std::env::current_exe()
+        .ok()?
+        .parent()?
+        .parent()?
+        .parent()?
+        .to_path_buf();
+    available(&app).then_some(app)
 }
 
-fn shipped(app: &Path) -> bool {
-    app.join("Contents/Resources/locked-use/install.sh").is_file()
+fn available(app: &Path) -> bool {
+    app.join("Contents/Resources/locked-use/HyperNeoLockedUse.bundle")
+        .is_dir()
+        && Command::new("/usr/bin/codesign")
+            .args(["--verify", "--strict", "--test-requirement"])
+            .arg(format!("={SIGNER}"))
+            .arg(app)
+            .status()
+            .is_ok_and(|status| status.success())
 }
 
 fn admin_command(app: &Path, install: bool) -> Command {
-    let scripts = app.join("Contents/Resources/locked-use");
     let mut command = Command::new("/usr/bin/osascript");
     for line in SCRIPT {
         command.args(["-e", line]);
     }
     command
+        .arg(BODY)
         .arg(app)
-        .arg(scripts.join(if install { "install.sh" } else { "uninstall.sh" }))
-        .arg(scripts.join("HyperNeoLockedUse.bundle"))
-        .arg(SIGNER);
+        .arg(app.join("Contents/Resources/locked-use/HyperNeoLockedUse.bundle"))
+        .arg(SIGNER)
+        .arg(if install { "install" } else { "uninstall" })
+        .args(SCRIPTS);
     command
 }
 
@@ -111,7 +143,9 @@ mod tests {
 
     #[test]
     fn locked_use_root_step_runs_only_its_own_copies_after_verifying_the_app() {
-        let verify = BODY.find("/usr/bin/codesign --verify --strict --deep").unwrap();
+        let verify = BODY
+            .find("/usr/bin/codesign --verify --strict --deep")
+            .unwrap();
         let copy = BODY.find("/usr/bin/mktemp -d /private/tmp/").unwrap();
         let run = BODY.find("/bin/bash \"$d/$4.sh\" \"$2\"").unwrap();
         assert!(verify < copy && copy < run);
