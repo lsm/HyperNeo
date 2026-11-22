@@ -28,42 +28,38 @@ try {
   await page.goto(`${base}/pair#${code}`);
   await page.getByRole('button', { name: 'Pair this browser' }).click();
   await page.getByText('This browser is paired.').waitFor({ timeout: 10000 });
+  const queue = page.locator('[data-human-queue]:visible');
   const open = async () => {
     await page.goto(`${base}/neo`);
     const work = page.getByRole('button', { name: /your work|你的事/i }).first();
     await page.waitForTimeout(500);
     if (await work.isVisible().catch(() => false)) await work.click();
-    await page.locator('[data-topic-chips]').waitFor({ timeout: 15000 });
+    await queue.waitFor({ timeout: 15000 });
+    assert.equal(await page.locator('[data-topic-chips]').count(), 0);
   };
-  const chips = () => page.locator('[data-topic-chips] button').allInnerTexts();
   const cards = () => listedAsks(page);
   const card = (id) => revealAsk(page, id);
   await open();
-  result.chips = (await chips()).map((text) => text.replace(/\s+/g, ' ').trim());
-  assert.equal(result.chips[0], `全部 ${(await cards()).length}`);
-  assert.equal(result.chips.filter((chip) => chip === 'Shop 1').length, 2, 'two projects titled Shop stay two chips');
-  assert.equal(result.chips.filter((chip) => /^kids 2$/i.test(chip)).length, 1, 'kids and Kids fold into one chip');
-  assert(result.chips.includes('家长控制 2'));
-  assert.equal(result.chips.at(-1), '其他 2', 'an ask with no topic joins the 其他 chip, last');
   const header = await (await card('screen-time')).locator('[data-ask-status] > span').first().innerText();
   assert.equal(header.trim(), '在做');
   const tags = page.locator('article[data-ask]:visible [data-topic-swatch]');
   assert.equal(await tags.count(), await page.locator('article[data-ask]:visible').count(), 'every card shows one topic tag');
   assert.equal((await (await card('plain')).getByRole('button', { name: '其他' }).count()), 1);
-  const shopChips = page.locator('[data-topic-chips] button', { hasText: 'Shop' });
   const shopSets = [];
-  for (const index of [0, 1]) {
-    await shopChips.nth(index).click();
+  for (const id of ['shop-a', 'shop-b']) {
+    const tag = (await card(id)).getByRole('button', { name: 'Shop', exact: true });
+    await tag.click();
     shopSets.push(await cards());
+    await tag.click();
   }
-  result.shopChipCards = shopSets;
-  assert.deepEqual(shopSets.flat().sort(), ['shop-a', 'shop-b'], 'each Shop chip shows only its own project');
-  await page.locator('[data-topic-chips] button', { hasText: /^kids 2$/i }).click();
+  result.shopTagCards = shopSets;
+  assert.deepEqual(shopSets, [['shop-a'], ['shop-b']], 'each Shop tag shows only its own project');
+  await (await card('kids-lower')).getByRole('button', { name: 'kids', exact: true }).click();
   assert.deepEqual((await cards()).sort(), ['kids-lower', 'kids-upper']);
   await page.waitForTimeout(800);
   await page.screenshot({ path: join(evidence, 'topics-1280-kids.png') });
   await page.reload();
-  await page.locator('[data-topic-chips]').waitFor();
+  await queue.waitFor();
   assert.deepEqual((await cards()).sort(), ['kids-lower', 'kids-upper'], 'the folded filter survives reload');
   await (await card('kids-upper')).getByRole('button', { name: 'Kids' }).click();
   assert((await cards()).length > 2, 'the card button toggles the same folded key off');
@@ -76,12 +72,12 @@ try {
     await page.emulateMedia({ colorScheme: scheme });
     await page.screenshot({ path: join(evidence, `topics-1280-${scheme}.png`), fullPage: true });
   }
-  await page.locator('[data-topic-chips] button', { hasText: '家长控制' }).click();
+  await (await card('screen-time')).getByRole('button', { name: '家长控制', exact: true }).click();
   assert.deepEqual((await cards()).sort(), ['app-approvals', 'screen-time']);
   await page.reload();
-  await page.locator('[data-topic-chips]').waitFor();
+  await queue.waitFor();
   assert.deepEqual((await cards()).sort(), ['app-approvals', 'screen-time'], 'the filter survives reload');
-  await page.locator('[data-topic-chips] button', { hasText: '家长控制' }).click();
+  await (await card('screen-time')).getByRole('button', { name: '家长控制', exact: true }).click();
   assert((await cards()).length > 2, 'a second tap clears the filter');
   await (await card('protocol')).getByRole('button', { name: 'OAP' }).click();
   assert.deepEqual(await cards(), ['protocol']);
@@ -93,18 +89,18 @@ try {
   await page.locator('article[data-ask="protocol"]').waitFor();
   assert.equal(await page.locator('[data-topic-chips]').count(), 0, 'chips hide while searching');
   await page.locator('article[data-ask="protocol"]').getByRole('button', { name: 'OAP' }).click();
-  await page.locator('[data-topic-chips]').waitFor();
+  await queue.waitFor();
   assert.equal(await page.getByRole('searchbox').inputValue(), '', 'the topic tap clears the search');
   assert.deepEqual(await cards(), ['protocol'], 'and applies the filter');
   result.searchTopicTap = true;
-  await page.locator('[data-topic-chips] button', { hasText: 'OAP' }).click();
+  await (await card('protocol')).getByRole('button', { name: 'OAP', exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await open();
   await page.waitForTimeout(800);
-  const row = await page.locator('[data-topic-chips]').boundingBox();
+  const row = await queue.locator('[data-queue-state]').first().locator('..').boundingBox();
   result.phoneRow = row;
   await page.screenshot({ path: join(evidence, 'topics-390-check.png') });
-  assert(row && row.x >= 0 && row.x + row.width <= 391, 'the chip row stays inside the phone width');
+  assert(row && row.x >= 0 && row.x + row.width <= 391, 'the state row stays inside the phone width');
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= 391), 'no sideways page scroll');
   for (const scheme of ['light', 'dark']) {
     await page.emulateMedia({ colorScheme: scheme });

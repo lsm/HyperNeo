@@ -17,13 +17,11 @@ done and dropped. No key or model is used.
 
 End state, in `$RUN/evidence/`:
 
-- `card-topics.json` has `passed: true` and chips `全部 11`, `家长控制 2`, one `kids 2`,
-  two `Shop 1`, and `其他 2` last.
-- Each card shows its topic as a tag with a colored border right after the title, and the
-  state word first on the line below. The untopiced card shows 其他.
-- Each `Shop` chip shows only its own project's card; the `kids` chip shows both picks and
-  survives reload; a card's topic button selects the same set as its chip.
-- Tapping a chip filters, the filter survives reload, and a second tap clears it. Tapping a
-  card's topic filters the same way, and during a work search it clears the search first.
-- `topics-1280-{light,dark}.png`, `topics-1280-kids.png`, `topics-1280-filtered.png` and `topics-390-{light,dark}.png`:
-  at 390 px the chip row stays inside the screen and scrolls sideways.
+- `card-topics.json` has `passed: true`. Each card displays a topic tag with a colored
+  border and its state below the title. The untopiced card shows 其他.
+- Each Shop tag selects only its own project. Tapping either kids card's tag shows both
+  picks. The selection survives reload. Tapping the tag again clears it.
+- Tapping a card's topic during work search clears the search and applies the topic.
+- The Inbox shows the queue filter rows. The standalone topic chips are absent when the
+  daemon supplies the queue. At 390 px the state row fits without sideways page scrolling.
+- Inspect the unfiltered and filtered desktop captures and both mobile themes.

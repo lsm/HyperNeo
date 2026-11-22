@@ -1244,7 +1244,7 @@ export function NeoLive() {
                   <NeoWorkEmpty icon="work" title={t('live.noWork')} hint={t('live.noWorkHint')} />
                 </div>
               )}
-              {!workQuery.trim() && (
+              {!fullQueue && !workQuery.trim() && (
                 <NeoTopicChips entries={sceneEntries} selected={topic} onSelect={chooseTopic} />
               )}
               {humanQueue && (

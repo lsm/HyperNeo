@@ -33,7 +33,6 @@ try {
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(`${base}/neo`);
     const chips = page.locator('[data-topic-chips]');
-    await chips.waitFor();
     const queue = page.locator('[data-human-queue]');
     const hotel = queue.locator('#neo-ref-question-hotel-card');
     await hotel.getByRole('button', { name: 'Hold', exact: true }).waitFor();
@@ -59,38 +58,44 @@ try {
         leftInset: box.x - frame.x,
       };
     });
-    const legacy = {
-      state: await queue.getByRole('group', { name: 'State', exact: true }).count(),
-      ask: await queue.getByRole('group', { name: 'Ask', exact: true }).count(),
-      more: await queue.getByRole('combobox', { name: 'More' }).count(),
+    const states = queue.getByRole('group', { name: 'State', exact: true });
+    const asks = queue.getByRole('group', { name: 'Ask', exact: true });
+    const more = asks.getByRole('combobox', { name: 'More' });
+    const rows = {
+      standalone: await chips.count(),
+      state: await states.getByRole('button').allInnerTexts(),
+      ask: await asks.getByRole('button').allInnerTexts(),
+      more: await more.count(),
     };
-    const labels = await chips.getByRole('button').allInnerTexts();
     await page.screenshot({ path: join(evidence, `${phase}-${theme}.png`), animations: 'disabled' });
-    observations.push({ theme, labels, legacy, hover });
-    assert.deepEqual(labels.map((text) => text.trim()), ['All 5', 'Travel 3', 'Finance 2']);
+    observations.push({ theme, rows, hover });
+    assert.deepEqual(rows.state, ['Waiting on you 4', 'Held 1', 'In progress 2']);
+    assert.equal(rows.ask[0], 'All 4');
+    assert.equal(rows.more, 1);
     assert.deepEqual(hover.target, [44, 44]);
     assert.notEqual(hover.background, 'rgba(0, 0, 0, 0)');
     if (phase === 'before') continue;
-    const checkFace = (face) => {
-      assert.deepEqual(face.face, [32, 32]);
-      assert(face.radius.endsWith('%') ? parseFloat(face.radius) >= 50 : parseFloat(face.radius) >= 16);
-      assert(face.iconCenterOffset.every((offset) => Math.abs(offset) <= 1));
-    };
-    assert.deepEqual(legacy, { state: 0, ask: 0, more: 0 });
-    checkFace(hover);
+    assert.equal(rows.standalone, 0);
+    assert.deepEqual(hover.face, [32, 32]);
+    assert(hover.radius.endsWith('%') ? parseFloat(hover.radius) >= 50 : parseFloat(hover.radius) >= 16);
+    assert(hover.iconCenterOffset.every((offset) => Math.abs(offset) <= 1));
     assert(Math.abs(hover.frameCenterOffset) <= 1);
     assert(hover.leftInset >= 8);
-    await queue.getByText('Call the garage', { exact: true }).waitFor();
-    const trip = queue.locator('#neo-ref-question-trip-card');
-    await trip.getByRole('button', { name: 'Take back' }).waitFor();
-    await chips.getByRole('button', { name: 'Finance 2' }).click();
-    await queue.locator('#neo-ref-question-tax-card').waitFor();
-    await hotel.waitFor({ state: 'detached' });
-    await chips.getByRole('button', { name: 'All 5' }).click();
+    const extraAsk = await more.locator('option').last().getAttribute('value');
+    assert(extraAsk);
+    await more.selectOption(extraAsk);
+    assert.deepEqual(await queue.locator('[data-queue-ask]').evaluateAll((groups) =>
+      groups.map((group) => group.getAttribute('data-queue-ask'))), [extraAsk]);
+    await asks.getByRole('button', { name: 'All 4' }).click();
     await hotel.getByRole('button', { name: 'Hold', exact: true }).click();
-    await hotel.getByRole('button', { name: 'Take back' }).waitFor();
+    await states.getByRole('button', { name: 'Held 2' }).click();
     await hotel.getByRole('button', { name: 'Take back' }).click();
+    await states.getByRole('button', { name: 'Waiting on you 4' }).click();
     await hotel.getByRole('button', { name: 'Hold', exact: true }).waitFor();
+    await states.getByRole('button', { name: 'In progress 2' }).click();
+    await queue.getByText('Call the garage', { exact: true }).waitFor();
+    await asks.getByRole('button', { name: 'Synthetic car service 1' }).click();
+    await queue.getByText('Pack the bags', { exact: true }).waitFor({ state: 'detached' });
     const chooser = page.waitForEvent('filechooser');
     await attach.click();
     assert.equal(await (await chooser).isMultiple(), true);
@@ -102,11 +107,11 @@ try {
   await browser.close();
 }
 if (phase === 'before') {
-  const failures = observations.flatMap(({ theme, legacy, hover }) => {
-    assert.deepEqual(legacy, { state: 1, ask: 1, more: 1 });
+  const failures = observations.flatMap(({ theme, rows, hover }) => {
+    assert.equal(rows.standalone, 1);
     assert.deepEqual(hover.face, [44, 44]);
-    return [`${theme}: two legacy filter rows and a 44 px hover face`];
+    return [`${theme}: a duplicate standalone filter row and a 44 px hover face`];
   });
   assert.fail(failures.join('\n'));
 }
-console.log(`PASS: ${observations.length} themes, project filters, held and in-progress work, and centered attachment hover`);
+console.log(`PASS: ${observations.length} themes, state and ask filters, Hold and Take back, and centered attachment hover`);

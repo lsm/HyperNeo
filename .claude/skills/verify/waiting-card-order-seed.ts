@@ -14,7 +14,6 @@ if (process.argv[3] === 'update') {
   assert(path.startsWith('/private/tmp/hyperneo-8909-'));
   const fixture = new Database(path);
   try {
-    fixture.exec('PRAGMA busy_timeout = 5000');
     assert.equal(fixture.prepare("SELECT title FROM sessions WHERE id = 'neo:10000000-0000-4000-8000-000000008909'").get()?.title, 'Synthetic ordering proof');
     fixture.prepare("UPDATE neo_asks SET outcome = 'Unrelated status update', updated_at = ? WHERE id = 'waiting-old'").run(Date.now());
   } finally { fixture.close(); }
