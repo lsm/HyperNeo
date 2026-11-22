@@ -410,6 +410,7 @@ describe('OAP native session reopen wiring', () => {
   test('drops a reopen notice if its session is deleted while the notice is being saved', async () => {
     const host = fixture({
       known: true,
+      freshId: 'native-thread-b',
       refusal: new OxapHubRequestError('unknown_session', 'missing'),
     });
     let noticeStarted!: () => void;
