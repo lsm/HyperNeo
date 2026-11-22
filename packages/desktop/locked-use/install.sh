@@ -1,7 +1,7 @@
 #!/bin/bash
 # Opt-in install for Locked Use. Run as root: install.sh <HyperNeoLockedUse.bundle>
-# Adds one alternative to the stock screen-unlock rule. The login window password
-# prompt stays in place and still unlocks on its own. Any failure restores the stock rule.
+# Adds one alternative to a supported screen-unlock rule. The existing login
+# paths stay in place. A failed install restores the original rule.
 set -euo pipefail
 [[ "$(id -u)" == 0 ]] || { echo "run with sudo" >&2; exit 1; }
 source="${1:?HyperNeoLockedUse.bundle}"
@@ -17,8 +17,7 @@ case "$(install_plan "$work/rule.plist")" in
     installed) echo "already installed"; exit 0 ;;
     fresh) ;;
     *)
-        echo "$right is not the stock use-login-window-ui rule, or $mine is still defined or unknown;" >&2
-        echo "refusing to change anything. Run uninstall.sh first." >&2
+        echo "$right is unsupported, or $mine is still defined or unreadable. No changes made." >&2
         exit 1
         ;;
 esac
@@ -58,4 +57,4 @@ read_rule "$work/after.plist"
 same_policy "$work/after.plist" "$work/expected.plist"
 trap - ERR
 rule_of "$work/after.plist"
-echo "installed; stock rule backed up at $backup"
+echo "installed; original rule backed up at $backup"
