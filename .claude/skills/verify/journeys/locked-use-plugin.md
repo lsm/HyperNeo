@@ -86,8 +86,21 @@ bash packages/desktop/locked-use/check-guardian.sh "$RUN"
 ```
 
 Pass prints `ended untrusted_owner` twice (no launcher, and a launcher signed with
-another identifier), then `ended not_installed` without the plugin or
-`ended not_locked` with it, and `guardian check PASS`.
+another identifier), then `ended not_locked accessibility_required
+input_monitoring_required` (with `not_installed` first when the plugin is absent) from a
+copy that holds no privacy grants, and `guardian check PASS`.
+
+Crash relock, with no GUI: Desktop starts the guardian and relocks the Mac when it exits
+uncleanly after covering, such as when it is killed:
+
+```bash
+mkdir -p packages/desktop/src-tauri/binaries
+touch "packages/desktop/src-tauri/binaries/hyperneo-$(rustc --print host-tuple)"
+cargo test --locked --manifest-path packages/desktop/src-tauri/Cargo.toml --lib locked_use::
+```
+
+Pass runs 5 tests: killed or relock-failed after covering relocks once; a clean end or a
+start-gate refusal does not.
 
 Live run, on a Mac with the plugin installed and the owner present. Start it, then lock
 the Mac with Control-Command-Q within 20 seconds:

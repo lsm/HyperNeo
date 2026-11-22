@@ -206,9 +206,12 @@ int main(int argc, const char *argv[]) {
         double seconds = argc > 1 ? atof(argv[1]) : 0;
         if (seconds <= 0) seconds = 60;
         if (!ownerIsHyperNeo(getppid())) return say(@"ended untrusted_owner"), 2;
-        if (!pluginInstalled()) return say(@"ended not_installed"), 2;
-        if (!screenLocked()) return say(@"ended not_locked"), 2;
-        if (!AXIsProcessTrusted()) return say(@"ended accessibility_required"), 2;
+        NSMutableArray<NSString *> *refused = [NSMutableArray array];
+        if (!pluginInstalled()) [refused addObject:@"not_installed"];
+        if (!screenLocked()) [refused addObject:@"not_locked"];
+        if (!AXIsProcessTrusted()) [refused addObject:@"accessibility_required"];
+        if (!CGPreflightListenEventAccess()) [refused addObject:@"input_monitoring_required"];
+        if (refused.count) return say([@"ended " stringByAppendingString:[refused componentsJoinedByString:@" "]]), 2;
         [NSApplication sharedApplication].activationPolicy = NSApplicationActivationPolicyAccessory;
         Guardian *guardian = [Guardian new];
         guardian.started = NSDate.date;
