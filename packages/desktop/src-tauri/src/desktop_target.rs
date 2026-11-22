@@ -54,27 +54,34 @@ extern "C" {
 
 #[cfg(not(test))]
 pub(super) fn screen_locked() -> bool {
+    screen_lock_state().unwrap_or(false)
+}
+
+#[cfg(not(test))]
+pub(super) fn screen_lock_state() -> Option<bool> {
     use core_foundation::boolean::CFBoolean;
 
     let raw = unsafe { CGSessionCopyCurrentDictionary() };
     if raw.is_null() {
-        return false;
+        return None;
     }
     let session: CFDictionary<CFString, CFType> =
         unsafe { CFDictionary::wrap_under_create_rule(raw) };
-    session
-        .find(CFString::from_static_string("CGSSessionScreenIsLocked"))
-        .is_some_and(|value| {
-            value
-                .clone()
-                .downcast::<CFBoolean>()
-                .is_some_and(bool::from)
-                || value
+    Some(
+        session
+            .find(CFString::from_static_string("CGSSessionScreenIsLocked"))
+            .is_some_and(|value| {
+                value
                     .clone()
-                    .downcast::<CFNumber>()
-                    .and_then(|flag| flag.to_i64())
-                    .is_some_and(|flag| flag != 0)
-        })
+                    .downcast::<CFBoolean>()
+                    .is_some_and(bool::from)
+                    || value
+                        .clone()
+                        .downcast::<CFNumber>()
+                        .and_then(|flag| flag.to_i64())
+                        .is_some_and(|flag| flag != 0)
+            }),
+    )
 }
 
 pub(super) fn class(tool: &str) -> Option<&'static str> {

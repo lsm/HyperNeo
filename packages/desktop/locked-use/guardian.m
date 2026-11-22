@@ -1,7 +1,7 @@
 // Locked Use guardian. HyperNeo Desktop starts it while the screen is locked.
 // It covers every display, asks the signed authorization plugin for a one-time
 // unlock, keeps the display awake so the cover stays visible, and locks the screen
-// again on local input, stdin EOF, "stop", or when no stdin line arrives for argv[1] seconds. Its stdout reports: covered <n>, unlocked, ended <reason>.
+// again on local input, stdin EOF, "stop", or when no stdin line arrives for argv[1] seconds.
 #import <AppKit/AppKit.h>
 #import <ApplicationServices/ApplicationServices.h>
 #import <IOKit/pwr_mgt/IOPMLib.h>
@@ -17,6 +17,12 @@ static NSString *const OwnerRequirement =
 static BOOL screenLocked(void) {
     NSDictionary *session = CFBridgingRelease(CGSessionCopyCurrentDictionary());
     return [session[@"CGSSessionScreenIsLocked"] boolValue];
+}
+
+static void lockScreen(void) {
+    void *login = dlopen("/System/Library/PrivateFrameworks/login.framework/Versions/Current/login", RTLD_LAZY);
+    void (*lock)(void) = login ? (void (*)(void))dlsym(login, "SACLockScreenImmediate") : NULL;
+    if (lock) lock();
 }
 
 static BOOL pluginInstalled(void) {
@@ -64,7 +70,7 @@ static AXUIElementRef find(AXUIElementRef item, NSString *identifier, int depth)
 
 @interface Guardian : NSObject
 @property(nonatomic) NSMutableArray<NSWindow *> *covers;
-@property(nonatomic) BOOL armed, unlocked, ending;
+@property(nonatomic) BOOL armed, allowAnswered, unlocked, ending, ownerInput;
 @property(nonatomic) int listener;
 @property(nonatomic) dispatch_source_t listening;
 @property(nonatomic, copy) NSString *socketPath;
@@ -126,9 +132,10 @@ static AXUIElementRef find(AXUIElementRef item, NSString *identifier, int depth)
         char request = 0;
         struct timeval deadline = {.tv_sec = 1};
         setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &deadline, sizeof deadline);
-        BOOL grant = read(client, &request, 1) == 1 && request == '?' && self.armed && !self.ending;
+        BOOL grant = read(client, &request, 1) == 1 && request == '?' && self.armed && !self.ending && !self.allowAnswered;
         self.armed = NO;
-        (void)write(client, grant ? "1" : "0", 1);
+        if (grant) self.allowAnswered = YES;
+        if (write(client, grant ? "1" : "0", 1) == 1 && grant) say(@"allow_answered");
         close(client);
     });
     dispatch_resume(source);
@@ -145,7 +152,11 @@ static AXUIElementRef find(AXUIElementRef item, NSString *identifier, int depth)
     AXUIElementSetMessagingTimeout(app, 0.5);
     __block int tries = 0;
     [NSTimer scheduledTimerWithTimeInterval:0.2 repeats:YES block:^(NSTimer *timer) {
-        if (self.ending) return [timer invalidate];
+        if (self.ending || self.ownerInput) {
+            [timer invalidate];
+            CFRelease(app);
+            return;
+        }
         if (!screenLocked()) {
             [timer invalidate];
             CFRelease(app);
@@ -157,7 +168,7 @@ static AXUIElementRef find(AXUIElementRef item, NSString *identifier, int depth)
             CFRelease(app);
             return [self end:@"unlock_failed"];
         }
-        if (tries % 10 != 1) return;
+        if (self.allowAnswered || tries % 10 != 1) return;
         AXUIElementRef field = find(app, @"UserPasswordTextField", 0);
         if (field && AXUIElementSetAttributeValue(field, kAXValueAttribute, CFSTR("hyperneo-locked-use")) == kAXErrorSuccess) {
             self.armed = YES;
@@ -174,19 +185,33 @@ static AXUIElementRef find(AXUIElementRef item, NSString *identifier, int depth)
     self.ending = YES;
     self.armed = NO;
     unlink(self.socketPath.fileSystemRepresentation);
-    if (!screenLocked()) {
-        void *login = dlopen("/System/Library/PrivateFrameworks/login.framework/Versions/Current/login", RTLD_LAZY);
-        void (*lock)(void) = login ? (void (*)(void))dlsym(login, "SACLockScreenImmediate") : NULL;
-        if (lock) lock();
-    }
-    __block int waited = 0;
+    BOOL locked = screenLocked();
+    __block BOOL awaitingUnlock = self.allowAnswered && !self.unlocked && locked;
+    NSTimeInterval started = NSProcessInfo.processInfo.systemUptime;
+    if (!locked) lockScreen();
     [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *timer) {
-        if (screenLocked() || ++waited > 100) {
+        NSTimeInterval elapsed = NSProcessInfo.processInfo.systemUptime - started;
+        BOOL locked = screenLocked();
+        if (awaitingUnlock) {
+            if (locked && elapsed < 5) return;
+            lockScreen();
+            awaitingUnlock = NO;
+            return;
+        }
+        if (locked || elapsed >= 10) {
             [timer invalidate];
-            say([NSString stringWithFormat:@"ended %@%@", reason, screenLocked() ? @"" : @" relock_failed"]);
-            exit(screenLocked() ? 0 : 3);
+            say([NSString stringWithFormat:@"ended %@%@", reason, locked ? @"" : @" relock_failed"]);
+            exit(locked ? 0 : 3);
         }
     }];
+}
+
+- (void)ownerDidAct {
+    if (self.ownerInput) return;
+    self.ownerInput = YES;
+    self.armed = NO;
+    say(@"owner_input");
+    dispatch_async(dispatch_get_main_queue(), ^{ [self end:@"local_input"]; });
 }
 
 @end
@@ -196,7 +221,7 @@ static CGEventRef onInput(CGEventTapProxy proxy, CGEventType type, CGEventRef ev
     Guardian *guardian = (__bridge Guardian *)context;
     if (type == kCGEventTapDisabledByTimeout || type == kCGEventTapDisabledByUserInput
         || CGEventGetIntegerValueField(event, kCGEventSourceUnixProcessID) == 0) {
-        dispatch_async(dispatch_get_main_queue(), ^{ [guardian end:@"local_input"]; });
+        [guardian ownerDidAct];
     }
     return event;
 }
@@ -218,10 +243,12 @@ int main(int argc, const char *argv[]) {
         IOPMAssertionID awake = 0;
         IOPMAssertionCreateWithName(kIOPMAssertPreventUserIdleDisplaySleep, kIOPMAssertionLevelOn,
                                     CFSTR("HyperNeo Locked Use cover"), &awake);
-        CGEventMask mask = CGEventMaskBit(kCGEventKeyDown) | CGEventMaskBit(kCGEventFlagsChanged)
+        CGEventMask mask = CGEventMaskBit(kCGEventKeyDown) | CGEventMaskBit(kCGEventKeyUp) | CGEventMaskBit(kCGEventFlagsChanged)
             | CGEventMaskBit(kCGEventLeftMouseDown) | CGEventMaskBit(kCGEventRightMouseDown)
             | CGEventMaskBit(kCGEventOtherMouseDown) | CGEventMaskBit(kCGEventMouseMoved)
-            | CGEventMaskBit(kCGEventLeftMouseDragged) | CGEventMaskBit(kCGEventScrollWheel);
+            | CGEventMaskBit(kCGEventLeftMouseUp) | CGEventMaskBit(kCGEventRightMouseUp) | CGEventMaskBit(kCGEventOtherMouseUp)
+            | CGEventMaskBit(kCGEventLeftMouseDragged) | CGEventMaskBit(kCGEventRightMouseDragged)
+            | CGEventMaskBit(kCGEventOtherMouseDragged) | CGEventMaskBit(kCGEventScrollWheel);
         CFMachPortRef tap = CGEventTapCreate(kCGHIDEventTap, kCGHeadInsertEventTap, kCGEventTapOptionListenOnly,
                                              mask, onInput, (__bridge void *)guardian);
         if (!tap) return say(@"ended input_monitoring_required"), 2;

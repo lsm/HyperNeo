@@ -106,38 +106,52 @@ another identifier), then `ended not_locked accessibility_required
 input_monitoring_required` (with `not_installed` first when the plugin is absent) from a
 copy that holds no privacy grants, and `guardian check PASS`.
 
-Desktop gate and crash relock, with no GUI. One task owns Locked Use and handles every
-event in order: Idle, Starting (guardian spawned, waiting up to 15 seconds for `unlocked`),
-Owned (only that worker may act; each of its calls keeps the guardian alive, idle 120
-seconds) and Releasing (guardian input closed, until the guardian process exits). Other
-workers get `screen_locked` outside Idle. A start is refused while any call is acting, after
-an unsettled call or unconfirmed stop, or for a stopped worker. Stopping the owner returns
-only after its guardian has exited. Desktop relocks when the guardian exits uncleanly after
-covering, such as when it is killed:
+## Release and suppression regression checks
+
+Run the native fixture on a macOS build host. It injects the lock state and
+lock request into the guardian's real exit path. It neither starts Desktop nor
+changes the host's lock state.
 
 ```bash
-mkdir -p packages/desktop/src-tauri/binaries
-touch "packages/desktop/src-tauri/binaries/hyperneo-$(rustc --print host-tuple)"
-cargo test --locked --manifest-path packages/desktop/src-tauri/Cargo.toml --lib locked_use
+bash packages/desktop/locked-use/check-release.sh
+cargo test --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml -- locked_use
 ```
 
-Pass runs 19 tests: killed or relock-failed after covering relocks once; a clean end or a
-start-gate refusal does not; a second worker is refused while the owner holds the Mac, even
-when its call was admitted earlier, and is admitted only after the guardian has exited; no
-start while a call is acting, and retiring an acting worker never waits on a start; an
-unsettled call blocks starts until its driver is confirmed stopped; a stop or a cancel during
-startup releases only after the guardian exits, a call cancelled while being admitted or ending after its worker retired never blocks a start, a start cancelled after the unlock releases the Mac, and a stopped worker never takes the Mac; a
-refusing or missing guardian leaves the call refused.
+The fixture prints the delayed unlock, the lock request, the confirmed relock,
+then the guardian exit. With no observed unlock it prints a lock request after the
+roughly five-second cap and exits. Both cases end in `guardian release check PASS`.
+The Desktop tests cover refusal while a guardian is active or releasing,
+suppression on a locked launch and after owner input or a crash, and admitting
+workers again after an unlock.
 
-Live run, on a Mac with the plugin installed and the owner present. Start it, then lock
-the Mac with Control-Command-Q within 20 seconds:
+## Attended signed Desktop checks
 
-```bash
-{ sleep 50; echo stop; } | { sleep 20; "$RUN/launch-app" "$RUN/hyperneo-locked-use" 120; } > "$RUN/live.log" &
-```
+Use a signed Apple Silicon build on an Apple Silicon Mac and a signed Intel
+build on an Intel Mac. Run each with the owner present, Locked Use installed
+alongside OpenAI, and Accessibility and Input Monitoring granted. Save the
+active unlock rule before and after. Launch Desktop while unlocked or unlock it
+manually once if it was launched from a locked screen. When inducing owner input,
+use the physical keyboard or pointing device.
 
-Within a few seconds of the lock the Mac unlocks behind a blue cover on every display
-that reads "HyperNeo is using this Mac" and the start time. `pmset -g assertions` over ssh
-lists `HyperNeo Locked Use cover` under PreventUserIdleDisplaySleep. About 30 seconds
-later the Mac locks again and `live.log` ends `ended stopped`. Repeat and touch the
-trackpad while covered: the Mac locks at once and the log ends `ended local_input`.
+Retain the Desktop log entries prefixed `Locked Use`, which include
+`allow_answered`, `owner_input`, the guardian's `ended` reason and suppression
+transitions. Record the visible lock and unlock states alongside those entries.
+
+1. With the Mac locked, have a worker perform a real Calculator action and read
+   the result back through Desktop. Check the blue cover. Stop the worker and
+   confirm the Mac relocks and the guardian exits cleanly.
+2. Repeat with input during startup, under the cover, and immediately after
+   relock while the guardian is still exiting. Use the mouse and one or two
+   password characters, first without Return and then with Return. Confirm that
+   the guardian disarms and the log records zero further HyperNeo Allow replies
+   until a normal manual unlock.
+3. Request a second worker while the first owns the Mac and again while it is
+   releasing. Confirm both requests are refused. Interrupt a session with
+   owner input and immediately request another session. Confirm refusal and zero
+   approvals. After manual unlock, run two clean sessions without owner input
+   and confirm each works and relocks.
+4. Confirm the full password unlocks normally with Locked Use idle and while
+   suppressed, clearing suppression. Confirm OpenAI Locked Use works before a
+   HyperNeo session, during HyperNeo suppression and after a HyperNeo session.
+   During suppression, confirm there are no HyperNeo Allow replies and that
+   OpenAI relocks normally. Compare the saved rule with the active rule.

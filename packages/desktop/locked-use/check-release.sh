@@ -14,6 +14,6 @@ check() {
     [[ "$result" == "$expected" ]]
 }
 
-check $'unlock observed\nlock requested\nended stopped' delayed
+check $'unlock observed\nlock requested\nrelock observed\nended stopped' delayed
 check $'lock requested\nended stopped' capped
 echo 'guardian release check PASS (2 cases)'
