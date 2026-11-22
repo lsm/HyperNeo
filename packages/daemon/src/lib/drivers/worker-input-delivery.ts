@@ -75,6 +75,7 @@ export function createWorkerInputDelivery(
     action: 'wait' | 'fail' | 'send' | 'uncertain' | 'confirm';
     detail: string;
     report?: true;
+    busyHyperneoId?: string;
   } => {
     if (facts.failure !== null) return { action: 'fail', detail: facts.failure };
     if (facts.payload.dispatched)
@@ -110,6 +111,7 @@ export function createWorkerInputDelivery(
       return {
         action: 'wait',
         ...(!live ? { report: true as const } : {}),
+        ...(live && facts.ref.adapter === 'hyperneo' ? { busyHyperneoId: facts.ref.id } : {}),
         detail: live
           ? 'Waiting for the current worker turn to end.'
           : facts.status && !facts.status.ok
@@ -154,7 +156,15 @@ export function createWorkerInputDelivery(
           reported = false;
         }
       }
-      await gateway.call(workerInputWrites, 'wait', job, plan.detail, reported);
+      await gateway.call(
+        workerInputWrites,
+        'wait',
+        job,
+        plan.detail,
+        reported,
+        undefined,
+        plan.busyHyperneoId
+      );
       return { waiting: plan.detail };
     }
     if (plan.action === 'fail' || plan.action === 'uncertain')
