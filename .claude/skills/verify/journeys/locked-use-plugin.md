@@ -3,8 +3,8 @@
 Locked Use adds one alternative to the screen-unlock right
 `system.login.screensaver`: the signed plugin's mechanism
 `HyperNeoLockedUse:unlock,privileged`. The rule becomes "any one of" that right
-and the original `use-login-window-ui`, so password and Touch ID unlock stay as
-they were. The mechanism allows only when a process signed as
+and the original unlock alternatives, so the login window and any supported
+OpenAI unlock rule stay in place. The mechanism allows only when a process signed as
 `io.hyperneo.locked-use` by team P5R65T296V, running as the console user, answers
 on `/private/tmp/io.hyperneo.locked-use.<uid>.sock`. Anything else denies.
 
@@ -38,6 +38,9 @@ paths moved into a fixture: install, reinstall, uninstall, reinstall after an un
 could not remove the right (refused, nothing changed), a held lock (refused), two installs
 at once (the second is refused) and a failed install (rolled back). Install and uninstall
 hold one lock from the first read to the end, so they never run at the same time.
+The OpenAI fixture starts with the OpenAI rule and the login window, with one
+success required. It checks that installation keeps both in order, uninstall
+restores the exact original policy, and a stricter threshold is refused.
 
 Install and removal change the Mac's unlock rule and need the owner's admin
 password. Run them only on a test Mac or with the owner's explicit approval, and
@@ -51,13 +54,14 @@ security authorizationdb read system.login.screensaver > "$RUN/after.plist"
 diff <(plutil -extract rule xml1 -o - "$RUN/before.plist") <(plutil -extract rule xml1 -o - "$RUN/after.plist")
 ```
 
-Install prints the rule array `io.hyperneo.locked-use.unlock, use-login-window-ui`;
+Install prints the rule array with `io.hyperneo.locked-use.unlock` first;
 uninstall prints the original array and the diff is empty. Install refuses while the Locked Use right is still defined or its state is unknown (run uninstall first), and refuses any rule
-other than the stock `class rule` with exactly `use-login-window-ui`, copies the plugin
+other than the stock `class rule` with exactly `use-login-window-ui` or the
+OpenAI remote unlock rule followed by `use-login-window-ui` with `k-of-n` equal to 1. It copies the plugin
 without ACLs or extended attributes, verifies the tree is root-owned and writable only by
 root and is the Developer ID plugin `io.hyperneo.locked-use.plugin`, and restores the
-stock rule if any later step fails; if that restore does not read back, it says so and
-leaves the plugin and right in place. Uninstall needs the root-owned stock backup and a live
+original rule if any later step fails; if that restore does not read back, it says so and
+leaves the plugin and right in place. Uninstall needs the root-owned original backup and a live
 rule equal to the backup, with or without Locked Use; anything else, including any tool
 error, is refused unchanged. It verifies
 the restored rule before removing the right, and deletes the bundle only after the
