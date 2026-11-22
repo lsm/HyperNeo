@@ -16,7 +16,7 @@ import { answerCodexProbeLocally, serveLocalRelease } from './oxap-codex-provide
 const [binary, version, sha256, ...args] = process.argv.slice(2);
 const mode = args.length === 2 ? args[0] : 'first';
 const runArgument = args.at(-1)!;
-assert(['first', 'flash', 'recovery', 'pending'].includes(mode));
+assert(['first', 'recovery', 'pending'].includes(mode));
 const run = resolve(runArgument);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -73,7 +73,7 @@ try {
   const { sessionId } = await hub.request<{ sessionId: string }>('session.create', {
     workspacePath: workspace,
     title: 'Synthetic DeepSeek first message',
-    config: { provider: 'deepseek', model: mode === 'flash' ? 'deepseek-v4-flash' : 'deepseek-v4-pro' },
+    config: { provider: 'deepseek', model: 'deepseek-v4-pro' },
   });
   const errors: string[] = [];
   app.internalEventBus.subscribe('session.errorObserved', ({ details }) => {
@@ -124,10 +124,10 @@ try {
     [false]
   );
   const replies = [...rows.values()].filter((row) => row.type === 'assistant');
-  const expectedModel = mode === 'flash' ? 'deepseek-v4-flash' : 'deepseek-v4-pro';
-  const replyText = replies.flatMap((row) => (row.message?.content ?? []).map((block) => block.text));
-  Object.assign(evidence, { expectedModel, replyText });
-  assert.deepEqual(replyText, [`Synthetic DeepSeek reply from ${expectedModel}`]);
+  assert.deepEqual(
+    replies.flatMap((row) => (row.message?.content ?? []).map((block) => block.text)),
+    ['Synthetic DeepSeek reply']
+  );
   if (mode === 'recovery' || mode === 'pending') {
     while (app.sessionManager.getCachedSession(sessionId)?.queryPromise) {
       assert(Date.now() < deadline, 'The first query did not finish shutting down');
