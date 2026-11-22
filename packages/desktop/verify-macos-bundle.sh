@@ -31,6 +31,17 @@ if ! verify_signature "$app/Contents/MacOS/hyperneo-locked-use" ' and identifier
     echo "hyperneo-locked-use signature verification failed" >&2
     exit 1
 fi
+locked="$app/Contents/Resources/locked-use"
+if ! verify_signature "$locked/HyperNeoLockedUse.bundle" ' and identifier "io.hyperneo.locked-use.plugin"'; then
+    echo "Locked Use plugin signature verification failed" >&2
+    exit 1
+fi
+for script in install.sh uninstall.sh policy.sh policy.jxa; do
+    if ! cmp -s "$locked/$script" "$(dirname "$0")/locked-use/$script"; then
+        echo "Locked Use $script missing or changed in the bundle" >&2
+        exit 1
+    fi
+done
 verify_signature "$app"
 codesign --display --entitlements - --xml "$app" > "$entitlements"
 security cms -D -i "$app/Contents/embedded.provisionprofile" > "$entitlements.profile"
