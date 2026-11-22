@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 
 const [port, directory, phase] = process.argv.slice(2);
-assert(port && port !== '8399' && directory && ['before', 'topic-before', 'after'].includes(phase));
+assert(port && port !== '8399' && directory && ['before', 'topic-before', 'layout-before', 'after'].includes(phase));
 const run = resolve(directory);
 const evidence = join(run, 'evidence');
 const base = `http://127.0.0.1:${port}`;
@@ -36,6 +36,25 @@ try {
     const queue = page.locator('[data-human-queue]');
     const hotel = queue.locator('#neo-ref-question-hotel-card');
     await hotel.getByRole('button', { name: 'Hold', exact: true }).waitFor();
+    const states = queue.getByRole('group', { name: 'State', exact: true });
+    const asks = queue.getByRole('group', { name: 'Ask', exact: true });
+    const more = asks.getByRole('combobox', { name: 'More' });
+    const measureFilters = async () => {
+      const header = await page.locator('[data-work-tabs]').locator('..').boundingBox();
+      const stateRow = await states.boundingBox();
+      const askRow = await asks.boundingBox();
+      const menu = await more.boundingBox();
+      const firstChip = await asks.getByRole('button', { name: 'All 4' }).boundingBox();
+      assert(header && stateRow && askRow && menu && firstChip);
+      return {
+        gap: stateRow.y - header.y - header.height,
+        askHeight: askRow.height,
+        moreWidth: menu.width,
+        moreHeight: menu.height,
+        rightInset: askRow.x + askRow.width - menu.x - menu.width,
+        centerOffset: menu.y + menu.height / 2 - firstChip.y - firstChip.height / 2,
+      };
+    };
     const checkSavedTopic = async () => {
       await page.evaluate(() => localStorage.setItem('neo:topic-filter', 'pick:travel'));
       await page.reload();
@@ -81,9 +100,6 @@ try {
         leftInset: box.x - frame.x,
       };
     });
-    const states = queue.getByRole('group', { name: 'State', exact: true });
-    const asks = queue.getByRole('group', { name: 'Ask', exact: true });
-    const more = asks.getByRole('combobox', { name: 'More' });
     const rows = {
       standalone: await chips.count(),
       state: await states.getByRole('button').allInnerTexts(),
@@ -92,13 +108,21 @@ try {
     };
     await page.screenshot({ path: join(evidence, `${phase}-${theme}.png`), animations: 'disabled' });
     const observation = { theme, rows, hover };
+    if (phase === 'layout-before' || phase === 'after') observation.filters = await measureFilters();
     observations.push(observation);
     assert.deepEqual(rows.state, ['Waiting on you 4', 'Held 1', 'In progress 2']);
     assert.equal(rows.ask[0], 'All 4');
     assert.equal(rows.more, 1);
     assert.deepEqual(hover.target, [44, 44]);
     assert.notEqual(hover.background, 'rgba(0, 0, 0, 0)');
-    if (phase === 'before') continue;
+    if (phase === 'before' || phase === 'layout-before') continue;
+    const checkLayout = ({ gap, askHeight, moreWidth, moreHeight, rightInset, centerOffset }) => {
+      assert(gap >= 8 && gap <= 16);
+      assert(askHeight <= 34);
+      assert(moreWidth >= 28 && moreWidth <= 34 && moreWidth === moreHeight);
+      assert(Math.abs(rightInset) <= 1 && Math.abs(centerOffset) <= 1);
+    };
+    checkLayout(observation.filters);
     assert.equal(rows.standalone, 0);
     assert.deepEqual(hover.face, [32, 32]);
     assert(hover.radius.endsWith('%') ? parseFloat(hover.radius) >= 50 : parseFloat(hover.radius) >= 16);
@@ -124,6 +148,31 @@ try {
     await attach.click();
     assert.equal(await (await chooser).isMultiple(), true);
     observation.savedTopic = await checkSavedTopic();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.reload();
+    await page.getByRole('button', { name: /^Your work/ }).click();
+    await hotel.waitFor();
+    await page.waitForFunction(() => {
+      const menu = document.querySelector('[data-human-queue] select')?.getBoundingClientRect();
+      return menu && menu.width > 0 && menu.left >= 0 && menu.right <= innerWidth;
+    });
+    const mobile = await measureFilters();
+    checkLayout(mobile);
+    const track = asks.getByRole('button', { name: 'All 4' }).locator('..');
+    assert(await track.evaluate((el) => el.scrollWidth > el.clientWidth));
+    await track.evaluate((el) => { el.scrollLeft = el.scrollWidth; });
+    assert(await track.evaluate((el) => el.scrollLeft > 0));
+    const scrolledInset = await more.evaluate((menu) => {
+      const row = menu.closest('[role="group"]');
+      return row.getBoundingClientRect().right - menu.getBoundingClientRect().right;
+    });
+    assert(Math.abs(scrolledInset - mobile.rightInset) <= 1);
+    await page.screenshot({ path: join(evidence, `after-mobile-${theme}.png`), animations: 'disabled' });
+    await more.focus();
+    assert.equal(await more.evaluate((el) => document.activeElement === el), true);
+    await more.selectOption(extraAsk);
+    await queue.locator(`[data-queue-ask="${extraAsk}"]`).waitFor();
+    observation.mobile = mobile;
     assert.deepEqual(errors, []);
     await context.close();
   }
@@ -138,6 +187,14 @@ if (phase === 'before') {
     return [`${theme}: a duplicate standalone filter row and a 44 px hover face`];
   });
   assert.fail(failures.join('\n'));
+}
+if (phase === 'layout-before') {
+  for (const { filters } of observations) {
+    assert(filters.gap >= 20);
+    assert(filters.askHeight > 34);
+    assert(filters.moreWidth > 34);
+  }
+  assert.fail(`${observations.length} themes: extra header gap and a wrapping text More control`);
 }
 if (phase === 'topic-before') {
   for (const { savedTopic } of observations)

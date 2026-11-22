@@ -13,7 +13,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { t } from '../lib/i18n/index.ts';
 import { QuestionBox } from './NeoAskTodos.tsx';
 import { FORM_CHECKBOX_CLASS } from '../components/ui/FormField.tsx';
-import { neoPlainClass } from './NeoCardParts.tsx';
+import { NeoMoreIcon, neoPlainClass } from './NeoCardParts.tsx';
 import type { NeoWorkFocus } from './neo-work-reference.ts';
 
 const STATES: NeoHumanQueueState[] = ['waiting', 'held', 'progress'];
@@ -211,7 +211,7 @@ export function NeoHumanQueue({
   };
   if (!queue.items.length) return null;
   return (
-    <div data-human-queue class="mt-6 space-y-3">
+    <div data-human-queue class="mt-3 space-y-3">
       {staleFailed && (
         <p role="alert" class="text-sm text-danger">
           {t('queue.refreshFailed')}{' '}
@@ -241,40 +241,48 @@ export function NeoHumanQueue({
           </button>
         ))}
       </div>
-      <div role="group" aria-label={t('queue.ask')} class="flex flex-wrap gap-2">
-        <button
-          type="button"
-          class={`${chip} ${tone(ask === null)}`}
-          aria-pressed={ask === null}
-          onClick={() => setAsk(null)}
-        >
-          {t('queue.allAsks')} {count(state, null)}
-        </button>
-        {asks.slice(0, SHOWN_ASKS).map((id) => (
+      <div role="group" aria-label={t('queue.ask')} class="flex items-center gap-2">
+        <div class="scrollbar-none flex min-w-0 flex-1 gap-2 overflow-x-auto">
           <button
-            key={id}
             type="button"
-            class={`${chip} ${tone(ask === id)} max-w-[12rem] truncate`}
-            aria-pressed={ask === id}
-            onClick={() => setAsk(id)}
+            class={`${chip} ${tone(ask === null)} shrink-0 whitespace-nowrap`}
+            aria-pressed={ask === null}
+            onClick={() => setAsk(null)}
           >
-            {title(id)} {queue.counts[id][state]}
+            {t('queue.allAsks')} {count(state, null)}
           </button>
-        ))}
+          {asks.slice(0, SHOWN_ASKS).map((id) => (
+            <button
+              key={id}
+              type="button"
+              class={`${chip} ${tone(ask === id)} max-w-[12rem] shrink-0 truncate`}
+              aria-pressed={ask === id}
+              onClick={() => setAsk(id)}
+            >
+              {title(id)} {queue.counts[id][state]}
+            </button>
+          ))}
+        </div>
         {asks.length > SHOWN_ASKS && (
-          <select
-            aria-label={t('queue.more')}
-            class={`${chip} ${tone(asks.slice(SHOWN_ASKS).includes(ask ?? ''))} max-w-[10rem] bg-transparent`}
-            value={asks.slice(SHOWN_ASKS).includes(ask ?? '') ? ask! : ''}
-            onChange={(event) => setAsk((event.target as HTMLSelectElement).value || null)}
+          <span
+            class={`${tone(asks.slice(SHOWN_ASKS).includes(ask ?? ''))} relative grid size-8 shrink-0 place-items-center rounded-full border focus-within:ring-2 focus-within:ring-inset focus-within:ring-accent`}
           >
-            <option value="">{t('queue.more')}</option>
-            {asks.slice(SHOWN_ASKS).map((id) => (
-              <option key={id} value={id}>
-                {title(id)} {queue.counts[id][state]}
-              </option>
-            ))}
-          </select>
+            <NeoMoreIcon />
+            <select
+              aria-label={t('queue.more')}
+              title={t('queue.more')}
+              class="absolute inset-0 size-full cursor-pointer opacity-0"
+              value={asks.slice(SHOWN_ASKS).includes(ask ?? '') ? ask! : ''}
+              onChange={(event) => setAsk((event.target as HTMLSelectElement).value || null)}
+            >
+              <option value="">{t('queue.more')}</option>
+              {asks.slice(SHOWN_ASKS).map((id) => (
+                <option key={id} value={id}>
+                  {title(id)} {queue.counts[id][state]}
+                </option>
+              ))}
+            </select>
+          </span>
         )}
       </div>
       {runs.map(({ id, first, items: run }) => {
