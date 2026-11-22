@@ -85,6 +85,8 @@ jobs:
         run: python3 packages/desktop/tests/macos-rpaths.py
       - name: Require the hardened runtime on every slice
         run: bash packages/desktop/tests/hardened-slices.sh
+      - name: Check the bundle verifier, file-backed and as Desktop embeds it
+        run: bash packages/desktop/tests/cua-driver.sh
       - name: Build production-admission host fixture
         run: cargo build --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml
       - name: Start a release-host driver and tolerate endpoint failures

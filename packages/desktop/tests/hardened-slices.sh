@@ -1,5 +1,6 @@
 #!/bin/bash
-# Real codesign and lipo on ad hoc signed universal fixtures: every slice must carry the runtime flag.
+# Real codesign on ad hoc signed universal fixtures, through the verifier as Desktop embeds it:
+# every slice must carry the runtime flag.
 set -uo pipefail
 desktop="$(cd "$(dirname "$0")/.." && pwd)"
 fixture="$(mktemp -d)"
@@ -26,7 +27,7 @@ bundle() {
 failed=0
 check() {
     local name="$1" want="$2" code="$3" status=0
-    bash "$desktop/hardened-slices.sh" "$code" 2>/dev/null || status=1
+    /bin/bash -c "$(cat "$desktop/verify-macos-bundle.sh")" -- --hardened "$code" >/dev/null 2>&1 || status=1
     if [[ "$status" == "$want" ]]; then printf 'PASS: %s\n' "$name"; else printf 'FAIL: %s\n' "$name" >&2; failed=1; fi
 }
 
