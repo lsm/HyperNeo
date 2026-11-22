@@ -1,5 +1,5 @@
 import { generateUUID } from '@hyperneo/shared';
-import { isOxapHarness, oxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
+import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import type {
   MessageDeliveryMode,
   MessageImage,
@@ -179,6 +179,7 @@ interface MessageInputProps {
   pendingAttachmentKey?: string;
   sessionType?: SessionType;
   harness?: SessionConfig['harness'];
+  imagesSupported?: boolean;
   onSend: (
     content: string,
     images?: MessageImage[],
@@ -209,6 +210,7 @@ export default function MessageInput({
   pendingAttachmentKey,
   sessionType,
   harness,
+  imagesSupported = !isOxapHarness(harness),
   onSend,
   disabled,
   onOpenTools,
@@ -229,7 +231,7 @@ export default function MessageInput({
   registerDropTarget,
   store,
 }: MessageInputProps) {
-  const textOnly = isOxapHarness(harness) && oxapHarness(harness).input === 'text';
+  const textOnly = !imagesSupported;
   const isTouchDeviceRef = useRef(
     window.matchMedia('(pointer: coarse)').matches ||
       ('ontouchstart' in window && window.innerWidth < 768)

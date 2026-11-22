@@ -31,7 +31,7 @@ import type { QueryLifecycleManager } from './query-lifecycle-manager.ts';
 import type { QueryLike } from './query-like.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { sessionSdkPath } from '../session/sdk-path.ts';
-import { decideSwitch, engineForProvider } from './session-engine.ts';
+import { decideSwitch, engineForProvider, oxapModelSwitchRefusal } from './session-engine.ts';
 
 const ONE_M_SUFFIX = /\[1m\]$/i;
 type ModelPair = Pick<SessionConfig, 'model' | 'provider'>;
@@ -349,6 +349,8 @@ export class ModelSwitchHandler {
       engineForProvider(newProvider, () => db.providers.getProviderByProviderId(newProvider))
     );
     if (switched !== true) return switched;
+    const locked = oxapModelSwitchRefusal(session.config, session.sdkSessionId, newModel);
+    if (locked) return locked;
     const sessionApiKey =
       newProvider === session.config.provider ? session.config.providerConfig?.apiKey : undefined;
     return (await isValidModel(newModel, 'global', newProvider, sessionApiKey))
