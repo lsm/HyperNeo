@@ -355,9 +355,15 @@ export class NeoAskTodoRepository {
     projectId: string | null | undefined,
     limit: number,
     work = false,
-    before?: { updatedAt: number; id: string }
+    before?: { updatedAt: number; id: string },
+    queueIds: readonly string[] = []
   ) {
-    const asks = this.withTopics(this.listAsks(projectId, limit, work, before));
+    const listed = this.listAsks(projectId, limit, work, before);
+    const listedIds = new Set(listed.map((ask) => ask.id));
+    const queueAsks = new Set(queueIds);
+    const extra = queueIds.filter((id) => !listedIds.has(id));
+    const resolved = this.withTopics([...listed, ...(extra.length ? this.getAsks(extra) : [])]);
+    const asks = resolved.slice(0, listed.length);
     const ids = asks.map((ask) => ask.id);
     const todos = this.listTodosForAsks(ids);
     const questions = this.listQuestionsForAsks(ids);
@@ -373,6 +379,11 @@ export class NeoAskTodoRepository {
     const unlisted = this.countAsks(projectId) - asks.length;
     return {
       asks,
+      queueTopics: Object.fromEntries(
+        resolved
+          .filter(({ id }) => queueAsks.has(id))
+          .map(({ id, topic, topicKey, topicSource }) => [id, { topic, topicKey, topicSource }])
+      ),
       unlisted,
       openWork: this.openWorkFacts(),
       historyCursor:
@@ -680,7 +691,7 @@ export class NeoAskTodoRepository {
     return this.getAsk(ask.id)!;
   }
 
-  private withTopics(asks: readonly NeoAsk[]): NeoAsk[] {
+  private withTopics(asks: readonly NeoAsk[]) {
     return readNeoAskTopics(this.db, asks, this.getAsks(asks.flatMap((ask) => ask.parentId ?? [])));
   }
 

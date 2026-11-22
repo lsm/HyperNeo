@@ -3,6 +3,7 @@ import type {
   NeoQuestionAnswer,
   NeoQuestionEntry,
 } from '@hyperneo/shared/types/neo-ask';
+import { NEO_OTHER_TOPIC, NEO_OTHER_TOPIC_KEY } from '@hyperneo/shared/types/neo-ask';
 import type {
   NeoHumanQueue as Queue,
   NeoHumanQueueItem,
@@ -15,9 +16,10 @@ import { QuestionBox } from './NeoAskTodos.tsx';
 import { FORM_CHECKBOX_CLASS } from '../components/ui/FormField.tsx';
 import { NeoMoreIcon, neoPlainClass } from './NeoCardParts.tsx';
 import type { NeoWorkFocus } from './neo-work-reference.ts';
+import { neoTopicLabel } from './topic-label.ts';
 
 const STATES: NeoHumanQueueState[] = ['waiting', 'held', 'progress'];
-const SHOWN_ASKS = 3;
+const SHOWN_TOPICS = 3;
 const chip = 'rounded-full border px-3 py-1 text-sm';
 const holds = (item: NeoHumanQueueItem, focus: NeoWorkFocus) =>
   focus.questionId
@@ -64,8 +66,32 @@ export function NeoHumanQueue({
   renderAsk?: (entry: NeoAskEntry, refreshing?: boolean) => ComponentChildren;
 }) {
   const [state, setState] = useState<NeoHumanQueueState>('waiting');
-  const [ask, setAsk] = useState<string | null>(null);
+  const [topic, setTopic] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, NeoAskEntry>>({});
+  const title = (id: string) => {
+    const item = queue.items.find((candidate) => candidate.askId === id);
+    return (
+      entries.find((entry) => entry.ask.id === id)?.ask.title ??
+      details[id]?.ask.title ??
+      (item && ('questionId' in item ? item.text : item.title)) ??
+      id
+    );
+  };
+  const topicKey = (id: string) =>
+    queue.topics?.[id]?.topicKey ?? (queue.topics ? NEO_OTHER_TOPIC_KEY : id);
+  const topics = new Map<string, { label: string; counts: Queue['counts'][string] }>();
+  for (const [id, counts] of Object.entries(queue.counts)) {
+    const key = topicKey(id);
+    const existing = topics.get(key);
+    if (existing) {
+      for (const s of STATES) existing.counts[s] += counts[s];
+    } else {
+      const label = queue.topics
+        ? neoTopicLabel(queue.topics[id] ?? { topic: NEO_OTHER_TOPIC, topicKey: key })!
+        : title(id);
+      topics.set(key, { label, counts: { ...counts } });
+    }
+  }
   const [attempt, setAttempt] = useState(0);
   const shown = useRef<Record<string, NeoAskEntry>>({});
   const [settled, setSettled] = useState(0);
@@ -97,19 +123,20 @@ export function NeoHumanQueue({
   const focusReady = !!focused && !!card(focused.askId);
   const outside = focus && !focused ? focus.askId : null;
   useEffect(() => {
-    if (ask !== null && !queue.counts[ask]) setAsk(null);
-  }, [queue, ask]);
+    if (topic !== null && !topics.has(topic)) setTopic(null);
+  }, [queue, topic]);
   const revealed = useRef<{ reveal: number; done: boolean } | null>(null);
   useEffect(() => {
-    if (!focused || revealed.current?.reveal === reveal) return;
+    if (!focus || revealed.current?.reveal === reveal) return;
+    if (!queue.topics || topic !== topicKey(focus.askId)) setTopic(null);
+    if (!focused) return;
     revealed.current = { reveal, done: false };
     setState(focused.state);
-    setAsk(null);
-  }, [reveal, focused]);
+  }, [reveal, focus, focused]);
   useEffect(() => {
     const request = revealed.current;
     if (!focus || !focused || !request || request.reveal !== reveal || request.done) return;
-    if (focused.state !== state || ask !== null) return;
+    if (focused.state !== state || (topic !== null && topicKey(focused.askId) !== topic)) return;
     let restore = () => {};
     const frame = requestAnimationFrame(() => {
       const target = [
@@ -136,22 +163,16 @@ export function NeoHumanQueue({
       cancelAnimationFrame(frame);
       restore();
     };
-  }, [focus, focused?.state, state, ask, focusReady, reveal]);
-  const title = (id: string) =>
-    entries.find((entry) => entry.ask.id === id)?.ask.title ??
-    details[id]?.ask.title ??
-    queue.items
-      .filter((item) => item.askId === id)
-      .map((item) => ('questionId' in item ? item.text : item.title))[0] ??
-    id;
-  const count = (s: NeoHumanQueueState, a: string | null) =>
-    Object.entries(queue.counts).reduce(
-      (total, [id, counts]) => total + (a === null || a === id ? counts[s] : 0),
-      0
-    );
-  const asks = Object.keys(queue.counts).filter((id) => id === ask || queue.counts[id][state] > 0);
+  }, [focus, focused?.state, state, topic, focusReady, reveal]);
+  const count = (s: NeoHumanQueueState, key: string | null) =>
+    key === null
+      ? [...topics.values()].reduce((total, { counts }) => total + counts[s], 0)
+      : (topics.get(key)?.counts[s] ?? 0);
+  const choices = [...topics].filter(([key, { counts }]) => key === topic || counts[state] > 0);
+  const overflow = choices.slice(SHOWN_TOPICS);
+  const selectedOverflow = overflow.some(([key]) => key === topic) ? (topic ?? '') : '';
   const items = queue.items.filter(
-    (item) => item.state === state && (ask === null || item.askId === ask)
+    (item) => item.state === state && (topic === null || topicKey(item.askId) === topic)
   );
   const groups = [...new Set(items.map((item) => item.askId))];
   const runs: { id: string; first: boolean; items: NeoHumanQueueItem[] }[] = [];
@@ -237,48 +258,52 @@ export function NeoHumanQueue({
             aria-pressed={state === s}
             onClick={() => setState(s)}
           >
-            {t(`queue.state.${s}`)} {count(s, ask)}
+            {t(`queue.state.${s}`)} {count(s, topic)}
           </button>
         ))}
       </div>
-      <div role="group" aria-label={t('queue.ask')} class="flex items-center gap-2">
+      <div
+        role="group"
+        aria-label={t(queue.topics ? 'queue.topic' : 'queue.ask')}
+        class="flex items-center gap-2"
+      >
         <div class="scrollbar-none flex min-w-0 flex-1 gap-2 overflow-x-auto">
           <button
             type="button"
-            class={`${chip} ${tone(ask === null)} shrink-0 whitespace-nowrap`}
-            aria-pressed={ask === null}
-            onClick={() => setAsk(null)}
+            class={`${chip} ${tone(topic === null)} shrink-0 whitespace-nowrap`}
+            aria-pressed={topic === null}
+            onClick={() => setTopic(null)}
           >
             {t('queue.allAsks')} {count(state, null)}
           </button>
-          {asks.slice(0, SHOWN_ASKS).map((id) => (
+          {choices.slice(0, SHOWN_TOPICS).map(([key, { label, counts }]) => (
             <button
-              key={id}
+              key={key}
               type="button"
-              class={`${chip} ${tone(ask === id)} max-w-[12rem] shrink-0 truncate`}
-              aria-pressed={ask === id}
-              onClick={() => setAsk(id)}
+              class={`${chip} ${tone(topic === key)} max-w-[12rem] shrink-0 truncate`}
+              aria-pressed={topic === key}
+              onClick={() => setTopic(key)}
             >
-              {title(id)} {queue.counts[id][state]}
+              {label} {counts[state]}
             </button>
           ))}
         </div>
-        {asks.length > SHOWN_ASKS && (
+        {overflow.length > 0 && (
           <span
-            class={`${tone(asks.slice(SHOWN_ASKS).includes(ask ?? ''))} relative grid size-8 shrink-0 place-items-center rounded-full border focus-within:ring-2 focus-within:ring-inset focus-within:ring-accent`}
+            class={`${tone(!!selectedOverflow)} relative grid size-8 shrink-0 place-items-center rounded-full border focus-within:ring-2 focus-within:ring-inset focus-within:ring-accent`}
           >
             <NeoMoreIcon />
             <select
               aria-label={t('queue.more')}
               title={t('queue.more')}
               class="absolute inset-0 size-full cursor-pointer opacity-0"
-              value={asks.slice(SHOWN_ASKS).includes(ask ?? '') ? ask! : ''}
-              onChange={(event) => setAsk((event.target as HTMLSelectElement).value || null)}
+              value={selectedOverflow}
+              onChange={(event) => setTopic(event.currentTarget.value || null)}
             >
               <option value="">{t('queue.more')}</option>
-              {asks.slice(SHOWN_ASKS).map((id) => (
-                <option key={id} value={id}>
-                  {title(id)} {queue.counts[id][state]}
+              {overflow.map(([key, { label, counts }]) => (
+                <option key={key} value={key}>
+                  {label} {counts[state]}
                 </option>
               ))}
             </select>

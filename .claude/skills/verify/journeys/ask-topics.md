@@ -19,3 +19,7 @@ MCP adapter as a Neo session, `neo.ask.propose` with topic `" 家长控制 "` st
 answers `ask_settled: this ask is dropped.` and keeps its topic. The RPC
 `neo.snapshot` shows both topics, again after a real daemon restart. Evidence is
 `$RUN/evidence/ask-topics.json`.
+
+Propose, edit and add a todo from a direct human input with `HyperNeo`,
+`neo-ios`, `支付` and a 12-cell pick made of five CJK characters and a family
+emoji. Each write rejects a 13-cell pick without changing the ask rows.

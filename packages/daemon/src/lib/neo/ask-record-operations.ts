@@ -38,17 +38,17 @@ import {
 } from '../../storage/repositories/neo-ask-settlement.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import type { LanguageSetting } from '@hyperneo/shared/types/settings';
+import { NeoTopicFrom, NeoTopicPick } from './ask-topic.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
 type AskReceipt = { ok: true; ask: NeoAsk; todos: NeoTodo[]; records?: string[] };
 
 const Text = z.string().trim().min(1);
-const Topic = Text.max(12);
 
 const Open = z.object({
   title: Text.max(200),
-  topic: Topic.optional(),
+  topic: NeoTopicPick.optional(),
   request: Text.max(4000),
   yesLabel: Text.max(24).optional(),
   noLabel: Text.max(24).optional(),
@@ -62,8 +62,8 @@ const Open = z.object({
 
 const Outcome = z.object({ askId: Text, outcome: Text.max(4000) });
 
-const TopicInput = z.object({ askId: Text, topic: Topic });
-const TopicMerge = z.object({ from: Topic, to: Topic });
+const TopicInput = z.object({ askId: Text, topic: NeoTopicPick });
+const TopicMerge = z.object({ from: NeoTopicFrom, to: NeoTopicPick });
 const TopicMerged = z.union([
   z.object({ ok: z.literal(false), reason: z.string() }),
   z.object({ ok: z.literal(true), merged: z.number() }),

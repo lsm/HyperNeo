@@ -2,9 +2,12 @@ import { cleanup, fireEvent, render } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NeoTopicChips, neoTopicCounts } from '../NeoTopicChips.tsx';
 import { locale } from '../../lib/i18n/index.ts';
+import { NEO_OTHER_TOPIC_KEY } from '@hyperneo/shared/types/neo-ask';
 
 const asks = (...topics: (string | null)[]) =>
-  topics.map((topic) => ({ ask: { topic, topicKey: topic && `key:${topic}` } }));
+  topics.map((topic) => ({
+    ask: { topic, topicKey: topic === '其他' ? NEO_OTHER_TOPIC_KEY : topic && `key:${topic}` },
+  }));
 
 beforeEach(() => {
   locale.value = 'zh-Hans';
@@ -20,7 +23,7 @@ describe('neoTopicCounts', () => {
       [
         ['key:OAP', 'OAP', 3],
         ['key:邮件', '邮件', 1],
-        ['key:其他', '其他', 3],
+        [NEO_OTHER_TOPIC_KEY, '其他', 3],
       ]
     );
   });

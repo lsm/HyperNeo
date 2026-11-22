@@ -45,8 +45,8 @@ try {
   assert.equal(header.trim(), '在做');
   const labels = [
     ['plain', '其他'],
-    ['shop-a', 'Shop'],
-    ['shop-b', 'Shop'],
+    ['shop-a', '项目'],
+    ['shop-b', '项目'],
     ['kids-lower', 'kids'],
     ['kids-upper', 'Kids'],
     ['protocol', 'OAP'],

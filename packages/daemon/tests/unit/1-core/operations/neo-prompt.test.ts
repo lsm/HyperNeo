@@ -68,8 +68,9 @@ describe('root Neo system prompt', () => {
 
   test('tells Neo a topic is a lasting area reused from the topic list', () => {
     expect(NEO_ROOT_TURN_END).toContain('neo.ask.topic');
-    expect(NEO_ROOT_TURN_END).toContain('a lasting area of the human');
-    expect(NEO_ROOT_TURN_END).toContain('not a single matter');
+    expect(NEO_ROOT_TURN_END).toContain("a lasting topic in the human's language");
+    expect(NEO_ROOT_TURN_END).toContain('up to 12 display cells');
+    expect(NEO_ROOT_TURN_END).toContain('Count CJK, fullwidth characters and emoji as two cells.');
     expect(NEO_ROOT_TURN_END).toContain('reuse a topic from the topic list');
     expect(NEO_ROOT_TURN_END).toContain('其他');
   });

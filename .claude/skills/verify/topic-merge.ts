@@ -96,6 +96,21 @@ try {
     const after = stored();
     evidence.push({ name: 'stored topics after merge', after });
     assert.deepEqual(after, ['a-school=孩子', 'b-camp=孩子', 'c-tutor=孩子', 'd-roof=家']);
+    const rejected = await as(neo)({
+      name: 'neo.topic.merge', input: { from: '孩子', to: '甲乙丙丁戊己A' },
+    });
+    assert.equal(rejected.isError, true);
+    assert.deepEqual(stored(), after);
+    evidence.push({ name: 'rejected merge', result: rejected.content[0].text });
+
+    const legacy = '甲乙丙丁戊己A';
+    db.prepare('UPDATE neo_asks SET topic = ? WHERE id = ?').run(legacy, ids['d-roof']);
+    let from = legacy;
+    for (const to of ['HyperNeo', 'neo-ios', '支付', 'Twelve cells', '甲乙丙丁戊👨‍👩‍👧‍👦', '家庭']) {
+      assert.deepEqual(await call('neo.topic.merge', { from, to }), { ok: true, merged: 1 });
+      assert(stored().includes(`d-roof=${to}`));
+      from = to;
+    }
   } finally {
     await app.cleanup();
   }

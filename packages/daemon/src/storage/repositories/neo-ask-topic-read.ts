@@ -1,4 +1,4 @@
-import type { NeoAsk } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAsk, NeoTopicLabel } from '@hyperneo/shared/types/neo-ask';
 import { hostname } from 'node:os';
 import {
   neoAskTopic,
@@ -8,6 +8,7 @@ import {
 } from '../../lib/neo/ask-topic.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoProjectMergeRepository } from './neo-project-merge-repository.ts';
+import { NeoRepository } from './neo-repository.ts';
 
 const json = (ids: Iterable<string>) => JSON.stringify([...new Set(ids)]);
 
@@ -15,7 +16,8 @@ export function readNeoAskTopics(
   db: Database,
   asks: readonly NeoAsk[],
   parents: readonly NeoAsk[]
-): NeoAsk[] {
+): (NeoAsk & NeoTopicLabel)[] {
+  if (!asks.length) return [];
   const known = new Map([...asks, ...parents].map((ask) => [ask.id, ask]));
   const todos = new Map<string, NeoAskTopicTodo[]>();
   for (const row of db
@@ -53,6 +55,12 @@ export function readNeoAskTopics(
   );
   const merges = new NeoProjectMergeRepository(db);
   const title = db.prepare('SELECT title FROM neo_concerns WHERE id = ?');
+  const repositoryNames = new Set(
+    [...new NeoRepository(db).repositories().values()].flatMap((path) => [
+      path.toLowerCase(),
+      path.split('/').at(-1)?.toLowerCase(),
+    ])
+  );
   const projects = new Map(
     [
       ...new Set([
@@ -62,7 +70,18 @@ export function readNeoAskTopics(
     ].flatMap((id) => {
       const resolved = merges.resolve(id);
       const row = resolved ? (title.get(resolved) as { title: string } | null) : null;
-      return resolved && row ? [[id, { id: resolved, title: row.title }] as const] : [];
+      return resolved && row
+        ? [
+            [
+              id,
+              {
+                id: resolved,
+                title: row.title,
+                repositoryName: repositoryNames.has(row.title.toLowerCase()),
+              },
+            ] as const,
+          ]
+        : [];
     })
   );
   return asks.map((ask) => {
