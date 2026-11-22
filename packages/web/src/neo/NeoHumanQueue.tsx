@@ -6,7 +6,6 @@ import type {
 import type {
   NeoHumanQueue as Queue,
   NeoHumanQueueItem,
-  NeoHumanQueueState,
 } from '@hyperneo/shared/types/neo-snapshot';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
@@ -16,9 +15,6 @@ import { FORM_CHECKBOX_CLASS } from '../components/ui/FormField.tsx';
 import { neoPlainClass } from './NeoCardParts.tsx';
 import type { NeoWorkFocus } from './neo-work-reference.ts';
 
-const STATES: NeoHumanQueueState[] = ['waiting', 'held', 'progress'];
-const SHOWN_ASKS = 3;
-const chip = 'rounded-full border px-3 py-1 text-sm';
 const holds = (item: NeoHumanQueueItem, focus: NeoWorkFocus) =>
   focus.questionId
     ? 'questionId' in item && item.questionId === focus.questionId
@@ -30,9 +26,6 @@ const holds = (item: NeoHumanQueueItem, focus: NeoWorkFocus) =>
 
 export const neoHumanQueueHolds = (queue: Queue, focus: NeoWorkFocus) =>
   queue.items.some((item) => holds(item, focus));
-
-const tone = (on: boolean) =>
-  on ? 'border-accent bg-accent/10 text-fg' : 'border-line text-fg-muted hover:text-fg';
 
 export function NeoHumanQueue({
   queue,
@@ -63,8 +56,6 @@ export function NeoHumanQueue({
   onDesktopControl?: (todoId: string, on: boolean) => void;
   renderAsk?: (entry: NeoAskEntry, refreshing?: boolean) => ComponentChildren;
 }) {
-  const [state, setState] = useState<NeoHumanQueueState>('waiting');
-  const [ask, setAsk] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, NeoAskEntry>>({});
   const [attempt, setAttempt] = useState(0);
   const shown = useRef<Record<string, NeoAskEntry>>({});
@@ -96,20 +87,12 @@ export function NeoHumanQueue({
   const focused = focus && queue.items.find((item) => holds(item, focus));
   const focusReady = !!focused && !!card(focused.askId);
   const outside = focus && !focused ? focus.askId : null;
-  useEffect(() => {
-    if (ask !== null && !queue.counts[ask]) setAsk(null);
-  }, [queue, ask]);
   const revealed = useRef<{ reveal: number; done: boolean } | null>(null);
   useEffect(() => {
-    if (!focused || revealed.current?.reveal === reveal) return;
-    revealed.current = { reveal, done: false };
-    setState(focused.state);
-    setAsk(null);
-  }, [reveal, focused]);
-  useEffect(() => {
+    if (!focus || !focused) return;
+    if (revealed.current?.reveal !== reveal) revealed.current = { reveal, done: false };
     const request = revealed.current;
-    if (!focus || !focused || !request || request.reveal !== reveal || request.done) return;
-    if (focused.state !== state || ask !== null) return;
+    if (request.done) return;
     let restore = () => {};
     const frame = requestAnimationFrame(() => {
       const target = [
@@ -136,7 +119,7 @@ export function NeoHumanQueue({
       cancelAnimationFrame(frame);
       restore();
     };
-  }, [focus, focused?.state, state, ask, focusReady, reveal]);
+  }, [focus, focused?.askId, focusReady, reveal]);
   const title = (id: string) =>
     entries.find((entry) => entry.ask.id === id)?.ask.title ??
     details[id]?.ask.title ??
@@ -144,28 +127,13 @@ export function NeoHumanQueue({
       .filter((item) => item.askId === id)
       .map((item) => ('questionId' in item ? item.text : item.title))[0] ??
     id;
-  const count = (s: NeoHumanQueueState, a: string | null) =>
-    Object.entries(queue.counts).reduce(
-      (total, [id, counts]) => total + (a === null || a === id ? counts[s] : 0),
-      0
-    );
-  const asks = Object.keys(queue.counts).filter((id) => id === ask || queue.counts[id][state] > 0);
-  const items = queue.items.filter(
-    (item) => item.state === state && (ask === null || item.askId === ask)
-  );
-  const groups = [...new Set(items.map((item) => item.askId))];
-  const runs: { id: string; first: boolean; items: NeoHumanQueueItem[] }[] = [];
-  for (const item of items) {
-    const last = runs.at(-1);
-    if (last?.id === item.askId) last.items.push(item);
-    else
-      runs.push({
-        id: item.askId,
-        first: !runs.some((run) => run.id === item.askId),
-        items: [item],
-      });
+  const groups = new Map<string, NeoHumanQueueItem[]>();
+  for (const item of queue.items) {
+    const group = groups.get(item.askId);
+    if (group) group.push(item);
+    else groups.set(item.askId, [item]);
   }
-  const stale = groups.filter((id) => !card(id));
+  const stale = [...groups.keys()].filter((id) => !card(id));
   useEffect(() => {
     if (!onLoadDetails) return;
     for (const id of stale) {
@@ -227,66 +195,15 @@ export function NeoHumanQueue({
           </button>
         </p>
       )}
-      <div role="group" aria-label={t('queue.state')} class="flex flex-wrap gap-2">
-        {STATES.map((s) => (
-          <button
-            key={s}
-            type="button"
-            data-queue-state={s}
-            class={`${chip} ${tone(state === s)}`}
-            aria-pressed={state === s}
-            onClick={() => setState(s)}
-          >
-            {t(`queue.state.${s}`)} {count(s, ask)}
-          </button>
-        ))}
-      </div>
-      <div role="group" aria-label={t('queue.ask')} class="flex flex-wrap gap-2">
-        <button
-          type="button"
-          class={`${chip} ${tone(ask === null)}`}
-          aria-pressed={ask === null}
-          onClick={() => setAsk(null)}
-        >
-          {t('queue.allAsks')} {count(state, null)}
-        </button>
-        {asks.slice(0, SHOWN_ASKS).map((id) => (
-          <button
-            key={id}
-            type="button"
-            class={`${chip} ${tone(ask === id)} max-w-[12rem] truncate`}
-            aria-pressed={ask === id}
-            onClick={() => setAsk(id)}
-          >
-            {title(id)} {queue.counts[id][state]}
-          </button>
-        ))}
-        {asks.length > SHOWN_ASKS && (
-          <select
-            aria-label={t('queue.more')}
-            class={`${chip} ${tone(asks.slice(SHOWN_ASKS).includes(ask ?? ''))} max-w-[10rem] bg-transparent`}
-            value={asks.slice(SHOWN_ASKS).includes(ask ?? '') ? ask! : ''}
-            onChange={(event) => setAsk((event.target as HTMLSelectElement).value || null)}
-          >
-            <option value="">{t('queue.more')}</option>
-            {asks.slice(SHOWN_ASKS).map((id) => (
-              <option key={id} value={id}>
-                {title(id)} {queue.counts[id][state]}
-              </option>
-            ))}
-          </select>
-        )}
-      </div>
-      {runs.map(({ id, first, items: run }) => {
+      {[...groups].map(([id, items]) => {
         const validated = renderAsk && id !== outside ? card(id) : undefined;
         if (validated) shown.current[id] = validated;
         const full = renderAsk && id !== outside && (validated ?? shown.current[id]);
         const showFull = !!full;
-        if (showFull && !first) return null;
         return (
           <section
-            key={first ? id : `${id}:${'questionId' in run[0] ? run[0].questionId : run[0].todoId}`}
-            id={id === outside || showFull || !first ? undefined : `neo-ref-ask-${id}`}
+            key={id}
+            id={id === outside || showFull ? undefined : `neo-ref-ask-${id}`}
             data-queue-ask={id}
             aria-label={title(id)}
             class={showFull ? undefined : 'rounded-2xl border border-line p-4'}
@@ -306,7 +223,7 @@ export function NeoHumanQueue({
             )}
             {showFull
               ? renderAsk(full, !validated)
-              : run.map((item) => (
+              : items.map((item) => (
                   <QueueItem
                     key={'questionId' in item ? item.questionId : item.todoId}
                     item={item}

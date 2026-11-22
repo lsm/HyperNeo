@@ -78,30 +78,26 @@ function show(onHold = vi.fn(), onAnswer = vi.fn()) {
   const view = render(
     <NeoHumanQueue queue={queue} entries={entries} onHold={onHold} onAnswer={onAnswer} />
   );
-  const states = within(view.getByRole('group', { name: 'State' }));
-  const asks = within(view.getByRole('group', { name: 'Ask' }));
-  return { view, states, asks, onHold, onAnswer };
+  return { view, onHold, onAnswer };
 }
 
 describe('NeoHumanQueue', () => {
-  it('shows what waits on the human by default, grouped by ask, with counts', async () => {
-    const { view, states } = show();
-    expect(
-      states.getByRole('button', { name: 'Waiting on you 2' }).getAttribute('aria-pressed')
-    ).toBe('true');
-    expect(states.getByRole('button', { name: 'Held 1' })).toBeTruthy();
-    expect(states.getByRole('button', { name: 'In progress 2' })).toBeTruthy();
+  it('shows waiting cards, held cards and in-progress work together without legacy filters', () => {
+    const { view } = show();
+    expect(view.queryByRole('group', { name: 'State' })).toBeNull();
+    expect(view.queryByRole('group', { name: 'Ask' })).toBeNull();
     const trip = within(view.getByRole('region', { name: 'Plan the trip' }));
-    expect(await trip.findByText('Question q1')).toBeTruthy();
+    expect(trip.getByText('Question q1')).toBeTruthy();
     expect(trip.getByText('Book hotel')).toBeTruthy();
-    expect(trip.queryByText('Question q2')).toBeNull();
+    expect(trip.getByText('Question q2')).toBeTruthy();
+    expect(trip.getByText('Pack bags')).toBeTruthy();
     expect(view.getByRole('region', { name: 'File taxes' })).toBeTruthy();
-    expect(view.queryByRole('region', { name: 'Service the car' })).toBeNull();
+    expect(view.getByRole('region', { name: 'Service the car' })).toBeTruthy();
   });
 
   it('answers a card and holds it with one button', () => {
     const { view, onHold, onAnswer } = show();
-    const card = within(view.getByRole('region', { name: 'Plan the trip' }));
+    const card = within(view.getByText('Question q1').closest('#neo-ref-question-q1')!);
     fireEvent.click(card.getByRole('button', { name: 'Agree' }));
     expect(onAnswer).toHaveBeenCalledWith('q1', 'yes');
     fireEvent.click(card.getByRole('button', { name: 'Hold' }));
@@ -109,49 +105,23 @@ describe('NeoHumanQueue', () => {
   });
 
   it('lists held cards with a take-back button and says when a card is about the whole ask', async () => {
-    const { view, states, onHold } = show();
-    fireEvent.click(states.getByRole('button', { name: 'Held 1' }));
+    const { view, onHold } = show();
     const trip = within(view.getByRole('region', { name: 'Plan the trip' }));
     expect(await trip.findByText('Question q2')).toBeTruthy();
     expect(trip.getByText('The whole ask')).toBeTruthy();
     expect(trip.getByText('On hold')).toBeTruthy();
-    expect(trip.queryByText('Awaiting your answer')).toBeNull();
     fireEvent.click(trip.getByRole('button', { name: 'Take back' }));
     expect(onHold).toHaveBeenCalledWith('q2', false);
   });
 
   it('shows work in progress with whose step it is', () => {
-    const { view, states } = show();
-    fireEvent.click(states.getByRole('button', { name: 'In progress 2' }));
+    const { view } = show();
     const car = within(view.getByRole('region', { name: 'Service the car' }));
     expect(car.getByText('Call the garage')).toBeTruthy();
     expect(car.getByText("A worker's step")).toBeTruthy();
     expect(
       within(view.getByRole('region', { name: 'Plan the trip' })).getByText('Your step')
     ).toBeTruthy();
-  });
-
-  it('filters by ask, and each row counts what follows the other choice', () => {
-    const { view, states, asks } = show();
-    expect(asks.getByRole('button', { name: 'All 2' }).getAttribute('aria-pressed')).toBe('true');
-    expect(asks.getByRole('button', { name: 'Plan the trip 1' })).toBeTruthy();
-    expect(asks.queryByRole('button', { name: /Service the car/ })).toBeNull();
-    fireEvent.click(asks.getByRole('button', { name: 'Plan the trip 1' }));
-    expect(view.queryByRole('region', { name: 'File taxes' })).toBeNull();
-    expect(states.getByRole('button', { name: 'Waiting on you 1' })).toBeTruthy();
-    fireEvent.click(states.getByRole('button', { name: 'In progress 1' }));
-    expect(view.getByText('Pack bags')).toBeTruthy();
-    expect(view.queryByText('Call the garage')).toBeNull();
-  });
-
-  it('keeps the chosen ask visible after a state switch empties it', () => {
-    const { states, asks } = show();
-    fireEvent.click(states.getByRole('button', { name: 'In progress 2' }));
-    fireEvent.click(asks.getByRole('button', { name: 'Service the car 1' }));
-    fireEvent.click(states.getByRole('button', { name: 'Waiting on you 0' }));
-    expect(
-      asks.getByRole('button', { name: 'Service the car 0' }).getAttribute('aria-pressed')
-    ).toBe('true');
   });
 
   it('loads the full card before the human decides on a summarised ask', async () => {
@@ -191,25 +161,9 @@ describe('NeoHumanQueue', () => {
       />
     );
     const trip = within(view.getByRole('region', { name: 'Plan the trip' }));
-    fireEvent.click(trip.getByRole('button', { name: 'Reply in chat' }));
+    const card = within(trip.getByText('Question q1').closest('#neo-ref-question-q1')!);
+    fireEvent.click(card.getByRole('button', { name: 'Reply in chat' }));
     expect(onReply).toHaveBeenCalledWith(expect.objectContaining({ id: 'q1' }));
-  });
-
-  it('reveals a card the conversation points at, whatever filter is on', async () => {
-    const view = render(
-      <NeoHumanQueue
-        queue={queue}
-        entries={entries}
-        onHold={vi.fn()}
-        onAnswer={vi.fn()}
-        focus={{ askId: 'trip', questionId: 'q2' }}
-      />
-    );
-    const states = within(view.getByRole('group', { name: 'State' }));
-    expect(states.getByRole('button', { name: 'Held 1' }).getAttribute('aria-pressed')).toBe(
-      'true'
-    );
-    expect(await view.findByText('Question q2')).toBeTruthy();
   });
 
   it('says when the full card failed to load, retries, and only then offers a decision', async () => {
@@ -247,12 +201,12 @@ describe('NeoHumanQueue', () => {
   });
 
   it.each([
-    [{ askId: 'car', todoId: 't4' }, 'In progress 2', 'neo-ref-todo-t4'],
-    [{ askId: 'trip', todoId: 't1' }, 'Waiting on you 2', 'neo-ref-todo-t1'],
-    [{ askId: 'trip', questionId: 'q2' }, 'Held 1', 'neo-ref-question-q2'],
-    [{ askId: 'car' }, 'In progress 2', 'neo-ref-ask-car'],
-  ])('reveals and focuses the referenced %o', async (focus, chip, anchor) => {
-    const view = render(
+    [{ askId: 'car', todoId: 't4' }, 'neo-ref-todo-t4'],
+    [{ askId: 'trip', todoId: 't1' }, 'neo-ref-todo-t1'],
+    [{ askId: 'trip', questionId: 'q2' }, 'neo-ref-question-q2'],
+    [{ askId: 'car' }, 'neo-ref-ask-car'],
+  ])('reveals and focuses the referenced %o', async (focus, anchor) => {
+    render(
       <NeoHumanQueue
         queue={queue}
         entries={entries}
@@ -261,8 +215,6 @@ describe('NeoHumanQueue', () => {
         focus={focus}
       />
     );
-    const states = within(view.getByRole('group', { name: 'State' }));
-    expect(states.getByRole('button', { name: chip }).getAttribute('aria-pressed')).toBe('true');
     await waitFor(() => expect(document.activeElement?.id).toBe(anchor));
   });
 
@@ -344,25 +296,6 @@ describe('NeoHumanQueue', () => {
     }
   });
 
-  it('drops the ask filter when that ask leaves the queue', () => {
-    const props = { entries, onHold: vi.fn(), onAnswer: vi.fn() };
-    const view = render(<NeoHumanQueue {...props} queue={queue} />);
-    const states = within(view.getByRole('group', { name: 'State' }));
-    const asks = within(view.getByRole('group', { name: 'Ask' }));
-    fireEvent.click(states.getByRole('button', { name: 'In progress 2' }));
-    fireEvent.click(asks.getByRole('button', { name: 'Service the car 1' }));
-    const { car: _car, ...counts } = queue.counts;
-    view.rerender(
-      <NeoHumanQueue
-        {...props}
-        queue={{ items: queue.items.filter((item) => item.askId !== 'car'), counts }}
-      />
-    );
-    expect(asks.getByRole('button', { name: 'All 1' }).getAttribute('aria-pressed')).toBe('true');
-    expect(states.getByRole('button', { name: 'Waiting on you 2' })).toBeTruthy();
-    expect(view.getByText('Pack bags')).toBeTruthy();
-  });
-
   it('reads an ask again when a newer snapshot arrives during its read', async () => {
     let first = (_: NeoAskEntry) => {};
     const onLoadDetails = vi
@@ -411,8 +344,6 @@ describe('NeoHumanQueue', () => {
     const input = document.createElement('input');
     document.body.append(input);
     input.focus();
-    const states = within(view.getByRole('group', { name: 'State' }));
-    fireEvent.click(states.getByRole('button', { name: 'In progress 2' }));
     const held: Queue = {
       items: queue.items.map((item) =>
         'questionId' in item && item.questionId === 'q1' ? { ...item, state: 'held' } : item
@@ -437,9 +368,6 @@ describe('NeoHumanQueue', () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(document.activeElement).toBe(input);
-    expect(states.getByRole('button', { name: 'In progress 2' }).getAttribute('aria-pressed')).toBe(
-      'true'
-    );
     view.rerender(
       <NeoHumanQueue
         {...props}
@@ -559,7 +487,6 @@ describe('NeoHumanQueue', () => {
       />
     );
     const label = 'Let the agent use this computer';
-    fireEvent.click(view.getByRole('button', { name: 'In progress 2' }));
     expect(view.getByText('Remote step')).toBeTruthy();
     expect(view.queryByRole('checkbox', { name: label })).toBeNull();
     expect(view.queryByRole('button', { name: 'Show details: Remote step' })).toBeNull();

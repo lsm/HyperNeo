@@ -550,9 +550,11 @@ export function NeoComposer({
             title={t('composer.attachTitle')}
             disabled={voiceBusy}
             onClick={() => fileInput.current?.click()}
-            class="rounded-full p-2 text-fg-muted hover:bg-fill-soft hover:text-accent"
+            class="group grid size-11 shrink-0 place-items-center rounded-full text-fg-muted hover:text-accent"
           >
-            <NeoIcon name="plus" />
+            <span class="grid size-8 place-items-center rounded-full group-hover:bg-fill-soft">
+              <NeoIcon name="plus" />
+            </span>
           </button>
           <div class="neo-composer-preferences min-w-0">
             <NeoPreferences
