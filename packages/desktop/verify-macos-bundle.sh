@@ -6,8 +6,8 @@ driver="$app/Contents/MacOS/cua-driver"
 requirement='anchor apple generic and certificate leaf[subject.OU] = "P5R65T296V" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists'
 
 verify_signature() {
-    codesign --verify --strict --test-requirement "=$requirement${2:-}" "$1" &&
-        codesign --display --verbose=2 "$1" 2>&1 | grep 'flags=.*(runtime)' >/dev/null
+    codesign --verify --strict --all-architectures --test-requirement "=$requirement${2:-}" "$1" &&
+        bash "$(dirname "$0")/hardened-slices.sh" "$1"
 }
 
 if ! verify_signature "$driver" ' and identifier "cua-driver"'; then
