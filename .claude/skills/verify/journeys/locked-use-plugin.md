@@ -103,9 +103,11 @@ touch "packages/desktop/src-tauri/binaries/hyperneo-$(rustc --print host-tuple)"
 cargo test --locked --manifest-path packages/desktop/src-tauri/Cargo.toml --lib locked_use::
 ```
 
-Pass runs 8 tests: killed or relock-failed after covering relocks once; a clean end or a
+Pass runs 10 tests: killed or relock-failed after covering relocks once; a clean end or a
 start-gate refusal does not; a second worker is refused while the owner holds the Mac and
-admitted once it stops; a refusing or missing guardian leaves the call refused.
+admitted once it stops, even when its call was admitted before the session started; a
+session starts only after calls already acting end; a refusing or missing guardian leaves
+the call refused.
 
 Live run, on a Mac with the plugin installed and the owner present. Start it, then lock
 the Mac with Control-Command-Q within 20 seconds:

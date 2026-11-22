@@ -1039,9 +1039,11 @@ impl Drivers {
                     return true;
                 }
                 *slot = None;
+                *self.locked_owner.lock().unwrap() = None;
                 return false;
             }
             *slot = None;
+            *self.locked_owner.lock().unwrap() = None;
         }
         if !locked {
             return true;
@@ -1049,11 +1051,16 @@ impl Drivers {
         if !self.guardian.exists() {
             return false;
         }
+        {
+            let _quiet = self.acting.write().await;
+            *self.locked_owner.lock().unwrap() = Some(worker.to_owned());
+        }
         let Ok((guardian, lines)) = locked_use::start(
             &self.guardian,
             LOCKED_USE_IDLE_SECONDS,
             locked_use::lock_screen,
         ) else {
+            *self.locked_owner.lock().unwrap() = None;
             return false;
         };
         let waited = tokio::task::spawn_blocking(move || {
@@ -1070,6 +1077,7 @@ impl Drivers {
         })
         .await;
         let Ok(Some(lines)) = waited else {
+            *self.locked_owner.lock().unwrap() = None;
             return false;
         };
         *slot = Some(LockedSession {
@@ -1081,8 +1089,13 @@ impl Drivers {
     }
 
     /// Admits a call right before it acts, and holds that admission until the call ends.
-    async fn may_act(&self, _worker: &str) -> Option<tokio::sync::RwLockReadGuard<'_, ()>> {
-        Some(self.acting.read().await)
+    async fn may_act(&self, worker: &str) -> Option<tokio::sync::RwLockReadGuard<'_, ()>> {
+        let acting = self.acting.read().await;
+        let owner = self.locked_owner.lock().unwrap();
+        owner
+            .as_deref()
+            .is_none_or(|owner| owner == worker)
+            .then_some(acting)
     }
 
     /// Marks a worker unconfirmed: no start or input, and its leases stay pinned.
@@ -1118,6 +1131,7 @@ impl Drivers {
                     .is_some_and(|held| held.worker == worker_id)
                 {
                     *session = None;
+                    *self.locked_owner.lock().unwrap() = None;
                 }
                 drop(session);
                 self.leases.lock().unwrap().release(worker_id);
