@@ -1351,6 +1351,44 @@ mod peer_tests {
     }
 
     #[tokio::test]
+    async fn retiring_an_acting_worker_cannot_deadlock_a_locked_use_start() {
+        let directory = tempfile::tempdir().unwrap();
+        let drivers = Arc::new(locked_use_drivers(
+            &directory,
+            Some("echo 'covered 1'; echo unlocked; while read line; do :; done; echo 'ended owner_gone'"),
+        ));
+        let acting = drivers.may_act("other").await.unwrap();
+        let starting = tokio::spawn({
+            let drivers = drivers.clone();
+            async move { drivers.locked_use("owner", true).await }
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::timeout(Duration::from_secs(1), drivers.retire("other", &mut None))
+            .await
+            .expect("retire waited on a starting Locked Use session")
+            .unwrap();
+        drop(acting);
+        assert!(starting.await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn locked_use_keeps_others_refused_until_the_retired_guardian_exits() {
+        let directory = tempfile::tempdir().unwrap();
+        let drivers = locked_use_drivers(
+            &directory,
+            Some("echo 'covered 1'; echo unlocked; while read line; do :; done; sleep 1; echo 'ended owner_gone'"),
+        );
+        assert!(drivers.locked_use("owner", true).await);
+        drivers.retire("owner", &mut None).await.unwrap();
+        assert!(drivers.may_act("other").await.is_none());
+        assert!(!drivers.locked_use("other", false).await);
+        assert!(drivers.may_act("other").await.is_none());
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        assert!(drivers.locked_use("other", false).await);
+        assert!(drivers.may_act("other").await.is_some());
+    }
+
+    #[tokio::test]
     async fn locked_use_ends_when_the_screen_locks_again() {
         let directory = tempfile::tempdir().unwrap();
         let drivers = locked_use_drivers(
