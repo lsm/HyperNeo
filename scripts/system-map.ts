@@ -62,6 +62,7 @@ const EVENT_LISTENS = new Set(['subscribe', 'onEvent']);
 export function isSource(path: string): boolean {
   return (
     /^packages\/[^/]+\/src\/.+\.tsx?$/.test(path) &&
+    !path.includes('\n') &&
     !path.endsWith('.d.ts') &&
     !/\/(tests?|__tests__|__mocks__)\/|\.(test|spec)\./.test(path)
   );
@@ -305,18 +306,124 @@ export function formatImpact(impacts: readonly Impact[]): string {
 }
 
 function git(root: string, ...args: string[]): string[] {
-  const result = Bun.spawnSync(['git', '-C', root, ...args]);
+  const result = Bun.spawnSync(['git', '-C', root, '-c', 'core.quotePath=false', ...args]);
   if (result.exitCode !== 0) throw new Error(result.stderr.toString().trim());
-  return result.stdout.toString().split('\n').filter(Boolean);
+  return result.stdout.toString().split('\0').filter(Boolean);
 }
 
 export function readRepositorySources(root: string, includeUntracked = false): Map<string, string> {
   const options = includeUntracked ? ['--cached', '--others', '--exclude-standard'] : [];
   return new Map(
-    git(root, 'ls-files', ...options, '--', 'packages')
+    git(root, 'ls-files', '-z', ...options, '--', 'packages')
       .filter((path) => isSource(path) && existsSync(join(root, path)))
       .map((path) => [path, readFileSync(join(root, path), 'utf8')])
   );
+}
+
+function changedSources(root: string, base = 'origin/dev'): string[] {
+  return git(root, 'diff', '--name-only', '-z', '--no-renames', '--merge-base', base, '--').filter(
+    isSource
+  );
+}
+
+type DrillRoute = ReturnType<
+  typeof import('./pipeline-verdict-report.ts').reportPipelineVerdicts
+>[number];
+
+function componentPath(file: string): [pkg: string, area: string] {
+  const [, pkg, , first, second, ...remaining] = file.split('/');
+  if (first === 'lib' && remaining.length) return [pkg, second];
+  return [pkg, second === undefined ? '' : first];
+}
+
+function componentAnchor(key: string): string {
+  return Array.from(Buffer.from(key), (byte) => {
+    const char = String.fromCharCode(byte);
+    return /[a-z0-9]/.test(char) ? char : `_${byte.toString(16).padStart(2, '0')}`;
+  }).join('');
+}
+
+function escapeLabel(label: string): string {
+  return label.replace(/[!-/:-@[-`{-~]/g, '\\$&');
+}
+
+function codeSpan(name: string): string {
+  const ticks = name.match(/`+/g) ?? [];
+  const fence = '`'.repeat(1 + Math.max(0, ...ticks.map((run) => run.length)));
+  const pad = ticks.length || (name.trim() && name.startsWith(' ') && name.endsWith(' '));
+  return pad ? `${fence} ${name} ${fence}` : `${fence}${name}${fence}`;
+}
+
+function sourceLink(file: string): string {
+  const target = file
+    .split('/')
+    .map((part) =>
+      encodeURIComponent(part).replace(
+        /[!'()*]/g,
+        (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`
+      )
+    )
+    .join('/');
+  return `[${escapeLabel(file.slice(file.lastIndexOf('/') + 1))}](${target})`;
+}
+
+function drillDownMap(routes: DrillRoute[], changed: string[]): string {
+  const packages = new Map<string, { count: number; areas: Map<string, DrillRoute[]> }>();
+  const touchedFiles = new Set(changed);
+  const touchedComponents = new Set<string>();
+  function addComponent(file: string, route?: DrillRoute) {
+    const [pkg, area] = componentPath(file);
+    const group = packages.get(pkg) ?? { count: 0, areas: new Map<string, DrillRoute[]>() };
+    packages.set(pkg, group);
+    const entries = group.areas.get(area) ?? [];
+    group.areas.set(area, entries);
+    if (route) {
+      entries.push(route);
+      group.count++;
+    } else {
+      touchedComponents.add(`${pkg}/${area}`);
+    }
+  }
+  for (const route of routes) addComponent(route.file, route);
+  for (const file of changed) addComponent(file);
+
+  const named = routes.filter((route) => route.verdict === 'named').length;
+  const unreadable = routes.filter((route) => route.verdict === 'unreadable').length;
+  const index = [
+    `# System map — ${routes.length} routes, ${named} named, ${unreadable} unreadable`,
+    '',
+  ];
+  const sections: string[] = [];
+  const touch = (touched: boolean) => (touched ? ' (touched)' : '');
+  const sortedPackages = [...packages].sort(
+    ([a, x], [b, y]) => y.count - x.count || a.localeCompare(b)
+  );
+  for (const [pkg, { count, areas }] of sortedPackages) {
+    sections.push('', `## ${escapeLabel(pkg)} — ${count} routes`);
+    const sortedAreas = [...areas].sort(
+      ([a, x], [b, y]) => y.length - x.length || a.localeCompare(b)
+    );
+    for (const [area, entries] of sortedAreas) {
+      const key = `${pkg}/${area}`;
+      const id = componentAnchor(key);
+      const summary = `${entries.length} routes${touch(touchedComponents.has(key))}`;
+      const label = `${escapeLabel(pkg)}/${escapeLabel(area)}`;
+      index.push(`- [${label}](#${id}) — ${summary}${area ? '' : ' (package root)'}`);
+      sections.push(
+        '',
+        `<a id="${id}"></a>`,
+        '',
+        `### ${escapeLabel(area) || 'package root'} — ${summary}`
+      );
+      for (const { file, name, variant } of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+        const alternate = variant ? ` (${variant})` : '';
+        sections.push(
+          `- ${codeSpan(name)}${alternate}${touch(touchedFiles.has(file))} — ${sourceLink(file)}`
+        );
+      }
+    }
+  }
+  return [...index, ...sections].join('\n');
 }
 
 function loadRepository(root: string): SystemMap {
@@ -367,7 +474,7 @@ function formatRoute(pipeline: PipelineDescription): string {
 async function listRoutes(root: string): Promise<void> {
   let describable = 0;
   let unavailable = 0;
-  for (const path of git(root, 'ls-files', '--', 'packages').filter(isSource)) {
+  for (const path of git(root, 'ls-files', '-z', '--', 'packages').filter(isSource)) {
     if (!existsSync(join(root, path))) continue;
     const source = readFileSync(join(root, path), 'utf8');
     const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
@@ -417,11 +524,22 @@ const USAGE = `Usage:
   bun run system-map where <name>            who defines, calls, reads or writes an operation,
                                              RPC method, event or table
   bun run system-map impact <file>...        what the planned files are linked to outside the plan
-  bun run system-map impact --diff [base]    the same for files changed since base (origin/dev)`;
+  bun run system-map impact --diff [base]    the same for files changed since base (origin/dev)
+  bun run system-map map [--diff [base]]     print the strict route map as Markdown`;
 
 async function main(args: readonly string[]): Promise<number> {
   const root = process.cwd();
   const [command, ...rest] = args;
+  if (command === 'map' && (!rest.length || (rest[0] === '--diff' && rest.length <= 2))) {
+    const changed = rest[0] === '--diff' ? changedSources(root, rest[1]) : [];
+    const sources = readRepositorySources(root, true);
+    const { reportPipelineVerdicts } = await import('./pipeline-verdict-report.ts');
+    const routes = reportPipelineVerdicts(sources, (input) =>
+      countPipelineRoutes(input, true, sources)
+    );
+    console.log(drillDownMap(routes, changed));
+    return 0;
+  }
   if (command === 'routes' && rest.length === 1 && rest[0] === 'list') {
     await listRoutes(root);
     return 0;
@@ -441,10 +559,7 @@ async function main(args: readonly string[]): Promise<number> {
     return links.length ? 0 : 1;
   }
   if (command === 'impact' && rest.length) {
-    const plan =
-      rest[0] === '--diff'
-        ? git(root, 'diff', '--name-only', '--merge-base', rest[1] ?? 'origin/dev').filter(isSource)
-        : rest;
+    const plan = rest[0] === '--diff' ? changedSources(root, rest[1]) : rest;
     console.log(formatImpact(impact(loadRepository(root), plan)));
     return 0;
   }

@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import {
   buildSystemMap,
   countPipelineRoutes,
@@ -458,5 +459,226 @@ test('strict shorthand mismatches preserve later cross-file factory resolution',
     misnamed: 1,
     dynamic: 0,
     unreadable: 0,
+  });
+});
+
+function mapFixture(
+  run: (fixture: {
+    git: (...args: string[]) => string;
+    write: (file: string, text: string) => void;
+    cli: (...args: string[]) => ReturnType<typeof Bun.spawnSync>;
+    map: (...args: string[]) => string;
+  }) => void
+) {
+  const cwd = mkdtempSync(join(tmpdir(), 'system-map-'));
+  const env = {
+    HOME: cwd,
+    PATH: process.env.PATH ?? '',
+    NODE_ENV: 'test',
+    GIT_AUTHOR_NAME: 'Fixture',
+    GIT_AUTHOR_EMAIL: 'fixture@example.com',
+    GIT_COMMITTER_NAME: 'Fixture',
+    GIT_COMMITTER_EMAIL: 'fixture@example.com',
+  };
+  const git = (...args: string[]) => {
+    const result = Bun.spawnSync(['git', ...args], { cwd, env });
+    if (result.exitCode !== 0) throw new Error(result.stderr.toString());
+    return result.stdout.toString().trim();
+  };
+  const write = (file: string, text: string) => {
+    const path = join(cwd, file);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, text);
+  };
+  const cli = (...args: string[]) =>
+    Bun.spawnSync([process.execPath, join(import.meta.dir, 'system-map.ts'), ...args], {
+      cwd,
+      env,
+    });
+  const map = (...args: string[]) => {
+    const result = cli('map', ...args);
+    if (result.exitCode !== 0) throw new Error(result.stderr.toString());
+    return result.stdout.toString();
+  };
+  try {
+    git('init', '-q');
+    git('config', 'core.ignorecase', 'false');
+    git('config', 'diff.renames', 'true');
+    write('.gitignore', 'ignored.ts\n');
+    git('add', '.gitignore');
+    git('commit', '-qm', 'Fixture base');
+    git('update-ref', 'refs/remotes/origin/dev', 'HEAD');
+    run({ git, write, cli, map });
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}
+
+function mapRoute(name: string, schema = 'schema'): string {
+  const literal = JSON.stringify(name);
+  return `defineOperation({
+    name: ${literal},
+    inputSchema: ${schema},
+    execute: () => superpipe({})(${literal}).end()()
+  });\n`;
+}
+
+function mapAnchors(markdown: string): string[] {
+  const links = [...markdown.matchAll(/^\- \[.*\]\(#([a-z0-9_]+)\) — /gm)].map((m) => m[1]);
+  const anchors = [...markdown.matchAll(/^<a id="([a-z0-9_]+)"><\/a>$/gm)].map((m) => m[1]);
+  expect(links).toEqual(anchors);
+  expect(new Set(anchors).size).toBe(anchors.length);
+  return anchors;
+}
+
+test('map groups and sorts strict routes, preserves variants, and emits followable links', () => {
+  mapFixture(({ git, write, cli, map }) => {
+    write('packages/space/src/zeta/z.ts', mapRoute('space.zeta'));
+    write('packages/space/src/main.ts', mapRoute('space.list'));
+    write('packages/space/src/alpha/other.ts', mapRoute('space.beta'));
+    write('packages/space/src/alpha/route.ts', mapRoute('space.alpha'));
+    write(
+      'packages/daemon/src/lib/neo/ops.ts',
+      [
+        mapRoute('neo.read', 'first'),
+        mapRoute('neo.read', 'second'),
+        mapRoute('neo.tick`name'),
+        "const guarded = superpipe({})('neo.unreadable').end();\n" +
+          "defineOperation({ name: 'neo.unreadable', execute: () => condition && guarded() });\n",
+      ].join('')
+    );
+    write('packages/space/src/ignored.ts', mapRoute('space.ignored'));
+    write('packages/shared/src/types/operation-names.ts', "export const names = ['space.list'];");
+    git('add', 'packages/space/src/main.ts', 'packages/shared/src/types/operation-names.ts');
+
+    const markdown = map();
+    expect(markdown.split('\n')[0]).toBe('# System map — 8 routes, 7 named, 1 unreadable');
+    expect(mapAnchors(markdown)).toEqual([
+      'daemon_2fneo',
+      'space_2falpha',
+      'space_2f',
+      'space_2fzeta',
+    ]);
+    expect(markdown).toContain('## daemon — 4 routes\n');
+    expect(markdown).toContain('## space — 4 routes\n');
+    expect(markdown).toContain('### package root — 1 routes\n');
+    expect(markdown).toContain('- `space.list` — [main\\.ts](packages/space/src/main.ts)');
+    expect(markdown).toContain('- `` neo.tick`name ``');
+    expect(markdown.match(/^- `neo\.read`.*schema:[a-f0-9]{64}.*$/gm)?.length).toBe(2);
+    expect(markdown.indexOf('- `space.alpha`')).toBeLessThan(markdown.indexOf('- `space.beta`'));
+    expect(map()).toBe(markdown);
+    const where = cli('where', 'space.list');
+    expect(where.exitCode).toBe(0);
+    expect(where.stdout.toString()).toContain('op space.list  defines  packages/space/src/main.ts');
+  });
+});
+
+test('map uses fixed byte anchors and escapes filesystem labels', () => {
+  mapFixture(({ git, write, map }) => {
+    const writeRoute = (area: string, file: string) => {
+      const path = `packages/space/src/${area ? `${area}/` : ''}${file}`;
+      write(path, mapRoute('space.read'));
+      git('add', '--', path);
+    };
+    writeRoute('', 'main.ts');
+    writeRoute('root', 'lower.ts');
+    writeRoute('Root', 'upper.ts');
+    writeRoute('root-2', 'route.ts');
+    writeRoute('(root)', 'route.ts');
+    writeRoute('a]b', 'route.ts');
+    writeRoute('a[b', 'route.ts');
+    writeRoute('x](#imaginary)', 'x](#imaginary).ts');
+    write('.git/info/exclude', '/packages/space/src/root/upper.ts\n');
+    const initial = map();
+    const ids = mapAnchors(initial);
+    expect(ids.toSorted()).toEqual([
+      'space_2f',
+      'space_2f_28root_29',
+      'space_2f_52oot',
+      'space_2fa_5bb',
+      'space_2fa_5db',
+      'space_2froot',
+      'space_2froot_2d2',
+      'space_2fx_5d_28_23imaginary_29',
+    ]);
+    expect(initial).toContain('[space/a\\]b](#space_2fa_5db)');
+    expect(initial).toContain('[space/a\\[b](#space_2fa_5bb)');
+    expect(initial).toContain('[space/x\\]\\(\\#imaginary\\)](#space_2fx_5d_28_23imaginary_29)');
+    expect(initial).toContain(
+      '[x\\]\\(\\#imaginary\\)\\.ts](packages/space/src/x%5D%28%23imaginary%29/x%5D%28%23imaginary%29.ts)'
+    );
+
+    writeRoute('root', 'another.ts');
+    writeRoute('root-3', 'route.ts');
+    const changed = map('--diff');
+    expect(changed).toContain('[space/root](#space_2froot) — 2 routes (touched)');
+    expect(
+      mapAnchors(changed)
+        .filter((id) => id !== 'space_2froot_2d3')
+        .toSorted()
+    ).toEqual(ids.toSorted());
+  });
+});
+
+test('map diff preserves Git path bytes and marks exact files, helpers, and empty components', () => {
+  mapFixture(({ git, write, map }) => {
+    const neo = 'packages/daemon/src/lib/neo';
+    const odd = 'packages/space/src/café "a\\b"/route.ts';
+    const newline = 'packages/space/src/new\nline/route.ts';
+    write(`${neo}/ops.ts`, mapRoute('neo.read'));
+    write(`${neo}/helper.ts`, 'export const a = 1;');
+    write(odd, mapRoute('space.odd'));
+    write(newline, mapRoute('space.excluded'));
+    write('packages/web/src/components/view.tsx', 'export const a = 1;');
+    git('add', 'packages');
+    git('commit', '-qm', 'Fixture routes');
+    git('update-ref', 'refs/remotes/origin/dev', 'HEAD');
+    write(`${neo}/helper.ts`, 'export const a = 2;');
+    write(odd, mapRoute('space.odd') + '\n');
+    write(newline, mapRoute('space.excluded') + '\n');
+    write('packages/web/src/components/view.tsx', 'export const a = 2;');
+    write('notes.md', 'Changed documentation.');
+    git('add', 'notes.md');
+
+    const markdown = map('--diff', 'HEAD');
+    expect(map('--diff')).toBe(markdown);
+    expect(markdown).toContain('[daemon/neo](#daemon_2fneo) — 1 routes (touched)');
+    expect(markdown).toContain('- `neo.read` — ');
+    expect(markdown).toContain('- `space.odd` (touched) — ');
+    expect(markdown).toContain('[space/café \\"a\\\\b\\"](#space_2fcaf_c3_a9_20_22a_5cb_22)');
+    expect(markdown).toContain('[web/components](#web_2fcomponents) — 0 routes (touched)');
+    expect(markdown).toMatch(/### components — 0 routes \(touched\)\s*$/);
+    expect(markdown).not.toContain('space.excluded');
+    expect(markdown).not.toContain('notes.md');
+    expect(map()).not.toContain('web/components');
+  });
+});
+
+test('map diff marks both ends of a cross-component rename', () => {
+  mapFixture(({ git, write, map }) => {
+    const from = 'packages/daemon/src/lib/space/space-read-operations.ts';
+    const to = 'packages/space/src/space-read-operations.ts';
+    write(from, mapRoute('space.list'));
+    git('add', from);
+    git('commit', '-qm', 'Fixture routes');
+    mkdirSync(dirname(join(git('rev-parse', '--show-toplevel'), to)), { recursive: true });
+    git('mv', from, to);
+
+    const markdown = map('--diff', 'HEAD');
+    expect(markdown).toContain('[daemon/space](#daemon_2fspace) — 0 routes (touched)');
+    expect(markdown).toContain('[space/](#space_2f) — 1 routes (touched) (package root)');
+    expect(markdown).toContain('### space — 0 routes (touched)\n');
+    expect(markdown).toContain('- `space.list` (touched) — ');
+    expect(map()).not.toContain('daemon/space');
+  });
+});
+
+test('map exits nonzero and emits no Markdown when strict analysis fails', () => {
+  mapFixture(({ write, cli }) => {
+    write('packages/space/src/operations.ts', 'defineOperation(config);');
+    const result = cli('map');
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout.toString()).toBe('');
+    expect(result.stderr.toString()).toContain('Unsupported operation definition');
   });
 });
