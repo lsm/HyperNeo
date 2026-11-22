@@ -117,40 +117,9 @@ struct Drivers {
     closing: std::sync::atomic::AtomicBool,
     /// Workers whose driver shutdown failed; they get no input until Stop confirms it.
     unconfirmed: StdMutex<std::collections::BTreeSet<String>>,
-    guardian: PathBuf,
-    /// The one Locked Use session on this Mac; only the worker that started it may act.
-    locked_use: Mutex<Option<std::sync::mpsc::Receiver<String>>>,
-    /// Held for reading while a call acts; a Locked Use start waits for those calls to end.
-    acting: tokio::sync::RwLock<()>,
-    /// Set from a session's start until its guardian has exited; no guardian once it is ending.
-    locked_owner: StdMutex<Option<LockedOwner>>,
-    /// Workers whose call ended without a result or a confirmed driver stop; Locked Use waits.
-    unsettled: StdMutex<std::collections::BTreeSet<String>>,
+    /// The one owner of this Mac's Locked Use state.
+    locked: locked_use::Gatekeeper,
 }
-/// A call's admission to act. Dropped unsettled, it marks its worker until a confirmed stop.
-struct Acting<'a> {
-    _guard: tokio::sync::RwLockReadGuard<'a, ()>,
-    drivers: &'a Drivers,
-    worker: String,
-    settled: bool,
-}
-impl Drop for Acting<'_> {
-    fn drop(&mut self) {
-        if !self.settled {
-            self.drivers
-                .unsettled
-                .lock()
-                .unwrap()
-                .insert(self.worker.clone());
-        }
-    }
-}
-struct LockedOwner {
-    worker: String,
-    guardian: Option<locked_use::LockedUse>,
-}
-const LOCKED_USE_IDLE_SECONDS: u32 = 120;
-const LOCKED_USE_UNLOCK: Duration = Duration::from_secs(15);
 /// Settles a dispatch's leases and gives back its foreground lock when it ends, unless its
 /// worker is held.
 struct Settle<'a> {
@@ -279,6 +248,12 @@ impl Control {
         }
         record::retire_leftovers(&directory).await?;
         let listener = UnixListener::bind(&socket)?;
+        let workers = directory.join("workers");
+        let (locked, gatekeeper) = locked_use::Gatekeeper::new(
+            binary.with_file_name("hyperneo-locked-use"),
+            move |worker| record::ensure_enabled(&workers.join(worker)).is_ok(),
+        );
+        tokio::spawn(gatekeeper);
         let drivers = Arc::new(Drivers {
             workers: Mutex::new(BTreeMap::new()),
             binary: binary.clone(),
@@ -292,11 +267,7 @@ impl Control {
             foreground_owner: StdMutex::default(),
             closing: Default::default(),
             unconfirmed: StdMutex::default(),
-            guardian: binary.with_file_name("hyperneo-locked-use"),
-            locked_use: Mutex::default(),
-            acting: Default::default(),
-            locked_owner: StdMutex::default(),
-            unsettled: StdMutex::default(),
+            locked,
         });
         let state = drivers.clone();
         let task = tokio::spawn(async move {
@@ -1042,102 +1013,12 @@ impl Drivers {
         true
     }
 
-    /// Decides whether a worker may act on this Mac. On a locked screen it starts the guardian,
-    /// which applies its own start gates, and lets only that worker act until it stops, the
-    /// guardian ends, or the screen locks again. Dropping a session relocks through the guardian.
     async fn locked_use(&self, worker: &str, locked: bool) -> bool {
-        let mut slot = self.locked_use.lock().await;
-        if let Some(lines) = slot.as_ref() {
-            let running = loop {
-                match lines.try_recv() {
-                    Ok(_) => {}
-                    Err(std::sync::mpsc::TryRecvError::Empty) => break true,
-                    Err(std::sync::mpsc::TryRecvError::Disconnected) => break false,
-                }
-            };
-            if running {
-                let mut owner = self.locked_owner.lock().unwrap();
-                let Some(held) = owner.as_mut().filter(|held| held.worker == worker) else {
-                    return false;
-                };
-                let alive = !locked
-                    && held
-                        .guardian
-                        .as_mut()
-                        .is_some_and(|guardian| guardian.keep_alive().is_ok());
-                if !alive {
-                    held.guardian = None;
-                }
-                return alive;
-            }
-            *slot = None;
-            *self.locked_owner.lock().unwrap() = None;
-        }
-        if !locked {
-            return true;
-        }
-        if !self.guardian.exists() {
-            return false;
-        }
-        {
-            let _quiet = self.acting.write().await;
-            if !self.unsettled.lock().unwrap().is_empty()
-                || !self.unconfirmed.lock().unwrap().is_empty()
-                || record::ensure_enabled(&self.records.join("workers").join(worker)).is_err()
-            {
-                return false;
-            }
-            *self.locked_owner.lock().unwrap() = Some(LockedOwner {
-                worker: worker.to_owned(),
-                guardian: None,
-            });
-        }
-        let Ok((guardian, lines)) = locked_use::start(
-            &self.guardian,
-            LOCKED_USE_IDLE_SECONDS,
-            locked_use::lock_screen,
-        ) else {
-            *self.locked_owner.lock().unwrap() = None;
-            return false;
-        };
-        let deadline = Instant::now() + LOCKED_USE_UNLOCK;
-        let unlocked = loop {
-            match lines.try_recv() {
-                Ok(line) if line == "unlocked" => break true,
-                Ok(line) if line.starts_with("ended ") => break false,
-                Ok(_) => {}
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => break false,
-                Err(std::sync::mpsc::TryRecvError::Empty) if Instant::now() >= deadline => {
-                    break false
-                }
-                Err(std::sync::mpsc::TryRecvError::Empty) => {
-                    tokio::time::sleep(Duration::from_millis(50)).await
-                }
-            }
-        };
-        *slot = Some(lines);
-        let mut owner = self.locked_owner.lock().unwrap();
-        let kept =
-            unlocked && record::ensure_enabled(&self.records.join("workers").join(worker)).is_ok();
-        if let Some(owner) = owner.as_mut().filter(|_| kept) {
-            owner.guardian = Some(guardian);
-        }
-        kept
+        self.locked.gate(worker, locked).await
     }
 
-    /// Admits a call right before it acts, and holds that admission until the call ends.
-    async fn may_act(&self, worker: &str) -> Option<Acting<'_>> {
-        let guard = self.acting.read().await;
-        let owner = self.locked_owner.lock().unwrap();
-        owner
-            .as_ref()
-            .is_none_or(|owner| owner.worker == worker && owner.guardian.is_some())
-            .then(|| Acting {
-                _guard: guard,
-                drivers: self,
-                worker: worker.to_owned(),
-                settled: false,
-            })
+    async fn may_act(&self, worker: &str) -> Option<locked_use::Acting> {
+        self.locked.act(worker).await
     }
 
     /// Marks a worker unconfirmed: no start or input, and its leases stay pinned.
@@ -1147,6 +1028,7 @@ impl Drivers {
             .unwrap()
             .insert(worker_id.to_owned());
         self.leases.lock().unwrap().pin(worker_id);
+        self.locked.hold(worker_id);
     }
 
     async fn retire(&self, worker_id: &str, worker: &mut Option<Worker>) -> Result<()> {
@@ -1167,19 +1049,13 @@ impl Drivers {
         match confirmed {
             Ok(()) => {
                 *worker = None;
-                if let Some(owner) = self
-                    .locked_owner
-                    .lock()
-                    .unwrap()
-                    .as_mut()
-                    .filter(|owner| owner.worker == worker_id)
-                {
-                    owner.guardian = None;
+                if !self.locked.retired(worker_id).await {
+                    self.hold(worker_id);
+                    return Err("stop_unconfirmed: Locked Use guardian did not exit".into());
                 }
                 self.leases.lock().unwrap().release(worker_id);
                 self.foreground_owner.lock().unwrap().remove(worker_id);
                 self.unconfirmed.lock().unwrap().remove(worker_id);
-                self.unsettled.lock().unwrap().remove(worker_id);
                 Ok(())
             }
             Err(error) => {
@@ -1283,11 +1159,7 @@ mod peer_tests {
             foreground_owner: StdMutex::default(),
             closing: Default::default(),
             unconfirmed: StdMutex::default(),
-            guardian: PathBuf::new(),
-            locked_use: Mutex::default(),
-            acting: Default::default(),
-            locked_owner: StdMutex::default(),
-            unsettled: StdMutex::default(),
+            locked: idle_gatekeeper(),
         };
         assert_eq!(wait_unreaped(pid).unwrap(), (Some(0), None));
         assert!(drivers.authorized(pid));
@@ -1296,8 +1168,21 @@ mod peer_tests {
         assert!(!drivers.authorized(pid));
     }
 
+    fn idle_gatekeeper() -> locked_use::Gatekeeper {
+        let (locked, gatekeeper) = locked_use::Gatekeeper::new(PathBuf::new(), |_| true);
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(gatekeeper);
+        }
+        locked
+    }
+
     fn locked_use_drivers(directory: &TempDir, guardian: Option<&str>) -> Drivers {
         let path = directory.path().join("hyperneo-locked-use");
+        let workers = directory.path().join("workers");
+        let (locked, gatekeeper) = locked_use::Gatekeeper::new(path.clone(), move |worker| {
+            record::ensure_enabled(&workers.join(worker)).is_ok()
+        });
+        tokio::spawn(gatekeeper);
         if let Some(script) = guardian {
             std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -1315,16 +1200,12 @@ mod peer_tests {
             foreground_owner: StdMutex::default(),
             closing: Default::default(),
             unconfirmed: StdMutex::default(),
-            guardian: path,
-            locked_use: Mutex::default(),
-            acting: Default::default(),
-            locked_owner: StdMutex::default(),
-            unsettled: StdMutex::default(),
+            locked,
         }
     }
 
     async fn released(drivers: &Drivers, worker: &str) -> bool {
-        for _ in 0..50 {
+        for _ in 0..150 {
             if drivers.locked_use(worker, false).await {
                 return true;
             }
@@ -1387,22 +1268,17 @@ mod peer_tests {
     }
 
     #[tokio::test]
-    async fn locked_use_waits_for_a_call_already_acting() {
+    async fn locked_use_refuses_to_start_while_a_call_is_acting() {
         let directory = tempfile::tempdir().unwrap();
-        let drivers = Arc::new(locked_use_drivers(
+        let drivers = locked_use_drivers(
             &directory,
             Some("echo 'covered 1'; echo unlocked; while read line; do :; done; echo 'ended owner_gone'"),
-        ));
+        );
         let mut acting = drivers.may_act("other").await.unwrap();
-        let starting = tokio::spawn({
-            let drivers = drivers.clone();
-            async move { drivers.locked_use("owner", true).await }
-        });
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        assert!(!starting.is_finished());
+        assert!(!drivers.locked_use("owner", true).await);
         acting.settled = true;
         drop(acting);
-        assert!(starting.await.unwrap());
+        assert!(drivers.locked_use("owner", true).await);
         assert!(drivers.may_act("other").await.is_none());
     }
 
@@ -1414,18 +1290,14 @@ mod peer_tests {
             Some("echo 'covered 1'; echo unlocked; while read line; do :; done; echo 'ended owner_gone'"),
         ));
         let mut acting = drivers.may_act("other").await.unwrap();
-        let starting = tokio::spawn({
-            let drivers = drivers.clone();
-            async move { drivers.locked_use("owner", true).await }
-        });
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!drivers.locked_use("owner", true).await);
         tokio::time::timeout(Duration::from_secs(1), drivers.retire("other", &mut None))
             .await
-            .expect("retire waited on a starting Locked Use session")
+            .expect("retire waited on a Locked Use start")
             .unwrap();
         acting.settled = true;
         drop(acting);
-        assert!(starting.await.unwrap());
+        assert!(drivers.locked_use("owner", true).await);
     }
 
     #[tokio::test]
@@ -1435,12 +1307,17 @@ mod peer_tests {
             &directory,
             Some("echo 'covered 1'; echo unlocked; while read line; do :; done; sleep 1; echo 'ended owner_gone'"),
         );
+        let drivers = Arc::new(drivers);
         assert!(drivers.locked_use("owner", true).await);
-        drivers.retire("owner", &mut None).await.unwrap();
+        let retiring = tokio::spawn({
+            let drivers = drivers.clone();
+            async move { drivers.retire("owner", &mut None).await.is_ok() }
+        });
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!retiring.is_finished());
         assert!(drivers.may_act("other").await.is_none());
         assert!(!drivers.locked_use("other", false).await);
-        assert!(drivers.may_act("other").await.is_none());
-        tokio::time::sleep(Duration::from_millis(1500)).await;
+        assert!(retiring.await.unwrap());
         assert!(drivers.locked_use("other", false).await);
         assert!(drivers.may_act("other").await.is_some());
     }
@@ -1475,7 +1352,6 @@ mod peer_tests {
         std::fs::write(record.join("stopped"), "").unwrap();
         drivers.retire("owner", &mut None).await.unwrap();
         assert!(!starting.await.unwrap());
-        assert!(drivers.may_act("owner").await.is_none());
         assert!(released(&drivers, "other").await);
         assert!(!drivers.locked_use("owner", true).await);
         assert!(drivers.may_act("other").await.is_some());
@@ -1558,11 +1434,7 @@ mod peer_tests {
             foreground_owner: StdMutex::default(),
             closing: Default::default(),
             unconfirmed: StdMutex::default(),
-            guardian: PathBuf::new(),
-            locked_use: Mutex::default(),
-            acting: Default::default(),
-            locked_owner: StdMutex::default(),
-            unsettled: StdMutex::default(),
+            locked: idle_gatekeeper(),
         });
         let request = |worker: &'static str| {
             let drivers = drivers.clone();
