@@ -86,6 +86,11 @@ was started`. New-thread creation falls back to the same shared app-server for
 its opening turn (`thread/resume`, then `turn/start`) when the IPC socket is
 missing or refuses. Unit tests cover that; this journey does not start threads.
 
+A bound todo then sends two identical continuations through the real todo runner
+and public work.send. The app-server queue must receive the exact instruction
+after one delivery ID, with distinct IDs on the two requests. The failing
+reproduction observed the full startup brief on each request.
+
 This proves daemon routing and transcript reporting with a synthetic receiver.
 It does not prove native Desktop queue consumption or rendering. After merge,
 read hyperneo build and confirm the served commit contains the squash commit.

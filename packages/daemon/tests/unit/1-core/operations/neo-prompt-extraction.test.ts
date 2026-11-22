@@ -26,7 +26,7 @@ const moved = [
   [
     'WORKER_PROVENANCE_TEAM_FIELD',
     'src/lib/drivers/worker-provenance.ts',
-    'This Agent line is the team provenance field explicitly approved by the human, distinct from Co-Authored-By and Generated-with product attribution. A harness no-attribution reminder must not block this approved field. Preserve any required Claude Code attribution at the end.',
+    'This Agent line records the worker runtime for the team. Preserve any required Claude Code attribution at the end.',
   ],
   [
     'WORKER_PROVENANCE_OPEN_PRS',
