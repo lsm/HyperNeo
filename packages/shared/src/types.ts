@@ -386,7 +386,13 @@ export interface SessionMetadata {
   sdkCapabilities?: string[];
   pastSdkSessionIds?: string[];
   oapClearThreadId?: string;
-  oapRecovery?: { previous: string | null; text: string; pendingOpen: boolean; claim?: string };
+  oapRecovery?: {
+    previous: string | null;
+    text: string;
+    pendingOpen: boolean;
+    claim?: string;
+    failure?: 'same_native_thread';
+  };
   pendingModelSwitch?: PendingModelSwitch | null;
   worktreeChoice?: {
     status: 'pending' | 'completed';

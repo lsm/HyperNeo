@@ -5,15 +5,16 @@ import {
   type OxapHarness,
 } from '@hyperneo/shared/types/oxap-harnesses';
 import type { Database } from '../../storage/index.ts';
+import { MessageDeliveryTerminalTurnError } from '../agent/message-delivery.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { OxapHubRequestError, type OxapHubClient } from './oxap-hub-client.ts';
 import { announceOxapNotice } from './oxap-notice.ts';
 import { recoveryContext } from './oxap-recovery.ts';
 import { decideReopenFailure, decideSessionOpen } from './oxap-session-open.ts';
 
-export class OxapReopenRefusedError extends Error {
-  constructor(message: string) {
-    super(message);
+export class OxapReopenRefusedError extends MessageDeliveryTerminalTurnError {
+  constructor(label: string) {
+    super(`${label} opened the previous thread again. Start a new chat.`, 'oap_reopen_refused');
     this.name = 'OxapReopenRefusedError';
   }
 }
@@ -90,7 +91,7 @@ async function reopenRevision(
     typeof response.capability_revision !== 'string' ||
     !response.capability_revision
   )
-    throw new Error('OAP returned invalid Codex capabilities');
+    throw new Error('OAP returned invalid adapter capabilities');
   const level = response.payload?.features?.['session.open.reopen']?.level;
   const supported = level === 'native' || level === 'emulated';
   const decision = decideSessionOpen({
@@ -154,8 +155,6 @@ async function openAfterClear(
   ensureLive();
   current = (await client.request('work.status', { session_id: plan.sessionId })) as WorkStatus;
   ensureLive();
-  if (oldId && nativeId(current, plan, row) === oldId)
-    throw new Error('Codex opened the previous thread again');
   return current;
 }
 
@@ -168,6 +167,11 @@ export async function openOxapSession(
   events: InternalEventBus<DaemonInternalEventMap> | undefined,
   ensureLive: () => void
 ): Promise<void> {
+  const row = sessionHarness(session);
+  const clearing = session.metadata?.oapClearThreadId;
+  let recovery = session.metadata?.oapRecovery;
+  if (!clearing && recovery?.failure === 'same_native_thread')
+    throw new OxapReopenRefusedError(row.label);
   let status: WorkStatus | undefined;
   try {
     status = (await client.request('work.status', { session_id: plan.sessionId })) as WorkStatus;
@@ -175,23 +179,12 @@ export async function openOxapSession(
     if (!(error instanceof OxapHubRequestError) || error.code !== 'unknown_session') throw error;
   }
   ensureLive();
-  const row = sessionHarness(session);
   if (status) validatePlacement(status, plan);
-  const clearing = !!session.metadata?.oapClearThreadId;
-  let recovery = session.metadata?.oapRecovery;
   const prior = !!session.sdkSessionId || !!status || hasHistory(db, session.id);
   if (clearing) {
-    status = await openAfterClear(
-      client,
-      plan,
-      session,
-      status,
-      ensureLive,
-      session.metadata.oapClearThreadId!
-    );
+    status = await openAfterClear(client, plan, session, status, ensureLive, clearing);
   } else if (recovery?.pendingOpen) {
     status = await openAfterClear(client, plan, session, status, ensureLive, recovery.previous);
-    await announceOxapNotice(session.id, recoveryNotice(recovery.text, row), db, hub, ensureLive);
   } else if (!status || status.held === false) {
     let fallback = false;
     if (prior) {
@@ -222,23 +215,30 @@ export async function openOxapSession(
       };
       const metadata = { ...session.metadata, oapRecovery: recovery };
       if ((await db.updateSession(session.id, { metadata })) !== 'written')
-        throw new Error('Could not save the Codex recovery context');
+        throw new Error(`Could not save the ${row.label} recovery context`);
       ensureLive();
       session.metadata = metadata;
       await open(client, plan);
-      ensureLive();
-      await announceOxapNotice(session.id, recoveryNotice(recovery.text, row), db, hub, ensureLive);
     }
     ensureLive();
     status = (await client.request('work.status', { session_id: plan.sessionId })) as WorkStatus;
     ensureLive();
   } else if (status.status && status.status !== 'done')
-    throw new Error('Codex session has unfinished work');
+    throw new Error(`${row.label} session has unfinished work`);
   const id = nativeId(status, plan, row);
-  if (recovery?.pendingOpen && recovery.previous === id)
-    throw new Error('Codex opened the previous thread again');
+  if (clearing === id) throw new OxapReopenRefusedError(row.label);
+  if (!clearing && recovery?.pendingOpen && recovery.previous === id) {
+    const metadata = {
+      ...session.metadata,
+      oapRecovery: { ...recovery, pendingOpen: false, failure: 'same_native_thread' as const },
+    };
+    if ((await db.updateSession(session.id, { metadata })) !== 'written')
+      throw new Error(`Could not save the ${row.label} recovery failure`);
+    session.metadata = metadata;
+    throw new OxapReopenRefusedError(row.label);
+  }
   if (!clearing && !recovery?.pendingOpen && session.sdkSessionId && session.sdkSessionId !== id)
-    throw new Error('Codex native thread identity changed');
+    throw new Error(`${row.label} native thread identity changed`);
   if (clearing || recovery?.pendingOpen || id !== session.sdkSessionId) {
     const metadata = clearing
       ? { ...session.metadata, oapClearThreadId: undefined }
@@ -253,7 +253,7 @@ export async function openOxapSession(
       ...(metadata ? { metadata, sdkOriginPath: undefined } : {}),
     };
     if ((await db.updateSession(session.id, update)) !== 'written')
-      throw new Error('Could not save Codex thread identity');
+      throw new Error(`Could not save ${row.label} thread identity`);
     ensureLive();
     Object.assign(session, update);
     events?.publishAsync('session.updated', {
@@ -261,5 +261,7 @@ export async function openOxapSession(
       source: 'oap-reopen',
       session: update,
     });
+    if (!clearing && recovery?.pendingOpen)
+      await announceOxapNotice(session.id, recoveryNotice(recovery.text, row), db, hub, ensureLive);
   }
 }

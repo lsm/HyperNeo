@@ -124,11 +124,10 @@ try {
     [false]
   );
   const replies = [...rows.values()].filter((row) => row.type === 'assistant');
+  const expectedModel = mode === 'flash' ? 'deepseek-v4-flash' : 'deepseek-v4-pro';
   const replyText = replies.flatMap((row) => (row.message?.content ?? []).map((block) => block.text));
-  assert.deepEqual(
-    replyText,
-    ['Synthetic DeepSeek reply from deepseek-v4-' + (mode === 'flash' ? 'flash' : 'pro')]
-  );
+  Object.assign(evidence, { expectedModel, replyText });
+  assert.deepEqual(replyText, [`Synthetic DeepSeek reply from ${expectedModel}`]);
   if (mode === 'recovery' || mode === 'pending') {
     const original = app.db.getSession(sessionId)!;
     const excerpt = 'Saved conversation excerpt';
@@ -166,14 +165,17 @@ try {
       deliveryJob: { status: job()?.status, retryCount: job()?.retryCount },
       notices,
       pendingOpen: saved.metadata.oapRecovery?.pendingOpen,
+      recoveryFailure: saved.metadata.oapRecovery?.failure,
       previousThreadPreserved: saved.sdkSessionId === original.sdkSessionId,
       excerptPreserved: mode !== 'pending' || saved.metadata.oapRecovery?.text === excerpt,
     });
     assert.deepEqual(errors, ['OXAP DeepSeek opened the previous thread again. Start a new chat.']);
     assert.equal(deliveryStatus(), 'failed');
+    assert.equal(job()?.status, 'dead');
     assert.equal(job()?.retryCount, 0);
     assert.deepEqual(notices, []);
     assert.equal(saved.metadata.oapRecovery?.pendingOpen, false);
+    assert.equal(saved.metadata.oapRecovery?.failure, 'same_native_thread');
     assert.equal(saved.sdkSessionId, original.sdkSessionId);
     if (mode === 'pending') assert.equal(saved.metadata.oapRecovery?.text, excerpt);
   }
