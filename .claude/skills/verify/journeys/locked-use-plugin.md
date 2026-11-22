@@ -102,15 +102,15 @@ covering, such as when it is killed:
 ```bash
 mkdir -p packages/desktop/src-tauri/binaries
 touch "packages/desktop/src-tauri/binaries/hyperneo-$(rustc --print host-tuple)"
-cargo test --locked --manifest-path packages/desktop/src-tauri/Cargo.toml --lib locked_use::
+cargo test --locked --manifest-path packages/desktop/src-tauri/Cargo.toml --lib locked_use
 ```
 
-Pass runs 16 tests: killed or relock-failed after covering relocks once; a clean end or a
+Pass runs 17 tests: killed or relock-failed after covering relocks once; a clean end or a
 start-gate refusal does not; a second worker is refused while the owner holds the Mac, even
 when its call was admitted earlier, and is admitted only after the guardian has exited; no
 start while a call is acting, and retiring an acting worker never waits on a start; an
 unsettled call blocks starts until its driver is confirmed stopped; a stop or a cancel during
-startup releases only after the guardian exits, and a stopped worker never takes the Mac; a
+startup releases only after the guardian exits, a call cancelled while being admitted never blocks a start, and a stopped worker never takes the Mac; a
 refusing or missing guardian leaves the call refused.
 
 Live run, on a Mac with the plugin installed and the owner present. Start it, then lock

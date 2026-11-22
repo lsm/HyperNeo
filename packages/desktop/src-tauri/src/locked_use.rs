@@ -61,7 +61,7 @@ enum Message {
     },
     Act {
         worker: String,
-        reply: oneshot::Sender<bool>,
+        reply: oneshot::Sender<Option<Acting>>,
     },
     Done {
         worker: String,
@@ -99,7 +99,9 @@ enum State {
     },
 }
 
-/// A call's admission to act. Dropped unsettled, it blocks new starts until a confirmed retire.
+/// A call's admission to act, built by the actor. Settled until the caller receives it, so a
+/// cancelled admission only ends; dropped unsettled after that, it blocks new starts until a
+/// confirmed retire.
 pub(crate) struct Acting {
     messages: mpsc::UnboundedSender<Message>,
     worker: String,
@@ -121,7 +123,8 @@ impl Gatekeeper {
         enabled: impl Fn(&str) -> bool + Send + 'static,
     ) -> (Self, impl std::future::Future<Output = ()> + Send) {
         let (messages, inbox) = mpsc::unbounded_channel();
-        (Self { messages }, run(inbox, guardian, enabled))
+        let own = messages.downgrade();
+        (Self { messages }, run(inbox, own, guardian, enabled))
     }
 
     pub(crate) async fn gate(&self, worker: &str, locked: bool) -> bool {
@@ -141,11 +144,9 @@ impl Gatekeeper {
             reply,
         };
         self.messages.send(act).ok()?;
-        answer.await.unwrap_or(false).then(|| Acting {
-            messages: self.messages.clone(),
-            worker: worker.to_owned(),
-            settled: false,
-        })
+        let mut acting = answer.await.ok()??;
+        acting.settled = false;
+        Some(acting)
     }
 
     pub(crate) fn hold(&self, worker: &str) {
@@ -197,6 +198,7 @@ fn release_for(state: State, worker: &str) -> State {
 
 async fn run(
     mut inbox: mpsc::UnboundedReceiver<Message>,
+    own: mpsc::WeakUnboundedSender<Message>,
     path: PathBuf,
     enabled: impl Fn(&str) -> bool,
 ) {
@@ -334,9 +336,15 @@ async fn run(
                     State::Owned { worker: owner, .. } => *owner == worker,
                     _ => false,
                 };
-                if reply.send(allowed).is_ok() && allowed {
-                    *acting.entry(worker).or_default() += 1;
-                }
+                let admission = allowed.then(|| own.upgrade()).flatten().map(|messages| {
+                    *acting.entry(worker.clone()).or_default() += 1;
+                    Acting {
+                        messages,
+                        worker,
+                        settled: true,
+                    }
+                });
+                let _ = reply.send(admission);
                 state
             }
             Message::Done { worker, settled } => {
