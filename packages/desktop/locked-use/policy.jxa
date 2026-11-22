@@ -1,0 +1,68 @@
+// Parses authorization rule plists once and answers with the exit status; any error or "no" exits non-zero.
+//   policy.jxa stock <rule>              exit 0 when it is the stock use-login-window-ui rule
+//   policy.jxa same <a> <b>              exit 0 when both are equal apart from created/modified/version
+//   policy.jxa installed <stock> <out>   writes the stock rule with Locked Use added
+//   policy.jxa right <definition>        exit 0 when it is the Locked Use right install.sh writes
+ObjC.import("Foundation");
+
+function fail(reason) {
+    throw new Error(reason);
+}
+
+const mine = "io.hyperneo.locked-use.unlock";
+const volatile = ["created", "modified", "version"];
+
+function load(path) {
+    const error = $();
+    const data = $.NSData.dataWithContentsOfFileOptionsError(path, 0, error);
+    if (!data || data.isNil()) throw new Error(`cannot read ${path}`);
+    const plist = $.NSPropertyListSerialization.propertyListWithDataOptionsFormatError(data, 1, null, error);
+    if (!plist || plist.isNil() || !plist.isKindOfClass($.NSDictionary)) throw new Error(`not a dictionary plist: ${path}`);
+    return plist;
+}
+
+function isStock(rule) {
+    const kind = rule.objectForKey("class");
+    const list = rule.objectForKey("rule");
+    return !kind.isNil() && kind.isEqual($("rule"))
+        && !list.isNil() && list.isEqual($(["use-login-window-ui"]))
+        && rule.objectForKey("k-of-n").isNil();
+}
+
+function isLockedUseRight(definition) {
+    const kind = definition.objectForKey("class");
+    const mechanisms = definition.objectForKey("mechanisms");
+    const shared = definition.objectForKey("shared");
+    const tries = definition.objectForKey("tries");
+    return !kind.isNil() && kind.isEqual($("evaluate-mechanisms"))
+        && !mechanisms.isNil() && mechanisms.isEqual($(["HyperNeoLockedUse:unlock,privileged"]))
+        && !shared.isNil() && shared.isKindOfClass($.NSNumber) && shared.boolValue === false
+        && !tries.isNil() && tries.isKindOfClass($.NSNumber) && tries.intValue === 1;
+}
+
+function stable(rule) {
+    const copy = rule.mutableCopy;
+    volatile.forEach((key) => copy.removeObjectForKey(key));
+    return copy;
+}
+
+function run(argv) {
+    const [mode, a, b] = argv;
+    if (mode === "stock" && argv.length === 2) {
+        if (!isStock(load(a))) fail("no");
+    } else if (mode === "same" && argv.length === 3) {
+        if (!stable(load(a)).isEqual(stable(load(b)))) fail("no");
+    } else if (mode === "installed" && argv.length === 3) {
+        const stock = load(a);
+        if (!isStock(stock)) fail("no");
+        const out = stock.mutableCopy;
+        out.setObjectForKey($(1), "k-of-n");
+        out.setObjectForKey($([mine, "use-login-window-ui"]), "rule");
+        if (!out.writeToFileAtomically(b, true)) fail("no");
+    } else if (mode === "right" && argv.length === 2) {
+        if (!isLockedUseRight(load(a))) fail("no");
+    } else {
+        fail("usage");
+    }
+    return "";
+}
