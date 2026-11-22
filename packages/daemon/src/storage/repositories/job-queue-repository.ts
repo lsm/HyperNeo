@@ -397,23 +397,27 @@ export class JobQueueRepository {
   }
 
   wakeParkedDeliveries(sessionId: string, now: number): number {
+    return this.wakePendingSessionJobs('message_delivery', sessionId, now);
+  }
+
+  wakeWorkerInputs(sessionId: string, now: number): void {
+    this.wakePendingSessionJobs('worker_input', `hyperneo:${sessionId}`, now);
+  }
+
+  private wakePendingSessionJobs(
+    queue: 'message_delivery' | 'worker_input',
+    sessionKey: string,
+    now: number
+  ): number {
     return withBusyRetry(() =>
       this.db
         .prepare(
           `UPDATE job_queue SET run_at = ?
-            WHERE queue = 'message_delivery' AND status = 'pending' AND run_at > ?
+            WHERE queue = ? AND status = 'pending' AND run_at > ?
               AND json_extract(payload, '$.sessionId') = ?`
         )
-        .run(now, now, sessionId)
+        .run(now, queue, now, sessionKey)
     ).changes;
-  }
-
-  wakeWorkerInputs(sessionId: string, now: number): void {
-    this.db
-      .prepare(`UPDATE job_queue SET run_at = ?
-        WHERE queue = 'worker_input' AND status = 'pending' AND run_at > ?
-          AND json_extract(payload, '$.sessionId') = ?`)
-      .run(now, now, `hyperneo:${sessionId}`);
   }
 
   requeueWaiting(jobId: string, runAt: number, claimToken: string): Job | null {
