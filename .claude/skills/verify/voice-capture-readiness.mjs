@@ -5,8 +5,9 @@ import { createRequire } from 'node:module';
 const run = process.argv[2];
 const fixture = JSON.parse(readFileSync(`${run}/browser.json`, 'utf8'));
 const { chromium } = createRequire(import.meta.url)('playwright');
-const browser = await chromium.launch({
+const launched = chromium.launch({
   executablePath: process.env.VERIFY_BROWSER,
+  handleSIGTERM: false,
   args: [
     '--use-fake-ui-for-media-stream',
     '--use-fake-device-for-media-stream',
@@ -14,7 +15,22 @@ const browser = await chromium.launch({
   ],
 });
 const results = {};
+
+async function finish() {
+  try {
+    writeFileSync(`${run}/evidence/capture-readiness.json`, JSON.stringify(results, null, 2));
+    console.log(JSON.stringify(results));
+  } finally {
+    await (await launched).close();
+  }
+}
+
+process.once('SIGTERM', () => {
+  void finish().finally(() => process.exit(143));
+});
+
 try {
+  const browser = await launched;
   const pairing = await browser.newContext();
   const response = await pairing.request.post(`${fixture.base}/pair`, {
     headers: { origin: fixture.base },
@@ -134,7 +150,5 @@ try {
     }
   }
 } finally {
-  writeFileSync(`${run}/evidence/capture-readiness.json`, JSON.stringify(results, null, 2));
-  console.log(JSON.stringify(results));
-  await browser.close();
+  await finish();
 }

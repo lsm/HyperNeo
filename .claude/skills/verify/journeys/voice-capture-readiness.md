@@ -19,4 +19,6 @@ waveform delay, then stops into the draft. The synthetic ASR must receive the
 startup audio, and the transcript must land in the existing draft with no
 message sent. Check `capture-readiness.json`, the startup screenshots and an
 exit code of 0. The unfixed composer fails by displaying the waveform before
-the source is connected.
+the source is connected. If the harness terminates the browser helper,
+`capture-readiness.json` contains any results collected before termination and
+the wrapper exits nonzero.
