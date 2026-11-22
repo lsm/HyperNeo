@@ -164,9 +164,29 @@ describe('voiceRecorderStore', () => {
     expect(fakeContext.createMediaStreamSource).toHaveBeenCalledWith(fakeStream);
     expect(fakeContext.createAnalyser).toHaveBeenCalledTimes(1);
     expect(mediaStreamSource.connect).toHaveBeenCalledWith(analyserNode);
-    expect(analyserNode.connect).toHaveBeenCalledWith(workletNode);
+    expect(mediaStreamSource.connect).toHaveBeenCalledWith(workletNode);
     expect(workletNode.connect).toHaveBeenCalledWith(fakeContext.destination);
     expect(voiceRecorderStore.isRecording.value).toBe(true);
+  });
+
+  it('waits for 250 ms of unmuted samples, even if the room is silent', async () => {
+    const track = { stop: vi.fn(), muted: true };
+    navigator.mediaDevices.getUserMedia.mockResolvedValueOnce({ getTracks: () => [track] });
+    await voiceRecorderStore.start('owner-a', 's1');
+    const capture = (samples: number) =>
+      workletNode.onaudioprocess({
+        inputBuffer: { getChannelData: () => new Float32Array(samples) },
+      });
+    expect(voiceRecorderStore.isStarting.value).toBe(true);
+    capture(12_000);
+    expect(voiceRecorderStore.isStarting.value).toBe(true);
+    track.muted = false;
+    capture(11_999);
+    expect(voiceRecorderStore.isStarting.value).toBe(true);
+    capture(1);
+    expect(voiceRecorderStore.isStarting.value).toBe(false);
+    const recording = await voiceRecorderStore.stop();
+    expect(recording.peakLevel).toBe(0);
   });
 
   it('start() while occupied rejects instead of clobbering the live owner', async () => {

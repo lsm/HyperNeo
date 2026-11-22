@@ -310,6 +310,7 @@ export default function MessageInput({
     voiceRecorder.isRecording ||
     isTranscribing ||
     voiceRecorder.durationLimitHit;
+  const showRecordingControls = voiceActive && !voiceRecorder.isStarting;
 
   useEffect(() => {
     registerDropTarget?.((files) => {
@@ -1342,7 +1343,7 @@ export default function MessageInput({
               onSubmit={() => {
                 void handleSubmit('immediate');
               }}
-              disabled={disabled}
+              disabled={disabled || voiceRecorder.isStarting}
               placeholder={placeholderProp ?? getPlaceholderForSessionType(sessionType)}
               showAgentMentionAutocomplete={showAgentMentionAutocomplete}
               agentMentionCandidates={filteredAgentMentionCandidates}
@@ -1395,19 +1396,18 @@ export default function MessageInput({
                   : undefined
               }
               recordingBody={
-                voiceActive ? (
+                showRecordingControls ? (
                   <VoiceWaveform
                     getLevel={voiceRecorder.getLevel}
                     isRecording={voiceRecorder.isRecording}
                     isTranscribing={isTranscribing}
-                    isStarting={voiceRecorder.isStarting}
                     onCancel={cancelRecording}
                     startedAt={voiceRecorder.recordingStartedAt}
                   />
                 ) : undefined
               }
               voiceControl={
-                voiceActive ? (
+                showRecordingControls ? (
                   <>
                     <button
                       type="button"
@@ -1507,27 +1507,30 @@ export default function MessageInput({
                   <button
                     type="button"
                     onClick={() => {
-                      void handleVoiceClick();
+                      if (voiceRecorder.isStarting) cancelRecording();
+                      else void handleVoiceClick();
                     }}
                     disabled={
-                      (disabled && !voiceRecorder.isRecording) ||
-                      isTranscribing ||
-                      resendingVoiceRecordId !== null
+                      !voiceRecorder.isStarting && (disabled || resendingVoiceRecordId !== null)
                     }
                     title={
-                      voiceSupported
-                        ? 'Start voice input'
-                        : 'Voice input requires HTTPS or localhost'
+                      voiceRecorder.isStarting
+                        ? 'Cancel microphone startup'
+                        : voiceSupported
+                          ? 'Start voice input'
+                          : 'Voice input requires HTTPS or localhost'
                     }
-                    aria-label="Start voice input"
-                    class={`w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 ${
-                      isTranscribing
-                        ? 'bg-accent/80 text-accent-fg cursor-wait focus-visible:ring-accent/70'
-                        : 'bg-fill-strong/70 text-fg-soft hover:bg-line-strong hover:text-fg focus-visible:ring-accent/60'
-                    } ${disabled ? 'opacity-50 cursor-not-allowed' : 'active:scale-95'}`}
+                    aria-label={
+                      voiceRecorder.isStarting ? 'Cancel microphone startup' : 'Start voice input'
+                    }
+                    aria-busy={voiceRecorder.isStarting}
+                    class="w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 bg-fill-strong/70 text-fg-soft hover:bg-line-strong hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {isTranscribing ? (
-                      <span class="w-4 h-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                    {voiceRecorder.isStarting ? (
+                      <span
+                        aria-hidden="true"
+                        class="w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin motion-reduce:animate-none"
+                      />
                     ) : (
                       <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="currentColor">
                         <path d="M12 14a3 3 0 003-3V6a3 3 0 10-6 0v5a3 3 0 003 3z" />
