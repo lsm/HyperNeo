@@ -75,6 +75,12 @@ Signed Desktop builds ship the plugin and these four scripts in
 `verify-macos-bundle.sh` fails the release build unless the shipped plugin is the Developer ID
 `io.hyperneo.locked-use.plugin` with the hardened runtime and every script matches the repo copy.
 
+On a signed Desktop build with these resources, launch a single copy of the app
+and confirm there is one HyperNeo icon in the macOS menu bar. Right-click it and
+check for **Install Locked Use…** between **Hide HyperNeo** and **Quit**, or
+**Remove Locked Use…** if the plugin is installed. Dismiss the menu to check the
+label without changing the Mac's unlock rule.
+
 ## Guardian
 
 The guardian `hyperneo-locked-use` (identifier `io.hyperneo.locked-use`) is the only
