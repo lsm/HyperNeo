@@ -6,8 +6,8 @@ Use SKILL.md's isolated proof wrapper with a fresh evidence directory.
 bash .claude/skills/verify/proof-run.sh "$EVIDENCE" .claude/skills/verify/worker-input-delivery.ts
 ```
 
-The helper sends two ordinary notices through the daemon's registered work.send
-operation to a busy synthetic HyperNeo session. It requires durable input rows,
+The helper sends two follow-ups through the registered `work.send` and
+`neo.todo.continue` operations to a busy synthetic HyperNeo session. It requires durable input rows,
 parked jobs, retained message text and deferred deadlines, then restarts its own
 daemon against that synthetic database. It interrupts the worker through
 `client.interrupt` and observes both messages, in order and once each, through

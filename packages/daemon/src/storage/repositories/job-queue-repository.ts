@@ -408,6 +408,14 @@ export class JobQueueRepository {
     ).changes;
   }
 
+  wakeWorkerInputs(sessionId: string, now: number): void {
+    this.db
+      .prepare(`UPDATE job_queue SET run_at = ?
+        WHERE queue = 'worker_input' AND status = 'pending' AND run_at > ?
+          AND json_extract(payload, '$.sessionId') = ?`)
+      .run(now, now, `hyperneo:${sessionId}`);
+  }
+
   requeueWaiting(jobId: string, runAt: number, claimToken: string): Job | null {
     const res = withBusyRetry(() =>
       this.db

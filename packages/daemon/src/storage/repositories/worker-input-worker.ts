@@ -11,6 +11,7 @@ import {
 import { NeoTodoSessionRepository, neoWorkerKey } from './neo-todo-session-repository.ts';
 import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
 import { readDriverOutcome, type DriverSent } from '../../lib/neo/driver-work.ts';
+import { hyperneoSessionBusy, readHyperneoSession } from '../../lib/drivers/hyperneo-adapter.ts';
 
 export type WorkerInput = {
   message: string;
@@ -138,10 +139,18 @@ export class WorkerInputJobs {
     return { ...row, failure, payload, ref, closed, head, todo, initialOutcome };
   }
 
-  wait(job: Job, detail: string | null, reported = false, delayMs = 60_000): void {
+  wait(
+    job: Job,
+    detail: string | null,
+    reported = false,
+    delayMs = 60_000,
+    busyHyperneoId?: string
+  ): void {
+    const worker = busyHyperneoId ? readHyperneoSession(this.db, busyHyperneoId) : null;
+    const delay = worker && !hyperneoSessionBusy(worker) ? 0 : delayMs;
     const waiting = new JobQueueRepository(this.db).requeueWaiting(
       job.id,
-      Date.now() + delayMs,
+      Date.now() + delay,
       job.claimToken!
     );
     if (waiting)

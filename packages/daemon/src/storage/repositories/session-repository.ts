@@ -11,6 +11,8 @@ import type { SessionUpdate } from './session-status-write.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SQLiteValue } from '../types.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
+import { neoSessionStatus } from '../../lib/neo/session-status.ts';
+import { JobQueueRepository } from './job-queue-repository.ts';
 import type { ReactiveDatabase, TableChangeScope } from '../reactive-database.ts';
 import {
   MESSAGE_SEARCH_TERMINAL_SESSION_TTL_MS,
@@ -385,6 +387,10 @@ export class SessionRepository {
       : null;
     if (refusal) return refusal;
     this.updateSession(id, updates);
+    const processing = neoSessionStatus(updates.processingState);
+    if (processing === 'idle' || processing === 'interrupted') {
+      new JobQueueRepository(this.db).wakeWorkerInputs(id, Date.now());
+    }
     return 'written';
   }
 
