@@ -9,6 +9,10 @@ import type { ReadWorkResultSchema } from '../../../packages/daemon/src/lib/driv
 import type { Result, WorkDelivery, WorkDetail, WorkStarted } from '../../../packages/daemon/src/lib/drivers/types.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
+import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
+import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
+import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
+import { readWorkCompaction } from '../../../packages/daemon/src/storage/repositories/work-started-sessions-worker.ts';
 import type { z } from 'zod';
 
 const run = process.argv.at(-1)!;
@@ -23,7 +27,9 @@ const stopFixture = mode === 'stop' || stopRace || closeError || holdClose;
 const resumeFixture = mode === 'resume' || lateBatch || lateClose || stopFixture;
 const longHistory = mode === 'history-long';
 const historyFixture = mode === 'history' || longHistory;
-const healthyStart = mode === 'start' || resumeFixture || historyFixture;
+const compactUnconfirmed = mode === 'compact-unconfirmed';
+const compactFixture = mode === 'compact' || compactUnconfirmed;
+const healthyStart = mode === 'start' || resumeFixture || historyFixture || compactFixture;
 const startFixture = healthyStart || initializeRequiresAuth;
 assert(startFixture || ['fixture', 'absent', 'signed-out', 'start-signed-out'].includes(mode));
 assert.equal(process.env.NODE_ENV, 'test');
@@ -40,6 +46,7 @@ const journal = join(evidence, 'requests.jsonl');
 const release = join(run, 'release');
 const releaseFollowUp = join(run, 'release-follow-up');
 const releaseClose = join(run, 'release-close');
+const releaseCompaction = join(run, 'release-compaction');
 writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 2\n', { mode: 0o700 });
 if (mode === 'signed-out' || mode === 'start-signed-out') {
   assert(isAbsolute(binary));
@@ -50,6 +57,27 @@ if (startFixture) {
 import assert from 'node:assert/strict';
 import { appendFileSync, existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
+if (process.argv[2] === '--version') {
+  process.stdout.write('1.5.14\\n');
+  process.exit(0);
+}
+if (process.argv[2] === '--sandbox') {
+  const args = ['--sandbox','--conversation','owned-1','--settings','{"disableSlashCommands":false}','--print','/compact','--output-format','stream-json','--print-timeout','90s'];
+  assert.deepEqual(process.argv.slice(2), args);
+  assert.equal(process.cwd(), ${JSON.stringify(workspaceRoot)});
+  appendFileSync(${JSON.stringify(journal)}, JSON.stringify({method:'compact'}) + '\\n');
+  while (!existsSync(${JSON.stringify(releaseCompaction)})) await Bun.sleep(25);
+  const step = (conversation_id, step_index, step_type) => ({
+    event:'step_update',step_update:{conversation_id,step_index,step_type,state:'DONE'},
+  });
+  for (const event of [
+    step('owned-1',2,'user_input'),
+    step('foreign',3,'checkpoint'),
+    ...(${compactUnconfirmed} ? [] : [step('owned-1',4,'checkpoint')]),
+    {event:'result',result:{conversation_id:'owned-1',status:'SUCCESS'}},
+  ]) process.stdout.write(JSON.stringify(event) + '\\n');
+  process.exit(0);
+}
 const discovery = !process.argv.includes('--sandbox');
 assert.deepEqual(process.argv.slice(2), discovery
   ? ['acp', '--disable-telemetry'] : ['acp', '--sandbox', '--disable-telemetry']);
@@ -254,6 +282,64 @@ try {
       const foreign = (await find()).find((item) => item.ref.id === 'foreign');
       assert(foreign);
       assert.equal(foreign.place.folder, undefined);
+      if (compactFixture) {
+        const db = app.db.getDatabase();
+        const root = 'neo:10000000-0000-4000-8000-000000000001';
+        const now = Date.now();
+        await app.db.createSession({
+          id: root, title: 'Synthetic Neo', workspacePath: workspaceRoot,
+          createdAt: new Date(now).toISOString(), lastActiveAt: new Date(now).toISOString(),
+          status: 'active', config: { queryMode: 'manual' },
+          metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 },
+        });
+        new NeoRepository(db).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
+        const todos = new NeoAskTodoRepository(db);
+        const sessions = new NeoTodoSessionRepository(db);
+        const todoId = 'compact-fixture';
+        todos.openAsk({ id: 'compact-ask', projectId: null, sessionId: root, originMessageId: null, title: 'Keep worker', request: 'Keep this worker for another turn', createdAt: now });
+        todos.addTodo(todoId, 'compact-ask', { title: 'First turn', doneWhen: 'Greet', check: null, instruction: 'Greet the user', named: null }, now);
+        sessions.create(todoId, { verb: 'start', adapter, place: input.place });
+        sessions.recordRef(todoId, started.value.ref, now);
+        db.prepare("UPDATE neo_todos SET state='done', finished_at=? WHERE id=?").run(now, todoId);
+        const refresh = async () => {
+          await app.jobProcessor.stop();
+          db.prepare("UPDATE job_queue SET run_at=0 WHERE queue='neo.work.driver.refresh' AND status='pending'").run();
+          const job = db.prepare("SELECT id FROM job_queue WHERE queue='neo.work.driver.refresh' AND status='pending' LIMIT 1").get() as { id: string } | null;
+          assert(job);
+          await app.jobProcessor.tick();
+          const deadline = Date.now() + 5_000;
+          while (Date.now() < deadline) {
+            const row = db.prepare('SELECT status,error FROM job_queue WHERE id=?').get(job.id) as { status: string; error: string | null };
+            if (row.status === 'completed') return;
+            assert(!['failed','dead'].includes(row.status), row.error ?? row.status);
+            await Bun.sleep(25);
+          }
+          assert.fail('Neo worker refresh did not finish');
+        };
+        const countCompactions = () => (readFileSync(journal, 'utf8').match(/"method":"compact"/g) ?? []).length;
+        await refresh();
+        const startDeadline = Date.now() + 5_000;
+        while (!countCompactions() && Date.now() < startDeadline) await Bun.sleep(25);
+        assert.equal(countCompactions(), 1, 'The kept worker runs one native compaction');
+        const busy = await send(started.value.ref.id);
+        assert(!busy.ok && busy.reason === 'busy' && busy.notSent);
+        writeFileSync(releaseCompaction, '');
+        const readCompaction = () => readWorkCompaction(db, started.value.ref);
+        const completionDeadline = Date.now() + 5_000;
+        while (!readCompaction().compactedAt && !readCompaction().failure && Date.now() < completionDeadline)
+          await Bun.sleep(25);
+        const finished = readCompaction();
+        if (compactUnconfirmed) {
+          assert.equal(finished.compactedAt, null);
+          assert.equal(finished.failure?.count, 1);
+        } else {
+          assert(finished.compactedAt && finished.compactedAt >= now);
+          assert.equal(finished.failure, null);
+        }
+        await refresh();
+        assert.equal(countCompactions(), 1);
+        results.compaction = { confirmed: !!finished.compactedAt, attempts: countCompactions() };
+      }
       if (historyFixture) {
         const read = (options: object) => rpc<z.infer<typeof ReadWorkResultSchema>>('work.read', {
           sessionId: started.value.ref.id, before: 1, after: 0, ...options,
