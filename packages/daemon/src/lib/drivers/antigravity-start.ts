@@ -224,9 +224,10 @@ export function createAntigravityStart(
     };
     completed.delete(id);
     sessions.set(id, receipt ? { ...work, inputEvidence: { receipt, state: 'pending' } } : work);
+    let promptEnded = false;
     const endPrompt = () => {
+      promptEnded = true;
       collectReply(false);
-      activePrompts.delete(id);
     };
     const finish = async (status: WorkDetail['status'], detail: string) => {
       endPrompt();
@@ -259,67 +260,72 @@ export function createAntigravityStart(
         ],
         ...(inputEvidence ? { inputEvidence } : {}),
       });
+      activePrompts.delete(id);
       completed.add(id);
       if (completed.size > RETAINED_TURNS) {
         const oldest = completed.values().next().value!;
         completed.delete(oldest);
         sessions.delete(oldest);
       }
-      return status;
     };
     collectReply(true);
-    const completion = transport
+    const promptResult = transport
       .sendRequest(
         'session/prompt',
         { sessionId: id, prompt: [{ type: 'text', text: message }] },
         { onResponseFrame: endPrompt }
       )
-      .then(
-        async (response) => {
-          const result = Completion.safeParse('result' in response ? response.result : undefined);
-          const saved = await within(
-            transport.sendRequest('session/close', { sessionId: id }),
-            CLOSE_TIMEOUT_MS,
-            'Antigravity could not confirm session persistence.'
-          ).then(
-            (closed) => 'result' in closed,
-            () => false
-          );
-          if (!saved) {
-            return finish(
-              'failed',
-              'Antigravity did not confirm saved history. Check the CLI session before retrying.'
-            );
-          }
-          if (result.success && result.data.stopReason === 'end_turn')
-            return finish('done', readReply());
-          if (result.success && result.data.stopReason === 'cancelled')
-            return finish('stopped', readReply());
+      .then((response) => Completion.safeParse('result' in response ? response.result : undefined));
+    void promptResult.then(
+      async (result) => {
+        const saved = await within(
+          transport.sendRequest('session/close', { sessionId: id }),
+          CLOSE_TIMEOUT_MS,
+          'Antigravity could not confirm session persistence.'
+        ).then(
+          (closed) => 'result' in closed,
+          () => false
+        );
+        if (!saved) {
           return finish(
             'failed',
-            'Antigravity did not complete the turn. Check the CLI session before retrying.'
+            'Antigravity did not confirm saved history. Check the CLI session before retrying.'
           );
-        },
-        (error: unknown) =>
-          finish(
-            'failed',
-            error instanceof JsonRpcRequestTimeoutError
-              ? `The Antigravity turn exceeded the ${TURN_TIMEOUT_MINUTES}-minute limit. Check the CLI session before retrying.`
-              : 'Antigravity disconnected during the turn. Check the CLI session before retrying.'
-          )
-      );
-    let requested = false;
-    const cancelPrompt: CancelPrompt = async () => {
-      if (activePrompts.get(id) !== cancelPrompt) return { ok: true, value: { stopped: false } };
-      if (!requested) {
-        requested = true;
+        }
+        if (result.success && result.data.stopReason === 'end_turn')
+          return finish('done', readReply());
+        if (result.success && result.data.stopReason === 'cancelled')
+          return finish('stopped', readReply());
+        return finish(
+          'failed',
+          'Antigravity did not complete the turn. Check the CLI session before retrying.'
+        );
+      },
+      (error: unknown) =>
+        finish(
+          'failed',
+          error instanceof JsonRpcRequestTimeoutError
+            ? `The Antigravity turn exceeded the ${TURN_TIMEOUT_MINUTES}-minute limit. Check the CLI session before retrying.`
+            : 'Antigravity disconnected during the turn. Check the CLI session before retrying.'
+        )
+    );
+    let stopResult: Promise<StopResult> | undefined;
+    const cancelPrompt: CancelPrompt = () => {
+      if (stopResult) return stopResult;
+      if (!promptEnded && activePrompts.get(id) === cancelPrompt) {
         transport.sendNotification('session/cancel', { sessionId: id });
       }
       const detail = 'Antigravity did not confirm cancellation. Check work.status before retrying.';
-      const outcome = await within(completion, STOP_TIMEOUT_MS, detail).catch(() => null);
-      return outcome === 'done' || outcome === 'stopped'
-        ? { ok: true, value: { stopped: outcome === 'stopped' } }
-        : reject('unreachable', detail);
+      stopResult = within(promptResult, STOP_TIMEOUT_MS, detail).then(
+        (result): StopResult => {
+          const reason = result.data?.stopReason;
+          return reason === 'cancelled' || reason === 'end_turn'
+            ? { ok: true, value: { stopped: reason === 'cancelled' } }
+            : reject('unreachable', detail);
+        },
+        () => reject('unreachable', detail)
+      );
+      return stopResult;
     };
     activePrompts.set(id, cancelPrompt);
     return work;
