@@ -452,6 +452,7 @@ export const en = {
   'session.loadEarlier': 'Load earlier messages',
   'link.openFailed': 'Could not open the link. You can copy it and open it in your browser.',
   'session.loadFailed': 'This chat didn’t open.',
+  'session.openExternalFailed': 'Could not open the session link.',
   'session.loadEarlierFailed': 'Couldn’t load earlier messages. Try again',
   'composer.stop': 'Stop',
   'session.message': 'Message this chat',

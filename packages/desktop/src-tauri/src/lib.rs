@@ -5,6 +5,7 @@ mod permissions_page;
 mod desktop_drivers;
 #[cfg(target_os = "macos")]
 mod locked_use_install;
+mod session_links;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -371,6 +372,7 @@ pub fn run() {
 			desktop_permissions::open_desktop_permission_settings
 		])
 		.plugin(tauri_plugin_shell::init())
+		.plugin(session_links::plugin())
 		.plugin(tauri_plugin_notification::init())
 		.plugin(tauri_plugin_global_shortcut::Builder::new().build())
 		.manage(SidecarState {

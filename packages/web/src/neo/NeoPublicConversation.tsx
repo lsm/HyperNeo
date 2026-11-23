@@ -47,7 +47,12 @@ import type {
 } from './public-conversation.ts';
 import { neoCardReplyTitle } from './public-conversation.ts';
 import { neoMessageAnchor } from './reply-context.ts';
-import { neoAppLabel, neoSessionKind, neoSessionLink } from './work-driver.ts';
+import {
+  handoffNativeSessionLink,
+  neoAppLabel,
+  neoSessionKind,
+  neoSessionLink,
+} from './work-driver.ts';
 
 export type NeoEditUndelivered = (ask: NeoAskItem) => boolean | void | Promise<boolean | void>;
 export type NeoRetryUndelivered = (ask: NeoAskItem) => Promise<boolean>;
@@ -346,6 +351,9 @@ function NoticeRow({
             {link ? (
               <a
                 href={link}
+                onClick={(event) => {
+                  if (handoffNativeSessionLink(link)) event.preventDefault();
+                }}
                 class="flex min-h-9 items-center gap-1.5 justify-self-end rounded-md px-3 text-accent hover:bg-fill-soft"
                 aria-label={t('chat.openNamed', { name: notice.title })}
               >
