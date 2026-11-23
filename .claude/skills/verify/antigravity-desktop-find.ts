@@ -42,6 +42,7 @@ for await (const line of createInterface({ input: process.stdin })) {
     ? { protocolVersion: 1, agentCapabilities: { sessionCapabilities: { list: {} } } }
     : { sessions: [
         { sessionId: 'desktop-proof', cwd: ${JSON.stringify(home)}, title: ${JSON.stringify(observed.title)} },
+        { sessionId: 'desktop-workspace', cwd: ${JSON.stringify(workspace)}, title: 'Project conversation' },
         { sessionId: 'cli-copy', cwd: ${JSON.stringify(workspace)}, title: 'Imported CLI copy' },
         { sessionId: 'desktop-child', cwd: ${JSON.stringify(workspace)}, title: 'Child' },
         { sessionId: 'desktop-remote', cwd: ${JSON.stringify(home)}, title: 'SSH' },
@@ -97,13 +98,16 @@ try {
       last_modified_time DATETIME NOT NULL, parent_conversation_id TEXT NOT NULL, nesting_depth INTEGER NOT NULL
     );`);
   const insert = fixture.prepare('INSERT INTO conversation_summaries VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-  const urls = JSON.stringify([pathToFileURL(workspace).href, pathToFileURL(alternate).href]);
+  const localUrls = [pathToFileURL(workspace).href, pathToFileURL(alternate).href];
+  const urls = JSON.stringify(localUrls);
+  const remoteUrl = 'vscode-remote://ssh-remote+host/project';
+  const mixedUrls = JSON.stringify([remoteUrl, ...localUrls]);
   insert.run('desktop-proof', observed.title, observed.source, observed.origin, '', '2026-06-02 12:00:00+00:00', '', 0);
-  insert.run('desktop-workspace', 'Project conversation', '', 'antigravity', urls, '2026-06-01 12:00:00+00:00', '', 0);
+  insert.run('desktop-workspace', 'Project conversation', '', 'antigravity', mixedUrls, '2026-06-01 12:00:00+00:00', '', 0);
   insert.run('cli-copy', 'Imported CLI copy', 'CORTEX_TRAJECTORY_SOURCE_CLI', 'antigravity', urls, '2026-06-03 12:00:00+00:00', '', 0);
   insert.run('cli-index', 'CLI profile', '', 'antigravity-cli', urls, '2026-06-04 12:00:00+00:00', '', 0);
   insert.run('desktop-child', 'Child', '', 'antigravity', urls, '2026-06-05 12:00:00+00:00', 'desktop-workspace', 1);
-  insert.run('desktop-remote', 'SSH', '', 'antigravity', '["vscode-remote://ssh-remote+host/project"]', '2026-06-06 12:00:00+00:00', '', 0);
+  insert.run('desktop-remote', 'SSH', '', 'antigravity', JSON.stringify([remoteUrl]), '2026-06-06 12:00:00+00:00', '', 0);
   const wal = readFileSync(`${state}-wal`);
   assert.deepEqual(await capabilities(), ['find']);
   const find = async (adapters: string[], input: object = {}) => {
