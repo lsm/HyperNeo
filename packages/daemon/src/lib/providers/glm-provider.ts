@@ -87,6 +87,18 @@ export class GlmProvider implements Provider {
       available: true,
     },
     {
+      id: 'glm-5.4[1m]',
+      name: 'GLM-5.4',
+      alias: 'glm-5.4',
+      family: 'glm',
+      provider: 'glm',
+      contextWindow: 1_000_000,
+      preferContextWindowMetadata: true,
+      description: 'GLM-5.4 · 1M context window, image input and function calling',
+      releaseDate: '2026-11-23',
+      available: true,
+    },
+    {
       id: 'glm-5.3-flash[1m]',
       name: 'GLM-5.3-Flash',
       alias: 'glm-5.3-flash',
