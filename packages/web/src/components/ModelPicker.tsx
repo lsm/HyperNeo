@@ -179,7 +179,7 @@ export function ModelPicker({
         aria-description={newChatHarness && `Client: ${newChatHarness.label}`}
         aria-expanded={open}
         aria-controls={menuId}
-        class="flex h-8 max-w-full items-center gap-1.5 rounded-full border px-2.5 text-xs text-fg-soft transition-colors hover:brightness-110 shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
+        class={`flex h-8 max-w-full items-center gap-1.5 rounded-full border px-2.5 text-xs text-fg-soft transition-colors hover:brightness-110 shadow-sm disabled:cursor-not-allowed disabled:opacity-50 ${newChatHarness ? 'sm:pointer-coarse:h-11' : ''}`}
         style={activeModelInfo ? solidPillStyle(activeProvider) : undefined}
       >
         {waiting || busy ? (
@@ -238,10 +238,13 @@ export function ModelPicker({
           onThinking={onSelectThinking}
           onReload={onReload}
           onClose={close}
+          summary={newChatHarness && { model: label, client: newChatHarness.label }}
         >
           {!!newChatHarness?.options.length && (
-            <fieldset class="shrink-0 border-t border-line px-3 py-2" aria-label="Client">
-              <p class="px-2 pb-1 text-xs font-medium text-fg-muted">Client</p>
+            <fieldset
+              class="min-h-0 overflow-y-auto border-t border-line px-3 py-2"
+              aria-label="Client"
+            >
               {newChatHarness.options.map(({ label, selected, unavailableReason, onSelect }) => (
                 <button
                   key={label}
@@ -252,7 +255,7 @@ export function ModelPicker({
                     onSelect();
                     close();
                   }}
-                  class={`flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs focus-visible:outline-accent disabled:opacity-50 ${selected ? 'bg-accent/10 text-accent' : 'text-fg-soft hover:bg-fill-soft'}`}
+                  class={`flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-sm pointer-coarse:min-h-11 focus-visible:outline-accent disabled:opacity-50 ${selected ? 'bg-accent/10 text-accent' : 'text-fg-soft hover:bg-fill-soft'}`}
                 >
                   <span>
                     {label}

@@ -38,6 +38,7 @@ import {
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
 import { WorkspaceChips } from '../components/WorkspaceChips.tsx';
 import { ModelPicker } from '../components/ModelPicker.tsx';
+import { isCoarsePointer } from '../neo/useCoarsePointer.ts';
 import { findDefaultModel, useModelSwitcher } from '../hooks/useModelSwitcher.ts';
 
 type NewChatWorktreeMode = 'worktree' | 'direct';
@@ -45,7 +46,7 @@ type NewChatHarness = 'sdk' | OxapHarnessId;
 
 const HARNESS_SETUP = 'Set up in Settings → Providers';
 const CHAT_ICON_CONTROL =
-  'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border';
+  'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border sm:pointer-coarse:size-11';
 
 interface NewChatModelSelection {
   id: string;
@@ -504,7 +505,7 @@ export function SessionsPage() {
               placeholder="Ask anything to start a new chat..."
               rows={3}
               disabled={submitting}
-              autoFocus
+              autoFocus={!isCoarsePointer()}
               class="w-full bg-transparent resize-none px-1.5 py-1 text-sm text-fg placeholder:text-fg-faint focus:outline-none disabled:opacity-60"
             />
             <div class="flex items-center justify-between gap-2 pt-1">
@@ -591,7 +592,7 @@ export function SessionsPage() {
                 }
                 title="Start chat"
                 aria-label="Start chat"
-                class="flex items-center justify-center w-8 h-8 shrink-0 rounded-full bg-accent-hover text-accent-fg transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
+                class="flex items-center justify-center w-8 h-8 shrink-0 rounded-full bg-accent-hover sm:pointer-coarse:size-11 text-accent-fg transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {submitting ? (
                   <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">

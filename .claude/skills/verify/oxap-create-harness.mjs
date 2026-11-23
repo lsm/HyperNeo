@@ -35,7 +35,6 @@ try {
   await initial.close();
 
   const tablets = new Map([[744, 1133], [820, 1180], [1024, 768], [1180, 820]]);
-  const failedWidths = [];
   for (const width of [744, 820, 1024, 1180, 390, 1280, 320]) {
     const touch = width !== 1280;
     const context = await browser.newContext({
@@ -72,8 +71,13 @@ try {
     };
     const model = page.getByRole('button', { name: 'Choose model, client and thinking' });
     const choices = page.getByRole('group', { name: 'Client', exact: true });
-    const choose = async (name) => {
+    const clientRow = page.getByRole('button', { name: /^Client,/ });
+    const openClient = async () => {
       await click(model);
+      await click(clientRow);
+    };
+    const choose = async (name) => {
+      await openClient();
       await click(choices.getByRole('button', { name, exact: true }));
       await choices.waitFor({ state: 'hidden' });
     };
@@ -89,6 +93,9 @@ try {
       assert(boxes.every((box, index) => box.x >= 0 && box.x + box.width <= width + 1 &&
         (index === 0 || boxes[index - 1].x + boxes[index - 1].width <= box.x + 1)),
         `${name} controls overlap or overflow at ${width}px`);
+      if (tablets.has(width)) {
+        assert(boxes.every((box) => box.height >= 44), `Toolbar touch targets are too short at ${width}px`);
+      }
       for (const control of controls.slice(1, -1)) {
         const box = await control.boundingBox();
         assert.equal(box.width, box.height, 'The control should be round');
@@ -126,10 +133,41 @@ try {
     assert.equal(await model.locator(':scope > svg').count(), 0, 'The picker has no trailing chevron');
     await screenshot('default');
     await click(model);
-    if (tablets.has(width)) {
-      const row = page.getByRole('button', { name: /^Model,/ });
-      if (!await row.isVisible()) failedWidths.push(width);
+    const modelRow = page.getByRole('button', { name: /^Model,/ });
+    assert.match(await modelRow.innerText(), /Synthetic Codex/);
+    const search = page.getByRole('searchbox', { name: 'Search models' });
+    assert.equal(await search.isVisible(), false);
+    await click(modelRow);
+    assert.equal(await search.isVisible(), true);
+    assert.equal(await search.evaluate((input) => document.activeElement === input), false);
+    assert.equal(await choices.isVisible(), false);
+    const selected = page.getByRole('button', { name: /Synthetic Codex/, pressed: true });
+    const keyboard = tablets.has(width) && width > tablets.get(width);
+    if (keyboard) {
+      await click(search);
+      await page.evaluate(() => {
+        document.documentElement.classList.add('keyboard-open');
+        document.documentElement.style.setProperty('--safe-height', '280px');
+      });
     }
+    await selected.scrollIntoViewIfNeeded();
+    const modelItem = await selected.boundingBox();
+    const list = await page.getByRole('group', { name: 'Models', exact: true }).boundingBox();
+    assert(modelItem && list && modelItem.y >= list.y - 1 &&
+      modelItem.y + modelItem.height <= list.y + list.height + 1,
+      `The selected model can be browsed at ${width}px`);
+    if (keyboard) {
+      const menu = await page.getByRole('group', { name: 'Model, client and thinking settings' }).boundingBox();
+      assert(menu && menu.y >= 0 && menu.y + menu.height <= 280,
+        `The model picker clears the keyboard at ${width}px`);
+      await page.evaluate(() => {
+        document.documentElement.classList.remove('keyboard-open');
+        document.documentElement.style.removeProperty('--safe-height');
+      });
+    }
+    await click(page.getByRole('button', { name: 'Back to settings' }));
+    await click(clientRow);
+    assert.equal(await search.isVisible(), false);
     assert.equal(await choices.getByRole('button', { name: 'Claude Code', exact: true }).getAttribute('aria-pressed'), 'true');
     await page.keyboard.press('Escape');
     await submit(undefined, undefined);
@@ -145,13 +183,13 @@ try {
     setCodexDefault('oxap-codex');
     await open('codex-6-luna', 'anthropic-codex');
     const configured = choices.getByRole('button', { name: 'OXAP Codex', exact: true, pressed: true });
-    await click(model);
+    await openClient();
     await configured.waitFor();
     await click(choices.getByRole('button', { name: 'Claude Code', exact: true }));
     assert.match(await model.innerText(), /Claude Code/);
     await submit('sdk', undefined);
     await open('deepseek-v4-pro', 'deepseek');
-    await click(model);
+    await openClient();
     const unavailable = choices.getByRole('button', { name: /OXAP DeepSeek.*Set up in Settings/ });
     assert.equal(await unavailable.isDisabled(), true);
     const menu = page.getByRole('group', { name: 'Model, client and thinking settings' });
@@ -171,7 +209,6 @@ try {
     console.log(JSON.stringify({ width, touch, creations: creations.length, defaultOmitted: true, oxapOverride: true, sdkOverride: true, unavailableDisabled: true, modelResolvedByDaemon: true }));
     await context.close();
   }
-  assert.deepEqual(failedWidths, [], "The picker must show the Model row at tablet widths");
 } finally {
   await browser.close();
 }

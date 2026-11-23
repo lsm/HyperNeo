@@ -30,6 +30,7 @@ export function NeoModelMenu({
   onReload,
   align = 'left',
   children,
+  summary,
 }: {
   id?: string;
   models: ModelInfo[];
@@ -46,26 +47,52 @@ export function NeoModelMenu({
   onReload?: () => void;
   align?: 'left' | 'right' | 'trigger';
   children?: ComponentChildren;
+  summary?: { model: string; client: string };
 }) {
   const position = { left: '-left-10 sm:left-0', right: 'right-0', trigger: 'left-0' }[align];
   const [query, setQuery] = useState('');
+  const [section, setSection] = useState<'Settings' | 'Model' | 'Client' | 'Thinking'>('Settings');
+  const back = useRef<HTMLButtonElement>(null);
+  const modelRow = useRef<HTMLButtonElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    search.current?.focus();
-  }, []);
+    if (!summary) search.current?.focus();
+    else if (section === 'Settings') modelRow.current?.focus();
+    else back.current?.focus();
+  }, [!!summary, section]);
+  const openSection = (next: typeof section) => {
+    setQuery('');
+    setSection(next);
+  };
+  const rows =
+    summary &&
+    ([
+      { name: 'Model', value: summary.model, available: true },
+      { name: 'Client', value: summary.client, available: !!children },
+      ...(showThinking
+        ? [
+            {
+              name: 'Thinking',
+              value: THINKING_OPTIONS.find(({ value }) => value === level)?.label ?? 'Off',
+              available: true,
+            } as const,
+          ]
+        : []),
+    ] as const);
+  const showModels = !summary || section === 'Model';
   const visible = filterModelsBySearch(models, query);
   const groups = groupModelsByProvider(visible);
   return (
     <div
       id={id}
       role="group"
-      aria-label={children ? 'Model, client and thinking settings' : 'Model and thinking settings'}
-      class={`neo-arrive absolute bottom-full ${position} z-30 mb-3 flex w-[360px] max-w-[calc(100vw-64px)] flex-col overflow-hidden rounded-2xl border border-line-strong bg-surface-raised shadow-xl`}
+      aria-label={summary ? 'Model, client and thinking settings' : 'Model and thinking settings'}
+      class={`neo-arrive absolute bottom-full ${position} z-30 mb-3 flex w-[360px] max-w-[calc(100vw-64px)] flex-col overflow-hidden rounded-2xl border border-line-strong bg-surface-raised shadow-xl ${summary && section === 'Model' ? 'new-chat-model-search' : ''}`}
       style={{
         maxHeight:
           align === 'trigger'
-            ? 'min(580px, calc(50dvh - 32px))'
+            ? 'var(--model-menu-height, min(580px, calc(var(--safe-height, 100dvh) / 2 - 32px)))'
             : 'min(580px, calc(100dvh - var(--neo-composer-height, 190px) - 90px))',
       }}
       onKeyDown={(event) => {
@@ -76,19 +103,57 @@ export function NeoModelMenu({
       }}
     >
       <div class="flex shrink-0 items-center justify-between px-4 pb-2 pt-3">
-        <h2 class="text-sm font-medium">
-          {children ? 'Model, client & thinking' : 'Model & thinking'}
-        </h2>
+        <div class="flex items-center gap-2">
+          {summary && section !== 'Settings' && (
+            <button
+              type="button"
+              ref={back}
+              aria-label="Back to settings"
+              class="inline-flex size-8 items-center justify-center rounded-lg text-fg-muted hover:bg-fill-soft pointer-coarse:size-11"
+              onClick={() => openSection('Settings')}
+            >
+              <NeoIcon name="back" class="!h-4 !w-4" />
+            </button>
+          )}
+          <h2 class="text-sm font-medium">
+            {section !== 'Settings'
+              ? section
+              : summary
+                ? 'Model, client & thinking'
+                : 'Model & thinking'}
+          </h2>
+        </div>
         <button
           type="button"
           aria-label="Close model settings"
-          class="rounded-lg p-1.5 text-fg-muted hover:bg-fill-soft"
+          class="inline-flex items-center justify-center rounded-lg p-1.5 text-fg-muted hover:bg-fill-soft pointer-coarse:size-11"
           onClick={onClose}
         >
           <NeoIcon name="close" class="!h-4 !w-4" />
         </button>
       </div>
-      <div class="relative mx-3 mb-2 shrink-0">
+      {rows && section === 'Settings' && (
+        <div class="min-h-0 overflow-y-auto px-3 pb-3">
+          {rows.map(({ name, value, available }) => (
+            <button
+              key={name}
+              ref={name === 'Model' ? modelRow : undefined}
+              type="button"
+              disabled={!available}
+              aria-label={`${name}, ${value}`}
+              class="flex min-h-11 w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm text-fg hover:bg-fill-soft disabled:hover:bg-transparent"
+              onClick={() => openSection(name)}
+            >
+              <span>{name}</span>
+              <span class="min-w-0 flex-1 truncate text-right text-fg-muted">{value}</span>
+              {available && (
+                <NeoIcon name="chevron" class="!rotate-90 !h-3.5 !w-3.5 shrink-0 text-fg-faint" />
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+      <div class={`relative mx-3 mb-2 shrink-0 ${showModels ? '' : 'hidden'}`}>
         <NeoIcon
           name="search"
           class="pointer-events-none absolute left-3 top-2.5 !h-4 !w-4 text-fg-faint"
@@ -113,7 +178,7 @@ export function NeoModelMenu({
         ref={list}
         role="group"
         aria-label="Models"
-        class="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-2 pb-3"
+        class={`min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-2 pb-3 ${showModels ? '' : 'hidden'}`}
         style={{ maxHeight: '380px' }}
         onKeyDown={(event) => {
           if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
@@ -149,7 +214,10 @@ export function NeoModelMenu({
                   aria-pressed={selected}
                   disabled={busy || item.available === false}
                   title={item.available === false ? 'Not runnable on this account' : undefined}
-                  onClick={() => onModel(item)}
+                  onClick={() => {
+                    onModel(item);
+                    if (summary) openSection('Settings');
+                  }}
                   class={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors focus-visible:outline-accent disabled:opacity-50 ${selected ? 'bg-accent/10 text-accent' : 'text-fg-soft hover:bg-fill-soft'}`}
                 >
                   <span class="min-w-0 flex-1">
@@ -176,9 +244,11 @@ export function NeoModelMenu({
           </button>
         )}
       </div>
-      {children}
-      {showThinking && (
-        <div class="shrink-0 border-t border-line bg-surface/40 p-3">
+      {(!summary || section === 'Client') && children}
+      {showThinking && (!summary || section === 'Thinking') && (
+        <div
+          class={`border-t border-line bg-surface/40 p-3 ${summary ? 'min-h-0 overflow-y-auto' : 'shrink-0'}`}
+        >
           <div class="mb-2 flex items-center justify-between">
             <span class="text-xs font-medium text-fg-muted">Thinking</span>
             <span class="text-[10px] text-fg-faint">{working ? scope.working : scope.idle}</span>

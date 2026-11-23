@@ -121,14 +121,18 @@ describe('SessionsPage', () => {
     vi.mocked(createSession).mockReturnValue(new Promise(() => {}));
     render(<SessionsPage />);
     fireEvent.click(screen.getByRole('button', { name: 'Choose model, client and thinking' }));
-    await waitFor(() => expect(screen.queryByRole('slider')).toBeNull());
+    expect(screen.queryByRole('button', { name: /^Thinking,/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^Model,/ }));
     fireEvent.click(screen.getByRole('button', { name: /Sonnet model/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Thinking,/ }));
     await waitFor(() => expect(screen.getByRole('slider')).toBeTruthy());
     expect(screen.getByRole('button', { name: 'Sandbox' }).getAttribute('aria-pressed')).toBe(
       'true'
     );
+    fireEvent.click(screen.getByRole('button', { name: 'Back to settings' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Model,/ }));
     fireEvent.click(screen.getByRole('button', { name: /Codex model/ }));
-    await waitFor(() => expect(screen.queryByRole('slider')).toBeNull());
+    expect(screen.queryByRole('button', { name: /^Thinking,/ })).toBeNull();
     fireEvent.input(screen.getByPlaceholderText('Ask anything to start a new chat...'), {
       target: { value: 'Hello' },
     });
@@ -159,6 +163,7 @@ describe('SessionsPage', () => {
     render(<SessionsPage />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Choose model, client and thinking' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Client,/ }));
     const client = await screen.findByRole('group', { name: 'Client' });
     fireEvent.click(within(client).getByRole('button', { name: 'OXAP Codex' }));
     expect(
@@ -184,6 +189,7 @@ describe('SessionsPage', () => {
     render(<SessionsPage />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Choose model, client and thinking' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Client,/ }));
     fireEvent.click(await screen.findByRole('button', { name: 'OXAP Codex' }));
     fireEvent.input(screen.getByPlaceholderText('Ask anything to start a new chat...'), {
       target: { value: 'Hello' },
@@ -223,6 +229,7 @@ describe('SessionsPage', () => {
     expect(createSession).not.toHaveBeenCalled();
 
     fireEvent.click(trigger);
+    fireEvent.click(await screen.findByRole('button', { name: /^Client, OXAP DeepSeek/ }));
     expect(
       (await screen.findByRole('button', { name: /OXAP DeepSeek.*Set up in Settings/ })).disabled
     ).toBe(true);
@@ -265,6 +272,7 @@ describe('SessionsPage', () => {
     vi.mocked(createSession).mockReturnValue(new Promise(() => {}));
     render(<SessionsPage />);
     fireEvent.click(screen.getByRole('button', { name: 'Choose model, client and thinking' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Thinking,/ }));
     expect(screen.getByRole('slider')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Sandbox' }).getAttribute('aria-pressed')).toBe(
       'true'

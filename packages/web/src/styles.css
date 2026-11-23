@@ -1312,6 +1312,13 @@ html.keyboard-open body {
   height: var(--safe-height, 100dvh);
 }
 
+html.keyboard-open .new-chat-model-search {
+  --model-menu-height: calc(var(--safe-height, 100dvh) - 1rem);
+  position: fixed;
+  inset: 0.5rem 0 auto;
+  margin: 0 auto;
+}
+
 /* Safe area bottom padding is handled at the app level via pb-safe on the main
    content wrapper, so the composer clears the home indicator. */
 

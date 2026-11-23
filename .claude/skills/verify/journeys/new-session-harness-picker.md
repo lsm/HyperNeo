@@ -7,10 +7,14 @@ Bun, Node 24, `PLAYWRIGHT_NODE_PATH` and `VERIFY_BROWSER` set, run:
 bash .claude/skills/verify/oxap-create-thinking.sh /absolute/fresh/evidence-directory harness
 ```
 
-At 1280 px and at 390 and 320 px with a coarse pointer, the journey checks that
+At 1280 px and at 320, 390, 744, 820, 1024 and 1180 px with a coarse pointer,
+the journey checks that
 the model picker, round Sandbox button and send button stay on one line. The
 model picker shows the Claude Code provider default beside the Codex model and
-contains the choices under Client. Starting that chat omits the override.
+shows the choices under Client. Open Model to browse and search without the
+Client and Thinking sections taking up room. Opening the menu or Model view
+leaves the search field unfocused. Starting a chat with the default client omits
+the override.
 Choosing OXAP Codex sends the override and stores OXAP. Reopening the form
 shows the provider default again. Changing the provider default in settings then
 allows the journey to verify the reverse override to Claude Code. DeepSeek's
@@ -22,3 +26,9 @@ browser boundary.
 
 Keep `client-picker-default-1280.png`, `client-picker-override-1280.png`,
 `client-picker-disabled-1280.png` and their `-390.png` counterparts.
+
+For native tablet verification, open an isolated fixture in iPad Simulator
+Safari and check portrait and landscape. Capture the composer and the Client
+view for the provider default, a selected override, and an unavailable client.
+Open Model and tap Search separately to check that only the deliberate search
+opens the software keyboard. Use simulator screenshots for this check.
