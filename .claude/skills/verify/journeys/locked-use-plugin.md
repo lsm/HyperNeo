@@ -114,7 +114,9 @@ changes the host's lock state.
 
 ```bash
 bash packages/desktop/locked-use/check-release.sh
-cargo test --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml -- locked_use
+mkdir -p packages/desktop/src-tauri/binaries
+touch "packages/desktop/src-tauri/binaries/hyperneo-$(rustc --print host-tuple)"
+cargo test --locked --manifest-path packages/desktop/src-tauri/Cargo.toml --lib locked_use::
 ```
 
 The fixture prints the delayed unlock, the lock request, the confirmed relock,
