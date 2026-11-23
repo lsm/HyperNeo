@@ -4,6 +4,15 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.62.3] - 2026-11-23
+
+- Cover the full macOS display during Locked Use and relock after a delayed unlock (#11590, #11532).
+- Notarize and staple both macOS release disk images (#11600).
+- Add GLM-5.4 to the GLM provider catalog (#11593).
+- Discover Antigravity Desktop conversations (#11597).
+- API compatibility since v0.62.2. No API surface changes. The pinned phone inventory reports 0 breaking, 0 risky, and 0 safe changes.
+- Known limits for Locked Use. Stopping a worker does not yet end an unlock already in progress. The desktop may flash once when the cover closes.
+
 ## [0.62.2] - 2026-11-23
 
 - Fix unlocking the macOS lock screen with Locked Use (#11573).

@@ -2678,7 +2678,7 @@ dependencies = [
 
 [[package]]
 name = "hyperneo-desktop"
-version = "0.62.2"
+version = "0.62.3"
 dependencies = [
  "cc",
  "core-foundation 0.10.1",
