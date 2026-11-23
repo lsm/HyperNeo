@@ -11,10 +11,12 @@ import { createWorkerNameSource } from '../../drivers/worker-names.ts';
 import { PACKAGE_DOWNLOAD_WAIT_MS } from '../../agent/npm-package-download.ts';
 import { findExecutable } from '../../drivers/find-executable.ts';
 import { createAntigravityAdapter } from '../../drivers/antigravity-adapter.ts';
+import { createCursorCliControl } from '../../drivers/cursor-cli-control.ts';
 import { gitWorktreeProject } from '../../drivers/worktree-project.ts';
 import { resolveNewSessionModel } from '../../session/new-session-model.ts';
 import {
   cleanupOwnedWorktree,
+  prepareWorkerFolder,
   workerWorktreeHasSubmodules,
   WORKTREE_SUBMODULES,
   WORKTREE_UNSAVED,
@@ -638,6 +640,23 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     copilotCli.length ? copilotCli : existsSync(copilotDesktopPath) ? [copilotDesktop] : [];
   const antigravityPath =
     findExecutable('agy') ?? findExecutable('agy', join(homedir(), '.local/bin'));
+  const cursorPath =
+    findExecutable('cursor-agent') ?? findExecutable('cursor-agent', join(homedir(), '.local/bin'));
+  const cursor = cursorPath
+    ? createCursorCliControl(cursorPath, machine, (folder, inPlace) =>
+        prepareWorkerFolder(
+          folder,
+          {
+            worktreesDir: join(getWorktreeBaseDir(folder), 'cursor'),
+            gitCheckout: readGitCheckout,
+            spawn: spawnProcess,
+            newId: () => crypto.randomUUID(),
+          },
+          inPlace
+        )
+      )
+    : null;
+  if (cursor) context.driverCleanup?.push(cursor.close);
   const adapters = [
     createHyperneoAdapter({
       readTurnEnds: (sessionId, since) =>
@@ -671,6 +690,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     }),
     ...codex(),
     ...(antigravityPath ? [createAntigravityAdapter(antigravityPath, machine)] : []),
+    ...(cursor ? [cursor] : []),
     ...desktop,
     ...claudeCodeAdapters(
       searchChats,
