@@ -88,10 +88,12 @@ try {
   evidence.afterRestore = afterRestore;
   evidence.otherUnchangedAfterRestore = readFileSync(file(sdk.other)).equals(otherBefore);
   assert.equal(app.db.getSession(worker)?.status, 'active');
-  for (const id of [sdk.worker, sdk.retired]) {
+  const restoredArchiveFlags = [sdk.worker, sdk.retired].map((id) => {
     assert.ok(afterRestore.includes(`${id}.jsonl`));
-    assert.ok(!afterRestore.includes(`${id}/archived.json`), 'SDK archive marker remained after restore');
-  }
+    return JSON.parse(readFileSync(join(dir, id, 'archived.json'), 'utf8')).archived;
+  });
+  evidence.restoredArchiveFlags = restoredArchiveFlags;
+  assert.deepEqual(restoredArchiveFlags, [false, false]);
   assert.equal(evidence.otherUnchangedAfterRestore, true);
   const rearchived = await rpc('session.archive', { sessionId: worker, confirmed: true });
   assert.ok(!rearchived.error, JSON.stringify(rearchived));
@@ -102,7 +104,7 @@ try {
   evidence.otherUnchangedAfterDelete = readFileSync(file(sdk.other)).equals(otherBefore);
   assert.deepEqual(evidence.afterDelete, [`${sdk.other}.jsonl`]);
   assert.equal(evidence.otherUnchangedAfterDelete, true);
-  console.log('PASS: archiving the worker marked its current and retired transcripts archived in place; restoring cleared both archive markers; deleting it removed only those; the other session transcript that mentions the worker stayed byte-identical.');
+  console.log('PASS: archiving the worker marked its current and retired transcripts archived in place; restoring cleared both archived flags; deleting it removed only those; the other session transcript that mentions the worker stayed byte-identical.');
 } finally {
   writeFileSync(join(run, 'evidence/archive-transcripts.json'), JSON.stringify(evidence, null, 2));
   await app?.cleanup();

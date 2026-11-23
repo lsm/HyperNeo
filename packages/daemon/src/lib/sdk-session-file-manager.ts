@@ -1,4 +1,9 @@
-import { archiveSession, deleteSession } from '@anthropic-ai/claude-agent-sdk';
+import {
+  archiveSession,
+  deleteSession,
+  getSessionInfo,
+  unarchiveSession,
+} from '@anthropic-ai/claude-agent-sdk';
 import { generateUUID } from '@hyperneo/shared';
 import {
   copyFileSync,
@@ -655,6 +660,26 @@ export async function archiveSDKSessions(
   for (const id of sdkSessionIds)
     if (await ifSessionFound(() => archiveSession(id, { dir: workspacePath }))) archived++;
   return archived;
+}
+
+export async function withUnarchivedSDKSessions(
+  workspacePath: string,
+  sdkSessionIds: readonly string[],
+  commit: () => Promise<boolean>
+): Promise<boolean> {
+  const restored: string[] = [];
+  let committed = false;
+  const options = { dir: workspacePath };
+  try {
+    for (const id of sdkSessionIds) {
+      if (!(await getSessionInfo(id, options))?.archived) continue;
+      if (await ifSessionFound(() => unarchiveSession(id, options))) restored.push(id);
+    }
+    committed = await commit();
+    return committed;
+  } finally {
+    if (!committed) await archiveSDKSessions(workspacePath, restored);
+  }
 }
 
 export async function deleteSDKSessions(

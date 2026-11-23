@@ -25,7 +25,11 @@ import { Logger } from '../logger.ts';
 import { teardownSessionDeliveries } from '../mailbox/cancellation.ts';
 import { getProviderService } from '../provider-service.ts';
 import { resolveNewSessionModel, type NewSessionModelSettings } from './new-session-model.ts';
-import { archiveSDKSessions, deleteSDKSessions } from '../sdk-session-file-manager.ts';
+import {
+  archiveSDKSessions,
+  deleteSDKSessions,
+  withUnarchivedSDKSessions,
+} from '../sdk-session-file-manager.ts';
 import type { WorktreeManager } from '../worktree-manager.ts';
 import type { WorkArchived } from '../drivers/types.ts';
 import { admitCreateSessionConfig } from './create-session-config.ts';
@@ -654,6 +658,7 @@ export class SessionLifecycle {
   private async restoreArchivedSession(session: Session): Promise<UnarchiveSessionResponse> {
     const archived = session.metadata.archivedWorktree;
     let worktree = session.worktree ?? (archived && { ...archived, isWorktree: true });
+    const sdkWorkspacePath = sessionSdkPath({ workspacePath: session.workspacePath, worktree });
     let worktreeBaseBranch: string | undefined;
     if (worktree && !(await this.worktreeManager.verifyWorktree(worktree))) {
       const { branch, mainRepoPath } = worktree;
@@ -676,7 +681,10 @@ export class SessionLifecycle {
     };
     let written = false;
     try {
-      written = (await this.db.updateSession(session.id, updates)) === 'written';
+      const commit = async () => (await this.db.updateSession(session.id, updates)) === 'written';
+      written = sdkWorkspacePath
+        ? await withUnarchivedSDKSessions(sdkWorkspacePath, sessionSdkIds(session), commit)
+        : await commit();
     } finally {
       if (!written && worktreeBaseBranch && worktree)
         await this.worktreeManager.removeWorktree(worktree);
