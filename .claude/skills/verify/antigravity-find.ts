@@ -24,6 +24,10 @@ const stopRace = mode === 'stop-race' || mode === 'stop-race-close-error';
 const closeError = mode === 'stop-close-error' || mode === 'stop-race-close-error';
 const holdClose = mode === 'stop-held-close';
 const stopFixture = mode === 'stop' || stopRace || closeError || holdClose;
+const steerWithoutReplay = mode === 'steer-without-replay';
+const steerIdentical = mode === 'steer-identical';
+const steerFixture = mode === 'steer' || steerWithoutReplay || steerIdentical;
+const steerMessage = steerIdentical ? 'Reply with a greeting.' : 'Change the greeting.';
 const resumeFixture = mode === 'resume' || lateBatch || lateClose || stopFixture;
 const longHistory = mode === 'history-long';
 const historyFixture = mode === 'history' || longHistory;
@@ -32,7 +36,7 @@ const compactFixture = mode === 'compact' || compactUnconfirmed;
 const configUnsupported = mode === 'config-unsupported';
 const configUnconfirmed = mode === 'config-unconfirmed';
 const configFixture = mode === 'config' || configUnsupported || configUnconfirmed;
-const healthyStart = mode === 'start' || resumeFixture || historyFixture || compactFixture || configFixture;
+const healthyStart = mode === 'start' || resumeFixture || historyFixture || compactFixture || configFixture || steerFixture;
 const startFixture = healthyStart || initializeRequiresAuth;
 assert(startFixture || ['fixture', 'absent', 'signed-out', 'start-signed-out'].includes(mode));
 assert.equal(process.env.NODE_ENV, 'test');
@@ -139,6 +143,15 @@ for await (const line of createInterface({input: process.stdin})) {
     emit({id,result:{}});
   } else if (method === 'session/load') {
     assert.deepEqual(params,{sessionId,cwd:${JSON.stringify(workspaceRoot)},mcpServers:[]});
+    if (${steerFixture}) {
+      emit(
+        chunk(sessionId,'Reply with a greeting.','user'),
+        chunk(sessionId,'Original answer'),
+        ...(${steerWithoutReplay} ? [] : [chunk(sessionId,'Change the greeting.','user'),chunk(sessionId,'New answer')]),
+        {id,result:{}},
+      );
+      continue;
+    }
     emit(
       chunk(sessionId,'Opening question','user'),
       chunk(sessionId,'First'), chunk(sessionId,' answer'),
@@ -158,6 +171,19 @@ for await (const line of createInterface({input: process.stdin})) {
     if (resumed && ${closeError}) emit({id,error:{code:-32603,message:'Save failed'}});
     else emit({id,result:{}});
   } else if (method === 'session/prompt') {
+    if (${steerFixture}) {
+      assert.equal(params.sessionId,sessionId);
+      if (promptId === undefined) {
+        promptId = id;
+        note(sessionId, 'Original answer');
+      } else {
+        assert.deepEqual(params.prompt,[{type:'text',text:${JSON.stringify(steerMessage)}}]);
+        emit({id:promptId,result:{stopReason:'end_turn'}},chunk(sessionId,'Late original text'));
+        while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(25);
+        emit(chunk(sessionId,'New answer'),{id,result:{stopReason:'end_turn'}});
+      }
+      continue;
+    }
     if (${configFixture}) assert.deepEqual([model,effort],['model-alt','low']);
     assert.deepEqual(params,{sessionId,prompt:[{type:'text',text:resumed ? 'Continue the greeting.' : 'Reply with a greeting.'}]});
     promptId = id;
@@ -237,17 +263,71 @@ try {
   await app.jobProcessor.stop();
   await transport.connect();
   const adapter = 'antigravity-cli';
-  const catalog = await hub.request<{ ok: boolean; value: { id: string; capabilities: string[] }[] }>(
+  const catalog = await hub.request<{ ok: boolean; value: { id: string; capabilities: string[]; steerBehavior?: string }[] }>(
     'operation.invoke', { name: 'work.adapters', input: {} }
   );
   assert(catalog.ok);
   const registered = catalog.value.find((entry) => entry.id === adapter);
   results.catalog = registered ?? null;
   if (mode === 'absent') assert.equal(registered, undefined);
-  else assert.deepEqual(registered?.capabilities, ['find', 'start', 'status', 'send', 'stop']);
+  else assert.deepEqual(registered?.capabilities, ['find', 'start', 'status', 'send', 'steer', 'stop']);
 
   let operations = 1;
-  if (startFixture || mode === 'start-signed-out') {
+  if (steerFixture) {
+    assert.equal(registered?.steerBehavior, 'best_effort');
+    const invoke = <T>(name: string, input: object) => {
+      operations += 1;
+      return hub.request<T>('operation.invoke', { name, input });
+    };
+    const started = await invoke<Result<WorkStarted>>('work.start', {
+      adapter,
+      place: { machine: hostname(), folder: workspaceRoot, name: 'Fixture workspace' },
+      title: 'Steering fixture',
+      message: 'Reply with a greeting.',
+    });
+    assert(started.ok, JSON.stringify(started));
+    const { ref } = started.value;
+    const steer = (target = ref) => invoke<Result<WorkDelivery>>('work.send', {
+      ref: target, message: steerMessage, mode: 'steer',
+    });
+    const sent = await steer();
+    assert(sent.ok && !sent.value.delivered && sent.value.unconfirmed && sent.value.receipt, JSON.stringify(sent));
+    const receipt = sent.value.receipt;
+    const snapshot = () => invoke<Result<WorkDetail>>('work.status', { ref, receipt });
+    const pending = await snapshot();
+    assert(pending.ok && pending.value.status === 'running' && pending.value.inputEvidence?.state === 'pending');
+    const overlapping = await steer();
+    assert(!overlapping.ok && overlapping.reason === 'busy' && overlapping.notSent);
+    const foreign = await steer({ adapter, id: 'foreign' });
+    assert(!foreign.ok && foreign.notSent);
+    writeFileSync(release, '');
+    const deadline = Date.now() + 5_000;
+    let settled = await snapshot();
+    while (settled.ok && settled.value.status === 'running' && Date.now() < deadline) {
+      await Bun.sleep(25);
+      settled = await snapshot();
+    }
+    assert(settled.ok && settled.value.status === 'done');
+    const evidence = settled.value.inputEvidence;
+    if (steerWithoutReplay || steerIdentical) {
+      assert.equal(settled.value.lastReply, undefined);
+      assert.equal(evidence?.state, 'unavailable');
+    } else {
+      assert.equal(settled.value.lastReply, 'New answer');
+      assert(evidence?.state === 'observed');
+      assert.deepEqual(evidence.exchange.map(({ role, text }) => [role, text]), [
+        ['user', 'Change the greeting.'], ['agent', 'New answer'],
+      ]);
+    }
+    const idle = await steer();
+    assert(!idle.ok && idle.notSent);
+    const requests = readFileSync(journal, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    assert.deepEqual(requests.map(({ method }) => method), [
+      'initialize', 'session/new', 'session/prompt', 'session/prompt', 'session/close',
+      ...(steerIdentical ? [] : ['initialize', 'session/load']),
+    ]);
+    results.steered = settled;
+  } else if (startFixture || mode === 'start-signed-out') {
     const input = {
       adapter,
       place: { machine: hostname(), folder: workspaceRoot, name: 'Fixture workspace' },
