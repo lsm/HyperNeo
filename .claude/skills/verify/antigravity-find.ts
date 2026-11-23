@@ -258,6 +258,12 @@ try {
       operations += 1;
       return hub.request<T>('operation.invoke', { name, input });
     };
+    if (configFixture) {
+      const { description } = await rpc<{ description: string }>('operations.describe', { name: 'work.start' });
+      assert.match(description, /Antigravity CLI accepts model and effort on new sessions/);
+      assert.match(description, /Antigravity CLI reports the confirmed model and effort/);
+      results.startGuidance = 'Advertises Antigravity model and effort on new sessions';
+    }
     if (healthyStart && !configFixture) {
       const refused = await rpc<Result<WorkStarted>>('work.start', { ...input, model: 'unsupported' });
       assert(!refused.ok && refused.notSent && refused.reason === 'unsupported_model');
