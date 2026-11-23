@@ -27,7 +27,8 @@ const sessionId = 'fixture-cursor-cli';
 let model = 'default';
 let effort = 'medium';
 const config = () => ({ configOptions: [
-  { id: 'model', category: 'model', currentValue: model },
+  { id: 'model', category: 'model', currentValue: model,
+    options: [{ value: 'fixture-variant[reasoning_effort=high]' }, { value: 'fixture-variant[reasoning_effort=low]' }] },
   ...(model === 'fixture-model' ? [{ id: 'reasoning', category: 'thought_level', currentValue: effort }] : []),
 ] });
 const write = (value) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...value }) + '\\n');
@@ -48,8 +49,11 @@ for await (const line of createInterface({ input: process.stdin })) {
     write({ id, result: config() });
   } else if (method === 'session/prompt') {
     const text = params.prompt[0].text;
-    assert.equal(model, 'fixture-model');
-    assert.equal(effort, 'high');
+    if (text === 'variant') assert.equal(model, 'fixture-variant[reasoning_effort=high]');
+    else {
+      assert.equal(model, 'fixture-model');
+      assert.equal(effort, 'high');
+    }
     if (text === 'hold') assert(loaded);
     write({ method: 'session/update', params: {
       sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'reply ' + text } },
@@ -120,6 +124,11 @@ try {
     assert(stop.ok && stop.value.stopped);
     const stopped = await rpc<Result<WorkDetail>>('work.status', { ref, receipt: send.value.receipt });
     assert(stopped.ok && stopped.value.status === 'stopped');
+    const variant = await rpc<Result<WorkStarted>>('work.start', {
+      ...args, model: 'fixture-variant', effort: 'high', message: 'variant',
+    });
+    assert(variant.ok && variant.value.receipt && variant.value.effort === 'high');
+    assert.equal(variant.value.model, 'fixture-variant[reasoning_effort=high]');
   }
   process.stdout.write(`Cursor CLI lifecycle: ${calls} RPC calls, result confirmed\n`);
 } finally {

@@ -12,7 +12,12 @@ const Config = z.object({
   configOptions: z
     .array(
       z
-        .object({ id: z.string(), category: z.string().optional(), currentValue: z.string() })
+        .object({
+          id: z.string(),
+          category: z.string().optional(),
+          currentValue: z.string(),
+          options: z.array(z.object({ value: z.string() })).optional(),
+        })
         .passthrough()
     )
     .optional(),
@@ -54,16 +59,29 @@ async function configure(
 ) {
   const select = (category: string) =>
     config.configOptions?.find((item) => item.category === category);
-  for (const [category, target] of [
-    ['model', requested.model],
-    ['thought_level', requested.effort],
-  ] as const) {
-    if (target === undefined) continue;
+  const model = select('model');
+  const base = (id: string) => id.split('[', 1)[0];
+  const effort = (id?: string) => id?.match(/(?:\[|,)(?:reasoning_)?effort=([^,\]]+)/)?.[1];
+  const requestedModel = requested.model ?? model?.currentValue;
+  const variants =
+    model?.options
+      ?.map(({ value }) => value)
+      .filter((value) =>
+        requestedModel?.includes('[') && requested.model
+          ? value === requestedModel
+          : base(value) === (requestedModel && base(requestedModel))
+      ) ?? [];
+  const matchingEffort = variants.filter((id) => effort(id) === requested.effort);
+  let targetModel = requested.model;
+  if (targetModel && model) {
+    if (targetModel === base(model.currentValue)) targetModel = model.currentValue;
+    else if (variants.length === 1) targetModel = variants[0];
+  }
+  if (requested.effort !== undefined && matchingEffort.length === 1)
+    targetModel = matchingEffort[0];
+  async function set(category: string, target: string, label: string) {
     const option = select(category);
-    if (!option)
-      throw new Error(
-        `Cursor did not advertise ${category === 'model' ? 'a model selector' : 'thinking effort for this model'}.`
-      );
+    if (!option) throw new Error(`Cursor did not advertise ${label} for this session.`);
     if (option.currentValue !== target) {
       config = Config.parse(
         await request(transport, 'session/set_config_option', {
@@ -73,12 +91,15 @@ async function configure(
         })
       );
       if (select(category)?.currentValue !== target)
-        throw new Error(
-          `Cursor did not confirm the requested ${category === 'model' ? 'model' : 'thinking effort'}.`
-        );
+        throw new Error(`Cursor did not confirm the requested ${label}.`);
     }
   }
-  return { model: select('model')?.currentValue, effort: select('thought_level')?.currentValue };
+  if (targetModel !== undefined) await set('model', targetModel, 'model');
+  const actualEffort = () =>
+    select('thought_level')?.currentValue ?? effort(select('model')?.currentValue);
+  if (requested.effort !== undefined && actualEffort() !== requested.effort)
+    await set('thought_level', requested.effort, 'thinking effort for this model');
+  return { model: select('model')?.currentValue, effort: actualEffort() };
 }
 
 export function createCursorCliControl(
