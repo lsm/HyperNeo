@@ -403,7 +403,9 @@ export class SDKStatusReader {
                                     ? 'message-feed'
                                     : 'page' in args
                                       ? 'sdk-page'
-                                      : 'sdk-status'
+                                      : 'antigravityDesktop' in args
+                                        ? 'antigravity-desktop'
+                                        : 'sdk-status'
               : 'close',
             id,
             epoch,
