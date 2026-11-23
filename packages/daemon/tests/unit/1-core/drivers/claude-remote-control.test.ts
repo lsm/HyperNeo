@@ -329,6 +329,19 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
     expect(requests()).toBe(4);
   });
 
+  test('never asks neo-helper to archive itself', async () => {
+    const result = await runClaudeHelperArchive(
+      { sessionId: 'local_helper', title: 'neo-helper' },
+      deps()
+    );
+    expect(result).toEqual({
+      ok: false,
+      reason: 'unsupported',
+      detail: 'neo-helper never archives itself.',
+    });
+    expect(spawned).toHaveLength(0);
+  });
+
   test('reports an archive the app has not made yet without waiting or touching the record', async () => {
     write(record('t1', { isArchived: true }));
     const before = readFileSync(join(dir, 'acct/scope/local_t1.json'), 'utf8');

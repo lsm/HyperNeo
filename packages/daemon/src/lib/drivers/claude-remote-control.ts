@@ -286,6 +286,8 @@ export function admitArchiveRequest(
   target: RemoteControlTarget,
   deps: ClaudeDesktopAdapterDeps
 ): Gate<RemoteControlTarget> {
+  if (target.title === RC_TOGGLE_TITLE)
+    return { reason: reject('unsupported', `${RC_TOGGLE_TITLE} never archives itself.`) };
   const at = archiveRequests.get(deps)?.get(target.sessionId);
   return at !== undefined && deps.now() - at < HELPER_ARCHIVE_RESEND_MS
     ? {
