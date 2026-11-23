@@ -4,6 +4,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { ProcessJsonRpcTransport } from '../process-json-rpc.ts';
 import { buildSafeProcessEnv } from '../safe-process-env.ts';
+import { createAntigravityHistory } from './antigravity-history.ts';
 import { createAntigravityStart } from './antigravity-start.ts';
 import type { FindQuery, PlaceGroup, WorkAdapter } from './types.ts';
 
@@ -164,14 +165,12 @@ export function createAntigravityAdapter(
   machine: string,
   readOwnedFolders: ReadOwnedFolders = async () => []
 ): WorkAdapter & { close: () => Promise<void> } {
-  const control = createAntigravityStart(
-    executable,
-    machine,
-    ADAPTER,
-    async (id) => (await readOwnedFolders(ADAPTER)).find(([sessionId]) => sessionId === id)?.[1]
-  );
+  const readOwnedFolder = async (id: string) =>
+    (await readOwnedFolders(ADAPTER)).find(([sessionId]) => sessionId === id)?.[1];
+  const control = createAntigravityStart(executable, machine, ADAPTER, readOwnedFolder);
   return {
     ...control,
+    readTurns: createAntigravityHistory(executable, readOwnedFolder),
     id: ADAPTER,
     capabilities: ['find', 'start', 'status', 'send', 'stop'],
     async find(query) {
