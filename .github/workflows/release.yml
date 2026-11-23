@@ -410,6 +410,29 @@ jobs:
           python3 packages/desktop/check-macos-rpaths.py \
             "packages/desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle/macos/HyperNeo.app"
 
+      - name: Notarize and validate macOS disk image
+        if: runner.os == 'macOS'
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          images=(packages/desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle/dmg/*.dmg)
+          if [[ ${#images[@]} != 1 || ! -f "${images[0]}" ]]; then
+            echo "::error::Expected exactly one macOS disk image"
+            exit 1
+          fi
+          dmg="${images[0]}"
+          result=$(xcrun notarytool submit "$dmg" \
+            --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" \
+            --wait --output-format json)
+          printf '%s\n' "$result"
+          if ! jq -e '.status == "Accepted"' >/dev/null <<< "$result"; then
+            echo "::error::Apple did not accept the macOS disk image"
+            exit 1
+          fi
+          xcrun stapler staple "$dmg"
+          bash packages/desktop/verify-macos-dmg.sh "$dmg"
+
       - name: Collect desktop artifacts
         run: |
           VERSION="${{ needs.wait-for-ci.outputs.version }}"

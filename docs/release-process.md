@@ -129,7 +129,12 @@ gh release create vX.Y.Z --title "vX.Y.Z" --notes "..."
 - Every smoke-tested target (all except `linux-arm64`) boots the compiled binary on its native runner and runs the RPC smoke suite before upload; daemon binaries run the same suite with `--daemon`.
 - The release version check covers `npm/hyperneo` and `npm/hyperneod`, so both wrapper packages (including their optionalDependencies pins) must be bumped with every release.
 - npm publishing uses Trusted Publishing (OIDC); a first-time publish of a new package (`hyperneod`, `@hyperneo/hyperneod-<target>`) requires wiring it up as a trusted-publishing partner for this workflow in npm settings first.
-- macOS desktop artifacts are signed and notarized in CI. Linux and Windows installers are **unsigned**: Windows shows SmartScreen warnings until a code-signing certificate is wired up (`bundle.windows.certificateThumbprint` in `tauri.conf.json`; the workflow passes no signing secrets for Windows today).
+- CI signs and notarizes the macOS app, then submits each signed DMG to Apple using the same App Store Connect key. Each DMG must pass `stapler validate` and Gatekeeper's disk-image assessment before CI creates the app ZIP, computes checksums, or uploads artifacts. The release publishes no updater manifest.
+- Linux and Windows installers are **unsigned**: Windows shows SmartScreen warnings until a code-signing certificate is wired up (`bundle.windows.certificateThumbprint` in `tauri.conf.json`; the workflow passes no signing secrets for Windows today).
+
+## macOS release audit
+
+Use the [disk image verification journey](../.claude/skills/verify/journeys/release-macos-dmg.md) to audit both downloaded macOS DMGs, both app ZIPs, and their checksums. Record the workflow run or release tag and the validation results for each architecture.
 
 ## Dry runs (workflow_dispatch)
 
