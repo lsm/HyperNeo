@@ -4,6 +4,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { GlmProvider } from '../../../packages/daemon/src/lib/providers/glm-provider.ts';
 import { getProviderRegistry } from '../../../packages/daemon/src/lib/providers/registry.ts';
+import { newestAvailableModel } from '../../../packages/daemon/src/lib/rpc-handlers/family-operations/drivers.ts';
 
 const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -53,7 +54,11 @@ try {
     assert.equal(envVars.ANTHROPIC_DEFAULT_SONNET_MODEL, model.id);
     assert.equal(envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW, String(model.contextWindow));
   }
-  console.log(JSON.stringify({ catalogMatches: added.length, model, routingChecks: 2 }, null, 2));
+  const newest = newestAvailableModel(await provider.getModels());
+  assert.equal(newest?.id, model.id);
+  console.log(
+    JSON.stringify({ catalogMatches: added.length, model, routingChecks: 2, newest: newest?.id }, null, 2)
+  );
 } finally {
   await app.cleanup();
 }

@@ -168,6 +168,7 @@ describe('GlmProvider', () => {
       expect(models.find((model) => model.id === 'glm-5.4[1m]')).toMatchObject({
         alias: 'glm-5.4',
         contextWindow: 1_000_000,
+        releaseDate: '2026-11-23',
         available: true,
       });
     });
@@ -774,12 +775,12 @@ describe('GlmProvider', () => {
 
   describe('static models', () => {
     it('should have static models defined', () => {
-      expect(GlmProvider.MODELS).toHaveLength(8);
       expect(GlmProvider.MODELS.map((m) => m.id)).toEqual([
         'glm-5',
         'glm-5.1',
         'glm-5.2[1m]',
         'glm-5.3[1m]',
+        'glm-5.4[1m]',
         'glm-5.3-flash[1m]',
         'glm-5-turbo',
         'glm-5v-turbo',

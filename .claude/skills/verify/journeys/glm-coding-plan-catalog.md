@@ -12,5 +12,6 @@ The helper intercepts both upstream fetches in the real GLM provider and
 supplies an in-memory fixture credential. The real `models.list` WebSocket
 reply should offer one GLM-5.4 entry with `glm-5.4[1m]`, the `glm-5.4` alias,
 and a 1M-token context window. Both selections should configure the same SDK
-route. Retain `proof.log` and `run-status.json`. Account access requires a
+route. GLM-5.4 should be the newest available entry in the GLM catalog.
+Retain `proof.log` and `run-status.json`. Account access requires a
 separately authorized post-deploy session on the live daemon.

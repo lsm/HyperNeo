@@ -95,7 +95,7 @@ export class GlmProvider implements Provider {
       contextWindow: 1_000_000,
       preferContextWindowMetadata: true,
       description: 'GLM-5.4 · 1M context window, image input and function calling',
-      releaseDate: '',
+      releaseDate: '2026-11-23',
       available: true,
     },
     {
