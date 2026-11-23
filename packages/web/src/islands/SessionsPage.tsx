@@ -36,6 +36,7 @@ import {
   NATIVE_FOLDER_PICKER_TIMEOUT_MS,
 } from '../lib/runtime-capabilities.ts';
 import { Dropdown } from '../components/ui/Dropdown.tsx';
+import { NeoIcon } from '../neo/NeoIcon.tsx';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
 import { WorkspaceChips } from '../components/WorkspaceChips.tsx';
 import { ModelPicker } from '../components/ModelPicker.tsx';
@@ -45,6 +46,8 @@ type NewChatWorktreeMode = 'worktree' | 'direct';
 type NewChatHarness = 'sdk' | OxapHarnessId;
 
 const HARNESS_SETUP = 'Set up in Settings → Providers';
+const CHAT_ICON_CONTROL =
+  'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border';
 
 interface NewChatModelSelection {
   id: string;
@@ -510,8 +513,8 @@ export function SessionsPage() {
               autoFocus
               class="w-full bg-transparent resize-none px-1.5 py-1 text-sm text-fg placeholder:text-fg-faint focus:outline-none disabled:opacity-60"
             />
-            <div class="flex items-start justify-between gap-2 pt-1">
-              <div class="flex min-w-0 flex-wrap items-center gap-2">
+            <div class="flex items-center justify-between gap-2 pt-1">
+              <div class="flex min-w-0 items-center gap-2">
                 <ModelPicker
                   menuId="new-chat-preferences"
                   activeModelInfo={activeModelInfo}
@@ -533,6 +536,7 @@ export function SessionsPage() {
                 {mayUseOxap && providers !== null ? (
                   <Dropdown
                     position="left"
+                    class="shrink-0"
                     isOpen={harnessMenuOpen}
                     onOpenChange={setHarnessMenuOpen}
                     trigger={
@@ -541,28 +545,38 @@ export function SessionsPage() {
                         aria-label={`Harness: ${harnessLabel}`}
                         aria-haspopup="menu"
                         aria-expanded={harnessMenuOpen}
-                        class="flex h-8 items-center gap-1.5 rounded-full border border-line px-2.5 text-xs text-fg-muted hover:text-fg"
+                        title={`Harness: ${harnessLabel}`}
+                        class={`${CHAT_ICON_CONTROL} border-line text-fg-muted hover:text-fg`}
                       >
-                        {harnessLabel}
-                        <span aria-hidden="true">▾</span>
+                        <NeoIcon name={isOxap ? 'chip' : 'terminal'} class="!h-4 !w-4" />
                       </button>
                     }
                     items={[
-                      { label: 'Claude Code', onClick: () => chooseHarness('sdk') },
+                      {
+                        label: 'Claude Code',
+                        icon: <NeoIcon name="check" class={harness === 'sdk' ? '' : 'invisible'} />,
+                        onClick: () => chooseHarness('sdk'),
+                      },
                       ...eligibleHarnesses.map((id) => {
                         const label = oxapHarness(id).label;
                         const available = ready(id);
                         return {
                           label: available ? label : `${label} — ${HARNESS_SETUP}`,
                           disabled: !available,
+                          icon: <NeoIcon name="check" class={harness === id ? '' : 'invisible'} />,
                           onClick: () => chooseHarness(id),
                         };
                       }),
                     ]}
                   />
                 ) : !mayUseOxap ? (
-                  <span class="text-xs text-fg-muted" aria-label="Harness: Claude Code">
-                    Claude Code
+                  <span
+                    role="img"
+                    aria-label="Harness: Claude Code"
+                    title="Harness: Claude Code"
+                    class={`${CHAT_ICON_CONTROL} border-transparent text-fg-muted`}
+                  >
+                    <NeoIcon name="terminal" class="!h-4 !w-4" />
                   </span>
                 ) : null}
                 {!isOxap && (
@@ -572,13 +586,19 @@ export function SessionsPage() {
                     aria-pressed={sandbox}
                     onClick={() => setSandboxChoice(!sandbox)}
                     title={sandbox ? 'Sandbox on: commands run isolated' : 'Sandbox off'}
-                    class={`flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors ${
+                    class={`${CHAT_ICON_CONTROL} transition-colors ${
                       sandbox
                         ? 'border-success/40 bg-success/10 text-success'
                         : 'border-line text-fg-muted hover:text-fg'
                     }`}
                   >
-                    <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg
+                      aria-hidden="true"
+                      class="h-4 w-4"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
                       <path
                         stroke-linecap="round"
                         stroke-linejoin="round"
@@ -586,7 +606,6 @@ export function SessionsPage() {
                         d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
                       />
                     </svg>
-                    Sandbox
                   </button>
                 )}
               </div>

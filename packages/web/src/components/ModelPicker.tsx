@@ -149,7 +149,7 @@ export function ModelPicker({
   const waiting = loading && availableModels.length === 0;
 
   return (
-    <div class="relative min-w-0" ref={ref}>
+    <div class="relative min-w-0 max-w-[260px]" ref={ref}>
       <button
         ref={trigger}
         type="button"
@@ -159,7 +159,7 @@ export function ModelPicker({
         aria-label="Choose model and thinking"
         aria-expanded={open}
         aria-controls={menuId}
-        class="flex h-8 max-w-[260px] items-center gap-1.5 rounded-full border px-2.5 text-xs text-fg-soft transition-colors hover:brightness-110 shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
+        class="flex h-8 max-w-full items-center gap-1.5 rounded-full border px-2.5 text-xs text-fg-soft transition-colors hover:brightness-110 shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
         style={activeModelInfo ? solidPillStyle(activeProvider) : undefined}
       >
         {waiting || busy ? (
