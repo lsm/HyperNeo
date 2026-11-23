@@ -11,7 +11,8 @@ node .claude/skills/verify/chat-markdown-urls.mjs "$VERIFY_PORT" "$RUN"
 
 The helper seeds a synthetic assistant message and reads it through the paired
 browser. It checks the exact destinations of four allowed links. The labels
-for refused links and images stay visible without an active destination.
+for refused links and images stay visible without an active destination. A
+refused inline image is shown as a short label with its encoded data omitted.
 Review `evidence/chat-markdown-urls.json` and `evidence/chat-markdown-urls.png`
 in the run directory.
 

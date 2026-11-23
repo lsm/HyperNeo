@@ -26,7 +26,7 @@ const markdown = [
   '[Section](#details)',
   '[Unsupported](example:destination)',
   '[Inline text][data]',
-  '![Inline picture](data:image/png;base64,iVBORw0KGgo=)',
+  `![Inline picture](data:image/png;base64,${'QUJD'.repeat(1024)})`,
   '',
   '[data]: data:text/plain,hello',
 ].join('\n');
@@ -72,15 +72,25 @@ try {
   const hrefs = ['https://example.com', 'mailto:user@example.com', `/session/${sessionId}`, '#details'];
   writeFileSync(
     `${run}/evidence/chat-markdown-urls.json`,
-    JSON.stringify({ engine, linkLabels: links.map(({ label }) => label), images }, null, 2)
+    JSON.stringify(
+      {
+        engine,
+        linkLabels: links.map(({ label }) => label),
+        images,
+        showsPayload: visible.includes('data:image'),
+      },
+      null,
+      2
+    )
   );
   await page.screenshot({ path: `${run}/evidence/chat-markdown-urls.png` });
   assert.deepEqual(links, allowed.map((label, index) => ({ label, href: hrefs[index] })));
   assert.equal(images, 0);
-  for (const label of ['Unsupported', 'Inline text', 'Inline picture']) {
+  for (const label of ['Unsupported', 'Inline text', '[image: Inline picture]']) {
     assert(visible.includes(label));
   }
-  console.log('PASS: 4 allowed links, 3 visible refused labels, 0 inline images');
+  assert(!visible.includes('data:image'));
+  console.log('PASS: 4 allowed links, 3 visible refused labels, 0 inline images or payloads');
 } finally {
   await browser.close();
 }

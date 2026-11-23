@@ -258,6 +258,7 @@ describe('MarkdownRenderer', () => {
     });
 
     it('keeps approved chat destinations and renders other destinations as text', async () => {
+      const payload = 'QUJD'.repeat(1024);
       const markdown = [
         '[web](https://example.com)',
         '[email](mailto:user@example.com)',
@@ -265,7 +266,7 @@ describe('MarkdownRenderer', () => {
         '[section](#details)',
         '[unsupported](example:destination)',
         '[inline text][data]',
-        '![inline picture](data:image/png;base64,iVBORw0KGgo=)',
+        `![inline picture](data:image/png;base64,${payload})`,
         '',
         '[data]: data:text/plain,hello',
       ].join('\n');
@@ -278,7 +279,8 @@ describe('MarkdownRenderer', () => {
         [...container.querySelectorAll('a[href]')].map((link) => link.getAttribute('href'))
       ).toEqual(['https://example.com', 'mailto:user@example.com', '/session/example', '#details']);
       expect(container.querySelector('img')).toBeNull();
-      expect(container.textContent).toContain('inline picture');
+      expect(container.textContent).toContain('[image: inline picture]');
+      expect(container.textContent).not.toContain('data:image');
     });
 
     it('preserves preview reference text without interpreting paths inside code', async () => {
