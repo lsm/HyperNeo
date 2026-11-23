@@ -17,5 +17,7 @@ keeps its parent's harness.
 Refusals cover unknown and unsupported harnesses, a nested `config.harness`,
 unsupported OXAP restrictions, a missing setting or key, and removal of the
 saved adapter executable or installed hub. Each refusal leaves the session count
-unchanged. `result.json` records the accepted creations, refusals and clones.
+unchanged. After removing the adapter executable, cloning the original OXAP
+chat returns `harness_unsupported` and creates no child. `result.json` records
+the accepted creations, refusals and clones.
 The journey exercises creation and cloning. It does not send a model turn.

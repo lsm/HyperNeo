@@ -32,6 +32,7 @@ import {
   codexSessionRefusal,
   effectiveOxapConfig,
   engineForProvider,
+  OxapSessionAdmissionError,
   selectSessionEngine,
   thinkingRefusal,
 } from '../agent/session-engine.ts';
@@ -190,7 +191,7 @@ export class SessionLifecycle {
           globalSettings.oxapHub,
           this.config.readOxapProviderKey
         ));
-      if (refusal) throw new Error(refusal);
+      if (refusal) throw new OxapSessionAdmissionError(refusal);
     }
 
     const providedTitle = params.title?.trim();

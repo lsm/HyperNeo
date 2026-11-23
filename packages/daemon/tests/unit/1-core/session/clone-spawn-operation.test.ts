@@ -241,6 +241,18 @@ describe('session.clone.spawn', () => {
     });
   });
 
+  test('propagates infrastructure failures from session creation', async () => {
+    const h = makeHarness();
+    const failure = new Error('Session write failed');
+    h.deps = {
+      ...h.deps,
+      createSession: async () => {
+        throw failure;
+      },
+    };
+    await expect(run(h, {})).rejects.toBe(failure);
+  });
+
   test('the input schema accepts the Ultra thinking level and rejects unknown ones', () => {
     const schema = createSpawnSessionCloneOperation(makeHarness().deps).inputSchema;
     expect(schema.safeParse({ thinkingLevel: 'think64k' }).success).toBe(true);
