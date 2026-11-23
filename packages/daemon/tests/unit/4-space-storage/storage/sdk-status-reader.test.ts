@@ -644,15 +644,19 @@ test('a Cursor Desktop file error leaves a queued SDK status read intact', async
     const accepted = Promise.allSettled([reader.readCursorDesktop(cursorRead), reader.read(args)]);
     await tick();
     const worker = workers[0];
-    worker.onmessage?.({
-      data: {
-        ...worker.requests[0],
-        error: 'database is locked',
-        finishedAt: Date.now(),
-        workerMs: 0,
-        queueMs: 0,
-      },
-    } as MessageEvent<SDKStatusReply>);
+    const { id, epoch } = worker.requests[0];
+    worker.onmessage?.(
+      new MessageEvent<SDKStatusReply>('message', {
+        data: {
+          id,
+          epoch,
+          error: 'database is locked',
+          finishedAt: Date.now(),
+          workerMs: 0,
+          queueMs: 0,
+        },
+      })
+    );
     await tick();
     if (worker.requests[1]) worker.reply(worker.requests[1], page);
     const [cursor, status] = await accepted;
