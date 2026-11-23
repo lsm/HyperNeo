@@ -9,7 +9,7 @@ import type {
   WorktreeCommitStatus,
 } from '@hyperneo/shared';
 import { navigateToSession, navigateToSessions } from '../lib/router.ts';
-import { sessions } from '../lib/state.ts';
+import { globalSettings, projectArchivedVisibility, sidebarSessions } from '../lib/state.ts';
 import { newChatProjectSignal, workspaceHistoryVersionSignal } from '../lib/signals.ts';
 import {
   getWorkspaceHistory,
@@ -67,7 +67,8 @@ interface ProjectGroup {
 function buildView(
   sessionsList: Session[],
   history: WorkspaceHistoryEntry[],
-  systemProjects: SystemProject[] = []
+  systemProjects: SystemProject[],
+  showsArchived: (path?: string) => boolean
 ): { projects: ProjectGroup[]; ungrouped: Session[]; childrenByParent: Map<string, Session[]> } {
   const byRoot = new Map<string, Session[]>();
   const memberships = new Map(
@@ -107,10 +108,15 @@ function buildView(
     [...memberships.values(), ...systemDefinitions].map((project) => [project.id, project])
   );
   const ungrouped: Session[] = [];
-  const ids = new Set(sessionsList.map((session) => session.id));
+  const visibleSessions = sessionsList.filter((session) => {
+    if (session.status !== 'archived') return true;
+    const folder = projectRootOf(session);
+    return showsArchived(folder ? projectKey(folder) : undefined);
+  });
+  const ids = new Set(visibleSessions.map((session) => session.id));
   const childrenByParent = new Map<string, Session[]>();
 
-  for (const session of sessionsList) {
+  for (const session of visibleSessions) {
     const parentId = session.parentSessionId;
     if (parentId && ids.has(parentId)) {
       const siblings = childrenByParent.get(parentId) ?? [];
@@ -210,7 +216,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     return () => {
       current = false;
     };
-  }, [historyVersion, sessions.value]);
+  }, [historyVersion, sidebarSessions.value]);
 
   const workKey = (project: SystemProject) =>
     JSON.stringify([
@@ -258,13 +264,17 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     };
   }, [workSignature, workRefresh]);
 
-  const sessionsList = sessions.value.filter(isUserSession);
+  const showArchivedByDefault = globalSettings.value?.showArchived ?? false;
+  const showsArchived = (path?: string) =>
+    (path === undefined ? undefined : projectArchivedVisibility.value.get(path)) ??
+    showArchivedByDefault;
   const { projects, ungrouped, childrenByParent } = buildView(
-    sessionsList,
+    sidebarSessions.value.filter(isUserSession),
     history,
-    systemProjects
+    systemProjects,
+    showsArchived
   );
-  const hasContent = sessionsList.length > 0 || projects.length > 0;
+  const hasContent = ungrouped.length > 0 || projects.length > 0;
   const childrenOf = (sessionId: string) => childrenByParent.get(sessionId) ?? [];
   const removeProjectTarget = projects.find((project) => project.path === removeProjectPath);
 
@@ -333,11 +343,19 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     addProjectFromPath(addProjectPath);
   };
 
-  const handleRemoveProject = async (folders: string[]) => {
+  const clearArchiveVisibility = (projectPath: string) => {
+    if (!projectArchivedVisibility.value.has(projectPath)) return;
+    const next = new Map(projectArchivedVisibility.value);
+    next.delete(projectPath);
+    projectArchivedVisibility.value = next;
+  };
+
+  const handleRemoveProject = async (project: ProjectGroup) => {
     try {
-      for (const path of folders) {
+      for (const path of project.folders) {
         if (!(await removeWorkspaceFromHistory(path))) throw new Error('Failed to remove project');
       }
+      clearArchiveVisibility(project.path);
     } catch {
       toast.error('Failed to remove project');
     } finally {
@@ -358,6 +376,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
         )
           throw new Error('Project has active work');
         await forgetSystemProject(removeProjectTarget.path.slice(4));
+        clearArchiveVisibility(removeProjectTarget.path);
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Failed to forget project');
       } finally {
@@ -384,7 +403,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
       );
       return;
     }
-    await handleRemoveProject(removeProjectTarget.folders);
+    await handleRemoveProject(removeProjectTarget);
   };
 
   const handleArchive = async (sessionId: string, children?: CloneChildrenChoice) => {
@@ -556,7 +575,12 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
                   onSessionClick={handleSessionClick}
                   onArchive={handleArchive}
                   childrenOf={childrenOf}
-                  alwaysShowRemove={project.system}
+                  showArchived={showsArchived(project.path)}
+                  onToggleArchived={() => {
+                    const next = new Map(projectArchivedVisibility.value);
+                    next.set(project.path, !showsArchived(project.path));
+                    projectArchivedVisibility.value = next;
+                  }}
                   removeDisabledReason={
                     project.system
                       ? (() => {
@@ -578,7 +602,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
                   onRemove={() =>
                     project.system || unarchived(project.sessions).length > 0
                       ? setRemoveProjectPath(project.path)
-                      : handleRemoveProject(project.folders)
+                      : handleRemoveProject(project)
                   }
                 />
               ))}

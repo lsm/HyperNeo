@@ -1,4 +1,6 @@
-import { CloseGlyph } from './icons/common-glyphs.tsx';
+import { useState } from 'preact/hooks';
+import { CheckGlyph } from './icons/common-glyphs.tsx';
+import { Dropdown, type DropdownMenuItem } from './ui/Dropdown.tsx';
 import type { Session } from '@hyperneo/shared';
 import { SessionConversationGroup } from './SessionConversationGroup.tsx';
 
@@ -18,7 +20,8 @@ interface SessionProjectGroupProps {
   childrenOf?: (sessionId: string) => Session[];
   onRemove?: () => void;
   removeDisabledReason?: string;
-  alwaysShowRemove?: boolean;
+  showArchived: boolean;
+  onToggleArchived: () => void;
 }
 
 export function SessionProjectGroup({
@@ -34,9 +37,36 @@ export function SessionProjectGroup({
   childrenOf,
   onRemove,
   removeDisabledReason,
-  alwaysShowRemove,
+  showArchived,
+  onToggleArchived,
 }: SessionProjectGroupProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const isEmpty = sessions.length === 0;
+  const items: DropdownMenuItem[] = [
+    {
+      label: 'Show archived chats',
+      checked: showArchived,
+      icon: (
+        <CheckGlyph
+          class={showArchived ? 'h-4 w-4' : 'invisible h-4 w-4'}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          aria-hidden="true"
+        />
+      ),
+      onClick: onToggleArchived,
+    },
+  ];
+  if (onRemove) {
+    items.push({
+      label: 'Delete this project',
+      title: removeDisabledReason,
+      disabled: !!removeDisabledReason,
+      danger: true,
+      onClick: onRemove,
+    });
+  }
 
   return (
     <div>
@@ -94,29 +124,28 @@ export function SessionProjectGroup({
             </svg>
           </button>
         )}
-        {onRemove && (
-          <button
-            type="button"
-            data-testid="project-remove"
-            onClick={onRemove}
-            disabled={!!removeDisabledReason}
-            title={removeDisabledReason ?? 'Remove from list'}
-            aria-label={`Remove project ${name}`}
-            class={`${ROW_ICON_BUTTON} disabled:cursor-not-allowed disabled:opacity-50 ${
-              isEmpty || alwaysShowRemove
-                ? ''
-                : 'sm:opacity-0 sm:group-hover/project:opacity-100 group-focus-within/project:opacity-100 [@media(hover:none)]:opacity-100'
-            }`}
-          >
-            <CloseGlyph
-              class="h-3.5 w-3.5"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              aria-hidden="true"
-            />
-          </button>
-        )}
+        <Dropdown
+          items={items}
+          isOpen={menuOpen}
+          onOpenChange={setMenuOpen}
+          portal
+          preferAbove
+          trigger={
+            <button
+              type="button"
+              aria-label={`Project actions for ${name}`}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              class={ROW_ICON_BUTTON}
+            >
+              <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="5" cy="12" r="1.7" />
+                <circle cx="12" cy="12" r="1.7" />
+                <circle cx="19" cy="12" r="1.7" />
+              </svg>
+            </button>
+          }
+        />
         {removeDisabledReason && (
           <span
             role="tooltip"

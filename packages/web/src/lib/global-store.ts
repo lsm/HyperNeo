@@ -18,6 +18,14 @@ const SESSIONS_SUBSCRIPTION_ID = 'sessions-list';
 export class GlobalStore {
   readonly sessions = signal<Session[]>([]);
 
+  readonly projectArchivedVisibility = signal(new Map<string, boolean>());
+
+  readonly visibleSessions = computed(() =>
+    this.settings.value?.showArchived
+      ? this.sessions.value
+      : this.sessions.value.filter((session) => session.status !== 'archived')
+  );
+
   readonly sessionsTotalCount = signal<number>(0);
 
   readonly archivedSessionCount = signal<number>(0);
@@ -25,7 +33,7 @@ export class GlobalStore {
   readonly hasArchivedSessions = computed<boolean>(
     () =>
       this.archivedSessionCount.value > 0 ||
-      this.sessionsTotalCount.value > this.sessions.value.length
+      this.sessionsTotalCount.value > this.visibleSessions.value.length
   );
 
   readonly systemState = signal<SystemState | null>(null);
@@ -38,10 +46,10 @@ export class GlobalStore {
     () => this.systemState.value?.health || null
   );
 
-  readonly sessionCount = computed<number>(() => this.sessions.value.length);
+  readonly sessionCount = computed<number>(() => this.visibleSessions.value.length);
 
   readonly recentSessions = computed<Session[]>(() => {
-    return [...this.sessions.value]
+    return [...this.visibleSessions.value]
       .sort((a, b) => new Date(b.lastActiveAt).getTime() - new Date(a.lastActiveAt).getTime())
       .slice(0, 5);
   });
@@ -175,17 +183,19 @@ export class GlobalStore {
     this.cleanupFunctions = [];
   }
 
-  private subscribeSessions(hub: Awaited<ReturnType<typeof connectionManager.getHub>>): () => void {
-    const getParams = (): number[] => {
-      const showArchived = this.settings.value?.showArchived ?? false;
-      return [showArchived ? 1 : 0];
-    };
+  private includeArchivedSessions(): boolean {
+    return (
+      Boolean(this.settings.value?.showArchived) ||
+      [...this.projectArchivedVisibility.value.values()].includes(true)
+    );
+  }
 
+  private subscribeSessions(hub: Awaited<ReturnType<typeof connectionManager.getHub>>): () => void {
     const doSubscribe = (): void => {
       hub
         .request('liveQuery.subscribe', {
           queryName: 'sessions.list',
-          params: getParams(),
+          params: [this.includeArchivedSessions() ? 1 : 0],
           subscriptionId: SESSIONS_SUBSCRIPTION_ID,
         })
         .catch(() => {});
@@ -221,9 +231,9 @@ export class GlobalStore {
     });
     this.cleanupFunctions.push(unsubReconnect);
 
-    let prevShowArchived = this.settings.value?.showArchived ?? false;
+    let prevShowArchived = this.includeArchivedSessions();
     const checkSetting = (): void => {
-      const current = this.settings.value?.showArchived ?? false;
+      const current = this.includeArchivedSessions();
       if (current !== prevShowArchived) {
         prevShowArchived = current;
         doSubscribe();
@@ -233,7 +243,10 @@ export class GlobalStore {
     const unsubSettings = hub.onEvent<SettingsState>(STATE_CHANNELS.GLOBAL_SETTINGS, () => {
       queueMicrotask(checkSetting);
     });
-    this.cleanupFunctions.push(unsubSettings);
+    this.cleanupFunctions.push(
+      unsubSettings,
+      this.projectArchivedVisibility.subscribe(checkSetting)
+    );
 
     doSubscribe();
     return checkSetting;
@@ -262,11 +275,10 @@ export class GlobalStore {
 
     const hub = await connectionManager.getHub();
 
-    const showArchived = this.settings.value?.showArchived ?? false;
     hub
       .request('liveQuery.subscribe', {
         queryName: 'sessions.list',
-        params: [showArchived ? 1 : 0],
+        params: [this.includeArchivedSessions() ? 1 : 0],
         subscriptionId: SESSIONS_SUBSCRIPTION_ID,
       })
       .catch(() => {});
@@ -292,7 +304,7 @@ export class GlobalStore {
   }
 
   getSession(sessionId: string): Session | undefined {
-    return this.sessions.value.find((s) => s.id === sessionId);
+    return this.visibleSessions.value.find((s) => s.id === sessionId);
   }
 
   updateSession(sessionId: string, updates: Partial<Session>): void {

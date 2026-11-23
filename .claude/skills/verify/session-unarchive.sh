@@ -62,6 +62,7 @@ echo 'PASS: Neo operation restored the recorded branch tip (1 session)'
 desktop=$(create_archive 'Desktop restore')
 phone=$(create_archive 'Phone restore')
 mkdir "$RUN/Other"
+rpc rpc:workspace.add "$(jq -nc --arg path "$RUN/Other" '{path:$path}')" >/dev/null
 other=$(rpc rpc:session.create "$(jq -nc --arg path "$RUN/Other"   '{workspacePath:$path,title:"Other archived chat",worktreeMode:"direct"}')" | jq -er '.reply.sessionId')
 rpc rpc:session.archive "$(jq -nc --arg id "$other" '{sessionId:$id}')" | jq -e '.reply.success'
 node "$verify/session-unarchive-web.mjs" "$out" "$desktop" "$phone"

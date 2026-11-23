@@ -42,6 +42,7 @@ try {
       new URL(route.request().url()).origin === origin ? route.continue() : route.abort()
     );
     const page = await context.newPage();
+    page.setDefaultTimeout(10000);
     try {
       await page.goto(`${origin}/sessions`);
       const row = page.getByTestId("session-row").filter({ has: page.locator(`[data-testid="session-card"][data-session-id="${sessionId}"]`) });
@@ -53,6 +54,7 @@ try {
       const activate = (control) =>
         hasTouch ? control.tap({ timeout: 5000 }) : control.click({ timeout: 5000 });
       await menuTrigger.waitFor({ timeout: 5000 });
+      await page.getByRole('button', { name: 'Project actions for Other' }).waitFor();
       assert.equal(await row.count(), 0, 'The archived chat starts hidden');
       await activate(menuTrigger);
       await activate(page.getByRole('menuitemcheckbox', { name: 'Show archived chats', checked: false }));
@@ -62,6 +64,7 @@ try {
       await page.getByRole('menuitemcheckbox', { name: 'Show archived chats', checked: true }).waitFor();
       const deleteItem = page.getByRole('menuitem', { name: 'Delete this project' });
       await deleteItem.waitFor();
+      if (!hasTouch) await row.hover({ position: { x: 12, y: 12 } });
       const button = row.getByRole('button', { name: 'Unarchive', exact: true });
       await button.waitFor({ timeout: 5000 });
       await page.screenshot({ path: join(out, `${label}-project-menu.png`), animations: 'disabled' });
@@ -73,6 +76,7 @@ try {
       await row.waitFor({ state: 'detached' });
       await activate(menuTrigger);
       await activate(page.getByRole('menuitemcheckbox', { name: 'Show archived chats', checked: false }));
+      if (!hasTouch) await row.hover();
       await activate(button);
       await page.getByText('Chat unarchived with a fresh worktree from dev').waitFor({ timeout: 5000 });
       await button.waitFor({ state: 'detached', timeout: 5000 });
