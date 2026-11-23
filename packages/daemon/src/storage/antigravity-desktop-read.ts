@@ -15,18 +15,24 @@ const desktopRows = `FROM conversation_summaries
 
 function localFolders(workspaceUris: string): string[] | null {
   if (!workspaceUris.trim()) return [];
+  let uris: unknown;
   try {
-    const uris: unknown = JSON.parse(workspaceUris);
-    if (!Array.isArray(uris)) return null;
-    return uris.map((entry: unknown) => {
-      if (typeof entry !== 'string') throw new Error('Invalid workspace URI');
-      const uri = new URL(entry);
-      if (uri.hostname || uri.protocol !== 'file:') throw new Error('Nonlocal workspace URI');
-      return normalize(fileURLToPath(uri));
-    });
+    uris = JSON.parse(workspaceUris);
   } catch {
     return null;
   }
+  if (!Array.isArray(uris)) return null;
+  const folders = uris.flatMap((entry: unknown) => {
+    if (typeof entry !== 'string') return [];
+    try {
+      const uri = new URL(entry);
+      if (uri.hostname || uri.protocol !== 'file:') return [];
+      return [normalize(fileURLToPath(uri))];
+    } catch {
+      return [];
+    }
+  });
+  return folders.length > 0 || uris.length === 0 ? folders : null;
 }
 
 function readCatalog({ statePath, query }: AntigravityDesktopRead, readonlyUri = false): Catalog {
