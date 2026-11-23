@@ -13,7 +13,9 @@ import type { z } from 'zod';
 const run = process.argv.at(-1)!;
 const [mode, binary] = process.argv.slice(2, -1);
 const initializeRequiresAuth = mode === 'start-init-auth';
-const resumeFixture = mode === 'resume';
+const lateBatch = mode === 'resume-late-batch';
+const lateClose = mode === 'resume-late-close';
+const resumeFixture = mode === 'resume' || lateBatch || lateClose;
 const healthyStart = mode === 'start' || resumeFixture;
 const startFixture = healthyStart || initializeRequiresAuth;
 assert(startFixture || ['fixture', 'absent', 'signed-out', 'start-signed-out'].includes(mode));
@@ -45,8 +47,9 @@ assert.deepEqual(process.argv.slice(2), discovery
   ? ['acp', '--disable-telemetry'] : ['acp', '--sandbox', '--disable-telemetry']);
 assert.equal(process.cwd(), discovery ? process.env.HOME : ${JSON.stringify(workspaceRoot)});
 const sessionId = 'owned-1';
-const emit = (message) => process.stdout.write(JSON.stringify({jsonrpc: '2.0', ...message}) + '\\n');
-const note = (id, text) => emit({method:'session/update',params:{sessionId:id,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text}}}});
+const emit = (...messages) => process.stdout.write(messages.map(message => JSON.stringify({jsonrpc: '2.0', ...message}) + '\\n').join(''));
+const chunk = (id, text) => ({method:'session/update',params:{sessionId:id,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text}}}});
+const note = (id, text) => emit(chunk(id, text));
 let promptId;
 let resumed = false;
 for await (const line of createInterface({input: process.stdin})) {
@@ -71,6 +74,7 @@ for await (const line of createInterface({input: process.stdin})) {
     emit({id,result:{}});
   } else if (method === 'session/close') {
     assert.deepEqual(params,{sessionId});
+    if (resumed && ${lateClose}) note(sessionId,' Late during close');
     emit({id,result:{}});
   } else if (method === 'session/prompt') {
     assert.deepEqual(params,{sessionId,prompt:[{type:'text',text:resumed ? 'Continue the greeting.' : 'Reply with a greeting.'}]});
@@ -83,7 +87,9 @@ for await (const line of createInterface({input: process.stdin})) {
     while (!existsSync(release)) await Bun.sleep(25);
     note('other-session','Wrong session');
     note(sessionId,resumed ? 'Hello again' : 'Hello');
-    emit({id:promptId,result:{stopReason:'end_turn'}});
+    const ended = {id:promptId,result:{stopReason:'end_turn'}};
+    if (resumed && ${lateBatch}) emit(ended, chunk(sessionId,' Late prior turn'));
+    else emit(ended);
   }
 }
 `, { mode: 0o700 });
@@ -244,6 +250,7 @@ try {
         }
         assert(followUp.ok && followUp.value.status === 'done');
         assert.equal(followUp.value.lastReply, 'Hello again');
+        assert.deepEqual(followUp.value.turnEnds?.map(({ message }) => message), ['Hello again']);
         const input = followUp.value.inputEvidence;
         assert(input?.state === 'observed');
         assert.deepEqual(input.receipt, sent.value.receipt);
