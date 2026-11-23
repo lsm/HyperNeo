@@ -225,7 +225,7 @@ export async function openOxapSession(
       }
     } else await open(client, plan);
     if (fallback) {
-      if (row.adapter === 'deepseek')
+      if (row.adapter === 'deepseek' && (session.sdkSessionId || status))
         throw new OxapReopenDeliveryError('The saved DeepSeek thread is unavailable to resume.');
       recovery = {
         previous: session.sdkSessionId ?? null,

@@ -24,3 +24,6 @@ sender's durable inbox, and failed work status with the same reason.
 
 Use `refused-reopen` for a refusal from the first native resume attempt.
 The same sender and chat checks apply, and the worker retains its native ID.
+
+Use `first-open-retry` to seed a failed first input without a native binding.
+The next send must open its first native thread and receive a reply.

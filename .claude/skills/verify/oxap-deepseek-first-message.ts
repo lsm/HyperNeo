@@ -18,7 +18,7 @@ import { answerCodexProbeLocally, serveLocalRelease } from './oxap-codex-provide
 const [binary, version, sha256, ...args] = process.argv.slice(2);
 const mode = args.length === 2 ? args[0] : 'first';
 const runArgument = args.at(-1)!;
-assert(['first', 'recovery', 'pending', 'flash', 'image', 'flash-web', 'pro-web', 'flash-recovery', 'sdk-default', 'locked-recovery', 'refused-reopen'].includes(mode));
+assert(['first', 'recovery', 'pending', 'flash', 'image', 'flash-web', 'pro-web', 'flash-recovery', 'sdk-default', 'locked-recovery', 'refused-reopen', 'first-open-retry'].includes(mode));
 const run = resolve(runArgument);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -88,6 +88,16 @@ try {
     title: 'Synthetic DeepSeek first message',
     config: { provider: 'deepseek', model },
   });
+  if (mode === 'first-open-retry') {
+    assert(!app.db.getSession(sessionId)?.sdkSessionId);
+    await app.db.saveUserMessage(sessionId, {
+      type: 'user',
+      uuid: crypto.randomUUID(),
+      session_id: sessionId,
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'Synthetic failed first send' },
+    }, 'failed');
+  }
   const errors: string[] = [];
   app.internalEventBus.subscribe('session.errorObserved', ({ details }) => {
     const error = details as { userMessage?: string } | undefined;
@@ -181,7 +191,12 @@ try {
     replyText,
     flash
       ? [JSON.stringify({ model, images: withImage ? [{ type: 'image', data: png, mimeType: 'image/png' }] : [] })]
-      : ['Synthetic DeepSeek reply']
+      : mode === 'first-open-retry'
+        ? [
+            'The previous OXAP DeepSeek thread cannot be resumed. A new thread will start without earlier conversation.',
+            'Synthetic DeepSeek reply',
+          ]
+        : ['Synthetic DeepSeek reply']
   );
   if (flash) {
     const switching = await hub.request<{ success: boolean; error: string }>('session.model.switch', {
