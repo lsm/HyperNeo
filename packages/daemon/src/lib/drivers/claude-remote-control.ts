@@ -279,8 +279,6 @@ export function sendHelperArchiveRequest(
   target: RemoteControlTarget,
   deps: ClaudeDesktopAdapterDeps
 ): Promise<Result<WorkDelivery>> {
-  const requests = archiveRequests.get(deps) ?? new Map<string, number>();
-  archiveRequests.set(deps, requests.set(target.sessionId, deps.now()));
   const message = fillPrompt(CLAUDE_DESKTOP_HELPER_ARCHIVE_REQUEST, {
     sessionId: target.sessionId,
     title: target.title,
@@ -294,6 +292,8 @@ export async function awaitAppArchive(
   deps: ClaudeDesktopAdapterDeps
 ): Promise<Result<{ archived: true }>> {
   if (!sent.ok) return sent;
+  const requests = archiveRequests.get(deps) ?? new Map<string, number>();
+  archiveRequests.set(deps, requests.set(target.sessionId, deps.now()));
   const until = deps.now() + HELPER_ARCHIVE_WAIT_MS;
   for (;;) {
     const records = await loadClaudeDesktopRecords(deps, new Map());

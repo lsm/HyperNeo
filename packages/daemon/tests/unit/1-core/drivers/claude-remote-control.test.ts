@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
@@ -275,29 +282,51 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
     expect(relayed()).toContain('Please archive the Claude Code session local_t1 (Fix the parser)');
   });
 
-  test('asks neo-helper again only after ten minutes without an archive', async () => {
-    helperTranscript();
+  test('asks neo-helper again only after ten minutes, and right away after a failed send', async () => {
+    const transcript = helperTranscript();
     write(record('t1'));
     let now = 0;
+    let accept = false;
+    const base = deps();
     const archiveDeps = {
-      ...deps(),
+      ...base,
       now: () => now,
       sleep: async (ms: number) => {
         now += ms;
       },
+      spawn: ((args, options) => {
+        const child = base.spawn(args, options);
+        if (accept && args.includes('HyperNeo relay'))
+          appendFileSync(
+            transcript,
+            JSON.stringify({
+              type: 'user',
+              uuid: `request-${now}`,
+              content: `<cross-session-message>${args.at(-1)}</cross-session-message>`,
+            }) + '\n'
+          );
+        return child;
+      }) as ClaudeDesktopAdapterDeps['spawn'],
     };
     const requests = () => spawned.filter((call) => call.args.includes('HyperNeo relay')).length;
     expect(await runClaudeHelperArchive(target, archiveDeps)).toMatchObject({ ok: false });
-    expect(requests()).toBe(1);
+    expect(await runClaudeHelperArchive(target, archiveDeps)).toMatchObject({ ok: false });
+    expect(requests()).toBe(2);
+    accept = true;
+    expect(await runClaudeHelperArchive(target, archiveDeps)).toMatchObject({
+      ok: false,
+      detail: expect.stringContaining('has not archived'),
+    });
+    expect(requests()).toBe(3);
     expect(await runClaudeHelperArchive(target, archiveDeps)).toMatchObject({
       ok: false,
       reason: 'not_delivered',
       detail: expect.stringContaining('waiting for Claude Desktop'),
     });
-    expect(requests()).toBe(1);
+    expect(requests()).toBe(3);
     now += 10 * 60_000;
     await runClaudeHelperArchive(target, archiveDeps);
-    expect(requests()).toBe(2);
+    expect(requests()).toBe(4);
   });
 
   test('reports an archive the helper never makes without touching the record', async () => {
