@@ -154,17 +154,23 @@ describe('GlmProvider', () => {
 
       const models = await provider.getModels();
 
-      expect(models).toHaveLength(8);
       expect(models.map((m) => m.id)).toEqual([
         'glm-5',
         'glm-5.1',
         'glm-5.2[1m]',
         'glm-5.3[1m]',
+        'glm-5.4[1m]',
         'glm-5.3-flash[1m]',
         'glm-5-turbo',
         'glm-5v-turbo',
         'glm-4.7',
       ]);
+      expect(models.find((model) => model.id === 'glm-5.4[1m]')).toMatchObject({
+        alias: 'glm-5.4',
+        contextWindow: 1_000_000,
+        releaseDate: '2026-11-23',
+        available: true,
+      });
     });
 
     it('should return empty array when API key is not available', async () => {
@@ -570,6 +576,17 @@ describe('GlmProvider', () => {
       expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5.3[1m]');
     });
 
+    it.each(['glm-5.4', 'glm-5.4[1m]'])('routes %s to GLM-5.4 with 1M context', (modelId) => {
+      const config = provider.buildSdkConfig(modelId, { apiKey: 'test-key' });
+
+      expect(config.envVars).toMatchObject({
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-5.4[1m]',
+        ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-5.4[1m]',
+        ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-5.4[1m]',
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000',
+      });
+    });
+
     it('should route glm-5.3-flash to the 1M SDK model id', () => {
       process.env.GLM_API_KEY = 'test-key';
 
@@ -758,12 +775,12 @@ describe('GlmProvider', () => {
 
   describe('static models', () => {
     it('should have static models defined', () => {
-      expect(GlmProvider.MODELS).toHaveLength(8);
       expect(GlmProvider.MODELS.map((m) => m.id)).toEqual([
         'glm-5',
         'glm-5.1',
         'glm-5.2[1m]',
         'glm-5.3[1m]',
+        'glm-5.4[1m]',
         'glm-5.3-flash[1m]',
         'glm-5-turbo',
         'glm-5v-turbo',

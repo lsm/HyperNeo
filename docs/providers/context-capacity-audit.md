@@ -44,6 +44,7 @@ The curated static entries agree with the provider documentation:
 | GLM-5, GLM-5.1 | 200,000 | [GLM-5](https://docs.z.ai/guides/llm/glm-5), [GLM-5.1](https://docs.z.ai/guides/llm/glm-5.1) |
 | GLM-5-Turbo, GLM-5V-Turbo | 200,000 | [Turbo](https://docs.z.ai/guides/llm/glm-5-turbo), [Vision Turbo](https://docs.z.ai/guides/vlm/glm-5v-turbo) |
 | GLM-5.2, GLM-5.3 | 1,000,000 | [GLM-5.2](https://docs.z.ai/guides/llm/glm-5.2), [GLM-5.3](https://docs.z.ai/guides/llm/glm-5.3) |
+| GLM-5.4 | 1,000,000 | [GLM-5.4](https://docs.z.ai/guides/llm/glm-5.4.md) |
 | GLM-5.3-Flash / FlashX | 1,000,000 | [Flash family](https://docs.z.ai/guides/vlm/glm-5.3-flash) |
 | GLM-4.7 / Flash / FlashX | 200,000 | [GLM-4.7 family](https://docs.z.ai/guides/llm/glm-4.7) |
 
