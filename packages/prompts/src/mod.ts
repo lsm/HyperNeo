@@ -272,6 +272,7 @@ import mdToolProjectsReorganize from './neo/tools/neo.projects.reorganize.md' wi
 import mdToolPublicationPublish from './neo/tools/neo.publication.publish.md' with { type: 'text' };
 import mdToolPublicationRead from './neo/tools/neo.publication.read.md' with { type: 'text' };
 import mdToolSessionArchive from './neo/tools/neo.session.archive.md' with { type: 'text' };
+import mdToolSessionUnarchive from './neo/tools/neo.session.unarchive.md' with { type: 'text' };
 import mdToolSpeechAck from './neo/tools/neo.speech.ack.md' with { type: 'text' };
 import mdToolSpeechCatalog from './neo/tools/neo.speech.catalog.md' with { type: 'text' };
 import mdToolSpeechListen from './neo/tools/neo.speech.listen.md' with { type: 'text' };
@@ -748,6 +749,7 @@ export const NEO_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = Object.fr
     'neo/tools/neo.publication.publish.md': mdToolPublicationPublish,
     'neo/tools/neo.publication.read.md': mdToolPublicationRead,
     'neo/tools/neo.session.archive.md': mdToolSessionArchive,
+    'neo/tools/neo.session.unarchive.md': mdToolSessionUnarchive,
     'neo/tools/neo.speech.ack.md': mdToolSpeechAck,
     'neo/tools/neo.speech.catalog.md': mdToolSpeechCatalog,
     'neo/tools/neo.speech.listen.md': mdToolSpeechListen,

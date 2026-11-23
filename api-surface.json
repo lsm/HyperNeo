@@ -39457,6 +39457,60 @@
     {
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "sessionId": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "type": "object"
+      },
+      "name": "neo.session.unarchive",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "success": {
+                "const": true,
+                "type": "boolean"
+              },
+              "worktreeBaseBranch": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "success"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "reason": {
+                "type": "string"
+              },
+              "success": {
+                "const": false,
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "success",
+              "reason"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
         "default": {},
         "properties": {
           "cursor": {

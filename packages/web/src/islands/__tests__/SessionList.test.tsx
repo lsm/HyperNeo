@@ -40,10 +40,18 @@ const {
 }));
 
 let mockSessionsSignal: ReturnType<typeof signal<Session[]>>;
+let mockProjectArchiveVisibility: ReturnType<typeof signal<Map<string, boolean>>>;
+let mockSettingsSignal: ReturnType<typeof signal<{ showArchived: boolean } | null>>;
 let mockSessionStatusesSignal: ReturnType<typeof signal<Map<string, unknown>>>;
 
 vi.mock('../../lib/state.ts', () => ({
-  get sessions() {
+  get globalSettings() {
+    return mockSettingsSignal;
+  },
+  get projectArchivedVisibility() {
+    return mockProjectArchiveVisibility;
+  },
+  get sidebarSessions() {
     return computed(() => mockSessionsSignal.value);
   },
 }));
@@ -92,6 +100,8 @@ vi.mock('../../components/ArchiveConfirmDialog.tsx', () => ({
 }));
 
 mockSessionsSignal = signal<Session[]>([]);
+mockProjectArchiveVisibility = signal(new Map());
+mockSettingsSignal = signal(null);
 mockSessionStatusesSignal = signal(new Map());
 
 import {
@@ -130,11 +140,31 @@ function createHistory(path: string, lastUsedAt = 1): WorkspaceHistoryEntry {
   };
 }
 
+function openProjectMenu(name: string) {
+  const trigger = screen.getByRole('button', { name: `Project actions for ${name}`, exact: true });
+  if (trigger.getAttribute('aria-expanded') === 'true') return;
+  const openMenu = screen.queryByRole('menu');
+  if (openMenu) fireEvent.keyDown(openMenu, { key: 'Escape' });
+  fireEvent.click(trigger);
+}
+
+function projectDelete(name: string) {
+  openProjectMenu(name);
+  return screen.getByRole('menuitem', { name: 'Delete this project' });
+}
+
+async function findProjectDelete(name: string) {
+  await screen.findByRole('button', { name: `Project actions for ${name}`, exact: true });
+  return projectDelete(name);
+}
+
 describe('SessionsSidebar', () => {
   beforeEach(() => {
     cleanup();
     vi.clearAllMocks();
     mockSessionsSignal.value = [];
+    mockProjectArchiveVisibility.value = new Map();
+    mockSettingsSignal.value = null;
     mockSessionStatusesSignal.value = new Map();
     mockGetWorkspaceHistory.mockResolvedValue([]);
     mockListSystemProjects.mockResolvedValue([]);
@@ -216,7 +246,7 @@ describe('SessionsSidebar', () => {
     expect(newChatProjectSignal.value).toBe(first);
 
     mockGetWorkspaceHistory.mockResolvedValue([unrelated]);
-    fireEvent.click(screen.getByRole('button', { name: 'Remove project Project', exact: true }));
+    fireEvent.click(projectDelete('Project'));
     await waitFor(() => expect(screen.getAllByTestId('project-group-header')).toHaveLength(1));
     expect(mockRemoveWorkspaceFromHistory.mock.calls).toEqual([[first], [second]]);
     expect(
@@ -249,16 +279,16 @@ describe('SessionsSidebar', () => {
     mockRemoveWorkspaceFromHistory
       .mockResolvedValueOnce(true)
       .mockRejectedValueOnce(new Error('Disconnected'));
-    fireEvent.click(screen.getByRole('button', { name: 'Remove project Product' }));
+    fireEvent.click(projectDelete('Product'));
     await waitFor(() => expect(mockToastError).toHaveBeenCalledWith('Failed to remove project'));
     await waitFor(() => expect(screen.queryByText('/code')).toBeNull());
     expect(mockGetWorkspaceHistory).toHaveBeenCalledTimes(2);
-    expect(screen.getByRole('button', { name: 'Remove project Product' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Project actions for Product' })).toBeTruthy();
     mockRemoveWorkspaceFromHistory.mockClear();
     mockGetWorkspaceHistory.mockResolvedValue([]);
-    fireEvent.click(screen.getByRole('button', { name: 'Remove project Product' }));
+    fireEvent.click(projectDelete('Product'));
     await waitFor(() =>
-      expect(screen.queryByRole('button', { name: 'Remove project Product' })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Project actions for Product' })).toBeNull()
     );
     expect(mockRemoveWorkspaceFromHistory.mock.calls).toEqual([['/docs']]);
   });
@@ -267,8 +297,33 @@ describe('SessionsSidebar', () => {
     mockGetWorkspaceHistory.mockResolvedValue([createHistory('/code')]);
     mockRemoveWorkspaceFromHistory.mockResolvedValue(false);
     render(<SessionsSidebar />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove project code' }));
+    fireEvent.click(await findProjectDelete('code'));
     await waitFor(() => expect(mockToastError).toHaveBeenCalledWith('Failed to remove project'));
+  });
+
+  it('shows archived chats only in the project whose toggle is on', async () => {
+    mockSessionsSignal.value = [
+      createMockSession('active', 'Active chat', '/workspace/alpha'),
+      createMockSession('archived', 'Archived chat', '/workspace/alpha', 'archived'),
+      createMockSession('other', 'Other archive', '/workspace/beta', 'archived'),
+    ];
+    mockGetWorkspaceHistory.mockResolvedValue([createHistory('/workspace/beta')]);
+    render(<SessionsSidebar />);
+
+    expect(screen.queryByText('Archived chat')).toBeNull();
+    openProjectMenu('alpha');
+    const toggle = () => screen.getByRole('menuitemcheckbox', { name: 'Show archived chats' });
+    expect(toggle().getAttribute('aria-checked')).toBe('false');
+    fireEvent.click(toggle());
+    expect(await screen.findByText('Archived chat')).toBeTruthy();
+    expect(screen.queryByText('Other archive')).toBeNull();
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+
+    openProjectMenu('alpha');
+    expect(toggle().getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(toggle());
+    expect(screen.queryByText('Archived chat')).toBeNull();
+    expect(screen.getByText('Active chat')).toBeTruthy();
   });
 
   it('archives every open chat after confirmation and then removes the project', async () => {
@@ -281,13 +336,14 @@ describe('SessionsSidebar', () => {
     render(<SessionsSidebar />);
     await waitFor(() => expect(mockGetWorkspaceHistory).toHaveBeenCalledTimes(1));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Remove project neo-read' }));
+    fireEvent.click(projectDelete('neo-read'));
     expect(screen.getByText(/This archives 2 chats in this project/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByTestId('project-remove-confirm')).toBeNull();
     expect(mockArchiveSession).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Remove project neo-read' }));
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    fireEvent.click(projectDelete('neo-read'));
     fireEvent.click(screen.getByTestId('project-remove-confirm'));
 
     await waitFor(() =>
@@ -307,7 +363,7 @@ describe('SessionsSidebar', () => {
       .mockResolvedValueOnce({ success: false, requiresConfirmation: true, commitStatus: {} });
     render(<SessionsSidebar />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Remove project neo-read' }));
+    fireEvent.click(projectDelete('neo-read'));
     fireEvent.click(screen.getByTestId('project-remove-confirm'));
 
     await waitFor(() =>
@@ -340,10 +396,8 @@ describe('SessionsSidebar', () => {
     expect(screen.getByText('Review')).toBeTruthy();
     expect(screen.queryByText('neo-read')).toBeNull();
     expect(screen.getAllByText('No chats')).toHaveLength(2);
-    expect(
-      screen.getByRole('button', { name: 'Remove project Neo Read' }).hasAttribute('disabled')
-    ).toBe(true);
-    expect(screen.getByRole('button', { name: 'Remove project Idle' })).toBeTruthy();
+    expect(projectDelete('Neo Read').hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Project actions for Idle' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'New session in Idle' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'New session in Section' })).toBeNull();
   });
@@ -360,7 +414,7 @@ describe('SessionsSidebar', () => {
       },
     ]);
     render(<SessionsSidebar />);
-    const remove = await screen.findByRole('button', { name: 'Remove project Idle' });
+    const remove = await findProjectDelete('Idle');
     await waitFor(() => expect(remove.hasAttribute('disabled')).toBe(false));
     expect(mockFindProjectWork).toHaveBeenCalledTimes(1);
     mockSessionsSignal.value = [createMockSession('chat', 'Other', '/code/other')];
@@ -401,12 +455,13 @@ describe('SessionsSidebar', () => {
       return false;
     });
     render(<SessionsSidebar />);
-    const idle = await screen.findByRole('button', { name: 'Remove project Idle' });
-    const okay = await screen.findByRole('button', { name: 'Remove project Okay' });
+    const idle = await findProjectDelete('Idle');
     await waitFor(() => expect(idle.getAttribute('title')).toBe('Could not check project work'));
+    const okay = await findProjectDelete('Okay');
     await waitFor(() => expect(okay.hasAttribute('disabled')).toBe(false));
+    const retried = projectDelete('Idle');
     mockSessionsSignal.value = [createMockSession('other', 'Other', '/code/other')];
-    await waitFor(() => expect(idle.hasAttribute('disabled')).toBe(false));
+    await waitFor(() => expect(retried.hasAttribute('disabled')).toBe(false));
     expect(
       mockFindProjectWork.mock.calls.filter((args) => args[0][0] === '/code/idle')
     ).toHaveLength(2);
@@ -428,7 +483,7 @@ describe('SessionsSidebar', () => {
       },
     ]);
     render(<SessionsSidebar />);
-    const remove = await screen.findByRole('button', { name: 'Remove project Idle' });
+    const remove = await findProjectDelete('Idle');
     await waitFor(() => expect(remove.hasAttribute('disabled')).toBe(false));
     hasSessions = true;
     mockSessionsSignal.value = [createMockSession('one', 'Other', '/code/other')];
@@ -452,7 +507,7 @@ describe('SessionsSidebar', () => {
       },
     ]);
     render(<SessionsSidebar />);
-    const remove = await screen.findByRole('button', { name: 'Remove project Inbox' });
+    const remove = await findProjectDelete('Inbox');
     expect(remove.hasAttribute('disabled')).toBe(true);
     expect(remove.getAttribute('title')).toBe('This project cannot be forgotten.');
   });
@@ -469,7 +524,7 @@ describe('SessionsSidebar', () => {
       },
     ]);
     render(<SessionsSidebar />);
-    const remove = await screen.findByRole('button', { name: 'Remove project Remote' });
+    const remove = await findProjectDelete('Remote');
     expect(remove.hasAttribute('disabled')).toBe(true);
     expect(remove.getAttribute('title')).toBe('Cannot check all work for this project');
   });

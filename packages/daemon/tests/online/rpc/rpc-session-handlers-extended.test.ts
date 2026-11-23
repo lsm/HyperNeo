@@ -1,3 +1,4 @@
+import type { UnarchiveSessionResponse } from '@hyperneo/shared';
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 
@@ -65,6 +66,28 @@ describe('Session RPC Handlers - Extended', () => {
           confirmed: true,
         })
       ).rejects.toThrow();
+    });
+  });
+
+  describe('session.unarchive', () => {
+    test('restores an archived chat to the active list', async () => {
+      const sessionId = await createSession('/test/session-unarchive');
+      await daemon.messageHub.request('session.archive', { sessionId });
+      expect((await getSession(sessionId)).archivedAt).toBeString();
+
+      const result = await daemon.messageHub.request<UnarchiveSessionResponse>(
+        'session.unarchive',
+        {
+          sessionId,
+        }
+      );
+      expect(result).toEqual({ success: true });
+
+      const restored = await getSession(sessionId);
+      expect(restored.status).toBe('active');
+      expect(restored.archivedAt).toBeUndefined();
+      expect(restored.worktree).toBeUndefined();
+      expect((await listSessions('active')).map((session) => session.id)).toContain(sessionId);
     });
   });
 

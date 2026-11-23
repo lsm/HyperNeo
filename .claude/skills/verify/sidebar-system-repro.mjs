@@ -1,3 +1,4 @@
+import { projectActions, projectDelete } from './sidebar-project-menu.mjs';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { existsSync } from 'node:fs';
@@ -61,8 +62,8 @@ try {
   }
   await page.getByTestId('project-group-header').filter({ hasText: 'neo-read' }).hover();
   if (process.env.VERIFY_INJECT_FAILURE) {
-    const retry = page.getByRole('button', {name:'Remove project neo-read'});
-    await page.waitForFunction(() => document.querySelector('[aria-label="Remove project neo-read"]')?.title === 'Could not check project work', null, {timeout:15000});
+    const retry = await projectDelete(page, 'neo-read');
+    await page.waitForFunction(() => document.querySelector('[role="menuitem"]:last-child')?.title === 'Could not check project work', null, {timeout:15000});
     assert(await retry.isDisabled());
     await page.evaluate(async (folder) => {
       const socket = new WebSocket(`${location.origin.replace('http', 'ws')}/ws`);
@@ -78,13 +79,13 @@ try {
     await page.getByText('Connectivity update').waitFor({timeout:15000});
     console.log('Observed temporary work lookup failure');
   }
-  const ended = page.getByRole('button', { name: 'Remove project neo-read' });
+  const ended = await projectDelete(page, 'neo-read');
   await page.waitForFunction(() => {
-    const button = document.querySelector('[aria-label="Remove project neo-read"]');
+    const button = document.querySelector('[role="menuitem"]:last-child');
     return button && button.title !== 'Checking project work';
   }, null, { timeout: 15000 });
   if (process.env.VERIFY_INJECT_FAILURE) {
-    await page.waitForFunction(() => !document.querySelector('[aria-label="Remove project neo-read"]')?.disabled, null, {timeout: 15000});
+    await page.waitForFunction(() => !document.querySelector('[role="menuitem"]:last-child')?.disabled, null, {timeout: 15000});
   }
   assert.equal(await page.getByText('Finished synthetic worker').count(), 0);
   await page.screenshot({ path: `${run}/evidence/sidebar-ended-worker.png` });
@@ -92,7 +93,7 @@ try {
   console.log('A finished hidden worker and an offline peer did not block removal');
   if (process.env.VERIFY_INJECT_FAILURE) console.log('Work lookup recovered after the project list refreshed');
   await page.screenshot({ path: `${run}/evidence/sidebar-system-hover.png` });
-  const inbox = page.getByRole('button', {name: 'Remove project Inbox'});
+  const inbox = await projectDelete(page, 'Inbox');
   await inbox.waitFor({state:'attached'});
   assert(await inbox.isDisabled(), 'the protected Inbox must refuse removal');
   assert.equal(await inbox.getAttribute('title'), 'This project cannot be forgotten.');
@@ -119,14 +120,14 @@ try {
       return result;
     }, {method, data});
   }
-  const shared = page.getByRole('button', {name:'Remove project Shared project'});
+  const shared = await projectDelete(page, 'Shared project');
   await shared.click();
-  await shared.waitFor({state:'detached'});
+  await projectActions(page, 'Shared project').waitFor({state:'detached'});
   let historyResult = await callRpc('workspace.history', {});
   assert(!historyResult.entries.some((entry) => entry.path.endsWith('/projects/shared-a') || entry.path.endsWith('/projects/shared-b')));
   assert(existsSync(`${run}/projects/shared-a/retained.txt`));
   console.log('Both shared folders disappeared and the file remained');
-  const stale = page.getByRole('button', {name:'Remove project Stale project'});
+  const stale = await projectDelete(page, 'Stale project');
   await stale.waitFor({state:'attached'});
   assert.deepEqual(await callRpc('workspace.remove', {path:`${run}/projects/stale-a`}), {success:true});
   await stale.click();
@@ -138,32 +139,34 @@ try {
   assert(remaining && remaining.project.folders.length === 1 && remaining.project.folders[0].endsWith('/projects/stale-b'));
   assert.deepEqual(await callRpc('workspace.remove', {path:`${run}/projects/stale-a`}), {success:false});
   console.log('Missing folder produced an error; remaining membership was intact');
-  const archived = page.getByRole('button', {name: 'Remove project archived-chat'});
+  const archived = await projectDelete(page, 'archived-chat');
   await archived.click({timeout:15000});
   await page.getByRole('button', {name:'Forget project'}).click();
-  await archived.waitFor({state:'detached'});
+  await projectActions(page, 'archived-chat').waitFor({state:'detached'});
   const archivedSessions = await callRpc('session.list', {includeArchived:true});
   assert(archivedSessions.sessions.some(({id, status}) => id === 'archived-chat' && status === 'archived'));
   console.log('Archived-only project was forgotten and its chat stayed archived');
-  const linked = page.getByRole('button', {name: 'Remove project linked-ask'});
+  const linked = await projectDelete(page, 'linked-ask');
   await linked.click({timeout:15000});
   await page.getByRole('button', {name: 'Forget project'}).click();
   await page.getByText('Project has chats, workers, or other linked work.').waitFor({timeout:15000});
   await page.screenshot({path:`${run}/evidence/sidebar-${scheme}-error.png`, animations:'disabled'});
   await page.getByRole('button', {name:'Dismiss notification'}).first().click();
   await page.getByRole('alert').filter({hasText:'Project has chats, workers, or other linked work.'}).waitFor({state:'detached'});
-  assert.equal(await linked.count(), 1);
+  assert.equal(await projectActions(page, 'linked-ask').count(), 1);
   console.log('Linked work refusal was explained');
-  const remote = page.getByRole('button', {name: 'Remove project remote-work'});
+  const remote = await projectDelete(page, 'remote-work');
   await remote.waitFor({state: 'attached'});
   assert(await remote.isDisabled());
   assert.equal(await remote.getAttribute('title'), 'Cannot check all work for this project');
-  const folderless = page.getByRole('button', {name: 'Remove project folderless'});
+  const folderless = await projectDelete(page, 'folderless');
   await folderless.click({timeout: 15000});
   await page.getByRole('button', {name: 'Forget project'}).click();
-  await folderless.waitFor({state:'detached', timeout:15000});
+  await projectActions(page, 'folderless').waitFor({state:'detached', timeout:15000});
   console.log('Forgot a folderless project; remote work remains protected');
-  await page.waitForFunction(() => !document.querySelector('[aria-label="Remove project refused"]')?.disabled, null, {timeout:15000});
+  await projectDelete(page, 'refused');
+  await page.waitForFunction(() => !document.querySelector('[role="menuitem"]:last-child')?.disabled, null, {timeout:15000});
+  await page.keyboard.press('Escape');
   const priorChecks = workChecks;
   await page.evaluate(async (folder) => {
     const socket = new WebSocket(`${location.origin.replace('http', 'ws')}/ws`);
@@ -186,7 +189,7 @@ try {
   assert.equal(workChecks, priorChecks, 'unrelated session changes must not rescan projects');
   console.log('Unrelated session update did not rescan projects');
 
-  const hidden = page.getByRole('button', {name: 'Remove project hidden-worker'});
+  const hidden = await projectDelete(page, 'hidden-worker');
   await hidden.waitFor({state: 'attached'});
   await page.waitForTimeout(1500);
   assert(await hidden.isDisabled(), 'a hidden live worker must refuse removal');
@@ -215,11 +218,11 @@ try {
   assert.deepEqual(direct, {ok:false, reason:'project_in_use'});
   console.log('Backend also refused the hidden worker');
 
-  const busy = page.getByRole('button', {name: 'Remove project occupied'});
+  const busy = await projectDelete(page, 'occupied');
   await busy.waitFor({state: 'attached'});
   assert(await busy.isDisabled(), 'a project with a chat must refuse removal');
   console.log('Project with chat refused removal');
-  const refused = page.getByRole('button', {name: 'Remove project refused'});
+  const refused = await projectDelete(page, 'refused');
   await refused.click({timeout: 15000});
   await page.getByRole('button', {name: 'Forget project'}).click();
   await page.getByText(/synthetic refusal/).waitFor({timeout: 15000});
@@ -247,12 +250,10 @@ try {
   assert(history.entries.some((entry) => entry.path.endsWith('/projects/delta-only')));
   console.log('Failed forget preserved folder history');
 
-  const count = await page.getByRole('button', { name: 'Remove project neo-read' }).count();
+  const count = await projectActions(page, 'neo-read').count();
   console.log(`Remove control count: ${count}`);
   assert.equal(count, 1, 'empty system project must expose remove');
-  assert.equal(await page.getByRole('button', {name:'Remove project neo-read'}).locator('path[d="M6 18L18 6M6 6l12 12"]').count(), 1);
-  assert.equal(await page.getByRole('button', {name:'Remove project neo-read'}).getAttribute('title'), 'Remove from list');
-  const remove = page.getByRole('button', { name: 'Remove project neo-read' });
+  const remove = await projectDelete(page, 'neo-read');
   await remove.waitFor({state: 'visible'});
   await remove.click({timeout: 15000});
   await page.getByText('Your files and chats stay. The folder leaves the sidebar, and this project is permanently forgotten.').waitFor();
@@ -263,7 +264,7 @@ try {
   await page.getByRole('button', {name: 'New session in occupied'}).waitFor();
   assert.equal(await page.getByRole('button', {name: 'New session in neo-read'}).count(), 0);
   assert.equal(await page.getByRole('button', {name: 'New session in alpha'}).count(), 0);
-  assert.equal(await archived.count(), 0);
+  assert.equal(await projectActions(page, 'archived-chat').count(), 0);
   assert(existsSync(`${run}/projects/alpha/retained.txt`));
   await page.getByText('Retained chat').waitFor();
   const { session: finished } = await callRpc('session.get', {sessionId:'ended-worker'});

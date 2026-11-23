@@ -21,6 +21,7 @@ vi.mock('simple-git', () => ({
 
 const fsOsMocks = vi.hoisted(() => ({
   existsSync: vi.fn(),
+  realpathSync: vi.fn(),
   mkdirSync: vi.fn(),
   writeFileSync: vi.fn(),
   readFileSync: vi.fn(),
@@ -40,6 +41,7 @@ vi.mock('node:fs', async (importOriginal) => {
   return {
     ...actual,
     existsSync: passthrough(fsOsMocks.existsSync, actual.existsSync),
+    realpathSync: passthrough(fsOsMocks.realpathSync, actual.realpathSync),
     mkdirSync: passthrough(fsOsMocks.mkdirSync, actual.mkdirSync),
     writeFileSync: passthrough(fsOsMocks.writeFileSync, actual.writeFileSync),
     readFileSync: passthrough(fsOsMocks.readFileSync, actual.readFileSync),
@@ -80,6 +82,8 @@ describe('WorktreeManager', () => {
       return existsSyncResults.get(path as string) ?? false;
     });
 
+    fsOsMocks.realpathSync.mockImplementation((path: string) => path);
+
     mkdirSyncSpy.mockImplementation(() => undefined as unknown as string);
 
     writeFileSyncSpy.mockImplementation(() => undefined);
@@ -92,6 +96,7 @@ describe('WorktreeManager', () => {
 
   afterEach(() => {
     existsSyncSpy.mockReset();
+    fsOsMocks.realpathSync.mockReset();
     mkdirSyncSpy.mockReset();
     writeFileSyncSpy.mockReset();
     readFileSyncSpy.mockReset();
@@ -416,38 +421,35 @@ describe('WorktreeManager', () => {
 
     it('should cleanup on failure', async () => {
       const shortKey = shortKeyFor('/test/repo');
+      const worktreesDir = `/home/testuser/.hyperneo/projects/${shortKey}/worktrees`;
+      const worktreePath = `${worktreesDir}/session-123`;
       existsSyncResults.set('/test/repo/.git', true);
-      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
-      existsSyncResults.set(
-        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
-        true
-      );
-      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, true);
-      existsSyncResults.set(
-        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
-        false
-      );
+      existsSyncResults.set(worktreesDir, true);
       mockGitRevparse.mockResolvedValue('.git');
-      readFileSyncSpy.mockReturnValue('/test/repo' as any);
-
-      mockGitRaw
-        .mockResolvedValueOnce('')
-        .mockRejectedValueOnce(new Error('Failed to add worktree'));
-
-      existsSyncResults.set(
-        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
-        true
-      );
+      mockGitRaw.mockResolvedValueOnce('').mockImplementationOnce(async () => {
+        existsSyncResults.set(worktreePath, true);
+        throw new Error('Failed to add worktree');
+      });
 
       await expect(
-        manager.createWorktree({
-          sessionId: 'session-123',
-          repoPath: '/test/repo',
-          branchName: 'my-branch',
-        })
-      ).rejects.toThrow('Failed to create worktree');
+        manager.createWorktree({ sessionId: 'session-123', repoPath: '/test/repo' })
+      ).rejects.toThrow('Failed to create worktree: Failed to add worktree');
 
-      expect(mockGitRaw).toHaveBeenCalled();
+      expect(mockGitRaw).toHaveBeenCalledWith(['worktree', 'remove', worktreePath, '--force']);
+    });
+
+    it('preserves an existing directory when creation is refused', async () => {
+      const shortKey = shortKeyFor('/test/repo');
+      const worktreePath = `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`;
+      existsSyncResults.set('/test/repo/.git', true);
+      existsSyncResults.set(worktreePath, true);
+      mockGitRevparse.mockResolvedValue('.git');
+
+      await expect(
+        manager.createWorktree({ sessionId: 'session-123', repoPath: '/test/repo' })
+      ).rejects.toThrow('Failed to create worktree: Worktree directory already exists');
+
+      expect(mockGitRaw).not.toHaveBeenCalled();
     });
   });
 
@@ -580,6 +582,23 @@ describe('WorktreeManager', () => {
       });
 
       expect(result).toBe(true);
+    });
+
+    it('matches a stored path alias to the worktree listed by Git', async () => {
+      existsSyncResults.set('/alias/worktree', true);
+      existsSyncResults.set('/test/repo/.git', true);
+      fsOsMocks.realpathSync.mockReturnValue('/test/worktree');
+      mockGitRevparse.mockResolvedValue('.git');
+      mockGitRaw.mockResolvedValue('worktree /test/worktree\nHEAD abc123\n');
+
+      expect(
+        await manager.verifyWorktree({
+          isWorktree: true,
+          worktreePath: '/alias/worktree',
+          mainRepoPath: '/test/repo',
+          branch: 'session/test',
+        })
+      ).toBe(true);
     });
   });
 

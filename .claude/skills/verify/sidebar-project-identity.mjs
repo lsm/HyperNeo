@@ -1,3 +1,4 @@
+import { projectDelete } from './sidebar-project-menu.mjs';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
@@ -38,7 +39,7 @@ try {
       animations: 'disabled',
     });
   }
-  await page.getByRole('button', { name: 'Remove project code-fixture', exact: true }).click();
+  await (await projectDelete(page, 'code-fixture')).click();
   await codeRows.waitFor({ state: 'detached' });
   await page.reload();
   await rows.nth(1).waitFor();

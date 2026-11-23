@@ -197,6 +197,10 @@ export interface ArchiveSessionResponse {
   agentName?: string;
 }
 
+export type UnarchiveSessionResponse =
+  | { success: true; worktreeBaseBranch?: string }
+  | { success: false; reason: string };
+
 export interface DeleteSessionResponse {
   success: boolean;
   reason?: 'has_clones' | 'owns_goals' | 'agent_primary_session';

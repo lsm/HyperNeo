@@ -7,7 +7,7 @@ checks that the chat is still archived through RPC, and checks that the project 
 gone after reload. Set `VERIFY_BROWSER`, `VERIFY_NODE` and `PLAYWRIGHT_NODE_PATH`
 when needed, as in the sidebar new-session journey.
 
-The desktop screenshots show the remove control, confirmation, disabled reason and error.
+The desktop screenshots show the project actions menu, confirmation, disabled reason and error.
 Set `VERIFY_COLOR_SCHEME` to `light` or `dark` to capture both appearances. The browser
 checks that the protected Inbox and projects with a chat, active hidden worker, or uncheckable
 remote work refuse removal. The tooltip distinguishes visible chats from active work.

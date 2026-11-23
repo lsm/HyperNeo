@@ -8,11 +8,16 @@ export function setupOperationHandlers(
   registry: OperationRegistrySource,
   deviceOf: (clientId: string) => UpgradeIdentity | null
 ) {
-  return messageHub.onRequest(
-    'operation.invoke',
-    createOperationRpcHandler(registry, (context) => {
-      const device = context.clientId ? deviceOf(context.clientId) : null;
-      return device ? { device } : {};
-    })
+  const invoke = createOperationRpcHandler(registry, (context) => {
+    const device = context.clientId ? deviceOf(context.clientId) : null;
+    return device ? { device } : {};
+  });
+  const unregisterUnarchive = messageHub.onRequest('session.unarchive', (input, context) =>
+    invoke({ name: 'neo.session.unarchive', input }, context)
   );
+  const unregisterInvoke = messageHub.onRequest('operation.invoke', invoke);
+  return () => {
+    unregisterUnarchive();
+    unregisterInvoke();
+  };
 }

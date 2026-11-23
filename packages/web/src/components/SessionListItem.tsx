@@ -1,6 +1,8 @@
 import type { Session } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
+import { unarchiveSession } from '../lib/api-helpers.ts';
+import { toast } from '../lib/toast.ts';
 import { useSessionRename } from '../hooks/useSessionRename';
 import { conversationTitle, getSessionSidebarStatus } from '../lib/session-sidebar-status.ts';
 import { allSessionStatuses } from '../lib/session-status.ts';
@@ -38,16 +40,36 @@ export default function SessionListItem({
   });
   const isActive = currentSessionIdSignal.value === session.id;
   const [confirming, setConfirming] = useState(false);
-  const [archiving, setArchiving] = useState(false);
+  const [busy, setBusy] = useState(false);
   const { isEditing, startEditing, inputProps } = useSessionRename(session.id, session.title);
 
   const handleArchive = async () => {
-    setArchiving(true);
+    setBusy(true);
     try {
       await onArchive(session.id);
     } finally {
-      setArchiving(false);
+      setBusy(false);
       setConfirming(false);
+    }
+  };
+
+  const handleUnarchive = async () => {
+    setBusy(true);
+    try {
+      const result = await unarchiveSession(session.id);
+      if (!result.success) {
+        toast.error(result.reason);
+        return;
+      }
+      toast.success(
+        result.worktreeBaseBranch
+          ? `Chat unarchived with a fresh worktree from ${result.worktreeBaseBranch}`
+          : 'Chat unarchived'
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to unarchive chat');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -67,7 +89,7 @@ export default function SessionListItem({
       testId="session-card"
       sessionId={session.id}
       onMouseLeave={() => {
-        if (!archiving) setConfirming(false);
+        if (!busy) setConfirming(false);
       }}
       editor={
         isEditing && (
@@ -80,17 +102,26 @@ export default function SessionListItem({
         )
       }
       actions={
-        session.status !== 'archived' && (
+        session.status === 'archived' ? (
+          <button
+            type="button"
+            onClick={handleUnarchive}
+            disabled={busy}
+            class="h-[26px] rounded-md px-2 text-[11px] font-semibold text-fg-muted hover:bg-fill focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-60"
+          >
+            {busy ? 'Unarchiving…' : 'Unarchive'}
+          </button>
+        ) : (
           <div class="flex items-center">
             {confirming ? (
               <button
                 type="button"
                 data-testid="session-archive-confirm"
                 onClick={handleArchive}
-                disabled={archiving}
+                disabled={busy}
                 class="h-[26px] rounded-md bg-danger px-2 text-[11px] font-semibold text-on-danger transition-colors hover:bg-danger disabled:opacity-60"
               >
-                {archiving ? 'Archiving…' : 'Archive'}
+                {busy ? 'Archiving…' : 'Archive'}
               </button>
             ) : (
               <button

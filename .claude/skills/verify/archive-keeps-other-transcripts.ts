@@ -81,6 +81,22 @@ try {
     `${sdk.retired}`, `${sdk.retired}.jsonl`, `${sdk.retired}/archived.json`, `${sdk.other}.jsonl`,
   ].sort());
   assert.equal(evidence.otherUnchangedAfterArchive, true);
+  const restored = await rpc('session.unarchive', { sessionId: worker });
+  evidence.restore = restored;
+  assert.deepEqual(restored.data, { success: true });
+  const afterRestore = readdirSync(dir, { recursive: true }).map(String).sort();
+  evidence.afterRestore = afterRestore;
+  evidence.otherUnchangedAfterRestore = readFileSync(file(sdk.other)).equals(otherBefore);
+  assert.equal(app.db.getSession(worker)?.status, 'active');
+  const restoredArchiveFlags = [sdk.worker, sdk.retired].map((id) => {
+    assert.ok(afterRestore.includes(`${id}.jsonl`));
+    return JSON.parse(readFileSync(join(dir, id, 'archived.json'), 'utf8')).archived;
+  });
+  evidence.restoredArchiveFlags = restoredArchiveFlags;
+  assert.deepEqual(restoredArchiveFlags, [false, false]);
+  assert.equal(evidence.otherUnchangedAfterRestore, true);
+  const rearchived = await rpc('session.archive', { sessionId: worker, confirmed: true });
+  assert.ok(!rearchived.error, JSON.stringify(rearchived));
   const deleted = await rpc('session.delete', { sessionId: worker });
   evidence.delete = deleted;
   assert.ok(!deleted.error, JSON.stringify(deleted));
@@ -88,7 +104,7 @@ try {
   evidence.otherUnchangedAfterDelete = readFileSync(file(sdk.other)).equals(otherBefore);
   assert.deepEqual(evidence.afterDelete, [`${sdk.other}.jsonl`]);
   assert.equal(evidence.otherUnchangedAfterDelete, true);
-  console.log('PASS: archiving the worker marked its current and retired transcripts archived in place; deleting it removed only those; the other session transcript that mentions the worker stayed byte-identical.');
+  console.log('PASS: archiving the worker marked its current and retired transcripts archived in place; restoring cleared both archived flags; deleting it removed only those; the other session transcript that mentions the worker stayed byte-identical.');
 } finally {
   writeFileSync(join(run, 'evidence/archive-transcripts.json'), JSON.stringify(evidence, null, 2));
   await app?.cleanup();

@@ -1,7 +1,7 @@
 import simpleGit, { SimpleGit } from 'simple-git';
 import { execFile } from 'node:child_process';
 import { dirname, join, normalize } from 'node:path';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import type {
   WorktreeMetadata,
   CommitInfo,
@@ -754,6 +754,29 @@ export class WorktreeManager {
     }
   }
 
+  async resolveUnarchiveBase(repoPath: string, recordedBranch: string) {
+    for (const branch of [recordedBranch, 'dev']) {
+      if (await this.checkBranchExists(repoPath, branch)) {
+        return { branch, ref: `refs/heads/${branch}` };
+      }
+    }
+
+    const defaultBranch = await this.getDefaultBranch(repoPath);
+    if (defaultBranch !== 'HEAD') {
+      if (await this.checkBranchExists(repoPath, defaultBranch)) {
+        return { branch: defaultBranch, ref: `refs/heads/${defaultBranch}` };
+      }
+      const branch = `origin/${defaultBranch}`;
+      const ref = `refs/remotes/${branch}`;
+      try {
+        await this.getGit(repoPath).revparse(['--verify', ref]);
+        return { branch, ref };
+      } catch {}
+    }
+
+    return { branch: (await this.getCurrentBranch(repoPath)) ?? 'HEAD', ref: 'HEAD' };
+  }
+
   async resolveMainRepoPath(worktreePath: string): Promise<string | null> {
     try {
       const git = this.getGit(worktreePath);
@@ -806,11 +829,13 @@ export class WorktreeManager {
     const worktreePath = join(worktreesDir, safeSessionId);
     let branchName = customBranchName || `session/${safeSessionId}`;
 
-    try {
-      if (existsSync(worktreePath)) {
-        throw new Error(`Worktree directory already exists: ${worktreePath}`);
-      }
+    if (existsSync(worktreePath)) {
+      throw new Error(
+        `Failed to create worktree: Worktree directory already exists: ${worktreePath}`
+      );
+    }
 
+    try {
       const branchExists = await this.checkBranchExists(gitRoot, branchName);
       if (branchExists) {
         this.logger.warn(`Stale branch detected: ${branchName} — deleting and recreating`);
@@ -862,10 +887,10 @@ export class WorktreeManager {
 
     try {
       const worktrees = await this.listWorktrees(mainRepoPath);
-      const exists = worktrees.some((w) => w.path === worktreePath);
+      const canonicalPath = existsSync(worktreePath) ? realpathSync(worktreePath) : worktreePath;
 
-      if (exists) {
-        await git.raw(['worktree', 'remove', worktreePath, '--force']);
+      if (worktrees.some((w) => w.path === canonicalPath)) {
+        await git.raw(['worktree', 'remove', canonicalPath, '--force']);
       }
 
       if (deleteBranch && branch) {
@@ -943,14 +968,9 @@ export class WorktreeManager {
       return false;
     }
 
+    const canonicalPath = realpathSync(worktreePath);
     const worktrees = await this.listWorktrees(mainRepoPath);
-    const exists = worktrees.some((w) => w.path === worktreePath);
-
-    if (!exists) {
-      return false;
-    }
-
-    return true;
+    return worktrees.some((w) => w.path === canonicalPath);
   }
 
   async getCurrentBranch(worktreePath: string): Promise<string | null> {
