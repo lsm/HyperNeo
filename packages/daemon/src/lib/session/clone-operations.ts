@@ -144,6 +144,7 @@ export async function buildCloneParams(
   const parentBranch = parent.worktree?.branch ?? parent.gitBranch ?? undefined;
   return {
     workspacePath,
+    harness: parent.config.harness ?? 'sdk',
     worktreeMode: isGit ? 'worktree' : 'direct',
     ...(isGit && parentBranch ? { worktreeBaseBranch: parentBranch } : {}),
     title: input.title ?? `${parent.title} · 分身`,

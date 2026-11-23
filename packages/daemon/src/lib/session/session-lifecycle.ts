@@ -32,9 +32,11 @@ import {
   codexSessionRefusal,
   effectiveOxapConfig,
   engineForProvider,
+  selectSessionEngine,
   thinkingRefusal,
 } from '../agent/session-engine.ts';
 import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
+import { newSessionOxapRefusal, type OxapSettingsDeps } from '../oxap/oxap-settings.ts';
 import type { AgentSessionFactory, SessionCache } from './session-cache.ts';
 import {
   commitSessionInputDraft,
@@ -65,6 +67,7 @@ export interface SessionLifecycleConfig {
   maxTokens: number;
   temperature: number;
   disableWorktrees?: boolean;
+  readOxapProviderKey?: OxapSettingsDeps['key'];
   titleGenerationQueryForTesting?: SdkQueryFunction;
   titleGenerationProviderServiceForTesting?: TitleGenerationProviderService;
 }
@@ -75,6 +78,7 @@ export interface CreateSessionParams {
   workspacePath?: string | null;
   initialTools?: string[];
   config?: Partial<Session['config']>;
+  harness?: Session['config']['harness'];
   worktreeBaseBranch?: string;
   worktreeMode?: 'worktree' | 'direct';
   detectGit?: false;
@@ -164,8 +168,9 @@ export class SessionLifecycle {
     const sandbox = params.config?.sandbox
       ? { ...globalSettings.sandbox, ...params.config.sandbox }
       : globalSettings.sandbox;
-    const harness = engineForProvider(provider, () =>
-      this.db.providers.getProviderByProviderId(provider)
+    const providerRecord = () => this.db.providers.getProviderByProviderId(provider);
+    const harness = selectSessionEngine(
+      params.harness ?? engineForProvider(provider, providerRecord)
     );
     if (isOxapHarness(harness)) {
       const refusal =
@@ -176,7 +181,15 @@ export class SessionLifecycle {
           ),
           false,
           false
-        ) ?? thinkingRefusal(harness, params.config?.thinkingLevel);
+        ) ??
+        thinkingRefusal(harness, params.config?.thinkingLevel) ??
+        (await newSessionOxapRefusal(
+          harness,
+          provider,
+          providerRecord(),
+          globalSettings.oxapHub,
+          this.config.readOxapProviderKey
+        ));
       if (refusal) throw new Error(refusal);
     }
 

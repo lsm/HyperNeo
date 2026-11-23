@@ -205,6 +205,7 @@ describe('session.clone.spawn', () => {
   test('model and thinking level overrides replace the copied values', async () => {
     const h = makeHarness();
     await run(h, { model: 'claude-opus-5-5', thinkingLevel: 'off' });
+    expect(h.created[0]?.harness).toBe('sdk');
     expect(h.created[0]?.config).toMatchObject({
       model: 'claude-opus-5-5',
       thinkingLevel: 'off',
@@ -226,6 +227,7 @@ describe('session.clone.spawn', () => {
       })
     );
     await run(h, {});
+    expect(h.created[0]?.harness).toBe('oxap-codex');
     expect(h.created[0]?.config).toEqual({ model: 'gpt-5.5', provider: 'anthropic-codex' });
     expect(await run(h, { thinkingLevel: 'think16k' })).toEqual({
       accepted: false,

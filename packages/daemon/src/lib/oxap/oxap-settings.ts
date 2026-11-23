@@ -1,5 +1,13 @@
+import { constants } from 'node:fs';
+import { access, stat } from 'node:fs/promises';
+import { isAbsolute } from 'node:path';
 import type { GlobalSettings, ProviderRecord } from '@hyperneo/shared';
-import { isOxapHarness, OXAP_HARNESSES, oxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
+import {
+  isOxapHarness,
+  OXAP_HARNESSES,
+  oxapHarness,
+  type OxapHarnessId,
+} from '@hyperneo/shared/types/oxap-harnesses';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation, type OperationDefinition } from '../operations/registry.ts';
@@ -31,9 +39,41 @@ async function readKeys(records: Records, deps: OxapSettingsDeps) {
   return keys;
 }
 
+const HUB_NOT_INSTALLED = 'OXAP hub is not installed; choose an OXAP harness in Settings';
+
+async function isExecutableFile(path: string): Promise<boolean> {
+  if (!isAbsolute(path)) return false;
+  try {
+    if (!(await stat(path)).isFile()) return false;
+    await access(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function newSessionOxapRefusal(
+  harness: OxapHarnessId,
+  provider: string,
+  record: Pick<ProviderRecord, 'configJson'> | null,
+  installed: OxapHubBinary | undefined,
+  readKey: OxapSettingsDeps['key'] | undefined
+): Promise<string | undefined> {
+  const row = oxapHarness(harness);
+  if (!row.providers.includes(provider)) return `${provider} cannot run on ${harness}`;
+  if (!installed || !(await isExecutableFile(installed.path))) return HUB_NOT_INSTALLED;
+  const saved = record && savedOxapAdapter({ providerId: provider, configJson: record.configJson });
+  if (saved?.harness !== harness) return `${provider} needs an absolute executable path`;
+  const executable = saved.settings.executable;
+  if (executable && !(await isExecutableFile(executable)))
+    return `${provider} needs an executable file; check Settings → Providers`;
+  if (row.key && !(await readKey?.(provider))?.trim()) return `${provider} needs ${row.key}`;
+  return undefined;
+}
+
 async function currentBinary(deps: OxapSettingsDeps): Promise<OxapHubBinary> {
   const installed = deps.settings().oxapHub;
-  if (!installed) throw new Error('OXAP hub is not installed; choose an OXAP harness in Settings');
+  if (!installed) throw new Error(HUB_NOT_INSTALLED);
   if (installed.version === releaseName()) return installed;
   const updated = await deps.install(installed);
   deps.writeHub(updated);

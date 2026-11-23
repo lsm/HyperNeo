@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
-import { answerCodexProbeLocally, OXAP_CODEX_MODEL, oxapCodexProvider } from './oxap-codex-provider.ts';
+import { answerCodexProbeLocally, OXAP_CODEX_MODEL, seedSyntheticCodexAdmission } from './oxap-codex-provider.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { checkOxapBinary } from '../../../packages/daemon/src/lib/oxap/oxap-binary.ts';
 import { OxapHubClient } from '../../../packages/daemon/src/lib/oxap/oxap-hub-client.ts';
@@ -79,7 +79,7 @@ try {
   hub.registerTransport(transport);
   await transport.initialize();
   await hub.request('providers.create', { params: { providerId: 'anthropic', displayName: 'Synthetic provider', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-devproxy-test-key' } });
-  await hub.request('providers.create', oxapCodexProvider);
+  await seedSyntheticCodexAdmission(hub, app.settingsManager);
   const { sessionId } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic OAP transport', config: { model: OXAP_CODEX_MODEL, provider: 'anthropic-codex' } });
   client = new OxapHubClient({ command: binary, args: ['serve', '--stdio', '--config', config, '--session-history', join(run, 'hub/history.jsonl')], cwd: join(run, 'hub'), env: { HOME: join(run, 'hub'), CODEX_HOME: join(run, 'codex-home') } });
   await client.connect();

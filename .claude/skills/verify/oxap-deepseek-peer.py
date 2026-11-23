@@ -9,7 +9,7 @@ def emit(**frame):
 
 
 assert sys.argv[1:] == ['--profile', 'sdk']
-assert 'DEEPSEEK_API_KEY' not in os.environ
+assert os.environ.get('DEEPSEEK_API_KEY') == 'synthetic-deepseek-proof'
 
 for line in sys.stdin:
     request = json.loads(line)
