@@ -56,7 +56,12 @@ The hub registers one adapter per provider id, built only from providers whose
    would start without `DEEPSEEK_API_KEY`. Saving the default as `sdk` keeps
    `harnessSettings` instead of dropping them (today `oxap-settings.ts`
    removes both). Configured means "settings saved", derived from the record
-   that already holds it.
+   that already holds it. A row whose required key (`row.key`, such as
+`DEEPSEEK_API_KEY`) is missing is not configured, so the dialog disables it and
+creation refuses it, instead of failing at the first run. The provider card
+shows the retained executable field whenever a configured harness exists, even
+while the default is `sdk`, so a stale path can be fixed without flipping the
+default.
 2. **Existing chats survive a default change.** `openGate` refuses to reopen a
    chat whose harness differs from the provider's current default ("no longer
    uses"). It instead checks that the session's harness is still configured for
@@ -90,7 +95,7 @@ Each slice works on its own: nothing is reachable before what it needs exists.
 
 1. Availability: keep `harnessSettings` when the default is set to `sdk`;
    register adapters and load keys from configured settings; `openGate` checks
-   configured, not default. Tests: switch DeepSeek's default to SDK, then run a
+   configured, not default; the key check and the card field above. Tests: switch DeepSeek's default to SDK, then run a
    turn on an existing OXAP chat (key present); same for Codex.
 2. Admission: `session.create` accepts `harness`; resolve, validate and store
    it; the configured check. Safe after 1 because an admitted override can
