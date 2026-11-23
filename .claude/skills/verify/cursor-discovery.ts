@@ -33,10 +33,16 @@ for await (const line of createInterface({ input: process.stdin })) {
     result = { protocolVersion: 1, agentCapabilities: { sessionCapabilities: { list: {} } } };
     initialized = true;
   } else if (initialized && method === 'session/list') {
-    result = { sessions: [
-      { sessionId: 'cursor-alpha', cwd: '/synthetic/alpha', title: 'Alpha session', updatedAt: '2026-11-19T15:00:00Z' },
-      { sessionId: 'cursor-beta', cwd: '/synthetic/beta' },
-    ].filter(session => !params.cwd || session.cwd === params.cwd) };
+    const alpha = { sessionId: 'cursor-alpha', cwd: '/synthetic/alpha', title: 'Alpha session', updatedAt: '2026-11-19T15:00:00Z' };
+    if (params.cwd === '/synthetic/repeated') result = { sessions: [], nextCursor: 'repeat' };
+    else if (params.cursor === undefined) result = {
+      sessions: [alpha].filter(session => !params.cwd || session.cwd === params.cwd), nextCursor: 'next',
+    };
+    else if (params.cursor === 'next') result = {
+      sessions: [{ ...alpha, title: 'Duplicate' }, { sessionId: 'cursor-beta', cwd: '/synthetic/beta' }]
+        .filter(session => !params.cwd || session.cwd === params.cwd),
+    };
+    else process.exit(4);
   } else process.exit(3);
   process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, result }) + '\\n');
 }
@@ -99,6 +105,13 @@ try {
     const alpha = await find({ folder: '/synthetic/alpha', text: 'alpha session' });
     assert.deepEqual(alpha.sessions.map(({ ref }) => [ref.adapter, ref.id]), [[adapter, 'cursor-alpha']]);
     assert.equal(alpha.sessions[0].lastActivityAt, Date.parse('2026-11-19T15:00:00Z'));
+    const beta = await find({ text: 'untitled Cursor session', limit: 1 });
+    assert.deepEqual(beta.sessions.map(({ ref }) => ref.id), ['cursor-beta']);
+    const loop = await find({ folder: '/synthetic/repeated' });
+    assert.equal(loop.sessions.length, 0);
+    assert.deepEqual(loop.unreachable, [
+      { source: adapter, reason: 'Cursor CLI repeated an ACP session cursor.' },
+    ]);
     assert.equal((await find({ text: 'missing' })).sessions.length, 0);
   } else {
     assert.equal(all.sessions.length, 0);
