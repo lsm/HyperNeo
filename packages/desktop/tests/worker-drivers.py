@@ -226,7 +226,9 @@ while True:
         break
     except OSError:
         time.sleep(0.1)
-client.sendall((json.dumps({'action': 'status', 'worker': 'peer'}) + '\\n').encode())
+# A refused peer gets a reply before the host reads any request.
+if '--expect-refusal' not in sys.argv[3:]:
+    client.sendall((json.dumps({'action': 'status', 'worker': 'peer'}) + '\\n').encode())
 reply = client.makefile('rb').readline()
 open(sys.argv[2], 'w').write(reply.decode())
 '''
@@ -235,7 +237,7 @@ open(sys.argv[2], 'w').write(reply.decode())
         out = out or self.root / f'peer-{len(self.pids)}.json'
         child = subprocess.Popen(
             [sys.executable, '-I', '-c', self.CONNECTOR,
-             str(self.root / 'desktop/control.sock'), str(out)])
+             str(self.root / 'desktop/control.sock'), str(out), '--expect-refusal'])
         self.addCleanup(child.kill)
         return out
 
@@ -259,7 +261,6 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertTrue(self.call('status')['ok'])
 
     def test_sidecar_child_is_accepted_while_registered(self):
-        refused = self.connector()
         out = self.root / 'peer-accepted.json'
         self.process.send_signal(signal.SIGINT)
         self.assertEqual(self.process.wait(timeout=10), 0)
@@ -277,7 +278,7 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertEqual(self.process.stdout.readline().strip(), 'ready')
         self.assertEqual(self.peer_reply(out),
                          {'ok': True, 'result': {'state': 'stopped', 'pid': None}})
-        self.assertEqual(self.peer_reply(refused), {'ok': False, 'error': 'not_daemon'})
+        self.assertEqual(self.peer_reply(self.connector()), {'ok': False, 'error': 'not_daemon'})
         self.assertTrue(self.call('status')['ok'])
 
     def test_publishes_protected_record_before_start_returns(self):
