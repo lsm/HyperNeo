@@ -25,12 +25,16 @@ env -i PATH=/usr/bin:/bin HOME="$RUN/home" GIT_AUTHOR_NAME=Fixture \
   GIT_COMMITTER_EMAIL=fixture@example.invalid git -C "$repo" commit -q --allow-empty -m 'Fixture base'
 
 create_archive() {
-  local title="$1" id params
+  local title="$1" id params checkout worktree
   id=$(rpc rpc:session.create "$(jq -nc --arg path "$repo" --arg title "$title" \
     '{workspacePath:$path,title:$title,worktreeMode:"worktree"}')" | jq -er '.reply.sessionId')
   params=$(jq -nc --arg id "$id" '{sessionId:$id}')
-  rpc rpc:session.get "$params" | jq -e '.reply.session.worktree.branch' > "$out/$title-branch.json"
+  checkout=$(rpc rpc:session.get "$params" | jq -e '.reply.session.worktree')
+  jq -e '.branch' <<< "$checkout" > "$out/$title-branch.json"
+  worktree=$(jq -er '.worktreePath' <<< "$checkout")
+  test -d "$worktree"
   rpc rpc:session.archive "$params" | jq -e '.reply | select(.success)' > "$out/$title-archive.json"
+  test ! -e "$worktree"
   printf '%s\n' "$id"
 }
 

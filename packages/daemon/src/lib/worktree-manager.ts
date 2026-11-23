@@ -807,7 +807,9 @@ export class WorktreeManager {
     let branchName = customBranchName || `session/${safeSessionId}`;
 
     if (existsSync(worktreePath)) {
-      throw new Error(`Worktree directory already exists: ${worktreePath}`);
+      throw new Error(
+        `Failed to create worktree: Worktree directory already exists: ${worktreePath}`
+      );
     }
 
     try {

@@ -8,7 +8,8 @@ VERIFY_MOCK_PORT=8132 bash .claude/skills/verify/with-run.sh \
   bash .claude/skills/verify/session-unarchive.sh 9432 /absolute/evidence-directory
 ```
 
-The helper creates and archives chats through the isolated daemon. The restore
+The helper creates and archives chats through the isolated daemon and checks
+that the original worktree directory is removed. The restore
 RPC reopens a chat and makes a fresh worktree from dev when the recorded branch
 is gone. The Neo operation uses the recorded branch tip when it is available.
 Desktop and 390px touch contexts show archived chats from the project menu while
