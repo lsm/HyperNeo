@@ -1,30 +1,32 @@
 # Copilot CLI sessions through OXAP ACP
 
-Status: proposal. Design only; no application code in this PR.
+Status: revised proposal. Design only; no application code in this PR.
 
 ## Decision
 
-Use the released generic ACP adapter with the official Copilot CLI. Bind the HyperNeo model when the native session opens and keep that model fixed for the native thread. Do not use ACP's model catalog or `session.model.switch`.
+Use the released generic ACP adapter with the official Copilot CLI. HyperNeo registers one ACP adapter per selectable model; each adapter's existing static `args` carry the model. OXAP needs only to publish the ACP native identity it already stores. No OAP field, capability, or model-switch path is added.
 
-The [CLI reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference) documents `--model=MODEL`, exact UUIDs with `--session-id`, and resume by session ID. The [ACP contract](https://docs.github.com/en/copilot/reference/copilot-cli-reference/acp-server) returns `sessionId` from `session/new`; server launch options apply to sessions it creates or loads. Thus `copilot --acp --model=MODEL` supplies the missing model path, while ACP already supplies the native identity.
+The [CLI reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference) documents `--model=MODEL`. The [ACP contract](https://docs.github.com/en/copilot/reference/copilot-cli-reference/acp-server) returns an opaque `sessionId` from `session/new`. It does not promise a UUID, nor do the docs prove that `--model` controls loaded sessions; those are live-proof gates below, not assumptions.
 
 ## OXAP changes
 
-Add optional `model_id` to `session.open.request`, gated by a new `session.open.model_selection` capability. An ACP registry entry may declare `model_flag`; the adapter appends that flag and `model_id` as two argv items when it spawns the per-session process. It refuses `model_id` without `model_flag`, and refuses a registry entry whose existing `args` already contain that flag. There is no default-model or slash-command fallback.
+Implement the existing native-link hook in Go, Rust and Zig. Each returns `acp://sessions/<id>`, where `<id>` is the UTF-8 percent-encoding of the exact opaque ACP session ID, preserving only unreserved characters. Add shared `work.status.link` corpus cases for an ordinary ID and an ID containing slash, spaces, percent and non-ASCII text. Descriptors and capability revisions stay unchanged.
 
-Implement the existing `native_link` adapter hook for generic ACP as `acp://sessions/<sessionId>`. This exposes the identity already returned by `session/new`; it does not invent a second ID or require a Copilot-specific adapter. Bump the ACP capability revision and release the hub.
+The existing hub binding already records `adapter` and `native_session_id`, and reopen requires the same adapter. The ACP subprocess is constructed per session, so two registry entries with different static args run independent CLI processes without a new adapter type.
 
 ## HyperNeo changes
 
-Add one `oxap-copilot` row for `anthropic-copilot`, reusing the saved executable, readiness checks, picker and admission rules. Its ACP entry carries `args: ['--acp']` and `model_flag: '--model'`; its `nativeId` accepts only `acp://sessions/<canonical UUID>`.
+Add one `oxap-copilot` row for `anthropic-copilot`, reusing saved-executable settings, readiness, the picker and admission rules. Extend hub-config inputs with the provider catalog snapshot and models stored on existing Copilot OXAP sessions. For each exact catalog ID, plus each stored ID needed to reopen an existing chat, register `anthropic-copilot:<percent-encoded model ID>` with `type: 'acp'` and exactly `args: ['--acp', '--model=<exact ID>']`. The second item is one argv value, so leading dashes cannot become options. Reject control characters and duplicate IDs; never substitute a default model.
 
-Include the canonical session model in `session.open.request` for this row, on both open and reopen. Require a model rather than silently using the CLI default. Once `sdkSessionId` exists, reject model changes as for DeepSeek; reopen uses the stored model. Do not send `model_id` on submit and do not call `session.model.switch` for Copilot.
+Session open resolves an alias to the catalog's exact `ModelInfo.id`, then selects the corresponding adapter. Reopen resolves the stored model to the same stable name; the saved-model entries keep a catalog refresh from stranding a chat. Missing or ambiguous models refuse before spawn. Once `sdkSessionId` exists, reject model changes as for DeepSeek. Do not call `session.model.switch` or put `model_id` on submit.
+
+The row's `nativeId` accepts only a canonical `acp://sessions/` link, percent-decodes it, and returns the opaque ID. It rejects invalid or non-canonical escapes and empty IDs; existing checks reject `.` and `..`. It makes no UUID assumption.
 
 ## Slice order, tests first
 
-1. OXAP: add failing tests for argv containing the selected model, rejection without `model_flag` or with a duplicate flag, and `work.status.link` containing the ACP native ID. Implement, run the ACP corpus and live CLI proof, then release.
-2. HyperNeo: add failing tests for the row and provider allowlist, UUID parsing and rejection of other links, model on open and reopen, no submit-time model or model switch, and a locked model after native identity is saved. Implement and pin the released hub.
-3. On one isolated daemon, prove an SDK Copilot chat and an OXAP Copilot chat coexist. Open OXAP chats with two different models and use `/session info` over ACP to confirm each selection. On one chat prove a native tool call, streamed answer, usage when supplied, stop, close, reopen with the same UUID, and a follow-up that recalls context. Also prove an unready row is disabled and creation refuses it.
+1. OXAP: add the failing native-link unit and shared corpus cases in all three implementations, implement them, and release. Gate the release on live CLI proof that the returned ID appears in `work.status.link`, survives in the binding log across a hub restart, and reopens to the same ID. With two static model registry entries, prove distinct argv and use `/session info` over ACP to confirm each selection on creation and reopen. Stop before HyperNeo if any identity or resume claim fails.
+2. HyperNeo: add failing tests for exact per-model args and stable names, control-character refusal, two coexisting model adapters, alias resolution, catalog-refresh reopen, native-link round trips, adapter mismatch refusal, and the locked model. Implement the row and registry, then pin the proven hub release.
+3. On one isolated daemon, prove SDK and OXAP Copilot chats coexist and retain their harness. On an OXAP chat prove a native tool call, streamed answer, usage when supplied, stop, close, same-ID reopen, and a contextual follow-up. Prove an unready row is disabled and creation refuses it.
 
 ## What stays unsupported versus the Copilot bridge
 
@@ -32,4 +34,4 @@ No Claude SDK tools, SDK tool policies or tool guards; the CLI owns its tools. N
 
 ## Rejected alternative
 
-Do not register the dedicated headless Copilot adapter. It is absent from the released hub registry and its current contract lacks cancellation and native reopen. Extending the already-proven generic ACP path is smaller and preserves stop and resume.
+Do not add `model_id` to `session.open.request`. That would require OAP semantics, schemas, validators, clients and fixtures across every implementation, while the existing registry argv and adapter-binding contract already preserve the selected model on restart and reopen.
