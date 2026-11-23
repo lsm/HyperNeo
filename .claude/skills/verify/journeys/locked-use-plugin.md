@@ -104,7 +104,34 @@ bash packages/desktop/locked-use/check-guardian.sh "$RUN"
 Pass prints `ended untrusted_owner` twice (no launcher, and a launcher signed with
 another identifier), then `ended not_locked accessibility_required
 input_monitoring_required` (with `not_installed` first when the plugin is absent) from a
-copy that holds no privacy grants, and `guardian check PASS`.
+copy that holds no privacy grants, and `guardian check PASS`. The screen must be
+unlocked for the `not_locked` token: with the screen locked the third start omits it
+and the check fails on the environment, not the guardian.
+
+Hidden password field, headless. While Touch ID can unlock, the login window keeps
+`UserPasswordTextField` out of its Accessibility tree and shows only "Touch ID or
+Enter Password", so the guardian has nothing to submit. Its answer is to click that
+prompt label (the one unnamed static text just below `FocusedUser`) at the HID tap,
+the way a physical click reaches the lock screen; a click posted to loginwindow's pid
+alone is ignored. The click's events carry the guardian as their source, never the
+HID source 0 that the owner-input tap reads as the owner, so the guardian cannot
+relock on its own click. Nothing is typed. Check the lookup, the click and the
+owner-input stop, without touching the real lock screen:
+
+```bash
+bash packages/desktop/locked-use/check-reveal.sh "$RUN"
+```
+
+Pass prints `click hid 720,530` then `submitted` (the field came back and was
+submitted), `prompts=2 reveal=no_prompt` with no click and `ended unlock_failed`
+(two candidate labels, nothing clicked), `reveal=clicked` with `ended unlock_failed`
+(the click shows nothing), and `reveal=owner_input` with `ended local_input` (owner
+input during the lookup stops the click), then `guardian reveal check PASS (4
+cases)`. In an attended run the same tokens appear in the `unlock_diagnostics` line
+of `HyperNeo.log`: `reveal=clicked` followed by `field_found=1` means the click
+worked; `reveal=no_user`, `no_prompt` means the lock-screen tree differs;
+`field_found=0` with `reveal=clicked` on every try means this Mac's login window
+ignored the HID-tap click too.
 
 Desktop gate and crash relock, with no GUI. One task owns Locked Use and handles every
 event in order: Idle, Starting (guardian spawned, waiting up to 15 seconds for `unlocked`),

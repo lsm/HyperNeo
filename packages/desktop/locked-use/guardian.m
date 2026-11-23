@@ -2,6 +2,8 @@
 // It covers every display, asks the signed authorization plugin for a one-time
 // unlock, keeps the display awake so the cover stays visible, and locks the screen
 // again on local input, stdin EOF, "stop", or when no stdin line arrives for argv[1] seconds. Its stdout reports: covered <n>, unlocked, ended <reason>.
+// While Touch ID can unlock, the login window hides its password field, so the guardian
+// also clicks the lock screen's prompt label to bring the field back before submitting.
 #import <AppKit/AppKit.h>
 #import <ApplicationServices/ApplicationServices.h>
 #import <IOKit/pwr_mgt/IOPMLib.h>
@@ -44,31 +46,110 @@ static void say(NSString *line) {
     fflush(stdout);
 }
 
-static AXUIElementRef find(AXUIElementRef item, NSString *identifier, int depth) {
+static AXUIElementRef find(AXUIElementRef item, NSString *identifier, int depth, NSMutableString *trace) {
     if (depth > 12) return NULL;
     CFTypeRef value = NULL;
-    if (AXUIElementCopyAttributeValue(item, kAXIdentifierAttribute, &value) == kAXErrorSuccess) {
+    AXError identifierError = AXUIElementCopyAttributeValue(item, kAXIdentifierAttribute, &value);
+    [trace appendFormat:@" id:%d", identifierError];
+    if (identifierError == kAXErrorSuccess) {
         BOOL match = [(__bridge NSString *)value isEqualToString:identifier];
         CFRelease(value);
         if (match) return (AXUIElementRef)CFRetain(item);
     }
     CFArrayRef children = NULL;
-    if (AXUIElementCopyAttributeValue(item, kAXChildrenAttribute, (CFTypeRef *)&children) != kAXErrorSuccess) return NULL;
+    AXError childrenError = AXUIElementCopyAttributeValue(item, kAXChildrenAttribute, (CFTypeRef *)&children);
+    [trace appendFormat:@" children:%d", childrenError];
+    if (childrenError != kAXErrorSuccess) return NULL;
     AXUIElementRef found = NULL;
     for (CFIndex i = 0; !found && i < CFArrayGetCount(children); i++) {
-        found = find(CFArrayGetValueAtIndex(children, i), identifier, depth + 1);
+        found = find(CFArrayGetValueAtIndex(children, i), identifier, depth + 1, trace);
     }
     CFRelease(children);
     return found;
 }
 
+static void collect(AXUIElementRef item, int depth, NSMutableArray *nodes) {
+    if (depth > 12) return;
+    [nodes addObject:(__bridge id)item];
+    CFArrayRef children = NULL;
+    if (AXUIElementCopyAttributeValue(item, kAXChildrenAttribute, (CFTypeRef *)&children) != kAXErrorSuccess) return;
+    for (id child in (__bridge NSArray *)children) collect((__bridge AXUIElementRef)child, depth + 1, nodes);
+    CFRelease(children);
+}
+
+static NSString *text(id item, CFStringRef attribute) {
+    CFTypeRef value = NULL;
+    if (AXUIElementCopyAttributeValue((__bridge AXUIElementRef)item, attribute, &value) != kAXErrorSuccess) return nil;
+    id object = CFBridgingRelease(value);
+    return [object isKindOfClass:NSString.class] ? object : nil;
+}
+
+static CGRect frameOf(id item) {
+    CFTypeRef position = NULL, extent = NULL;
+    CGRect frame = CGRectZero;
+    BOOL known = AXUIElementCopyAttributeValue((__bridge AXUIElementRef)item, kAXPositionAttribute, &position) == kAXErrorSuccess
+        && AXUIElementCopyAttributeValue((__bridge AXUIElementRef)item, kAXSizeAttribute, &extent) == kAXErrorSuccess
+        && AXValueGetValue(position, kAXValueCGPointType, &frame.origin) && AXValueGetValue(extent, kAXValueCGSizeType, &frame.size);
+    if (position) CFRelease(position);
+    if (extent) CFRelease(extent);
+    return known ? frame : CGRectNull;
+}
+
+// While Touch ID can unlock, the login window shows only "Touch ID or Enter Password" and keeps
+// the password field out of its tree. Find that prompt: the one unnamed label just below the one
+// focused user. Anything else, or more than one of either, is not clicked.
+static NSString *findPrompt(AXUIElementRef app, NSMutableString *trace, CGPoint *point) {
+    NSMutableArray *nodes = [NSMutableArray array];
+    collect(app, 0, nodes);
+    NSUInteger secure = 0, users = 0;
+    CGRect user = CGRectNull;
+    for (id item in nodes) {
+        secure += [text(item, kAXSubroleAttribute) isEqualToString:(__bridge NSString *)kAXSecureTextFieldSubrole];
+        if ([text(item, kAXIdentifierAttribute) isEqualToString:@"FocusedUser"]) users++, user = frameOf(item);
+    }
+    [trace appendFormat:@" nodes=%lu secure=%lu users=%lu", (unsigned long)nodes.count, (unsigned long)secure, (unsigned long)users];
+    if (users != 1 || CGRectIsNull(user)) return @"no_user";
+    NSMutableArray *prompts = [NSMutableArray array];
+    CGRect prompt = CGRectNull;
+    for (id item in nodes) {
+        if (![text(item, kAXRoleAttribute) isEqualToString:(__bridge NSString *)kAXStaticTextRole]
+            || text(item, kAXIdentifierAttribute).length) continue;
+        CGRect frame = frameOf(item);
+        if (CGRectIsNull(frame)) continue;
+        CGFloat gap = CGRectGetMinY(frame) - CGRectGetMaxY(user), offset = fabs(CGRectGetMidX(frame) - CGRectGetMidX(user));
+        if (gap < 0 || gap > 120 || offset > 240) continue;
+        [prompts addObject:item];
+        prompt = frame;
+    }
+    [trace appendFormat:@" prompts=%lu", (unsigned long)prompts.count];
+    if (prompts.count != 1) return @"no_prompt";
+    *point = CGPointMake(CGRectGetMidX(prompt), CGRectGetMidY(prompt));
+    return nil;
+}
+
+// Clicks the prompt at its screen point, posting the events at the HID tap the way a physical
+// click reaches the lock screen; the lock screen ignores events posted to loginwindow alone.
+// The events carry this process as their source, never the HID system's source 0, so the
+// guardian's owner-input tap cannot mistake them for the owner. Nothing is typed.
+static void clickPrompt(CGPoint point) {
+    for (NSNumber *type in @[ @(kCGEventLeftMouseDown), @(kCGEventLeftMouseUp) ]) {
+        CGEventRef event = CGEventCreateMouseEvent(NULL, type.intValue, point, kCGMouseButtonLeft);
+        CGEventSetIntegerValueField(event, kCGMouseEventClickState, 1);
+        CGEventPost(kCGHIDEventTap, event);
+        CFRelease(event);
+    }
+}
+
 @interface Guardian : NSObject
 @property(nonatomic) NSMutableArray<NSWindow *> *covers;
 @property(nonatomic) BOOL armed, unlocked, ending;
+@property BOOL ownerInput;
+@property(nonatomic) BOOL axTrusted, pluginRequestSeen;
 @property(nonatomic) int listener;
 @property(nonatomic) dispatch_source_t listening;
 @property(nonatomic, copy) NSString *socketPath;
 @property(nonatomic) NSDate *started;
+@property(nonatomic) NSMutableString *unlockTrace;
 @end
 
 @implementation Guardian
@@ -127,6 +208,7 @@ static AXUIElementRef find(AXUIElementRef item, NSString *identifier, int depth)
         struct timeval deadline = {.tv_sec = 1};
         setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &deadline, sizeof deadline);
         BOOL grant = read(client, &request, 1) == 1 && request == '?' && self.armed && !self.ending;
+        if (request == '?') self.pluginRequestSeen = YES;
         self.armed = NO;
         (void)write(client, grant ? "1" : "0", 1);
         close(client);
@@ -136,20 +218,36 @@ static AXUIElementRef find(AXUIElementRef item, NSString *identifier, int depth)
     return YES;
 }
 
+- (void)reportUnlockDiagnostics {
+    if (!self.unlockTrace) return;
+    say([NSString stringWithFormat:@"%@ plugin_request_seen=%d", self.unlockTrace, self.pluginRequestSeen]);
+    self.unlockTrace = nil;
+}
+
 - (void)unlock {
     IOPMAssertionID wake = 0;
-    IOPMAssertionDeclareUserActivity(CFSTR("HyperNeo Locked Use"), kIOPMUserActiveLocal, &wake);
+    IOReturn wakeResult = IOPMAssertionDeclareUserActivity(CFSTR("HyperNeo Locked Use"), kIOPMUserActiveLocal, &wake);
     NSRunningApplication *login = [NSRunningApplication runningApplicationsWithBundleIdentifier:@"com.apple.loginwindow"].firstObject;
+    pid_t loginPID = login.processIdentifier;
+    NSMutableString *trace = [NSMutableString stringWithFormat:@"unlock_diagnostics ax_trusted=%d loginwindow_pid=%d wake=%d",
+                              self.axTrusted, loginPID, wakeResult];
+    self.unlockTrace = trace;
     if (!login) return [self end:@"no_login_window"];
-    AXUIElementRef app = AXUIElementCreateApplication(login.processIdentifier);
-    AXUIElementSetMessagingTimeout(app, 0.5);
+    AXUIElementRef app = AXUIElementCreateApplication(loginPID);
+    AXError timeoutError = AXUIElementSetMessagingTimeout(app, 0.5);
+    [trace appendFormat:@" messaging_timeout=%d", timeoutError];
     __block int tries = 0;
     [NSTimer scheduledTimerWithTimeInterval:0.2 repeats:YES block:^(NSTimer *timer) {
-        if (self.ending) return [timer invalidate];
+        if (self.ending || self.ownerInput) {
+            [timer invalidate];
+            CFRelease(app);
+            return;
+        }
         if (!screenLocked()) {
             [timer invalidate];
             CFRelease(app);
             self.unlocked = YES;
+            [self reportUnlockDiagnostics];
             return say(@"unlocked");
         }
         if (++tries > 40) {
@@ -158,14 +256,29 @@ static AXUIElementRef find(AXUIElementRef item, NSString *identifier, int depth)
             return [self end:@"unlock_failed"];
         }
         if (tries % 10 != 1) return;
-        AXUIElementRef field = find(app, @"UserPasswordTextField", 0);
-        if (field && AXUIElementSetAttributeValue(field, kAXValueAttribute, CFSTR("hyperneo-locked-use")) == kAXErrorSuccess) {
-            self.armed = YES;
-            AXUIElementRef go = find(app, @"LUIBUTTON_GO", 0);
-            AXUIElementPerformAction(go ?: field, go ? kAXPressAction : kAXConfirmAction);
-            if (go) CFRelease(go);
+        [trace appendFormat:@" try=%d field=[", tries];
+        AXUIElementRef field = find(app, @"UserPasswordTextField", 0, trace);
+        [trace appendFormat:@"] field_found=%d", field != NULL];
+        if (!field) {
+            CGPoint point = CGPointZero;
+            NSString *missing = findPrompt(app, trace, &point);
+            if (!missing && self.ownerInput) missing = @"owner_input";
+            if (!missing) clickPrompt(point);
+            [trace appendFormat:@" reveal=%@", missing ?: @"clicked"];
         }
-        if (field) CFRelease(field);
+        if (field) {
+            AXError setError = AXUIElementSetAttributeValue(field, kAXValueAttribute, CFSTR("hyperneo-locked-use"));
+            [trace appendFormat:@" set=%d", setError];
+            if (setError == kAXErrorSuccess) {
+                self.armed = YES;
+                [trace appendString:@" go=["];
+                AXUIElementRef go = find(app, @"LUIBUTTON_GO", 0, trace);
+                AXError actionError = AXUIElementPerformAction(go ?: field, go ? kAXPressAction : kAXConfirmAction);
+                [trace appendFormat:@"] %@=%d", go ? @"press" : @"confirm", actionError];
+                if (go) CFRelease(go);
+            }
+            CFRelease(field);
+        }
     }];
 }
 
@@ -183,10 +296,19 @@ static AXUIElementRef find(AXUIElementRef item, NSString *identifier, int depth)
     [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *timer) {
         if (screenLocked() || ++waited > 100) {
             [timer invalidate];
+            [self reportUnlockDiagnostics];
             say([NSString stringWithFormat:@"ended %@%@", reason, screenLocked() ? @"" : @" relock_failed"]);
             exit(screenLocked() ? 0 : 3);
         }
     }];
+}
+
+- (void)ownerDidAct {
+    if (self.ownerInput) return;
+    self.ownerInput = YES;
+    self.armed = NO;
+    say(@"owner_input");
+    dispatch_async(dispatch_get_main_queue(), ^{ [self end:@"local_input"]; });
 }
 
 @end
@@ -196,7 +318,7 @@ static CGEventRef onInput(CGEventTapProxy proxy, CGEventType type, CGEventRef ev
     Guardian *guardian = (__bridge Guardian *)context;
     if (type == kCGEventTapDisabledByTimeout || type == kCGEventTapDisabledByUserInput
         || CGEventGetIntegerValueField(event, kCGEventSourceUnixProcessID) == 0) {
-        dispatch_async(dispatch_get_main_queue(), ^{ [guardian end:@"local_input"]; });
+        [guardian ownerDidAct];
     }
     return event;
 }
@@ -209,12 +331,14 @@ int main(int argc, const char *argv[]) {
         NSMutableArray<NSString *> *refused = [NSMutableArray array];
         if (!pluginInstalled()) [refused addObject:@"not_installed"];
         if (!screenLocked()) [refused addObject:@"not_locked"];
-        if (!AXIsProcessTrusted()) [refused addObject:@"accessibility_required"];
+        BOOL axTrusted = AXIsProcessTrusted();
+        if (!axTrusted) [refused addObject:@"accessibility_required"];
         if (!CGPreflightListenEventAccess()) [refused addObject:@"input_monitoring_required"];
         if (refused.count) return say([@"ended " stringByAppendingString:[refused componentsJoinedByString:@" "]]), 2;
         [NSApplication sharedApplication].activationPolicy = NSApplicationActivationPolicyAccessory;
         Guardian *guardian = [Guardian new];
         guardian.started = NSDate.date;
+        guardian.axTrusted = axTrusted;
         IOPMAssertionID awake = 0;
         IOPMAssertionCreateWithName(kIOPMAssertPreventUserIdleDisplaySleep, kIOPMAssertionLevelOn,
                                     CFSTR("HyperNeo Locked Use cover"), &awake);
