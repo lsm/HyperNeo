@@ -213,8 +213,9 @@ static void clickPrompt(CGPoint point) {
         char request = 0;
         struct timeval deadline = {.tv_sec = 1};
         setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &deadline, sizeof deadline);
-        BOOL grant = read(client, &request, 1) == 1 && request == '?' && self.armed && !self.ending && !self.allowAnswered && !self.ownerInput;
-        if (request == '?') self.pluginRequestSeen = YES;
+        BOOL requested = read(client, &request, 1) == 1 && request == '?';
+        BOOL grant = requested && self.armed && !self.ending && !self.allowAnswered && !self.ownerInput;
+        if (requested) self.pluginRequestSeen = YES;
         self.armed = NO;
         if (grant) self.allowAnswered = YES;
         if (write(client, grant ? "1" : "0", 1) == 1 && grant) say(@"allow_answered");
@@ -347,7 +348,10 @@ int main(int argc, const char *argv[]) {
         BOOL axTrusted = AXIsProcessTrusted();
         if (!axTrusted) [refused addObject:@"accessibility_required"];
         if (!CGPreflightListenEventAccess()) [refused addObject:@"input_monitoring_required"];
-        if (refused.count) return say([@"ended " stringByAppendingString:[refused componentsJoinedByString:@" "]]), 2;
+        if (refused.count) {
+            say([NSString stringWithFormat:@"unlock_diagnostics ax_trusted=%d", axTrusted]);
+            return say([@"ended " stringByAppendingString:[refused componentsJoinedByString:@" "]]), 2;
+        }
         [NSApplication sharedApplication].activationPolicy = NSApplicationActivationPolicyAccessory;
         Guardian *guardian = [Guardian new];
         guardian.started = NSDate.date;
