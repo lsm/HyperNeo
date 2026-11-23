@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { copyFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { GlobalSettings, MessageHub } from '../../../packages/shared/src/mod.ts';
 import { OXAP_VERSION } from '../../../packages/daemon/src/lib/oxap/oxap-install.ts';
 
 const PROBE = 'https://api.openai.com/v1/responses';
@@ -21,6 +22,25 @@ export const oxapCodexProvider = {
   },
   credentials: { apiKey: 'sk-synthetic-oxap-codex' },
 };
+
+export async function seedSyntheticCodexAdmission(
+  hub: MessageHub,
+  settings: { updateGlobalSettings: (patch: Partial<GlobalSettings>) => unknown },
+): Promise<void> {
+  settings.updateGlobalSettings({
+    oxapHub: { path: process.execPath, version: 'synthetic-fixture', sha256: '0'.repeat(64) },
+  });
+  await hub.request('providers.create', {
+    ...oxapCodexProvider,
+    params: {
+      ...oxapCodexProvider.params,
+      configJson: JSON.stringify({
+        harness: 'oxap-codex',
+        harnessSettings: { executable: process.execPath },
+      }),
+    },
+  });
+}
 
 export function answerCodexProbeLocally(): string[] {
   const probes: string[] = [];

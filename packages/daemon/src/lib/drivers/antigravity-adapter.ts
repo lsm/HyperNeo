@@ -1,8 +1,10 @@
+import { homedir } from 'node:os';
 import { basename, isAbsolute, normalize } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { ProcessJsonRpcTransport } from '../process-json-rpc.ts';
 import { buildSafeProcessEnv } from '../safe-process-env.ts';
+import { createAntigravityStart } from './antigravity-start.ts';
 import type { FindQuery, PlaceGroup, WorkAdapter } from './types.ts';
 
 const ADAPTER = 'antigravity-cli';
@@ -23,11 +25,14 @@ const SessionPage = z.object({
   ),
   nextCursor: z.string().nullish(),
 });
-type Session = z.infer<typeof SessionPage>['sessions'][number];
+type Session = z.infer<typeof SessionPage>['sessions'][number] & { folder?: string };
+type ReadOwnedFolders = (adapter: string) => Promise<readonly [id: string, folder: string][]>;
 
 async function listSessions(
   query: FindQuery,
-  transport: ProcessJsonRpcTransport
+  transport: ProcessJsonRpcTransport,
+  launchFolder: string,
+  ownedFolders: ReadonlyMap<string, string>
 ): Promise<Session[]> {
   const request = async (method: string, params: Record<string, unknown>) => {
     const response = await transport.sendRequest(method, params);
@@ -48,14 +53,18 @@ async function listSessions(
     const result = SessionPage.safeParse(await request('session/list', { cwd: folder, cursor }));
     if (!result.success) throw new Error('Antigravity returned an invalid ACP session list.');
     for (const session of result.data.sessions) {
-      if (folder && normalize(session.cwd) !== folder) continue;
+      const reported = normalize(session.cwd);
+      const workspace =
+        ownedFolders.get(session.sessionId) ?? (reported === launchFolder ? undefined : reported);
+      if (folder && workspace !== folder) continue;
       if (query.idPrefix && !session.sessionId.startsWith(query.idPrefix)) continue;
       if (
         text &&
-        ![session.title ?? '', session.cwd].some((term) => term.toLowerCase().includes(text))
+        ![session.title ?? '', workspace ?? ''].some((term) => term.toLowerCase().includes(text))
       )
         continue;
-      if (!sessions.has(session.sessionId)) sessions.set(session.sessionId, session);
+      if (!sessions.has(session.sessionId))
+        sessions.set(session.sessionId, { ...session, folder: workspace });
     }
     cursor = result.data.nextCursor ?? undefined;
     if (!cursor || sessions.size >= query.limit) break;
@@ -66,9 +75,15 @@ async function listSessions(
   return [...sessions.values()];
 }
 
-async function readSessions(query: FindQuery, executable: string): Promise<Session[]> {
+async function readSessions(
+  query: FindQuery,
+  executable: string,
+  ownedFolders: ReadonlyMap<string, string>
+): Promise<Session[]> {
+  const launchFolder = normalize(homedir());
   const transport = new ProcessJsonRpcTransport({
     command: executable,
+    cwd: launchFolder,
     args: ['acp', '--disable-telemetry'],
     replaceEnv: true,
     env: buildSafeProcessEnv(),
@@ -82,7 +97,10 @@ async function readSessions(query: FindQuery, executable: string): Promise<Sessi
     );
   });
   try {
-    return await Promise.race([listSessions(query, transport), deadline]);
+    return await Promise.race([
+      listSessions(query, transport, launchFolder, ownedFolders),
+      deadline,
+    ]);
   } finally {
     clearTimeout(timer);
     await transport.close();
@@ -94,14 +112,17 @@ function groupSessions(
   query: FindQuery,
   machine: string
 ): PlaceGroup[] {
-  const groups = new Map<string, PlaceGroup>();
+  const groups = new Map<string | undefined, PlaceGroup>();
   for (const session of sessions) {
-    const folder = normalize(session.cwd);
+    const folder = session.folder;
     const lastActivityAt = Date.parse(session.updatedAt ?? '') || 0;
     let group = groups.get(folder);
     if (!group) {
       group = {
-        place: { machine, folder, name: basename(folder) || folder },
+        place: {
+          machine,
+          ...(folder ? { folder, name: basename(folder) || folder } : { name: 'Antigravity CLI' }),
+        },
         lastActivityAt,
         openCount: 0,
         archivedCount: 0,
@@ -128,19 +149,32 @@ function groupSessions(
 }
 
 const find = (superpipe({})('antigravity-find') as PipelineAPI)
-  .input(['query', 'executable', 'machine'])
-  .pipe(readSessions, ['query', 'executable'], 'sessions')
+  .input(['query', 'executable', 'machine', 'ownedFolders'])
+  .pipe(readSessions, ['query', 'executable', 'ownedFolders'], 'sessions')
   .pipe(groupSessions, ['sessions', 'query', 'machine'], 'groups')
   .endAsync('groups') as (
   query: FindQuery,
   executable: string,
-  machine: string
+  machine: string,
+  ownedFolders: ReadonlyMap<string, string>
 ) => Promise<PlaceGroup[]>;
 
-export function createAntigravityAdapter(executable: string, machine: string): WorkAdapter {
+export function createAntigravityAdapter(
+  executable: string,
+  machine: string,
+  readOwnedFolders: ReadOwnedFolders = async () => []
+): WorkAdapter & { close: () => Promise<void> } {
+  const control = createAntigravityStart(executable, machine, ADAPTER);
   return {
+    ...control,
     id: ADAPTER,
-    capabilities: ['find'],
-    find: (query) => (query.spaceId ? [] : find(query, executable, machine)),
+    capabilities: ['find', 'start', 'status'],
+    async find(query) {
+      if (query.spaceId) return [];
+      const ownedFolders = new Map(
+        (await readOwnedFolders(ADAPTER)).map(([id, folder]) => [id, normalize(folder)])
+      );
+      return find(query, executable, machine, ownedFolders);
+    },
   };
 }

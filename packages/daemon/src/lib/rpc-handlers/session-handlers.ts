@@ -204,6 +204,7 @@ export function setupSessionHandlers(
       workspacePath: req.workspacePath,
       initialTools: req.initialTools,
       config: req.config,
+      harness: req.harness,
       worktreeBaseBranch: req.worktreeBaseBranch,
       worktreeMode: req.worktreeMode,
       title: req.title,

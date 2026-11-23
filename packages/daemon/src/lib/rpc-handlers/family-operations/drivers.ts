@@ -646,6 +646,12 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     copilotCli.length ? copilotCli : existsSync(copilotDesktopPath) ? [copilotDesktop] : [];
   const antigravityPath =
     findExecutable('agy') ?? findExecutable('agy', join(homedir(), '.local/bin'));
+  const antigravity = antigravityPath
+    ? createAntigravityAdapter(antigravityPath, machine, (adapter) =>
+        gatewayFor(db()).call(workStartedSessionReads, 'startedFolders', adapter)
+      )
+    : null;
+  if (antigravity) context.driverCleanup?.push(antigravity.close);
   const cursorState = cursorDesktopStatePath(homedir());
   const cursorDesktop = createCursorDesktopDiscovery(
     (query) => context.deps.db.readCursorDesktopAsync({ statePath: cursorState, query }),
@@ -683,7 +689,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       homeDir: homedir(),
     }),
     ...codex(),
-    ...(antigravityPath ? [createAntigravityAdapter(antigravityPath, machine)] : []),
+    ...(antigravity ? [antigravity] : []),
     ...(cursorPath ? [createCursorDiscovery(cursorPath, homedir(), machine)] : []),
     ...desktop,
     ...claudeCodeAdapters(

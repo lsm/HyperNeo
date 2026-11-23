@@ -35,6 +35,7 @@ export interface CreateSessionRequest {
   workspacePath?: string | null;
   initialTools?: string[];
   config?: Partial<SessionConfig>;
+  harness?: SessionConfig['harness'];
   worktreeBaseBranch?: string;
   worktreeMode?: 'worktree' | 'direct';
   title?: string;

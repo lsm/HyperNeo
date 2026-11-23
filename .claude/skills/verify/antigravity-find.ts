@@ -1,16 +1,20 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import type { FindWorkResultSchema } from '../../../packages/daemon/src/lib/drivers/find-operation.ts';
+import type { Result, WorkDetail, WorkStarted } from '../../../packages/daemon/src/lib/drivers/types.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 import type { z } from 'zod';
 
 const run = process.argv.at(-1)!;
 const [mode, binary] = process.argv.slice(2, -1);
-assert(['fixture', 'absent', 'signed-out'].includes(mode));
+const initializeRequiresAuth = mode === 'start-init-auth';
+const startFixture = mode === 'start' || initializeRequiresAuth;
+assert(startFixture || ['fixture', 'absent', 'signed-out', 'start-signed-out'].includes(mode));
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -22,10 +26,57 @@ const bin = join(run, 'home/.local/bin');
 mkdirSync(bin, { recursive: true });
 const executable = join(bin, 'agy');
 const journal = join(evidence, 'requests.jsonl');
+const release = join(run, 'release');
 writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 2\n', { mode: 0o700 });
-if (mode === 'signed-out') {
+if (mode === 'signed-out' || mode === 'start-signed-out') {
   assert(isAbsolute(binary));
   symlinkSync(binary, executable);
+}
+if (startFixture) {
+  writeFileSync(executable, `#!/usr/bin/env bun
+import assert from 'node:assert/strict';
+import { appendFileSync, existsSync } from 'node:fs';
+import { createInterface } from 'node:readline';
+const discovery = !process.argv.includes('--sandbox');
+assert.deepEqual(process.argv.slice(2), discovery
+  ? ['acp', '--disable-telemetry'] : ['acp', '--sandbox', '--disable-telemetry']);
+assert.equal(process.cwd(), discovery ? process.env.HOME : ${JSON.stringify(workspaceRoot)});
+const sessionId = 'owned-1';
+const emit = (message) => process.stdout.write(JSON.stringify({jsonrpc: '2.0', ...message}) + '\\n');
+const note = (id, text) => emit({method:'session/update',params:{sessionId:id,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text}}}});
+let promptId;
+for await (const line of createInterface({input: process.stdin})) {
+  const {id, method, params, result} = JSON.parse(line);
+  appendFileSync(${JSON.stringify(journal)}, JSON.stringify({method, params, result}) + '\\n');
+  if (method === 'initialize') {
+    emit(${initializeRequiresAuth}
+      ? {id,error:{code:-32000,message:'Authentication required'}}
+      : {id,result:{protocolVersion:1,agentCapabilities:{sessionCapabilities:{list:{},close:{}}}}});
+  }
+  else if (method === 'session/list') emit({id,result:{sessions:[
+    {sessionId,cwd:process.cwd(),title:'Owned fixture'},
+    {sessionId:'foreign',cwd:process.cwd(),title:'External fixture'},
+  ]}});
+  else if (method === 'session/new') {
+    assert.deepEqual(params,{cwd:${JSON.stringify(workspaceRoot)},mcpServers:[]});
+    emit({id,result:{sessionId}});
+  } else if (method === 'session/close') {
+    assert.deepEqual(params,{sessionId});
+    emit({id,result:{}});
+  } else if (method === 'session/prompt') {
+    assert.deepEqual(params,{sessionId,prompt:[{type:'text',text:'Reply with a greeting.'}]});
+    promptId = id;
+    emit({id:'permission-1',method:'session/request_permission',params:{sessionId,options:[],toolCall:{toolCallId:'tool'}}});
+  } else {
+    assert.equal(id,'permission-1');
+    assert.deepEqual(result,{outcome:{outcome:'cancelled'}});
+    while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(25);
+    note('other-session','Wrong session');
+    note(sessionId,'Hello');
+    emit({id:promptId,result:{stopReason:'end_turn'}});
+  }
+}
+`, { mode: 0o700 });
 }
 if (mode === 'fixture') {
   process.env.HTTPS_PROXY = 'http://proxy.example.test:8080';
@@ -87,9 +138,69 @@ try {
   const registered = catalog.value.find((entry) => entry.id === adapter);
   results.catalog = registered ?? null;
   if (mode === 'absent') assert.equal(registered, undefined);
-  else assert.deepEqual(registered?.capabilities, ['find']);
+  else assert.deepEqual(registered?.capabilities, ['find', 'start', 'status']);
 
-  if (mode !== 'absent') {
+  let operations = 1;
+  if (startFixture || mode === 'start-signed-out') {
+    const input = {
+      adapter,
+      place: { machine: hostname(), folder: workspaceRoot, name: 'Fixture workspace' },
+      title: 'Fixture work',
+      message: 'Reply with a greeting.',
+    };
+    const rpc = <T>(name: string, input: object) => {
+      operations += 1;
+      return hub.request<T>('operation.invoke', { name, input });
+    };
+    if (mode === 'start') {
+      const refused = await rpc<Result<WorkStarted>>('work.start', { ...input, model: 'unsupported' });
+      assert(!refused.ok && refused.notSent && refused.reason === 'unsupported_model');
+      assert(!existsSync(journal));
+    }
+    const started = await rpc<Result<WorkStarted>>('work.start', input);
+    results.started = started;
+    if (mode !== 'start') {
+      assert(!started.ok && started.notSent && started.reason === 'unreachable');
+      assert.equal(started.detail, 'Sign in to Antigravity CLI before starting a session.');
+      if (initializeRequiresAuth) {
+        const requests = readFileSync(journal, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+        assert.deepEqual(requests.map((request) => request.method), ['initialize']);
+      }
+    } else {
+      assert(started.ok);
+      assert.equal(started.value.status, 'running');
+      assert.deepEqual(started.value.ref, { adapter, id: 'owned-1' });
+      const snapshot = () => rpc<Result<WorkDetail>>('work.status', { ref: started.value.ref });
+      const active = await snapshot();
+      assert(active.ok && active.value.status === 'running');
+      assert(!((await rpc<Result<WorkDetail>>('work.status', { ref: { adapter, id: 'foreign' } })).ok));
+      writeFileSync(release, '');
+      const deadline = Date.now() + 5_000;
+      let settled = await snapshot();
+      while (settled.ok && settled.value.status === 'running' && Date.now() < deadline) {
+        await Bun.sleep(25);
+        settled = await snapshot();
+      }
+      assert(settled.ok && settled.value.status === 'done');
+      assert.equal(settled.value.lastReply, 'Hello');
+      assert.deepEqual(settled.value.turnEnds?.map((turn) => turn.message), ['Hello']);
+      results.settled = settled;
+      const requests = readFileSync(journal, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+      assert.deepEqual(requests.map((request) => request.method), ['initialize', 'session/new', 'session/prompt', undefined, 'session/close']);
+      assert.deepEqual(requests[3].result, { outcome: { outcome: 'cancelled' } });
+      const find = async (folder?: string) => (await rpc<z.infer<typeof FindWorkResultSchema>>('work.find', {
+        adapters: [adapter], localOnly: true, ...(folder ? { folder } : {}),
+      })).places.flatMap((place) => place.work);
+      const scoped = await find(workspaceRoot);
+      assert.deepEqual(scoped.map((item) => [item.ref.id, item.place.folder]), [['owned-1', workspaceRoot]]);
+      const wrongFolder = await find(join(run, 'home'));
+      assert.equal(wrongFolder.length, 0);
+      const foreign = (await find()).find((item) => item.ref.id === 'foreign');
+      assert(foreign);
+      assert.equal(foreign.place.folder, undefined);
+    }
+  } else if (mode !== 'absent') {
+    operations += 1;
     const found = await hub.request<z.infer<typeof FindWorkResultSchema>>('operation.invoke', {
       name: 'work.find', input: { adapters: [adapter], text: 'Find this session', folder: workspaceRoot, limit: 1, localOnly: true },
     });
@@ -111,7 +222,7 @@ try {
     }
   }
   results.passed = true;
-  console.log(JSON.stringify({ mode, passed: true, operations: mode === 'absent' ? 1 : 2 }));
+  console.log(JSON.stringify({ mode, passed: true, operations }));
 } finally {
   await transport.close();
   await closed;

@@ -1137,7 +1137,7 @@ describe('SessionLifecycle', () => {
     });
   });
 
-  describe('create derives the harness from the provider', () => {
+  describe('create uses the requested harness or provider default', () => {
     const codexModel: ModelInfo = {
       ...mockKimiModels[0],
       id: 'gpt-5.5',
@@ -1150,15 +1150,25 @@ describe('SessionLifecycle', () => {
       mock(() => ({
         ...DEFAULT_GLOBAL_SETTINGS,
         settingSources: ['user', 'project', 'local'],
+        oxapHub: { path: process.execPath, version: 'synthetic', sha256: '0'.repeat(64) },
         ...overrides,
       }));
 
+    let codexDefault: string | undefined;
+
     beforeEach(() => {
+      codexDefault = 'oxap-codex';
       setModelsCache(new Map([['global', [...mockKimiModels, codexModel]]]));
+      mockDb.getGlobalSettings = settings() as never;
       (mockDb as unknown as { providers: unknown }).providers = {
         getProviderByProviderId: (providerId: string) =>
           providerId === 'anthropic-codex'
-            ? { configJson: JSON.stringify({ harness: 'oxap-codex' }) }
+            ? {
+                configJson: JSON.stringify({
+                  harness: codexDefault,
+                  harnessSettings: { executable: process.execPath },
+                }),
+              }
             : null,
       };
     });
@@ -1168,6 +1178,32 @@ describe('SessionLifecycle', () => {
       await lifecycle.create({ config: { provider: 'anthropic', model: 'sonnet' } });
       expect(createdSessions[0].config.harness).toBe('oxap-codex');
       expect(createdSessions[1].config).not.toHaveProperty('harness');
+    });
+
+    it('honors an explicit SDK harness without requiring an OXAP hub', async () => {
+      mockDb.getGlobalSettings = settings({ oxapHub: undefined }) as never;
+      await lifecycle.create({
+        harness: 'sdk',
+        config: { provider: 'anthropic-codex', model: 'gpt-5.5' },
+      });
+      expect(createdSessions[0].config).not.toHaveProperty('harness');
+    });
+
+    it('uses saved OXAP settings for an override on an SDK default', async () => {
+      codexDefault = undefined;
+      await lifecycle.create({
+        harness: 'oxap-codex',
+        config: { provider: 'anthropic-codex', model: 'gpt-5.5' },
+      });
+      expect(createdSessions[0].config.harness).toBe('oxap-codex');
+    });
+
+    it('refuses an uninstalled OXAP provider default before saving the session', async () => {
+      mockDb.getGlobalSettings = settings({ oxapHub: undefined }) as never;
+      await expect(
+        lifecycle.create({ config: { provider: 'anthropic-codex', model: 'gpt-5.5' } })
+      ).rejects.toThrow('OXAP hub is not installed');
+      expect(createdSessions).toHaveLength(0);
     });
 
     it('refuses a client-sent harness and creates nothing', async () => {

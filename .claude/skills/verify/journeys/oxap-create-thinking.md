@@ -1,6 +1,6 @@
 # Create a chat with an OXAP provider
 
-Build the web UI, then run `bash .claude/skills/verify/oxap-create-thinking.sh <evidence-dir>` with pinned Bun, Node 24, `PLAYWRIGHT_NODE_PATH` and `VERIFY_BROWSER` set. It owns an isolated daemon, seeds an OXAP provider and synthetic model, pairs a browser and cleans up. Port 31397 must be free.
+Build the web UI, then run `bash .claude/skills/verify/oxap-create-thinking.sh <evidence-dir>` with pinned Bun, Node 24, `PLAYWRIGHT_NODE_PATH` and `VERIFY_BROWSER` set. It owns an isolated daemon, seeds an OXAP provider, hub, and synthetic model, pairs a browser and cleans up. Port 31397 must be free.
 
 A failed provider lookup shows an error and Retry restores the form. The create form hides thinking and sandbox for OXAP, even with persisted `off` thinking and enabled sandbox selections. Creating a chat succeeds and the session model picker hides thinking; light and dark screenshots show the form. The fixture supplies a synthetic model catalog and does not make a model turn.
 
@@ -18,7 +18,7 @@ It injects a controlled provider lookup failure for an SDK chat, checks that its
 current provider's model stays visible and the retry control clears the error,
 then retains `sdk-provider-retry.png`.
 
-It also saves OXAP after an 11-second synthetic release download. The real
+It also replaces the fixture hub after an 11-second synthetic release download. The real
 installer validates and installs a local fixture archive; the UI stays pending
 beyond the default timeout, then shows success and the saved hub after reload.
 

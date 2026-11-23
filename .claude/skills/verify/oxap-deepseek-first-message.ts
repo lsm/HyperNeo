@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
@@ -28,12 +28,6 @@ const peer = join(run, 'dsh');
 mkdirSync(workspace);
 mkdirSync(join(run, 'evidence'));
 copyFileSync('.claude/skills/verify/oxap-deepseek-peer.py', peer);
-if (mode === 'sdk-default') {
-  writeFileSync(peer, readFileSync(peer, 'utf8').replace(
-    "assert 'DEEPSEEK_API_KEY' not in os.environ",
-    "assert os.environ.get('DEEPSEEK_API_KEY') == 'synthetic-deepseek-proof'"
-  ));
-}
 chmodSync(peer, 0o700);
 copyFileSync('.claude/skills/verify/gh-stub.sh', join(run, 'bin/gh'));
 chmodSync(join(run, 'bin/gh'), 0o700);
@@ -69,7 +63,7 @@ try {
       isDefault: true,
       sortOrder: 0,
     },
-    ...(mode === 'sdk-default' ? { credentials: { apiKey: 'synthetic-deepseek-proof' } } : {}),
+    credentials: { apiKey: 'synthetic-deepseek-proof' },
   });
   const saved = await hub.request('operation.invoke', {
     name: 'oxap.settings.save',

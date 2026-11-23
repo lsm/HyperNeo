@@ -10,14 +10,15 @@ The helper starts an isolated daemon on an ephemeral port and uses authenticated
 RPC to create a synthetic Codex session. The OXAP scripts choose the provider:
 `oxap-codex-provider.ts` adds an `anthropic-codex` provider record whose
 `configJson` names `oxap-codex`, and session create derives the chat's harness
-from it. The Codex bridge probes OpenAI once when it lists models; the helper
+from it. The fixture registers an installed hub and adapter executable for
+creation. The Codex bridge probes OpenAI once when it lists models; the helper
 answers that one URL in-process and refuses any other non-loopback request, so
 nothing leaves the machine. It verifies the derived harness persists, a
-client-sent harness is refused at create and update, and these doors refuse
+nested config harness is refused at create and update, and these doors refuse
 before they save, leaving the stored config byte-identical: an SDK chat moving
 to the OXAP provider, the OXAP chat moving to `anthropic`, `permissionMode:
 plan`, a thinking level through `session.update` and `session.thinking.set`,
-`session.sandbox.switch` on, and `session.coordinator.switch` on. A message produces a visible refusal
+`session.sandbox.switch` on, and `session.coordinator.switch` on. After the fixture removes the hub setting, a message produces a visible refusal
 saying the OXAP hub is not installed, without entering the SDK startup gate
 or tracking an SDK child. A second session injects a synthetic OAP hub into its
 runtime and sends two turns through the daemon; each must persist a text result

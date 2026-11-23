@@ -96,13 +96,16 @@ try {
     if (!before) {
       assert.equal(await page.getByLabel('Harness', { exact: true }).inputValue(), 'oxap-codex');
       await page.getByLabel('Harness executable').waitFor();
-      await page.getByText('Hub not installed').waitFor();
+      await page.getByText('synthetic-fixture', { exact: true }).waitFor();
     }
     await page.screenshot({ path: `${output}/oxap-provider-${theme}.png`, animations: 'disabled' });
     if (!before && theme === 'dark') {
-      await page.getByLabel('Harness executable').fill('relative');
+      const executable = page.getByLabel('Harness executable');
+      const savedExecutable = await executable.inputValue();
+      await executable.fill('relative');
       await page.getByRole('button', { name: 'Save harness' }).click();
       await page.getByText(/needs an absolute executable path/).waitFor();
+      await executable.fill(savedExecutable);
       await page.getByLabel('Harness', { exact: true }).selectOption('sdk');
       await page.getByRole('button', { name: 'Save harness' }).click();
       await page.getByText('Harness saved').waitFor();
@@ -148,7 +151,7 @@ try {
         assert.match(await sha.textContent(), /^[a-f0-9]{64}$/);
         await page.screenshot({ path: `${output}/hub-installed-${appearance}.png`, animations: 'disabled', mask: [path], maskColor: appearance === 'dark' ? '#27272d' : '#f0f0f2' });
       }
-      console.log('Delayed first install saved and the installed hub persisted');
+      console.log('Delayed hub replacement saved and the installed hub persisted');
       for (const appearance of ['light', 'dark']) {
         await page.evaluate((value) => localStorage.setItem('theme', value), appearance);
         await page.goto(`${base}/session/${created.sessionId}`);
