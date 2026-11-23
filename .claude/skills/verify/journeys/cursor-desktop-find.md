@@ -17,3 +17,6 @@ sessions only on request. It must honor the result limit and still find a
 session by exact ID. Remote sessions and subagents must stay out of the
 result. A live WAL must remain unchanged. This proof checks discovery without
 an account. Creating or controlling a signed-in session needs an attended run.
+
+The proof then changes the fixture schema. The Cursor read must report the
+schema error while a queued HyperNeo SDK read still completes.

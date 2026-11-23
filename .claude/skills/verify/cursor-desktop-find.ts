@@ -108,7 +108,18 @@ try {
     'desktop-open',
   ]);
   assert.deepEqual(readFileSync(`${state}-wal`), wal);
-  process.stdout.write(`Cursor Desktop: ${calls} RPC calls, ${all.length} sessions, WAL unchanged\n`);
+  fixture.exec('ALTER TABLE composerHeaders RENAME COLUMN recency TO unused_recency');
+  const [broken, unrelated] = await Promise.allSettled([
+    app.db.readCursorDesktopAsync({ statePath: state, query: { includeClosed: true, limit: 1 } }),
+    app.db.countPendingTurnsAsync('fixture-model', 3),
+  ]);
+  assert(broken.status === 'rejected' && String(broken.reason).includes('recency'));
+  assert.deepEqual(unrelated, { status: 'fulfilled', value: 0 });
+  const rejected = await rpc<z.infer<typeof FindWorkResultSchema>>('work.find', {
+    adapters: [adapter], localOnly: true,
+  });
+  assert(rejected.unreachable.some(({ source, reason }) => source === adapter && reason.includes('recency')));
+  process.stdout.write(`Cursor Desktop: ${calls} RPC calls, ${all.length} sessions, WAL unchanged by discovery, SDK reader retained\n`);
 } finally {
   socket?.close();
   await app.cleanup();

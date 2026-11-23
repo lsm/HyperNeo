@@ -619,6 +619,50 @@ test('a memory daemon can read Claude session files off main', async () => {
   expect(worker.stopped).toBe(true);
 });
 
+const cursorRead = {
+  statePath: '/synthetic-cursor.sqlite',
+  query: { includeClosed: false, limit: 1 },
+};
+
+test('a memory daemon can read Cursor Desktop metadata', async () => {
+  const worker = new TestWorker();
+  const reader = new SDKStatusReader(':memory:', () => worker as unknown as Worker);
+  try {
+    const accepted = Promise.allSettled([reader.readCursorDesktop(cursorRead)]);
+    worker.onmessage?.({ data: { ready: true } } as MessageEvent<SDKStatusReply>);
+    const request = worker.requests[0];
+    if (request) worker.reply(request, []);
+    expect(await accepted).toEqual([{ status: 'fulfilled', value: [] }]);
+  } finally {
+    await reader.close();
+  }
+});
+
+test('a Cursor Desktop file error leaves a queued SDK status read intact', async () => {
+  const { reader, workers } = fixture();
+  try {
+    const accepted = Promise.allSettled([reader.readCursorDesktop(cursorRead), reader.read(args)]);
+    await tick();
+    const worker = workers[0];
+    worker.onmessage?.({
+      data: {
+        ...worker.requests[0],
+        error: 'database is locked',
+        finishedAt: Date.now(),
+        workerMs: 0,
+        queueMs: 0,
+      },
+    } as MessageEvent<SDKStatusReply>);
+    await tick();
+    if (worker.requests[1]) worker.reply(worker.requests[1], page);
+    const [cursor, status] = await accepted;
+    expect(cursor.status === 'rejected' && cursor.reason.message).toBe('database is locked');
+    expect(status).toEqual({ status: 'fulfilled', value: page });
+  } finally {
+    await reader.close();
+  }
+});
+
 for (const failure of [
   'unable to open database file',
   'database is locked',
