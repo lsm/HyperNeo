@@ -1905,7 +1905,7 @@ async function archiveClaudeSession(
             : [join(getDataDir(), 'claude-worktrees')]
         )
       : Promise.resolve(undefined);
-  if (record.isArchived) {
+  if (record.isArchived && record.archiveSetAtMs) {
     const worktree = await cleanup();
     return { ok: true, value: { archived: false, ...(worktree ? { worktree } : {}) } };
   }

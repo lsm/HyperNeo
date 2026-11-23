@@ -139,7 +139,11 @@ describe('claude-desktop adapter against the app session records', () => {
       if (entry.records.some((record) => record.sessionId === target.sessionId))
         writeFileSync(
           path,
-          JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf8')), isArchived: true })
+          JSON.stringify({
+            ...JSON.parse(readFileSync(path, 'utf8')),
+            isArchived: true,
+            archiveSetAtMs: 1,
+          })
         );
     return { ok: true as const, value: { archived: true } };
   }
@@ -635,7 +639,11 @@ describe('claude-desktop adapter against the app session records', () => {
     const driver = adapter([]);
     const ref = { adapter: driver.id, id: 'local_a1' };
     expect(await driver.archive!(ref, () => null)).toEqual({ ok: true, value: { archived: true } });
-    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ ...before, isArchived: true });
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({
+      ...before,
+      isArchived: true,
+      archiveSetAtMs: 1,
+    });
     expect(existsSync(env.TMPDIR)).toBe(false);
     expect(existsSync(env.XDG_CACHE_HOME)).toBe(false);
     expect(existsSync(root)).toBe(true);
@@ -720,6 +728,20 @@ describe('claude-desktop adapter against the app session records', () => {
     expect(existsSync(folder)).toBe(true);
   });
 
+  test('asks the app to archive a record whose archived flag the app never stamped', async () => {
+    const path = join(dir, 'acct-a/scope-1/local_a1.json');
+    writeFileSync(
+      path,
+      JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf8')), isArchived: true })
+    );
+    const driver = adapter([]);
+    expect(
+      await driver.archive!({ adapter: 'claude-desktop', id: 'local_a1' }, () => null)
+    ).toMatchObject({ ok: true, value: { archived: true } });
+    expect(appArchives).toEqual(['local_a1']);
+    expect(JSON.parse(readFileSync(path, 'utf8')).archiveSetAtMs).toBe(1);
+  });
+
   test('refuses to archive without the app helper instead of editing the record', async () => {
     const path = join(dir, 'acct-a/scope-1/local_a1.json');
     const before = readFileSync(path, 'utf8');
@@ -767,7 +789,12 @@ describe('claude-desktop adapter against the app session records', () => {
     const env = await prepareWorkerSandbox(root);
     writeFileSync(
       path,
-      JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf8')), cwd: root, isArchived: true })
+      JSON.stringify({
+        ...JSON.parse(readFileSync(path, 'utf8')),
+        cwd: root,
+        isArchived: true,
+        archiveSetAtMs: 1,
+      })
     );
     try {
       expect(

@@ -297,7 +297,12 @@ export async function awaitAppArchive(
   const until = deps.now() + HELPER_ARCHIVE_WAIT_MS;
   for (;;) {
     const records = await loadClaudeDesktopRecords(deps, new Map());
-    if (records.some((record) => record.sessionId === target.sessionId && record.isArchived))
+    if (
+      records.some(
+        (record) =>
+          record.sessionId === target.sessionId && record.isArchived && record.archiveSetAtMs
+      )
+    )
       return { ok: true, value: { archived: true } };
     if (deps.now() >= until)
       return reject(

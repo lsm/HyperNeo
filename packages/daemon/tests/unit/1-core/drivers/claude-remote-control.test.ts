@@ -266,7 +266,7 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
               content: `<cross-session-message>${args.at(-1)}</cross-session-message>`,
             }) + '\n'
           );
-          write(record('t1', { isArchived: true }));
+          write(record('t1', { isArchived: true, archiveSetAtMs: 1 }));
         }
         return child;
       },
@@ -301,7 +301,7 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
   });
 
   test('reports an archive the helper never makes without touching the record', async () => {
-    write(record('t1'));
+    write(record('t1', { isArchived: true }));
     const before = readFileSync(join(dir, 'acct/scope/local_t1.json'), 'utf8');
     let now = 0;
     const result = await awaitAppArchive({ ok: true, value: { delivered: true } }, target, {

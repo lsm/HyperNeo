@@ -9,6 +9,7 @@ export const ClaudeDesktopRecordSchema = z.object({
   cwd: z.string().optional(),
   title: z.string().default(''),
   isArchived: z.boolean().default(false),
+  archiveSetAtMs: z.number().nullable().optional().catch(undefined),
   lastActivityAt: z.number().default(0),
   permissionMode: z.string().optional(),
   remoteControlUserEnabled: z.boolean().optional(),
