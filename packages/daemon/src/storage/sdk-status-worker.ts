@@ -50,6 +50,7 @@ function readCursorDesktop({ statePath, query }: CursorDesktopRead, readonlyUri 
                CASE WHEN json_valid(CAST(value AS TEXT)) THEN CAST(value AS TEXT) ELSE '{}' END AS header
           FROM composerHeaders
          WHERE NOT isSubagent AND (? OR NOT isArchived)
+           AND composerId = COALESCE(?, composerId)
       ), sessions AS (
         SELECT id,
                COALESCE(NULLIF(trim(json_extract(header, '$.name')), ''), 'Untitled Cursor session') AS title,
@@ -63,14 +64,16 @@ function readCursorDesktop({ statePath, query }: CursorDesktopRead, readonlyUri 
        WHERE typeof(id) = 'text' AND id <> '' AND typeof(folder) = 'text'
          AND instr(id, ?) = 1 AND folder = COALESCE(?, folder)
          AND (instr(lower(title), ?) OR instr(lower(folder), ?))
-       ORDER BY updatedAt DESC, id LIMIT 500
+       ORDER BY updatedAt DESC, id LIMIT ?
     `)
       .all(
         Number(query.includeClosed),
+        query.id ?? null,
         query.idPrefix ?? '',
         query.folder ?? null,
         text,
-        text
+        text,
+        query.limit
       ) as CursorDesktopSession[];
   } catch (error) {
     if (readonlyUri || !/unable to open database file|readonly database/.test(String(error)))

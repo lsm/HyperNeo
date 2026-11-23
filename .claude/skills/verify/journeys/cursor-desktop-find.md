@@ -13,6 +13,7 @@ its own database and never modifies the source profile.
 
 The public adapter catalog appears as soon as the desktop index is present.
 Find should show local sessions by title and workspace and include archived
-sessions only on request. Remote sessions and subagents must stay out of the
+sessions only on request. It must honor the result limit and still find a
+session by exact ID. Remote sessions and subagents must stay out of the
 result. A live WAL must remain unchanged. This proof checks discovery without
 an account. Creating or controlling a signed-in session needs an attended run.

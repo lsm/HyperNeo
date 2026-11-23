@@ -101,6 +101,12 @@ try {
   const [archived] = await find({ includeClosed: true, idPrefix: 'desktop-arch' });
   assert.equal(archived?.title, 'Untitled Cursor session');
   assert.equal(archived?.archived, true);
+  assert.deepEqual((await find({ includeClosed: true, limit: 1 })).map(({ ref }) => ref.id), [
+    'desktop-archived',
+  ]);
+  assert.deepEqual((await find({ id: 'desktop-open', limit: 1 })).map(({ ref }) => ref.id), [
+    'desktop-open',
+  ]);
   assert.deepEqual(readFileSync(`${state}-wal`), wal);
   process.stdout.write(`Cursor Desktop: ${calls} RPC calls, ${all.length} sessions, WAL unchanged\n`);
 } finally {
