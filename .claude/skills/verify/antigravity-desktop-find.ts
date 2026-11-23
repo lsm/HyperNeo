@@ -6,6 +6,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import type { FindWorkResultSchema } from '../../../packages/daemon/src/lib/drivers/find-operation.ts';
 import type { Result } from '../../../packages/daemon/src/lib/drivers/types.ts';
+import { subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logger.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
@@ -67,6 +68,11 @@ const socket = new WebSocketClientTransport({
 hub.registerTransport(socket);
 let fixture: Database | undefined;
 let operations = 0;
+let catalogReads = 0;
+const unsubscribe = subscribeToStructuredLogs((event) => {
+  if (event.module === 'hyperneo:daemon:sqlite.worker' && event.message === 'sqlite.worker.request' &&
+    event.metadata.operation === desktop && event.metadata.outcome === 'ok') catalogReads++;
+});
 const rpc = <T>(name: string, input: object) => {
   operations++;
   return hub.request<T>('operation.invoke', { name, input });
@@ -117,12 +123,14 @@ try {
   assert.deepEqual(project.map(({ ref, place }) => [ref.id, place.folder]), [['desktop-workspace', alternate]]);
   assert.deepEqual((await find([desktop], { idPrefix: 'desktop-work', limit: 1 })).map(({ ref, place }) => [ref.id, place.folder]), [['desktop-workspace', workspace]]);
   assert.deepEqual((await find([desktop], { limit: 1 })).map(({ ref }) => ref.id), ['desktop-proof']);
+  assert(catalogReads > 0, 'successful catalog reads have the antigravity-desktop operation label');
   assert.deepEqual(readFileSync(`${state}-wal`), wal);
-  const proof = { passed: true, operations, desktopWork: all.filter(({ ref }) => ref.adapter === desktop).length, cliCopies: all.filter(({ ref }) => ref.adapter === cli).length, walUnchanged: true, confirmedTitle: exact[0]?.title };
+  const proof = { passed: true, operations, catalogReads, desktopWork: all.filter(({ ref }) => ref.adapter === desktop).length, cliCopies: all.filter(({ ref }) => ref.adapter === cli).length, walUnchanged: true, confirmedTitle: exact[0]?.title };
   mkdirSync(join(run, 'evidence'), { recursive: true });
   writeFileSync(join(run, 'evidence', 'antigravity-desktop-find.json'), JSON.stringify(proof, null, 2));
   console.log(JSON.stringify(proof));
 } finally {
+  unsubscribe();
   await socket.close();
   await closed;
   hub.cleanup();
