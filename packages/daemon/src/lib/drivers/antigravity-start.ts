@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute } from 'node:path';
+import { basename, isAbsolute } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { JsonRpcRequestTimeoutError, ProcessJsonRpcTransport } from '../process-json-rpc.ts';
@@ -9,7 +9,9 @@ import { selectLocalStartFolder } from './start-folder.ts';
 import type {
   StartRequest,
   WorkAdapter,
+  WorkDelivery,
   WorkDetail,
+  WorkRef,
   Rejected,
   Result,
   WorkStarted,
@@ -25,9 +27,12 @@ const AUTH_REQUIRED = -32000;
 const SIGN_IN_DETAIL = 'Sign in to Antigravity CLI before starting a session.';
 const Init = z.object({
   protocolVersion: z.literal(1),
-  agentCapabilities: z.object({ sessionCapabilities: z.object({ close: z.object({}) }) }),
+  agentCapabilities: z.object({
+    sessionCapabilities: z.object({ close: z.object({}), resume: z.object({}).nullish() }),
+  }),
 });
 const Session = z.object({ sessionId: z.string().min(1) });
+const Resumed = z.object({});
 const Update = Session.extend({
   update: z.object({
     sessionUpdate: z.literal('agent_message_chunk'),
@@ -36,6 +41,7 @@ const Update = Session.extend({
 });
 const Completion = z.object({ stopReason: z.string() });
 type Gate<Value> = { value: Value } | { reason: Rejected };
+type Receipt = NonNullable<WorkDelivery['receipt']>;
 
 function admitStart(request: StartRequest, closing: boolean): Gate<StartRequest> {
   if (closing)
@@ -64,36 +70,53 @@ async function within<T>(pending: Promise<T>, ms: number, detail: string): Promi
   }
 }
 
-async function openSession(transport: ProcessJsonRpcTransport, cwd: string) {
+async function openSession(transport: ProcessJsonRpcTransport, cwd: string, resumeId?: string) {
   const initialized = await transport.sendRequest('initialize', {
     protocolVersion: 1,
     clientCapabilities: {},
   });
   if ('error' in initialized && initialized.error.code === AUTH_REQUIRED)
     return reject('unreachable', SIGN_IN_DETAIL, true);
-  if (!('result' in initialized) || !Init.safeParse(initialized.result).success) {
+  const init = Init.safeParse('result' in initialized ? initialized.result : undefined);
+  if (!init.success) {
     return reject('unreachable', 'Antigravity must support ACP version 1 session close.', true);
   }
-  const opened = await transport.sendRequest('session/new', { cwd, mcpServers: [] });
+  if (resumeId && !init.data.agentCapabilities.sessionCapabilities.resume)
+    return reject('not_supported', 'This Antigravity CLI does not support ACP resume.', true);
+  const opened = await transport.sendRequest(resumeId ? 'session/resume' : 'session/new', {
+    cwd,
+    mcpServers: [],
+    ...(resumeId ? { sessionId: resumeId } : {}),
+  });
   if ('error' in opened) {
     return reject(
       'unreachable',
       opened.error.code === AUTH_REQUIRED
         ? SIGN_IN_DETAIL
-        : `Antigravity rejected session creation (${opened.error.code}).`,
+        : `Antigravity rejected session ${resumeId ? 'resume' : 'creation'} (${opened.error.code}).`,
       true
     );
   }
+  if (resumeId)
+    return Resumed.safeParse(opened.result).success
+      ? { ok: true as const, value: resumeId }
+      : reject('not_delivered', 'Antigravity did not confirm the resumed session.', true);
   const session = Session.safeParse(opened.result);
   return session.success
     ? { ok: true as const, value: session.data.sessionId }
     : reject('not_delivered', 'Antigravity did not confirm the new session.', true);
 }
 
-export function createAntigravityStart(executable: string, machine: string, adapter: string) {
+export function createAntigravityStart(
+  executable: string,
+  machine: string,
+  adapter: string,
+  readOwnedFolder: (id: string) => Promise<string | undefined> = async () => undefined
+) {
   const running = new Set<ProcessJsonRpcTransport>();
   const sessions = new Map<string, WorkDetail>();
   const completed = new Set<string>();
+  const resuming = new Set<string>();
   let closing = false;
 
   const selectFolder = (request: StartRequest): Gate<string> => {
@@ -122,7 +145,7 @@ export function createAntigravityStart(executable: string, machine: string, adap
           ),
         };
 
-  const connect = async (cwd: string) => {
+  const connect = async (cwd: string, resumeId?: string) => {
     let sessionId: string | undefined;
     let reply = '';
     const transport = new ProcessJsonRpcTransport({
@@ -154,9 +177,11 @@ export function createAntigravityStart(executable: string, machine: string, adap
     let opened: Awaited<ReturnType<typeof openSession>>;
     try {
       opened = await within(
-        openSession(transport, cwd),
+        openSession(transport, cwd, resumeId),
         START_TIMEOUT_MS,
-        'Antigravity session creation timed out.'
+        resumeId
+          ? 'Antigravity session resume timed out.'
+          : 'Antigravity session creation timed out.'
       );
     } catch (error) {
       opened = reject(
@@ -169,36 +194,62 @@ export function createAntigravityStart(executable: string, machine: string, adap
       await close();
       return { reason: opened };
     }
-    sessionId = opened.value;
-    return { value: { id: sessionId, cwd, transport, close, readReply: () => reply } };
+    const id = opened.value;
+    const collectReply = (collect: boolean) => {
+      sessionId = collect ? id : undefined;
+    };
+    return { value: { id, cwd, transport, collectReply, close, readReply: () => reply } };
   };
 
   type Opened = NonNullable<Awaited<ReturnType<typeof connect>>['value']>;
-  const launch = async (opened: Opened, request: StartRequest): Promise<Result<WorkStarted>> => {
-    const { id, cwd, transport, close, readReply } = opened;
-    if (closing || sessions.has(id)) {
-      await close();
-      return reject('not_delivered', 'Antigravity could not establish a new owned session.', true);
-    }
+  const launchTurn = (
+    opened: Opened,
+    target: Pick<WorkDetail, 'title' | 'place'>,
+    message: string,
+    receipt?: Receipt
+  ): WorkDetail => {
+    const { id, cwd, transport, collectReply, close, readReply } = opened;
     const work: WorkDetail = {
       ref: { adapter, id },
-      title: request.sessionTitle ?? request.title,
-      place: { ...request.place, folder: cwd },
+      title: target.title,
+      place: { ...target.place, folder: cwd },
       execution: { machine, directory: cwd },
       status: 'running',
       lastActivityAt: Date.now(),
       watchHint: 'Open this session in Antigravity CLI. HyperNeo shows the most recent owned turn.',
     };
-    sessions.set(id, work);
-    const finish = (status: WorkDetail['status'], detail: string) => {
+    completed.delete(id);
+    sessions.set(id, receipt ? { ...work, inputEvidence: { receipt, state: 'pending' } } : work);
+    const finish = async (status: WorkDetail['status'], detail: string) => {
+      collectReply(false);
+      await close();
       const at = Date.now();
       const reply = readReply();
+      let inputEvidence: WorkDetail['inputEvidence'];
+      if (receipt)
+        inputEvidence =
+          status === 'done'
+            ? {
+                receipt,
+                state: 'observed',
+                transcriptState: 'completed',
+                exchange: [
+                  { at: work.lastActivityAt, role: 'user', text: message },
+                  ...(reply ? [{ at, role: 'agent' as const, text: reply }] : []),
+                ],
+                exchangeCut: reply.length === MAX_REPLY_CHARS,
+                ...(reply ? { replyAt: at } : {}),
+              }
+            : { receipt, state: 'unavailable' };
       sessions.set(id, {
         ...work,
         status,
         lastActivityAt: at,
         ...(reply ? { lastReply: reply, lastReplyAt: at } : {}),
-        turnEnds: [{ id, at, startedAt: work.lastActivityAt, message: detail }],
+        turnEnds: [
+          { id: receipt?.inputId ?? id, at, startedAt: work.lastActivityAt, message: detail },
+        ],
+        ...(inputEvidence ? { inputEvidence } : {}),
       });
       completed.add(id);
       if (completed.size > RETAINED_TURNS) {
@@ -207,11 +258,13 @@ export function createAntigravityStart(executable: string, machine: string, adap
         sessions.delete(oldest);
       }
     };
+    collectReply(true);
     void transport
-      .sendRequest('session/prompt', {
-        sessionId: id,
-        prompt: [{ type: 'text', text: request.message }],
-      })
+      .sendRequest(
+        'session/prompt',
+        { sessionId: id, prompt: [{ type: 'text', text: message }] },
+        { onResponseFrame: () => collectReply(false) }
+      )
       .then(
         async (response) => {
           const result = Completion.safeParse('result' in response ? response.result : undefined);
@@ -224,20 +277,19 @@ export function createAntigravityStart(executable: string, machine: string, adap
             () => false
           );
           if (!saved) {
-            finish(
+            return finish(
               'failed',
               'Antigravity did not confirm saved history. Check the CLI session before retrying.'
             );
-            return;
           }
-          if (result.success && result.data.stopReason === 'end_turn') finish('done', readReply());
-          else if (result.success && result.data.stopReason === 'cancelled')
-            finish('stopped', readReply());
-          else
-            finish(
-              'failed',
-              'Antigravity did not complete the turn. Check the CLI session before retrying.'
-            );
+          if (result.success && result.data.stopReason === 'end_turn')
+            return finish('done', readReply());
+          if (result.success && result.data.stopReason === 'cancelled')
+            return finish('stopped', readReply());
+          return finish(
+            'failed',
+            'Antigravity did not complete the turn. Check the CLI session before retrying.'
+          );
         },
         (error: unknown) =>
           finish(
@@ -246,8 +298,21 @@ export function createAntigravityStart(executable: string, machine: string, adap
               ? `The Antigravity turn exceeded the ${TURN_TIMEOUT_MINUTES}-minute limit. Check the CLI session before retrying.`
               : 'Antigravity disconnected during the turn. Check the CLI session before retrying.'
           )
-      )
-      .finally(close);
+      );
+    return work;
+  };
+
+  const launch = async (opened: Opened, request: StartRequest): Promise<Result<WorkStarted>> => {
+    const { id } = opened;
+    if (closing || sessions.has(id) || resuming.has(id)) {
+      await opened.close();
+      return reject('not_delivered', 'Antigravity could not establish a new owned session.', true);
+    }
+    const work = launchTurn(
+      opened,
+      { title: request.sessionTitle ?? request.title, place: request.place },
+      request.message
+    );
     return { ok: true, value: work };
   };
 
@@ -256,22 +321,78 @@ export function createAntigravityStart(executable: string, machine: string, adap
     .pipe(admitStart, ['request', 'closing'], 'result:started')
     .pipe(selectFolder, 'started', 'result:started')
     .pipe(requireDirectory, 'started', 'result:started')
-    .pipe(connect, 'started', 'result:started')
+    .pipe((cwd: string) => connect(cwd), 'started', 'result:started')
     .pipe(launch, ['started', 'request'], 'started')
     .endAsync('started') as (
     request: StartRequest,
     closing: boolean
   ) => Promise<Result<WorkStarted>>;
 
-  const status: NonNullable<WorkAdapter['status']> = async (ref) => {
+  const ownedFolder = async (ref: WorkRef): Promise<Gate<string>> => {
+    const cwd = ref.adapter === adapter ? await readOwnedFolder(ref.id) : undefined;
+    return cwd
+      ? { value: cwd }
+      : { reason: reject('not_started_by_us', 'Choose a session started by HyperNeo.', true) };
+  };
+
+  const resume = async (
+    ref: WorkRef,
+    cwd: string,
+    message: string
+  ): Promise<Result<WorkDelivery>> => {
+    const { id } = ref;
+    const previous = sessions.get(id);
+    if (resuming.has(id) || previous?.status === 'running')
+      return reject('busy', 'Antigravity is already working in this session.', true);
+    if (closing) return reject('unreachable', 'The Antigravity driver is shutting down.', true);
+    resuming.add(id);
+    try {
+      const opened = await connect(cwd, id);
+      if (!opened.value) return opened.reason;
+      if (closing) {
+        await opened.value.close();
+        return reject('unreachable', 'The Antigravity driver is shutting down.', true);
+      }
+      const receipt = { executionId: id, inputId: crypto.randomUUID() };
+      const target = previous ?? {
+        title: 'Antigravity CLI session',
+        place: { machine, name: basename(cwd) || cwd },
+      };
+      launchTurn(opened.value, target, message, receipt);
+      return { ok: true, value: { delivered: false, unconfirmed: true, receipt } };
+    } finally {
+      resuming.delete(id);
+    }
+  };
+
+  const send = (superpipe({})('antigravity-send') as PipelineAPI)
+    .input(['ref', 'message'])
+    .pipe(ownedFolder, 'ref', 'result:delivery')
+    .pipe(requireDirectory, 'delivery', 'result:delivery')
+    .pipe(resume, ['ref', 'delivery', 'message'], 'delivery')
+    .endAsync('delivery') as (ref: WorkRef, message: string) => Promise<Result<WorkDelivery>>;
+
+  const status: NonNullable<WorkAdapter['status']> = async (ref, _, receipt) => {
     const work = sessions.get(ref.id);
-    return work && ref.adapter === adapter
-      ? { ok: true, value: work }
-      : reject('not_found', 'This daemon has no retained Antigravity turn for that session.', true);
+    if (!work || ref.adapter !== adapter)
+      return reject(
+        'not_found',
+        'This daemon has no retained Antigravity turn for that session.',
+        true
+      );
+    const evidence = work.inputEvidence;
+    if (
+      receipt &&
+      (evidence?.receipt.inputId !== receipt.inputId ||
+        evidence.receipt.executionId !== receipt.executionId)
+    )
+      return { ok: true, value: { ...work, inputEvidence: { receipt, state: 'unavailable' } } };
+    return { ok: true, value: work };
   };
 
   return {
     start: (request: StartRequest) => launchStart(request, closing),
+    send,
     status,
     async close() {
       closing = true;
