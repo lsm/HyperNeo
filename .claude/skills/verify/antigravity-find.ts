@@ -12,7 +12,9 @@ import type { z } from 'zod';
 
 const run = process.argv.at(-1)!;
 const [mode, binary] = process.argv.slice(2, -1);
-assert(['fixture', 'absent', 'signed-out', 'start', 'start-signed-out'].includes(mode));
+const initializeRequiresAuth = mode === 'start-init-auth';
+const startFixture = mode === 'start' || initializeRequiresAuth;
+assert(startFixture || ['fixture', 'absent', 'signed-out', 'start-signed-out'].includes(mode));
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -30,7 +32,7 @@ if (mode === 'signed-out' || mode === 'start-signed-out') {
   assert(isAbsolute(binary));
   symlinkSync(binary, executable);
 }
-if (mode === 'start') {
+if (startFixture) {
   writeFileSync(executable, `#!/usr/bin/env bun
 import assert from 'node:assert/strict';
 import { appendFileSync, existsSync } from 'node:fs';
@@ -46,7 +48,11 @@ let promptId;
 for await (const line of createInterface({input: process.stdin})) {
   const {id, method, params, result} = JSON.parse(line);
   appendFileSync(${JSON.stringify(journal)}, JSON.stringify({method, params, result}) + '\\n');
-  if (method === 'initialize') emit({id,result:{protocolVersion:1,agentCapabilities:{sessionCapabilities:{list:{},close:{}}}}});
+  if (method === 'initialize') {
+    emit(${initializeRequiresAuth}
+      ? {id,error:{code:-32000,message:'Authentication required'}}
+      : {id,result:{protocolVersion:1,agentCapabilities:{sessionCapabilities:{list:{},close:{}}}}});
+  }
   else if (method === 'session/list') emit({id,result:{sessions:[
     {sessionId,cwd:process.cwd(),title:'Owned fixture'},
     {sessionId:'foreign',cwd:process.cwd(),title:'External fixture'},
@@ -135,7 +141,7 @@ try {
   else assert.deepEqual(registered?.capabilities, ['find', 'start', 'status']);
 
   let operations = 1;
-  if (mode === 'start' || mode === 'start-signed-out') {
+  if (startFixture || mode === 'start-signed-out') {
     const input = {
       adapter,
       place: { machine: hostname(), folder: workspaceRoot, name: 'Fixture workspace' },
@@ -153,9 +159,13 @@ try {
     }
     const started = await rpc<Result<WorkStarted>>('work.start', input);
     results.started = started;
-    if (mode === 'start-signed-out') {
-      assert(!started.ok && started.notSent);
-      assert.match(started.detail, /Sign in to Antigravity CLI/);
+    if (mode !== 'start') {
+      assert(!started.ok && started.notSent && started.reason === 'unreachable');
+      assert.equal(started.detail, 'Sign in to Antigravity CLI before starting a session.');
+      if (initializeRequiresAuth) {
+        const requests = readFileSync(journal, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+        assert.deepEqual(requests.map((request) => request.method), ['initialize']);
+      }
     } else {
       assert(started.ok);
       assert.equal(started.value.status, 'running');

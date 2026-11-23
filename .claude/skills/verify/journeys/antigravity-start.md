@@ -8,6 +8,8 @@ bash .claude/skills/verify/proof-run.sh /absolute/start-evidence \
   .claude/skills/verify/antigravity-find.ts start
 bash .claude/skills/verify/proof-run.sh /absolute/signed-out-start-evidence \
   .claude/skills/verify/antigravity-find.ts start-signed-out /absolute/vendor/agy
+bash .claude/skills/verify/proof-run.sh /absolute/initialize-auth-evidence \
+  .claude/skills/verify/antigravity-find.ts start-init-auth
 ```
 
 The public `work.start` operation creates an owned session in the requested local
@@ -25,6 +27,8 @@ folder search matches the recorded owned workspace. An external session with
 no verified workspace only appears in unscoped discovery.
 
 The real signed-out CLI must report that sign-in is needed before any prompt is
-submitted. Require both wrapper exits to be zero and check `antigravity-find.json`
-and the fixture's `requests.jsonl`. The fixture covers the successful protocol path.
-An attended, signed-in smoke is required to verify a real model turn.
+submitted. The initialization fixture returns the same authentication error
+during `initialize` and must report the same sign-in instruction without
+sending a second ACP request. Require all wrapper exits to be zero and check
+`antigravity-find.json` and the fixtures' `requests.jsonl`. An attended,
+signed-in smoke is required to verify a real model turn.
