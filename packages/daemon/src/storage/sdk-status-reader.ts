@@ -2,6 +2,8 @@ import type { NeoCardSearchPage } from './neo-card-search.ts';
 import type { WorkDetail, WorkTurnFact } from '../lib/drivers/types.ts';
 import { runtimeWorkerUrl } from '../lib/runtime-worker-url.ts';
 import type { CodexSnapshot } from '../lib/drivers/codex-desktop-adapter.ts';
+import type { AntigravityDesktopRead } from '../lib/drivers/antigravity-desktop-discovery.ts';
+import type { readAntigravityDesktop } from './antigravity-desktop-read.ts';
 import type {
   CursorDesktopRead,
   CursorDesktopSession,
@@ -61,6 +63,7 @@ type SDKReadArgs =
   | { claudeRecords: { sessionsDir: string } }
   | { copilotDesktop: CopilotDesktopRead }
   | { cursorDesktop: CursorDesktopRead }
+  | { antigravityDesktop: AntigravityDesktopRead }
   | {
       codexSnapshot: {
         statePath: string;
@@ -73,7 +76,12 @@ type SDKReadArgs =
   | CardSearchArgs;
 
 export function isDesktopDatabaseRead(args: SDKReadArgs): boolean {
-  return 'codexSnapshot' in args || 'copilotDesktop' in args || 'cursorDesktop' in args;
+  return (
+    'codexSnapshot' in args ||
+    'copilotDesktop' in args ||
+    'cursorDesktop' in args ||
+    'antigravityDesktop' in args
+  );
 }
 
 export type SDKReadResult =
@@ -90,6 +98,7 @@ export type SDKReadResult =
   | ClaudeDesktopRecord[]
   | CopilotDesktopSession[]
   | CursorDesktopSession[]
+  | ReturnType<typeof readAntigravityDesktop>
   | WorkTurnFact[];
 export type SDKStatusRequest = {
   id: number;
@@ -266,6 +275,12 @@ export class SDKStatusReader {
     return this.enqueue({ cursorDesktop: args }) as Promise<CursorDesktopSession[]>;
   }
 
+  readAntigravityDesktop(args: AntigravityDesktopRead) {
+    return this.enqueue({ antigravityDesktop: args }) as Promise<
+      ReturnType<typeof readAntigravityDesktop>
+    >;
+  }
+
   readCodexSnapshot(
     statePath: string,
     includeClosed: boolean,
@@ -388,7 +403,9 @@ export class SDKStatusReader {
                                     ? 'message-feed'
                                     : 'page' in args
                                       ? 'sdk-page'
-                                      : 'sdk-status'
+                                      : 'antigravityDesktop' in args
+                                        ? 'antigravity-desktop'
+                                        : 'sdk-status'
               : 'close',
             id,
             epoch,

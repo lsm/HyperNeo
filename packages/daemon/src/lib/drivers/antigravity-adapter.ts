@@ -33,7 +33,8 @@ async function listSessions(
   query: FindQuery,
   transport: ProcessJsonRpcTransport,
   launchFolder: string,
-  ownedFolders: ReadonlyMap<string, string>
+  ownedFolders: ReadonlyMap<string, string>,
+  desktopIds: ReadonlySet<string>
 ): Promise<Session[]> {
   const request = async (method: string, params: Record<string, unknown>) => {
     const response = await transport.sendRequest(method, params);
@@ -54,6 +55,7 @@ async function listSessions(
     const result = SessionPage.safeParse(await request('session/list', { cwd: folder, cursor }));
     if (!result.success) throw new Error('Antigravity returned an invalid ACP session list.');
     for (const session of result.data.sessions) {
+      if (desktopIds.has(session.sessionId)) continue;
       const reported = normalize(session.cwd);
       const workspace =
         ownedFolders.get(session.sessionId) ?? (reported === launchFolder ? undefined : reported);
@@ -79,7 +81,8 @@ async function listSessions(
 async function readSessions(
   query: FindQuery,
   executable: string,
-  ownedFolders: ReadonlyMap<string, string>
+  ownedFolders: ReadonlyMap<string, string>,
+  desktopIds: ReadonlySet<string>
 ): Promise<Session[]> {
   const launchFolder = normalize(homedir());
   const transport = new ProcessJsonRpcTransport({
@@ -99,7 +102,7 @@ async function readSessions(
   });
   try {
     return await Promise.race([
-      listSessions(query, transport, launchFolder, ownedFolders),
+      listSessions(query, transport, launchFolder, ownedFolders, desktopIds),
       deadline,
     ]);
   } finally {
@@ -150,20 +153,22 @@ function groupSessions(
 }
 
 const find = (superpipe({})('antigravity-find') as PipelineAPI)
-  .input(['query', 'executable', 'machine', 'ownedFolders'])
-  .pipe(readSessions, ['query', 'executable', 'ownedFolders'], 'sessions')
+  .input(['query', 'executable', 'machine', 'ownedFolders', 'desktopIds'])
+  .pipe(readSessions, ['query', 'executable', 'ownedFolders', 'desktopIds'], 'sessions')
   .pipe(groupSessions, ['sessions', 'query', 'machine'], 'groups')
   .endAsync('groups') as (
   query: FindQuery,
   executable: string,
   machine: string,
-  ownedFolders: ReadonlyMap<string, string>
+  ownedFolders: ReadonlyMap<string, string>,
+  desktopIds: ReadonlySet<string>
 ) => Promise<PlaceGroup[]>;
 
 export function createAntigravityAdapter(
   executable: string,
   machine: string,
-  readOwnedFolders: ReadOwnedFolders = async () => []
+  readOwnedFolders: ReadOwnedFolders = async () => [],
+  readDesktopIds: () => Promise<readonly string[]> = async () => []
 ): WorkAdapter & { close: () => Promise<void> } {
   const readOwnedFolder = async (id: string) =>
     (await readOwnedFolders(ADAPTER)).find(([sessionId]) => sessionId === id)?.[1];
@@ -183,10 +188,12 @@ export function createAntigravityAdapter(
     },
     async find(query) {
       if (query.spaceId) return [];
-      const ownedFolders = new Map(
-        (await readOwnedFolders(ADAPTER)).map(([id, folder]) => [id, normalize(folder)])
-      );
-      return find(query, executable, machine, ownedFolders);
+      const [folders, desktopIds] = await Promise.all([
+        readOwnedFolders(ADAPTER),
+        readDesktopIds(),
+      ]);
+      const ownedFolders = new Map(folders.map(([id, folder]) => [id, normalize(folder)]));
+      return find(query, executable, machine, ownedFolders, new Set(desktopIds));
     },
   };
 }
