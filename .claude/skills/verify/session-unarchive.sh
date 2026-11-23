@@ -18,15 +18,20 @@ rpc() {
 rpc rpc:providers.create '{"params":{"providerId":"anthropic","displayName":"Anthropic (dev proxy)","kind":"built_in","authType":"api_key","isEnabled":true,"isDefault":true,"sortOrder":0},"credentials":{"apiKey":"sk-devproxy-test-key"}}' |
   jq -e '.reply | select(has("error") | not)' >/dev/null
 
+init_repo() {
+  local folder="$1" branch="$2"
+  git init -q -b "$branch" "$folder"
+  env -i PATH=/usr/bin:/bin HOME="$RUN/home" GIT_AUTHOR_NAME=Fixture \
+    GIT_AUTHOR_EMAIL=fixture@example.invalid GIT_COMMITTER_NAME=Fixture \
+    GIT_COMMITTER_EMAIL=fixture@example.invalid git -C "$folder" commit -q --allow-empty -m 'Fixture base'
+}
+
 repo="$RUN/Example"
-git init -q -b dev "$repo"
-env -i PATH=/usr/bin:/bin HOME="$RUN/home" GIT_AUTHOR_NAME=Fixture \
-  GIT_AUTHOR_EMAIL=fixture@example.invalid GIT_COMMITTER_NAME=Fixture \
-  GIT_COMMITTER_EMAIL=fixture@example.invalid git -C "$repo" commit -q --allow-empty -m 'Fixture base'
+init_repo "$repo" dev
 
 create_archive() {
-  local title="$1" id params checkout worktree
-  id=$(rpc rpc:session.create "$(jq -nc --arg path "$repo" --arg title "$title" \
+  local title="$1" folder="${2:-$repo}" id params checkout worktree
+  id=$(rpc rpc:session.create "$(jq -nc --arg path "$folder" --arg title "$title" \
     '{workspacePath:$path,title:$title,worktreeMode:"worktree"}')" | jq -er '.reply.sessionId')
   params=$(jq -nc --arg id "$id" '{sessionId:$id}')
   checkout=$(rpc rpc:session.get "$params" | jq -e '.reply.session.worktree')
@@ -62,6 +67,18 @@ recorded_tree=$(jq -er '.reply.session.worktree.worktreePath' "$out/neo-restored
 test "$(git -C "$recorded_tree" rev-parse HEAD)" = "$recorded_tip"
 test "$(git -C "$repo" rev-parse "$recorded_branch")" = "$recorded_tip"
 echo 'PASS: Neo operation restored the recorded branch tip (1 session)'
+
+main_repo="$RUN/Main"
+init_repo "$main_repo" main
+main_id=$(create_archive 'Main fallback' "$main_repo")
+main_params=$(jq -nc --arg id "$main_id" '{sessionId:$id}')
+rpc rpc:session.unarchive "$main_params" > "$out/main-unarchive.json"
+jq -e '.reply.success and .reply.worktreeBaseBranch == "main"' "$out/main-unarchive.json"
+rpc rpc:session.get "$main_params" > "$out/main-restored.json"
+main_tree=$(jq -er '.reply.session | select(.status == "active" and .archivedAt == null) | .worktree.worktreePath' "$out/main-restored.json")
+test "$(git -C "$main_tree" rev-parse HEAD)" = "$(git -C "$main_repo" rev-parse main)"
+echo 'PASS: archived RPC session restored on main without dev (1 session)'
+
 
 desktop=$(create_archive 'Desktop restore')
 phone=$(create_archive 'Phone restore')
