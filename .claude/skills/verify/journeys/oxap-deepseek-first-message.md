@@ -21,4 +21,9 @@ attach, paste, drop, and the locked model picker in the real chat composer.
 The Flash run sends the pasted image. Both modes capture the attachment menu
 and the delivered reply.
 
+With `sdk-default`, the fixture stores a disposable credential over RPC,
+switches the provider back to Claude Code after the first turn and sends a
+second turn in the same chat. The local dsh peer requires the saved key, and
+the transcript confirms the reply arrived on the original native thread.
+
 The fixture runs the published OXAP hub with a local dsh peer.
