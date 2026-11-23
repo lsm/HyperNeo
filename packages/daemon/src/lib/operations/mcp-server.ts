@@ -20,7 +20,7 @@ import {
 
 export function createOperationMcpServer(
   registry: OperationRegistrySource,
-  resolveCaller: () => CallerIdentity | Promise<CallerIdentity>,
+  resolveCaller: (operation: string) => CallerIdentity | Promise<CallerIdentity>,
   recordRefusal?: (refusal: OperationRefusal) => void | Promise<void>,
   descriptionRole?: OperationCallerRole
 ) {

@@ -68,7 +68,7 @@ export function operationRefusal(
 
 export function createOperationMcpHandler(
   registry: OperationRegistrySource,
-  resolveCaller: () => CallerIdentity | Promise<CallerIdentity>,
+  resolveCaller: (operation: string) => CallerIdentity | Promise<CallerIdentity>,
   recordRefusal: (refusal: OperationRefusal) => void | Promise<void> = () => {}
 ) {
   return async (args: unknown) => {
@@ -77,7 +77,7 @@ export function createOperationMcpHandler(
       return mcpResult({ code: 'invalid_input', message: parsed.error.message }, true);
     }
     try {
-      const caller = await resolveCaller();
+      const caller = await resolveCaller(parsed.data.name);
       const outcome = await invokeOperation(
         resolveOperationRegistry(registry),
         parsed.data.name,

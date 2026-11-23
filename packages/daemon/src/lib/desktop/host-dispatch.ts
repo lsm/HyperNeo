@@ -1,6 +1,40 @@
 import { createConnection } from 'node:net';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+
+const epoch = randomUUID();
+let sequence = 0;
+
+export class DesktopTurn {
+  readonly id = [epoch, ++sequence] as const;
+  stopped = false;
+
+  async cancel(dataDir: string, worker: string): Promise<boolean> {
+    this.stopped = true;
+    const path = join(dataDir, 'desktop/control.sock');
+    const client = createConnection({ path, signal: AbortSignal.timeout(18_000) }, () =>
+      client.write(`${JSON.stringify({ action: 'cancelTurn', worker, turn: this.id })}\n`)
+    );
+    try {
+      let text = '';
+      for await (const chunk of client) {
+        text += chunk.toString();
+        const newline = text.indexOf('\n');
+        if (newline !== -1) {
+          const reply = JSON.parse(text.slice(0, newline));
+          return reply?.ok === true && reply.result?.state === 'stopped';
+        }
+        if (text.length > 4096) return false;
+      }
+      return false;
+    } catch (error) {
+      return ['ENOENT', 'ECONNREFUSED'].includes((error as NodeJS.ErrnoException).code ?? '');
+    } finally {
+      client.destroy();
+    }
+  }
+}
 
 export const DesktopDispatchReply = z.object({
   call_id: z.string(),
@@ -28,6 +62,7 @@ export function dispatchDesktopCall(
     tool: string;
     arguments: Record<string, unknown>;
     callId: string;
+    turn?: DesktopTurn['id'];
   }
 ): Promise<z.infer<typeof DesktopDispatchReply>> {
   return new Promise((resolve, reject) => {

@@ -13,6 +13,7 @@ mod locked_use;
 mod record;
 #[path = "desktop_target.rs"]
 mod target;
+use locked_use::Turn;
 use serde_json::{json, Value};
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,7 +31,7 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::UnixListener,
     process::Command,
-    sync::{Mutex, OwnedMutexGuard},
+    sync::{watch, Mutex, OwnedMutexGuard, Semaphore},
     task::{JoinHandle, JoinSet},
     time::{timeout, timeout_at, Instant},
 };
@@ -102,6 +103,7 @@ struct Worker {
 }
 struct Drivers {
     workers: Mutex<BTreeMap<String, Arc<Mutex<Option<Worker>>>>>,
+    stopped_turns: StdMutex<BTreeMap<(String, String), watch::Sender<u64>>>,
     binary: PathBuf,
     verification_path: String,
     records: PathBuf,
@@ -153,6 +155,7 @@ impl Drop for Settle<'_> {
 struct Request {
     action: String,
     worker: String,
+    turn: Option<(String, u64)>,
     work_dir: Option<PathBuf>,
     tool: Option<String>,
     arguments: Option<Value>,
@@ -164,6 +167,7 @@ struct Request {
     todo: Option<String>,
     todos: Option<Vec<String>>,
 }
+
 pub(crate) struct Control {
     drivers: Arc<Drivers>,
     task: StdMutex<Option<JoinHandle<()>>>,
@@ -261,6 +265,7 @@ impl Control {
         tokio::spawn(gatekeeper);
         let drivers = Arc::new(Drivers {
             workers: Mutex::new(BTreeMap::new()),
+            stopped_turns: StdMutex::default(),
             binary: binary.clone(),
             verification_path,
             descriptor: base.join("runtime.json"),
@@ -277,6 +282,8 @@ impl Control {
         let state = drivers.clone();
         let task = tokio::spawn(async move {
             let mut requests = JoinSet::new();
+            // Keep room at the control socket for a stop while dispatches wait on worker slots.
+            let work = Arc::new(Semaphore::new(16));
             loop {
                 #[cfg(not(test))]
                 let accepted = listener.accept().await;
@@ -295,7 +302,7 @@ impl Control {
                     }
                 };
                 while requests.try_join_next().is_some() {}
-                if requests.len() >= 16 {
+                if requests.len() >= 32 {
                     let _ = timeout(
                         Duration::from_secs(2),
                         stream.write_all(b"{\"ok\": false, \"error\": \"desktop_busy\"}\n"),
@@ -304,6 +311,7 @@ impl Control {
                     continue;
                 }
                 let state = state.clone();
+                let work = work.clone();
                 requests.spawn(async move {
                     let authorized = peer_pid(&stream).is_some_and(|pid| state.authorized(pid));
                     let (input, mut output) = stream.into_split();
@@ -329,8 +337,14 @@ impl Control {
                     } else if !line.ends_with('\n') {
                         return;
                     } else {
-                        match serde_json::from_str(&line) {
-                            Ok(request) => state.request(request).await,
+                        match serde_json::from_str::<Request>(&line) {
+                            Ok(request) if request.action == "cancelTurn" => {
+                                state.request(request).await
+                            }
+                            Ok(request) => match work.try_acquire() {
+                                Ok(_permit) => state.request(request).await,
+                                Err(_) => Err("desktop_busy".into()),
+                            },
                             Err(error) => Err(error.into()),
                         }
                     };
@@ -465,6 +479,24 @@ impl Drivers {
         {
             return Err("Invalid worker identifier".into());
         }
+        let mut turn = match request.turn {
+            Some((epoch, sequence)) => {
+                let mut stopped = self.stopped_turns.lock().unwrap();
+                let marker = stopped.entry((request.worker.clone(), epoch)).or_default();
+                if request.action == "cancelTurn" {
+                    marker.send_modify(|last| *last = (*last).max(sequence));
+                }
+                Some(Turn(sequence, marker.subscribe()))
+            }
+            None => None,
+        };
+        if request.action == "cancelTurn" {
+            return if turn.is_some() && self.locked.cancel_turn(&request.worker).await {
+                Ok(json!({"state": "stopped"}))
+            } else {
+                Err("Desktop turn stop could not be confirmed".into())
+            };
+        }
         #[cfg(test)]
         if request.action == "fixture-fail-start-cleanup" {
             FAIL_START_CLEANUP.store(true, Ordering::Relaxed);
@@ -581,6 +613,15 @@ impl Drivers {
         let mut bundle = Value::Null;
         let mut class = Value::Null;
         let mut observed = Value::Null;
+        let stopped = || {
+            finish(
+                json!(null),
+                json!(null),
+                "refused",
+                json!("turn_stopped"),
+                false,
+            )
+        };
         let unscoped_windows = request.action == "dispatch"
             && request.tool.as_deref() == Some("list_windows")
             && request
@@ -601,8 +642,15 @@ impl Drivers {
                 .as_ref()
                 .is_some_and(|args| args["fixture_screen_locked"] == true)
         };
-        if request.action == "dispatch" && !self.locked_use(&request.worker, screen_locked()).await
+        if request.action == "dispatch"
+            && !self
+                .locked
+                .gate(&request.worker, screen_locked(), turn.clone())
+                .await
         {
+            if Turn::stopped(&turn) {
+                return Ok(stopped());
+            }
             return Ok(finish(
                 bundle,
                 class,
@@ -719,7 +767,12 @@ impl Drivers {
             slots.entry(worker_id.clone()).or_default().clone()
         };
         let mut worker = if request.action == "dispatch" {
-            match timeout_at(deadline, slot.lock()).await {
+            let acquired = tokio::select! {
+                biased;
+                acquired = timeout_at(deadline, slot.lock()) => acquired,
+                _ = Turn::cancelled(&mut turn) => return Ok(stopped()),
+            };
+            match acquired {
                 Ok(worker) => worker,
                 Err(_) => {
                     return Ok(finish(
@@ -751,6 +804,9 @@ impl Drivers {
                     .await?
                 }
                 "dispatch" => {
+                    if Turn::stopped(&turn) {
+                        return Ok(Some(stopped()));
+                    }
                     if self.closing.load(std::sync::atomic::Ordering::SeqCst)
                         || self.unconfirmed.lock().unwrap().contains(&worker_id)
                     {
@@ -772,6 +828,9 @@ impl Drivers {
                         let live =
                             |held: &leases::Target| target::alive(&held.instance, held.window);
                         loop {
+                            if Turn::stopped(&turn) {
+                                return Ok(Some(stopped()));
+                            }
                             let taken = self.leases.lock().unwrap().acquire(
                                 &worker_id,
                                 todo,
@@ -809,6 +868,9 @@ impl Drivers {
                         )
                         .await?;
                     }
+                    if Turn::stopped(&turn) {
+                        return Ok(Some(stopped()));
+                    }
                     if screen_locked() {
                         return Ok(Some(finish(
                             bundle,
@@ -822,7 +884,12 @@ impl Drivers {
                         .arguments
                         .as_ref()
                         .is_some_and(|args| args["delivery_mode"] == "foreground");
-                    if foreground && !self.take_foreground(&worker_id, deadline).await {
+                    if foreground
+                        && !tokio::select! {
+                            available = self.take_foreground(&worker_id, deadline) => available,
+                            _ = Turn::cancelled(&mut turn) => return Ok(Some(stopped())),
+                        }
+                    {
                         return Ok(Some(finish(
                             bundle,
                             class,
@@ -878,7 +945,14 @@ impl Drivers {
                             false,
                         )));
                     }
-                    let Some(mut acting) = self.may_act(&worker_id).await else {
+                    let mut admission = self.may_act(&worker_id).await;
+                    if Turn::stopped(&turn) {
+                        if let Some(acting) = &mut admission {
+                            acting.settled = true;
+                        }
+                        return Ok(Some(stopped()));
+                    }
+                    let Some(mut acting) = admission else {
                         return Ok(Some(finish(
                             bundle,
                             class,
@@ -1018,8 +1092,9 @@ impl Drivers {
         true
     }
 
+    #[cfg(test)]
     async fn locked_use(&self, worker: &str, locked: bool) -> bool {
-        self.locked.gate(worker, locked).await
+        self.locked.gate(worker, locked, None).await
     }
 
     async fn may_act(&self, worker: &str) -> Option<locked_use::Acting> {
@@ -1153,6 +1228,7 @@ mod peer_tests {
         let directory = tempfile::tempdir().unwrap();
         let drivers = Drivers {
             workers: Mutex::new(BTreeMap::new()),
+            stopped_turns: StdMutex::default(),
             binary: PathBuf::new(),
             verification_path: String::new(),
             records: directory.path().into(),
@@ -1196,6 +1272,7 @@ mod peer_tests {
         }
         Drivers {
             workers: Mutex::new(BTreeMap::new()),
+            stopped_turns: StdMutex::default(),
             binary: PathBuf::new(),
             verification_path: String::new(),
             records: directory.path().into(),
@@ -1504,6 +1581,7 @@ mod peer_tests {
         let directory = tempfile::tempdir().unwrap();
         let drivers = Arc::new(Drivers {
             workers: Mutex::new(BTreeMap::new()),
+            stopped_turns: StdMutex::default(),
             binary: PathBuf::new(),
             verification_path: String::new(),
             records: directory.path().into(),

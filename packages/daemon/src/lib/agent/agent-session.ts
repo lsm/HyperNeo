@@ -82,6 +82,8 @@ import {
 } from './network-outage-pause.ts';
 import { runRateLimitManualCancel } from './rate-limit-manual-cancel.ts';
 import { runRateLimitManualRetry } from './rate-limit-manual-retry.ts';
+import { getDataDir } from '../data-dir.ts';
+import type { DesktopTurn } from '../desktop/host-dispatch.ts';
 
 export const RECENTLY_EXITED_ROOT_PID_RETENTION_MS = 15 * 60 * 1000;
 
@@ -379,26 +381,40 @@ export class AgentSession
     );
   }
 
+  private desktopTurn?: DesktopTurn;
+
   getOperationMcpServer(
-    inputOrigin?: () => { messageId: string } | null
+    inputOrigin?: () => { messageId: string } | null,
+    desktopTurn?: () => DesktopTurn | null
   ): ReturnType<typeof createOperationMcpServer> {
     const descriptionRole = this.operationCallerIdentity().role;
     const descriptionKey =
       descriptionRole === 'neo'
         ? JSON.stringify([descriptionRole, enabledOperationPacks(this.resolveOperationRegistry())])
         : descriptionRole;
-    if (!inputOrigin && this.operationMcpServer && this.operationMcpServerKey === descriptionKey)
+    const scoped = inputOrigin || desktopTurn;
+    if (!scoped && this.operationMcpServer && this.operationMcpServerKey === descriptionKey)
       return this.operationMcpServer;
     const server = createOperationMcpServer(
       () => this.resolveOperationRegistry(),
-      () => ({
-        ...this.operationCallerIdentity(),
-        consumedInputId: inputOrigin?.()?.messageId,
-      }),
+      (operation) => {
+        const turn =
+          operation === 'desktop.call' && desktopTurn
+            ? this.isInterruptInProgress()
+              ? null
+              : desktopTurn()
+            : undefined;
+        if (turn) this.desktopTurn = turn;
+        return {
+          ...this.operationCallerIdentity(),
+          consumedInputId: inputOrigin?.()?.messageId,
+          desktopTurn: turn,
+        };
+      },
       this.recordOperationRefusal,
       descriptionRole
     );
-    if (!inputOrigin) {
+    if (!scoped) {
       this.operationMcpServer = server;
       this.operationMcpServerKey = descriptionKey;
     }
@@ -1334,6 +1350,7 @@ export class AgentSession
   }): Promise<void> {
     this.interruptRequests += 1;
     this.interruptedAt = Date.now();
+    const desktopStop = this.desktopTurn?.cancel(getDataDir(), this.session.id);
     try {
       this.rateLimitWatchdog.cancel();
       this.networkPause.stop();
@@ -1349,6 +1366,8 @@ export class AgentSession
       }
 
       await this.interruptHandler.handleInterrupt(opts);
+      if ((await desktopStop) === false)
+        throw new Error('Desktop turn stop could not be confirmed');
     } finally {
       this.interruptRequests -= 1;
     }

@@ -76,7 +76,9 @@ export function createDesktopCallOperation(
         !!caller.role &&
         caller.role !== 'neo' &&
         caller.principal === undefined
-          ? { value: caller.sessionId! }
+          ? caller.desktopTurn === null || caller.desktopTurn?.stopped
+            ? refuse('turn_stopped')
+            : { value: caller.sessionId! }
           : refuse('desktop_worker_only'),
       'caller',
       'result:outcome'
@@ -101,7 +103,7 @@ export function createDesktopCallOperation(
     )
     .pipe(decideDesktopCall, 'facts', 'result:outcome')
     .pipe(
-      (input: z.infer<typeof Input>, binding: Binding) =>
+      (input: z.infer<typeof Input>, binding: Binding, caller: OperationCaller) =>
         dispatchDesktopCall(options.dataDir ?? getDataDir(), {
           worker: binding.worker,
           workDir: binding.workDir,
@@ -113,8 +115,9 @@ export function createDesktopCallOperation(
           tool: input.tool,
           arguments: input.args,
           callId: randomUUID(),
+          turn: caller.desktopTurn?.id,
         }),
-      ['input', 'outcome'],
+      ['input', 'outcome', 'caller'],
       'reply'
     )
     .pipe(

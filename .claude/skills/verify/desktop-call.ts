@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict';
+import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { once } from 'node:events';
 import { join, resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import catalog from '../../../packages/daemon/src/lib/desktop/tool-catalog.json' with { type: 'json' };
+import { DesktopTurn } from '../../../packages/daemon/src/lib/desktop/host-dispatch.ts';
 import { operationInvoke } from '../../../packages/daemon/tests/helpers/operation-mcp.ts';
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
 import { planSessionDoorCall } from '../../../packages/daemon/src/lib/messaging/session-door.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 
 const run = resolve(process.argv[2]);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -27,6 +31,7 @@ const app = await createDaemonApp({
 });
 assert(![8399, 8499].includes(app.server.port));
 const requests: Record<string, unknown>[] = [];
+const cancelTurn = Promise.withResolvers<() => void>();
 let hostBusy = false;
 let hostTimeout = false;
 let hostLocked = false;
@@ -41,6 +46,10 @@ const host = createServer(socket => {
     if (!line.includes('\n')) return;
     const request = JSON.parse(line);
     requests.push(request);
+    if (request.action === 'cancelTurn') {
+      cancelTurn.resolve(() => socket.end('{"ok":true,"result":{"state":"stopped"}}\n'));
+      return;
+    }
     if (hostBusy) {
       socket.end(JSON.stringify({ ok: false, error: 'desktop_busy' }) + '\n');
       return;
@@ -54,6 +63,12 @@ const host = createServer(socket => {
     socket.end(JSON.stringify({ ok: true, result: { call_id: request.callId, bundle_id: 'org.example.fixture', class: 'pointer', decision: 'allowed', dispatched: true, ...body } }) + '\n');
   });
 });
+const hub = new MessageHub({ defaultSessionId: 'global' });
+const transport = new WebSocketClientTransport({
+  url: `ws://127.0.0.1:${app.server.port}/ws`,
+  createSocket: (url) => createLocalSocket(url),
+});
+hub.registerTransport(transport);
 try {
   await app.jobProcessor.stop();
   host.listen(join(run, 'data/desktop/control.sock'));
@@ -181,7 +196,41 @@ try {
   assert.equal(requests.length, 11);
   writeFileSync(join(run, 'evidence/desktop-call.json'), JSON.stringify({ passed: true, hostRequests: requests.length, auditRows: audited.length, hostBusy: true, hostTimeout: true, blockedAllowed: true, pendingAllowed: true, currentPreferred: true, ambiguousRefused: true, blockedWithQueuedAllowed: true, finishedRefused: true, driverErrorBody: true, rpcRefused: true, sessionDoorRefused: true, spoofRefused: true, unlistedRefused: true, unapprovedRefused: true, noScopeRefused: true, siblingIsolated: true, siblingOwnScope: true, hostLocked: true, resumed: true, describedTools: listedTools.length }, null, 2));
   console.log(`desktop.call journey PASS host_requests=11 no_scope_refused=1 sibling_isolated=1 sibling_own_scope=1 host_busy=1 host_timeout=1 host_locked=1 resumed=1 initial_audit_rows=2 blocked_allowed=1 pending_allowed=1 current_preferred=1 ambiguous_refused=1 blocked_with_queued_allowed=1 finished_refused=1 driver_error_body=1 refused_paths=5 described_tools=${listedTools.length}`);
+
+  await transport.connect();
+  await agent.stateManager.setProcessing('fixture-input');
+  let turn = new DesktopTurn();
+  const invokeTurn = operationInvoke(agent.getOperationMcpServer(undefined, () => turn));
+  const dispatch = async () => JSON.parse((await invokeTurn({ name: 'desktop.call', input })).content[0].text);
+  assert.equal((await dispatch()).dispatched, true);
+  const first = requests.at(-1)!;
+  let stopSettled = false;
+  const stop = hub.request('operation.invoke', {
+    name: 'work.stop',
+    input: { ref: { adapter: 'hyperneo', id: worker } },
+  }).finally(() => { stopSettled = true; });
+  const acknowledge = await Promise.race([
+    cancelTurn.promise,
+    stop.then((response) => { throw new Error(`Work stop returned without Desktop acknowledgment: ${JSON.stringify(response)}`); }),
+  ]);
+  try {
+    assert.deepEqual(requests.at(-1), { action: 'cancelTurn', worker, turn: first.turn });
+    await delay(50);
+    assert.equal(stopSettled, false);
+  } finally {
+    acknowledge();
+  }
+  const stopped = await stop;
+  assert.deepEqual(stopped, { ok: true, value: { stopped: true } });
+  assert.deepEqual(await dispatch(), { ok: false, reason: 'turn_stopped', decision: 'refused', dispatched: false });
+  assert.equal(requests.length, 13);
+  turn = new DesktopTurn();
+  assert.equal((await dispatch()).dispatched, true);
+  assert.notDeepEqual(requests.at(-1)!.turn, first.turn);
+  writeFileSync(join(run, 'evidence/desktop-turn-stop.json'), JSON.stringify({ stopped, revokedTurnRefused: true, nextTurnDispatched: true, hostRequests: requests.length - 11 }, null, 2));
+  console.log('work.stop journey PASS stop_waited_for_host=1 revoked_turn_refused=1 next_turn_dispatched=1 host_requests=3');
 } finally {
+  await transport.close();
   await new Promise<void>(done => host.close(() => done()));
   await app.cleanup();
 }

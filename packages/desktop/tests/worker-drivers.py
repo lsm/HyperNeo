@@ -1094,7 +1094,7 @@ open(sys.argv[2], 'w').write(reply.decode())
         return started, exited
 
     def dispatch_turn(self, turn, **arguments):
-        params = {} if os.getenv('HYPERNEO_TURN_STOP_BASELINE') else {'turn': turn}
+        params = {} if os.getenv('HYPERNEO_TURN_STOP_BASELINE') else {'turn': ['fixture', turn]}
         reply = self.dispatch('list_windows', arguments, workDir=str(self.work), **params)
         self.assertTrue(reply['ok'], reply)
         return reply['result']
@@ -1105,7 +1105,7 @@ open(sys.argv[2], 'w').write(reply.decode())
 
     def cancel_turn(self, turn):
         baseline = os.getenv('HYPERNEO_TURN_STOP_BASELINE')
-        reply = self.call('cancelTurn', **({} if baseline else {'turn': turn}))
+        reply = self.call('cancelTurn', **({} if baseline else {'turn': ['fixture', turn]}))
         if not baseline:
             self.assertEqual(reply, {'ok': True, 'result': {'state': 'stopped'}})
 
@@ -1131,17 +1131,32 @@ open(sys.argv[2], 'w').write(reply.decode())
         print('owned: guardian exited; stopped turn refused; next turn dispatched')
 
     def test_turn_stop_cancels_queued_call_before_worker_slot_frees(self):
-        timeline = self.root / 'timeline'
+        _, exited = self.turn_guardian()
+        unavailable = self.root / 'permissions-missing'
+        unavailable.touch()
+        self.assertEqual(self.dispatch_turn(1, fixture_screen_locked=True)['reason'],
+                         'desktop_permissions_required')
+        unavailable.unlink()
+        self.work = self.work / 'slow'
+        self.work.mkdir()
         with ThreadPoolExecutor(max_workers=2) as pool:
-            first = pool.submit(self.dispatch_turn, 1, fixture_timeline=str(timeline))
-            wait_until(timeline.exists)
+            first = pool.submit(self.dispatch_turn, 1)
+            wait_until(lambda: bool(list(self.work.glob('d-*/d.starting'))))
+            release = next(self.work.glob('d-*/d.starting')).with_suffix('.release')
             queued = pool.submit(self.dispatch_turn, 1)
-            wait_until(lambda: self.call('fixture-slots')['result']['references'] == 3)
-            self.cancel_turn(1)
-            self.assert_turn_stopped(queued.result(timeout=5))
-            first.result(timeout=8)
+            try:
+                wait_until(lambda: self.call('fixture-slots')['result']['references'] == 3)
+                self.cancel_turn(1)
+                if os.getenv('HYPERNEO_TURN_STOP_BASELINE'):
+                    release.touch()
+                self.assert_turn_stopped(queued.result(timeout=3))
+                self.assertTrue(exited.exists())
+                self.assertFalse(first.done())
+            finally:
+                release.touch()
+            self.assert_turn_stopped(first.result(timeout=5))
         self.assertTrue(self.dispatch_turn(2)['dispatched'])
-        print('queued: stopped turn refused; next turn dispatched')
+        print('queued: refused before the slot freed; starting driver received no call; next turn dispatched')
 
     def test_unfiltered_window_listing_keeps_only_approved_apps(self):
         dock = int(subprocess.check_output(['/usr/bin/pgrep', '-x', 'Dock']).split()[0])
@@ -1473,6 +1488,7 @@ open(sys.argv[2], 'w').write(reply.decode())
                     # The saturated host replies and closes before reading a request.
                     reply = json.loads(client.makefile('rb').readline())
                     self.assertEqual(reply, {'ok': False, 'error': 'desktop_busy'})
+                self.cancel_turn(1)
             finally:
                 for marker in slow.glob('d-*/d.starting'):
                     marker.with_suffix('.release').touch()
@@ -1480,7 +1496,7 @@ open(sys.argv[2], 'w').write(reply.decode())
                     result = future.result(timeout=15)
                     self.assertTrue(result['ok'], result)
                     self.pids.append(result['result']['pid'])
-        print('saturated_host=desktop_busy')
+        print('saturated_host=desktop_busy turn_stop=accepted')
 
     def test_owner_approval_covers_all_actions_for_the_app(self):
         pid = finder()

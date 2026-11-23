@@ -1,6 +1,7 @@
 import type { OperationName } from '@hyperneo/shared/types/operation-names';
 import type { z } from 'zod';
 import type { SessionToolProfile } from '@hyperneo/shared/types/session-tool-choice';
+import type { DesktopTurn } from '../desktop/host-dispatch.ts';
 
 export type OperationCallerRole =
   | 'neo'
@@ -11,6 +12,7 @@ export type OperationCallerRole =
 
 export interface OperationCaller {
   readonly consumedInputId?: string;
+  readonly desktopTurn?: DesktopTurn | null;
   readonly clientId?: string;
   readonly source: 'rpc' | 'mcp' | 'internal';
   readonly principal?: string;
