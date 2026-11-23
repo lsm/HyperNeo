@@ -262,7 +262,10 @@ try {
   } else if (mode === 'settings-restart') {
     const turn = async (content: string, count: number) => {
       await hub.request('message.send', { sessionId: firstId, content });
-      await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.filter((row) => row.type === 'result').length === count && !first.queryPromise, content);
+      await waitFor(() => {
+        assert.deepEqual(errors, []);
+        return app!.db.getSDKMessages(firstId, 1000).messages.filter((row) => row.type === 'result').length === count && !first.queryPromise;
+      }, content);
     };
     await turn('Synthetic turn before resave', 1);
     const before = await liveHub(app);
@@ -281,11 +284,11 @@ try {
     assert.notEqual(await liveHub(app), before);
     assert.deepEqual(await hub.request('operation.invoke', { name: 'oxap.settings.save', input: { providerId: 'anthropic-codex', harness: 'oxap-codex', settings: { executable: 'codex' } } }), { accepted: false, reason: 'anthropic-codex needs an absolute executable path' });
     assert.deepEqual(await hub.request('operation.invoke', { name: 'oxap.settings.save', input: { providerId: 'anthropic-codex', harness: 'sdk' } }), { accepted: true });
-    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic turn after leaving OXAP' }).catch(() => {});
-    const refusal = 'This chat ran on OXAP Codex, which this provider no longer uses; start a new chat';
-    await waitFor(() => errors.includes(refusal), 'refusal after the provider left OXAP');
+    await turn('Synthetic turn after switching the default to Claude Code', 3);
+    assert.equal(servedConfig().adapters['anthropic-codex']?.executable, secondPeer);
+    assert.deepEqual(errors, []);
     assert.equal(app.db.getSession(firstId)?.config.harness, 'oxap-codex');
-    Object.assign(evidence, { port: app.server.port, resavedExecutable: secondPeer, hubRestartedOnSave: true, turnsAcrossRestart: 2, relativePathRefused: true, leftOxapRefusal: refusal, pass: true });
+    Object.assign(evidence, { port: app.server.port, resavedExecutable: secondPeer, hubRestartedOnSave: true, turnsAcrossRestart: 3, relativePathRefused: true, pass: true });
   } else if (mode === 'model-id') {
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic model selection' });
     await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'result') && !first.queryPromise, 'turn with a chosen model');

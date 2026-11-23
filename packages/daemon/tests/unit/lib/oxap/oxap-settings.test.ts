@@ -134,6 +134,9 @@ describe('oxap.settings.save', () => {
   it('puts the key in the hub environment only, named in the entry', async () => {
     const h = host({ keys: { 'synthetic-memory': 'sk-a' } });
     await h.run({ providerId: 'synthetic-memory', harness: 'oxap-synthetic' });
+    expect(await h.run({ providerId: 'synthetic-memory', harness: 'sdk' })).toEqual({
+      accepted: true,
+    });
     const next = await readHubOptions(h.deps);
     expect(next.hub.adapters['synthetic-memory']).toEqual({
       type: 'memory',
@@ -171,7 +174,7 @@ describe('oxap.settings.save', () => {
     });
   });
 
-  it('switches a provider back to Claude Code without installing anything', async () => {
+  it('keeps the configured adapter when a provider switches back to Claude Code', async () => {
     const h = host();
     await h.run({
       providerId: 'anthropic-codex',
@@ -182,9 +185,21 @@ describe('oxap.settings.save', () => {
     expect(await h.run({ providerId: 'anthropic-codex', harness: 'sdk' })).toEqual({
       accepted: true,
     });
-    expect(JSON.parse(h.records[0].configJson!)).toEqual({ models: ['m'] });
+    expect(JSON.parse(h.records[0].configJson!)).toEqual({
+      models: ['m'],
+      harnessSettings: { executable: '/c' },
+    });
+    expect(
+      await h.run({
+        providerId: 'anthropic-codex',
+        harness: 'sdk',
+        settings: { executable: '/updated-codex' },
+      })
+    ).toEqual({ accepted: true });
     expect(h.install).not.toHaveBeenCalled();
-    expect((await readHubOptions(h.deps)).hub.adapters).toEqual({});
+    expect((await readHubOptions(h.deps)).hub.adapters).toMatchObject({
+      'anthropic-codex': { executable: '/updated-codex' },
+    });
   });
 
   it('keeps other providers on the hub when one stored harness setting is broken', async () => {
