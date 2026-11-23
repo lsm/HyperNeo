@@ -17,3 +17,12 @@ check() {
 check $'unlock observed\nlock requested\nrelock observed\nended stopped' delayed
 check $'lock requested\nended stopped' capped
 echo 'guardian release check PASS (2 cases)'
+
+trace="$("$run/check-release" ax-trace)"
+printf '%s\n' "$trace"
+if ! [[ "$trace" == *'children:0 child_count:2'* && "$trace" == *'children:0 child_count:0'* &&
+        "$trace" == *'depth_limit:13'* ]]; then
+    echo 'guardian AX trace missing child counts or depth limit' >&2
+    exit 1
+fi
+echo 'guardian AX trace check PASS'

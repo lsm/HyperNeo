@@ -33,7 +33,14 @@ static void *fixtureSymbol(void *handle, const char *name) {
     return strcmp(name, "SACLockScreenImmediate") == 0 ? (void *)fixtureLock : NULL;
 }
 
+static AXError fixtureAttribute(AXUIElementRef item, CFStringRef attribute, CFTypeRef *value) {
+    if (!CFEqual(attribute, kAXChildrenAttribute)) return kAXErrorNoValue;
+    *value = CFRetain(item);
+    return kAXErrorSuccess;
+}
+
 #define CGSessionCopyCurrentDictionary fixtureSession
+#define AXUIElementCopyAttributeValue fixtureAttribute
 #define dlopen fixtureFramework
 #define dlsym fixtureSymbol
 #define main guardianMain
@@ -42,6 +49,14 @@ static void *fixtureSymbol(void *handle, const char *name) {
 
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
+        if (argc == 2 && strcmp(argv[1], "ax-trace") == 0) {
+            NSArray *chain = @[];
+            for (int i = 0; i < 13; i++) chain = @[chain];
+            NSMutableString *trace = [NSMutableString string];
+            if (find((__bridge AXUIElementRef)@[@[], chain], @"fixture", 0, trace)) return 5;
+            say(trace);
+            return 0;
+        }
         Guardian *guardian = [Guardian new];
         guardian.socketPath = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
         guardian.allowAnswered = YES;
