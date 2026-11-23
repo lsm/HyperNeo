@@ -15,7 +15,9 @@ const [mode, binary] = process.argv.slice(2, -1);
 const initializeRequiresAuth = mode === 'start-init-auth';
 const lateBatch = mode === 'resume-late-batch';
 const lateClose = mode === 'resume-late-close';
-const resumeFixture = mode === 'resume' || lateBatch || lateClose;
+const stopRace = mode === 'stop-race';
+const stopFixture = mode === 'stop' || stopRace;
+const resumeFixture = mode === 'resume' || lateBatch || lateClose || stopFixture;
 const healthyStart = mode === 'start' || resumeFixture;
 const startFixture = healthyStart || initializeRequiresAuth;
 assert(startFixture || ['fixture', 'absent', 'signed-out', 'start-signed-out'].includes(mode));
@@ -80,9 +82,17 @@ for await (const line of createInterface({input: process.stdin})) {
     assert.deepEqual(params,{sessionId,prompt:[{type:'text',text:resumed ? 'Continue the greeting.' : 'Reply with a greeting.'}]});
     promptId = id;
     emit({id:'permission-1',method:'session/request_permission',params:{sessionId,options:[],toolCall:{toolCallId:'tool'}}});
+  } else if (method === 'session/cancel') {
+    assert(resumed && ${stopFixture});
+    assert.equal(id,undefined);
+    assert.deepEqual(params,{sessionId});
+    while (!existsSync(${JSON.stringify(releaseFollowUp)})) await Bun.sleep(25);
+    if (${stopRace}) note(sessionId,'Hello again');
+    emit({id:promptId,result:{stopReason:${JSON.stringify(stopRace ? 'end_turn' : 'cancelled')}}});
   } else {
     assert.equal(id,'permission-1');
     assert.deepEqual(result,{outcome:{outcome:'cancelled'}});
+    if (resumed && ${stopFixture}) continue;
     const release = resumed ? ${JSON.stringify(releaseFollowUp)} : ${JSON.stringify(release)};
     while (!existsSync(release)) await Bun.sleep(25);
     note('other-session','Wrong session');
@@ -222,6 +232,13 @@ try {
       const foreign = (await find()).find((item) => item.ref.id === 'foreign');
       assert(foreign);
       assert.equal(foreign.place.folder, undefined);
+      const stop = (id: string) => rpc<Result<{stopped: boolean}>>('work.stop', { ref: { adapter, id } });
+      if (stopFixture) {
+        const idle = await stop(started.value.ref.id);
+        assert(idle.ok && !idle.value.stopped, JSON.stringify(idle));
+        const unrelated = await stop(foreign.ref.id);
+        assert(!unrelated.ok && unrelated.reason === 'not_found' && unrelated.notSent);
+      }
       if (resumeFixture) {
         const refused = await send(foreign.ref.id);
         assert(!refused.ok && refused.reason === 'not_started_by_us' && refused.notSent);
@@ -241,26 +258,55 @@ try {
         assert.equal(activeFollowUp.value.inputEvidence?.state, 'pending');
         const busy = await send(started.value.ref.id);
         assert(!busy.ok && busy.reason === 'busy' && busy.notSent);
-        writeFileSync(releaseFollowUp, '');
+        if (stopFixture) {
+          assert(registered?.capabilities.includes('stop'));
+          let reports = 0;
+          const stopping = [1, 2].map(async () => {
+            const result = await stop(started.value.ref.id);
+            reports += 1;
+            return result;
+          });
+          const cancelDeadline = Date.now() + 5_000;
+          while (!readFileSync(journal, 'utf8').includes('"session/cancel"') && Date.now() < cancelDeadline)
+            await Bun.sleep(25);
+          assert(readFileSync(journal, 'utf8').includes('"session/cancel"'));
+          assert.equal(reports, 0);
+          const duringCancel = await readFollowUp();
+          assert(duringCancel.ok && duringCancel.value.status === 'running');
+          writeFileSync(releaseFollowUp, '');
+          for (const result of await Promise.all(stopping))
+            assert(result.ok && result.value.stopped === !stopRace, JSON.stringify(result));
+        } else writeFileSync(releaseFollowUp, '');
         const followUpDeadline = Date.now() + 5_000;
         let followUp = await readFollowUp();
         while (followUp.ok && followUp.value.status === 'running' && Date.now() < followUpDeadline) {
           await Bun.sleep(25);
           followUp = await readFollowUp();
         }
-        assert(followUp.ok && followUp.value.status === 'done');
-        assert.equal(followUp.value.lastReply, 'Hello again');
-        assert.deepEqual(followUp.value.turnEnds?.map(({ message }) => message), ['Hello again']);
+        const cancelled = stopFixture && !stopRace;
+        assert(followUp.ok && followUp.value.status === (cancelled ? 'stopped' : 'done'));
+        assert.equal(followUp.value.lastReply, cancelled ? undefined : 'Hello again');
+        assert.deepEqual(followUp.value.turnEnds?.map(({ message }) => message), [cancelled ? '' : 'Hello again']);
         const input = followUp.value.inputEvidence;
-        assert(input?.state === 'observed');
+        assert(input);
         assert.deepEqual(input.receipt, sent.value.receipt);
-        assert.deepEqual(input.exchange.map(({ role, text }) => [role, text]), [
-          ['user', 'Continue the greeting.'], ['agent', 'Hello again'],
-        ]);
+        if (cancelled) assert.equal(input.state, 'unavailable');
+        else {
+          assert(input.state === 'observed');
+          assert.deepEqual(input.exchange.map(({ role, text }) => [role, text]), [
+            ['user', 'Continue the greeting.'], ['agent', 'Hello again'],
+          ]);
+        }
+        if (stopFixture) {
+          const idle = await stop(started.value.ref.id);
+          assert(idle.ok && !idle.value.stopped);
+        }
         const resumedRequests = readFileSync(journal, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
-        assert.deepEqual(resumedRequests.map(({ method }) => method).slice(-5), [
-          'initialize', 'session/resume', 'session/prompt', undefined, 'session/close',
-        ]);
+        const expected = [
+          'initialize', 'session/resume', 'session/prompt', undefined,
+          ...(stopFixture ? ['session/cancel'] : []), 'session/close',
+        ];
+        assert.deepEqual(resumedRequests.map(({ method }) => method).slice(-expected.length), expected);
         results.resumed = followUp;
       }
     }
