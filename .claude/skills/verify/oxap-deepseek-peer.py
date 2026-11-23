@@ -51,7 +51,10 @@ for line in sys.stdin:
         if use_lease and lease is None:
             assert acquire_lease(session_id)
         blocks = request["params"]["contentBlocks"]
-        after_restart = {"type": "text", "text": "Message after hub restart"} in blocks
+        after_restart = any(
+            block.get("text") in ("Message after hub restart", "Verify model after hub restart")
+            for block in blocks
+        )
         turn_id = 2 if after_restart else 1
         user_message = {
             "id": f"user-{turn_id}", "role": "user", "source": {"kind": "user"},
@@ -77,7 +80,10 @@ for line in sys.stdin:
         reply = "Synthetic DeepSeek reply after restart" if after_restart else "Synthetic DeepSeek reply"
         if any(block.get("text", "").startswith("Verify model") for block in user_message["content"]):
             images = [block for block in user_message["content"] if block["type"] == "image"]
-            reply = json.dumps({"model": model, "images": images}, separators=(",", ":"))
+            details = {"model": model, "images": images}
+            if after_restart:
+                details["reopened"] = True
+            reply = json.dumps(details, separators=(",", ":"))
         event(5, "assistant/message", {
             "message": {
                 "id": f"assistant-{turn_id}", "role": "assistant",
