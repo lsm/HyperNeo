@@ -68,17 +68,24 @@ test "$(git -C "$recorded_tree" rev-parse HEAD)" = "$recorded_tip"
 test "$(git -C "$repo" rev-parse "$recorded_branch")" = "$recorded_tip"
 echo 'PASS: Neo operation restored the recorded branch tip (1 session)'
 
+verify_default_restore() {
+  local label="$1" folder="$2" branch="$3" ref="$4" id params tree
+  id=$(create_archive "$label" "$folder")
+  params=$(jq -nc --arg id "$id" '{sessionId:$id}')
+  rpc rpc:session.unarchive "$params" > "$out/$label-unarchive.json"
+  jq -e --arg branch "$branch" '.reply.success and .reply.worktreeBaseBranch == $branch' "$out/$label-unarchive.json"
+  rpc rpc:session.get "$params" > "$out/$label-restored.json"
+  tree=$(jq -er '.reply.session | select(.status == "active" and .archivedAt == null) | .worktree.worktreePath' "$out/$label-restored.json")
+  test "$(git -C "$tree" rev-parse HEAD)" = "$(git -C "$folder" rev-parse "$ref")"
+  printf 'PASS: archived RPC session restored on %s without dev (1 session)\n' "$branch"
+}
+
 main_repo="$RUN/Main"
 init_repo "$main_repo" main
-main_id=$(create_archive 'Main fallback' "$main_repo")
-main_params=$(jq -nc --arg id "$main_id" '{sessionId:$id}')
-rpc rpc:session.unarchive "$main_params" > "$out/main-unarchive.json"
-jq -e '.reply.success and .reply.worktreeBaseBranch == "main"' "$out/main-unarchive.json"
-rpc rpc:session.get "$main_params" > "$out/main-restored.json"
-main_tree=$(jq -er '.reply.session | select(.status == "active" and .archivedAt == null) | .worktree.worktreePath' "$out/main-restored.json")
-test "$(git -C "$main_tree" rev-parse HEAD)" = "$(git -C "$main_repo" rev-parse main)"
-echo 'PASS: archived RPC session restored on main without dev (1 session)'
-
+verify_default_restore 'Main fallback' "$main_repo" main refs/heads/main
+git -C "$main_repo" update-ref refs/remotes/origin/stable "$(git -C "$main_repo" rev-parse main)"
+git -C "$main_repo" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/stable
+verify_default_restore 'Remote fallback' "$main_repo" origin/stable refs/remotes/origin/stable
 
 desktop=$(create_archive 'Desktop restore')
 phone=$(create_archive 'Phone restore')

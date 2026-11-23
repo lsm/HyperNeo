@@ -657,15 +657,14 @@ export class SessionLifecycle {
     let worktreeBaseBranch: string | undefined;
     if (worktree && !(await this.worktreeManager.verifyWorktree(worktree))) {
       const { branch, mainRepoPath } = worktree;
-      worktreeBaseBranch = (await this.worktreeManager.checkBranchExists(mainRepoPath, branch))
-        ? branch
-        : 'dev';
+      const base = await this.worktreeManager.resolveUnarchiveBase(mainRepoPath, branch);
+      worktreeBaseBranch = base.branch;
       worktree =
         (await this.worktreeManager.createWorktree({
           sessionId: session.id,
           repoPath: mainRepoPath,
           branchName: `session/restored-${generateUUID()}`,
-          baseBranch: `refs/heads/${worktreeBaseBranch}`,
+          baseBranch: base.ref,
         })) ?? undefined;
       if (!worktree) throw new Error('Could not recreate the archived worktree');
     }

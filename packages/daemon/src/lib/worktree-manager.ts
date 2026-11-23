@@ -744,7 +744,7 @@ export class WorktreeManager {
       });
   }
 
-  async checkBranchExists(repoPath: string, branchName: string): Promise<boolean> {
+  private async checkBranchExists(repoPath: string, branchName: string): Promise<boolean> {
     try {
       const git = this.getGit(repoPath);
       const result = await git.raw(['branch', '--list', branchName]);
@@ -752,6 +752,29 @@ export class WorktreeManager {
     } catch {
       return false;
     }
+  }
+
+  async resolveUnarchiveBase(repoPath: string, recordedBranch: string) {
+    for (const branch of [recordedBranch, 'dev']) {
+      if (await this.checkBranchExists(repoPath, branch)) {
+        return { branch, ref: `refs/heads/${branch}` };
+      }
+    }
+
+    const defaultBranch = await this.getDefaultBranch(repoPath);
+    if (defaultBranch !== 'HEAD') {
+      if (await this.checkBranchExists(repoPath, defaultBranch)) {
+        return { branch: defaultBranch, ref: `refs/heads/${defaultBranch}` };
+      }
+      const branch = `origin/${defaultBranch}`;
+      const ref = `refs/remotes/${branch}`;
+      try {
+        await this.getGit(repoPath).revparse(['--verify', ref]);
+        return { branch, ref };
+      } catch {}
+    }
+
+    return { branch: (await this.getCurrentBranch(repoPath)) ?? 'HEAD', ref: 'HEAD' };
   }
 
   async resolveMainRepoPath(worktreePath: string): Promise<string | null> {
