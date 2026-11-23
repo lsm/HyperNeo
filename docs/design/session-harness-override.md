@@ -59,8 +59,8 @@ The hub registers one adapter per provider id, built only from providers whose
    that already holds it. A row whose required key (`row.key`, such as
 `DEEPSEEK_API_KEY`) is missing is not configured, so the dialog disables it and
 creation refuses it, instead of failing at the first run. The provider card
-shows the retained executable field whenever a configured harness exists, even
-while the default is `sdk`, so a stale path can be fixed without flipping the
+shows the retained executable field whenever executable settings are saved,
+whether or not the key is set and even while the default is `sdk`, so a stale path can be fixed without flipping the
 default.
 2. **Existing chats survive a default change.** `openGate` refuses to reopen a
    chat whose harness differs from the provider's current default ("no longer
