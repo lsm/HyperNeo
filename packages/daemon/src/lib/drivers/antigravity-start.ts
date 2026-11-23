@@ -5,6 +5,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { JsonRpcRequestTimeoutError, ProcessJsonRpcTransport } from '../process-json-rpc.ts';
 import { buildSafeProcessEnv } from '../safe-process-env.ts';
+import { compactAntigravity } from './antigravity-compact.ts';
 import { selectLocalStartFolder } from './start-folder.ts';
 import type {
   StartRequest,
@@ -117,10 +118,11 @@ export function createAntigravityStart(
   readOwnedFolder: (id: string) => Promise<string | undefined> = async () => undefined
 ) {
   const running = new Set<ProcessJsonRpcTransport>();
+  const compactions = new Map<AbortController, ReturnType<typeof compactAntigravity>>();
   const activePrompts = new Map<string, CancelPrompt>();
   const sessions = new Map<string, WorkDetail>();
   const completed = new Set<string>();
-  const resuming = new Set<string>();
+  const reserved = new Set<string>();
   let closing = false;
 
   const selectFolder = (request: StartRequest): Gate<string> => {
@@ -333,7 +335,7 @@ export function createAntigravityStart(
 
   const launch = async (opened: Opened, request: StartRequest): Promise<Result<WorkStarted>> => {
     const { id } = opened;
-    if (closing || sessions.has(id) || resuming.has(id)) {
+    if (closing || sessions.has(id) || reserved.has(id)) {
       await opened.close();
       return reject('not_delivered', 'Antigravity could not establish a new owned session.', true);
     }
@@ -364,18 +366,25 @@ export function createAntigravityStart(
       : { reason: reject('not_started_by_us', 'Choose a session started by HyperNeo.', true) };
   };
 
-  const resume = async (
-    ref: WorkRef,
-    cwd: string,
-    message: string
-  ): Promise<Result<WorkDelivery>> => {
-    const { id } = ref;
+  const withIdleWorker = async <Value>(
+    id: string,
+    run: (previous: WorkDetail | undefined) => Promise<Result<Value>>
+  ): Promise<Result<Value>> => {
     const previous = sessions.get(id);
-    if (resuming.has(id) || previous?.status === 'running')
+    if (reserved.has(id) || previous?.status === 'running')
       return reject('busy', 'Antigravity is already working in this session.', true);
     if (closing) return reject('unreachable', 'The Antigravity driver is shutting down.', true);
-    resuming.add(id);
+    reserved.add(id);
     try {
+      return await run(previous);
+    } finally {
+      reserved.delete(id);
+    }
+  };
+
+  const resume = (ref: WorkRef, cwd: string, message: string) =>
+    withIdleWorker<WorkDelivery>(ref.id, async (previous) => {
+      const { id } = ref;
       const opened = await connect(cwd, id);
       if (!opened.value) return opened.reason;
       if (closing) {
@@ -389,10 +398,7 @@ export function createAntigravityStart(
       };
       launchTurn(opened.value, target, message, receipt);
       return { ok: true, value: { delivered: false, unconfirmed: true, receipt } };
-    } finally {
-      resuming.delete(id);
-    }
-  };
+    });
 
   const send = (superpipe({})('antigravity-send') as PipelineAPI)
     .input(['ref', 'message'])
@@ -400,6 +406,25 @@ export function createAntigravityStart(
     .pipe(requireDirectory, 'delivery', 'result:delivery')
     .pipe(resume, ['ref', 'delivery', 'message'], 'delivery')
     .endAsync('delivery') as (ref: WorkRef, message: string) => Promise<Result<WorkDelivery>>;
+
+  const compactIdle = (ref: WorkRef, cwd: string) =>
+    withIdleWorker<{ compacted: boolean }>(ref.id, async () => {
+      const abort = new AbortController();
+      const pending = compactAntigravity(executable, cwd, ref.id, abort.signal);
+      compactions.set(abort, pending);
+      try {
+        return await pending;
+      } finally {
+        compactions.delete(abort);
+      }
+    });
+
+  const compact = (superpipe({})('antigravity-compact') as PipelineAPI)
+    .input(['ref'])
+    .pipe(ownedFolder, 'ref', 'result:compaction')
+    .pipe(requireDirectory, 'compaction', 'result:compaction')
+    .pipe(compactIdle, ['ref', 'compaction'], 'compaction')
+    .endAsync('compaction') as (ref: WorkRef) => ReturnType<typeof compactAntigravity>;
 
   const selectPrompt = (ref: WorkRef): Gate<CancelPrompt | null> =>
     ref.adapter === adapter && sessions.has(ref.id)
@@ -446,9 +471,14 @@ export function createAntigravityStart(
     send,
     status,
     stop,
+    compact,
     async close() {
       closing = true;
-      await Promise.all([...running].map((transport) => transport.close()));
+      for (const abort of compactions.keys()) abort.abort();
+      await Promise.all([
+        ...[...running].map((transport) => transport.close()),
+        ...compactions.values(),
+      ]);
     },
   };
 }

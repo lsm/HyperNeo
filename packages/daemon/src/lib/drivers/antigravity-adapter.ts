@@ -172,7 +172,7 @@ export function createAntigravityAdapter(
     ...control,
     readTurns: createAntigravityHistory(executable, readOwnedFolder),
     id: ADAPTER,
-    capabilities: ['find', 'start', 'status', 'send', 'stop'],
+    capabilities: ['find', 'start', 'status', 'send', 'stop', 'compact'],
     async find(query) {
       if (query.spaceId) return [];
       const ownedFolders = new Map(
