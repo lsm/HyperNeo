@@ -30,8 +30,6 @@ describe('markdown-image admission', () => {
       'JaVaScRiPt:alert(1)',
       'vbscript:m(1)',
       'ftp://e.com/a.png',
-      'DATA:IMAGE/PNG;base64,iVBORw0KGgo=',
-      'data:text/html;base64,PGI+',
       'mailto:user@example.com',
     ];
     for (const src of srcs) {
@@ -65,14 +63,14 @@ describe('markdown-image admission', () => {
     });
   });
 
-  it('gateSchemeAllowed rejects data images', () => {
+  it('gateSchemeAllowed replaces data URLs with a short image label', () => {
     expect(
-      gateSchemeAllowed({ src: 'data:image/png;base64,iVBORw0KGgo=', alt: '', title: '' })
+      gateSchemeAllowed({ src: 'DATA:IMAGE/PNG;base64,iVBORw0KGgo=', alt: 'chart', title: '' })
     ).toEqual({
-      reason: { kind: 'downgrade', text: '![](data:image/png;base64,iVBORw0KGgo=)' },
+      reason: { kind: 'downgrade', text: '[image: chart]' },
     });
     expect(gateSchemeAllowed({ src: 'data:text/html,hi', alt: '', title: '' })).toEqual({
-      reason: { kind: 'downgrade', text: '![](data:text/html,hi)' },
+      reason: { kind: 'downgrade', text: '[image]' },
     });
   });
 

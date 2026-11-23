@@ -29,6 +29,9 @@ export function isAllowedMarkdownUrl(url: string, kind: 'link' | 'image') {
 }
 
 function toDowngrade(candidate: MarkdownImageCandidate): MarkdownImageAdmission {
+  if (urlScheme(candidate.src) === 'data') {
+    return { kind: 'downgrade', text: candidate.alt ? `[image: ${candidate.alt}]` : '[image]' };
+  }
   const title = candidate.title ? ` "${candidate.title}"` : '';
   return { kind: 'downgrade', text: `![${candidate.alt}](${candidate.src}${title})` };
 }

@@ -424,7 +424,7 @@ describe('MarkdownRenderer', () => {
         <MarkdownRenderer content={'![html](data:text/html;base64,PGI+aGk8L2I+)'} />
       );
       await waitFor(() => {
-        expect(container.textContent).toContain('data:text/html');
+        expect(container.textContent).toBe('[image: html]');
       });
       expect(container.querySelector('img')).toBeFalsy();
     });
