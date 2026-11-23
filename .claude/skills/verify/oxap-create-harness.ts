@@ -38,8 +38,8 @@ const transport = new WebSocketClientTransport({
 });
 const codex = { provider: 'anthropic-codex', model: OXAP_CODEX_MODEL };
 const deepseek = { provider: 'deepseek', model: 'deepseek-v4-pro' };
-const evidence: { creations: string[]; refusals: string[]; clones: string[] } = {
-  creations: [], refusals: [], clones: [],
+const evidence: { creations: string[]; refusals: string[]; clones: string[]; cloneRefusals: string[] } = {
+  creations: [], refusals: [], clones: [], cloneRefusals: [],
 };
 
 try {
@@ -113,6 +113,17 @@ try {
 
   unlinkSync(executable);
   await refuse('Executable removed', codex, 'oxap-codex', /needs an executable file/);
+  const beforeClone = app.db.listSessions().length;
+  const rejectedClone = await hub.request('operation.invoke', {
+    name: 'session.clone.spawn', input: { parentSessionId: oxap, title: 'Refused clone' },
+  });
+  assert.deepEqual(rejectedClone, {
+    accepted: false,
+    reason: 'harness_unsupported',
+    message: 'anthropic-codex needs an executable file; check Settings → Providers',
+  });
+  assert.equal(app.db.listSessions().length, beforeClone);
+  evidence.cloneRefusals.push('Executable removed');
   copyFileSync(binary, executable);
   unlinkSync(app.settingsManager.getGlobalSettings().oxapHub!.path);
   await refuse('Installed hub removed', codex, 'oxap-codex', /OXAP hub is not installed/);
