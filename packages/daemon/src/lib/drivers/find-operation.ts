@@ -115,7 +115,7 @@ export function selectFindAdapters(input: FindInput, deps: FindWorkDeps): WorkAd
 
 export function toFindQuery(input: FindInput): FindQuery {
   return input.id
-    ? { folder: input.folder, spaceId: input.spaceId, includeClosed: true, limit: 50 }
+    ? { id: input.id, folder: input.folder, spaceId: input.spaceId, includeClosed: true, limit: 50 }
     : {
         ...(input.idPrefix ? { idPrefix: input.idPrefix } : {}),
         text: input.text,
