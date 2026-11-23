@@ -8,6 +8,7 @@ import {
 } from '../../drivers/worker-input-delivery.ts';
 import { neoUserFolder } from '../../neo/folder.ts';
 import { createWorkerNameSource } from '../../drivers/worker-names.ts';
+import { createCursorDiscovery } from '../../drivers/cursor-discovery.ts';
 import { PACKAGE_DOWNLOAD_WAIT_MS } from '../../agent/npm-package-download.ts';
 import { findExecutable } from '../../drivers/find-executable.ts';
 import { createAntigravityAdapter } from '../../drivers/antigravity-adapter.ts';
@@ -553,6 +554,9 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     });
   const db = () => context.deps.db.getDatabase();
   const machine = hostname();
+  const cursorPath =
+    findExecutable('cursor-agent') ??
+    findExecutable('cursor-agent', join(homedir(), '.local', 'bin'));
   const recentVectors = new Map<string, { at: number; semantic: ReturnType<typeof embedQuery> }>();
   const recentSearches = new Map<
     string,
@@ -677,6 +681,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     }),
     ...codex(),
     ...(antigravity ? [antigravity] : []),
+    ...(cursorPath ? [createCursorDiscovery(cursorPath, homedir(), machine)] : []),
     ...desktop,
     ...claudeCodeAdapters(
       searchChats,
