@@ -3,6 +3,7 @@ import { readHyperneoTurnEnds } from './hyperneo-turn-ends-read.ts';
 import { readHyperneoTurnFacts } from './hyperneo-turn-facts-read.ts';
 import { readClaudeDesktopRecordFiles } from './claude-desktop-read.ts';
 import { readCodexSnapshot } from './codex-desktop-read.ts';
+import { cursorWorkspaceFolder } from './cursor-desktop-path.ts';
 import { countPendingTurns, readPendingTurns } from './turn-vectors.ts';
 import { readMessageFacts } from '../lib/neo/message-status.ts';
 import { readMessageFeed } from './sdk-message-feed-read.ts';
@@ -43,8 +44,11 @@ function readCursorDesktop({ statePath, query }: CursorDesktopRead, readonlyUri 
       .get();
     if (!index) return [];
     const text = query.text?.toLowerCase() ?? '';
-    return app
-      .prepare(`
+    const windows = process.platform === 'win32';
+    const folderFilter = windows ? query.folder?.toLowerCase() : query.folder;
+    const matches: CursorDesktopSession[] = [];
+    const rows = app
+      .prepare<CursorDesktopSession & { marshalled: number | null }>(`
       WITH headers AS (
         SELECT composerId AS id, isArchived AS archived, COALESCE(recency, 0) AS updatedAt,
                CASE WHEN json_valid(CAST(value AS TEXT)) THEN CAST(value AS TEXT) ELSE '{}' END AS header
@@ -55,26 +59,32 @@ function readCursorDesktop({ statePath, query }: CursorDesktopRead, readonlyUri 
         SELECT id,
                COALESCE(NULLIF(trim(json_extract(header, '$.name')), ''), 'Untitled Cursor session') AS title,
                json_extract(header, '$.workspaceIdentifier.uri.path') AS folder,
+               json_extract(header, '$.workspaceIdentifier.uri."$mid"') AS marshalled,
                updatedAt, archived
           FROM headers
          WHERE json_extract(header, '$.workspaceIdentifier.uri.scheme') = 'file'
            AND COALESCE(json_extract(header, '$.workspaceIdentifier.uri.authority'), '') = ''
       )
-      SELECT id, title, folder, updatedAt, archived FROM sessions
+      SELECT id, title, folder, marshalled, updatedAt, archived FROM sessions
        WHERE typeof(id) = 'text' AND id <> '' AND typeof(folder) = 'text'
-         AND instr(id, ?) = 1 AND folder = COALESCE(?, folder)
-         AND (instr(lower(title), ?) OR instr(lower(folder), ?))
-       ORDER BY updatedAt DESC, id LIMIT ?
+         AND instr(id, ?) = 1
+       ORDER BY updatedAt DESC, id
     `)
-      .all(
-        Number(query.includeClosed),
-        query.id ?? null,
-        query.idPrefix ?? '',
-        query.folder ?? null,
-        text,
-        text,
-        query.limit
-      ) as CursorDesktopSession[];
+      .iterate(Number(query.includeClosed), query.id ?? null, query.idPrefix ?? '');
+    for (const { folder: path, marshalled, ...session } of rows) {
+      if (matches.length >= query.limit) break;
+      const folder = cursorWorkspaceFolder(path, marshalled === 1, windows);
+      if (!folder || (folderFilter && (windows ? folder.toLowerCase() : folder) !== folderFilter))
+        continue;
+      if (
+        text &&
+        !session.title.toLowerCase().includes(text) &&
+        !folder.toLowerCase().includes(text)
+      )
+        continue;
+      matches.push({ ...session, folder });
+    }
+    return matches;
   } catch (error) {
     if (readonlyUri || !/unable to open database file|readonly database/.test(String(error)))
       throw error;

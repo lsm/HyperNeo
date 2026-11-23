@@ -106,6 +106,9 @@ try {
   assert.deepEqual((await find({ includeClosed: true, limit: 1 })).map(({ ref }) => ref.id), [
     'desktop-archived',
   ]);
+  assert.deepEqual((await find({ includeClosed: true, text: 'native desktop', limit: 1 })).map(({ ref }) => ref.id), [
+    'desktop-open',
+  ]);
   assert.deepEqual((await find({ id: 'desktop-open', limit: 1 })).map(({ ref }) => ref.id), [
     'desktop-open',
   ]);
