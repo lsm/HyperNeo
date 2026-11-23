@@ -164,11 +164,16 @@ export function createAntigravityAdapter(
   machine: string,
   readOwnedFolders: ReadOwnedFolders = async () => []
 ): WorkAdapter & { close: () => Promise<void> } {
-  const control = createAntigravityStart(executable, machine, ADAPTER);
+  const control = createAntigravityStart(
+    executable,
+    machine,
+    ADAPTER,
+    async (id) => (await readOwnedFolders(ADAPTER)).find(([sessionId]) => sessionId === id)?.[1]
+  );
   return {
     ...control,
     id: ADAPTER,
-    capabilities: ['find', 'start', 'status'],
+    capabilities: ['find', 'start', 'status', 'send'],
     async find(query) {
       if (query.spaceId) return [];
       const ownedFolders = new Map(
