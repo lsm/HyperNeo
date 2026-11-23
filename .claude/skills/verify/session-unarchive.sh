@@ -32,9 +32,9 @@ create_archive() {
   checkout=$(rpc rpc:session.get "$params" | jq -e '.reply.session.worktree')
   jq -e '.branch' <<< "$checkout" > "$out/$title-branch.json"
   worktree=$(jq -er '.worktreePath' <<< "$checkout")
-  test -d "$worktree"
+  test -d "$worktree" || return 1
   rpc rpc:session.archive "$params" | jq -e '.reply | select(.success)' > "$out/$title-archive.json"
-  test ! -e "$worktree"
+  test ! -e "$worktree" || return 1
   printf '%s\n' "$id"
 }
 
