@@ -171,6 +171,7 @@ export function createAntigravityAdapter(
   return {
     ...control,
     readTurns: createAntigravityHistory(executable, readOwnedFolder),
+    supportsStartEffort: true,
     id: ADAPTER,
     capabilities: ['find', 'start', 'status', 'send', 'stop', 'compact'],
     async find(query) {

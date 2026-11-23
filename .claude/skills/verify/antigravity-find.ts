@@ -29,7 +29,10 @@ const longHistory = mode === 'history-long';
 const historyFixture = mode === 'history' || longHistory;
 const compactUnconfirmed = mode === 'compact-unconfirmed';
 const compactFixture = mode === 'compact' || compactUnconfirmed;
-const healthyStart = mode === 'start' || resumeFixture || historyFixture || compactFixture;
+const configUnsupported = mode === 'config-unsupported';
+const configUnconfirmed = mode === 'config-unconfirmed';
+const configFixture = mode === 'config' || configUnsupported || configUnconfirmed;
+const healthyStart = mode === 'start' || resumeFixture || historyFixture || compactFixture || configFixture;
 const startFixture = healthyStart || initializeRequiresAuth;
 assert(startFixture || ['fixture', 'absent', 'signed-out', 'start-signed-out'].includes(mode));
 assert.equal(process.env.NODE_ENV, 'test');
@@ -88,6 +91,19 @@ const chunk = (id, text, role='agent') => ({method:'session/update',params:{sess
 const note = (id, text) => emit(chunk(id, text));
 let promptId;
 let resumed = false;
+let model = 'model-default';
+let effort = 'high';
+const choices = (values) => values.map(value=>({value,name:value}));
+const configOptions = () => [
+  {
+    id:'active-model',category:'model',type:'select',currentValue:model,
+    options:[{group:'available',options:choices(['model-default','model-alt'])}],
+  },
+  {
+    id:'reasoning',category:'thought_level',type:'select',currentValue:effort,
+    options:choices(model === 'model-alt' ? ['low','high'] : ['medium','high']),
+  },
+];
 for await (const line of createInterface({input: process.stdin})) {
   const {id, method, params, result} = JSON.parse(line);
   appendFileSync(${JSON.stringify(journal)}, JSON.stringify({method, params, result}) + '\\n');
@@ -102,7 +118,20 @@ for await (const line of createInterface({input: process.stdin})) {
   ]}});
   else if (method === 'session/new') {
     assert.deepEqual(params,{cwd:${JSON.stringify(workspaceRoot)},mcpServers:[]});
-    emit({id,result:{sessionId}});
+    emit({id,result:{sessionId,configOptions:${configFixture} ? configOptions() : undefined}});
+  } else if (method === 'session/set_config_option') {
+    assert(${configFixture});
+    assert.equal(params.sessionId,sessionId);
+    if (params.configId === 'active-model') {
+      assert.equal(params.value,'model-alt');
+      model = params.value;
+    } else {
+      assert.equal(params.configId,'reasoning');
+      assert.equal(model,'model-alt');
+      assert.equal(params.value,'low');
+      if (!${configUnconfirmed}) effort = params.value;
+    }
+    emit({id,result:{configOptions:configOptions()}});
   } else if (method === 'session/resume') {
     assert.deepEqual(params,{sessionId,cwd:${JSON.stringify(workspaceRoot)},mcpServers:[]});
     resumed = true;
@@ -129,6 +158,7 @@ for await (const line of createInterface({input: process.stdin})) {
     if (resumed && ${closeError}) emit({id,error:{code:-32603,message:'Save failed'}});
     else emit({id,result:{}});
   } else if (method === 'session/prompt') {
+    if (${configFixture}) assert.deepEqual([model,effort],['model-alt','low']);
     assert.deepEqual(params,{sessionId,prompt:[{type:'text',text:resumed ? 'Continue the greeting.' : 'Reply with a greeting.'}]});
     promptId = id;
     emit({id:'permission-1',method:'session/request_permission',params:{sessionId,options:[],toolCall:{toolCallId:'tool'}}});
@@ -228,14 +258,28 @@ try {
       operations += 1;
       return hub.request<T>('operation.invoke', { name, input });
     };
-    if (healthyStart) {
+    if (healthyStart && !configFixture) {
       const refused = await rpc<Result<WorkStarted>>('work.start', { ...input, model: 'unsupported' });
       assert(!refused.ok && refused.notSent && refused.reason === 'unsupported_model');
-      assert(!existsSync(journal));
+      if (existsSync(journal)) {
+        assert(!readFileSync(journal, 'utf8').includes('"session/prompt"'));
+        writeFileSync(journal, '');
+      }
     }
-    const started = await rpc<Result<WorkStarted>>('work.start', input);
+    const requested = configFixture
+      ? { ...input, model: 'model-alt', effort: configUnsupported ? 'medium' : 'low' }
+      : input;
+    const started = await rpc<Result<WorkStarted>>('work.start', requested);
     results.started = started;
-    if (!healthyStart) {
+    if (configUnsupported || configUnconfirmed) {
+      assert(!started.ok && started.notSent, JSON.stringify(started));
+      assert.equal(started.reason, configUnsupported ? 'unsupported_effort' : 'not_delivered');
+      const requests = readFileSync(journal, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+      assert.deepEqual(requests.map(({ method }) => method), [
+        'initialize', 'session/new', 'session/set_config_option',
+        ...(configUnconfirmed ? ['session/set_config_option'] : []), 'session/close',
+      ]);
+    } else if (!healthyStart) {
       assert(!started.ok && started.notSent && started.reason === 'unreachable');
       assert.equal(started.detail, 'Sign in to Antigravity CLI before starting a session.');
       if (initializeRequiresAuth) {
@@ -243,8 +287,9 @@ try {
         assert.deepEqual(requests.map((request) => request.method), ['initialize']);
       }
     } else {
-      assert(started.ok);
+      assert(started.ok, JSON.stringify(started));
       assert.equal(started.value.status, 'running');
+      if (configFixture) assert.deepEqual([started.value.model, started.value.effort], ['model-alt','low']);
       assert.deepEqual(started.value.ref, { adapter, id: 'owned-1' });
       const snapshot = () => rpc<Result<WorkDetail>>('work.status', { ref: started.value.ref });
       const active = await snapshot();
@@ -266,12 +311,17 @@ try {
         settled = await snapshot();
       }
       assert(settled.ok && settled.value.status === 'done');
+      if (configFixture) assert.deepEqual([settled.value.model, settled.value.effort], ['model-alt','low']);
       assert.equal(settled.value.lastReply, 'Hello');
       assert.deepEqual(settled.value.turnEnds?.map((turn) => turn.message), ['Hello']);
       results.settled = settled;
       const requests = readFileSync(journal, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
-      assert.deepEqual(requests.map((request) => request.method), ['initialize', 'session/new', 'session/prompt', undefined, 'session/close']);
-      assert.deepEqual(requests[3].result, { outcome: { outcome: 'cancelled' } });
+      assert.deepEqual(requests.map((request) => request.method), [
+        'initialize', 'session/new',
+        ...(configFixture ? ['session/set_config_option', 'session/set_config_option'] : []),
+        'session/prompt', undefined, 'session/close',
+      ]);
+      assert.deepEqual(requests.at(-2).result, { outcome: { outcome: 'cancelled' } });
       const find = async (folder?: string) => (await rpc<z.infer<typeof FindWorkResultSchema>>('work.find', {
         adapters: [adapter], localOnly: true, ...(folder ? { folder } : {}),
       })).places.flatMap((place) => place.work);
