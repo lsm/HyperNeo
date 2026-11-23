@@ -65,6 +65,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
+      - name: Check Locked Use covers with synthetic displays
+        run: bash packages/desktop/locked-use/check-cover.sh
       - uses: ./.github/actions/setup-bun
         with:
           bun-version: 1.4.4
