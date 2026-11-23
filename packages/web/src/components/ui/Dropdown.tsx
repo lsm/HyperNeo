@@ -1,5 +1,4 @@
-import { ComponentChildren, type VNode } from 'preact';
-import { createPortal } from 'preact/compat';
+import { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
 
@@ -8,7 +7,6 @@ export interface DropdownItem {
   onClick: (e?: Event) => void;
   icon?: ComponentChildren;
   danger?: boolean;
-  checked?: boolean;
   disabled?: boolean;
   title?: string;
 }
@@ -22,8 +20,6 @@ export type DropdownMenuItem = DropdownItem | DropdownDivider;
 export interface DropdownProps {
   trigger: ComponentChildren;
   items: DropdownMenuItem[];
-  portal?: boolean;
-  preferAbove?: boolean;
   position?: 'left' | 'right';
   class?: string;
   customContent?: ComponentChildren;
@@ -35,8 +31,6 @@ export function Dropdown({
   trigger,
   items,
   position = 'right',
-  portal = false,
-  preferAbove = false,
   class: className,
   customContent,
   isOpen: controlledIsOpen,
@@ -81,9 +75,7 @@ export function Dropdown({
         const spaceBelow = viewportHeight - triggerRect.bottom - 8;
         const spaceAbove = triggerRect.top - 8;
 
-        const shouldPositionAbove =
-          (preferAbove && spaceAbove >= menuHeight) ||
-          (spaceBelow < menuHeight && spaceAbove > spaceBelow);
+        const shouldPositionAbove = spaceBelow < menuHeight && spaceAbove > spaceBelow;
 
         const newStyle: {
           top: string;
@@ -128,7 +120,7 @@ export function Dropdown({
         cancelAnimationFrame(rafId);
       };
     }
-  }, [isOpen, position, preferAbove]);
+  }, [isOpen, position]);
 
   useLayoutEffect(() => {
     if (!isOpen) return;
@@ -136,7 +128,6 @@ export function Dropdown({
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setIsOpen(false);
-        if (portal) triggerRef.current?.querySelector('button')?.focus();
       }
     };
 
@@ -144,7 +135,7 @@ export function Dropdown({
     return () => {
       document.removeEventListener('keydown', handleEscape);
     };
-  }, [isOpen, portal]);
+  }, [isOpen]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -177,9 +168,7 @@ export function Dropdown({
   useEffect(() => {
     if (!isOpen) return;
 
-    const menuItems = menuRef.current?.querySelectorAll(
-      '[role="menuitem"]:not([disabled]), [role="menuitemcheckbox"]:not([disabled])'
-    );
+    const menuItems = dropdownRef.current?.querySelectorAll('[role="menuitem"]:not([disabled])');
     if (!menuItems || menuItems.length === 0) return;
 
     let currentIndex = 0;
@@ -206,101 +195,94 @@ export function Dropdown({
       }
     };
 
-    const menu = menuRef.current;
-    const keyTarget = portal ? menu : dropdownRef.current;
-    keyTarget?.addEventListener('keydown', handleKeyDown);
-    if (portal) (menuItems[0] as HTMLElement).focus();
+    dropdownRef.current?.addEventListener('keydown', handleKeyDown);
 
     return () => {
-      keyTarget?.removeEventListener('keydown', handleKeyDown);
+      dropdownRef.current?.removeEventListener('keydown', handleKeyDown);
     };
-  }, [isOpen, portal]);
-
-  const renderMenu = (menu: VNode) => (portal ? createPortal(menu, document.body) : menu);
+  }, [isOpen]);
 
   return (
     <div ref={dropdownRef} class={cn('relative', className)}>
       <div ref={triggerRef} class="cursor-pointer" onClick={() => setIsOpen(!isOpen)}>
         {trigger}
       </div>
-      {isOpen &&
-        renderMenu(
-          <div
-            ref={menuRef}
-            style={{
-              position: 'fixed',
-              top: menuStyle.top,
-              bottom: menuStyle.bottom,
-              left: menuStyle.left,
-              right: menuStyle.right,
-              maxHeight: 'calc(100vh - 32px)',
-            }}
-            class={cn(
-              'shadow-xl z-[9999] animate-slideIn',
-              customContent
-                ? ''
-                : 'py-1 bg-surface-overlay border border-line rounded-lg min-w-[200px]'
-            )}
-            role="menu"
-          >
-            {customContent ? (
-              customContent
-            ) : (
-              <>
-                {items.map((item, index) => {
-                  if ('type' in item && item.type === 'divider') {
-                    return <div key={`divider-${index}`} class="h-px bg-fill-strong my-1" />;
-                  }
 
-                  const menuItem = item as DropdownItem;
+      {isOpen && (
+        <div
+          ref={menuRef}
+          style={{
+            position: 'fixed',
+            top: menuStyle.top,
+            bottom: menuStyle.bottom,
+            left: menuStyle.left,
+            right: menuStyle.right,
+            maxHeight: 'calc(100vh - 32px)',
+          }}
+          class={cn(
+            'shadow-xl z-[9999] animate-slideIn',
+            customContent
+              ? ''
+              : 'py-1 bg-surface-overlay border border-line rounded-lg min-w-[200px]'
+          )}
+          role="menu"
+        >
+          {customContent ? (
+            customContent
+          ) : (
+            <>
+              {items.map((item, index) => {
+                if ('type' in item && item.type === 'divider') {
+                  return <div key={`divider-${index}`} class="h-px bg-fill-strong my-1" />;
+                }
 
-                  return (
-                    <button
-                      key={index}
-                      type="button"
-                      role={menuItem.checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
-                      aria-checked={menuItem.checked}
-                      disabled={menuItem.disabled}
-                      title={menuItem.title}
-                      onKeyDown={(e) => {
-                        if (menuItem.disabled) return;
-                        if (
-                          e.key === 'Enter' ||
-                          e.key === ' ' ||
-                          e.key === 'Space' ||
-                          e.key === 'Spacebar'
-                        ) {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          (e.currentTarget as HTMLButtonElement).click();
-                        }
-                      }}
-                      onClick={async (e) => {
-                        if (!menuItem.disabled) {
-                          e.stopPropagation();
-                          menuItem.onClick(e);
-                          await new Promise((resolve) => setTimeout(resolve, 0));
-                          setIsOpen(false);
-                        }
-                      }}
-                      class={cn(
-                        'w-full px-4 py-2 text-left text-sm flex items-center gap-3 transition-colors',
-                        menuItem.disabled
-                          ? 'text-fg-faint cursor-not-allowed'
-                          : menuItem.danger
-                            ? 'text-danger hover:bg-danger/10 hover:text-danger-soft'
-                            : 'text-fg-soft hover:bg-surface-raised hover:text-fg'
-                      )}
-                    >
-                      {menuItem.icon && <span class="w-4 h-4 flex-shrink-0">{menuItem.icon}</span>}
-                      <span>{menuItem.label}</span>
-                    </button>
-                  );
-                })}
-              </>
-            )}
-          </div>
-        )}
+                const menuItem = item as DropdownItem;
+
+                return (
+                  <button
+                    key={index}
+                    role="menuitem"
+                    disabled={menuItem.disabled}
+                    title={menuItem.title}
+                    onKeyDown={(e) => {
+                      if (menuItem.disabled) return;
+                      if (
+                        e.key === 'Enter' ||
+                        e.key === ' ' ||
+                        e.key === 'Space' ||
+                        e.key === 'Spacebar'
+                      ) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        (e.currentTarget as HTMLButtonElement).click();
+                      }
+                    }}
+                    onClick={async (e) => {
+                      if (!menuItem.disabled) {
+                        e.stopPropagation();
+                        menuItem.onClick(e);
+                        await new Promise((resolve) => setTimeout(resolve, 0));
+                        setIsOpen(false);
+                      }
+                    }}
+                    class={cn(
+                      'w-full px-4 py-2 text-left text-sm flex items-center gap-3 transition-colors',
+                      menuItem.disabled
+                        ? 'text-fg-faint cursor-not-allowed'
+                        : menuItem.danger
+                          ? 'text-danger hover:bg-danger/10 hover:text-danger-soft'
+                          : 'text-fg-soft hover:bg-surface-raised hover:text-fg'
+                    )}
+                  >
+                    {menuItem.icon && <span class="w-4 h-4 flex-shrink-0">{menuItem.icon}</span>}
+                    <span>{menuItem.label}</span>
+                  </button>
+                );
+              })}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

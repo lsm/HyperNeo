@@ -1,11 +1,12 @@
-import { useState } from 'preact/hooks';
-import { CheckGlyph } from './icons/common-glyphs.tsx';
-import { Dropdown, type DropdownMenuItem } from './ui/Dropdown.tsx';
+import { Menu, MenuButton, MenuItem, MenuItems } from '@hyperneo/ui';
 import type { Session } from '@hyperneo/shared';
 import { SessionConversationGroup } from './SessionConversationGroup.tsx';
 
 const ROW_ICON_BUTTON =
   'inline-flex h-[26px] w-[26px] flex-shrink-0 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-fill hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60';
+
+const PROJECT_MENU_ITEM =
+  'flex w-full items-center gap-3 px-4 py-2 text-left text-sm data-[focus]:bg-surface-raised';
 
 interface SessionProjectGroupProps {
   name: string;
@@ -18,7 +19,7 @@ interface SessionProjectGroupProps {
   onSessionClick: (sessionId: string) => void;
   onArchive: (sessionId: string) => void | Promise<void>;
   childrenOf?: (sessionId: string) => Session[];
-  onRemove?: () => void;
+  onRemove: () => void;
   removeDisabledReason?: string;
   showArchived: boolean;
   onToggleArchived: () => void;
@@ -40,33 +41,7 @@ export function SessionProjectGroup({
   showArchived,
   onToggleArchived,
 }: SessionProjectGroupProps) {
-  const [menuOpen, setMenuOpen] = useState(false);
   const isEmpty = sessions.length === 0;
-  const items: DropdownMenuItem[] = [
-    {
-      label: 'Show archived chats',
-      checked: showArchived,
-      icon: (
-        <CheckGlyph
-          class={showArchived ? 'h-4 w-4' : 'invisible h-4 w-4'}
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          aria-hidden="true"
-        />
-      ),
-      onClick: onToggleArchived,
-    },
-  ];
-  if (onRemove) {
-    items.push({
-      label: 'Delete this project',
-      title: removeDisabledReason,
-      disabled: !!removeDisabledReason,
-      danger: true,
-      onClick: onRemove,
-    });
-  }
 
   return (
     <div>
@@ -124,28 +99,39 @@ export function SessionProjectGroup({
             </svg>
           </button>
         )}
-        <Dropdown
-          items={items}
-          isOpen={menuOpen}
-          onOpenChange={setMenuOpen}
-          portal
-          preferAbove
-          trigger={
-            <button
-              type="button"
-              aria-label={`Project actions for ${name}`}
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              class={ROW_ICON_BUTTON}
-            >
-              <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                <circle cx="5" cy="12" r="1.7" />
-                <circle cx="12" cy="12" r="1.7" />
-                <circle cx="19" cy="12" r="1.7" />
-              </svg>
-            </button>
-          }
-        />
+        <Menu>
+          <MenuButton aria-label={`Project actions for ${name}`} class={ROW_ICON_BUTTON}>
+            <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="5" cy="12" r="1.7" />
+              <circle cx="12" cy="12" r="1.7" />
+              <circle cx="19" cy="12" r="1.7" />
+            </svg>
+          </MenuButton>
+          <MenuItems
+            anchor={{ to: 'top end', gap: 4 }}
+            modal={false}
+            class="z-[9999] min-w-[200px] rounded-lg border border-line bg-surface-overlay py-1 shadow-xl"
+          >
+            <MenuItem checked={showArchived} onClick={onToggleArchived}>
+              <button type="button" class={PROJECT_MENU_ITEM}>
+                <span class="w-4 text-center" aria-hidden="true">
+                  {showArchived ? '✓' : ''}
+                </span>
+                Show archived chats
+              </button>
+            </MenuItem>
+            <MenuItem disabled={!!removeDisabledReason} onClick={onRemove}>
+              <button
+                type="button"
+                disabled={!!removeDisabledReason}
+                title={removeDisabledReason}
+                class={`${PROJECT_MENU_ITEM} text-danger disabled:cursor-not-allowed disabled:text-fg-faint`}
+              >
+                Delete this project
+              </button>
+            </MenuItem>
+          </MenuItems>
+        </Menu>
         {removeDisabledReason && (
           <span
             role="tooltip"
