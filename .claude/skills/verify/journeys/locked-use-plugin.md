@@ -122,6 +122,8 @@ cargo test --locked --manifest-path packages/desktop/src-tauri/Cargo.toml --lib 
 The fixture prints the delayed unlock, the lock request, the confirmed relock,
 then the guardian exit. With no observed unlock it prints a lock request after the
 roughly five-second cap and exits. Both cases end in `guardian release check PASS`.
+The headless diagnostic fixture then prints `guardian AX trace check PASS`
+after distinguishing an empty child list from a nonempty list and a depth cutoff.
 The Desktop tests cover refusal while a guardian is active or releasing,
 suppression on a locked launch and after owner input or a crash, and admitting
 workers again after an unlock.
@@ -143,6 +145,8 @@ For an attended Desktop startup, check that `HyperNeo.log` records one
 `Locked Use guardian: unlock_diagnostics` line before `unlocked` or `ended`.
 It gives the Accessibility trust result, loginwindow PID (0 if absent), wake
 status, and the numeric results of the AX calls in each try in call order.
+`children:0` means the query succeeded. Read the following `child_count`
+for its actual size. `depth_limit` marks where the traversal stopped descending.
 `plugin_request_seen` reports whether an authorization request reached the
 guardian socket. Compare with the macOS unified log for subsystem
 `io.hyperneo.locked-use`, category `plugin`, which records invocations even if

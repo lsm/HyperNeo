@@ -51,7 +51,10 @@ static void say(NSString *line) {
 }
 
 static AXUIElementRef find(AXUIElementRef item, NSString *identifier, int depth, NSMutableString *trace) {
-    if (depth > 12) return NULL;
+    if (depth > 12) {
+        [trace appendFormat:@" depth_limit:%d", depth];
+        return NULL;
+    }
     CFTypeRef value = NULL;
     AXError identifierError = AXUIElementCopyAttributeValue(item, kAXIdentifierAttribute, &value);
     [trace appendFormat:@" id:%d", identifierError];
@@ -64,8 +67,10 @@ static AXUIElementRef find(AXUIElementRef item, NSString *identifier, int depth,
     AXError childrenError = AXUIElementCopyAttributeValue(item, kAXChildrenAttribute, (CFTypeRef *)&children);
     [trace appendFormat:@" children:%d", childrenError];
     if (childrenError != kAXErrorSuccess) return NULL;
+    CFIndex count = CFArrayGetCount(children);
+    [trace appendFormat:@" child_count:%ld", (long)count];
     AXUIElementRef found = NULL;
-    for (CFIndex i = 0; !found && i < CFArrayGetCount(children); i++) {
+    for (CFIndex i = 0; !found && i < count; i++) {
         found = find(CFArrayGetValueAtIndex(children, i), identifier, depth + 1, trace);
     }
     CFRelease(children);
