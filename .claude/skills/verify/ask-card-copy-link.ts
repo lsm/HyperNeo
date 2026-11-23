@@ -21,8 +21,10 @@ let daemonPort: number | undefined;
 const share = Bun.serve({
   hostname: '127.0.0.1',
   port: 0,
-  fetch(request) {
+  async fetch(request) {
     if (daemonPort === undefined) return new Response('Starting', { status: 503 });
+    const refused = await app.guardRequest(request);
+    if (refused) return refused;
     return fetch(new Request(`http://127.0.0.1:${daemonPort}${new URL(request.url).pathname}`, request));
   },
 });
@@ -52,7 +54,7 @@ const front = Bun.serve({
     const refused = await app.guardRequest(request);
     if (refused) return refused;
     const path = new URL(request.url).pathname;
-    if (path.startsWith('/ask/')) {
+    if (path.startsWith('/ask/') || path === '/pair') {
       return fetch(new Request(`http://127.0.0.1:${app.server.port}${path}`, request));
     }
     if (path === '/ws') {

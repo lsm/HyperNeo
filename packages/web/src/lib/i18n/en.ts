@@ -151,6 +151,8 @@ export const en = {
   'ask.state.todo': 'Not started',
   'ask.actions': 'Ask actions',
   'ask.copyLink': 'Copy link',
+  'ask.linkCopied': 'Link copied.',
+  'ask.windowLinkCopied': 'Link copied using this window’s address.',
   'ask.markDone': 'Mark done',
   'ask.drop': 'Drop this ask',
   'ask.all': 'All · {count}',

@@ -25,8 +25,9 @@ listener with userinfo, a path, a query and a fragment. The clipboard must use
 only its scheme, host and port. Fallback mode leaves the setting unset and
 checks the current window's origin and the neutral copy toast. The fixture
 covers brackets, backslashes and a multiline title. The page URL stays unchanged
-and clicking Copy link sends no operation request. An unpaired browser is refused
-with HTTP 401. Fetching from the paired browser must return HTTP 200,
+and clicking Copy link sends no operation request. A separate recipient browser
+is refused with HTTP 401 and pairs at the copied origin with its own code.
+Fetching again must return HTTP 200,
 text/markdown, no-store, and the expected card heading from the real daemon HTTP
 handler. Inspect each saved
 menu PNG and browser.json. Component tests additionally cover settled cards and
