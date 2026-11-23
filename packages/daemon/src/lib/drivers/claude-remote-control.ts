@@ -29,6 +29,7 @@ import { reject } from './work-operations.ts';
 
 export const RC_TOGGLE_TITLE = 'neo-helper';
 const HELPER_ARCHIVE_RESEND_MS = 10 * 60_000;
+const HELPER_OPEN_RETRY_MS = 10 * 60_000;
 
 export interface RemoteControlTarget {
   sessionId: string;
@@ -136,6 +137,8 @@ async function createHelper(
 
 type OpenHelper = Gate<{ record: RcToggle['record']; liveSessions: readonly ClaudeLiveSession[] }>;
 const openingHelpers = new WeakMap<ClaudeDesktopAdapterDeps, Map<string, Promise<OpenHelper>>>();
+const createdHelpers = new WeakMap<ClaudeDesktopAdapterDeps, Map<string, RcToggle['record']>>();
+const failedOpens = new WeakMap<ClaudeDesktopAdapterDeps, Map<string, number>>();
 
 export async function openRcToggle(
   records: readonly ClaudeDesktopRecord[],
@@ -149,6 +152,16 @@ export async function openRcToggle(
   openingHelpers.set(deps, opening);
   const pending = opening.get(title);
   if (pending) return pending;
+  const failures = failedOpens.get(deps) ?? new Map<string, number>();
+  failedOpens.set(deps, failures);
+  const failedAt = failures.get(title);
+  if (failedAt !== undefined && deps.now() - failedAt < HELPER_OPEN_RETRY_MS)
+    return {
+      reason: reject(
+        'not_delivered',
+        `Claude Code Desktop could not open ${title} recently; HyperNeo tries again after ten minutes.`
+      ),
+    };
   const preparing = (async () => {
     const current = await loadClaudeDesktopRecords(deps, new Map());
     const live = await probeLiveClaudeSessions(deps);
@@ -157,7 +170,10 @@ export async function openRcToggle(
   })();
   opening.set(title, preparing);
   try {
-    return await preparing;
+    const opened = await preparing;
+    if ('reason' in opened) failures.set(title, deps.now());
+    else failures.delete(title);
+    return opened;
   } finally {
     opening.delete(title);
   }
@@ -171,9 +187,17 @@ async function openHelper(
 ): Promise<Gate<{ record: RcToggle['record']; liveSessions: readonly ClaudeLiveSession[] }>> {
   const found = findRcToggle(records, liveSessions, title);
   if (found?.live) return readyHelper(found.record, liveSessions);
-  const created = found ? { value: found.record } : await createHelper(deps, title);
-  if ('reason' in created) return created;
-  const record = created.value;
+  const created = createdHelpers.get(deps) ?? new Map<string, RcToggle['record']>();
+  createdHelpers.set(deps, created);
+  const kept = created.get(title);
+  const made = found
+    ? { value: found.record }
+    : kept
+      ? { value: kept }
+      : await createHelper(deps, title);
+  if ('reason' in made) return made;
+  const record = made.value;
+  created.set(title, record);
   try {
     const imported = await importClaudeDesktopSession(
       record.cliSessionId,
@@ -196,6 +220,7 @@ async function openHelper(
       ),
     };
   }
+  created.delete(title);
   return readyHelper(record, live);
 }
 

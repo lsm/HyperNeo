@@ -436,6 +436,40 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
     }
   );
 
+  test('a helper Desktop cannot open is created once and retried only after ten minutes', async () => {
+    let now = 0;
+    const base = deps();
+    const openDeps = {
+      ...base,
+      now: () => now,
+      sleep: async (ms: number) => {
+        now += ms;
+      },
+      spawn: ((args, options) => {
+        const child = base.spawn(args, options);
+        live = [];
+        return child;
+      }) as ClaudeDesktopAdapterDeps['spawn'],
+    };
+    const created = () => spawned.filter((call) => call.args.includes('--session-id'));
+    const imports = () => spawned.filter((call) => call.args.includes('--desktop'));
+    expect(await openRcToggle([], [], openDeps)).toMatchObject({
+      reason: { reason: 'not_delivered', detail: expect.stringContaining('did not open') },
+    });
+    expect(created()).toHaveLength(1);
+    expect(imports()).toHaveLength(1);
+    expect(await openRcToggle([], [], openDeps)).toMatchObject({
+      reason: { reason: 'not_delivered', detail: expect.stringContaining('after ten minutes') },
+    });
+    expect(imports()).toHaveLength(1);
+    now += 10 * 60_000;
+    await openRcToggle([], [], openDeps);
+    expect(created()).toHaveLength(1);
+    expect(imports()).toHaveLength(2);
+    const id = created()[0].args[created()[0].args.indexOf('--session-id') + 1];
+    expect(imports()[1].args[imports()[1].args.indexOf('--resume') + 1]).toBe(id);
+  });
+
   test.each(['auto', 'default', 'acceptEdits', 'bypassPermissions'])(
     'a live %s target receives directly using fresh mode without a helper',
     async (mode) => {
