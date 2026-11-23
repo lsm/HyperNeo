@@ -50,19 +50,23 @@ static void say(NSString *line) {
     fflush(stdout);
 }
 
-static AXUIElementRef find(AXUIElementRef item, NSString *identifier, int depth) {
+static AXUIElementRef find(AXUIElementRef item, NSString *identifier, int depth, NSMutableString *trace) {
     if (depth > 12) return NULL;
     CFTypeRef value = NULL;
-    if (AXUIElementCopyAttributeValue(item, kAXIdentifierAttribute, &value) == kAXErrorSuccess) {
+    AXError identifierError = AXUIElementCopyAttributeValue(item, kAXIdentifierAttribute, &value);
+    [trace appendFormat:@" id:%d", identifierError];
+    if (identifierError == kAXErrorSuccess) {
         BOOL match = [(__bridge NSString *)value isEqualToString:identifier];
         CFRelease(value);
         if (match) return (AXUIElementRef)CFRetain(item);
     }
     CFArrayRef children = NULL;
-    if (AXUIElementCopyAttributeValue(item, kAXChildrenAttribute, (CFTypeRef *)&children) != kAXErrorSuccess) return NULL;
+    AXError childrenError = AXUIElementCopyAttributeValue(item, kAXChildrenAttribute, (CFTypeRef *)&children);
+    [trace appendFormat:@" children:%d", childrenError];
+    if (childrenError != kAXErrorSuccess) return NULL;
     AXUIElementRef found = NULL;
     for (CFIndex i = 0; !found && i < CFArrayGetCount(children); i++) {
-        found = find(CFArrayGetValueAtIndex(children, i), identifier, depth + 1);
+        found = find(CFArrayGetValueAtIndex(children, i), identifier, depth + 1, trace);
     }
     CFRelease(children);
     return found;
@@ -75,6 +79,8 @@ static AXUIElementRef find(AXUIElementRef item, NSString *identifier, int depth)
 @property(nonatomic) dispatch_source_t listening;
 @property(nonatomic, copy) NSString *socketPath;
 @property(nonatomic) NSDate *started;
+@property(nonatomic) NSMutableString *unlockTrace;
+@property(nonatomic) BOOL pluginRequestSeen;
 @end
 
 @implementation Guardian
@@ -132,7 +138,9 @@ static AXUIElementRef find(AXUIElementRef item, NSString *identifier, int depth)
         char request = 0;
         struct timeval deadline = {.tv_sec = 1};
         setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &deadline, sizeof deadline);
-        BOOL grant = read(client, &request, 1) == 1 && request == '?' && self.armed && !self.ending && !self.allowAnswered;
+        BOOL requested = read(client, &request, 1) == 1 && request == '?';
+        BOOL grant = requested && self.armed && !self.ending && !self.allowAnswered;
+        if (requested) self.pluginRequestSeen = YES;
         self.armed = NO;
         if (grant) self.allowAnswered = YES;
         if (write(client, grant ? "1" : "0", 1) == 1 && grant) say(@"allow_answered");
@@ -143,13 +151,24 @@ static AXUIElementRef find(AXUIElementRef item, NSString *identifier, int depth)
     return YES;
 }
 
-- (void)unlock {
+- (void)reportUnlockDiagnostics {
+    if (!self.unlockTrace) return;
+    say([NSString stringWithFormat:@"%@ plugin_request_seen=%d", self.unlockTrace, self.pluginRequestSeen]);
+    self.unlockTrace = nil;
+}
+
+- (void)unlock:(BOOL)axTrusted {
     IOPMAssertionID wake = 0;
-    IOPMAssertionDeclareUserActivity(CFSTR("HyperNeo Locked Use"), kIOPMUserActiveLocal, &wake);
+    IOReturn wakeResult = IOPMAssertionDeclareUserActivity(CFSTR("HyperNeo Locked Use"), kIOPMUserActiveLocal, &wake);
     NSRunningApplication *login = [NSRunningApplication runningApplicationsWithBundleIdentifier:@"com.apple.loginwindow"].firstObject;
+    pid_t loginPID = login.processIdentifier;
+    NSMutableString *trace = [NSMutableString stringWithFormat:@"unlock_diagnostics ax_trusted=%d loginwindow_pid=%d wake=%d",
+                              axTrusted, loginPID, wakeResult];
+    self.unlockTrace = trace;
     if (!login) return [self end:@"no_login_window"];
-    AXUIElementRef app = AXUIElementCreateApplication(login.processIdentifier);
-    AXUIElementSetMessagingTimeout(app, 0.5);
+    AXUIElementRef app = AXUIElementCreateApplication(loginPID);
+    AXError timeoutError = AXUIElementSetMessagingTimeout(app, 0.5);
+    [trace appendFormat:@" messaging_timeout=%d", timeoutError];
     __block int tries = 0;
     [NSTimer scheduledTimerWithTimeInterval:0.2 repeats:YES block:^(NSTimer *timer) {
         if (self.ending || self.ownerInput) {
@@ -161,6 +180,7 @@ static AXUIElementRef find(AXUIElementRef item, NSString *identifier, int depth)
             [timer invalidate];
             CFRelease(app);
             self.unlocked = YES;
+            [self reportUnlockDiagnostics];
             return say(@"unlocked");
         }
         if (++tries > 40) {
@@ -169,14 +189,22 @@ static AXUIElementRef find(AXUIElementRef item, NSString *identifier, int depth)
             return [self end:@"unlock_failed"];
         }
         if (self.allowAnswered || tries % 10 != 1) return;
-        AXUIElementRef field = find(app, @"UserPasswordTextField", 0);
-        if (field && AXUIElementSetAttributeValue(field, kAXValueAttribute, CFSTR("hyperneo-locked-use")) == kAXErrorSuccess) {
-            self.armed = YES;
-            AXUIElementRef go = find(app, @"LUIBUTTON_GO", 0);
-            AXUIElementPerformAction(go ?: field, go ? kAXPressAction : kAXConfirmAction);
-            if (go) CFRelease(go);
+        [trace appendFormat:@" try=%d field=[", tries];
+        AXUIElementRef field = find(app, @"UserPasswordTextField", 0, trace);
+        [trace appendFormat:@"] field_found=%d", field != NULL];
+        if (field) {
+            AXError setError = AXUIElementSetAttributeValue(field, kAXValueAttribute, CFSTR("hyperneo-locked-use"));
+            [trace appendFormat:@" set=%d", setError];
+            if (setError == kAXErrorSuccess) {
+                self.armed = YES;
+                [trace appendString:@" go=["];
+                AXUIElementRef go = find(app, @"LUIBUTTON_GO", 0, trace);
+                AXError actionError = AXUIElementPerformAction(go ?: field, go ? kAXPressAction : kAXConfirmAction);
+                [trace appendFormat:@"] %@=%d", go ? @"press" : @"confirm", actionError];
+                if (go) CFRelease(go);
+            }
+            CFRelease(field);
         }
-        if (field) CFRelease(field);
     }];
 }
 
@@ -200,6 +228,7 @@ static AXUIElementRef find(AXUIElementRef item, NSString *identifier, int depth)
         }
         if (locked || elapsed >= 10) {
             [timer invalidate];
+            [self reportUnlockDiagnostics];
             say([NSString stringWithFormat:@"ended %@%@", reason, locked ? @"" : @" relock_failed"]);
             exit(locked ? 0 : 3);
         }
@@ -234,9 +263,13 @@ int main(int argc, const char *argv[]) {
         NSMutableArray<NSString *> *refused = [NSMutableArray array];
         if (!pluginInstalled()) [refused addObject:@"not_installed"];
         if (!screenLocked()) [refused addObject:@"not_locked"];
-        if (!AXIsProcessTrusted()) [refused addObject:@"accessibility_required"];
+        BOOL axTrusted = AXIsProcessTrusted();
+        if (!axTrusted) [refused addObject:@"accessibility_required"];
         if (!CGPreflightListenEventAccess()) [refused addObject:@"input_monitoring_required"];
-        if (refused.count) return say([@"ended " stringByAppendingString:[refused componentsJoinedByString:@" "]]), 2;
+        if (refused.count) {
+            say([NSString stringWithFormat:@"unlock_diagnostics ax_trusted=%d", axTrusted]);
+            return say([@"ended " stringByAppendingString:[refused componentsJoinedByString:@" "]]), 2;
+        }
         [NSApplication sharedApplication].activationPolicy = NSApplicationActivationPolicyAccessory;
         Guardian *guardian = [Guardian new];
         guardian.started = NSDate.date;
@@ -279,7 +312,7 @@ int main(int argc, const char *argv[]) {
             else active = NSProcessInfo.processInfo.systemUptime;
         });
         dispatch_resume(input);
-        [guardian unlock];
+        [guardian unlock:axTrusted];
         [NSApp run];
     }
     return 0;

@@ -24,10 +24,10 @@ start() {
     shift
     got="$("$@" < /dev/null || true)"
     echo "$got"
-    [[ "$got" == "ended $expected" ]]
+    [[ "$got" == "$expected" ]]
 }
-start untrusted_owner "$out/hyperneo-locked-use"
-start untrusted_owner "$out/launch-other" "$out/hyperneo-locked-use"
-start "${installed}not_locked accessibility_required input_monitoring_required" \
+start "ended untrusted_owner" "$out/hyperneo-locked-use"
+start "ended untrusted_owner" "$out/launch-other" "$out/hyperneo-locked-use"
+start $'unlock_diagnostics ax_trusted=0\n'"ended ${installed}not_locked accessibility_required input_monitoring_required" \
     "$out/launch-app" --disclaim "$out/ungranted-guardian"
 echo "guardian check PASS"

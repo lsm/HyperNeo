@@ -102,7 +102,7 @@ bash packages/desktop/locked-use/check-guardian.sh "$RUN"
 ```
 
 Pass prints `ended untrusted_owner` twice (no launcher, and a launcher signed with
-another identifier), then `ended not_locked accessibility_required
+another identifier), then `unlock_diagnostics ax_trusted=0` and `ended not_locked accessibility_required
 input_monitoring_required` (with `not_installed` first when the plugin is absent) from a
 copy that holds no privacy grants, and `guardian check PASS`.
 
@@ -136,6 +136,15 @@ use the physical keyboard or pointing device.
 Retain the Desktop log entries prefixed `Locked Use`, which include
 `allow_answered`, `owner_input`, the guardian's `ended` reason and suppression
 transitions. Record the visible lock and unlock states alongside those entries.
+
+For an attended Desktop startup, check that `HyperNeo.log` records one
+`Locked Use guardian: unlock_diagnostics` line before `unlocked` or `ended`.
+It gives the Accessibility trust result, loginwindow PID (0 if absent), wake
+status, and the numeric results of the AX calls in each try in call order.
+`plugin_request_seen` reports whether an authorization request reached the
+guardian socket. Compare with the macOS unified log for subsystem
+`io.hyperneo.locked-use`, category `plugin`, which records invocations even if
+they never reach the guardian. The diagnostics contain no UI values or input.
 
 1. With the Mac locked, have a worker perform a real Calculator action and read
    the result back through Desktop. Check the blue cover. Stop the worker and
