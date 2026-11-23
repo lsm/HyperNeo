@@ -438,6 +438,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'session.assistant': '助手',
   'session.loadEarlier': '加载更早的消息',
   'session.loadFailed': '这个会话没能打开。',
+  'session.openExternalFailed': '无法打开会话链接。请检查是否已安装对应应用。',
   'session.loadEarlierFailed': '没能加载更早的消息，再试一次',
   'composer.stop': '停止',
   'session.message': '在这个会话里发消息',

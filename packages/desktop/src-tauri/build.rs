@@ -10,5 +10,11 @@ fn main() {
 		println!("cargo:rustc-link-lib=framework=CoreGraphics");
 	}
 
-	tauri_build::build()
+	tauri_build::try_build(
+		tauri_build::Attributes::new().plugin(
+			"session-links",
+			tauri_build::InlinedPlugin::new().commands(&["open"]),
+		),
+	)
+	.expect("failed to build desktop application");
 }

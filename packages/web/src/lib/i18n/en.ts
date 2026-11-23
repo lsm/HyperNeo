@@ -449,6 +449,7 @@ export const en = {
   'session.assistant': 'Assistant',
   'session.loadEarlier': 'Load earlier messages',
   'session.loadFailed': 'This chat didn’t open.',
+  'session.openExternalFailed': 'Could not open the session link. Check that the app is installed.',
   'session.loadEarlierFailed': 'Couldn’t load earlier messages. Try again',
   'composer.stop': 'Stop',
   'session.message': 'Message this chat',

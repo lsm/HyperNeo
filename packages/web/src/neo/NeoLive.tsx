@@ -25,6 +25,7 @@ import ToastContainer from '../islands/ToastContainer.tsx';
 import { blurComposerOnTap } from '../lib/blur-composer-on-tap.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { connectionState, reconnectAttemptCount } from '../lib/state.ts';
+import { toast } from '../lib/toast.ts';
 import { readNeoAskImages } from './conversation-ask-client.ts';
 import { NeoTopicChips } from './NeoTopicChips.tsx';
 import { NeoAskTodos, QuestionBox } from './NeoAskTodos.tsx';
@@ -36,6 +37,7 @@ import { NeoModelHoldLine } from './NeoModelHoldLine.tsx';
 import { shownModelHold } from '@hyperneo/shared/types/model-hold';
 import { NeoConversation } from './NeoConversation.tsx';
 import { NeoDrawer } from './NeoDrawer.tsx';
+import { handoffNativeSessionLink, isNativeSessionLink } from './work-driver.ts';
 import { NeoIcon } from './NeoIcon.tsx';
 import { publicAskText } from './NeoPublicConversation.tsx';
 import { NeoSessionPane } from './NeoSessionPane.tsx';
@@ -163,7 +165,15 @@ export function NeoLive() {
   const [chat, setChat] = useState<{ sessionId: string; label?: string } | null>(null);
   const closeChat = useCallback(() => setChat(null), []);
   const openSession = (link: string, label?: string) => {
-    if (!link.startsWith('/session/')) return window.open(link, '_blank', 'noopener');
+    if (!link.startsWith('/session/')) {
+      if (handoffNativeSessionLink(link)) return;
+      if (isNativeSessionLink(link) || /^https?:\/\//i.test(link)) {
+        window.open(link, '_blank', 'noopener');
+      } else {
+        toast.error(t('session.openExternalFailed'));
+      }
+      return;
+    }
     const sessionId = link.slice('/session/'.length);
     if (columns && previewDesktop)
       openArtifactPreview({ kind: 'session', sessionId }, label ?? sessionTitle(sessionId));

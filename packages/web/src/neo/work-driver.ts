@@ -1,10 +1,26 @@
 import { workerEngine } from '@hyperneo/shared/types/worker-identity';
+import { t } from '../lib/i18n/index.ts';
+import { openNativeSessionLink } from '../lib/runtime-capabilities.ts';
+import { toast } from '../lib/toast.ts';
+
+export function isNativeSessionLink(link: string): boolean {
+  return /^(codex|claude|ghapp):\/\//.test(link);
+}
+
+export function handoffNativeSessionLink(link: string): boolean {
+  if (!isNativeSessionLink(link)) return false;
+  const handoff = openNativeSessionLink(link);
+  if (!handoff) return false;
+  void handoff.catch(() => toast.error(t('session.openExternalFailed')));
+  return true;
+}
+
 export function neoSessionLink(
   link: string | null | undefined,
   daemon: string | null | undefined
 ): string | null {
   if (!link || [...link].some((char) => char <= ' ' || char === '\\')) return null;
-  if (/^(codex|claude|ghapp):\/\//.test(link)) return link;
+  if (isNativeSessionLink(link)) return link;
   return !daemon && /^\/(?!\/)/.test(link) ? link : null;
 }
 
