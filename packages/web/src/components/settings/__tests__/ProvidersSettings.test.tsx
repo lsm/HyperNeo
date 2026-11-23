@@ -675,6 +675,38 @@ describe('ProvidersSettings', () => {
     expect(screen.getByText('a'.repeat(64))).toBeTruthy();
   });
 
+  it('edits a saved executable while Claude Code is the default and no key is set', async () => {
+    const provider = createMockProvider('1', 'deepseek', {
+      displayName: 'DeepSeek',
+      configJson: JSON.stringify({ harnessSettings: { executable: '/synthetic/dsh' } }),
+    });
+    mockListProviders.mockResolvedValue({ providers: [provider] });
+    mockRequest.mockResolvedValue({ accepted: true });
+    render(<ProvidersSettings />);
+    fireEvent.click(await screen.findByText('DeepSeek'));
+    expect((screen.getByLabelText('Harness', { exact: true }) as HTMLSelectElement).value).toBe(
+      'sdk'
+    );
+    const executable = screen.getByLabelText('Harness executable') as HTMLInputElement;
+    expect(executable.value).toBe('/synthetic/dsh');
+    fireEvent.input(executable, { target: { value: '/synthetic/dsh-updated' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save harness' }));
+    await waitFor(() =>
+      expect(mockRequest).toHaveBeenCalledWith(
+        'operation.invoke',
+        {
+          name: 'oxap.settings.save',
+          input: {
+            providerId: 'deepseek',
+            harness: 'sdk',
+            settings: { executable: '/synthetic/dsh-updated' },
+          },
+        },
+        { timeout: 300_000 }
+      )
+    );
+  });
+
   it('expands provider row on click', async () => {
     const providers = [
       createMockProvider('1', 'anthropic', { displayName: 'Anthropic', authType: 'api_key' }),

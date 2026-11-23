@@ -166,13 +166,15 @@ describe('decideOxapOpen', () => {
     'harness' | 'provider'
   >;
 
-  it('opens on the adapter entry named for the chat provider', () => {
-    expect(decideOxapOpen(chat, { configJson: '{"harness":"oxap-codex"}' })).toEqual({
+  it('opens on the saved adapter after the provider switches back to Claude Code', () => {
+    expect(
+      decideOxapOpen(chat, { configJson: '{"harnessSettings":{"executable":"/codex"}}' })
+    ).toEqual({
       adapter: 'anthropic-codex',
     });
   });
 
-  it('refuses a chat whose provider moved to another harness or back to Claude Code', () => {
+  it('refuses a chat without saved OXAP settings', () => {
     const refusal =
       'This chat ran on OXAP Codex, which this provider no longer uses; start a new chat';
     expect(decideOxapOpen(chat, { configJson: '{}' })).toBe(refusal);

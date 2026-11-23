@@ -16,7 +16,10 @@ const options: OxapEngineOptions = {
   stateDirectory: '/synthetic/state',
   hub: { adapters: {}, environment: {} },
 };
-const record = { providerId: 'synthetic-memory', configJson: '{"harness":"oxap-synthetic"}' };
+const record = {
+  providerId: 'synthetic-memory',
+  configJson: '{"harness":"oxap-synthetic","harnessSettings":{}}',
+};
 const bind = createOxapRuntime as unknown as (
   engine: OxapEngine,
   options: { installed: () => boolean; read: () => Promise<OxapEngineOptions> },

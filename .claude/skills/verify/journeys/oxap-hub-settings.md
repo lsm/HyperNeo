@@ -21,10 +21,16 @@ It checks that a turn runs through the real hub, the served `oap-serve.json`
 names the adapter after the provider, lists `HOME` and `CODEX_HOME` by name and
 holds no key, and that re-saving another executable restarts the hub and the
 next turn runs on the new entry without a second download. A relative executable
-path is refused. Saving the provider back to Claude Code makes the next message
-fail with "This chat ran on OXAP Codex, which this provider no longer uses;
-start a new chat". The other `oap-workspace-wire.ts` modes take the same
-arguments and install the hub the same way.
+path is refused. Saving the provider back to Claude Code retains the executable
+and the next turn completes in the existing OXAP chat. The other
+`oap-workspace-wire.ts` modes take the same arguments and install the hub the
+same way.
+
+For `settings-restart-web`, build the web bundle, put Node on PATH, and set
+`VERIFY_BROWSER` and `NODE_PATH` as described in `../SKILL.md`. The browser opens
+the provider card, edits the retained executable with Claude Code selected and
+reloads to observe
+the saved field. A fourth turn in the existing Codex chat runs on that executable.
 
 The real GitHub download and its published checksum are not exercised; unit
 tests cover the checksum match and refusal.
