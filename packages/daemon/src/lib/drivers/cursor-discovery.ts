@@ -1,8 +1,7 @@
-import { spawn } from 'node:child_process';
 import { basename, isAbsolute } from 'node:path';
-import { createInterface } from 'node:readline';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
+import { ProcessJsonRpcTransport } from '../process-json-rpc.ts';
 import { buildSafeProcessEnv } from '../safe-process-env.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import type { FindQuery, PlaceGroup, WorkAdapter, WorkSummary } from './types.ts';
@@ -24,62 +23,37 @@ const SessionList = z.object({
     })
   ),
 });
-const Frame = z.object({
-  jsonrpc: z.literal('2.0'),
-  id: z.number().optional(),
-  result: z.unknown().optional(),
-  error: z.object({ code: z.number(), message: z.string() }).optional(),
-});
 type Session = z.infer<typeof SessionList>['sessions'][number];
 
 async function listSessions(command: string, home: string, folder: string | undefined) {
-  const signal = AbortSignal.timeout(10_000);
-  const child = spawn(command, ['acp'], {
+  const transport = new ProcessJsonRpcTransport({
+    command,
+    args: ['acp'],
     cwd: home,
     env: buildSafeProcessEnv(),
-    stdio: ['pipe', 'pipe', 'ignore'],
-    signal,
-    killSignal: 'SIGKILL',
-    windowsHide: true,
+    replaceEnv: true,
+    requestTimeoutMs: 5_000,
+    onStderr: () => {},
   });
-  const stopped = new Promise<void>((resolve) => child.once('close', () => resolve()));
-  child.on('error', (error) => child.stdout.destroy(error));
-  child.stdin.on('error', (error) => child.stdout.destroy(error));
-  const reader = createInterface({ input: child.stdout, crlfDelay: Infinity });
-  const lines = reader[Symbol.asyncIterator]();
-
-  async function request(id: number, method: string, params: object): Promise<unknown> {
-    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
-    for (;;) {
-      const line = await lines.next();
-      if (line.done) throw new Error('Cursor CLI closed before replying.');
-      const frame = Frame.safeParse(JSON.parse(line.value));
-      if (!frame.success || frame.data.id !== id) continue;
-      if (frame.data.error?.message === 'Authentication required')
-        throw new Error('Cursor CLI authentication required. Run cursor-agent login.');
-      if (frame.data.error) throw new Error(`Cursor CLI rejected ${method}.`);
-      return frame.data.result;
-    }
+  async function request(method: string, params: Record<string, unknown>): Promise<unknown> {
+    const response = await transport.sendRequest(method, params);
+    if ('result' in response) return response.result;
+    if (response.error.message === 'Authentication required')
+      throw new Error('Cursor CLI authentication required. Run cursor-agent login.');
+    throw new Error(`Cursor CLI rejected ${method} (${response.error.code}).`);
   }
 
   try {
-    const init = await request(1, 'initialize', { protocolVersion: 1, clientCapabilities: {} });
+    const init = await request('initialize', { protocolVersion: 1, clientCapabilities: {} });
     if (!InitializeResult.safeParse(init).success)
       throw new Error('Cursor CLI does not support ACP session listing.');
     const result = SessionList.safeParse(
-      await request(2, 'session/list', folder ? { cwd: folder } : {})
+      await request('session/list', folder ? { cwd: folder } : {})
     );
     if (!result.success) throw new Error('Cursor CLI returned invalid session metadata.');
     return result.data.sessions;
-  } catch (error) {
-    if (signal.aborted) throw new Error('Cursor CLI session discovery timed out.');
-    if (error instanceof SyntaxError) throw new Error('Cursor CLI returned invalid ACP JSON.');
-    throw error;
   } finally {
-    reader.close();
-    child.stdin.destroy();
-    child.kill('SIGKILL');
-    await stopped;
+    await transport.close();
   }
 }
 
@@ -105,6 +79,7 @@ function groupSessions(
       title,
       lastActivityAt,
       status: 'done',
+      watchHint: 'Open this session in Cursor CLI. Discovery does not report live turn state.',
     };
     const group = groups.get(folder);
     if (group) {
