@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
-import { answerCodexProbeLocally, OXAP_CODEX_MODEL, oxapCodexProvider } from './oxap-codex-provider.ts';
+import { answerCodexProbeLocally, OXAP_CODEX_MODEL, seedSyntheticCodexAdmission } from './oxap-codex-provider.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import type { OxapQueryRuntime } from '../../../packages/daemon/src/lib/agent/query-runner.ts';
 import { OxapEngine } from '../../../packages/daemon/src/lib/oxap/oxap-engine.ts';
@@ -61,7 +61,7 @@ try {
   rpc.registerTransport(transport);
   await transport.initialize();
   await rpc.request('providers.create', { params: { providerId: 'anthropic', displayName: 'Synthetic provider', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-devproxy-test-key' } });
-  await rpc.request('providers.create', oxapCodexProvider);
+  await seedSyntheticCodexAdmission(rpc, app.settingsManager);
   const { sessionId } = await rpc.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic busy recovery', config: { model: OXAP_CODEX_MODEL, provider: 'anthropic-codex' } });
   const agent = app.sessionManager.getSession(sessionId);
   assert(agent);

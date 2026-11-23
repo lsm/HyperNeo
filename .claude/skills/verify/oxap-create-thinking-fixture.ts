@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { setModelsCache } from '../../../packages/daemon/src/lib/model-service.ts';
-import { answerCodexProbeLocally, oxapCodexProvider, serveLocalRelease } from './oxap-codex-provider.ts';
+import { answerCodexProbeLocally, seedSyntheticCodexAdmission, serveLocalRelease } from './oxap-codex-provider.ts';
 import { releaseName } from '../../../packages/daemon/src/lib/oxap/oxap-install.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
@@ -61,7 +61,7 @@ const transport = new WebSocketClientTransport({
 });
 rpc.registerTransport(transport);
 await transport.initialize();
-await rpc.request('providers.create', oxapCodexProvider);
+await seedSyntheticCodexAdmission(rpc, app.settingsManager);
 await rpc.request('providers.create', {
   params: { providerId: 'anthropic', displayName: 'Synthetic SDK', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: false, sortOrder: 2 },
   credentials: { apiKey: 'sk-devproxy-test-key' },

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
-import { answerCodexProbeLocally, OXAP_CODEX_MODEL, oxapCodexProvider } from './oxap-codex-provider.ts';
+import { answerCodexProbeLocally, OXAP_CODEX_MODEL, seedSyntheticCodexAdmission } from './oxap-codex-provider.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import type { OxapQueryRuntime } from '../../../packages/daemon/src/lib/agent/query-runner.ts';
 import { OxapHubClient } from '../../../packages/daemon/src/lib/oxap/oxap-hub-client.ts';
@@ -63,7 +63,7 @@ try {
   transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false, createSocket: createLocalSocket });
   rpc.registerTransport(transport);
   await transport.initialize();
-  await rpc.request('providers.create', oxapCodexProvider);
+  await seedSyntheticCodexAdmission(rpc, app.settingsManager);
   const create = async (oxap: boolean) => {
     const { sessionId } = await rpc.request<{ sessionId: string }>('session.create', {
       workspacePath: join(run, 'workspace'),

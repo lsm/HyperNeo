@@ -11,6 +11,8 @@ import { savedOxapAdapter } from '../oxap/oxap-hub-config.ts';
 
 export type SessionEngine = NonNullable<SessionConfig['harness']>;
 
+export class OxapSessionAdmissionError extends Error {}
+
 export function selectSessionEngine(harness: unknown): SessionEngine {
   if (harness === undefined || harness === 'sdk') return 'sdk';
   if (isOxapHarness(harness)) return harness;

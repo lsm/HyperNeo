@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
-import { answerCodexProbeLocally, OXAP_CODEX_MODEL, oxapCodexProvider } from './oxap-codex-provider.ts';
+import { answerCodexProbeLocally, OXAP_CODEX_MODEL, seedSyntheticCodexAdmission } from './oxap-codex-provider.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { getSdkStartupGate } from '../../../packages/daemon/src/lib/agent/sdk-startup-gate.ts';
 import type { OxapQueryRuntime } from '../../../packages/daemon/src/lib/agent/query-runner.ts';
@@ -45,7 +45,7 @@ try {
   hub.registerTransport(transport);
   await transport.initialize();
   await hub.request('providers.create', { params: { providerId: 'anthropic', displayName: 'Synthetic provider', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-devproxy-test-key' } });
-  await hub.request('providers.create', oxapCodexProvider);
+  await seedSyntheticCodexAdmission(hub, app.settingsManager);
   const { sessionId } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic Codex', config: { model: OXAP_CODEX_MODEL, provider: 'anthropic-codex' } });
   const stored = app.db.getSession(sessionId);
   assert.equal(stored?.config.harness, 'oxap-codex');
@@ -80,6 +80,8 @@ try {
   evidence.refusedDoors = doors;
   evidence.storedConfigUnchanged = true;
   evidence.clientHarnessRefused = clientHarness;
+  const installed = app.settingsManager.getGlobalSettings().oxapHub;
+  app.settingsManager.updateGlobalSettings({ oxapHub: undefined });
   await hub.request('message.send', { sessionId, content: 'Synthetic request' }).catch(() => {});
   const deadline = Date.now() + 10_000;
   while (!errors.some((message) => /OXAP hub is not installed/.test(message))) {
@@ -89,6 +91,7 @@ try {
   assert.equal(gateCalls, 0);
   assert.deepEqual(app.sessionManager.getTrackedAgentRootPidsSplit().live, []);
   assert.equal(app.db.getSession(sessionId)?.config.harness, 'oxap-codex');
+  app.settingsManager.updateGlobalSettings({ oxapHub: installed });
   const { sessionId: syntheticSession } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic OAP query', config: { model: OXAP_CODEX_MODEL, provider: 'anthropic-codex' } });
   const agent = app.sessionManager.getSession(syntheticSession);
   assert(agent);

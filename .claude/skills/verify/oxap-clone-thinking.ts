@@ -5,7 +5,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
-import { answerCodexProbeLocally, OXAP_CODEX_MODEL, oxapCodexProvider } from './oxap-codex-provider.ts';
+import { answerCodexProbeLocally, OXAP_CODEX_MODEL, seedSyntheticCodexAdmission } from './oxap-codex-provider.ts';
 
 const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -24,7 +24,7 @@ try {
   transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false, createSocket: createLocalSocket });
   hub.registerTransport(transport);
   await transport.initialize();
-  await hub.request('providers.create', oxapCodexProvider);
+  await seedSyntheticCodexAdmission(hub, app.settingsManager);
   const { sessionId } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic Codex', config: { model: OXAP_CODEX_MODEL, provider: 'anthropic-codex' } });
   assert.equal(app.db.getSession(sessionId)?.config.harness, 'oxap-codex');
   const off = await hub.request('session.create', { workspacePath: join(run, 'workspace'), title: 'Off', config: { model: OXAP_CODEX_MODEL, provider: 'anthropic-codex', thinkingLevel: 'off' } });
