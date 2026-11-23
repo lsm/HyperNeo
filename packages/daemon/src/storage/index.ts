@@ -528,6 +528,10 @@ export class Database {
     return this.getSDKReader().readCopilotDesktop(args);
   }
 
+  readCursorDesktopAsync(args: Parameters<SDKStatusReader['readCursorDesktop']>[0]) {
+    return this.getSDKReader().readCursorDesktop(args);
+  }
+
   readClaudeRecordsAsync(sessionsDir: string) {
     return this.getSDKReader().readClaudeRecords(sessionsDir);
   }

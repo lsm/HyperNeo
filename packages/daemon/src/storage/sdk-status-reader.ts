@@ -3,6 +3,10 @@ import type { WorkDetail, WorkTurnFact } from '../lib/drivers/types.ts';
 import { runtimeWorkerUrl } from '../lib/runtime-worker-url.ts';
 import type { CodexSnapshot } from '../lib/drivers/codex-desktop-adapter.ts';
 import type {
+  CursorDesktopRead,
+  CursorDesktopSession,
+} from '../lib/drivers/cursor-desktop-discovery.ts';
+import type {
   CopilotDesktopRead,
   CopilotDesktopSession,
 } from '../lib/drivers/copilot-desktop-adapter.ts';
@@ -56,6 +60,7 @@ type SDKReadArgs =
   | { neoMessageStatus: NeoMessageStatusRef[] }
   | { claudeRecords: { sessionsDir: string } }
   | { copilotDesktop: CopilotDesktopRead }
+  | { cursorDesktop: CursorDesktopRead }
   | {
       codexSnapshot: {
         statePath: string;
@@ -79,6 +84,7 @@ export type SDKReadResult =
   | CodexSnapshot
   | ClaudeDesktopRecord[]
   | CopilotDesktopSession[]
+  | CursorDesktopSession[]
   | WorkTurnFact[];
 export type SDKStatusRequest = {
   id: number;
@@ -249,6 +255,10 @@ export class SDKStatusReader {
 
   readCopilotDesktop(args: CopilotDesktopRead) {
     return this.enqueue({ copilotDesktop: args }) as Promise<CopilotDesktopSession[]>;
+  }
+
+  readCursorDesktop(args: CursorDesktopRead) {
+    return this.enqueue({ cursorDesktop: args }) as Promise<CursorDesktopSession[]>;
   }
 
   readCodexSnapshot(

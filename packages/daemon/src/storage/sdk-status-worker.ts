@@ -7,6 +7,11 @@ import { countPendingTurns, readPendingTurns } from './turn-vectors.ts';
 import { readMessageFacts } from '../lib/neo/message-status.ts';
 import { readMessageFeed } from './sdk-message-feed-read.ts';
 import { Database } from './sqlite-compat.ts';
+import { pathToFileURL } from 'node:url';
+import type {
+  CursorDesktopRead,
+  CursorDesktopSession,
+} from '../lib/drivers/cursor-desktop-discovery.ts';
 import { readCopilotDesktop } from './copilot-desktop-read.ts';
 import { SDKMessageRepository } from './repositories/sdk-message-repository.ts';
 import { subscribeToStructuredLogs } from '../lib/logger.ts';
@@ -27,6 +32,57 @@ const worker = globalThis as unknown as {
 let db: Database | null = null;
 let repository: SDKMessageRepository | null = null;
 let workerOperation = 'sdk-status';
+
+function readCursorDesktop({ statePath, query }: CursorDesktopRead, readonlyUri = false) {
+  let app: Database | undefined;
+  try {
+    app = new Database(statePath, { readonly: true, readonlyUri });
+    app.exec('PRAGMA busy_timeout = 500');
+    const index = app
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'composerHeaders'")
+      .get();
+    if (!index) return [];
+    const text = query.text?.toLowerCase() ?? '';
+    return app
+      .prepare(`
+      WITH headers AS (
+        SELECT composerId AS id, isArchived AS archived, COALESCE(recency, 0) AS updatedAt,
+               CASE WHEN json_valid(CAST(value AS TEXT)) THEN CAST(value AS TEXT) ELSE '{}' END AS header
+          FROM composerHeaders
+         WHERE NOT isSubagent AND (? OR NOT isArchived)
+      ), sessions AS (
+        SELECT id,
+               COALESCE(NULLIF(trim(json_extract(header, '$.name')), ''), 'Untitled Cursor session') AS title,
+               json_extract(header, '$.workspaceIdentifier.uri.path') AS folder,
+               updatedAt, archived
+          FROM headers
+         WHERE json_extract(header, '$.workspaceIdentifier.uri.scheme') = 'file'
+           AND COALESCE(json_extract(header, '$.workspaceIdentifier.uri.authority'), '') = ''
+      )
+      SELECT id, title, folder, updatedAt, archived FROM sessions
+       WHERE typeof(id) = 'text' AND id <> '' AND typeof(folder) = 'text'
+         AND instr(id, ?) = 1 AND folder = COALESCE(?, folder)
+         AND (instr(lower(title), ?) OR instr(lower(folder), ?))
+       ORDER BY updatedAt DESC, id LIMIT 500
+    `)
+      .all(
+        Number(query.includeClosed),
+        query.idPrefix ?? '',
+        query.folder ?? null,
+        text,
+        text
+      ) as CursorDesktopSession[];
+  } catch (error) {
+    if (readonlyUri || !/unable to open database file|readonly database/.test(String(error)))
+      throw error;
+  } finally {
+    app?.close();
+  }
+  const url = pathToFileURL(statePath);
+  url.searchParams.set('immutable', '1');
+  return readCursorDesktop({ statePath: url.href, query }, true);
+}
+
 subscribeToStructuredLogs((log) => {
   if (log.module === 'hyperneo:daemon:sqlite.query')
     worker.postMessage({
@@ -53,15 +109,17 @@ worker.onmessage = ({ data }) => {
                 ? 'codex-snapshot'
                 : 'copilotDesktop' in args
                   ? 'copilot-desktop'
-                  : 'turnVectors' in args
-                    ? 'turn-vectors'
-                    : 'neoMessageStatus' in args
-                      ? 'neo-message-status'
-                      : 'feed' in args
-                        ? 'message-feed'
-                        : 'page' in args
-                          ? 'sdk-page'
-                          : 'sdk-status'
+                  : 'cursorDesktop' in args
+                    ? 'cursor-desktop'
+                    : 'turnVectors' in args
+                      ? 'turn-vectors'
+                      : 'neoMessageStatus' in args
+                        ? 'neo-message-status'
+                        : 'feed' in args
+                          ? 'message-feed'
+                          : 'page' in args
+                            ? 'sdk-page'
+                            : 'sdk-status'
     : 'close';
   try {
     let result: SDKReadResult | null = null;
@@ -73,6 +131,8 @@ worker.onmessage = ({ data }) => {
       result = readClaudeDesktopRecordFiles(args.claudeRecords.sessionsDir);
     } else if ('copilotDesktop' in args) {
       result = readCopilotDesktop(args.copilotDesktop);
+    } else if ('cursorDesktop' in args) {
+      result = readCursorDesktop(args.cursorDesktop);
     } else if ('codexSnapshot' in args) {
       result = readCodexSnapshot(
         args.codexSnapshot.statePath,
