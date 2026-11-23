@@ -21,6 +21,8 @@ const CLOSE_TIMEOUT_MS = 3_000;
 const TURN_TIMEOUT_MINUTES = 60;
 const RETAINED_TURNS = 100;
 const MAX_REPLY_CHARS = 16_000;
+const AUTH_REQUIRED = -32000;
+const SIGN_IN_DETAIL = 'Sign in to Antigravity CLI before starting a session.';
 const Init = z.object({
   protocolVersion: z.literal(1),
   agentCapabilities: z.object({ sessionCapabilities: z.object({ close: z.object({}) }) }),
@@ -67,6 +69,8 @@ async function openSession(transport: ProcessJsonRpcTransport, cwd: string) {
     protocolVersion: 1,
     clientCapabilities: {},
   });
+  if ('error' in initialized && initialized.error.code === AUTH_REQUIRED)
+    return reject('unreachable', SIGN_IN_DETAIL, true);
   if (!('result' in initialized) || !Init.safeParse(initialized.result).success) {
     return reject('unreachable', 'Antigravity must support ACP version 1 session close.', true);
   }
@@ -74,8 +78,8 @@ async function openSession(transport: ProcessJsonRpcTransport, cwd: string) {
   if ('error' in opened) {
     return reject(
       'unreachable',
-      opened.error.code === -32000
-        ? 'Sign in to Antigravity CLI before starting a session.'
+      opened.error.code === AUTH_REQUIRED
+        ? SIGN_IN_DETAIL
         : `Antigravity rejected session creation (${opened.error.code}).`,
       true
     );
