@@ -312,6 +312,7 @@ export type ArchiveAdmission = () => Rejected | null;
 
 export interface FindQuery {
   all?: true;
+  id?: string;
   idPrefix?: string;
   text?: string;
   folder?: string;

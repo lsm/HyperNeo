@@ -15,7 +15,7 @@ assert(mode === 'fixture' || mode === 'signed-out');
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
-const cliDir = join(run, 'home/.local/bin');
+const cliDir = join(run, 'bin');
 mkdirSync(cliDir, { recursive: true });
 const cli = join(cliDir, 'cursor-agent');
 if (mode === 'signed-out') symlinkSync(executable, cli);
@@ -107,6 +107,8 @@ try {
     assert.equal(alpha.sessions[0].lastActivityAt, Date.parse('2026-11-19T15:00:00Z'));
     const beta = await find({ text: 'untitled Cursor session', limit: 1 });
     assert.deepEqual(beta.sessions.map(({ ref }) => ref.id), ['cursor-beta']);
+    const exact = await find({ id: 'cursor-beta', limit: 1 });
+    assert.deepEqual(exact.sessions.map(({ ref }) => ref.id), ['cursor-beta']);
     const loop = await find({ folder: '/synthetic/repeated' });
     assert.equal(loop.sessions.length, 0);
     assert.deepEqual(loop.unreachable, [
