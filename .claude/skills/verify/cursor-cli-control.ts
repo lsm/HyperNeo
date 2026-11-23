@@ -24,21 +24,32 @@ import assert from 'node:assert/strict';
 import { createInterface } from 'node:readline';
 assert.deepEqual(process.argv.slice(2), ['--sandbox', 'enabled', 'acp']);
 const sessionId = 'fixture-cursor-cli';
-const config = (currentValue) => ({ configOptions: [{ id: 'model', category: 'model', currentValue }] });
+let model = 'default';
+let effort = 'medium';
+const config = () => ({ configOptions: [
+  { id: 'model', category: 'model', currentValue: model },
+  ...(model === 'fixture-model' ? [{ id: 'reasoning', category: 'thought_level', currentValue: effort }] : []),
+] });
 const write = (value) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...value }) + '\\n');
 let held;
 let loaded = false;
 for await (const line of createInterface({ input: process.stdin })) {
   const { id, method, params } = JSON.parse(line);
   if (method === 'initialize') write({ id, result: { protocolVersion: 1 } });
-  else if (method === 'session/new') write({ id, result: { sessionId, ...config('default') } });
-  else if (method === 'session/set_config_option') write({ id, result: config(params.value === 'unavailable' ? 'default' : params.value) });
+  else if (method === 'session/new') write({ id, result: { sessionId, ...config() } });
+  else if (method === 'session/set_config_option') {
+    if (params.configId === 'model' && params.value !== 'unavailable') model = params.value;
+    if (params.configId === 'reasoning') effort = params.value;
+    write({ id, result: config() });
+  }
   else if (method === 'session/load') {
     assert.equal(params.sessionId, sessionId);
     loaded = true;
-    write({ id, result: config('fixture-model') });
+    write({ id, result: config() });
   } else if (method === 'session/prompt') {
     const text = params.prompt[0].text;
+    assert.equal(model, 'fixture-model');
+    assert.equal(effort, 'high');
     if (text === 'hold') assert(loaded);
     write({ method: 'session/update', params: {
       sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'reply ' + text } },
@@ -87,10 +98,12 @@ try {
   } else {
     const misleading = await rpc<Result<WorkStarted>>('work.start', { ...args, model: 'unavailable' });
     assert(!misleading.ok && misleading.detail.includes('confirm the requested model'));
-    const result = await rpc<Result<WorkStarted>>('work.start', { ...args, model: 'fixture-model' });
+    const noEffort = await rpc<Result<WorkStarted>>('work.start', { ...args, effort: 'high' });
+    assert(!noEffort.ok && noEffort.detail.includes('thinking effort for this model'));
+    const result = await rpc<Result<WorkStarted>>('work.start', { ...args, model: 'fixture-model', effort: 'high' });
     assert(result.ok, JSON.stringify(result));
-    const { ref, receipt, model } = result.value;
-    assert(receipt && model === 'fixture-model');
+    const { ref, receipt, model, effort } = result.value;
+    assert(receipt && model === 'fixture-model' && effort === 'high');
     let status: Result<WorkDetail>;
     do {
       status = await rpc<Result<WorkDetail>>('work.status', { ref, receipt });

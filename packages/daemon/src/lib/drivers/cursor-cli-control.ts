@@ -46,6 +46,41 @@ async function request(transport: ProcessJsonRpcTransport, method: string, param
   );
 }
 
+async function configure(
+  transport: ProcessJsonRpcTransport,
+  sessionId: string,
+  config: z.infer<typeof Config>,
+  requested: { model?: string; effort?: string }
+) {
+  const select = (category: string) =>
+    config.configOptions?.find((item) => item.category === category);
+  for (const [category, target] of [
+    ['model', requested.model],
+    ['thought_level', requested.effort],
+  ] as const) {
+    if (target === undefined) continue;
+    const option = select(category);
+    if (!option)
+      throw new Error(
+        `Cursor did not advertise ${category === 'model' ? 'a model selector' : 'thinking effort for this model'}.`
+      );
+    if (option.currentValue !== target) {
+      config = Config.parse(
+        await request(transport, 'session/set_config_option', {
+          sessionId,
+          configId: option.id,
+          value: target,
+        })
+      );
+      if (select(category)?.currentValue !== target)
+        throw new Error(
+          `Cursor did not confirm the requested ${category === 'model' ? 'model' : 'thinking effort'}.`
+        );
+    }
+  }
+  return { model: select('model')?.currentValue, effort: select('thought_level')?.currentValue };
+}
+
 export function createCursorCliControl(
   command: string,
   machine: string,
@@ -181,6 +216,7 @@ export function createCursorCliControl(
   return {
     id: ADAPTER,
     capabilities: ['find', 'start', 'send', 'status', 'stop'],
+    supportsStartEffort: true,
     find: (query) =>
       query.spaceId
         ? []
@@ -217,20 +253,7 @@ export function createCursorCliControl(
         const value = Session.parse(
           await request(transport, 'session/new', { cwd, mcpServers: [] })
         );
-        let model = value.configOptions?.find(({ category }) => category === 'model');
-        if (input.model) {
-          if (!model) throw new Error('Cursor did not advertise a model selector.');
-          const configured = Config.parse(
-            await request(transport, 'session/set_config_option', {
-              sessionId: value.sessionId,
-              configId: model.id,
-              value: input.model,
-            })
-          );
-          model = configured.configOptions?.find(({ category }) => category === 'model');
-          if (model?.currentValue !== input.model)
-            throw new Error('Cursor did not confirm the requested model.');
-        }
+        const config = await configure(transport, value.sessionId, value, input);
         const ref = { adapter: ADAPTER, id: value.sessionId };
         const entry: Entry = {
           detail: {
@@ -240,7 +263,7 @@ export function createCursorCliControl(
             execution: { machine, directory: cwd },
             status: 'running',
             lastActivityAt: Date.now(),
-            ...(model ? { model: model.currentValue } : {}),
+            ...config,
           },
         };
         sessions.set(ref.id, entry);
@@ -272,7 +295,10 @@ export function createCursorCliControl(
       let transport: ProcessJsonRpcTransport | undefined;
       try {
         transport = await connect(cwd);
-        await request(transport, 'session/load', { cwd, sessionId: ref.id, mcpServers: [] });
+        const config = Config.parse(
+          await request(transport, 'session/load', { cwd, sessionId: ref.id, mcpServers: [] })
+        );
+        await configure(transport, ref.id, config, entry.detail);
         const started = begin(entry, transport, text);
         return (await started.accepted)
           ? { ok: true, value: { delivered: true, receipt: started.receipt } }
