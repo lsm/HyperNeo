@@ -19,9 +19,11 @@ The choices for a provider are `sdk` (Claude Code) plus every row of
 filters this way in `SessionsPage.tsx`. A new harness becomes selectable by
 adding its row; nothing else lists harnesses.
 
-A row is selectable only when it is configured: its `settings` (the
-executable) are saved for that provider and the OXAP hub is installed. An
-eligible row that is not configured still shows, disabled, with "Set up in
+A row is selectable only when it is ready for a new session: its `settings`
+(the executable) are saved for that provider, its required key (`row.key`, such
+as `DEEPSEEK_API_KEY`) is set, and the OXAP hub is installed. This check applies
+only to the new-session dialog and to session creation; nothing else uses it.
+An eligible row that is not ready still shows, disabled, with "Set up in
 Settings → Providers". `sdk` is always selectable.
 
 First batch: OpenAI Codex offers SDK and OXAP Codex; DeepSeek offers SDK and
@@ -55,17 +57,15 @@ The hub registers one adapter per provider id, built only from providers whose
    its default. Today both look only at the default, so a retained DSH adapter
    would start without `DEEPSEEK_API_KEY`. Saving the default as `sdk` keeps
    `harnessSettings` instead of dropping them (today `oxap-settings.ts`
-   removes both). Configured means "settings saved", derived from the record
-   that already holds it. A row whose required key (`row.key`, such as
-`DEEPSEEK_API_KEY`) is missing is not configured, so the dialog disables it and
-creation refuses it, instead of failing at the first run. The provider card
-shows the retained executable field whenever executable settings are saved,
-whether or not the key is set and even while the default is `sdk`, so a stale path can be fixed without flipping the
-default.
+   removes both). "Saved" means the executable settings are in the record that already holds
+   them; it does not look at the key. The provider card shows the retained
+   executable field whenever settings are saved, whether or not the key is set
+   and even while the default is `sdk`, so a stale path can be fixed without
+   flipping the default.
 2. **Existing chats survive a default change.** `openGate` refuses to reopen a
    chat whose harness differs from the provider's current default ("no longer
-   uses"). It instead checks that the session's harness is still configured for
-   its provider. Changing the default then leaves an OXAP chat usable, and an
+   uses"). It instead checks that the session's harness is still saved for
+   its provider. Reopening does not check the key and behaves exactly as today. Changing the default then leaves an OXAP chat usable, and an
    SDK override and a default-OXAP chat run on the same daemon.
 
 Each provider has at most one OXAP row today, so the adapter keeps its
@@ -94,15 +94,15 @@ them.
 Each slice works on its own: nothing is reachable before what it needs exists.
 
 1. Availability: keep `harnessSettings` when the default is set to `sdk`;
-   register adapters and load keys from configured settings; `openGate` checks
-   configured, not default; the key check and the card field above. Tests: switch DeepSeek's default to SDK, then run a
+   register adapters and load keys from saved settings; `openGate` checks
+   saved, not default; the card field above. Tests: switch DeepSeek's default to SDK, then run a
    turn on an existing OXAP chat (key present); same for Codex.
 2. Admission: `session.create` accepts `harness`; resolve, validate and store
-   it; the configured check. Safe after 1 because an admitted override can
+   it; the ready-for-new-session check. Safe after 1 because an admitted override can
    open. Tests: default, SDK override, OXAP override on an SDK default,
-   unsupported, unconfigured.
+   unsupported, not ready (no settings, no key).
 3. Dialog: show the effective harness next to the model, list supported rows
-   (disabled when unconfigured), send `harness` only when the user overrides.
+   (disabled when not ready), send `harness` only when the user overrides.
 4. Prove both first-batch pairs end to end on one daemon: provider default
    chat and SDK override chat, then the reverse.
 5. Later, one PR each: OpenCode Go with DSH, then other pairs once each is
