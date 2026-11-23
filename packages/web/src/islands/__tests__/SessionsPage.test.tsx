@@ -54,6 +54,7 @@ vi.mock('../../lib/connection-manager.ts', () => ({
 import { newChatProjectSignal, workspaceHistoryVersionSignal } from '../../lib/signals';
 import { SessionsPage } from '../SessionsPage';
 import { createSession } from '../../lib/api-helpers.ts';
+import { globalSettings } from '../../lib/state.ts';
 
 function folderChip() {
   return screen.getAllByText(
@@ -68,6 +69,7 @@ describe('SessionsPage', () => {
     vi.clearAllMocks();
     vi.mocked(localStorage.getItem).mockReturnValue(null);
     modelFixture.models = [];
+    globalSettings.value = null;
     mockListProviders.mockResolvedValue({ providers: [] });
     newChatProjectSignal.value = null;
     workspaceHistoryVersionSignal.value = 0;
@@ -167,6 +169,27 @@ describe('SessionsPage', () => {
     expect(createSession).toHaveBeenCalledWith({
       harness: 'oxap-codex',
       config: { model: 'codex', provider: 'anthropic-codex' },
+    });
+  });
+
+  it('lets the daemon pick the model when overriding the harness without a catalog match', async () => {
+    globalSettings.value = { modelProvider: 'anthropic-codex' };
+    mockListProviders.mockResolvedValue({
+      providers: [{ providerId: 'anthropic-codex', readyHarnesses: ['oxap-codex'] }],
+    });
+    vi.mocked(createSession).mockReturnValue(new Promise(() => {}));
+    render(<SessionsPage />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Harness: Claude Code' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'OXAP Codex' }));
+    fireEvent.input(screen.getByPlaceholderText('Ask anything to start a new chat...'), {
+      target: { value: 'Hello' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Start chat' }));
+
+    expect(createSession).toHaveBeenCalledWith({
+      harness: 'oxap-codex',
+      config: { provider: 'anthropic-codex' },
     });
   });
 

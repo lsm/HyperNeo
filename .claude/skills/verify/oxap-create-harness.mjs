@@ -64,7 +64,7 @@ try {
     const open = async (id, provider) => {
       await page.goto(`${base}/sessions`);
       await page.evaluate(({ selectionKey, id, provider }) => {
-        localStorage.setItem(selectionKey, JSON.stringify({ model: { id, provider } }));
+        localStorage.setItem(selectionKey, JSON.stringify(id ? { model: { id, provider } } : {}));
       }, { selectionKey, id, provider });
       await page.reload();
     };
@@ -107,6 +107,7 @@ try {
       assert.equal(request.harness, expectedChoice);
       assert(response.data?.sessionId, JSON.stringify(response.error));
       assert.equal(response.data.session.config.harness, expectedStored);
+      return { request, session: response.data.session };
     };
 
     setCodexDefault('sdk');
@@ -144,7 +145,16 @@ try {
     await screenshot('disabled');
     await page.keyboard.press('Escape');
     await submit(undefined, undefined);
-    console.log(JSON.stringify({ width, touch, creations: creations.length, defaultOmitted: true, oxapOverride: true, sdkOverride: true, unavailableDisabled: true }));
+    setCodexDefault('sdk');
+    await open();
+    await sdk.waitFor();
+    await click(sdk);
+    await click(page.getByRole('menuitem', { name: 'OXAP Codex', exact: true }));
+    await codex.waitFor();
+    const { request, session } = await submit('oxap-codex', 'oxap-codex');
+    assert.deepEqual(request.config, { provider: 'anthropic-codex' }, 'An override should omit an unknown model');
+    assert.equal(session.config.model, 'codex-6-luna', 'The daemon should resolve the configured fallback');
+    console.log(JSON.stringify({ width, touch, creations: creations.length, defaultOmitted: true, oxapOverride: true, sdkOverride: true, unavailableDisabled: true, modelResolvedByDaemon: true }));
     await context.close();
   }
 } finally {

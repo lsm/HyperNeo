@@ -68,6 +68,11 @@ await rpc.request('providers.create', {
   credentials: { apiKey: 'sk-devproxy-test-key' },
 });
 if (harnessChoice) {
+  app.settingsManager.updateGlobalSettings({
+    model: 'sonnet',
+    modelProvider: 'anthropic-codex',
+    fallbackModels: [{ provider: 'anthropic-codex', model: 'codex-6-luna' }],
+  });
   await rpc.request('providers.create', {
     params: {
       providerId: 'deepseek', displayName: 'Synthetic DeepSeek', kind: 'built_in',
