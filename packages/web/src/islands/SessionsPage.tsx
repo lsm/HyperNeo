@@ -436,10 +436,8 @@ export function SessionsPage() {
       const req: CreateSessionRequest = {};
       if (harness !== defaultHarness) req.harness = harness;
       if ((selectedModel && selectedModelInfo) || req.harness) {
-        req.config = {
-          model: activeModelInfo?.id ?? defaultModelId,
-          provider: providerId as Provider,
-        };
+        req.config = { provider: providerId as Provider };
+        if (activeModelInfo) req.config.model = activeModelInfo.id;
       }
       if (selectedThinking && thinkingAllowed) {
         req.config = { ...req.config, thinkingLevel: selectedThinking };

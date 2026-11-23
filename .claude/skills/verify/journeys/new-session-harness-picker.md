@@ -15,8 +15,10 @@ Choosing OXAP Codex sends the override and stores OXAP. Reopening the form
 shows the provider default again. Changing the provider default in settings then
 allows the journey to verify the reverse override to Claude Code. DeepSeek's
 compatible OXAP option remains visible and disabled with the Settings hint
-while its key is missing. The journey forwards real create requests and holds
-the first message at the browser boundary.
+while its key is missing. When the default model does not match the catalog,
+an override sends the provider alone and the daemon resolves the fallback.
+The journey forwards real create requests and holds the first message at the
+browser boundary.
 
 Keep `one-line-default-1280.png`, `one-line-override-1280.png`,
 `one-line-disabled-1280.png` and their `-390.png` counterparts.
