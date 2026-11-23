@@ -67,6 +67,7 @@ export const NEO_RARE_OPERATION_NAMES = [
   'neo.rule.save',
   'neo.session.link',
   'neo.session.mute',
+  'neo.session.unarchive',
   'neo.snapshot',
   'neo.todo.retarget',
   'neo.workerOwnership.apply',

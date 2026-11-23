@@ -4,6 +4,7 @@ import type {
   ListSessionsResponse,
   UpdateSessionRequest,
   ArchiveSessionResponse,
+  UnarchiveSessionResponse,
   CloneChildrenChoice,
   DeleteSessionResponse,
   GetAuthStatusResponse,
@@ -143,6 +144,12 @@ export async function archiveSession(
     sessionId,
     confirmed,
     ...(children ? { children } : {}),
+  });
+}
+
+export async function unarchiveSession(sessionId: string): Promise<UnarchiveSessionResponse> {
+  return await getHubOrThrow().request<UnarchiveSessionResponse>('session.unarchive', {
+    sessionId,
   });
 }
 

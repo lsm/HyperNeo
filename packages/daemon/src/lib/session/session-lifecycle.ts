@@ -12,6 +12,7 @@ import type {
   Provider,
   Session,
   SessionMetadata,
+  UnarchiveSessionResponse,
   WorktreeMetadata,
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
@@ -98,6 +99,7 @@ export interface CreateSessionParams {
 }
 
 export class SessionLifecycle {
+  private readonly resourceOperations = new Map<string, Promise<unknown>>();
   private logger: Logger;
 
   constructor(
@@ -626,7 +628,82 @@ export class SessionLifecycle {
     return cleanup;
   }
 
-  async cleanupArchivedWorktree(sessionId: string): Promise<WorktreeCleanup | undefined> {
+  private async withSessionResources<T>(sessionId: string, effect: () => Promise<T>): Promise<T> {
+    const previous = this.resourceOperations.get(sessionId);
+    const pending = (previous?.catch(() => {}) ?? Promise.resolve()).then(effect);
+    this.resourceOperations.set(sessionId, pending);
+    try {
+      return await pending;
+    } finally {
+      if (this.resourceOperations.get(sessionId) === pending)
+        this.resourceOperations.delete(sessionId);
+    }
+  }
+
+  unarchive(sessionId: string): Promise<UnarchiveSessionResponse> {
+    return this.withSessionResources(sessionId, async () => {
+      const session = this.db.getSession(sessionId);
+      if (!session) return { success: false, reason: 'Session not found' };
+      if (session.status === 'active') return { success: true };
+      if (session.status !== 'archived')
+        return { success: false, reason: 'Only archived sessions can be reopened' };
+      return this.restoreArchivedSession(session);
+    });
+  }
+
+  private async restoreArchivedSession(session: Session): Promise<UnarchiveSessionResponse> {
+    const archived = session.metadata.archivedWorktree;
+    let worktree = session.worktree ?? (archived && { ...archived, isWorktree: true });
+    let worktreeBaseBranch: string | undefined;
+    if (worktree && !(await this.worktreeManager.verifyWorktree(worktree))) {
+      const { branch, mainRepoPath } = worktree;
+      worktreeBaseBranch = (await this.worktreeManager.checkBranchExists(mainRepoPath, branch))
+        ? branch
+        : 'dev';
+      worktree =
+        (await this.worktreeManager.createWorktree({
+          sessionId: session.id,
+          repoPath: mainRepoPath,
+          branchName: `session/restored-${generateUUID()}`,
+          baseBranch: `refs/heads/${worktreeBaseBranch}`,
+        })) ?? undefined;
+      if (!worktree) throw new Error('Could not recreate the archived worktree');
+    }
+
+    const updates = {
+      status: 'active' as const,
+      archivedAt: null,
+      ...(worktree ? { worktree, gitBranch: worktree.branch } : {}),
+    };
+    let written = false;
+    try {
+      written = (await this.db.updateSession(session.id, updates)) === 'written';
+    } finally {
+      if (!written && worktreeBaseBranch && worktree)
+        await this.worktreeManager.removeWorktree(worktree);
+    }
+    if (!written) return { success: false, reason: 'This session cannot be reopened' };
+
+    this.sessionCache.remove(session.id);
+    await this.internalEventBus
+      .publish('session.updated', {
+        sessionId: session.id,
+        source: 'update',
+        session: { ...updates, archivedAt: undefined },
+      })
+      .catch((error: unknown) => this.logger.warn('Could not publish session restore', error));
+    return { success: true, ...(worktreeBaseBranch ? { worktreeBaseBranch } : {}) };
+  }
+
+  cleanupArchivedWorktree(sessionId: string): Promise<WorktreeCleanup | undefined> {
+    return this.withSessionResources(sessionId, () =>
+      this.cleanupArchivedWorktreeResources(sessionId)
+    );
+  }
+
+  private async cleanupArchivedWorktreeResources(
+    sessionId: string
+  ): Promise<WorktreeCleanup | undefined> {
     const session = this.db.getSession(sessionId);
     if (session?.status !== 'archived' || !session.worktree) return undefined;
     const cleanup = await this.cleanupSessionWorktree(session.worktree);
@@ -634,7 +711,16 @@ export class SessionLifecycle {
     return cleanup;
   }
 
-  async archiveResources(
+  archiveResources(
+    sessionId: string,
+    trigger: ArchiveResourcesTrigger
+  ): Promise<WorktreeCleanup | undefined> {
+    return this.withSessionResources(sessionId, () =>
+      this.archiveSessionResources(sessionId, trigger)
+    );
+  }
+
+  private async archiveSessionResources(
     sessionId: string,
     trigger: ArchiveResourcesTrigger
   ): Promise<WorktreeCleanup | undefined> {
@@ -757,7 +843,16 @@ export class SessionLifecycle {
     return cleanup;
   }
 
-  async deleteResources(sessionId: string, trigger: DeleteResourcesTrigger): Promise<void> {
+  deleteResources(sessionId: string, trigger: DeleteResourcesTrigger): Promise<void> {
+    return this.withSessionResources(sessionId, () =>
+      this.deleteSessionResources(sessionId, trigger)
+    );
+  }
+
+  private async deleteSessionResources(
+    sessionId: string,
+    trigger: DeleteResourcesTrigger
+  ): Promise<void> {
     const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
     const session = this.db.getSession(sessionId);
 

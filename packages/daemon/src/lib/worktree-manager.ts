@@ -1,7 +1,7 @@
 import simpleGit, { SimpleGit } from 'simple-git';
 import { execFile } from 'node:child_process';
 import { dirname, join, normalize } from 'node:path';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import type {
   WorktreeMetadata,
   CommitInfo,
@@ -744,7 +744,7 @@ export class WorktreeManager {
       });
   }
 
-  private async checkBranchExists(repoPath: string, branchName: string): Promise<boolean> {
+  async checkBranchExists(repoPath: string, branchName: string): Promise<boolean> {
     try {
       const git = this.getGit(repoPath);
       const result = await git.raw(['branch', '--list', branchName]);
@@ -806,11 +806,11 @@ export class WorktreeManager {
     const worktreePath = join(worktreesDir, safeSessionId);
     let branchName = customBranchName || `session/${safeSessionId}`;
 
-    try {
-      if (existsSync(worktreePath)) {
-        throw new Error(`Worktree directory already exists: ${worktreePath}`);
-      }
+    if (existsSync(worktreePath)) {
+      throw new Error(`Worktree directory already exists: ${worktreePath}`);
+    }
 
+    try {
       const branchExists = await this.checkBranchExists(gitRoot, branchName);
       if (branchExists) {
         this.logger.warn(`Stale branch detected: ${branchName} — deleting and recreating`);
@@ -862,10 +862,10 @@ export class WorktreeManager {
 
     try {
       const worktrees = await this.listWorktrees(mainRepoPath);
-      const exists = worktrees.some((w) => w.path === worktreePath);
+      const canonicalPath = existsSync(worktreePath) ? realpathSync(worktreePath) : worktreePath;
 
-      if (exists) {
-        await git.raw(['worktree', 'remove', worktreePath, '--force']);
+      if (worktrees.some((w) => w.path === canonicalPath)) {
+        await git.raw(['worktree', 'remove', canonicalPath, '--force']);
       }
 
       if (deleteBranch && branch) {
@@ -943,14 +943,9 @@ export class WorktreeManager {
       return false;
     }
 
+    const canonicalPath = realpathSync(worktreePath);
     const worktrees = await this.listWorktrees(mainRepoPath);
-    const exists = worktrees.some((w) => w.path === worktreePath);
-
-    if (!exists) {
-      return false;
-    }
-
-    return true;
+    return worktrees.some((w) => w.path === canonicalPath);
   }
 
   async getCurrentBranch(worktreePath: string): Promise<string | null> {

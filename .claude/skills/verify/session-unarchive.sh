@@ -43,3 +43,23 @@ jq -e '.reply.session | .status == "active" and .archivedAt == null' "$out/resto
 worktree=$(jq -er '.reply.session.worktree.worktreePath' "$out/restored.json")
 test "$(git -C "$worktree" rev-parse HEAD)" = "$(git -C "$repo" rev-parse dev)"
 echo 'PASS: archived RPC session restored on dev (1 session)'
+
+recorded_id=$(create_archive Recorded)
+recorded_branch=$(jq -r . "$out/Recorded-branch.json")
+recorded_tip=$(env -i PATH=/usr/bin:/bin HOME="$RUN/home" GIT_AUTHOR_NAME=Fixture \
+  GIT_AUTHOR_EMAIL=fixture@example.invalid GIT_COMMITTER_NAME=Fixture \
+  GIT_COMMITTER_EMAIL=fixture@example.invalid git -C "$repo" commit-tree 'dev^{tree}' -p dev -m 'Recorded branch tip')
+git -C "$repo" branch "$recorded_branch" "$recorded_tip"
+recorded_params=$(jq -nc --arg id "$recorded_id" '{sessionId:$id}')
+rpc neo.session.unarchive "$recorded_params" > "$out/neo-unarchive.json"
+jq -e '.reply | (.value // .) | .success and .worktreeBaseBranch != "dev"' "$out/neo-unarchive.json"
+rpc rpc:session.get "$recorded_params" > "$out/neo-restored.json"
+recorded_tree=$(jq -er '.reply.session.worktree.worktreePath' "$out/neo-restored.json")
+test "$(git -C "$recorded_tree" rev-parse HEAD)" = "$recorded_tip"
+test "$(git -C "$repo" rev-parse "$recorded_branch")" = "$recorded_tip"
+echo 'PASS: Neo operation restored the recorded branch tip (1 session)'
+
+rpc rpc:settings.global.update '{"updates":{"showArchived":true}}' | jq -e '.reply.success'
+desktop=$(create_archive 'Desktop restore')
+phone=$(create_archive 'Phone restore')
+node "$verify/session-unarchive-web.mjs" "$out" "$desktop" "$phone"

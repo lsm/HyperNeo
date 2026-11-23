@@ -111,7 +111,7 @@ export class GlobalStore {
       return;
     }
 
-    this.subscribeSessions(hub);
+    const checkSessionListSetting = this.subscribeSessions(hub);
 
     const unsubSystem = hub.onEvent<SystemState>(STATE_CHANNELS.GLOBAL_SYSTEM, (state) => {
       this.systemState.value = state;
@@ -145,6 +145,7 @@ export class GlobalStore {
     if (snapshot) {
       this.systemState.value = snapshot.system || null;
       this.settings.value = snapshot.settings?.settings || null;
+      checkSessionListSetting();
     }
 
     this.initState = 'ready';
@@ -174,7 +175,7 @@ export class GlobalStore {
     this.cleanupFunctions = [];
   }
 
-  private subscribeSessions(hub: Awaited<ReturnType<typeof connectionManager.getHub>>): void {
+  private subscribeSessions(hub: Awaited<ReturnType<typeof connectionManager.getHub>>): () => void {
     const getParams = (): number[] => {
       const showArchived = this.settings.value?.showArchived ?? false;
       return [showArchived ? 1 : 0];
@@ -235,6 +236,7 @@ export class GlobalStore {
     this.cleanupFunctions.push(unsubSettings);
 
     doSubscribe();
+    return checkSetting;
   }
 
   private applySessionsDelta(event: LiveQueryDeltaEvent): void {

@@ -978,17 +978,14 @@ describe('GlobalStore - refresh()', () => {
     expect(store.settings.value).toEqual(settings);
   });
 
-  it('should subscribe with archived sessions when showArchived is set', async () => {
+  it('includes archived sessions when the initial snapshot enables them', async () => {
     hub.state.snapshot = {
       system: createSystemState(),
       settings: settingsState(createSettings({ showArchived: true })),
     };
     await store.initialize();
-    hub.request.mockClear();
-
-    await store.refresh();
-
     expect(subscribeCalls()).toEqual([
+      { queryName: 'sessions.list', params: [0], subscriptionId: 'sessions-list' },
       { queryName: 'sessions.list', params: [1], subscriptionId: 'sessions-list' },
     ]);
   });

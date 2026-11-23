@@ -113,6 +113,7 @@ import { sessionSender } from '../../messaging/message-send.ts';
 import { renderAddress } from '../../mailbox/address.ts';
 import { createWorkerOwnershipBackfillOperations } from '../../neo/worker-ownership-backfill.ts';
 import { createNeoSessionArchiveOperation } from '../../neo/session-archive-operation.ts';
+import { createNeoSessionUnarchiveOperation } from '../../neo/session-unarchive-operation.ts';
 import { reject } from '../../drivers/work-operations.ts';
 import { handoffPromptToMailbox } from '../../mailbox/handoff.ts';
 import { invokeOperation } from '../../operations/invoke.ts';
@@ -994,6 +995,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     health.operation,
     ...createWorkVerbOperations({ ...deps, queueInput: workerInputs.accept }),
     createNeoSessionArchiveOperation({ ...deps, db: context.deps.db }),
+    createNeoSessionUnarchiveOperation(context.deps.db, context.deps.sessionManager),
     ...createWorkerOwnershipBackfillOperations(context.deps.db),
     createReadWorkOperation({
       readTurns,
