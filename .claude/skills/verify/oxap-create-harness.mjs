@@ -34,7 +34,7 @@ try {
   const storageState = await initial.context().storageState();
   await initial.close();
 
-  for (const width of [1280, 390]) {
+  for (const width of [390, 1280, 320]) {
     const touch = width < 640;
     const context = await browser.newContext({
       storageState, hasTouch: touch, locale: 'en-US', colorScheme: 'light',
@@ -68,8 +68,31 @@ try {
       }, { selectionKey, id, provider });
       await page.reload();
     };
-    const screenshot = (name) =>
-      page.screenshot({ path: join(output, `${name}-${width}.png`), animations: 'disabled' });
+    const screenshot = async (name) => {
+      const sandbox = page.getByRole('button', { name: 'Sandbox', exact: true });
+      const model = page.getByRole('button', { name: 'Choose model and thinking' });
+      const harness = page.getByRole('button', { name: /^Harness:/ });
+      const start = page.getByRole('button', { name: 'Start chat' });
+      const controls = [model, harness, ...(await sandbox.count() ? [sandbox] : []), start];
+      const boxes = await Promise.all(controls.map((control) => control.boundingBox()));
+      const middle = (box) => box.y + box.height / 2;
+      assert(boxes.every(Boolean), `${name} controls are visible at ${width}px`);
+      assert(boxes.every((box) => Math.abs(middle(box) - middle(boxes[0])) <= 1),
+        `${name} toolbar wraps at ${width}px`);
+      assert(boxes.every((box, index) => box.x >= 0 && box.x + box.width <= width + 1 &&
+        (index === 0 || boxes[index - 1].x + boxes[index - 1].width <= box.x + 1)),
+        `${name} controls overlap or overflow at ${width}px`);
+      for (const control of controls.slice(1, -1)) {
+        const box = await control.boundingBox();
+        assert.equal(box.width, box.height, 'The control should be round');
+        assert.equal(await control.innerText(), '', 'The control should display only an icon');
+      }
+      if (width !== 320) {
+        await page.screenshot({
+          path: join(output, `one-line-${name}-${width}.png`), animations: 'disabled',
+        });
+      }
+    };
     const submit = async (expectedChoice, expectedStored) => {
       const count = creations.length;
       await page.getByPlaceholder('Ask anything to start a new chat...').fill('Synthetic harness choice');
