@@ -10,6 +10,7 @@ import { neoUserFolder } from '../../neo/folder.ts';
 import { createWorkerNameSource } from '../../drivers/worker-names.ts';
 import { PACKAGE_DOWNLOAD_WAIT_MS } from '../../agent/npm-package-download.ts';
 import { findExecutable } from '../../drivers/find-executable.ts';
+import { createCursorDiscovery } from '../../drivers/cursor-discovery.ts';
 import { gitWorktreeProject } from '../../drivers/worktree-project.ts';
 import { resolveNewSessionModel } from '../../session/new-session-model.ts';
 import {
@@ -635,6 +636,10 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
   );
   const copilot = () =>
     copilotCli.length ? copilotCli : existsSync(copilotDesktopPath) ? [copilotDesktop] : [];
+  const cursorPath =
+    findExecutable('cursor-agent') ??
+    findExecutable('cursor-agent', join(homedir(), '.local', 'bin'));
+  const cursor = cursorPath ? [createCursorDiscovery(cursorPath, homedir(), machine)] : [];
   const adapters = [
     createHyperneoAdapter({
       readTurnEnds: (sessionId, since) =>
@@ -692,6 +697,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       ...(context.extensionAdapters?.({ searchChats: ownChats }) ?? []),
       ...adapters.slice(1),
       ...copilot(),
+      ...cursor,
     ];
   };
   const folder = neoUserFolder(context.deps.config.workspaceRoot);
