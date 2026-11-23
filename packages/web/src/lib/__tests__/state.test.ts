@@ -7,6 +7,7 @@ import {
   appState,
   connectionState,
   sessions,
+  sidebarSessions,
   hasArchivedSessions,
   systemState,
   authStatus,
@@ -32,15 +33,6 @@ interface MockHub {
   unsubscribe: ReturnType<typeof vi.fn>;
   call: ReturnType<typeof vi.fn>;
 }
-
-vi.mock('../global-store', () => ({
-  globalStore: {
-    sessions: signal<Session[]>([]),
-    hasArchivedSessions: signal(false),
-    systemState: signal<SystemState | null>(null),
-    settings: signal(null),
-  },
-}));
 
 vi.mock('../state-channel', () => {
   return {
@@ -82,7 +74,7 @@ function createSDKMessage(
 describe('state', () => {
   beforeEach(() => {
     globalStore.sessions.value = [];
-    globalStore.hasArchivedSessions.value = false;
+    globalStore.archivedSessionCount.value = 0;
     globalStore.systemState.value = null;
     globalStore.settings.value = null;
     vi.clearAllMocks();
@@ -239,7 +231,7 @@ describe('state', () => {
   });
 
   describe('Computed Signals - Global State', () => {
-    it('should return sessions from globalStore', () => {
+    it('shows archived sessions in the global list when settings allow it', () => {
       const mockSessions: Session[] = [
         {
           id: 'session-1',
@@ -250,16 +242,20 @@ describe('state', () => {
           lastActiveAt: new Date().toISOString(),
         },
       ];
-      globalStore.sessions.value = mockSessions;
+      const archived = { ...mockSessions[0], id: 'archived', status: 'archived' } as const;
+      globalStore.sessions.value = [...mockSessions, archived];
 
       expect(sessions.value).toEqual(mockSessions);
+      expect(sidebarSessions.value).toEqual([...mockSessions, archived]);
+      globalStore.settings.value = { showArchived: true };
+      expect(sessions.value).toEqual([...mockSessions, archived]);
     });
 
     it('should return hasArchivedSessions from globalStore', () => {
-      globalStore.hasArchivedSessions.value = true;
+      globalStore.archivedSessionCount.value = 1;
       expect(hasArchivedSessions.value).toBe(true);
 
-      globalStore.hasArchivedSessions.value = false;
+      globalStore.archivedSessionCount.value = 0;
       expect(hasArchivedSessions.value).toBe(false);
     });
 
