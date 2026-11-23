@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { cursorDesktopStatePath } from '../../../packages/daemon/src/lib/drivers/cursor-desktop-discovery.ts';
@@ -18,7 +19,7 @@ assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, home);
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 const state = cursorDesktopStatePath(home);
-const folder = '/synthetic/Project with # characters';
+const folder = '/synthetic/Project with # café and %20';
 const adapter = 'cursor-desktop';
 writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
 process.chdir(run);
@@ -76,14 +77,14 @@ try {
     INSERT INTO composerHeaders (composerId, workspaceId, isArchived, isSubagent, recency, value)
     VALUES (?, 'workspace', ?, ?, ?, ?)
   `);
-  for (const [id, title, archived, subagent, scheme] of [
-    ['desktop-open', 'Native Desktop title', 0, 0, 'file'],
-    ['desktop-archived', '', 1, 0, 'file'],
-    ['desktop-child', 'Child', 0, 1, 'file'],
-    ['desktop-remote', 'SSH', 0, 0, 'vscode-remote'],
+  for (const [id, title, archived, subagent, uri] of [
+    ['desktop-open', 'Native Desktop title', 0, 0, { scheme: 'file', path: pathToFileURL(folder).pathname }],
+    ['desktop-archived', '', 1, 0, { $mid: 1, scheme: 'file', path: folder }],
+    ['desktop-child', 'Child', 0, 1, { scheme: 'file', path: folder }],
+    ['desktop-remote', 'SSH', 0, 0, { scheme: 'vscode-remote', path: folder }],
   ] as const)
     insert.run(id, archived, subagent, 1_790_000_000_000,
-      JSON.stringify({ composerId: id, name: title, workspaceIdentifier: { id: 'workspace', uri: { scheme, path: folder } } }));
+      JSON.stringify({ composerId: id, name: title, workspaceIdentifier: { id: 'workspace', uri } }));
   const wal = readFileSync(`${state}-wal`);
   assert.deepEqual(await desktopCapabilities(), ['find']);
   async function find(query: object = {}) {
@@ -93,13 +94,14 @@ try {
     assert.deepEqual(result.unreachable, []);
     return result.places.flatMap((place) => place.work);
   }
-  const open = await find({ folder, text: 'native desktop' });
+  const open = await find({ folder, text: 'project with # café', limit: 1 });
   assert.deepEqual(open.map(({ ref, title, place }) => [ref.id, title, place.folder]),
     [['desktop-open', 'Native Desktop title', folder]]);
   const all = await find({ includeClosed: true });
   assert.equal(all.length, 2);
   const [archived] = await find({ includeClosed: true, idPrefix: 'desktop-arch' });
   assert.equal(archived?.title, 'Untitled Cursor session');
+  assert.equal(archived?.place.folder, folder);
   assert.equal(archived?.archived, true);
   assert.deepEqual((await find({ includeClosed: true, limit: 1 })).map(({ ref }) => ref.id), [
     'desktop-archived',
