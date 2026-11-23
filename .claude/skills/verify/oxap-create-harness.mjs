@@ -34,11 +34,13 @@ try {
   const storageState = await initial.context().storageState();
   await initial.close();
 
-  for (const width of [390, 1280, 320]) {
-    const touch = width < 640;
+  const tablets = new Map([[744, 1133], [820, 1180], [1024, 768], [1180, 820]]);
+  const failedWidths = [];
+  for (const width of [744, 820, 1024, 1180, 390, 1280, 320]) {
+    const touch = width !== 1280;
     const context = await browser.newContext({
       storageState, hasTouch: touch, locale: 'en-US', colorScheme: 'light',
-      viewport: { width, height: touch ? 844 : 900 },
+      viewport: { width, height: tablets.get(width) ?? (touch ? 844 : 900) },
       reducedMotion: 'reduce',
     });
     await context.route('**/*', (route) =>
@@ -124,6 +126,10 @@ try {
     assert.equal(await model.locator(':scope > svg').count(), 0, 'The picker has no trailing chevron');
     await screenshot('default');
     await click(model);
+    if (tablets.has(width)) {
+      const row = page.getByRole('button', { name: /^Model,/ });
+      if (!await row.isVisible()) failedWidths.push(width);
+    }
     assert.equal(await choices.getByRole('button', { name: 'Claude Code', exact: true }).getAttribute('aria-pressed'), 'true');
     await page.keyboard.press('Escape');
     await submit(undefined, undefined);
@@ -165,6 +171,7 @@ try {
     console.log(JSON.stringify({ width, touch, creations: creations.length, defaultOmitted: true, oxapOverride: true, sdkOverride: true, unavailableDisabled: true, modelResolvedByDaemon: true }));
     await context.close();
   }
+  assert.deepEqual(failedWidths, [], "The picker must show the Model row at tablet widths");
 } finally {
   await browser.close();
 }
