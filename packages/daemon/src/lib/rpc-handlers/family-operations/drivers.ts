@@ -10,6 +10,7 @@ import { neoUserFolder } from '../../neo/folder.ts';
 import { createWorkerNameSource } from '../../drivers/worker-names.ts';
 import { PACKAGE_DOWNLOAD_WAIT_MS } from '../../agent/npm-package-download.ts';
 import { findExecutable } from '../../drivers/find-executable.ts';
+import { createAntigravityAdapter } from '../../drivers/antigravity-adapter.ts';
 import { gitWorktreeProject } from '../../drivers/worktree-project.ts';
 import { resolveNewSessionModel } from '../../session/new-session-model.ts';
 import {
@@ -635,6 +636,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
   );
   const copilot = () =>
     copilotCli.length ? copilotCli : existsSync(copilotDesktopPath) ? [copilotDesktop] : [];
+  const antigravityPath =
+    findExecutable('agy') ?? findExecutable('agy', join(homedir(), '.local/bin'));
   const adapters = [
     createHyperneoAdapter({
       readTurnEnds: (sessionId, since) =>
@@ -667,6 +670,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       homeDir: homedir(),
     }),
     ...codex(),
+    ...(antigravityPath ? [createAntigravityAdapter(antigravityPath, machine)] : []),
     ...desktop,
     ...claudeCodeAdapters(
       searchChats,

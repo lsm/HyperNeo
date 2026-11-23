@@ -29,8 +29,8 @@ do not launch a native app to test them.
 
 For URL dispatch, run `node .claude/skills/verify/neo-session-links-web.mjs "$READY"`
 against a separate fixture run. Set `NODE_PATH` and `VERIFY_BROWSER` as in
-SKILL.md. This clicks the question and todo controls for Claude, Codex and
-Copilot, checks the browser or desktop handoff arguments, observes the
+SKILL.md. This clicks the question and todo controls for Claude, Codex, Copilot
+and a remote HTTPS session, checks the browser or desktop handoff arguments, observes the
 desktop failure message, and checks local session navigation. The bridge is a
 fixture here. Verify system handoff separately on an isolated desktop build.
 

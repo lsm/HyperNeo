@@ -234,6 +234,22 @@ describe('OAuthModal', () => {
       expect(codeElement).toBeNull();
     });
 
+    it('asks the user to open the sign-in page instead of pointing at an opened tab', () => {
+      render(
+        <OAuthModal
+          providerName="TestProvider"
+          authUrl="https://example.com/auth"
+          onCancel={mockOnCancel}
+          onComplete={mockOnComplete}
+        />
+      );
+
+      expect(document.body.textContent).toContain(
+        'Click Open Auth URL to authorize with TestProvider'
+      );
+      expect(document.body.textContent).not.toContain('tab that opened');
+    });
+
     it('should open auth URL in new window when Open Auth URL button is clicked', () => {
       const openMock = vi.spyOn(window, 'open').mockImplementation(() => null);
 

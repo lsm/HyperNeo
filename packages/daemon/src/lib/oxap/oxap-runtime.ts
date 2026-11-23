@@ -12,7 +12,7 @@ import { openOxapSession, type OxapReopenStore, type OxapReopenEvents } from './
 import { decideOxapOpen } from '../agent/session-engine.ts';
 import { canonicalModelId } from '../model-service.ts';
 import { checkCodexLogin } from './oxap-codex-login.ts';
-import { harnessSettings } from './oxap-hub-config.ts';
+import { savedOxapAdapter } from './oxap-hub-config.ts';
 
 type OpenPlan = { sessionId: string; directory: string; request: Record<string, unknown> };
 
@@ -180,7 +180,7 @@ export function createOxapRuntime(
                 if (slot.deleted) throw new Error('Codex session was deleted');
                 slot.client = client;
                 if (session.config.harness === 'oxap-codex') {
-                  const executable = record && harnessSettings(record).executable;
+                  const executable = record && savedOxapAdapter(record)?.settings.executable;
                   if (!executable) throw new Error('Codex executable is not configured');
                   await checkLogin(session.id, db, messageHub, executable);
                 }

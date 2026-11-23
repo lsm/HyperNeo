@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { defineOperation, type OperationDefinition } from '../operations/registry.ts';
 import { withProviderLock } from '../rpc-handlers/provider-mutation-lock.ts';
 import type { OxapEngine, OxapEngineOptions } from './oxap-engine.ts';
-import { buildHubConfig, harnessOf, missingSetting } from './oxap-hub-config.ts';
+import { buildHubConfig, missingSetting, savedOxapAdapter } from './oxap-hub-config.ts';
 import { releaseName, type OxapHubBinary } from './oxap-install.ts';
 
 export interface OxapSettingsDeps {
@@ -25,8 +25,7 @@ type Records = readonly Pick<ProviderRecord, 'providerId' | 'configJson'>[];
 async function readKeys(records: Records, deps: OxapSettingsDeps) {
   const keys: Record<string, string | undefined> = {};
   for (const record of records) {
-    const harness = harnessOf(record);
-    if (harness !== 'sdk' && oxapHarness(harness).key)
+    if (savedOxapAdapter(record)?.row.key)
       keys[record.providerId] = await deps.key(record.providerId);
   }
   return keys;
@@ -82,31 +81,27 @@ type Plan = { id: string; configJson: string; next: Records };
 function planSave(input: Save, records: ProviderRecord[]) {
   const record = records.find((entry) => entry.providerId === input.providerId);
   if (!record) return { reason: `Unknown provider ${input.providerId}` };
-  if (
-    input.harness !== 'sdk' &&
-    !(
-      isOxapHarness(input.harness) &&
-      oxapHarness(input.harness).providers.includes(record.providerId)
-    )
-  )
+  const row = isOxapHarness(input.harness) ? oxapHarness(input.harness) : undefined;
+  if (input.harness !== 'sdk' && !row?.providers.includes(record.providerId))
     return { reason: `${record.providerId} cannot run on ${input.harness}` };
-  const missing =
-    input.harness === 'sdk'
-      ? undefined
-      : missingSetting(oxapHarness(input.harness), input.settings ?? {});
-  if (missing) return { reason: `${record.providerId} needs an absolute ${missing} path` };
   let stored: Record<string, unknown>;
   try {
     stored = JSON.parse(record.configJson ?? '{}') as Record<string, unknown>;
   } catch {
     return { reason: `${record.providerId} has an unreadable config` };
   }
-  const { harness: _harness, harnessSettings: _settings, ...rest } = stored;
-  const configJson = JSON.stringify(
-    input.harness === 'sdk'
-      ? rest
-      : { ...rest, harness: input.harness, harnessSettings: input.settings }
-  );
+  const { harness: _harness, ...rest } = stored;
+  const settings = input.settings ?? {};
+  const saved = !row && Object.keys(settings).length > 0 ? savedOxapAdapter(record) : undefined;
+  const settingsRow = row ?? saved?.row;
+  if (settingsRow) {
+    const updated = { ...saved?.settings, ...settings };
+    const missing = missingSetting(settingsRow, updated);
+    if (missing) return { reason: `${record.providerId} needs an absolute ${missing} path` };
+    rest.harnessSettings = updated;
+  }
+  if (row) rest.harness = input.harness;
+  const configJson = JSON.stringify(rest);
   const next = records.map((entry) => (entry === record ? { ...entry, configJson } : entry));
   return { value: { id: record.id, configJson, next } };
 }

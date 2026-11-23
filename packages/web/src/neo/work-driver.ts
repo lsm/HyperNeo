@@ -7,8 +7,12 @@ export function isNativeSessionLink(link: string): boolean {
   return /^(codex|claude|ghapp):\/\//.test(link);
 }
 
+export function isRemoteSessionLink(link: string): boolean {
+  return /^https?:\/\//i.test(link);
+}
+
 export function handoffNativeSessionLink(link: string): boolean {
-  if (!isNativeSessionLink(link)) return false;
+  if (!isNativeSessionLink(link) && !isRemoteSessionLink(link)) return false;
   const handoff = openNativeSessionLink(link);
   if (!handoff) return false;
   void handoff.catch(() => toast.error(t('session.openExternalFailed')));

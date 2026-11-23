@@ -1,14 +1,18 @@
 use tauri::{plugin, AppHandle, Runtime, Url};
 
 fn is_session_url(url: &Url) -> bool {
+    if !url.username().is_empty() || url.password().is_some() {
+        return false;
+    }
+    if matches!(url.scheme(), "http" | "https") {
+        return url.has_host();
+    }
     let prefix = match (url.scheme(), url.host_str()) {
         ("claude", Some("claude.ai")) => "/epitaxy/",
         ("codex", Some("threads")) | ("ghapp", Some("sessions")) => "/",
         _ => return false,
     };
-    url.username().is_empty()
-        && url.password().is_none()
-        && url.port().is_none()
+    url.port().is_none()
         && url.query().is_none()
         && url.fragment().is_none()
         && url
@@ -44,9 +48,8 @@ async fn open<R: Runtime>(app: AppHandle<R>, url: String) -> Result<(), String> 
     {
         use tauri_plugin_shell::ShellExt;
         #[allow(deprecated)]
-        app.shell()
-            .open(url.as_str(), None)
-            .map_err(|error| error.to_string())
+        let result = app.shell().open(url.as_str(), None);
+        result.map_err(|error| error.to_string())
     }
 }
 

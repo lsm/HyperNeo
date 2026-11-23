@@ -34,17 +34,19 @@ try{
   {adapter:'copilot-cli',id:'copilot-worker',name:'Copilot worker',provider:'Copilot',link:'ghapp://sessions/synthetic-open-check'},
   {adapter:'hyperneo',id:'local-worker',name:'Local worker',provider:'Anthropic',link:'/session/local-worker'},
   {adapter:'hyperneo',id:'second-worker',name:'Second worker',provider:'Anthropic',link:'/session/second-worker'},
+  {adapter:'codex-desktop',id:'remote-worker',name:'Remote worker',provider:'Codex',link:'https://example.test/session/synthetic-open-check'},
  ];
  const links=new NeoTodoSessionRepository(db);
  for(const source of sessions){
   await app.db.createSession({id:source.id,title:source.name,workspacePath:join(run,'workspace'),createdAt:new Date().toISOString(),lastActiveAt:new Date().toISOString(),status:'active',config:{queryMode:'manual'},metadata:{messageCount:0,totalTokens:0,inputTokens:0,outputTokens:0,totalCost:0,toolCallCount:0}});
-  const askId=`open-${source.id}`,session={...source,label:source.name};
+  const ref={adapter:source.adapter,id:source.id,...(source.id==='remote-worker'?{daemon:'synthetic-remote'}:{})};
+  const askId=`open-${source.id}`,session={...source,...ref,label:source.name};
   store.openAsk({id:askId,title:`Review ${source.name}`,sessionId:root,projectId:null,originMessageId:null,request:'Synthetic open control check',createdAt:now});
   store.focusAsk(askId,session,now);
   store.askQuestion(`question-${source.id}`,askId,{kind:'yesno',text:`Review the ${source.name} decision?`,options:null,multiple:false,noLabel:'Wait',yesLabel:'Continue',sourceSession:session},now);
   const todo=store.addTodo(`todo-${source.id}`,askId,{title:`Follow ${source.name}`,doneWhen:'Observed result',check:null,instruction:null,named:null},now);
-  links.bind(todo.id,{adapter:source.adapter,id:source.id},now);
-  links.recordRef(todo.id,{adapter:source.adapter,id:source.id},now,source.link);
+  links.bind(todo.id,ref,now);
+  links.recordRef(todo.id,ref,now,source.link);
  }
  const retained={...sessions[3],label:'Local worker'};
  store.openAsk({id:'retired-focus',title:'Retired focused discussion',sessionId:root,projectId:null,originMessageId:null,request:'Synthetic retained navigation',createdAt:now+1});

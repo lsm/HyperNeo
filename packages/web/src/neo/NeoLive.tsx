@@ -37,7 +37,11 @@ import { NeoModelHoldLine } from './NeoModelHoldLine.tsx';
 import { shownModelHold } from '@hyperneo/shared/types/model-hold';
 import { NeoConversation } from './NeoConversation.tsx';
 import { NeoDrawer } from './NeoDrawer.tsx';
-import { handoffNativeSessionLink, isNativeSessionLink } from './work-driver.ts';
+import {
+  handoffNativeSessionLink,
+  isNativeSessionLink,
+  isRemoteSessionLink,
+} from './work-driver.ts';
 import { NeoIcon } from './NeoIcon.tsx';
 import { publicAskText } from './NeoPublicConversation.tsx';
 import { NeoSessionPane } from './NeoSessionPane.tsx';
@@ -167,7 +171,7 @@ export function NeoLive() {
   const openSession = (link: string, label?: string) => {
     if (!link.startsWith('/session/')) {
       if (handoffNativeSessionLink(link)) return;
-      if (isNativeSessionLink(link) || /^https?:\/\//i.test(link)) {
+      if (isNativeSessionLink(link) || isRemoteSessionLink(link)) {
         window.open(link, '_blank', 'noopener');
       } else {
         toast.error(t('session.openExternalFailed'));
