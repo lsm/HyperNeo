@@ -533,6 +533,10 @@ export class Database {
     return this.getSDKReader().readCursorDesktop(args);
   }
 
+  readAntigravityDesktopAsync(args: Parameters<SDKStatusReader['readAntigravityDesktop']>[0]) {
+    return this.getSDKReader().readAntigravityDesktop(args);
+  }
+
   readClaudeRecordsAsync(sessionsDir: string) {
     return this.getSDKReader().readClaudeRecords(sessionsDir);
   }

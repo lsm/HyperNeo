@@ -13,6 +13,10 @@ import { PACKAGE_DOWNLOAD_WAIT_MS } from '../../agent/npm-package-download.ts';
 import { findExecutable } from '../../drivers/find-executable.ts';
 import { createAntigravityAdapter } from '../../drivers/antigravity-adapter.ts';
 import {
+  antigravityDesktopStatePath,
+  createAntigravityDesktopDiscovery,
+} from '../../drivers/antigravity-desktop-discovery.ts';
+import {
   createCursorDesktopDiscovery,
   cursorDesktopStatePath,
 } from '../../drivers/cursor-desktop-discovery.ts';
@@ -647,9 +651,29 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     copilotCli.length ? copilotCli : existsSync(copilotDesktopPath) ? [copilotDesktop] : [];
   const antigravityPath =
     findExecutable('agy') ?? findExecutable('agy', join(homedir(), '.local/bin'));
+  const antigravityDesktopState = antigravityDesktopStatePath(homedir());
+  const antigravityDesktop = createAntigravityDesktopDiscovery(
+    async (query) =>
+      (
+        await context.deps.db.readAntigravityDesktopAsync({
+          statePath: antigravityDesktopState,
+          query,
+        })
+      ).sessions,
+    machine
+  );
   const antigravity = antigravityPath
-    ? createAntigravityAdapter(antigravityPath, machine, (adapter) =>
-        gatewayFor(db()).call(workStartedSessionReads, 'startedFolders', adapter)
+    ? createAntigravityAdapter(
+        antigravityPath,
+        machine,
+        (adapter) => gatewayFor(db()).call(workStartedSessionReads, 'startedFolders', adapter),
+        async () => {
+          if (!existsSync(antigravityDesktopState)) return [];
+          const catalog = await context.deps.db
+            .readAntigravityDesktopAsync({ statePath: antigravityDesktopState })
+            .catch(() => null);
+          return catalog?.ids ?? [];
+        }
       )
     : null;
   if (antigravity) context.driverCleanup?.push(antigravity.close);
@@ -717,6 +741,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       ...(context.extensionAdapters?.({ searchChats: ownChats }) ?? []),
       ...adapters.slice(1),
       ...copilot(),
+      ...(existsSync(antigravityDesktopState) ? [antigravityDesktop] : []),
       ...(existsSync(cursorState) ? [cursorDesktop] : []),
     ];
   };

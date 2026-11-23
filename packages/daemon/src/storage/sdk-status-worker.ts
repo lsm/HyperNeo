@@ -14,6 +14,7 @@ import type {
   CursorDesktopSession,
 } from '../lib/drivers/cursor-desktop-discovery.ts';
 import { readCopilotDesktop } from './copilot-desktop-read.ts';
+import { readAntigravityDesktop } from './antigravity-desktop-read.ts';
 import { SDKMessageRepository } from './repositories/sdk-message-repository.ts';
 import { subscribeToStructuredLogs } from '../lib/logger.ts';
 import {
@@ -132,7 +133,9 @@ worker.onmessage = ({ data }) => {
                           ? 'message-feed'
                           : 'page' in args
                             ? 'sdk-page'
-                            : 'sdk-status'
+                            : 'antigravityDesktop' in args
+                              ? 'antigravity-desktop'
+                              : 'sdk-status'
     : 'close';
   try {
     let result: SDKReadResult | null = null;
@@ -146,6 +149,8 @@ worker.onmessage = ({ data }) => {
       result = readCopilotDesktop(args.copilotDesktop);
     } else if ('cursorDesktop' in args) {
       result = readCursorDesktop(args.cursorDesktop);
+    } else if ('antigravityDesktop' in args) {
+      result = readAntigravityDesktop(args.antigravityDesktop);
     } else if ('codexSnapshot' in args) {
       result = readCodexSnapshot(
         args.codexSnapshot.statePath,
