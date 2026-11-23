@@ -41,7 +41,7 @@ OXAP id means that harness. Creation resolves it once:
 - `session-lifecycle` uses `params.harness ?? engineForProvider(provider)`.
   Omitted means the provider default, so every current caller is unchanged.
 - The requested value must be `sdk` or a row that lists the provider, and must
-  be configured. Otherwise creation fails with a plain message.
+  be ready for a new session. Otherwise creation fails with a plain message.
 
 No column, no table, no second field. The session record already holds the
 harness, and existing code reads it from there.
@@ -53,7 +53,7 @@ The hub registers one adapter per provider id, built only from providers whose
 
 1. **Availability is separated from the default.** `buildHubConfig`
    registers an adapter, and `readKeys` in `oxap-settings.ts` loads the
-   provider key, for each provider that has a configured OXAP harness, whatever
+   provider key, for each provider that has saved OXAP settings, whatever
    its default. Today both look only at the default, so a retained DSH adapter
    would start without `DEEPSEEK_API_KEY`. Saving the default as `sdk` keeps
    `harnessSettings` instead of dropping them (today `oxap-settings.ts`
