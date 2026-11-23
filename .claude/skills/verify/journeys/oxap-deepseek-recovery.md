@@ -12,8 +12,9 @@ bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
 In `recovery` mode the second message follows a hub restart. The synthetic dsh
 peer accepts native resume and the chat receives a reply on the same thread
 without a new-thread notice. Use `flash-recovery` to confirm that a Flash thread
-keeps its model after resume. In `pending` mode a replacement was already
-requested before restart. The next reply arrives on a different thread and the
+keeps its model after resume. The peer enforces an exclusive native lease and
+reports the model in the reopened chat's reply. In `pending` mode a replacement was
+already requested before restart. The next reply arrives on a different thread and the
 chat shows one replacement notice.
 
 Use `locked-recovery` to exercise `work.send` after restarting the daemon.

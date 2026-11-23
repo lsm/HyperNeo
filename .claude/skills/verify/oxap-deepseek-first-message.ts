@@ -79,7 +79,7 @@ try {
   const web = mode.endsWith('-web');
   const locked = mode === 'locked-recovery';
   const refusesReopen = mode === 'refused-reopen';
-  if (locked) writeFileSync(join(workspace, 'verify-native-lease'), '');
+  if (locked || mode === 'flash-recovery') writeFileSync(join(workspace, 'verify-native-lease'), '');
   const withImage = mode === 'image' || mode === 'flash-web';
   const model = flash ? 'deepseek-v4-flash' : 'deepseek-v4-pro';
   const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a4NEAAAAASUVORK5CYII=';
@@ -282,9 +282,13 @@ try {
       } else {
         await app.oxapEngine.restart();
       }
+      const verifyModel = mode === 'flash-recovery';
+      const expectedReply = verifyModel
+        ? JSON.stringify({ model, images: [], reopened: true })
+        : 'Synthetic DeepSeek reply after restart';
       const { messageId } = await hub.request<{ messageId: string }>('message.send', {
         sessionId,
-        content: 'Message after hub restart',
+        content: verifyModel ? 'Verify model after hub restart' : 'Message after hub restart',
       });
       const retryDeadline = Date.now() + 20_000;
       const deliveryStatus = () =>
@@ -292,7 +296,7 @@ try {
       const replyLines = () => [...rows.values()]
         .filter((row) => row.type === 'assistant')
         .flatMap((row) => (row.message?.content ?? []).map((block) => block.text));
-      while (!replyLines().includes('Synthetic DeepSeek reply after restart') || deliveryStatus() !== 'delivered') {
+      while (!replyLines().includes(expectedReply) || deliveryStatus() !== 'delivered') {
         assert.deepEqual(errors, [], 'The message after restart failed');
         assert(Date.now() < retryDeadline, `Restart delivery state: ${deliveryStatus()}, replies: ${replyLines()}`);
         await Bun.sleep(25);
@@ -303,6 +307,8 @@ try {
         payload?: { current_model_id?: string };
       };
       assert.equal(state.payload?.current_model_id, model);
+      evidence.reopenedModel = state.payload?.current_model_id;
+      if (verifyModel) evidence.reopenedReply = expectedReply;
       assert(saved.sdkSessionId);
       assert.equal(saved.sdkSessionId === nativeId, !pending);
       assert.equal(replyLines().filter((line) => line?.includes('new thread')).length, pending ? 1 : 0);
