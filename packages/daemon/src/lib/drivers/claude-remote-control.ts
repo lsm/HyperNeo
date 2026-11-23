@@ -28,9 +28,7 @@ import type { Result, WorkAdapter, WorkCallContext, WorkDelivery } from './types
 import { reject } from './work-operations.ts';
 
 export const RC_TOGGLE_TITLE = 'neo-helper';
-const HELPER_ARCHIVE_WAIT_MS = 60_000;
 const HELPER_ARCHIVE_RESEND_MS = 10 * 60_000;
-const HELPER_ARCHIVE_POLL_MS = 3_000;
 
 export interface RemoteControlTarget {
   sessionId: string;
@@ -294,23 +292,18 @@ export async function awaitAppArchive(
   if (!sent.ok) return sent;
   const requests = archiveRequests.get(deps) ?? new Map<string, number>();
   archiveRequests.set(deps, requests.set(target.sessionId, deps.now()));
-  const until = deps.now() + HELPER_ARCHIVE_WAIT_MS;
-  for (;;) {
-    const records = await loadClaudeDesktopRecords(deps, new Map());
-    if (
-      records.some(
-        (record) =>
-          record.sessionId === target.sessionId && record.isArchived && record.archiveSetAtMs
-      )
+  const records = await loadClaudeDesktopRecords(deps, new Map());
+  if (
+    records.some(
+      (record) =>
+        record.sessionId === target.sessionId && record.isArchived && record.archiveSetAtMs
     )
-      return { ok: true, value: { archived: true } };
-    if (deps.now() >= until)
-      return reject(
-        'not_delivered',
-        `${RC_TOGGLE_TITLE} has not archived ${target.title} in Claude Desktop yet; the next release retries.`
-      );
-    await deps.sleep(HELPER_ARCHIVE_POLL_MS);
-  }
+  )
+    return { ok: true, value: { archived: true } };
+  return reject(
+    'not_delivered',
+    `${RC_TOGGLE_TITLE} was asked to archive ${target.title}; the next release confirms it once Claude Desktop archives it.`
+  );
 }
 
 export const runClaudeHelperArchive = (

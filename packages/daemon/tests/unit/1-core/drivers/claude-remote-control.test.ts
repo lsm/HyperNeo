@@ -315,7 +315,7 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
     accept = true;
     expect(await runClaudeHelperArchive(target, archiveDeps)).toMatchObject({
       ok: false,
-      detail: expect.stringContaining('has not archived'),
+      detail: expect.stringContaining('was asked to archive'),
     });
     expect(requests()).toBe(3);
     expect(await runClaudeHelperArchive(target, archiveDeps)).toMatchObject({
@@ -329,7 +329,7 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
     expect(requests()).toBe(4);
   });
 
-  test('reports an archive the helper never makes without touching the record', async () => {
+  test('reports an archive the app has not made yet without waiting or touching the record', async () => {
     write(record('t1', { isArchived: true }));
     const before = readFileSync(join(dir, 'acct/scope/local_t1.json'), 'utf8');
     let now = 0;
@@ -341,7 +341,7 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
       },
     });
     expect(result).toMatchObject({ ok: false, reason: 'not_delivered' });
-    expect(now).toBeGreaterThanOrEqual(60_000);
+    expect(now).toBe(0);
     expect(readFileSync(join(dir, 'acct/scope/local_t1.json'), 'utf8')).toBe(before);
     expect(
       await awaitAppArchive({ ok: false, reason: 'busy', detail: 'live turn' }, target, deps())

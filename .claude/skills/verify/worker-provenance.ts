@@ -46,7 +46,7 @@ const digest = (path: string) => createHash('sha256').update(readFileSync(path))
 const originalSettings = digest(settings);
 const rcId = crypto.randomUUID();
 for (const args of [
-  ['claude', '-p', '--session-id', rcId, '-n', 'rc-toggle', '--permission-mode', 'auto', '--', 'Existing authorized synthetic RC helper'],
+  ['claude', '-p', '--session-id', rcId, '-n', 'neo-helper', '--permission-mode', 'auto', '--', 'Existing authorized synthetic RC helper'],
   ['script', '-q', '/dev/null', 'claude', '--desktop', '--resume', rcId],
 ]) {
   const result = spawnSync(args[0], args.slice(1), { cwd: join(run, 'workspace'), encoding: 'utf8' });
