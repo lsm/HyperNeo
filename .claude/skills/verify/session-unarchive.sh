@@ -59,7 +59,9 @@ test "$(git -C "$recorded_tree" rev-parse HEAD)" = "$recorded_tip"
 test "$(git -C "$repo" rev-parse "$recorded_branch")" = "$recorded_tip"
 echo 'PASS: Neo operation restored the recorded branch tip (1 session)'
 
-rpc rpc:settings.global.update '{"updates":{"showArchived":true}}' | jq -e '.reply.success'
 desktop=$(create_archive 'Desktop restore')
 phone=$(create_archive 'Phone restore')
+mkdir "$RUN/Other"
+other=$(rpc rpc:session.create "$(jq -nc --arg path "$RUN/Other"   '{workspacePath:$path,title:"Other archived chat",worktreeMode:"direct"}')" | jq -er '.reply.sessionId')
+rpc rpc:session.archive "$(jq -nc --arg id "$other" '{sessionId:$id}')" | jq -e '.reply.success'
 node "$verify/session-unarchive-web.mjs" "$out" "$desktop" "$phone"

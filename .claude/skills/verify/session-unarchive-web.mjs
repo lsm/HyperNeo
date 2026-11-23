@@ -49,13 +49,31 @@ try {
         await page.getByRole('button', { name: 'Open navigation menu' }).tap();
         assert(await page.evaluate(() => matchMedia('(pointer: coarse)').matches));
       }
+      const menuTrigger = page.getByRole('button', { name: 'Project actions for Example' });
+      const activate = (control) =>
+        hasTouch ? control.tap({ timeout: 5000 }) : control.click({ timeout: 5000 });
+      await menuTrigger.waitFor({ timeout: 5000 });
+      assert.equal(await row.count(), 0, 'The archived chat starts hidden');
+      await activate(menuTrigger);
+      await activate(page.getByRole('menuitemcheckbox', { name: 'Show archived chats', checked: false }));
       await row.waitFor({ timeout: 10000 });
-      if (!hasTouch) await row.hover();
+      assert.equal(await page.getByText('Other archived chat', { exact: true }).count(), 0);
+      await activate(menuTrigger);
+      await page.getByRole('menuitemcheckbox', { name: 'Show archived chats', checked: true }).waitFor();
+      const deleteItem = page.getByRole('menuitem', { name: 'Delete this project' });
+      await deleteItem.waitFor();
       const button = row.getByRole('button', { name: 'Unarchive', exact: true });
-      await button.scrollIntoViewIfNeeded({ timeout: 5000 });
-      await page.screenshot({ path: join(out, `${label}.png`), animations: 'disabled' });
-      if (hasTouch) await button.tap({ timeout: 5000 });
-      else await button.click();
+      await button.waitFor({ timeout: 5000 });
+      await page.screenshot({ path: join(out, `${label}-project-menu.png`), animations: 'disabled' });
+      await activate(deleteItem);
+      await page.getByText(/This archives .* in this project/).waitFor();
+      await activate(page.getByRole('button', { name: 'Cancel', exact: true }));
+      await activate(menuTrigger);
+      await activate(page.getByRole('menuitemcheckbox', { name: 'Show archived chats', checked: true }));
+      await row.waitFor({ state: 'detached' });
+      await activate(menuTrigger);
+      await activate(page.getByRole('menuitemcheckbox', { name: 'Show archived chats', checked: false }));
+      await activate(button);
       await page.getByText('Chat unarchived with a fresh worktree from dev').waitFor({ timeout: 5000 });
       await button.waitFor({ state: 'detached', timeout: 5000 });
       const { session } = rpc('rpc:session.get', { sessionId });
@@ -63,7 +81,7 @@ try {
       assert.equal(session.archivedAt, undefined);
       const message = rpc('rpc:message.send', { sessionId, content: 'Reply after unarchive' });
       assert(message.messageId);
-      console.log(`PASS: ${label} action restored one session and it accepted a message`);
+      console.log(`PASS: ${label} menu scoped archived chats, preserved delete confirmation and restored a chat that accepted a message`);
     } catch (error) {
       await page.screenshot({ path: join(out, `${label}-failure.png`) });
       throw error;
