@@ -5,30 +5,48 @@ loopback address. The link does not open on another device.
 
 ## Decision
 
-The daemon's share origin is the existing `HYPERNEO_PUBLIC_URL` environment value
-(`PUBLIC_URL` as the existing alias). Nothing else is a share origin.
+The share origin is the existing `HYPERNEO_PUBLIC_URL` value (`PUBLIC_URL` alias),
+read as an operator statement of where this daemon is reached. It is the only
+setting that holds a scheme, host and port. Allowed hosts has no scheme or port,
+the Tailscale probe only checks that Serve listens on 443, and `location.origin`
+describes one client's route, not everyone's.
 
-Why this one:
+The setting was introduced for the GitHub webhook and a working webhook proves only
+that one POST route is reachable. So the operator, not the daemon, vouches that the
+origin serves the same authenticated routes the web app uses, including
+`GET /ask/<id>.md`. Cross-device sharing needs that to be true. The daemon does not
+check it.
 
-- It is the only setting that is already a full origin: scheme, host and port.
-- It is already validated: a valid URL, and HTTPS unless it points at loopback.
-- It is a statement by the operator about how this daemon is reached. Allowed hosts
-  is a list with no scheme or port. The CLI Tailscale probe only checks that Serve
-  listens on 443, not that it routes here. Phone pairing and the web page's
-  `location.origin` describe how one client reached the daemon, not how others can.
+## Shape
 
-## Behaviour
-
-- The daemon exposes the validated value in the system state the web app already
-  loads, as `shareOrigin`, or null when unset or invalid.
+- `shareOrigin` is the parsed origin only: `http` or `https`, host and port, with no
+  userinfo, path, query or fragment. It appears in the authenticated system state
+  the web app already loads, and in the copied link.
+- It is null when the variable is unset, not a valid URL, or not `http(s)`.
+- The webhook keeps reading the variable as today, with its path join, HTTPS rule
+  and error messages unchanged. Routing, allowed hosts and pairing do not read
+  `shareOrigin`.
 - Copy link uses `shareOrigin` when set, otherwise `location.origin` as today.
-- When unset, the Copy link menu entry is unchanged, and the toast after copying
-  says the link only opens on this device.
-- The GitHub webhook path keeps reading the same variable. Its validation moves to
-  one shared function so both callers agree.
+  There is one fallback and no warning logic: a loopback value set by the operator
+  is used as given.
 
-## Out of scope
+## What the link does for a recipient
 
-No new setting, settings UI, Tailscale discovery, or per-device origin. Other
-links built from `location.origin` (pairing QR, settings pairing link) keep their
-current meaning: they are for the client that is asking.
+The link is only a URL. A recipient's browser has its own credentials, and a paired
+native app's credentials do not carry over. Opening the link in a browser that is not
+yet paired with that origin requires pairing there first.
+
+## Wording when unset
+
+The Copy link toast makes no claim about reach. It says the link uses this
+window's address, and the doc for the setting says to set `HYPERNEO_PUBLIC_URL` to
+share across devices.
+
+## Scope
+
+Only the ask-card Copy link (`NeoAskTodos.tsx`, destination `/ask/<id>.md`) is in
+scope. There is no session Copy link in the web app today, so session links are
+deferred until one exists.
+
+The pairing QR and settings pairing link keep `location.origin`: they are for the
+client that is asking. No new setting, discovery or per-device origin.
