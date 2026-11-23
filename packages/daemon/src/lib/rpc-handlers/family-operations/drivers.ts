@@ -638,6 +638,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     copilotCli.length ? copilotCli : existsSync(copilotDesktopPath) ? [copilotDesktop] : [];
   const antigravityPath =
     findExecutable('agy') ?? findExecutable('agy', join(homedir(), '.local/bin'));
+  const antigravity = antigravityPath ? createAntigravityAdapter(antigravityPath, machine) : null;
+  if (antigravity) context.driverCleanup?.push(antigravity.close);
   const adapters = [
     createHyperneoAdapter({
       readTurnEnds: (sessionId, since) =>
@@ -670,7 +672,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       homeDir: homedir(),
     }),
     ...codex(),
-    ...(antigravityPath ? [createAntigravityAdapter(antigravityPath, machine)] : []),
+    ...(antigravity ? [antigravity] : []),
     ...desktop,
     ...claudeCodeAdapters(
       searchChats,

@@ -3,6 +3,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { ProcessJsonRpcTransport } from '../process-json-rpc.ts';
 import { buildSafeProcessEnv } from '../safe-process-env.ts';
+import { createAntigravityStart } from './antigravity-start.ts';
 import type { FindQuery, PlaceGroup, WorkAdapter } from './types.ts';
 
 const ADAPTER = 'antigravity-cli';
@@ -137,10 +138,15 @@ const find = (superpipe({})('antigravity-find') as PipelineAPI)
   machine: string
 ) => Promise<PlaceGroup[]>;
 
-export function createAntigravityAdapter(executable: string, machine: string): WorkAdapter {
+export function createAntigravityAdapter(
+  executable: string,
+  machine: string
+): WorkAdapter & { close: () => Promise<void> } {
+  const control = createAntigravityStart(executable, machine, ADAPTER);
   return {
+    ...control,
     id: ADAPTER,
-    capabilities: ['find'],
+    capabilities: ['find', 'start', 'status'],
     find: (query) => (query.spaceId ? [] : find(query, executable, machine)),
   };
 }

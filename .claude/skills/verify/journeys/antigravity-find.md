@@ -21,3 +21,5 @@ one `initialize` and two `session/list` calls. Discovery must not load or modify
 sessions. The vendor binary in an isolated, signed-out home must surface its
 sign-in requirement through the same operation. Require exit code 0 in each
 mode. The fixture does not verify discovery from a signed-in account.
+
+For owned session creation and initial turn status, see [Antigravity start](antigravity-start.md).
