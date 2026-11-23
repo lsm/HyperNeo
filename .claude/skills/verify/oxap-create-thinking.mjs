@@ -48,9 +48,12 @@ try {
       { theme }
     );
     await page.reload();
-    await page.getByRole('button', { name: 'Choose model and thinking' }).waitFor();
-    await page.getByText('Synthetic Codex').first().waitFor();
-    await page.getByRole('button', { name: 'Choose model and thinking' }).click();
+    await page
+      .getByRole('button', { name: 'Choose model, client and thinking' })
+      .and(page.locator('[aria-description="Client: OXAP Codex"]'))
+      .click();
+    await page.getByRole('button', { name: 'Model, Synthetic Codex' }).click();
+    await page.getByRole('group', { name: 'Models', exact: true }).getByText('Synthetic Codex').waitFor();
     assert.equal(await page.getByRole('slider', { name: 'Thinking' }).count(), 0);
     assert.equal(await page.getByRole('button', { name: 'Sandbox' }).count(), 0);
     await page.screenshot({ path: `${output}/oxap-create-${theme}.png`, animations: 'disabled' });

@@ -1,4 +1,6 @@
 import type { MessageHub } from '@hyperneo/shared';
+import { oxapHarnessesForProvider } from '@hyperneo/shared/types/oxap-harnesses';
+import { newSessionOxapRefusal, type OxapSettingsDeps } from '../oxap/oxap-settings.ts';
 import { VOICE_CREDENTIAL_PROVIDER_ID } from './settings-handlers.ts';
 import type { CreateProviderParams, ProviderRecord, UpdateProviderParams } from '@hyperneo/shared';
 import type { ListRemoteModelsOptions, ProviderCredentials } from '@hyperneo/shared/provider';
@@ -204,6 +206,7 @@ export interface ProviderHandlerDeps {
   providerRepo: ProviderRepository;
   credentialManager: ProviderCredentialManager;
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
+  oxapSettings?: Pick<OxapSettingsDeps, 'settings' | 'key'>;
 }
 
 function notifyProvidersChanged(internalEventBus: InternalEventBus<DaemonInternalEventMap>): void {
@@ -214,7 +217,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
   const { messageHub, providerRepo, credentialManager, internalEventBus } = deps;
   const writer = providerWriter(providerRepo);
 
-  messageHub.onRequest('providers.list', async () => {
+  messageHub.onRequest('providers.list', async (data) => {
     const records = providerRepo.listProviders();
     const registry = getProviderRegistry();
     const enriched = await Promise.all(
@@ -229,7 +232,29 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         }
       })
     );
-    return { providers: enriched };
+    if ((data as { forNewSession?: boolean } | undefined)?.forNewSession !== true) {
+      return { providers: enriched };
+    }
+    const installed = deps.oxapSettings?.settings().oxapHub;
+    return {
+      providers: await Promise.all(
+        enriched.map(async (record) => {
+          const candidates = oxapHarnessesForProvider(record.providerId);
+          const refusals = await Promise.all(
+            candidates.map((harness) =>
+              newSessionOxapRefusal(
+                harness,
+                record.providerId,
+                record,
+                installed,
+                deps.oxapSettings?.key
+              )
+            )
+          );
+          return { ...record, readyHarnesses: candidates.filter((_, index) => !refusals[index]) };
+        })
+      ),
+    };
   });
 
   messageHub.onRequest('providers.listRemoteModels', async (data: unknown) => {

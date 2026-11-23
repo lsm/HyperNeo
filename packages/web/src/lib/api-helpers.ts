@@ -1,3 +1,4 @@
+import type { OxapHarnessId } from '@hyperneo/shared/types/oxap-harnesses';
 import type {
   CreateSessionRequest,
   CreateSessionResponse,
@@ -189,13 +190,15 @@ export async function refreshProvider(providerId: string): Promise<ProviderRefre
   return await hub.request<ProviderRefreshResponse>('auth.refresh', { providerId });
 }
 
-export async function listProviders(): Promise<{
-  providers: Array<ProviderRecord & { available: boolean }>;
+export type ListedProvider = ProviderRecord & {
+  available: boolean;
+  readyHarnesses?: OxapHarnessId[];
+};
+
+export async function listProviders(options?: { forNewSession: true }): Promise<{
+  providers: ListedProvider[];
 }> {
-  const hub = getHubOrThrow();
-  return await hub.request<{ providers: Array<ProviderRecord & { available: boolean }> }>(
-    'providers.list'
-  );
+  return await getHubOrThrow().request<{ providers: ListedProvider[] }>('providers.list', options);
 }
 
 export async function createProvider(

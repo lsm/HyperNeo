@@ -4,6 +4,7 @@ import {
   type ModelInfo,
   type ThinkingLevel,
 } from '@hyperneo/shared';
+import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import {
   filterModelsBySearch,
@@ -28,6 +29,8 @@ export function NeoModelMenu({
   onClose,
   onReload,
   align = 'left',
+  children,
+  summary,
 }: {
   id?: string;
   models: ModelInfo[];
@@ -42,23 +45,48 @@ export function NeoModelMenu({
   onThinking: (level: ThinkingLevel) => void;
   onClose: () => void;
   onReload?: () => void;
-  align?: 'left' | 'right';
+  align?: 'left' | 'right' | 'trigger';
+  children?: ComponentChildren;
+  summary?: { model: string; client: string };
 }) {
+  const position = { left: '-left-10 sm:left-0', right: 'right-0', trigger: 'left-0' }[align];
   const [query, setQuery] = useState('');
+  const [section, setSection] = useState<'Settings' | 'Model' | 'Client'>('Settings');
+  const back = useRef<HTMLButtonElement>(null);
+  const modelRow = useRef<HTMLButtonElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    search.current?.focus();
-  }, []);
+    if (!summary) search.current?.focus();
+    else if (section === 'Settings') modelRow.current?.focus();
+    else back.current?.focus();
+  }, [!!summary, section]);
+  const openSection = (next: typeof section) => {
+    setQuery('');
+    setSection(next);
+  };
+  const modelTitle = showThinking ? 'Model & thinking' : 'Model';
+  const rows =
+    summary &&
+    ([
+      { name: 'Model', label: modelTitle, value: summary.model, available: true },
+      { name: 'Client', label: 'Client', value: summary.client, available: !!children },
+    ] as const);
+  const showModels = !summary || section === 'Model';
   const visible = filterModelsBySearch(models, query);
   const groups = groupModelsByProvider(visible);
   return (
     <div
       id={id}
       role="group"
-      aria-label="Model and thinking settings"
-      class={`neo-arrive absolute bottom-full ${align === 'right' ? 'right-0' : '-left-10 sm:left-0'} z-30 mb-3 flex w-[360px] max-w-[calc(100vw-64px)] flex-col overflow-hidden rounded-2xl border border-line-strong bg-surface-raised shadow-xl`}
-      style={{ maxHeight: 'min(580px, calc(100dvh - var(--neo-composer-height, 190px) - 90px))' }}
+      aria-label={summary ? 'Model, client and thinking settings' : 'Model and thinking settings'}
+      class={`neo-arrive absolute bottom-full ${position} z-30 mb-3 flex w-[360px] max-w-[calc(100vw-64px)] flex-col overflow-hidden rounded-2xl border border-line-strong bg-surface-raised shadow-xl ${summary && section === 'Model' ? 'new-chat-model-search' : ''}`}
+      style={{
+        maxHeight:
+          align === 'trigger'
+            ? 'var(--model-menu-height, min(580px, calc(var(--safe-height, 100dvh) / 2 - 32px)))'
+            : 'min(580px, calc(100dvh - var(--neo-composer-height, 190px) - 90px))',
+      }}
       onKeyDown={(event) => {
         if (event.key === 'Escape') {
           event.stopPropagation();
@@ -67,17 +95,57 @@ export function NeoModelMenu({
       }}
     >
       <div class="flex shrink-0 items-center justify-between px-4 pb-2 pt-3">
-        <h2 class="text-sm font-medium">Model & thinking</h2>
+        <div class="flex items-center gap-2">
+          {summary && section !== 'Settings' && (
+            <button
+              type="button"
+              ref={back}
+              aria-label="Back to settings"
+              class="inline-flex size-8 items-center justify-center rounded-lg text-fg-muted hover:bg-fill-soft pointer-coarse:size-11"
+              onClick={() => openSection('Settings')}
+            >
+              <NeoIcon name="back" class="!h-4 !w-4" />
+            </button>
+          )}
+          <h2 class="text-sm font-medium">
+            {section === 'Client'
+              ? 'Client'
+              : section === 'Model' || !summary
+                ? modelTitle
+                : 'Chat settings'}
+          </h2>
+        </div>
         <button
           type="button"
           aria-label="Close model settings"
-          class="rounded-lg p-1.5 text-fg-muted hover:bg-fill-soft"
+          class="inline-flex items-center justify-center rounded-lg p-1.5 text-fg-muted hover:bg-fill-soft pointer-coarse:size-11"
           onClick={onClose}
         >
           <NeoIcon name="close" class="!h-4 !w-4" />
         </button>
       </div>
-      <div class="relative mx-3 mb-2 shrink-0">
+      {rows && section === 'Settings' && (
+        <div class="min-h-0 overflow-y-auto px-3 pb-3">
+          {rows.map(({ name, label, value, available }) => (
+            <button
+              key={name}
+              ref={name === 'Model' ? modelRow : undefined}
+              type="button"
+              disabled={!available}
+              aria-label={`${label}, ${value}`}
+              class="flex min-h-11 w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm text-fg hover:bg-fill-soft disabled:hover:bg-transparent"
+              onClick={() => openSection(name)}
+            >
+              <span>{label}</span>
+              <span class="min-w-0 flex-1 truncate text-right text-fg-muted">{value}</span>
+              {available && (
+                <NeoIcon name="chevron" class="!rotate-90 !h-3.5 !w-3.5 shrink-0 text-fg-faint" />
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+      <div class={`relative mx-3 mb-2 shrink-0 ${showModels ? '' : 'hidden'}`}>
         <NeoIcon
           name="search"
           class="pointer-events-none absolute left-3 top-2.5 !h-4 !w-4 text-fg-faint"
@@ -102,7 +170,7 @@ export function NeoModelMenu({
         ref={list}
         role="group"
         aria-label="Models"
-        class="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-2 pb-3"
+        class={`min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-2 pb-3 ${showModels ? '' : 'hidden'}`}
         style={{ maxHeight: '380px' }}
         onKeyDown={(event) => {
           if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
@@ -165,17 +233,21 @@ export function NeoModelMenu({
           </button>
         )}
       </div>
-      {showThinking && (
-        <div class="shrink-0 border-t border-line bg-surface/40 p-3">
-          <div class="mb-2 flex items-center justify-between">
-            <span class="text-xs font-medium text-fg-muted">Thinking</span>
-            <span class="text-[10px] text-fg-faint">{working ? scope.working : scope.idle}</span>
-          </div>
+      {(!summary || section === 'Client') && children}
+      {showThinking && showModels && (
+        <div class={`shrink-0 border-t border-line bg-surface/40 ${summary ? 'px-3' : 'p-3'}`}>
+          {!summary && (
+            <div class="mb-2 flex items-center justify-between">
+              <span class="text-xs font-medium text-fg-muted">Thinking</span>
+              <span class="text-[10px] text-fg-faint">{working ? scope.working : scope.idle}</span>
+            </div>
+          )}
           <ThinkingSlider
             level={level}
             options={THINKING_OPTIONS}
             busy={busy}
             onThinking={onThinking}
+            compact={!!summary}
           />
         </div>
       )}
@@ -198,11 +270,13 @@ function ThinkingSlider({
   options,
   busy,
   onThinking,
+  compact,
 }: {
   level: ThinkingLevel;
   options: { value: ThinkingLevel; label: string }[];
   busy: boolean;
   onThinking: (level: ThinkingLevel) => void;
+  compact: boolean;
 }) {
   const [preview, setPreview] = useState<number | null>(null);
   const selected = nearestOptionIndex(level, options);
@@ -212,7 +286,8 @@ function ThinkingSlider({
     if (options[index] && options[index].value !== level) onThinking(options[index].value);
   };
   return (
-    <div class="flex items-center gap-3 rounded-xl bg-surface px-3 py-2">
+    <div class={`flex items-center gap-3 ${compact ? '' : 'rounded-xl bg-surface px-3 py-2'}`}>
+      {compact && <span class="shrink-0 text-xs font-medium text-fg-muted">Thinking</span>}
       <div class="relative min-w-0 flex-1">
         <input
           type="range"
@@ -225,17 +300,19 @@ function ThinkingSlider({
           aria-valuetext={options[shown].label}
           onInput={(event) => setPreview(Number((event.target as HTMLInputElement).value))}
           onChangeCapture={(event) => pick(Number((event.target as HTMLInputElement).value))}
-          class="w-full cursor-pointer accent-accent disabled:cursor-not-allowed disabled:opacity-50"
+          class={`w-full cursor-pointer accent-accent disabled:cursor-not-allowed disabled:opacity-50 ${compact ? 'block h-11' : ''}`}
         />
-        <div aria-hidden="true" class="mt-0.5 flex justify-between px-[7px]">
-          {options.map((option, index) => (
-            <span
-              key={option.value}
-              title={option.label}
-              class={`h-1 w-1 rounded-full ${index <= shown ? 'bg-accent' : 'bg-line-strong'}`}
-            />
-          ))}
-        </div>
+        {!compact && (
+          <div aria-hidden="true" class="mt-0.5 flex justify-between px-[7px]">
+            {options.map((option, index) => (
+              <span
+                key={option.value}
+                title={option.label}
+                class={`h-1 w-1 rounded-full ${index <= shown ? 'bg-accent' : 'bg-line-strong'}`}
+              />
+            ))}
+          </div>
+        )}
       </div>
       <span
         class="w-[4.5rem] shrink-0 text-right text-xs font-medium text-accent"
