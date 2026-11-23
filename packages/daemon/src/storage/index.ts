@@ -56,6 +56,7 @@ import { WorkerAgentMemoryEmbedder } from './repositories/agent-memory-worker-em
 import type { WorkChatKind } from './work-chat-search.ts';
 import {
   SDKStatusReader,
+  isDesktopDatabaseRead,
   projectSDKStatusPage,
   readSDKMessagePage,
   type SDKPageParams,
@@ -560,7 +561,7 @@ export class Database {
       undefined,
       this.options?.queryObservability,
       (args) =>
-        'codexSnapshot' in args || 'claudeRecords' in args || 'copilotDesktop' in args
+        'claudeRecords' in args || isDesktopDatabaseRead(args)
           ? Promise.resolve()
           : this.core.waitForSdkMessageColumns(
               'sessionId' in args

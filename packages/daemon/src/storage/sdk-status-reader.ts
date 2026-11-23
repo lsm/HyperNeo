@@ -71,6 +71,11 @@ type SDKReadArgs =
     }
   | { turnVectors: { model: string; dimensions: number; limit: number | null } }
   | CardSearchArgs;
+
+export function isDesktopDatabaseRead(args: SDKReadArgs): boolean {
+  return 'codexSnapshot' in args || 'copilotDesktop' in args || 'cursorDesktop' in args;
+}
+
 export type SDKReadResult =
   | SDKStatusPage
   | NonNullable<WorkDetail['turnEnds']>
@@ -332,7 +337,7 @@ export class SDKStatusReader {
     if (
       this.dbPath === ':memory:' &&
       args &&
-      !('codexSnapshot' in args || 'claudeRecords' in args || 'copilotDesktop' in args)
+      !('claudeRecords' in args || isDesktopDatabaseRead(args))
     )
       return Promise.reject(new Error('SDK reader needs a file-backed DB'));
     const worker = (this.worker ??= this.createWorker());
@@ -373,15 +378,17 @@ export class SDKStatusReader {
                           ? 'codex-snapshot'
                           : 'copilotDesktop' in args
                             ? 'copilot-desktop'
-                            : 'turnVectors' in args
-                              ? 'turn-vectors'
-                              : 'neoMessageStatus' in args
-                                ? 'neo-message-status'
-                                : 'feed' in args
-                                  ? 'message-feed'
-                                  : 'page' in args
-                                    ? 'sdk-page'
-                                    : 'sdk-status'
+                            : 'cursorDesktop' in args
+                              ? 'cursor-desktop'
+                              : 'turnVectors' in args
+                                ? 'turn-vectors'
+                                : 'neoMessageStatus' in args
+                                  ? 'neo-message-status'
+                                  : 'feed' in args
+                                    ? 'message-feed'
+                                    : 'page' in args
+                                      ? 'sdk-page'
+                                      : 'sdk-status'
               : 'close',
             id,
             epoch,
@@ -394,7 +401,7 @@ export class SDKStatusReader {
           },
         });
         if (error) {
-          if (!args || !('codexSnapshot' in args || 'copilotDesktop' in args) || !timing?.error) {
+          if (!args || !isDesktopDatabaseRead(args) || !timing?.error) {
             this.worker = null;
             this.epoch++;
             worker.terminate();
