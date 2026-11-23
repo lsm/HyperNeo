@@ -4,6 +4,17 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.62.2] - 2026-11-23
+
+- Fix unlocking the macOS lock screen with Locked Use (#11573).
+
+### API compatibility
+
+Compared with v0.62.1, the pinned phone source inventory reports 0 breaking, 0 risky, and 4 safe changes. The full report flags 5 changed topic input limits and lists 11 safe changes.
+
+- Topic inputs now allow up to 12 display cells. The diff flags the removal of the previous string length limit in `neo.ask.propose`, `neo.ask.topic`, `neo.todo.add`, and `neo.topic.merge` as breaking.
+- The API adds `neo.session.unarchive`, ask topic source fields, and human queue topic lists.
+
 ## [0.62.1] - 2026-11-22
 
 - Install or remove Locked Use from the HyperNeo Desktop tray on macOS (#11515).
