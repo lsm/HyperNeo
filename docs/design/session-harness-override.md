@@ -49,21 +49,24 @@ harness, and existing code reads it from there.
 The hub registers one adapter per provider id, built only from providers whose
 *default* is OXAP. Two things follow, and the design fixes both:
 
-1. **Availability is separated from the default.** `buildHubConfig` registers
-   an adapter for each provider that has a configured OXAP harness, whatever
-   its default. Saving the default as `sdk` keeps `harnessSettings` instead of
-   dropping them (today `oxap-settings.ts` removes both). Configured means
-   "settings saved", so it is derived from the record that already holds it.
+1. **Availability is separated from the default.** `buildHubConfig`
+   registers an adapter, and `readKeys` in `oxap-settings.ts` loads the
+   provider key, for each provider that has a configured OXAP harness, whatever
+   its default. Today both look only at the default, so a retained DSH adapter
+   would start without `DEEPSEEK_API_KEY`. Saving the default as `sdk` keeps
+   `harnessSettings` instead of dropping them (today `oxap-settings.ts`
+   removes both). Configured means "settings saved", derived from the record
+   that already holds it.
 2. **Existing chats survive a default change.** `openGate` refuses to reopen a
    chat whose harness differs from the provider's current default ("no longer
    uses"). It instead checks that the session's harness is still configured for
    its provider. Changing the default then leaves an OXAP chat usable, and an
    SDK override and a default-OXAP chat run on the same daemon.
 
-With one OXAP row per provider (the first batch) the adapter keeps its
-provider-id name and `harnessSettings` stay flat. When a provider gets a second
-OXAP row (OpenCode Go), that slice keys the settings and the adapter name by
-harness id. This design does not build that early.
+Each provider has at most one OXAP row today, so the adapter keeps its
+provider-id name and `harnessSettings` stay flat. That includes OpenCode Go
+with DSH, whose first row this would be. A naming scheme for two OXAP rows on
+one provider is decided only when a second pairing needs it.
 
 ## What happens when the harness is not installed
 
@@ -83,18 +86,22 @@ them.
 
 ## Slices
 
-1. Admission: `session.create` accepts `harness`; resolve, validate and store
-   it; the configured check. Daemon tests: default, SDK override, OXAP override,
+Each slice works on its own: nothing is reachable before what it needs exists.
+
+1. Availability: keep `harnessSettings` when the default is set to `sdk`;
+   register adapters and load keys from configured settings; `openGate` checks
+   configured, not default. Tests: switch DeepSeek's default to SDK, then run a
+   turn on an existing OXAP chat (key present); same for Codex.
+2. Admission: `session.create` accepts `harness`; resolve, validate and store
+   it; the configured check. Safe after 1 because an admitted override can
+   open. Tests: default, SDK override, OXAP override on an SDK default,
    unsupported, unconfigured.
-2. Availability: keep `harnessSettings` when the default is set to `sdk`;
-   register adapters from configured settings; `openGate` checks configured, not
-   default. Tests: change the default, reopen an existing OXAP chat.
 3. Dialog: show the effective harness next to the model, list supported rows
    (disabled when unconfigured), send `harness` only when the user overrides.
 4. Prove both first-batch pairs end to end on one daemon: provider default
    chat and SDK override chat, then the reverse.
-5. Later, one PR each: OpenCode Go with DSH (needs keyed settings), then other
-   pairs once each is proven.
+5. Later, one PR each: OpenCode Go with DSH, then other pairs once each is
+   proven.
 
-Slice 1 and 2 may be reordered; 3 needs both. Measuring quota use between SDK
-and OXAP Codex is a separate piece of work and not part of this build.
+Measuring quota use between SDK and OXAP Codex is separate work and not part
+of this build.
