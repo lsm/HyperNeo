@@ -30,9 +30,14 @@ do not launch a native app to test them.
 For URL dispatch, run `node .claude/skills/verify/neo-session-links-web.mjs "$READY"`
 against a separate fixture run. Set `NODE_PATH` and `VERIFY_BROWSER` as in
 SKILL.md. This clicks the question and todo controls for Claude, Codex, Copilot
-and a remote HTTPS session, checks the browser or desktop handoff arguments, observes the
-desktop failure message, and checks local session navigation. The bridge is a
-fixture here. Verify system handoff separately on an isolated desktop build.
+and a remote HTTPS session, checks the browser or desktop handoff arguments,
+observes the desktop failure message, and checks local session navigation.
+
+For changes to the desktop bridge, also run **Desktop runtime paths → Check macOS
+Tauri wiring with an inert sidecar** from `.github/workflows/main.yml`. This
+runs `cargo check --release --locked` against the desktop manifest and
+compiles the build script against the locked Tauri API while validating the
+generated permissions. Verify the system handoff on an isolated desktop build.
 
 Explore keyboard activation and repeated Open/Back, then confirm the header is
 still absent. Save browser.json with phase after and passed true after all four
