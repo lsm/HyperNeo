@@ -15,7 +15,11 @@ const [mode, binary] = process.argv.slice(2, -1);
 const initializeRequiresAuth = mode === 'start-init-auth';
 const lateBatch = mode === 'resume-late-batch';
 const lateClose = mode === 'resume-late-close';
-const resumeFixture = mode === 'resume' || lateBatch || lateClose;
+const stopRace = mode === 'stop-race' || mode === 'stop-race-close-error';
+const closeError = mode === 'stop-close-error' || mode === 'stop-race-close-error';
+const holdClose = mode === 'stop-held-close';
+const stopFixture = mode === 'stop' || stopRace || closeError || holdClose;
+const resumeFixture = mode === 'resume' || lateBatch || lateClose || stopFixture;
 const healthyStart = mode === 'start' || resumeFixture;
 const startFixture = healthyStart || initializeRequiresAuth;
 assert(startFixture || ['fixture', 'absent', 'signed-out', 'start-signed-out'].includes(mode));
@@ -32,6 +36,7 @@ const executable = join(bin, 'agy');
 const journal = join(evidence, 'requests.jsonl');
 const release = join(run, 'release');
 const releaseFollowUp = join(run, 'release-follow-up');
+const releaseClose = join(run, 'release-close');
 writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 2\n', { mode: 0o700 });
 if (mode === 'signed-out' || mode === 'start-signed-out') {
   assert(isAbsolute(binary));
@@ -75,14 +80,26 @@ for await (const line of createInterface({input: process.stdin})) {
   } else if (method === 'session/close') {
     assert.deepEqual(params,{sessionId});
     if (resumed && ${lateClose}) note(sessionId,' Late during close');
-    emit({id,result:{}});
+    if (resumed && ${holdClose}) {
+      while (!existsSync(${JSON.stringify(releaseClose)})) await Bun.sleep(25);
+    }
+    if (resumed && ${closeError}) emit({id,error:{code:-32603,message:'Save failed'}});
+    else emit({id,result:{}});
   } else if (method === 'session/prompt') {
     assert.deepEqual(params,{sessionId,prompt:[{type:'text',text:resumed ? 'Continue the greeting.' : 'Reply with a greeting.'}]});
     promptId = id;
     emit({id:'permission-1',method:'session/request_permission',params:{sessionId,options:[],toolCall:{toolCallId:'tool'}}});
+  } else if (method === 'session/cancel') {
+    assert(resumed && ${stopFixture});
+    assert.equal(id,undefined);
+    assert.deepEqual(params,{sessionId});
+    while (!existsSync(${JSON.stringify(releaseFollowUp)})) await Bun.sleep(25);
+    if (${stopRace}) note(sessionId,'Hello again');
+    emit({id:promptId,result:{stopReason:${JSON.stringify(stopRace ? 'end_turn' : 'cancelled')}}});
   } else {
     assert.equal(id,'permission-1');
     assert.deepEqual(result,{outcome:{outcome:'cancelled'}});
+    if (resumed && ${stopFixture}) continue;
     const release = resumed ? ${JSON.stringify(releaseFollowUp)} : ${JSON.stringify(release)};
     while (!existsSync(release)) await Bun.sleep(25);
     note('other-session','Wrong session');
@@ -154,7 +171,7 @@ try {
   const registered = catalog.value.find((entry) => entry.id === adapter);
   results.catalog = registered ?? null;
   if (mode === 'absent') assert.equal(registered, undefined);
-  else assert.deepEqual(registered?.capabilities, ['find', 'start', 'status', 'send']);
+  else assert.deepEqual(registered?.capabilities, ['find', 'start', 'status', 'send', 'stop']);
 
   let operations = 1;
   if (startFixture || mode === 'start-signed-out') {
@@ -222,6 +239,13 @@ try {
       const foreign = (await find()).find((item) => item.ref.id === 'foreign');
       assert(foreign);
       assert.equal(foreign.place.folder, undefined);
+      const stop = (id: string) => rpc<Result<{stopped: boolean}>>('work.stop', { ref: { adapter, id } });
+      if (stopFixture) {
+        const idle = await stop(started.value.ref.id);
+        assert(idle.ok && !idle.value.stopped, JSON.stringify(idle));
+        const unrelated = await stop(foreign.ref.id);
+        assert(!unrelated.ok && unrelated.reason === 'not_found' && unrelated.notSent);
+      }
       if (resumeFixture) {
         const refused = await send(foreign.ref.id);
         assert(!refused.ok && refused.reason === 'not_started_by_us' && refused.notSent);
@@ -241,26 +265,72 @@ try {
         assert.equal(activeFollowUp.value.inputEvidence?.state, 'pending');
         const busy = await send(started.value.ref.id);
         assert(!busy.ok && busy.reason === 'busy' && busy.notSent);
-        writeFileSync(releaseFollowUp, '');
+        if (stopFixture) {
+          let reports = 0;
+          const stopping = [1, 2].map(async () => {
+            const result = await stop(started.value.ref.id);
+            reports += 1;
+            return result;
+          });
+          const cancelDeadline = Date.now() + 5_000;
+          while (!readFileSync(journal, 'utf8').includes('"session/cancel"') && Date.now() < cancelDeadline)
+            await Bun.sleep(25);
+          assert(readFileSync(journal, 'utf8').includes('"session/cancel"'));
+          assert.equal(reports, 0);
+          const duringCancel = await readFollowUp();
+          assert(duringCancel.ok && duringCancel.value.status === 'running');
+          writeFileSync(releaseFollowUp, '');
+          if (holdClose) {
+            const countCloseRequests = () => (readFileSync(journal, 'utf8').match(/"session\/close"/g) ?? []).length;
+            const closeDeadline = Date.now() + 2_000;
+            while (countCloseRequests() < 2 && Date.now() < closeDeadline) await Bun.sleep(25);
+            assert.equal(countCloseRequests(), 2);
+            const duringClose = await readFollowUp();
+            assert(duringClose.ok && duringClose.value.status === 'running');
+            stopping.push(stop(started.value.ref.id));
+          }
+          const stops = await Promise.all(stopping);
+          assert(stops.every((result) => result.ok && result.value.stopped === !stopRace), JSON.stringify(stops));
+          if (holdClose) {
+            const beforeSave = await readFollowUp();
+            assert(beforeSave.ok && beforeSave.value.status === 'running');
+            writeFileSync(releaseClose, '');
+          }
+        } else writeFileSync(releaseFollowUp, '');
         const followUpDeadline = Date.now() + 5_000;
         let followUp = await readFollowUp();
         while (followUp.ok && followUp.value.status === 'running' && Date.now() < followUpDeadline) {
           await Bun.sleep(25);
           followUp = await readFollowUp();
         }
-        assert(followUp.ok && followUp.value.status === 'done');
-        assert.equal(followUp.value.lastReply, 'Hello again');
-        assert.deepEqual(followUp.value.turnEnds?.map(({ message }) => message), ['Hello again']);
+        const cancelled = stopFixture && !stopRace;
+        assert(followUp.ok && followUp.value.status === (closeError ? 'failed' : cancelled ? 'stopped' : 'done'));
+        assert.equal(followUp.value.lastReply, cancelled ? undefined : 'Hello again');
+        if (closeError) {
+          assert.match(followUp.value.turnEnds?.[0]?.message ?? '', /did not confirm saved history/);
+        } else {
+          assert.deepEqual(followUp.value.turnEnds?.map(({ message }) => message), [cancelled ? '' : 'Hello again']);
+        }
         const input = followUp.value.inputEvidence;
-        assert(input?.state === 'observed');
+        assert(input);
         assert.deepEqual(input.receipt, sent.value.receipt);
-        assert.deepEqual(input.exchange.map(({ role, text }) => [role, text]), [
-          ['user', 'Continue the greeting.'], ['agent', 'Hello again'],
-        ]);
+        if (cancelled || closeError) assert.equal(input.state, 'unavailable');
+        else {
+          assert(input.state === 'observed');
+          assert.deepEqual(input.exchange.map(({ role, text }) => [role, text]), [
+            ['user', 'Continue the greeting.'], ['agent', 'Hello again'],
+          ]);
+        }
+        if (stopFixture) {
+          const idle = await stop(started.value.ref.id);
+          assert(idle.ok && !idle.value.stopped);
+        }
         const resumedRequests = readFileSync(journal, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
-        assert.deepEqual(resumedRequests.map(({ method }) => method).slice(-5), [
-          'initialize', 'session/resume', 'session/prompt', undefined, 'session/close',
-        ]);
+        const expected = [
+          'initialize', 'session/resume', 'session/prompt', undefined,
+          ...(stopFixture ? ['session/cancel'] : []), 'session/close',
+        ];
+        assert.deepEqual(resumedRequests.map(({ method }) => method).slice(-expected.length), expected);
         results.resumed = followUp;
       }
     }

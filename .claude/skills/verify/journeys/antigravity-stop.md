@@ -1,0 +1,29 @@
+# Stop Antigravity CLI work
+
+Use the isolated daemon and pinned Bun from the Verify skill:
+
+```sh
+bash .claude/skills/verify/proof-run.sh /absolute/stop-evidence \
+  .claude/skills/verify/antigravity-find.ts stop
+bash .claude/skills/verify/proof-run.sh /absolute/stop-race-evidence \
+  .claude/skills/verify/antigravity-find.ts stop-race
+bash .claude/skills/verify/proof-run.sh /absolute/stop-close-error-evidence \
+  .claude/skills/verify/antigravity-find.ts stop-close-error
+bash .claude/skills/verify/proof-run.sh /absolute/stop-race-close-error-evidence \
+  .claude/skills/verify/antigravity-find.ts stop-race-close-error
+bash .claude/skills/verify/proof-run.sh /absolute/stop-held-close-evidence \
+  .claude/skills/verify/antigravity-find.ts stop-held-close
+```
+
+Start and resume an owned session. Two concurrent `work.stop` calls send one
+notification to the active session and wait for its prompt result. A cancelled
+result reports `stopped: true` and leaves no completed reply on that receipt.
+An ordinary completion reports `stopped: false` and retains its reply. Idle
+and foreign sessions receive no cancellation notification.
+
+If saving fails, `work.stop` still reports the prompt result and `work.status`
+reports the save failure. A stop received during a held close returns the
+same result as the previous callers and sends no second cancellation.
+
+For an attended check, start a disposable turn with the signed-in CLI, stop
+that turn, and observe `stopped: true` followed by a `stopped` status.

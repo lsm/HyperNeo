@@ -20,6 +20,7 @@ import { reject } from './work-operations.ts';
 
 const START_TIMEOUT_MS = 15_000;
 const CLOSE_TIMEOUT_MS = 3_000;
+const STOP_TIMEOUT_MS = 10_000;
 const TURN_TIMEOUT_MINUTES = 60;
 const RETAINED_TURNS = 100;
 const MAX_REPLY_CHARS = 16_000;
@@ -42,6 +43,8 @@ const Update = Session.extend({
 const Completion = z.object({ stopReason: z.string() });
 type Gate<Value> = { value: Value } | { reason: Rejected };
 type Receipt = NonNullable<WorkDelivery['receipt']>;
+type StopResult = Result<{ stopped: boolean }>;
+type CancelPrompt = () => Promise<StopResult>;
 
 function admitStart(request: StartRequest, closing: boolean): Gate<StartRequest> {
   if (closing)
@@ -114,6 +117,7 @@ export function createAntigravityStart(
   readOwnedFolder: (id: string) => Promise<string | undefined> = async () => undefined
 ) {
   const running = new Set<ProcessJsonRpcTransport>();
+  const activePrompts = new Map<string, CancelPrompt>();
   const sessions = new Map<string, WorkDetail>();
   const completed = new Set<string>();
   const resuming = new Set<string>();
@@ -220,8 +224,13 @@ export function createAntigravityStart(
     };
     completed.delete(id);
     sessions.set(id, receipt ? { ...work, inputEvidence: { receipt, state: 'pending' } } : work);
-    const finish = async (status: WorkDetail['status'], detail: string) => {
+    let promptEnded = false;
+    const endPrompt = () => {
+      promptEnded = true;
       collectReply(false);
+    };
+    const finish = async (status: WorkDetail['status'], detail: string) => {
+      endPrompt();
       await close();
       const at = Date.now();
       const reply = readReply();
@@ -251,6 +260,7 @@ export function createAntigravityStart(
         ],
         ...(inputEvidence ? { inputEvidence } : {}),
       });
+      activePrompts.delete(id);
       completed.add(id);
       if (completed.size > RETAINED_TURNS) {
         const oldest = completed.values().next().value!;
@@ -259,46 +269,65 @@ export function createAntigravityStart(
       }
     };
     collectReply(true);
-    void transport
+    const promptResult = transport
       .sendRequest(
         'session/prompt',
         { sessionId: id, prompt: [{ type: 'text', text: message }] },
-        { onResponseFrame: () => collectReply(false) }
+        { onResponseFrame: endPrompt }
       )
-      .then(
-        async (response) => {
-          const result = Completion.safeParse('result' in response ? response.result : undefined);
-          const saved = await within(
-            transport.sendRequest('session/close', { sessionId: id }),
-            CLOSE_TIMEOUT_MS,
-            'Antigravity could not confirm session persistence.'
-          ).then(
-            (closed) => 'result' in closed,
-            () => false
-          );
-          if (!saved) {
-            return finish(
-              'failed',
-              'Antigravity did not confirm saved history. Check the CLI session before retrying.'
-            );
-          }
-          if (result.success && result.data.stopReason === 'end_turn')
-            return finish('done', readReply());
-          if (result.success && result.data.stopReason === 'cancelled')
-            return finish('stopped', readReply());
+      .then((response) => Completion.safeParse('result' in response ? response.result : undefined));
+    void promptResult.then(
+      async (result) => {
+        const saved = await within(
+          transport.sendRequest('session/close', { sessionId: id }),
+          CLOSE_TIMEOUT_MS,
+          'Antigravity could not confirm session persistence.'
+        ).then(
+          (closed) => 'result' in closed,
+          () => false
+        );
+        if (!saved) {
           return finish(
             'failed',
-            'Antigravity did not complete the turn. Check the CLI session before retrying.'
+            'Antigravity did not confirm saved history. Check the CLI session before retrying.'
           );
+        }
+        if (result.success && result.data.stopReason === 'end_turn')
+          return finish('done', readReply());
+        if (result.success && result.data.stopReason === 'cancelled')
+          return finish('stopped', readReply());
+        return finish(
+          'failed',
+          'Antigravity did not complete the turn. Check the CLI session before retrying.'
+        );
+      },
+      (error: unknown) =>
+        finish(
+          'failed',
+          error instanceof JsonRpcRequestTimeoutError
+            ? `The Antigravity turn exceeded the ${TURN_TIMEOUT_MINUTES}-minute limit. Check the CLI session before retrying.`
+            : 'Antigravity disconnected during the turn. Check the CLI session before retrying.'
+        )
+    );
+    let stopResult: Promise<StopResult> | undefined;
+    const cancelPrompt: CancelPrompt = () => {
+      if (stopResult) return stopResult;
+      if (!promptEnded && activePrompts.get(id) === cancelPrompt) {
+        transport.sendNotification('session/cancel', { sessionId: id });
+      }
+      const detail = 'Antigravity did not confirm cancellation. Check work.status before retrying.';
+      stopResult = within(promptResult, STOP_TIMEOUT_MS, detail).then(
+        (result): StopResult => {
+          const reason = result.data?.stopReason;
+          return reason === 'cancelled' || reason === 'end_turn'
+            ? { ok: true, value: { stopped: reason === 'cancelled' } }
+            : reject('unreachable', detail);
         },
-        (error: unknown) =>
-          finish(
-            'failed',
-            error instanceof JsonRpcRequestTimeoutError
-              ? `The Antigravity turn exceeded the ${TURN_TIMEOUT_MINUTES}-minute limit. Check the CLI session before retrying.`
-              : 'Antigravity disconnected during the turn. Check the CLI session before retrying.'
-          )
+        () => reject('unreachable', detail)
       );
+      return stopResult;
+    };
+    activePrompts.set(id, cancelPrompt);
     return work;
   };
 
@@ -372,6 +401,28 @@ export function createAntigravityStart(
     .pipe(resume, ['ref', 'delivery', 'message'], 'delivery')
     .endAsync('delivery') as (ref: WorkRef, message: string) => Promise<Result<WorkDelivery>>;
 
+  const selectPrompt = (ref: WorkRef): Gate<CancelPrompt | null> =>
+    ref.adapter === adapter && sessions.has(ref.id)
+      ? { value: activePrompts.get(ref.id) ?? null }
+      : {
+          reason: reject(
+            'not_found',
+            'This daemon has no owned Antigravity turn for that session.',
+            true
+          ),
+        };
+
+  const stop = (superpipe({})('antigravity-stop') as PipelineAPI)
+    .input(['ref'])
+    .pipe(selectPrompt, 'ref', 'result:stopped')
+    .pipe(
+      (prompt: CancelPrompt | null): Promise<StopResult> | StopResult =>
+        prompt ? prompt() : { ok: true, value: { stopped: false } },
+      'stopped',
+      'stopped'
+    )
+    .endAsync('stopped') as (ref: WorkRef) => Promise<StopResult>;
+
   const status: NonNullable<WorkAdapter['status']> = async (ref, _, receipt) => {
     const work = sessions.get(ref.id);
     if (!work || ref.adapter !== adapter)
@@ -394,6 +445,7 @@ export function createAntigravityStart(
     start: (request: StartRequest) => launchStart(request, closing),
     send,
     status,
+    stop,
     async close() {
       closing = true;
       await Promise.all([...running].map((transport) => transport.close()));
