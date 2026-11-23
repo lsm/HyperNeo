@@ -30,8 +30,10 @@ VERIFY_BUN="$TASK_BUN" node .claude/skills/verify/live-file-web-a4-proof.mjs "$R
 ```
 
 Set VERIFY_MOCK_PORT to the second unused port before launch. The proof creates
-fresh browser contexts at 1280 and 390 pixels, pairs each through `/pair#<code>`, clicks actual Neo publication
-paths, edits an inactive file then selects/reopens it, deletes and reopens it
+fresh browser contexts at 1280 and 390 pixels, pairs each through `/pair#<code>`,
+and clicks actual Neo publication paths. The Markdown file link must open the
+in-app preview without a browser `href`. The proof edits an inactive file then
+selects/reopens it, deletes and reopens it
 (the missing-file message must sit centered in the panel),
 and verifies current sanitized HTML and changed PNG pixels. Every live request
 must retain the publication source/reference; no registration or snapshot resolve

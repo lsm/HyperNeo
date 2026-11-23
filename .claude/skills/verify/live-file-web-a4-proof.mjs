@@ -25,9 +25,18 @@ export async function verifyLiveFilePage(page, {run, base, width, bun, cards = f
     for (const dialog of await page.getByRole('dialog').all()) await dialog.evaluate(node => Promise.all(node.getAnimations().map(animation => animation.finished.catch(() => {}))));
     return page.screenshot({path: join(run, 'evidence', `live-${name}-${width}.png`)});
   };
-  const tap = path => cards
-    ? page.locator('article').filter({hasText:'Live source-bound files:'}).getByRole('button',{name:`Open current file: ${path.split('/').at(-1)}`,exact:true}).click()
-    : page.getByRole('link', {name: `Open preview: ${path}`, exact: true}).click();
+  const tap = async path => {
+    if (cards) {
+      await page.locator('article').filter({hasText:'Live source-bound files:'}).getByRole('button',{name:`Open current file: ${path.split('/').at(-1)}`,exact:true}).click();
+      return;
+    }
+    const link = page.getByRole('link', {
+      name: path === html ? 'Current HTML' : `Open preview: ${path}`,
+      exact: true,
+    });
+    if (path === html) assert.equal(await link.getAttribute('href'), null);
+    await link.click();
+  };
   const close = async path => {
     if (width >= 1120) await page.getByRole('button', {name: `Close ${path.split('/').at(-1)}`, exact: true}).click();
     else await page.getByRole('button', {name: 'Back', exact: true}).click();

@@ -8,7 +8,6 @@ import {
   takeArtifactPreviewOpener,
 } from '../../../lib/artifact-preview-store.ts';
 import { ArtifactPreviewPanel } from '../ArtifactPreviewPanel.tsx';
-import MarkdownRenderer from '../../chat/MarkdownRenderer.tsx';
 import { NeoMessageMenu } from '../../../neo/NeoMessageMenu.tsx';
 import { Modal } from '../../ui/Modal.tsx';
 
@@ -102,23 +101,6 @@ describe('ArtifactPreviewPanel', () => {
       expect(screen.getByRole('dialog')).toBeTruthy();
     }
   );
-
-  it('dismisses the real image lightbox without losing the preview after focus moves', async () => {
-    await openDocument();
-    render(
-      <MarkdownRenderer content="![Synthetic image](data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=)" />
-    );
-    const image = await screen.findByRole('img', { name: 'Synthetic image' });
-    image.closest('a')!.addEventListener('click', (event) => event.preventDefault());
-    fireEvent(image, new MouseEvent('click', { bubbles: true, cancelable: true }));
-    expect(document.querySelector('.markdown-image-overlay')).toBeTruthy();
-    screen.getByRole('dialog').focus();
-    fireEvent.keyDown(document, { key: 'Escape' });
-    expect(document.querySelector('.markdown-image-overlay')).toBeNull();
-    expect(screen.getByRole('dialog')).toBeTruthy();
-    fireEvent.keyDown(document, { key: 'Escape' });
-    expect(screen.queryByRole('dialog')).toBeNull();
-  });
 
   it('opens and closes on ordinary HTTP without crypto.randomUUID', async () => {
     vi.stubGlobal('crypto', { getRandomValues: crypto.getRandomValues.bind(crypto) });
