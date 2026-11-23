@@ -176,6 +176,11 @@ export function createAntigravityAdapter(
     id: ADAPTER,
     capabilities: ['find', 'start', 'status', 'send', 'steer', 'stop', 'compact'],
     steerBehavior: 'best_effort',
+    unsupportedCapabilities: {
+      rename:
+        'Antigravity CLI does not expose rename over ACP. Open /resume in the CLI and press F2 on the conversation.',
+      archive: 'Antigravity CLI has no ACP operation to archive a conversation.',
+    },
     async find(query) {
       if (query.spaceId) return [];
       const ownedFolders = new Map(
