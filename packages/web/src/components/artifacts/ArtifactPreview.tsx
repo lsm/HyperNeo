@@ -1,3 +1,4 @@
+import { openExternalLink } from '../../lib/external-links.ts';
 import {
   ARTIFACT_DEFAULT_LIMITS,
   type ArtifactFileMetadata,
@@ -273,7 +274,7 @@ export function ArtifactPreview({
             type="button"
             class="rounded-md bg-surface-raised px-3 py-1 hover:bg-fill-strong"
             onClick={() => {
-              window.open(pendingUrl, '_blank', 'noopener,noreferrer');
+              openExternalLink(pendingUrl);
               setPendingUrl(null);
             }}
           >

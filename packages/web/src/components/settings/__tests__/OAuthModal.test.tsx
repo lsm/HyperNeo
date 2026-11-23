@@ -198,7 +198,11 @@ describe('OAuthModal', () => {
       );
       openButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
-      expect(openMock).toHaveBeenCalledWith('https://example.com/verify', '_blank');
+      expect(openMock).toHaveBeenCalledWith(
+        'https://example.com/verify',
+        '_blank',
+        'noopener,noreferrer'
+      );
     });
   });
 
@@ -268,7 +272,11 @@ describe('OAuthModal', () => {
       );
       openButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
-      expect(openMock).toHaveBeenCalledWith('https://example.com/auth', '_blank');
+      expect(openMock).toHaveBeenCalledWith(
+        'https://example.com/auth',
+        '_blank',
+        'noopener,noreferrer'
+      );
     });
 
     it('should prefer device flow when both authUrl and device flow params provided', () => {
