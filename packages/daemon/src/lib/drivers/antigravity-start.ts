@@ -6,6 +6,11 @@ import { z } from 'zod';
 import { JsonRpcRequestTimeoutError, ProcessJsonRpcTransport } from '../process-json-rpc.ts';
 import { buildSafeProcessEnv } from '../safe-process-env.ts';
 import { compactAntigravity } from './antigravity-compact.ts';
+import {
+  AntigravityConfig,
+  antigravityIdentity,
+  configureAntigravity,
+} from './antigravity-configuration.ts';
 import { selectLocalStartFolder } from './start-folder.ts';
 import type {
   StartRequest,
@@ -34,7 +39,6 @@ const Init = z.object({
   }),
 });
 const Session = z.object({ sessionId: z.string().min(1) });
-const Resumed = z.object({});
 const Update = Session.extend({
   update: z.object({
     sessionUpdate: z.literal('agent_message_chunk'),
@@ -50,15 +54,6 @@ type CancelPrompt = () => Promise<StopResult>;
 function admitStart(request: StartRequest, closing: boolean): Gate<StartRequest> {
   if (closing)
     return { reason: reject('unreachable', 'The Antigravity driver is shutting down.', true) };
-  if (request.model !== undefined || request.effort !== undefined) {
-    return {
-      reason: reject(
-        request.model !== undefined ? 'unsupported_model' : 'unsupported_effort',
-        'Choose the default Antigravity CLI configuration for this session.',
-        true
-      ),
-    };
-  }
   return { value: request };
 }
 
@@ -72,6 +67,17 @@ async function within<T>(pending: Promise<T>, ms: number, detail: string): Promi
   } finally {
     clearTimeout(timer);
   }
+}
+
+function saveSession(transport: ProcessJsonRpcTransport, sessionId: string): Promise<boolean> {
+  return within(
+    transport.sendRequest('session/close', { sessionId }),
+    CLOSE_TIMEOUT_MS,
+    'Antigravity could not confirm session persistence.'
+  ).then(
+    (closed) => 'result' in closed,
+    () => false
+  );
 }
 
 async function openSession(transport: ProcessJsonRpcTransport, cwd: string, resumeId?: string) {
@@ -101,14 +107,11 @@ async function openSession(transport: ProcessJsonRpcTransport, cwd: string, resu
       true
     );
   }
-  if (resumeId)
-    return Resumed.safeParse(opened.result).success
-      ? { ok: true as const, value: resumeId }
-      : reject('not_delivered', 'Antigravity did not confirm the resumed session.', true);
-  const session = Session.safeParse(opened.result);
-  return session.success
-    ? { ok: true as const, value: session.data.sessionId }
-    : reject('not_delivered', 'Antigravity did not confirm the new session.', true);
+  const config = AntigravityConfig.safeParse(opened.result);
+  const id = resumeId ?? Session.safeParse(opened.result).data?.sessionId;
+  return id && config.success
+    ? { ok: true as const, value: { id, options: config.data.configOptions } }
+    : reject('not_delivered', 'Antigravity did not confirm the session.', true);
 }
 
 export function createAntigravityStart(
@@ -200,14 +203,29 @@ export function createAntigravityStart(
       await close();
       return { reason: opened };
     }
-    const id = opened.value;
+    const { id, options } = opened.value;
     const collectReply = (collect: boolean) => {
       sessionId = collect ? id : undefined;
     };
-    return { value: { id, cwd, transport, collectReply, close, readReply: () => reply } };
+    return { value: { id, cwd, transport, options, collectReply, close, readReply: () => reply } };
   };
 
   type Opened = NonNullable<Awaited<ReturnType<typeof connect>>['value']>;
+  const configureOpened = async (opened: Opened, request: StartRequest): Promise<Gate<Opened>> => {
+    if (request.model === undefined && request.effort === undefined) return { value: opened };
+    const configured = await within(
+      configureAntigravity(opened.transport, opened.id, opened.options, request),
+      START_TIMEOUT_MS,
+      'Antigravity session configuration timed out.'
+    ).catch(() =>
+      reject('unreachable', 'Antigravity could not confirm session configuration.', true)
+    );
+    if (configured.ok) return { value: { ...opened, options: configured.value } };
+    await saveSession(opened.transport, opened.id);
+    await opened.close();
+    return { reason: configured };
+  };
+
   const launchTurn = (
     opened: Opened,
     target: Pick<WorkDetail, 'title' | 'place'>,
@@ -217,6 +235,7 @@ export function createAntigravityStart(
     const { id, cwd, transport, collectReply, close, readReply } = opened;
     const work: WorkDetail = {
       ref: { adapter, id },
+      ...antigravityIdentity(opened.options),
       title: target.title,
       place: { ...target.place, folder: cwd },
       execution: { machine, directory: cwd },
@@ -280,14 +299,7 @@ export function createAntigravityStart(
       .then((response) => Completion.safeParse('result' in response ? response.result : undefined));
     void promptResult.then(
       async (result) => {
-        const saved = await within(
-          transport.sendRequest('session/close', { sessionId: id }),
-          CLOSE_TIMEOUT_MS,
-          'Antigravity could not confirm session persistence.'
-        ).then(
-          (closed) => 'result' in closed,
-          () => false
-        );
+        const saved = await saveSession(transport, id);
         if (!saved) {
           return finish(
             'failed',
@@ -339,12 +351,23 @@ export function createAntigravityStart(
       await opened.close();
       return reject('not_delivered', 'Antigravity could not establish a new owned session.', true);
     }
-    const work = launchTurn(
-      opened,
-      { title: request.sessionTitle ?? request.title, place: request.place },
-      request.message
-    );
-    return { ok: true, value: work };
+    reserved.add(id);
+    try {
+      const configured = await configureOpened(opened, request);
+      if ('reason' in configured) return configured.reason;
+      if (closing) {
+        await opened.close();
+        return reject('unreachable', 'The Antigravity driver is shutting down.', true);
+      }
+      const work = launchTurn(
+        configured.value,
+        { title: request.sessionTitle ?? request.title, place: request.place },
+        request.message
+      );
+      return { ok: true, value: work };
+    } finally {
+      reserved.delete(id);
+    }
   };
 
   const launchStart = (superpipe({})('antigravity-start') as PipelineAPI)
