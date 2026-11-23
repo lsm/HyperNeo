@@ -155,11 +155,17 @@ static void clickPrompt(CGPoint point) {
 @implementation Guardian
 
 - (void)cover {
-    for (NSWindow *window in self.covers) [window orderOut:nil];
-    self.covers = [NSMutableArray array];
-    for (NSScreen *screen in NSScreen.screens) {
-        NSWindow *window = [[NSWindow alloc] initWithContentRect:screen.frame styleMask:NSWindowStyleMaskBorderless
+    NSArray<NSScreen *> *screens = NSScreen.screens;
+    if (!screens.count) return [self end:@"cover_mismatch"];
+    NSArray<NSWindow *> *previous = self.covers ?: @[];
+    self.covers = [NSMutableArray arrayWithArray:previous];
+    for (NSScreen *screen in screens) {
+        NSRect content = screen.frame;
+        // The initializer adds the supplied screen's origin.
+        content.origin = NSZeroPoint;
+        NSWindow *window = [[NSWindow alloc] initWithContentRect:content styleMask:NSWindowStyleMaskBorderless
                                                          backing:NSBackingStoreBuffered defer:NO screen:screen];
+        if (!window) return [self end:@"cover_mismatch"];
         window.releasedWhenClosed = NO;
         window.backgroundColor = [NSColor colorWithRed:0.04 green:0.11 blue:0.26 alpha:0.999];
         window.opaque = NO;
@@ -186,9 +192,12 @@ static void clickPrompt(CGPoint point) {
         [window.contentView addSubview:stack];
         [stack.centerXAnchor constraintEqualToAnchor:window.contentView.centerXAnchor].active = YES;
         [stack.centerYAnchor constraintEqualToAnchor:window.contentView.centerYAnchor].active = YES;
-        [window orderFrontRegardless];
         [self.covers addObject:window];
+        [window orderFrontRegardless];
+        if (!NSEqualRects(window.frame, screen.frame)) return [self end:@"cover_mismatch"];
     }
+    for (NSWindow *window in previous) [window orderOut:nil];
+    [self.covers removeObjectsInRange:NSMakeRange(0, previous.count)];
     say([NSString stringWithFormat:@"covered %lu", (unsigned long)self.covers.count]);
 }
 
@@ -376,7 +385,7 @@ int main(int argc, const char *argv[]) {
             else active = NSProcessInfo.processInfo.systemUptime;
         });
         dispatch_resume(input);
-        [guardian unlock];
+        if (!guardian.ending) [guardian unlock];
         [NSApp run];
     }
     return 0;

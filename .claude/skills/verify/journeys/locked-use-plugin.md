@@ -108,6 +108,19 @@ copy that holds no privacy grants, and `guardian check PASS`. The screen must be
 unlocked for the `not_locked` token: with the screen locked the third start omits it
 and the check fails on the environment, not the guardian.
 
+Cover geometry, headless. This runs the guardian's cover and relock paths with
+synthetic screens, windows and lock state. It opens no real windows:
+
+```bash
+bash packages/desktop/locked-use/check-cover.sh
+```
+
+Both covers must match their full screen frames before and after the larger
+display changes size and moves to a negative origin. If the replacement window
+reports a smaller frame, the guardian must relock and print
+`ended cover_mismatch` without a second `covered 2` line. Pass prints
+`guardian cover check cases=2 failures=0`.
+
 Hidden password field, headless. While Touch ID can unlock, the login window keeps
 `UserPasswordTextField` out of its Accessibility tree and shows only "Touch ID or
 Enter Password", so the guardian has nothing to submit. Its answer is to click that
