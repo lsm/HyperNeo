@@ -17,6 +17,9 @@ request is cancelled, and the final reply comes from the session that was starte
 An unrelated session update must not alter that reply. A foreign session has no
 owned status and an unsupported model is rejected before creating the child.
 The agent acknowledges `session/close` before the driver reports the turn done.
+Active turns have a 60-minute deadline. The focused driver tests advance a
+clock through the old ten-minute cutoff and check the timeout and disconnect
+messages separately.
 When the agent lists the subprocess launch directory for every session, a
 folder search matches the recorded owned workspace. An external session with
 no verified workspace only appears in unscoped discovery.

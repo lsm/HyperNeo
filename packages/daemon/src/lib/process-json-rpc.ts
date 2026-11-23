@@ -60,6 +60,12 @@ interface PendingRequest {
   timer: ReturnType<typeof setTimeout>;
 }
 
+export class JsonRpcRequestTimeoutError extends Error {
+  constructor(method: string, timeoutMs: number) {
+    super(`Request timed out after ${timeoutMs}ms: ${method}`);
+  }
+}
+
 export class ProcessJsonRpcTransport {
   private process: ChildProcess | null = null;
   private processTree: ProcessTree | null = null;
@@ -262,7 +268,7 @@ export class ProcessJsonRpcTransport {
       const timeoutMs = this.options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
       const timer = setTimeout(() => {
         this.pendingRequests.delete(id);
-        reject(new Error(`Request timed out after ${timeoutMs}ms: ${method}`));
+        reject(new JsonRpcRequestTimeoutError(method, timeoutMs));
       }, timeoutMs);
 
       let submitted: Promise<Error | undefined> = Promise.resolve(undefined);

@@ -1,15 +1,24 @@
 import { existsSync, mkdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute } from 'node:path';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { ProcessJsonRpcTransport } from '../process-json-rpc.ts';
+import { JsonRpcRequestTimeoutError, ProcessJsonRpcTransport } from '../process-json-rpc.ts';
 import { buildSafeProcessEnv } from '../safe-process-env.ts';
 import { selectLocalStartFolder } from './start-folder.ts';
-import type { StartRequest, WorkAdapter, WorkDetail } from './types.ts';
+import type {
+  StartRequest,
+  WorkAdapter,
+  WorkDetail,
+  Rejected,
+  Result,
+  WorkStarted,
+} from './types.ts';
 import { reject } from './work-operations.ts';
 
 const START_TIMEOUT_MS = 15_000;
 const CLOSE_TIMEOUT_MS = 3_000;
+const TURN_TIMEOUT_MINUTES = 60;
 const RETAINED_TURNS = 100;
 const MAX_REPLY_CHARS = 16_000;
 const Init = z.object({
@@ -24,6 +33,22 @@ const Update = Session.extend({
   }),
 });
 const Completion = z.object({ stopReason: z.string() });
+type Gate<Value> = { value: Value } | { reason: Rejected };
+
+function admitStart(request: StartRequest, closing: boolean): Gate<StartRequest> {
+  if (closing)
+    return { reason: reject('unreachable', 'The Antigravity driver is shutting down.', true) };
+  if (request.model !== undefined || request.effort !== undefined) {
+    return {
+      reason: reject(
+        request.model !== undefined ? 'unsupported_model' : 'unsupported_effort',
+        'Choose the default Antigravity CLI configuration for this session.',
+        true
+      ),
+    };
+  }
+  return { value: request };
+}
 
 async function within<T>(pending: Promise<T>, ms: number, detail: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -67,15 +92,7 @@ export function createAntigravityStart(executable: string, machine: string, adap
   const completed = new Set<string>();
   let closing = false;
 
-  const start: NonNullable<WorkAdapter['start']> = async (request: StartRequest) => {
-    if (closing) return reject('unreachable', 'The Antigravity driver is shutting down.', true);
-    if (request.model !== undefined || request.effort !== undefined) {
-      return reject(
-        request.model !== undefined ? 'unsupported_model' : 'unsupported_effort',
-        'Choose the default Antigravity CLI configuration for this session.',
-        true
-      );
-    }
+  const selectFolder = (request: StartRequest): Gate<string> => {
     const selected = selectLocalStartFolder(
       request,
       {
@@ -86,11 +103,22 @@ export function createAntigravityStart(executable: string, machine: string, adap
       },
       'Antigravity needs a local workspace.'
     );
-    if ('reason' in selected) return { ...selected.reason, notSent: true };
-    const cwd = selected.value;
-    if (!isAbsolute(cwd) || !statSync(cwd, { throwIfNoEntry: false })?.isDirectory())
-      return reject('invalid_place', 'Antigravity needs an absolute workspace directory.', true);
+    if ('reason' in selected) return { reason: { ...selected.reason, notSent: true } };
+    return selected;
+  };
 
+  const requireDirectory = (cwd: string): Gate<string> =>
+    isAbsolute(cwd) && statSync(cwd, { throwIfNoEntry: false })?.isDirectory()
+      ? { value: cwd }
+      : {
+          reason: reject(
+            'invalid_place',
+            'Antigravity needs an absolute workspace directory.',
+            true
+          ),
+        };
+
+  const connect = async (cwd: string) => {
     let sessionId: string | undefined;
     let reply = '';
     const transport = new ProcessJsonRpcTransport({
@@ -99,6 +127,7 @@ export function createAntigravityStart(executable: string, machine: string, adap
       cwd,
       env: buildSafeProcessEnv(),
       replaceEnv: true,
+      requestTimeoutMs: TURN_TIMEOUT_MINUTES * 60_000,
       onStderr: () => {},
       onRequest: ({ id, method }) => {
         if (method === 'session/request_permission')
@@ -134,14 +163,19 @@ export function createAntigravityStart(executable: string, machine: string, adap
     }
     if (!opened.ok) {
       await close();
-      return opened;
+      return { reason: opened };
     }
-    if (closing || sessions.has(opened.value)) {
+    sessionId = opened.value;
+    return { value: { id: sessionId, cwd, transport, close, readReply: () => reply } };
+  };
+
+  type Opened = NonNullable<Awaited<ReturnType<typeof connect>>['value']>;
+  const launch = async (opened: Opened, request: StartRequest): Promise<Result<WorkStarted>> => {
+    const { id, cwd, transport, close, readReply } = opened;
+    if (closing || sessions.has(id)) {
       await close();
       return reject('not_delivered', 'Antigravity could not establish a new owned session.', true);
     }
-    const id = opened.value;
-    sessionId = id;
     const work: WorkDetail = {
       ref: { adapter, id },
       title: request.sessionTitle ?? request.title,
@@ -154,6 +188,7 @@ export function createAntigravityStart(executable: string, machine: string, adap
     sessions.set(id, work);
     const finish = (status: WorkDetail['status'], detail: string) => {
       const at = Date.now();
+      const reply = readReply();
       sessions.set(id, {
         ...work,
         status,
@@ -191,24 +226,38 @@ export function createAntigravityStart(executable: string, machine: string, adap
             );
             return;
           }
-          if (result.success && result.data.stopReason === 'end_turn') finish('done', reply);
+          if (result.success && result.data.stopReason === 'end_turn') finish('done', readReply());
           else if (result.success && result.data.stopReason === 'cancelled')
-            finish('stopped', reply);
+            finish('stopped', readReply());
           else
             finish(
               'failed',
               'Antigravity did not complete the turn. Check the CLI session before retrying.'
             );
         },
-        () =>
+        (error: unknown) =>
           finish(
             'failed',
-            'Antigravity disconnected during the turn. Check the CLI session before retrying.'
+            error instanceof JsonRpcRequestTimeoutError
+              ? `The Antigravity turn exceeded the ${TURN_TIMEOUT_MINUTES}-minute limit. Check the CLI session before retrying.`
+              : 'Antigravity disconnected during the turn. Check the CLI session before retrying.'
           )
       )
       .finally(close);
     return { ok: true, value: work };
   };
+
+  const launchStart = (superpipe({})('antigravity-start') as PipelineAPI)
+    .input(['request', 'closing'])
+    .pipe(admitStart, ['request', 'closing'], 'result:started')
+    .pipe(selectFolder, 'started', 'result:started')
+    .pipe(requireDirectory, 'started', 'result:started')
+    .pipe(connect, 'started', 'result:started')
+    .pipe(launch, ['started', 'request'], 'started')
+    .endAsync('started') as (
+    request: StartRequest,
+    closing: boolean
+  ) => Promise<Result<WorkStarted>>;
 
   const status: NonNullable<WorkAdapter['status']> = async (ref) => {
     const work = sessions.get(ref.id);
@@ -218,7 +267,7 @@ export function createAntigravityStart(executable: string, machine: string, adap
   };
 
   return {
-    start,
+    start: (request: StartRequest) => launchStart(request, closing),
     status,
     async close() {
       closing = true;
