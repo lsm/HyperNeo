@@ -79,7 +79,7 @@ static AXError fixtureAction(AXUIElementRef item, CFStringRef action) {
     exit(0);
 }
 
-__attribute__((unused)) static void fixturePost(CGEventTapLocation tap, CGEventRef event) {
+static void fixturePost(CGEventTapLocation tap, CGEventRef event) {
     if (tap != kCGHIDEventTap || CGEventGetType(event) != kCGEventLeftMouseUp) return;
     if (CGEventGetIntegerValueField(event, kCGEventSourceUnixProcessID) == 0) {
         puts("click carries source 0, would read as owner input");

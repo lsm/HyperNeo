@@ -68,6 +68,78 @@ static AXUIElementRef find(AXUIElementRef item, NSString *identifier, int depth,
     return found;
 }
 
+static void collect(AXUIElementRef item, int depth, NSMutableArray *nodes) {
+    if (depth > 12) return;
+    [nodes addObject:(__bridge id)item];
+    CFArrayRef children = NULL;
+    if (AXUIElementCopyAttributeValue(item, kAXChildrenAttribute, (CFTypeRef *)&children) != kAXErrorSuccess) return;
+    for (id child in (__bridge NSArray *)children) collect((__bridge AXUIElementRef)child, depth + 1, nodes);
+    CFRelease(children);
+}
+
+static NSString *text(id item, CFStringRef attribute) {
+    CFTypeRef value = NULL;
+    if (AXUIElementCopyAttributeValue((__bridge AXUIElementRef)item, attribute, &value) != kAXErrorSuccess) return nil;
+    id object = CFBridgingRelease(value);
+    return [object isKindOfClass:NSString.class] ? object : nil;
+}
+
+static CGRect frameOf(id item) {
+    CFTypeRef position = NULL, extent = NULL;
+    CGRect frame = CGRectZero;
+    BOOL known = AXUIElementCopyAttributeValue((__bridge AXUIElementRef)item, kAXPositionAttribute, &position) == kAXErrorSuccess
+        && AXUIElementCopyAttributeValue((__bridge AXUIElementRef)item, kAXSizeAttribute, &extent) == kAXErrorSuccess
+        && AXValueGetValue(position, kAXValueCGPointType, &frame.origin) && AXValueGetValue(extent, kAXValueCGSizeType, &frame.size);
+    if (position) CFRelease(position);
+    if (extent) CFRelease(extent);
+    return known ? frame : CGRectNull;
+}
+
+// While Touch ID can unlock, the login window shows only "Touch ID or Enter Password" and keeps
+// the password field out of its tree. Find that prompt: the one unnamed label just below the one
+// focused user. Anything else, or more than one of either, is not clicked.
+static NSString *findPrompt(AXUIElementRef app, NSMutableString *trace, CGPoint *point) {
+    NSMutableArray *nodes = [NSMutableArray array];
+    collect(app, 0, nodes);
+    NSUInteger secure = 0, users = 0;
+    CGRect user = CGRectNull;
+    for (id item in nodes) {
+        secure += [text(item, kAXSubroleAttribute) isEqualToString:(__bridge NSString *)kAXSecureTextFieldSubrole];
+        if ([text(item, kAXIdentifierAttribute) isEqualToString:@"FocusedUser"]) users++, user = frameOf(item);
+    }
+    [trace appendFormat:@" nodes=%lu secure=%lu users=%lu", (unsigned long)nodes.count, (unsigned long)secure, (unsigned long)users];
+    if (users != 1 || CGRectIsNull(user)) return @"no_user";
+    NSMutableArray *prompts = [NSMutableArray array];
+    CGRect prompt = CGRectNull;
+    for (id item in nodes) {
+        if (![text(item, kAXRoleAttribute) isEqualToString:(__bridge NSString *)kAXStaticTextRole]
+            || text(item, kAXIdentifierAttribute).length) continue;
+        CGRect frame = frameOf(item);
+        if (CGRectIsNull(frame)) continue;
+        CGFloat gap = CGRectGetMinY(frame) - CGRectGetMaxY(user), offset = fabs(CGRectGetMidX(frame) - CGRectGetMidX(user));
+        if (gap < 0 || gap > 120 || offset > 240) continue;
+        [prompts addObject:item];
+        prompt = frame;
+    }
+    [trace appendFormat:@" prompts=%lu", (unsigned long)prompts.count];
+    if (prompts.count != 1) return @"no_prompt";
+    *point = CGPointMake(CGRectGetMidX(prompt), CGRectGetMidY(prompt));
+    return nil;
+}
+
+// Clicks the prompt at its screen point, posting the events at the HID tap the way a physical
+// click reaches the lock screen; the lock screen ignores events posted to loginwindow alone.
+// The events carry this process as their source, never the HID system's source 0, so the
+// guardian's owner-input tap cannot mistake them for the owner. Nothing is typed.
+static void clickPrompt(CGPoint point) {
+    for (NSNumber *type in @[ @(kCGEventLeftMouseDown), @(kCGEventLeftMouseUp) ]) {
+        CGEventRef event = CGEventCreateMouseEvent(NULL, type.intValue, point, kCGMouseButtonLeft);
+        CGEventSetIntegerValueField(event, kCGMouseEventClickState, 1);
+        CGEventPost(kCGHIDEventTap, event);
+        CFRelease(event);
+    }
+}
+
 @interface Guardian : NSObject
 @property(nonatomic) NSMutableArray<NSWindow *> *covers;
 @property(nonatomic) BOOL armed, unlocked, ending;
@@ -187,6 +259,13 @@ static AXUIElementRef find(AXUIElementRef item, NSString *identifier, int depth,
         [trace appendFormat:@" try=%d field=[", tries];
         AXUIElementRef field = find(app, @"UserPasswordTextField", 0, trace);
         [trace appendFormat:@"] field_found=%d", field != NULL];
+        if (!field) {
+            CGPoint point = CGPointZero;
+            NSString *missing = findPrompt(app, trace, &point);
+            if (!missing && self.ownerInput) missing = @"owner_input";
+            if (!missing) clickPrompt(point);
+            [trace appendFormat:@" reveal=%@", missing ?: @"clicked"];
+        }
         if (field) {
             AXError setError = AXUIElementSetAttributeValue(field, kAXValueAttribute, CFSTR("hyperneo-locked-use"));
             [trace appendFormat:@" set=%d", setError];
