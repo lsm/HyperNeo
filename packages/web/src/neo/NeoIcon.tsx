@@ -14,7 +14,6 @@ const paths = {
   external: 'M14 3h7v7m0-7L10 14M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5',
   work: 'M8 7V4h8v3M4 7h16v13H4V7Zm0 5c5 3 11 3 16 0M10 12h4',
   check: 'm5 12 4 4L19 6',
-  terminal: 'M4 5h16v14H4zM8 9l3 3-3 3m5 0h3',
   chip: 'M7 7h10v10H7zM10 10h4v4h-4zM9 4v3m6-3v3m-6 10v3m6-3v3M4 9h3m-3 6h3m10-6h3m-3 6h3',
   received: 'm2 12 4 4L16 6m-4 10L22 6',
   alert: 'M12 8v5m0 3h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z',

@@ -546,7 +546,7 @@ export function SessionsPage() {
                         title={`Harness: ${harnessLabel}`}
                         class={`${CHAT_ICON_CONTROL} border-line text-fg-muted hover:text-fg`}
                       >
-                        <NeoIcon name={isOxap ? 'chip' : 'terminal'} class="!h-4 !w-4" />
+                        <NeoIcon name="chip" class="!h-4 !w-4" />
                       </button>
                     }
                     items={[
@@ -574,7 +574,7 @@ export function SessionsPage() {
                     title="Harness: Claude Code"
                     class={`${CHAT_ICON_CONTROL} border-transparent text-fg-muted`}
                   >
-                    <NeoIcon name="terminal" class="!h-4 !w-4" />
+                    <NeoIcon name="chip" class="!h-4 !w-4" />
                   </span>
                 ) : null}
                 {!isOxap && (
