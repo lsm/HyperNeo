@@ -5,6 +5,7 @@ import { isAbsolute, join } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import type { FindWorkResultSchema } from '../../../packages/daemon/src/lib/drivers/find-operation.ts';
+import type { ReadWorkResultSchema } from '../../../packages/daemon/src/lib/drivers/read-operation.ts';
 import type { Result, WorkDelivery, WorkDetail, WorkStarted } from '../../../packages/daemon/src/lib/drivers/types.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
@@ -20,7 +21,8 @@ const closeError = mode === 'stop-close-error' || mode === 'stop-race-close-erro
 const holdClose = mode === 'stop-held-close';
 const stopFixture = mode === 'stop' || stopRace || closeError || holdClose;
 const resumeFixture = mode === 'resume' || lateBatch || lateClose || stopFixture;
-const healthyStart = mode === 'start' || resumeFixture;
+const historyFixture = mode === 'history';
+const healthyStart = mode === 'start' || resumeFixture || historyFixture;
 const startFixture = healthyStart || initializeRequiresAuth;
 assert(startFixture || ['fixture', 'absent', 'signed-out', 'start-signed-out'].includes(mode));
 assert.equal(process.env.NODE_ENV, 'test');
@@ -53,7 +55,7 @@ assert.deepEqual(process.argv.slice(2), discovery
 assert.equal(process.cwd(), discovery ? process.env.HOME : ${JSON.stringify(workspaceRoot)});
 const sessionId = 'owned-1';
 const emit = (...messages) => process.stdout.write(messages.map(message => JSON.stringify({jsonrpc: '2.0', ...message}) + '\\n').join(''));
-const chunk = (id, text) => ({method:'session/update',params:{sessionId:id,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text}}}});
+const chunk = (id, text, role='agent') => ({method:'session/update',params:{sessionId:id,update:{sessionUpdate:role+'_message_chunk',content:{type:'text',text}}}});
 const note = (id, text) => emit(chunk(id, text));
 let promptId;
 let resumed = false;
@@ -63,7 +65,7 @@ for await (const line of createInterface({input: process.stdin})) {
   if (method === 'initialize') {
     emit(${initializeRequiresAuth}
       ? {id,error:{code:-32000,message:'Authentication required'}}
-      : {id,result:{protocolVersion:1,agentCapabilities:{sessionCapabilities:{list:{},close:{},resume:{}}}}});
+      : {id,result:{protocolVersion:1,agentCapabilities:{loadSession:true,sessionCapabilities:{list:{},close:{},resume:{}}}}});
   }
   else if (method === 'session/list') emit({id,result:{sessions:[
     {sessionId,cwd:process.cwd(),title:'Owned fixture'},
@@ -77,6 +79,17 @@ for await (const line of createInterface({input: process.stdin})) {
     resumed = true;
     note(sessionId,'Replayed history');
     emit({id,result:{}});
+  } else if (method === 'session/load') {
+    assert.deepEqual(params,{sessionId,cwd:${JSON.stringify(workspaceRoot)},mcpServers:[]});
+    emit(
+      chunk(sessionId,'Opening question','user'),
+      chunk(sessionId,'First'), chunk(sessionId,' answer'),
+      chunk('foreign','Wrong session'),
+      chunk(sessionId,'Next question','user'),
+      chunk(sessionId,'Second answer'),
+      {id,result:{}},
+      chunk(sessionId,' Late replay'),
+    );
   } else if (method === 'session/close') {
     assert.deepEqual(params,{sessionId});
     if (resumed && ${lateClose}) note(sessionId,' Late during close');
@@ -239,6 +252,34 @@ try {
       const foreign = (await find()).find((item) => item.ref.id === 'foreign');
       assert(foreign);
       assert.equal(foreign.place.folder, undefined);
+      if (historyFixture) {
+        const read = (options: object) => rpc<z.infer<typeof ReadWorkResultSchema>>('work.read', {
+          sessionId: started.value.ref.id, before: 1, after: 0, ...options,
+        });
+        const latest = await read({});
+        assert(latest.ok && latest.value.nextCursor, JSON.stringify(latest));
+        assert.equal(latest.value.availability, 'incomplete');
+        assert.deepEqual(latest.value.turns.map(({ role, text }) => [role, text]), [
+          ['user', 'Next question'], ['assistant', 'Second answer'],
+        ]);
+        const earlier = await read({ cursor: latest.value.nextCursor });
+        assert(earlier.ok && earlier.value.availability === 'complete' && !earlier.value.nextCursor);
+        assert.deepEqual(earlier.value.turns.map(({ role, text }) => [role, text]), [
+          ['user', 'Opening question'], ['assistant', 'First answer'],
+        ]);
+        const anchored = await read({ around: earlier.value.turns[1].messageId, after: 1 });
+        assert(anchored.ok);
+        assert.deepEqual(anchored.value.turns.map(({ messageId }) => messageId), [
+          ...earlier.value.turns.map(({ messageId }) => messageId), latest.value.turns[0].messageId,
+        ]);
+        const unknown = await read({ sessionId: foreign.ref.id });
+        assert(!unknown.ok && unknown.reason === 'not_found');
+        const historyRequests = readFileSync(journal, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+        assert.deepEqual(historyRequests.slice(-6).map(({ method }) => method), [
+          'initialize', 'session/load', 'initialize', 'session/load', 'initialize', 'session/load',
+        ]);
+        results.history = latest;
+      }
       const stop = (id: string) => rpc<Result<{stopped: boolean}>>('work.stop', { ref: { adapter, id } });
       if (stopFixture) {
         const idle = await stop(started.value.ref.id);
