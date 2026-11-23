@@ -6,6 +6,7 @@ import { answerCodexProbeLocally, seedSyntheticCodexAdmission, serveLocalRelease
 import { releaseName } from '../../../packages/daemon/src/lib/oxap/oxap-install.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
+const harnessChoice = process.argv[2] === 'harness';
 const run = process.env.HYPERNEO_DATA_DIR!.replace(/\/data$/, '');
 answerCodexProbeLocally();
 serveLocalRelease('/usr/bin/true', releaseName(), `${run}/release`);
@@ -66,6 +67,15 @@ await rpc.request('providers.create', {
   params: { providerId: 'anthropic', displayName: 'Synthetic SDK', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: false, sortOrder: 2 },
   credentials: { apiKey: 'sk-devproxy-test-key' },
 });
+if (harnessChoice) {
+  await rpc.request('providers.create', {
+    params: {
+      providerId: 'deepseek', displayName: 'Synthetic DeepSeek', kind: 'built_in',
+      authType: 'api_key', isEnabled: true, isDefault: false, sortOrder: 3,
+      configJson: JSON.stringify({ harnessSettings: { executable: process.execPath } }),
+    },
+  });
+}
 setModelsCache(
   new Map([
     [
@@ -86,6 +96,11 @@ setModelsCache(
           id: 'synthetic-sdk', name: 'Synthetic SDK Model', alias: 'synthetic-sdk', family: 'sonnet',
           provider: 'anthropic', contextWindow: 128000, description: '', releaseDate: '', available: true,
         },
+        ...(harnessChoice ? [{
+          id: 'deepseek-v4-pro', name: 'Synthetic DeepSeek', alias: 'deepseek-v4-pro',
+          family: 'deepseek' as const, provider: 'deepseek' as const, contextWindow: 128000,
+          description: '', releaseDate: '', available: true,
+        }] : []),
       ],
     ],
   ])
@@ -101,7 +116,7 @@ await app.db.saveSDKMessage(seeded.sessionId, {
 });
 console.log(`AUTH_SESSION=${seeded.sessionId}`);
 const listProviders = app.db.providers.listProviders.bind(app.db.providers);
-let failProviderList = true;
+let failProviderList = !harnessChoice;
 app.db.providers.listProviders = () => {
   const marker = `${run}/fail-provider-list`;
   if (existsSync(marker)) {
