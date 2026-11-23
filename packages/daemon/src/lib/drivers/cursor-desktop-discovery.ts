@@ -2,6 +2,7 @@ import { basename, isAbsolute, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import type { FindQuery, PlaceGroup, WorkAdapter } from './types.ts';
+import { readCursorDesktopHistory } from './cursor-desktop-history.ts';
 
 const ADAPTER = 'cursor-desktop';
 
@@ -65,6 +66,23 @@ const find = (superpipe({})('cursor-desktop-find') as PipelineAPI)
   .pipe(groupSessions, ['sessions', 'machine'], 'groups')
   .endAsync('groups') as (query: FindQuery, read: Read, machine: string) => Promise<PlaceGroup[]>;
 
-export function createCursorDesktopDiscovery(read: Read, machine: string): WorkAdapter {
-  return { id: ADAPTER, capabilities: ['find'], find: (query) => find(query, read, machine) };
+export function createCursorDesktopDiscovery(
+  read: Read,
+  machine: string,
+  home: string
+): WorkAdapter {
+  const root = join(home, '.cursor', 'projects');
+  return {
+    id: ADAPTER,
+    capabilities: ['find'],
+    find: (query) => find(query, read, machine),
+    readTurns: async (id, around, before, after, cursor) => {
+      if (cursor && !cursor.cursorDesktop) return null;
+      if (around && !around.startsWith('cursor:')) return null;
+      const sessions = await read({ idPrefix: id, includeClosed: true, limit: 1 }).catch(() => []);
+      return sessions.some((session) => session.id === id)
+        ? readCursorDesktopHistory(root, id, around, before, after, cursor)
+        : null;
+    },
+  };
 }

@@ -5,6 +5,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { cursorDesktopStatePath } from '../../../packages/daemon/src/lib/drivers/cursor-desktop-discovery.ts';
 import type { FindWorkResultSchema } from '../../../packages/daemon/src/lib/drivers/find-operation.ts';
+import type { ReadWorkResultSchema } from '../../../packages/daemon/src/lib/drivers/read-operation.ts';
 import type { Result } from '../../../packages/daemon/src/lib/drivers/types.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
@@ -85,6 +86,14 @@ try {
     insert.run(id, archived, subagent, 1_790_000_000_000,
       JSON.stringify({ composerId: id, name: title, workspaceIdentifier: { id: 'workspace', uri: { scheme, path: folder } } }));
   const wal = readFileSync(`${state}-wal`);
+  const transcript = join(home, '.cursor/projects/project/agent-transcripts/desktop-open/desktop-open.jsonl');
+  mkdirSync(dirname(transcript), { recursive: true });
+  const transcriptBody = [
+    { role: 'user', message: { content: [{ type: 'text', text: 'Hello from Cursor' }] } },
+    { role: 'assistant', message: { content: [{ type: 'text', text: 'A native reply' }] } },
+    { type: 'turn_ended', status: 'success' },
+  ].map((row) => JSON.stringify(row)).join('\n') + '\n';
+  writeFileSync(transcript, transcriptBody);
   assert.deepEqual(await desktopCapabilities(), ['find']);
   async function find(query: object = {}) {
     const result = await rpc<z.infer<typeof FindWorkResultSchema>>('work.find', {
@@ -101,8 +110,24 @@ try {
   const [archived] = await find({ includeClosed: true, idPrefix: 'desktop-arch' });
   assert.equal(archived?.title, 'Untitled Cursor session');
   assert.equal(archived?.archived, true);
+  const read = (input: object) => rpc<z.infer<typeof ReadWorkResultSchema>>('work.read', {
+    sessionId: 'desktop-open', before: 0, after: 0, ...input,
+  });
+  const latest = await read({});
+  assert(latest.ok && latest.value.nextCursor);
+  assert.deepEqual(latest.value.turns.map(({ role, text, at }) => [role, text, at]), [
+    ['assistant', 'A native reply', 0],
+  ]);
+  const older = await read({ cursor: latest.value.nextCursor });
+  assert(older.ok);
+  assert.deepEqual(older.value.turns.map(({ role, text }) => [role, text]), [
+    ['user', 'Hello from Cursor'],
+  ]);
+  const surrounding = await read({ around: older.value.turns[0].messageId, after: 1 });
+  assert(surrounding.ok && surrounding.value.turns.length === 2);
+  assert.equal(readFileSync(transcript, 'utf8'), transcriptBody);
   assert.deepEqual(readFileSync(`${state}-wal`), wal);
-  process.stdout.write(`Cursor Desktop: ${calls} RPC calls, ${all.length} sessions, WAL unchanged\n`);
+  process.stdout.write(`Cursor Desktop: ${calls} RPC calls, ${all.length} sessions, 2 transcript messages, files unchanged\n`);
 } finally {
   socket?.close();
   await app.cleanup();

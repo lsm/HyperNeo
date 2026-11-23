@@ -645,7 +645,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
   const cursorState = cursorDesktopStatePath(homedir());
   const cursorDesktop = createCursorDesktopDiscovery(
     (query) => context.deps.db.readCursorDesktopAsync({ statePath: cursorState, query }),
-    machine
+    machine,
+    homedir()
   );
   const adapters = [
     createHyperneoAdapter({
@@ -979,7 +980,15 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     after: number,
     cursor?: WorkTurnPage['nextCursor']
   ) => {
-    for (const adapter of [...adapters, ...copilot()]) {
+    if (cursor?.cursorDesktop || around?.startsWith('cursor:'))
+      return existsSync(cursorState)
+        ? (cursorDesktop.readTurns?.(sessionId, around, before, after, cursor) ?? null)
+        : null;
+    for (const adapter of [
+      ...adapters,
+      ...copilot(),
+      ...(existsSync(cursorState) ? [cursorDesktop] : []),
+    ]) {
       const page = await adapter.readTurns?.(sessionId, around, before, after, cursor);
       if (page) return page;
     }

@@ -21,6 +21,9 @@ export const WorkReadCursor = z.object({
   copilot: z
     .object({ stamp: z.string().max(100), size: z.number().int().nonnegative().safe() })
     .optional(),
+  cursorDesktop: z
+    .object({ stamp: z.string().max(100), size: z.number().int().nonnegative().safe() })
+    .optional(),
   resume: z
     .object({
       seq: z.number().int().positive().safe(),

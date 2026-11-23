@@ -16,3 +16,8 @@ Find should show local sessions by title and workspace and include archived
 sessions only on request. Remote sessions and subagents must stay out of the
 result. A live WAL must remain unchanged. This proof checks discovery without
 an account. Creating or controlling a signed-in session needs an attended run.
+
+Read the synthetic session's newest reply and page back to the user's input.
+Open the returned input ID with one following message and observe both messages
+without changing the JSONL. Cursor's desktop transcript omits timestamps, so
+the reader returns zero for their numeric timestamp.
