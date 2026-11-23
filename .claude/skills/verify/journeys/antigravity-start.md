@@ -17,7 +17,7 @@ directory and submits its initial prompt through the sandboxed ACP child. The
 fixture holds the turn open until `work.status` reports it running. The permission
 request is cancelled, and the final reply comes from the session that was started.
 An unrelated session update must not alter that reply. A foreign session has no
-owned status and an unsupported model is rejected before creating the child.
+owned status and an unsupported model is rejected before sending the prompt.
 The agent acknowledges `session/close` before the driver reports the turn done.
 Active turns have a 60-minute deadline. The focused driver tests advance a
 clock through the old ten-minute cutoff and check the timeout and disconnect
