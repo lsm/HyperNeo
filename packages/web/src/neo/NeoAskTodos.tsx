@@ -20,6 +20,8 @@ import { IconButton } from '../components/ui/IconButton.tsx';
 import { Modal } from '../components/ui/Modal.tsx';
 import { openArtifactPreview } from '../lib/artifact-preview-store.ts';
 import { locale, type MessageKey, t } from '../lib/i18n/index.ts';
+import { systemState } from '../lib/state.ts';
+import { toast } from '../lib/toast.ts';
 import { copyToClipboard } from '../lib/utils.ts';
 import {
   NeoMoreIcon,
@@ -1038,7 +1040,12 @@ export function NeoAskTodos({
               label: t('ask.copyLink'),
               onClick: () => {
                 const title = ask.title.replace(/[\r\n]+/g, ' ').replace(/[\\`*_[\]<>]/g, '\\$&');
-                void copyToClipboard(`[${title}](${location.origin}/ask/${ask.id}.md)`);
+                const shareOrigin = systemState.peek()?.shareOrigin;
+                const origin = shareOrigin ?? location.origin;
+                void copyToClipboard(`[${title}](${origin}/ask/${ask.id}.md)`).then((copied) => {
+                  if (copied)
+                    toast.success(t(shareOrigin ? 'ask.linkCopied' : 'ask.windowLinkCopied'));
+                });
               },
             },
             ...(onReplyAsk ? [{ label: t('chat.reply'), onClick: onReplyAsk, disabled }] : []),

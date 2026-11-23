@@ -151,6 +151,8 @@ export const zhHans: Record<keyof typeof en, string> = {
   'ask.state.todo': '没开始',
   'ask.actions': '更多操作',
   'ask.copyLink': '复制链接',
+  'ask.linkCopied': '链接已复制。',
+  'ask.windowLinkCopied': '已使用当前窗口的地址复制链接。',
   'ask.markDone': '标记做完',
   'ask.drop': '放弃这件事',
   'ask.all': '全部 · {count}',

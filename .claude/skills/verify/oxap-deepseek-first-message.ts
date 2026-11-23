@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
@@ -17,7 +17,7 @@ import { answerCodexProbeLocally, serveLocalRelease } from './oxap-codex-provide
 const [binary, version, sha256, ...args] = process.argv.slice(2);
 const mode = args.length === 2 ? args[0] : 'first';
 const runArgument = args.at(-1)!;
-assert(['first', 'recovery', 'pending', 'flash', 'image', 'flash-web', 'pro-web', 'flash-recovery'].includes(mode));
+assert(['first', 'recovery', 'pending', 'flash', 'image', 'flash-web', 'pro-web', 'flash-recovery', 'sdk-default'].includes(mode));
 const run = resolve(runArgument);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -28,6 +28,12 @@ const peer = join(run, 'dsh');
 mkdirSync(workspace);
 mkdirSync(join(run, 'evidence'));
 copyFileSync('.claude/skills/verify/oxap-deepseek-peer.py', peer);
+if (mode === 'sdk-default') {
+  writeFileSync(peer, readFileSync(peer, 'utf8').replace(
+    "assert 'DEEPSEEK_API_KEY' not in os.environ",
+    "assert os.environ.get('DEEPSEEK_API_KEY') == 'synthetic-deepseek-proof'"
+  ));
+}
 chmodSync(peer, 0o700);
 copyFileSync('.claude/skills/verify/gh-stub.sh', join(run, 'bin/gh'));
 chmodSync(join(run, 'bin/gh'), 0o700);
@@ -63,6 +69,7 @@ try {
       isDefault: true,
       sortOrder: 0,
     },
+    ...(mode === 'sdk-default' ? { credentials: { apiKey: 'synthetic-deepseek-proof' } } : {}),
   });
   const saved = await hub.request('operation.invoke', {
     name: 'oxap.settings.save',
@@ -188,7 +195,7 @@ try {
     );
     evidence.existingSwitchRefused = true;
   }
-  if (mode === 'recovery' || mode === 'pending' || mode === 'flash-recovery') {
+  if (['recovery', 'pending', 'flash-recovery', 'sdk-default'].includes(mode)) {
     while (app.sessionManager.getCachedSession(sessionId)?.queryPromise) {
       assert(Date.now() < deadline, 'The first query did not finish shutting down');
       await Bun.sleep(25);
@@ -203,7 +210,13 @@ try {
         },
       });
     }
-    await app.oxapEngine.restart();
+    if (mode === 'sdk-default') {
+      assert.deepEqual(await hub.request('operation.invoke', {
+        name: 'oxap.settings.save', input: { providerId: 'deepseek', harness: 'sdk' },
+      }), { accepted: true });
+    } else {
+      await app.oxapEngine.restart();
+    }
     const { messageId } = await hub.request<{ messageId: string }>('message.send', {
       sessionId,
       content: 'Message after hub restart',

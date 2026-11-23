@@ -24,7 +24,6 @@ import { useInputDraft } from '../hooks/useInputDraft.ts';
 import ToastContainer from '../islands/ToastContainer.tsx';
 import { blurComposerOnTap } from '../lib/blur-composer-on-tap.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
-import { openExternalLink } from '../lib/external-links.ts';
 import { connectionState, reconnectAttemptCount } from '../lib/state.ts';
 import { readNeoAskImages } from './conversation-ask-client.ts';
 import { NeoTopicChips } from './NeoTopicChips.tsx';
@@ -164,7 +163,6 @@ export function NeoLive() {
   const [chat, setChat] = useState<{ sessionId: string; label?: string } | null>(null);
   const closeChat = useCallback(() => setChat(null), []);
   const openSession = (link: string, label?: string) => {
-    if (/^https?:\/\//i.test(link)) return openExternalLink(link);
     if (!link.startsWith('/session/')) return window.open(link, '_blank', 'noopener');
     const sessionId = link.slice('/session/'.length);
     if (columns && previewDesktop)

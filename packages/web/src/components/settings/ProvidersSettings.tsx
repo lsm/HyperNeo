@@ -1,4 +1,3 @@
-import { openExternalLink } from '../../lib/external-links.ts';
 import { OXAP_HARNESSES, isOxapHarness, oxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import { invokeOperation, requireAccepted } from '../../lib/operations.ts';
 import { MODEL_LIST_REQUEST_TIMEOUT_MS } from '@hyperneo/shared/provider';
@@ -520,9 +519,6 @@ export function ProvidersSettings() {
         toast.error(response.error || 'Failed to start OAuth flow');
         return;
       }
-      if (response.authUrl) {
-        openExternalLink(response.authUrl);
-      }
       setOauthFlow({
         providerId: provider.providerId,
         providerName: provider.displayName,
@@ -812,7 +808,8 @@ export function ProvidersSettings() {
 
   const saveHarness = async (
     provider: EnrichedProvider,
-    draft: { harness: string; executable: string }
+    draft: { harness: string; executable: string },
+    hasExecutableField: boolean
   ) => {
     setPendingId(provider.id);
     try {
@@ -825,7 +822,7 @@ export function ProvidersSettings() {
           {
             providerId: provider.providerId,
             harness: draft.harness,
-            settings: draft.harness === 'sdk' ? {} : { executable: draft.executable },
+            settings: hasExecutableField ? { executable: draft.executable } : {},
           },
           { timeout: 300_000 }
         )
@@ -993,6 +990,14 @@ export function ProvidersSettings() {
                   harness: config.harness ?? 'sdk',
                   executable: config.harnessSettings?.executable ?? '',
                 };
+                const selectedOxap = isOxapHarness(draft.harness)
+                  ? oxapHarness(draft.harness)
+                  : undefined;
+                const executableHarness =
+                  selectedOxap ??
+                  (config.harnessSettings?.executable ? eligible[0]?.[1] : undefined);
+                const hasExecutableField =
+                  executableHarness?.settings.includes('executable') ?? false;
                 const installedHub = hubBinary ?? globalSettings.value?.oxapHub;
                 const isExpanded = expandedId === provider.id;
                 const isPending = pendingId === provider.id;
@@ -1152,62 +1157,62 @@ export function ProvidersSettings() {
                                 ))}
                               </select>
                             </label>
-                            {isOxapHarness(draft.harness) && (
-                              <>
-                                {oxapHarness(draft.harness).settings.includes('executable') && (
-                                  <label class="block text-sm">
-                                    Harness executable
-                                    <input
-                                      aria-label="Harness executable"
-                                      placeholder={`Absolute path to ${oxapHarness(draft.harness).label} executable`}
-                                      value={draft.executable}
-                                      onInput={(e) =>
-                                        setHarnessDrafts((prev) => ({
-                                          ...prev,
-                                          [provider.id]: {
-                                            ...draft,
-                                            executable: e.currentTarget.value,
-                                          },
-                                        }))
-                                      }
-                                      class="block w-full bg-bg border border-line rounded px-2 py-1.5"
-                                    />
-                                    <span class="block text-xs text-fg-muted">
-                                      An absolute path is required.
-                                    </span>
-                                  </label>
+                            {hasExecutableField && executableHarness && (
+                              <label class="block text-sm">
+                                Harness executable
+                                <input
+                                  aria-label="Harness executable"
+                                  placeholder={`Absolute path to ${executableHarness.label} executable`}
+                                  value={draft.executable}
+                                  onInput={(e) =>
+                                    setHarnessDrafts((prev) => ({
+                                      ...prev,
+                                      [provider.id]: {
+                                        ...draft,
+                                        executable: e.currentTarget.value,
+                                      },
+                                    }))
+                                  }
+                                  class="block w-full bg-bg border border-line rounded px-2 py-1.5"
+                                />
+                                <span class="block text-xs text-fg-muted">
+                                  An absolute path is required.
+                                </span>
+                              </label>
+                            )}
+                            {selectedOxap && (
+                              <div class="text-sm">
+                                <p>Hub binary</p>
+                                {installedHub ? (
+                                  <dl class="mt-1 space-y-1 text-xs text-fg-muted break-all">
+                                    <div>
+                                      <dt class="inline">Path: </dt>
+                                      <dd class="inline">{installedHub.path}</dd>
+                                    </div>
+                                    <div>
+                                      <dt class="inline">Version: </dt>
+                                      <dd class="inline">{installedHub.version}</dd>
+                                    </div>
+                                    <div>
+                                      <dt class="inline">SHA-256: </dt>
+                                      <dd class="inline">{installedHub.sha256}</dd>
+                                    </div>
+                                  </dl>
+                                ) : (
+                                  <p class="text-xs text-fg-muted">Hub not installed</p>
                                 )}
-                                <div class="text-sm">
-                                  <p>Hub binary</p>
-                                  {installedHub ? (
-                                    <dl class="mt-1 space-y-1 text-xs text-fg-muted break-all">
-                                      <div>
-                                        <dt class="inline">Path: </dt>
-                                        <dd class="inline">{installedHub.path}</dd>
-                                      </div>
-                                      <div>
-                                        <dt class="inline">Version: </dt>
-                                        <dd class="inline">{installedHub.version}</dd>
-                                      </div>
-                                      <div>
-                                        <dt class="inline">SHA-256: </dt>
-                                        <dd class="inline">{installedHub.sha256}</dd>
-                                      </div>
-                                    </dl>
-                                  ) : (
-                                    <p class="text-xs text-fg-muted">Hub not installed</p>
-                                  )}
-                                </div>
-                                <p class="text-xs text-fg-muted">
-                                  Saving restarts the hub and interrupts active OXAP runs.
-                                </p>
-                              </>
+                              </div>
+                            )}
+                            {(selectedOxap || hasExecutableField) && (
+                              <p class="text-xs text-fg-muted">
+                                Saving restarts the hub and interrupts active OXAP runs.
+                              </p>
                             )}
                             <Button
                               size="sm"
                               variant="primary"
                               disabled={isPending}
-                              onClick={() => void saveHarness(provider, draft)}
+                              onClick={() => void saveHarness(provider, draft, hasExecutableField)}
                             >
                               Save harness
                             </Button>

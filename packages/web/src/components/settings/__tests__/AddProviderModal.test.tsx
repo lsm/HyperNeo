@@ -196,6 +196,25 @@ describe('AddProviderModal', () => {
     });
   });
 
+  it('leaves opening the OAuth consent page to the user click in the modal', async () => {
+    const openMock = vi.spyOn(window, 'open').mockImplementation(() => null);
+    mockLoginProvider.mockResolvedValue({ success: true, authUrl: 'https://example.com/oauth' });
+    mockCreateProvider.mockResolvedValue({
+      success: true,
+      provider: { id: '1', providerId: 'anthropic' },
+    });
+
+    render(
+      <AddProviderModal existingProviderIds={[]} onClose={() => {}} onProviderAdded={() => {}} />
+    );
+    await waitFor(() => screen.getByText('OpenAI Codex'));
+    fireEvent.click(screen.getAllByText('Connect')[0]);
+    await waitFor(() => expect(screen.getByTestId('oauth-modal')).toBeTruthy());
+
+    expect(openMock).not.toHaveBeenCalled();
+    openMock.mockRestore();
+  });
+
   it('does not create provider record when OAuth login fails', async () => {
     mockLoginProvider.mockResolvedValue({ success: false, error: 'OAuth denied' });
 

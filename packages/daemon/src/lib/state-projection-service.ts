@@ -288,6 +288,7 @@ export class StateProjectionService {
 
   private async getSystemState(): Promise<SystemState> {
     const authStatus = await this.authManager.getAuthStatus();
+    const publicUrl = URL.parse(process.env.HYPERNEO_PUBLIC_URL ?? process.env.PUBLIC_URL ?? '');
 
     return {
       version: BUILD_METADATA.version,
@@ -299,6 +300,10 @@ export class StateProjectionService {
       storageLocation: this.config.dbPath,
       workspaceRoot: this.config.workspaceRoot,
       homeDirectory: homedir(),
+      shareOrigin:
+        publicUrl?.protocol === 'http:' || publicUrl?.protocol === 'https:'
+          ? publicUrl.origin
+          : null,
 
       auth: authStatus,
 

@@ -174,8 +174,8 @@ export function OAuthModal({
           <>
             <div class="text-sm text-fg-soft">
               <p class="mb-4">
-                Authorize with {providerName} in the browser tab that opened. When the page shows
-                your authorization code, paste it below to finish.
+                Click Open Auth URL to authorize with {providerName}. When the page shows your
+                authorization code, paste it below to finish.
               </p>
 
               <div class="flex justify-center">

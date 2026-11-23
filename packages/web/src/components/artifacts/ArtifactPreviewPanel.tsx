@@ -95,7 +95,7 @@ export function ArtifactPreviewPanel({
         visible.current &&
         event.key === 'Escape' &&
         document.querySelector(
-          '[role="menu"], [aria-modal="true"], .markdown-image-overlay, #neo-preferences, #neo-preferences-session'
+          '[role="menu"], [aria-modal="true"], #neo-preferences, #neo-preferences-session'
         )
       )
         foregroundEscape = event;

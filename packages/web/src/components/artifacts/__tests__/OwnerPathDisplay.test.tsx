@@ -55,7 +55,10 @@ it('shortens recognized display labels while clicks, links and quote copies reta
   expect(label.textContent).toBe('~/reports/current.md');
   fireEvent.click(label);
   expect(open).toHaveBeenLastCalledWith(path);
-  expect(screen.getByRole('link', { name: 'Report' }).getAttribute('href')).toBe(`file://${path}`);
+  const report = screen.getByRole('link', { name: 'Report' });
+  expect(report.getAttribute('href')).toBeNull();
+  fireEvent.click(report);
+  expect(open).toHaveBeenLastCalledWith(`file://${path}`);
   fireEvent.click(screen.getByRole('button', { name: 'Copy quote' }));
   await waitFor(() => expect(copyToClipboard).toHaveBeenLastCalledWith(path));
   expect(document.querySelector('pre')?.textContent).toContain(path);
@@ -138,9 +141,9 @@ it('preserves inline code and emphasis inside path links', async () => {
   );
   const links = await screen.findAllByRole('link', { name: '~/reports/current.md', exact: true });
   expect(links).toHaveLength(2);
-  expect(container.querySelector('a code')?.textContent).toBe('~/reports/current.md');
-  expect(container.querySelector('a strong')?.textContent).toBe('~/reports/current.md');
-  const mixed = container.querySelectorAll('a')[2];
+  expect(links[0]?.querySelector('code')?.textContent).toBe('~/reports/current.md');
+  expect(links[1]?.querySelector('strong')?.textContent).toBe('~/reports/current.md');
+  const mixed = container.querySelectorAll('[role="link"]')[2];
   expect(mixed.textContent).toBe(path);
   expect(mixed.querySelector('strong')?.textContent).toBe('/home/owner');
   fireEvent.click(links[0]);
