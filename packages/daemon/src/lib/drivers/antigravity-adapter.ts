@@ -2,10 +2,12 @@ import { basename, isAbsolute, normalize } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { ProcessJsonRpcTransport } from '../process-json-rpc.ts';
+import { buildSafeProcessEnv } from '../safe-process-env.ts';
 import type { FindQuery, PlaceGroup, WorkAdapter } from './types.ts';
 
 const ADAPTER = 'antigravity-cli';
 const MAX_PAGES = 10;
+const DISCOVERY_TIMEOUT_MS = 15_000;
 const ListCapability = z.object({
   protocolVersion: z.literal(1),
   agentCapabilities: z.object({ sessionCapabilities: z.object({ list: z.object({}) }) }),
@@ -23,20 +25,10 @@ const SessionPage = z.object({
 });
 type Session = z.infer<typeof SessionPage>['sessions'][number];
 
-async function readSessions(query: FindQuery, executable: string): Promise<Session[]> {
-  const transport = new ProcessJsonRpcTransport({
-    command: executable,
-    args: ['acp', '--disable-telemetry'],
-    replaceEnv: true,
-    env: Object.fromEntries(
-      ['HOME', 'PATH', 'TMPDIR', 'USERPROFILE', 'SystemRoot'].flatMap((name) => {
-        const value = process.env[name];
-        return value === undefined ? [] : [[name, value]];
-      })
-    ),
-    requestTimeoutMs: 2_000,
-    onStderr: () => {},
-  });
+async function listSessions(
+  query: FindQuery,
+  transport: ProcessJsonRpcTransport
+): Promise<Session[]> {
   const request = async (method: string, params: Record<string, unknown>) => {
     const response = await transport.sendRequest(method, params);
     if ('result' in response) return response.result;
@@ -44,36 +36,55 @@ async function readSessions(query: FindQuery, executable: string): Promise<Sessi
       throw new Error('Sign in to Antigravity CLI before listing its sessions.');
     throw new Error(`Antigravity rejected ${method} (${response.error.code}).`);
   };
-  try {
-    const initialized = await request('initialize', { protocolVersion: 1, clientCapabilities: {} });
-    if (!ListCapability.safeParse(initialized).success)
-      throw new Error('This Antigravity CLI version does not advertise ACP session discovery.');
-    const sessions = new Map<string, Session>();
-    const seenCursors = new Set<string>();
-    const folder = query.folder ? normalize(query.folder) : undefined;
-    const text = query.text?.toLowerCase();
-    let cursor: string | undefined;
-    for (let page = 0; page < MAX_PAGES; page += 1) {
-      const result = SessionPage.safeParse(await request('session/list', { cwd: folder, cursor }));
-      if (!result.success) throw new Error('Antigravity returned an invalid ACP session list.');
-      for (const session of result.data.sessions) {
-        if (folder && normalize(session.cwd) !== folder) continue;
-        if (query.idPrefix && !session.sessionId.startsWith(query.idPrefix)) continue;
-        if (
-          text &&
-          ![session.title ?? '', session.cwd].some((term) => term.toLowerCase().includes(text))
-        )
-          continue;
-        if (!sessions.has(session.sessionId)) sessions.set(session.sessionId, session);
-      }
-      cursor = result.data.nextCursor ?? undefined;
-      if (!cursor || sessions.size >= query.limit) return [...sessions.values()];
-      if (seenCursors.has(cursor))
-        throw new Error('Antigravity repeated an ACP session list cursor.');
-      seenCursors.add(cursor);
+  const initialized = await request('initialize', { protocolVersion: 1, clientCapabilities: {} });
+  if (!ListCapability.safeParse(initialized).success)
+    throw new Error('This Antigravity CLI version does not advertise ACP session discovery.');
+  const sessions = new Map<string, Session>();
+  const seenCursors = new Set<string>();
+  const folder = query.folder ? normalize(query.folder) : undefined;
+  const text = query.text?.toLowerCase();
+  let cursor: string | undefined;
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const result = SessionPage.safeParse(await request('session/list', { cwd: folder, cursor }));
+    if (!result.success) throw new Error('Antigravity returned an invalid ACP session list.');
+    for (const session of result.data.sessions) {
+      if (folder && normalize(session.cwd) !== folder) continue;
+      if (query.idPrefix && !session.sessionId.startsWith(query.idPrefix)) continue;
+      if (
+        text &&
+        ![session.title ?? '', session.cwd].some((term) => term.toLowerCase().includes(text))
+      )
+        continue;
+      if (!sessions.has(session.sessionId)) sessions.set(session.sessionId, session);
     }
-    return [...sessions.values()];
+    cursor = result.data.nextCursor ?? undefined;
+    if (!cursor || sessions.size >= query.limit) break;
+    if (seenCursors.has(cursor))
+      throw new Error('Antigravity repeated an ACP session list cursor.');
+    seenCursors.add(cursor);
+  }
+  return [...sessions.values()];
+}
+
+async function readSessions(query: FindQuery, executable: string): Promise<Session[]> {
+  const transport = new ProcessJsonRpcTransport({
+    command: executable,
+    args: ['acp', '--disable-telemetry'],
+    replaceEnv: true,
+    env: buildSafeProcessEnv(),
+    onStderr: () => {},
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error('Antigravity session discovery timed out.')),
+      DISCOVERY_TIMEOUT_MS
+    );
+  });
+  try {
+    return await Promise.race([listSessions(query, transport), deadline]);
   } finally {
+    clearTimeout(timer);
     await transport.close();
   }
 }

@@ -13,7 +13,9 @@ bash .claude/skills/verify/proof-run.sh /absolute/signed-out-evidence \
 ```
 
 The daemon's real RPC catalog exposes `antigravity-cli` only when the executable
-is present. The ACP fixture returns the matching session on page two. Verify
+is present. The ACP fixture takes 2.5 seconds to initialize, checks that proxy
+configuration is passed without unrelated environment variables, and returns
+the matching session on page two. Verify
 its source, title and workspace through `work.find` and check the journal for
 one `initialize` and two `session/list` calls. Discovery must not load or modify
 sessions. The vendor binary in an isolated, signed-out home must surface its

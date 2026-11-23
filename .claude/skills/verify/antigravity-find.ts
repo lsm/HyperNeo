@@ -28,6 +28,8 @@ if (mode === 'signed-out') {
   symlinkSync(binary, executable);
 }
 if (mode === 'fixture') {
+  process.env.HTTPS_PROXY = 'http://proxy.example.test:8080';
+  process.env.ANTIGRAVITY_FIXTURE_PARENT_ONLY = 'parent';
   writeFileSync(executable, `#!/usr/bin/env bun
 import { appendFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
@@ -36,6 +38,7 @@ assert.deepEqual(process.argv.slice(2), ['acp', '--disable-telemetry']);
 for await (const line of createInterface({ input: process.stdin })) {
   const {id, method, params} = JSON.parse(line);
   appendFileSync(${JSON.stringify(journal)}, JSON.stringify({method, params}) + '\\n');
+  if (method === 'initialize') await Bun.sleep(2_500);
   const cwd = ${JSON.stringify(workspaceRoot)};
   const result = method === 'initialize'
     ? {protocolVersion: 1, agentCapabilities: {sessionCapabilities: {list: {}}}}
@@ -43,6 +46,8 @@ for await (const line of createInterface({ input: process.stdin })) {
       ? {sessions: [{sessionId: 'agy-b', title: 'Find this session', cwd, updatedAt: '2026-08-05T00:00:00Z'}]}
       : {sessions: [{sessionId: 'agy-a', title: 'First session', cwd}], nextCursor: 'next'};
   assert(['initialize', 'session/list'].includes(method));
+  assert.equal(process.env.HTTPS_PROXY, 'http://proxy.example.test:8080');
+  assert.equal(process.env.ANTIGRAVITY_FIXTURE_PARENT_ONLY, undefined);
   process.stdout.write(JSON.stringify({jsonrpc: '2.0', id, result}) + '\\n');
 }
 `, { mode: 0o700 });
