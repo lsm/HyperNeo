@@ -519,9 +519,6 @@ export function ProvidersSettings() {
         toast.error(response.error || 'Failed to start OAuth flow');
         return;
       }
-      if (response.authUrl) {
-        window.open(response.authUrl, '_blank');
-      }
       setOauthFlow({
         providerId: provider.providerId,
         providerName: provider.displayName,

@@ -537,6 +537,36 @@ describe('ProvidersSettings', () => {
     await waitFor(() => expect(screen.queryByTestId('oauth-modal')).toBeNull());
   });
 
+  it('leaves opening the OAuth consent page to the user click in the modal', async () => {
+    const openMock = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const provider = createMockProvider('1', 'anthropic-copilot', {
+      displayName: 'Copilot',
+      authType: 'oauth',
+      available: false,
+    });
+    mockListProviders.mockResolvedValueOnce({ providers: [provider] });
+    mockListProviderAuthStatus.mockResolvedValue({
+      providers: [
+        {
+          id: 'anthropic-copilot',
+          displayName: 'Copilot',
+          isAuthenticated: false,
+          method: 'oauth',
+        },
+      ],
+    });
+    mockLoginProvider.mockResolvedValue({ success: true, authUrl: 'https://example.com/oauth' });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Copilot'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    fireEvent.click(screen.getByText('Login'));
+    await waitFor(() => expect(screen.getByTestId('oauth-modal')).toBeTruthy());
+
+    expect(openMock).not.toHaveBeenCalled();
+    openMock.mockRestore();
+  });
+
   it('shows keychain unavailable banner without DB fallback copy', async () => {
     globalStore.systemState.value = {
       credentialStore: {
