@@ -257,6 +257,30 @@ describe('MarkdownRenderer', () => {
       });
     });
 
+    it('keeps approved chat destinations and renders other destinations as text', async () => {
+      const markdown = [
+        '[web](https://example.com)',
+        '[email](mailto:user@example.com)',
+        '[session](/session/example)',
+        '[section](#details)',
+        '[unsupported](example:destination)',
+        '[inline text][data]',
+        '![inline picture](data:image/png;base64,iVBORw0KGgo=)',
+        '',
+        '[data]: data:text/plain,hello',
+      ].join('\n');
+      const { container } = render(<MarkdownRenderer content={markdown} />);
+      await waitFor(() => {
+        expect(container.textContent).toContain('unsupported');
+        expect(container.textContent).toContain('inline text');
+      });
+      expect(
+        [...container.querySelectorAll('a[href]')].map((link) => link.getAttribute('href'))
+      ).toEqual(['https://example.com', 'mailto:user@example.com', '/session/example', '#details']);
+      expect(container.querySelector('img')).toBeNull();
+      expect(container.textContent).toContain('inline picture');
+    });
+
     it('preserves preview reference text without interpreting paths inside code', async () => {
       const content = [
         '[Design](docs/design/synthetic-preview.md)',
