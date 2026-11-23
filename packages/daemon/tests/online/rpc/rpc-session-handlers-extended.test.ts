@@ -1,3 +1,4 @@
+import type { UnarchiveSessionResponse } from '@hyperneo/shared';
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 
@@ -74,9 +75,13 @@ describe('Session RPC Handlers - Extended', () => {
       await daemon.messageHub.request('session.archive', { sessionId });
       expect((await getSession(sessionId)).archivedAt).toBeString();
 
-      expect(await daemon.messageHub.request('session.unarchive', { sessionId })).toEqual({
-        success: true,
-      });
+      const result = await daemon.messageHub.request<UnarchiveSessionResponse>(
+        'session.unarchive',
+        {
+          sessionId,
+        }
+      );
+      expect(result).toEqual({ success: true });
 
       const restored = await getSession(sessionId);
       expect(restored.status).toBe('active');
