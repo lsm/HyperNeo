@@ -995,7 +995,10 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     health.operation,
     ...createWorkVerbOperations({ ...deps, queueInput: workerInputs.accept }),
     createNeoSessionArchiveOperation({ ...deps, db: context.deps.db }),
-    createNeoSessionUnarchiveOperation(context.deps.db, context.deps.sessionManager),
+    createNeoSessionUnarchiveOperation(
+      (sessionId) => new NeoRepository(db()).getBindingBySession(sessionId),
+      context.deps.sessionManager
+    ),
     ...createWorkerOwnershipBackfillOperations(context.deps.db),
     createReadWorkOperation({
       readTurns,
