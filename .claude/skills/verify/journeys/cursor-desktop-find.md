@@ -20,3 +20,7 @@ an account. Creating or controlling a signed-in session needs an attended run.
 
 The proof then changes the fixture schema. The Cursor read must report the
 schema error while a queued HyperNeo SDK read still completes.
+
+The Windows path cases in `cursor-desktop-discovery.test.ts` check that an
+explicit `APPDATA` takes precedence and that a missing value falls back to the
+user's roaming profile.

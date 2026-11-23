@@ -1,4 +1,4 @@
-import { basename, isAbsolute, join } from 'node:path';
+import { basename, isAbsolute, join, win32 } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import type { FindQuery, PlaceGroup, WorkAdapter } from './types.ts';
@@ -16,11 +16,16 @@ export type CursorDesktopSession = {
 type Read = (query: FindQuery) => Promise<CursorDesktopSession[]>;
 
 export function cursorDesktopStatePath(home: string): string {
+  const catalog = ['Cursor', 'User', 'globalStorage', 'state.vscdb'];
+  if (process.platform === 'win32') {
+    const roaming = process.env.APPDATA || win32.join(home, 'AppData', 'Roaming');
+    return win32.join(roaming, ...catalog);
+  }
   const root =
     process.platform === 'darwin'
       ? join(home, 'Library', 'Application Support')
       : process.env.XDG_CONFIG_HOME || join(home, '.config');
-  return join(root, 'Cursor', 'User', 'globalStorage', 'state.vscdb');
+  return join(root, ...catalog);
 }
 
 function groupSessions(sessions: readonly CursorDesktopSession[], machine: string): PlaceGroup[] {
