@@ -1408,7 +1408,7 @@ open(sys.argv[2], 'w').write(reply.decode())
                 with socket.socket(socket.AF_UNIX) as client:
                     client.settimeout(2)
                     client.connect(str(self.root / 'desktop/control.sock'))
-                    client.sendall(b'{"action":"status","worker":"other"}\n')
+                    # The saturated host replies and closes before reading a request.
                     reply = json.loads(client.makefile('rb').readline())
                     self.assertEqual(reply, {'ok': False, 'error': 'desktop_busy'})
             finally:
