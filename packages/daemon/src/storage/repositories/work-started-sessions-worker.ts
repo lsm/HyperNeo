@@ -408,6 +408,15 @@ class WorkStartedSessionReads {
     return readStartedWork(this.db, null, undefined, ref).length > 0;
   }
 
+  startedFolders(adapter: string): [string, string][] {
+    const rows = this.db
+      .prepare(
+        "SELECT id, folder FROM work_started_sessions WHERE adapter = ? AND kind = 'worker' AND folder IS NOT NULL"
+      )
+      .all(adapter) as { id: string; folder: string }[];
+    return rows.map(({ id, folder }) => [id, folder]);
+  }
+
   reusableWorkers(
     adapter: string,
     todoId?: string,
@@ -452,7 +461,14 @@ export const workStartedSessionReads = defineRepositoryOp(
   'work.startedSessionReads',
   'read',
   WorkStartedSessionReads,
-  ['startedWork', 'startedByUs', 'reusableWorkers', 'todoRoles', 'workerPreparations']
+  [
+    'startedWork',
+    'startedByUs',
+    'startedFolders',
+    'reusableWorkers',
+    'todoRoles',
+    'workerPreparations',
+  ]
 );
 
 export const workStartedSessionWrites = defineRepositoryOp(
