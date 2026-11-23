@@ -565,10 +565,10 @@ export function pickRoute<Verb extends RoutedVerb>(
     return {
       reason: reject(
         verb === 'rename' ? 'not_supported' : 'unsupported',
-        verb === 'rename'
-          ? `The ${adapter.id} adapter has no supported rename API.`
-          : (adapter.unsupportedCapabilities?.[verb] ??
-              `The ${adapter.id} adapter cannot ${verb} work.`)
+        adapter.unsupportedCapabilities?.[verb] ??
+          (verb === 'rename'
+            ? `The ${adapter.id} adapter has no supported rename API.`
+            : `The ${adapter.id} adapter cannot ${verb} work.`)
       ),
     };
   }

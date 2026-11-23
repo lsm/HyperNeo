@@ -18,7 +18,10 @@ configuration is passed without unrelated environment variables, and returns
 the matching session on page two. Verify
 its source, title and workspace through `work.find` and check the journal for
 one `initialize` and two `session/list` calls. Discovery must not load or modify
-sessions. The vendor binary in an isolated, signed-out home must surface its
+sessions. Check that the catalog explains the missing rename and archive
+methods. A rename request must return the catalog's guidance to use the CLI
+conversation picker, without sending a rename request to the fixture.
+The vendor binary in an isolated, signed-out home must surface its
 sign-in requirement through the same operation. Require exit code 0 in each
 mode. The fixture does not verify discovery from a signed-in account.
 
