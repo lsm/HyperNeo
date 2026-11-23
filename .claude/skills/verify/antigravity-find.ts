@@ -263,7 +263,7 @@ try {
   await app.jobProcessor.stop();
   await transport.connect();
   const adapter = 'antigravity-cli';
-  const catalog = await hub.request<{ ok: boolean; value: { id: string; capabilities: string[]; steerBehavior?: string }[] }>(
+  const catalog = await hub.request<{ ok: boolean; value: { id: string; capabilities: string[]; steerBehavior?: string; unsupportedCapabilities?: Record<string, string> }[] }>(
     'operation.invoke', { name: 'work.adapters', input: {} }
   );
   assert(catalog.ok);
@@ -273,6 +273,18 @@ try {
   else assert.deepEqual(registered?.capabilities, ['find', 'start', 'status', 'send', 'steer', 'stop']);
 
   let operations = 1;
+  if (mode === 'fixture') {
+    const unsupported = registered?.unsupportedCapabilities;
+    assert.match(unsupported?.rename ?? '', /ACP.*\/resume.*F2/);
+    assert.match(unsupported?.archive ?? '', /ACP.*archive/);
+    const renamed = await hub.request<Result<{ renamed: boolean }>>('operation.invoke', {
+      name: 'work.rename', input: { ref: { adapter, id: 'agy-b' }, title: 'Refused rename' },
+    });
+    operations += 1;
+    assert(!renamed.ok && renamed.reason === 'not_supported');
+    assert.equal(renamed.detail, unsupported?.rename);
+    results.renameRefusal = renamed;
+  }
   if (steerFixture) {
     assert.equal(registered?.steerBehavior, 'best_effort');
     const invoke = <T>(name: string, input: object) => {
