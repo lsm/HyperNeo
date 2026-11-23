@@ -1,3 +1,4 @@
+import { openExternalLink } from '../../lib/external-links.ts';
 import type { ArtifactPrSummary as PrSummary } from '@hyperneo/shared/types/artifact-pr';
 import { previewReferenceCandidates } from '@hyperneo/shared/types/artifact-reference';
 import { t } from '../../lib/i18n/index.ts';
@@ -44,7 +45,7 @@ export function ArtifactPrSummary({
       <PreviewHeader title={pr.title} facts={facts} onBack={onBack}>
         <button
           type="button"
-          onClick={() => window.open(pr.url, '_blank', 'noopener,noreferrer')}
+          onClick={() => openExternalLink(pr.url)}
           class="rounded-md px-3 py-1 text-sm text-fg-muted hover:bg-surface-raised hover:text-fg"
         >
           {t('artifact.openGitHub')}

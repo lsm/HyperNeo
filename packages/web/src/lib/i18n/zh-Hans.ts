@@ -437,6 +437,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'session.hideSteps': '隐藏步骤',
   'session.assistant': '助手',
   'session.loadEarlier': '加载更早的消息',
+  'link.openFailed': '无法打开链接。你可以复制链接并在浏览器中打开。',
   'session.loadFailed': '这个会话没能打开。',
   'session.loadEarlierFailed': '没能加载更早的消息，再试一次',
   'composer.stop': '停止',

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { writeFileSync } from 'node:fs';
 const [port, fakeOrigin, run, phase] = process.argv.slice(2);
+const desktop = process.argv.includes('--desktop');
 assert(port && port !== '8399');
 const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, executablePath: process.env.VERIFY_BROWSER, timeout: 20000 });
@@ -14,6 +15,16 @@ try {
     return route.continue();
   });
   const page = await context.newPage();
+  if (desktop) {
+    await page.addInitScript(() => {
+      window.externalConsent = null;
+      window.__TAURI_INTERNALS__ = {
+        invoke: async (command, { path }) => {
+          if (command === 'plugin:shell|open') window.externalConsent = path;
+        },
+      };
+    });
+  }
   page.on('websocket', (socket) => assert.equal(new URL(socket.url()).port, port));
   page.setDefaultTimeout(10000);
   const open = () => page.goto(`http://127.0.0.1:${port}/settings?tab=connections`);
@@ -24,9 +35,17 @@ try {
     observations.push({ name, text });
   };
   const consent = async (begin, recoverRead = false) => {
-    const popupEvent = page.waitForEvent('popup');
+    const popupEvent = desktop ? null : page.waitForEvent('popup');
+    if (desktop) await page.evaluate(() => { window.externalConsent = null; });
     await begin();
-    const popup = await popupEvent;
+    const popup = desktop ? await context.newPage() : await popupEvent;
+    if (desktop) {
+      const path = await (await page.waitForFunction(() => window.externalConsent)).jsonValue();
+      assert.equal(new URL(path).origin, fakeOrigin);
+      assert.equal(new URL(page.url()).pathname, '/settings');
+      assert.equal(context.pages().length, 2, 'desktop does not open a popup');
+      await popup.goto(path);
+    }
     await popup.getByRole('heading', { name: 'Fake Google consent' }).waitFor();
     await page.getByRole('status').waitFor();
     if (recoverRead) {
@@ -98,4 +117,4 @@ try {
   writeFileSync(`${run}/evidence/google-settings-${phase}-failure.json`, JSON.stringify(failures, null, 2));
   throw error;
 } finally { await browser.close(); }
-writeFileSync(`${run}/evidence/google-settings-${phase}.json`, JSON.stringify({ observations, browserClosed: true }, null, 2));
+writeFileSync(`${run}/evidence/google-settings-${phase}.json`, JSON.stringify({ observations, desktopBridgeFixture: desktop, browserClosed: true }, null, 2));

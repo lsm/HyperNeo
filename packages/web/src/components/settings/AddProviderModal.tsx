@@ -1,3 +1,4 @@
+import { openExternalLink } from '../../lib/external-links.ts';
 import { ChevronRightGlyph } from '../icons/common-glyphs.tsx';
 import { useState } from 'preact/hooks';
 import { createProvider, loginProvider, submitProviderCallback } from '../../lib/api-helpers.ts';
@@ -182,7 +183,7 @@ export function AddProviderModal({
       onProviderAdded();
 
       if (response.authUrl) {
-        window.open(response.authUrl, '_blank');
+        openExternalLink(response.authUrl);
       }
       setOauthFlow({
         providerId: preset.providerId,

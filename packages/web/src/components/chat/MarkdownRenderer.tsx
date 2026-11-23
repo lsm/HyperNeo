@@ -1,3 +1,4 @@
+import { isDesktopLinkHost } from '../../lib/external-links.ts';
 import { escapeRawHtmlBlocks, hasCodeBlock, renderPlainText } from './markdown-escape.ts';
 export { renderPlainText } from './markdown-escape.ts';
 import { render } from 'preact';
@@ -385,6 +386,10 @@ function dismissImageOverlayFor(owner: unknown) {
 }
 
 function openImageAtFullSize(src: string, owner: unknown) {
+  if (isDesktopLinkHost()) {
+    showImageOverlay(src, owner);
+    return;
+  }
   const dataImageMatch = /^data:(image\/[a-z0-9.+-]+)/i.exec(src);
   if (dataImageMatch && !dataImageMatch[1].toLowerCase().includes('svg')) {
     const blob = dataUrlToBlob(src);

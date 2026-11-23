@@ -11,7 +11,9 @@ import { registerRouteExtension } from './lib/router.ts';
 import { spaceNav } from './components/space/space-nav.tsx';
 import { spaceRoutes } from './lib/space-router.ts';
 import { declareExtensionNav, loadWebExtensions } from './lib/web-extensions.ts';
+import { installDesktopExternalLinks } from './lib/external-links.ts';
 
+installDesktopExternalLinks();
 declareExtensionNav(spaceNav);
 registerRouteExtension(spaceRoutes);
 commandRegistry.registerAll(SPACE_COMMANDS);

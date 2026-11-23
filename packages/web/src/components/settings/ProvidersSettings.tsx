@@ -1,3 +1,4 @@
+import { openExternalLink } from '../../lib/external-links.ts';
 import { OXAP_HARNESSES, isOxapHarness, oxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import { invokeOperation, requireAccepted } from '../../lib/operations.ts';
 import { MODEL_LIST_REQUEST_TIMEOUT_MS } from '@hyperneo/shared/provider';
@@ -520,7 +521,7 @@ export function ProvidersSettings() {
         return;
       }
       if (response.authUrl) {
-        window.open(response.authUrl, '_blank');
+        openExternalLink(response.authUrl);
       }
       setOauthFlow({
         providerId: provider.providerId,
