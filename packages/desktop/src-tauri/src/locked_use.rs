@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{ChildStdin, Command, Stdio};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::{Duration, Instant};
 
 pub(crate) struct LockedUse {
@@ -49,6 +49,23 @@ const UNLOCK: Duration = Duration::from_secs(15);
 const RELEASE: Duration = Duration::from_secs(15);
 const LOCK_CHECK: Duration = Duration::from_millis(250);
 
+#[derive(Clone)]
+pub(super) struct Call(pub(super) watch::Receiver<bool>);
+
+impl Call {
+    pub(super) fn stopped(call: &Option<Self>) -> bool {
+        call.as_ref().is_some_and(|call| *call.0.borrow())
+    }
+
+    pub(super) async fn cancelled(call: &mut Option<Self>) {
+        if let Some(Self(revoked)) = call {
+            let _ = revoked.wait_for(|value| *value).await;
+        } else {
+            std::future::pending::<()>().await;
+        }
+    }
+}
+
 /// The one owner of this Mac's Locked Use state. Every start, act, call end, hold, retire
 /// and guardian event is a message it handles in order, and only it starts the guardian.
 #[derive(Clone)]
@@ -60,6 +77,7 @@ enum Message {
     Gate {
         worker: String,
         locked: bool,
+        call: Option<Call>,
         reply: oneshot::Sender<Option<Grant>>,
     },
     Unclaimed {
@@ -77,8 +95,9 @@ enum Message {
     Hold {
         worker: String,
     },
-    Retired {
+    Release {
         worker: String,
+        retired: bool,
         reply: oneshot::Sender<()>,
     },
 }
@@ -98,6 +117,7 @@ enum State {
     },
     Starting {
         worker: String,
+        call: Option<Call>,
         session: u64,
         guardian: LockedUse,
         lines: Events,
@@ -166,11 +186,12 @@ impl Gatekeeper {
         )
     }
 
-    pub(crate) async fn gate(&self, worker: &str, locked: bool) -> bool {
+    pub(super) async fn gate(&self, worker: &str, locked: bool, call: Option<Call>) -> bool {
         let (reply, answer) = oneshot::channel();
         let gate = Message::Gate {
             worker: worker.to_owned(),
             locked,
+            call,
             reply,
         };
         if self.messages.send(gate).is_err() {
@@ -203,12 +224,21 @@ impl Gatekeeper {
 
     /// Clears the worker's marks and ends its session; true once its guardian has exited.
     pub(crate) async fn retired(&self, worker: &str) -> bool {
+        self.wait_for_release(worker, true).await
+    }
+
+    pub(super) async fn cancel_turn(&self, worker: &str) -> bool {
+        self.wait_for_release(worker, false).await
+    }
+
+    async fn wait_for_release(&self, worker: &str, retired: bool) -> bool {
         let (reply, answer) = oneshot::channel();
-        let retired = Message::Retired {
+        let release = Message::Release {
             worker: worker.to_owned(),
+            retired,
             reply,
         };
-        self.messages.send(retired).is_ok()
+        self.messages.send(release).is_ok()
             && tokio::time::timeout(RELEASE, answer)
                 .await
                 .is_ok_and(|done| done.is_ok())
@@ -313,6 +343,7 @@ async fn run(
                 (
                     State::Starting {
                         worker,
+                        call,
                         session,
                         guardian,
                         lines,
@@ -321,7 +352,7 @@ async fn run(
                     },
                     Some(GuardianEvent::Line(line)),
                 ) => {
-                    if line == "unlocked" {
+                    if line == "unlocked" && !Call::stopped(&call) {
                         let grant =
                             own.upgrade()
                                 .filter(|_| enabled(&worker))
@@ -346,13 +377,15 @@ async fn run(
                     } else {
                         let starting = State::Starting {
                             worker,
+                            call,
                             session,
                             guardian,
                             lines,
                             until,
                             reply,
                         };
-                        if line == "owner_input" || line.starts_with("ended ") {
+                        if line == "unlocked" || line == "owner_input" || line.starts_with("ended ")
+                        {
                             owner_input |= line == "owner_input";
                             release(starting)
                         } else {
@@ -394,12 +427,17 @@ async fn run(
             Message::Gate {
                 worker,
                 locked,
+                call,
                 reply,
             } => match if matches!(state, State::Suppressed { .. }) {
                 observe_lock(state, lock_state.map_or(Some(locked), |read| read()))
             } else {
                 state
             } {
+                state if Call::stopped(&call) => {
+                    let _ = reply.send(None);
+                    state
+                }
                 State::Idle if !locked => {
                     let _ = reply.send(YES);
                     State::Idle
@@ -416,6 +454,7 @@ async fn run(
                     match started {
                         Some((guardian, lines)) => State::Starting {
                             worker,
+                            call,
                             session: {
                                 ids += 1;
                                 ids
@@ -502,9 +541,15 @@ async fn run(
                 blocked.insert(worker);
                 state
             }
-            Message::Retired { worker, reply } => {
-                blocked.remove(&worker);
-                acting.remove(&worker);
+            Message::Release {
+                worker,
+                retired,
+                reply,
+            } => {
+                if retired {
+                    blocked.remove(&worker);
+                    acting.remove(&worker);
+                }
                 let state = release_for(state, &worker);
                 match &state {
                     State::Releasing {
@@ -629,19 +674,19 @@ mod tests {
             Some(|| Some(LOCKED.load(Ordering::SeqCst))),
         );
         tokio::spawn(task);
-        assert!(!gate.gate("first", true).await);
+        assert!(!gate.gate("first", true, None).await);
         LOCKED.store(false, Ordering::SeqCst);
-        assert!(gate.gate("first", false).await);
+        assert!(gate.gate("first", false, None).await);
 
         LOCKED.store(true, Ordering::SeqCst);
-        assert!(gate.gate("first", true).await);
+        assert!(gate.gate("first", true, None).await);
         LOCKED.store(false, Ordering::SeqCst);
         assert!(gate.retired("first").await);
-        assert!(!gate.gate("second", false).await);
+        assert!(!gate.gate("second", false, None).await);
         LOCKED.store(true, Ordering::SeqCst);
-        assert!(!gate.gate("second", true).await);
+        assert!(!gate.gate("second", true, None).await);
         LOCKED.store(false, Ordering::SeqCst);
-        assert!(gate.gate("second", false).await);
+        assert!(gate.gate("second", false, None).await);
     }
 
     #[test]

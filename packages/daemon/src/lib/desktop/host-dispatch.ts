@@ -2,6 +2,41 @@ import { createConnection } from 'node:net';
 import { join } from 'node:path';
 import { z } from 'zod';
 
+export class DesktopTurn {
+  readonly calls = new Set<string>();
+  stopped = false;
+
+  async cancel(dataDir: string, worker: string): Promise<boolean> {
+    this.stopped = true;
+    const path = join(dataDir, 'desktop/control.sock');
+    const callIds = [...this.calls];
+    const client = createConnection({ path, signal: AbortSignal.timeout(18_000) }, () =>
+      client.write(`${JSON.stringify({ action: 'cancelTurn', worker, callIds })}\n`)
+    );
+    try {
+      let text = '';
+      for await (const chunk of client) {
+        text += chunk.toString();
+        const newline = text.indexOf('\n');
+        if (newline !== -1) {
+          const reply = JSON.parse(text.slice(0, newline));
+          const unsupported =
+            reply?.ok === false &&
+            typeof reply.error === 'string' &&
+            reply.error.startsWith('unknown field `callIds`,');
+          return unsupported || (reply?.ok === true && reply.result?.state === 'stopped');
+        }
+        if (text.length > 4096) return false;
+      }
+      return false;
+    } catch (error) {
+      return ['ENOENT', 'ECONNREFUSED'].includes((error as NodeJS.ErrnoException).code ?? '');
+    } finally {
+      client.destroy();
+    }
+  }
+}
+
 export const DesktopDispatchReply = z.object({
   call_id: z.string(),
   bundle_id: z.string().nullable(),
@@ -19,7 +54,10 @@ const Envelope = z.object({ ok: z.literal(true), result: DesktopDispatchReply })
 
 export function dispatchDesktopCall(
   dataDir: string,
-  request: {
+  {
+    turn,
+    ...request
+  }: {
     worker: string;
     workDir: string;
     apps: string[];
@@ -28,6 +66,7 @@ export function dispatchDesktopCall(
     tool: string;
     arguments: Record<string, unknown>;
     callId: string;
+    turn?: DesktopTurn;
   }
 ): Promise<z.infer<typeof DesktopDispatchReply>> {
   return new Promise((resolve, reject) => {
@@ -40,21 +79,30 @@ export function dispatchDesktopCall(
       client.destroy();
       reject(error);
     }
-    client.once('connect', () =>
-      client.write(JSON.stringify({ action: 'dispatch', ...request }) + '\n')
-    );
-    client.once('error', (error: NodeJS.ErrnoException) => {
-      if (error.code !== 'ENOENT' && error.code !== 'ECONNREFUSED') return fail(error);
+    function finish(reply: z.infer<typeof DesktopDispatchReply>) {
+      turn?.calls.delete(request.callId);
       clearTimeout(timer);
       client.destroy();
-      resolve({
+      resolve(reply);
+    }
+    function refuse(reason: string) {
+      finish({
         call_id: request.callId,
         bundle_id: null,
         class: null,
         decision: 'refused',
-        reason: 'desktop_app_not_connected',
+        reason,
         dispatched: false,
       });
+    }
+    client.once('connect', () => {
+      if (turn?.stopped) return refuse('turn_stopped');
+      turn?.calls.add(request.callId);
+      client.write(JSON.stringify({ action: 'dispatch', ...request }) + '\n');
+    });
+    client.once('error', (error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT' && error.code !== 'ECONNREFUSED') return fail(error);
+      refuse('desktop_app_not_connected');
     });
     client.once('end', () => fail(new Error('Desktop host closed without a reply.')));
     client.on('data', (chunk) => {
@@ -67,25 +115,11 @@ export function dispatchDesktopCall(
         const busy = z
           .object({ ok: z.literal(false), error: z.literal('desktop_busy') })
           .safeParse(envelope);
-        if (busy.success) {
-          clearTimeout(timer);
-          client.destroy();
-          resolve({
-            call_id: request.callId,
-            bundle_id: null,
-            class: null,
-            decision: 'refused',
-            reason: 'desktop_busy',
-            dispatched: false,
-          });
-          return;
-        }
+        if (busy.success) return refuse('desktop_busy');
         const { result } = Envelope.parse(envelope);
         if (result.call_id !== request.callId)
           throw new Error('Desktop host reply does not match this call.');
-        clearTimeout(timer);
-        client.destroy();
-        resolve(result);
+        finish(result);
       } catch (error) {
         fail(error instanceof Error ? error : new Error('Invalid desktop host reply.'));
       }

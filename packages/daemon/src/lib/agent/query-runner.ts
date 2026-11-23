@@ -26,6 +26,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../storage/database.ts';
 import { PROVIDER_KEY_ENV_VARS } from '../credential-discovery.ts';
+import { DesktopTurn } from '../desktop/host-dispatch.ts';
 import { ErrorCategory, type ErrorManager } from '../error-manager.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -1064,12 +1065,14 @@ export class QueryRunner {
         provider = providerRegistry.get(resolvedProviderId) ?? provider;
       }
 
+      let desktopTurn = new DesktopTurn();
       const deadline = Date.now() + Math.min(inactivityBackstopMs, 60_000);
       const pendingOptions = runLagPhase('sdk:options_build', () =>
         optionsBuilder.build({
           askUserQuestionHook: attemptHook,
           canUseTool: this.createAttemptBoundCanUseTool(attemptToken, questionOrigin),
           operationInputOrigin: () => humanInputs.origin(),
+          desktopTurn: () => (live() ? desktopTurn : null),
           session: providerSession,
         })
       );
@@ -1620,6 +1623,7 @@ export class QueryRunner {
             if (message.type === 'result') {
               questionInputs.endTurn();
               humanInputs.endTurn();
+              desktopTurn = new DesktopTurn();
             }
             await this.handleSDKMessage(message, queryGeneration);
           } catch (error) {

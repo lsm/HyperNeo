@@ -15,6 +15,9 @@ import time
 import unittest
 
 RUNNER = Path(sys.argv.pop(1)).resolve()
+LEGACY_HOST = '--legacy-host' in sys.argv
+if LEGACY_HOST:
+    sys.argv.remove('--legacy-host')
 SIGNED = 'P5R65T296V.io.hyperneo.app' in subprocess.run(
     ['/usr/bin/codesign', '-d', '--entitlements', '-', '--xml', str(RUNNER)], capture_output=True, text=True).stdout
 FAKE = f'#!{sys.executable}\n' + '''import json, os, socket, sys, time
@@ -1079,8 +1082,109 @@ open(sys.argv[2], 'w').write(reply.decode())
         params.setdefault('apps', ['com.apple.finder', 'com.apple.dock'])
         params.setdefault('todo', 'todo-' + worker)
         params.setdefault('todos', ['todo-worker-a', 'todo-worker-b'])
-        return self.call('dispatch', worker, tool=tool, arguments=arguments,
-                         callId='call-' + tool, **params)
+        params.setdefault('callId', 'call-' + tool)
+        return self.call('dispatch', worker, tool=tool, arguments=arguments, **params)
+
+    def turn_guardian(self, wait_for_unlock=False):
+        guardian = self.binary.with_name('hyperneo-locked-use')
+        started, exited = (self.root / name for name in ('covered', 'exited'))
+        start = 'sleep 1' if wait_for_unlock else ''
+        guardian.write_text(f"#!/bin/sh\n"
+                            f"touch '{started}'\necho 'covered 1'\n{start}\n"
+                            f"echo unlocked\nwhile read line; do :; done\n"
+                            f"touch '{exited}'\necho 'ended owner_gone'\n")
+        guardian.chmod(0o700)
+        return started, exited
+
+    def dispatch_call(self, call_id, **arguments):
+        reply = self.dispatch('list_windows', arguments, workDir=str(self.work), callId=call_id)
+        self.assertTrue(reply['ok'], reply)
+        self.assertEqual(reply['result']['call_id'], call_id)
+        return reply['result']
+
+    def assert_turn_stopped(self, reply):
+        self.assertEqual((reply['decision'], reply['reason'], reply['dispatched']),
+                         ('refused', 'turn_stopped', False), reply)
+
+    def cancel_turn(self, *call_ids):
+        reply = self.call('cancelTurn', callIds=list(call_ids))
+        self.assertEqual(reply, {'ok': True, 'result': {'state': 'stopped'}})
+
+    def test_turn_stop_legacy_dispatch_shape(self):
+        _, exited = self.turn_guardian()
+        self.assertEqual(self.dispatch_call('legacy-acquire', fixture_screen_locked=True)['reason'],
+                         'screen_locked')
+        self.assertTrue(self.dispatch_call('legacy-dispatch')['dispatched'])
+        if LEGACY_HOST:
+            reply = self.call('cancelTurn', callIds=[])
+            self.assertFalse(reply['ok'], reply)
+            self.assertTrue(reply['error'].startswith('unknown field `callIds`,'), reply)
+            self.assertFalse(exited.exists(), 'legacy host released its guardian on native stop')
+            self.assertTrue(self.dispatch_call('legacy-next')['dispatched'])
+            print('older Desktop: both dispatches worked; unsupported cancel left guardian owned')
+        else:
+            print('new Desktop: legacy dispatch without cancellation fields works')
+
+    def test_turn_stop_releases_starting_guardian(self):
+        started, exited = self.turn_guardian(wait_for_unlock=True)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(self.dispatch_call, 'starting-guardian', fixture_screen_locked=True)
+            wait_until(started.exists)
+            self.cancel_turn('starting-guardian')
+            self.assertTrue(exited.exists())
+            self.assert_turn_stopped(pending.result(timeout=5))
+            self.assertFalse(list(self.work.glob('d-*')))
+        print('startup: stopped turn refused; guardian exited; no driver started')
+
+    def test_turn_stop_releases_owned_guardian_and_allows_next_turn(self):
+        _, exited = self.turn_guardian()
+        self.assertEqual(self.dispatch_call('acquire', fixture_screen_locked=True)['reason'], 'screen_locked')
+        self.assertTrue(self.dispatch_call('owned')['dispatched'])
+        self.cancel_turn()
+        self.assertTrue(exited.exists())
+        self.assertTrue(self.dispatch_call('later')['dispatched'])
+        print('owned: guardian exited with no calls in flight; next turn dispatched')
+
+    def test_turn_stop_overtakes_dispatch_frame(self):
+        with socket.socket(socket.AF_UNIX) as client:
+            client.settimeout(3)
+            client.connect(str(self.root / 'desktop/control.sock'))
+            frame = (json.dumps(dict(action='dispatch', worker='worker-a', tool='list_windows',
+                                     workDir=str(self.work), callId='late-frame')) + '\n').encode()
+            client.sendall(frame[:10])
+            self.cancel_turn('late-frame')
+            client.sendall(frame[10:])
+            with client.makefile('rb') as stream:
+                self.assert_turn_stopped(json.loads(stream.readline())['result'])
+        self.assertFalse(list(self.work.glob('d-*')))
+        self.assertTrue(self.dispatch_call('later')['dispatched'])
+        print('overtaken frame: stopped call refused; next call dispatched')
+
+    def test_turn_stop_cancels_queued_call_before_worker_slot_frees(self):
+        _, exited = self.turn_guardian()
+        unavailable = self.root / 'permissions-missing'
+        unavailable.touch()
+        self.assertEqual(self.dispatch_call('acquire', fixture_screen_locked=True)['reason'],
+                         'desktop_permissions_required')
+        unavailable.unlink()
+        self.work = self.work / 'slow'
+        self.work.mkdir()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(self.dispatch_call, 'starting-driver')
+            wait_until(lambda: bool(list(self.work.glob('d-*/d.starting'))))
+            release = next(self.work.glob('d-*/d.starting')).with_suffix('.release')
+            queued = pool.submit(self.dispatch_call, 'queued')
+            try:
+                wait_until(lambda: self.call('fixture-slots')['result']['references'] == 3)
+                self.cancel_turn('starting-driver', 'queued')
+                self.assert_turn_stopped(queued.result(timeout=3))
+                self.assertTrue(exited.exists())
+                self.assertFalse(first.done())
+            finally:
+                release.touch()
+            self.assert_turn_stopped(first.result(timeout=5))
+        self.assertTrue(self.dispatch_call('later')['dispatched'])
+        print('queued: refused before the slot freed; starting driver received no call; next turn dispatched')
 
     def test_unfiltered_window_listing_keeps_only_approved_apps(self):
         dock = int(subprocess.check_output(['/usr/bin/pgrep', '-x', 'Dock']).split()[0])
@@ -1409,9 +1513,10 @@ open(sys.argv[2], 'w').write(reply.decode())
                 with socket.socket(socket.AF_UNIX) as client:
                     client.settimeout(2)
                     client.connect(str(self.root / 'desktop/control.sock'))
-                    # The saturated host replies and closes before reading a request.
+                    client.sendall(b'{"action":"status","worker":"other"}\n')
                     reply = json.loads(client.makefile('rb').readline())
                     self.assertEqual(reply, {'ok': False, 'error': 'desktop_busy'})
+                self.cancel_turn()
             finally:
                 for marker in slow.glob('d-*/d.starting'):
                     marker.with_suffix('.release').touch()
@@ -1419,7 +1524,7 @@ open(sys.argv[2], 'w').write(reply.decode())
                     result = future.result(timeout=15)
                     self.assertTrue(result['ok'], result)
                     self.pids.append(result['result']['pid'])
-        print('saturated_host=desktop_busy')
+        print('saturated_host=desktop_busy turn_stop=accepted')
 
     def test_owner_approval_covers_all_actions_for_the_app(self):
         pid = finder()
