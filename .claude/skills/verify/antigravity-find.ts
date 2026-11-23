@@ -15,8 +15,10 @@ const [mode, binary] = process.argv.slice(2, -1);
 const initializeRequiresAuth = mode === 'start-init-auth';
 const lateBatch = mode === 'resume-late-batch';
 const lateClose = mode === 'resume-late-close';
-const stopRace = mode === 'stop-race';
-const stopFixture = mode === 'stop' || stopRace;
+const stopRace = mode === 'stop-race' || mode === 'stop-race-close-error';
+const closeError = mode === 'stop-close-error' || mode === 'stop-race-close-error';
+const holdClose = mode === 'stop-held-close';
+const stopFixture = mode === 'stop' || stopRace || closeError || holdClose;
 const resumeFixture = mode === 'resume' || lateBatch || lateClose || stopFixture;
 const healthyStart = mode === 'start' || resumeFixture;
 const startFixture = healthyStart || initializeRequiresAuth;
@@ -34,6 +36,7 @@ const executable = join(bin, 'agy');
 const journal = join(evidence, 'requests.jsonl');
 const release = join(run, 'release');
 const releaseFollowUp = join(run, 'release-follow-up');
+const releaseClose = join(run, 'release-close');
 writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 2\n', { mode: 0o700 });
 if (mode === 'signed-out' || mode === 'start-signed-out') {
   assert(isAbsolute(binary));
@@ -77,7 +80,11 @@ for await (const line of createInterface({input: process.stdin})) {
   } else if (method === 'session/close') {
     assert.deepEqual(params,{sessionId});
     if (resumed && ${lateClose}) note(sessionId,' Late during close');
-    emit({id,result:{}});
+    if (resumed && ${holdClose}) {
+      while (!existsSync(${JSON.stringify(releaseClose)})) await Bun.sleep(25);
+    }
+    if (resumed && ${closeError}) emit({id,error:{code:-32603,message:'Save failed'}});
+    else emit({id,result:{}});
   } else if (method === 'session/prompt') {
     assert.deepEqual(params,{sessionId,prompt:[{type:'text',text:resumed ? 'Continue the greeting.' : 'Reply with a greeting.'}]});
     promptId = id;
@@ -273,8 +280,22 @@ try {
           const duringCancel = await readFollowUp();
           assert(duringCancel.ok && duringCancel.value.status === 'running');
           writeFileSync(releaseFollowUp, '');
-          for (const result of await Promise.all(stopping))
-            assert(result.ok && result.value.stopped === !stopRace, JSON.stringify(result));
+          if (holdClose) {
+            const countCloseRequests = () => (readFileSync(journal, 'utf8').match(/"session\/close"/g) ?? []).length;
+            const closeDeadline = Date.now() + 2_000;
+            while (countCloseRequests() < 2 && Date.now() < closeDeadline) await Bun.sleep(25);
+            assert.equal(countCloseRequests(), 2);
+            const duringClose = await readFollowUp();
+            assert(duringClose.ok && duringClose.value.status === 'running');
+            stopping.push(stop(started.value.ref.id));
+          }
+          const stops = await Promise.all(stopping);
+          assert(stops.every((result) => result.ok && result.value.stopped === !stopRace), JSON.stringify(stops));
+          if (holdClose) {
+            const beforeSave = await readFollowUp();
+            assert(beforeSave.ok && beforeSave.value.status === 'running');
+            writeFileSync(releaseClose, '');
+          }
         } else writeFileSync(releaseFollowUp, '');
         const followUpDeadline = Date.now() + 5_000;
         let followUp = await readFollowUp();
@@ -283,13 +304,17 @@ try {
           followUp = await readFollowUp();
         }
         const cancelled = stopFixture && !stopRace;
-        assert(followUp.ok && followUp.value.status === (cancelled ? 'stopped' : 'done'));
+        assert(followUp.ok && followUp.value.status === (closeError ? 'failed' : cancelled ? 'stopped' : 'done'));
         assert.equal(followUp.value.lastReply, cancelled ? undefined : 'Hello again');
-        assert.deepEqual(followUp.value.turnEnds?.map(({ message }) => message), [cancelled ? '' : 'Hello again']);
+        if (closeError) {
+          assert.match(followUp.value.turnEnds?.[0]?.message ?? '', /did not confirm saved history/);
+        } else {
+          assert.deepEqual(followUp.value.turnEnds?.map(({ message }) => message), [cancelled ? '' : 'Hello again']);
+        }
         const input = followUp.value.inputEvidence;
         assert(input);
         assert.deepEqual(input.receipt, sent.value.receipt);
-        if (cancelled) assert.equal(input.state, 'unavailable');
+        if (cancelled || closeError) assert.equal(input.state, 'unavailable');
         else {
           assert(input.state === 'observed');
           assert.deepEqual(input.exchange.map(({ role, text }) => [role, text]), [
