@@ -7,6 +7,8 @@ import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import type { FindQuery, PlaceGroup, WorkAdapter, WorkSummary } from './types.ts';
 
 const ADAPTER = 'cursor-cli';
+const MAX_PAGES = 10;
+const DISCOVERY_TIMEOUT_MS = 15_000;
 const InitializeResult = z.object({
   protocolVersion: z.literal(1),
   agentCapabilities: z.object({
@@ -22,6 +24,7 @@ const SessionList = z.object({
       updatedAt: z.string().nullish(),
     })
   ),
+  nextCursor: z.string().nullish(),
 });
 type Session = z.infer<typeof SessionList>['sessions'][number];
 
@@ -43,16 +46,38 @@ async function listSessions(command: string, home: string, folder: string | unde
     throw new Error(`Cursor CLI rejected ${method} (${response.error.code}).`);
   }
 
-  try {
+  async function readPages(): Promise<Session[]> {
     const init = await request('initialize', { protocolVersion: 1, clientCapabilities: {} });
     if (!InitializeResult.safeParse(init).success)
       throw new Error('Cursor CLI does not support ACP session listing.');
-    const result = SessionList.safeParse(
-      await request('session/list', folder ? { cwd: folder } : {})
+    const sessions = new Map<string, Session>();
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const result = SessionList.safeParse(await request('session/list', { cwd: folder, cursor }));
+      if (!result.success) throw new Error('Cursor CLI returned invalid session metadata.');
+      for (const session of result.data.sessions)
+        if (!sessions.has(session.sessionId)) sessions.set(session.sessionId, session);
+      const next = result.data.nextCursor;
+      if (!next) return [...sessions.values()];
+      if (seenCursors.has(next)) throw new Error('Cursor CLI repeated an ACP session cursor.');
+      seenCursors.add(next);
+      cursor = next;
+    }
+    throw new Error('Cursor CLI exceeded the ACP session page limit.');
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error('Cursor CLI session discovery timed out.')),
+      DISCOVERY_TIMEOUT_MS
     );
-    if (!result.success) throw new Error('Cursor CLI returned invalid session metadata.');
-    return result.data.sessions;
+  });
+  try {
+    return await Promise.race([readPages(), deadline]);
   } finally {
+    clearTimeout(timer);
     await transport.close();
   }
 }
