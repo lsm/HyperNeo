@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { checkOxapBinary } from '../../../packages/daemon/src/lib/oxap/oxap-binary.ts';
+import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
 import { readHubOptions } from '../../../packages/daemon/src/lib/oxap/oxap-settings.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
@@ -17,7 +18,7 @@ import { answerCodexProbeLocally, serveLocalRelease } from './oxap-codex-provide
 const [binary, version, sha256, ...args] = process.argv.slice(2);
 const mode = args.length === 2 ? args[0] : 'first';
 const runArgument = args.at(-1)!;
-assert(['first', 'recovery', 'pending', 'flash', 'image', 'flash-web', 'pro-web', 'flash-recovery', 'sdk-default'].includes(mode));
+assert(['first', 'recovery', 'pending', 'flash', 'image', 'flash-web', 'pro-web', 'flash-recovery', 'sdk-default', 'locked-recovery'].includes(mode));
 const run = resolve(runArgument);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -39,18 +40,20 @@ const config = getConfig({
   dbPath: join(run, 'data/daemon.db'),
   workspaceRoot: workspace,
 });
-const app = await createDaemonApp({
+const boot = () => createDaemonApp({
   config: { ...config, disableWorktrees: true, disableGoalProcessing: true },
   verbose: false,
 });
-const transport = new WebSocketClientTransport({
+let app = await boot();
+const connect = () => new WebSocketClientTransport({
   url: `ws://127.0.0.1:${app.server.port}/ws`,
   autoReconnect: false,
   createSocket: createLocalSocket,
 });
+let transport = connect();
 const evidence: Record<string, unknown> = { version, sha256, mode };
 try {
-  const hub = new MessageHub({ defaultSessionId: 'global' });
+  let hub = new MessageHub({ defaultSessionId: 'global' });
   hub.registerTransport(transport);
   await transport.initialize();
   await hub.request('providers.create', {
@@ -72,8 +75,10 @@ try {
   evidence.harnessSave = saved;
   assert.deepEqual(saved, { accepted: true });
   assert.deepEqual(releaseRequests, ['SHA256SUMS.txt', `${version}.tar.gz`]);
-  const flash = ['flash', 'image', 'flash-web', 'flash-recovery'].includes(mode);
+  const flash = ['flash', 'image', 'flash-web', 'flash-recovery', 'locked-recovery'].includes(mode);
   const web = mode.endsWith('-web');
+  const locked = mode === 'locked-recovery';
+  if (locked) writeFileSync(join(workspace, 'verify-native-lease'), '');
   const withImage = mode === 'image' || mode === 'flash-web';
   const model = flash ? 'deepseek-v4-flash' : 'deepseek-v4-pro';
   const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a4NEAAAAASUVORK5CYII=';
@@ -189,7 +194,7 @@ try {
     );
     evidence.existingSwitchRefused = true;
   }
-  if (['recovery', 'pending', 'flash-recovery', 'sdk-default'].includes(mode)) {
+  if (['recovery', 'pending', 'flash-recovery', 'sdk-default', 'locked-recovery'].includes(mode)) {
     while (app.sessionManager.getCachedSession(sessionId)?.queryPromise) {
       assert(Date.now() < deadline, 'The first query did not finish shutting down');
       await Bun.sleep(25);
@@ -204,38 +209,86 @@ try {
         },
       });
     }
-    if (mode === 'sdk-default') {
-      assert.deepEqual(await hub.request('operation.invoke', {
-        name: 'oxap.settings.save', input: { providerId: 'deepseek', harness: 'sdk' },
-      }), { accepted: true });
+    if (locked) {
+      await transport.close();
+      await app.cleanup();
+      app = await boot();
+      transport = connect();
+      hub = new MessageHub({ defaultSessionId: 'global' });
+      hub.registerTransport(transport);
+      await transport.initialize();
+      const sender = 'neo:10000000-0000-4000-8000-000000008837';
+      await app.db.createSession({
+        id: sender,
+        title: 'Synthetic sender',
+        workspacePath: workspace,
+        createdAt: new Date().toISOString(),
+        lastActiveAt: new Date().toISOString(),
+        status: 'active',
+        config: { queryMode: 'manual' },
+        metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 },
+      });
+      const registry = app.sessionManager.getOperationRegistry();
+      const caller = { role: 'neo', source: 'internal', sessionId: sender } as const;
+      const ref = { adapter: 'hyperneo', id: sessionId };
+      const sent = await invokeOperation(registry, 'work.send', {
+        ref, notice: true, message: 'Synthetic worker follow-up after restart',
+      }, caller);
+      assert(sent.kind === 'completed');
+      assert.match(JSON.stringify(sent.value), /"delivered":false/);
+      const reason = 'unsupported input: session.open.reopen (unsatisfiable)';
+      const end = Date.now() + 10000;
+      const getMessages = (id: string) => app.db.getSDKMessages(id, 50).messages;
+      while (!JSON.stringify(getMessages(sender)).includes(reason) && Date.now() < end) await Bun.sleep(25);
+      const status = await invokeOperation(registry, 'work.status', { ref }, caller);
+      Object.assign(evidence, {
+        nativeIdPreserved: app.db.getSession(sessionId)?.sdkSessionId === nativeId,
+        failedInputs: app.db.getUserMessagesByStatus(sessionId, 'failed', 50).total,
+        chatReason: JSON.stringify(getMessages(sessionId)).includes(reason),
+        senderReason: JSON.stringify(getMessages(sender)).includes(reason),
+        statusFailedWithReason: JSON.stringify(status).includes('"status":"failed"') && JSON.stringify(status).includes(reason),
+        lockRefusal: await Bun.file(join(workspace, 'verify-native-lease-refused')).exists(),
+      });
+      assert.equal(evidence.lockRefusal, true, 'The recovered runtime must hold the original native lease');
+      assert.equal(evidence.nativeIdPreserved, true);
+      assert.equal(evidence.failedInputs, 1);
+      assert.equal(evidence.senderReason, true, 'The originating sender should get the refusal reason');
+      assert.equal(evidence.chatReason, true, 'The worker chat should show the refusal reason');
+      assert.equal(evidence.statusFailedWithReason, true, 'Work status should expose the refusal');
     } else {
-      await app.oxapEngine.restart();
+      if (mode === 'sdk-default') {
+        assert.deepEqual(await hub.request('operation.invoke', {
+          name: 'oxap.settings.save', input: { providerId: 'deepseek', harness: 'sdk' },
+        }), { accepted: true });
+      } else {
+        await app.oxapEngine.restart();
+      }
+      const { messageId } = await hub.request<{ messageId: string }>('message.send', {
+        sessionId,
+        content: 'Message after hub restart',
+      });
+      const retryDeadline = Date.now() + 20_000;
+      const deliveryStatus = () =>
+        [...rows.values()].find((row) => row.uuid === messageId)?.deliveryStatus;
+      const replyLines = () => [...rows.values()]
+        .filter((row) => row.type === 'assistant')
+        .flatMap((row) => (row.message?.content ?? []).map((block) => block.text));
+      while (!replyLines().includes('Synthetic DeepSeek reply after restart') || deliveryStatus() !== 'delivered') {
+        assert.deepEqual(errors, [], 'The message after restart failed');
+        assert(Date.now() < retryDeadline, `Restart delivery state: ${deliveryStatus()}, replies: ${replyLines()}`);
+        await Bun.sleep(25);
+      }
+      const saved = app.db.getSession(sessionId)!;
+      const reopenedClient = await app.oxapEngine.getHub(() => readHubOptions(app.oxapSettings));
+      const state = await reopenedClient.request('state', { session_id: sessionId }) as {
+        payload?: { current_model_id?: string };
+      };
+      assert.equal(state.payload?.current_model_id, model);
+      assert(saved.sdkSessionId);
+      assert.equal(saved.sdkSessionId === nativeId, !pending);
+      assert.equal(replyLines().filter((line) => line?.includes('new thread')).length, pending ? 1 : 0);
+      Object.assign(evidence, { resumedSameThread: !pending, deliveryStatus: deliveryStatus(), restartReplies: 1 });
     }
-    const { messageId } = await hub.request<{ messageId: string }>('message.send', {
-      sessionId,
-      content: 'Message after hub restart',
-    });
-    const retryDeadline = Date.now() + 20_000;
-    const deliveryStatus = () =>
-      [...rows.values()].find((row) => row.uuid === messageId)?.deliveryStatus;
-    const replyLines = () => [...rows.values()]
-      .filter((row) => row.type === 'assistant')
-      .flatMap((row) => (row.message?.content ?? []).map((block) => block.text));
-    while (!replyLines().includes('Synthetic DeepSeek reply after restart') || deliveryStatus() !== 'delivered') {
-      assert.deepEqual(errors, [], 'The message after restart failed');
-      assert(Date.now() < retryDeadline, `Restart delivery state: ${deliveryStatus()}, replies: ${replyLines()}`);
-      await Bun.sleep(25);
-    }
-    const saved = app.db.getSession(sessionId)!;
-    const reopenedClient = await app.oxapEngine.getHub(() => readHubOptions(app.oxapSettings));
-    const state = await reopenedClient.request('state', { session_id: sessionId }) as {
-      payload?: { current_model_id?: string };
-    };
-    assert.equal(state.payload?.current_model_id, model);
-    assert(saved.sdkSessionId);
-    assert.equal(saved.sdkSessionId === nativeId, !pending);
-    assert.equal(replyLines().filter((line) => line?.includes('new thread')).length, pending ? 1 : 0);
-    Object.assign(evidence, { resumedSameThread: !pending, deliveryStatus: deliveryStatus(), restartReplies: 1 });
   }
 
   Object.assign(evidence, { opened: 1, firstMessageReplies: replies.length, modelSwitch, pass: true });

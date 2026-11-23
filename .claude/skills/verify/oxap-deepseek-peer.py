@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+import fcntl
 import json
 import os
 import sys
@@ -11,6 +12,22 @@ def emit(**frame):
 assert sys.argv[1:] == ['--profile', 'sdk']
 assert os.environ.get('DEEPSEEK_API_KEY') == 'synthetic-deepseek-proof'
 
+lease = None
+use_lease = os.path.exists("verify-native-lease")
+
+
+def acquire_lease(session_id):
+    global lease
+    candidate = open(f"{session_id}.lock", "a")
+    try:
+        fcntl.flock(candidate, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        candidate.close()
+        return False
+    lease = candidate
+    return True
+
+
 for line in sys.stdin:
     request = json.loads(line)
     method = request["method"]
@@ -22,9 +39,15 @@ for line in sys.stdin:
             "serverInfo": {"name": "deepseek-harness-sdk-runtime", "version": "0.0.1"}
         })
     elif method == "session/resume":
-        emit(id=request["id"], result={})
+        if use_lease and not acquire_lease(request["params"]["sessionId"]):
+            open("verify-native-lease-refused", "w").close()
+            emit(id=request["id"], error={"code": -32000, "message": "session is already open"})
+        else:
+            emit(id=request["id"], result={})
     elif method == "session/prompt":
         session_id = request["params"]["sessionId"]
+        if use_lease and lease is None:
+            assert acquire_lease(session_id)
         blocks = request["params"]["contentBlocks"]
         after_restart = {"type": "text", "text": "Message after hub restart"} in blocks
         turn_id = 2 if after_restart else 1
