@@ -782,6 +782,7 @@ function MenuItemFn({
     ref,
     role: checked === undefined ? 'menuitem' : 'menuitemcheckbox',
     'aria-checked': checked,
+    disabled: Tag === 'button' && disabled ? true : undefined,
     tabIndex: disabled ? undefined : -1,
     'aria-disabled': disabled || undefined,
     onClick: handleClick,

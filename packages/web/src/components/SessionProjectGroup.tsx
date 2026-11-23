@@ -112,23 +112,27 @@ export function SessionProjectGroup({
             modal={false}
             class="z-[9999] min-w-[200px] rounded-lg border border-line bg-surface-overlay py-1 shadow-xl"
           >
-            <MenuItem checked={showArchived} onClick={onToggleArchived}>
-              <button type="button" class={PROJECT_MENU_ITEM}>
-                <span class="w-4 text-center" aria-hidden="true">
-                  {showArchived ? '✓' : ''}
-                </span>
-                Show archived chats
-              </button>
+            <MenuItem
+              as="button"
+              type="button"
+              checked={showArchived}
+              onClick={onToggleArchived}
+              class={PROJECT_MENU_ITEM}
+            >
+              <span class="w-4 text-center" aria-hidden="true">
+                {showArchived ? '✓' : ''}
+              </span>
+              Show archived chats
             </MenuItem>
-            <MenuItem disabled={!!removeDisabledReason} onClick={onRemove}>
-              <button
-                type="button"
-                disabled={!!removeDisabledReason}
-                title={removeDisabledReason}
-                class={`${PROJECT_MENU_ITEM} text-danger disabled:cursor-not-allowed disabled:text-fg-faint`}
-              >
-                Delete this project
-              </button>
+            <MenuItem
+              as="button"
+              type="button"
+              disabled={!!removeDisabledReason}
+              title={removeDisabledReason}
+              onClick={onRemove}
+              class={`${PROJECT_MENU_ITEM} text-danger disabled:cursor-not-allowed disabled:text-fg-faint`}
+            >
+              Delete this project
             </MenuItem>
           </MenuItems>
         </Menu>
