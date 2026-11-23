@@ -21,7 +21,8 @@ const closeError = mode === 'stop-close-error' || mode === 'stop-race-close-erro
 const holdClose = mode === 'stop-held-close';
 const stopFixture = mode === 'stop' || stopRace || closeError || holdClose;
 const resumeFixture = mode === 'resume' || lateBatch || lateClose || stopFixture;
-const historyFixture = mode === 'history';
+const longHistory = mode === 'history-long';
+const historyFixture = mode === 'history' || longHistory;
 const healthyStart = mode === 'start' || resumeFixture || historyFixture;
 const startFixture = healthyStart || initializeRequiresAuth;
 assert(startFixture || ['fixture', 'absent', 'signed-out', 'start-signed-out'].includes(mode));
@@ -85,8 +86,9 @@ for await (const line of createInterface({input: process.stdin})) {
       chunk(sessionId,'Opening question','user'),
       chunk(sessionId,'First'), chunk(sessionId,' answer'),
       chunk('foreign','Wrong session'),
+      chunk(sessionId,'Unanswered question','user'),
       chunk(sessionId,'Next question','user'),
-      chunk(sessionId,'Second answer'),
+      chunk(sessionId,${longHistory} ? 'x'.repeat(15999)+'😀tail' : 'Second answer'),
       {id,result:{}},
       chunk(sessionId,' Late replay'),
     );
@@ -256,29 +258,44 @@ try {
         const read = (options: object) => rpc<z.infer<typeof ReadWorkResultSchema>>('work.read', {
           sessionId: started.value.ref.id, before: 1, after: 0, ...options,
         });
-        const latest = await read({});
+        const latest = await read(longHistory ? { before: 0 } : {});
         assert(latest.ok && latest.value.nextCursor, JSON.stringify(latest));
         assert.equal(latest.value.availability, 'incomplete');
-        assert.deepEqual(latest.value.turns.map(({ role, text }) => [role, text]), [
-          ['user', 'Next question'], ['assistant', 'Second answer'],
-        ]);
-        const earlier = await read({ cursor: latest.value.nextCursor });
-        assert(earlier.ok && earlier.value.availability === 'complete' && !earlier.value.nextCursor);
-        assert.deepEqual(earlier.value.turns.map(({ role, text }) => [role, text]), [
-          ['user', 'Opening question'], ['assistant', 'First answer'],
-        ]);
-        const anchored = await read({ around: earlier.value.turns[1].messageId, after: 1 });
-        assert(anchored.ok);
-        assert.deepEqual(anchored.value.turns.map(({ messageId }) => messageId), [
-          ...earlier.value.turns.map(({ messageId }) => messageId), latest.value.turns[0].messageId,
-        ]);
+        if (longHistory) {
+          const first = latest.value.turns[0];
+          assert.equal(first.text, 'x'.repeat(15999));
+          assert.equal(first.textComplete, false);
+          const rest = await read({ cursor: latest.value.nextCursor, before: 0 });
+          assert(rest.ok);
+          assert.deepEqual(rest.value.turns, [{
+            messageId: first.messageId, role: 'assistant', at: 0,
+            text: '😀tail', textComplete: true, textOffset: 15999,
+          }]);
+          assert(rest.value.nextCursor && !rest.value.nextCursor.resume);
+        } else {
+          assert.deepEqual(latest.value.turns.map(({ role, text }) => [role, text]), [
+            ['user', 'Next question'], ['assistant', 'Second answer'],
+          ]);
+          const earlier = await read({ cursor: latest.value.nextCursor, before: 2 });
+          assert(earlier.ok && earlier.value.availability === 'complete' && !earlier.value.nextCursor);
+          assert.deepEqual(earlier.value.turns.map(({ role, text }) => [role, text]), [
+            ['user', 'Opening question'], ['assistant', 'First answer'], ['user', 'Unanswered question'],
+          ]);
+          const anchored = await read({ around: earlier.value.turns[1].messageId, after: 1 });
+          assert(anchored.ok);
+          assert.deepEqual(anchored.value.turns.map(({ messageId }) => messageId),
+            earlier.value.turns.map(({ messageId }) => messageId));
+        }
         const unknown = await read({ sessionId: foreign.ref.id });
         assert(!unknown.ok && unknown.reason === 'not_found');
         const historyRequests = readFileSync(journal, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
-        assert.deepEqual(historyRequests.slice(-6).map(({ method }) => method), [
+        const expected = longHistory ? [
+          'initialize', 'session/load', 'initialize', 'session/load',
+        ] : [
           'initialize', 'session/load', 'initialize', 'session/load', 'initialize', 'session/load',
-        ]);
-        results.history = latest;
+        ];
+        assert.deepEqual(historyRequests.slice(-expected.length).map(({ method }) => method), expected);
+        results.history = { messages: latest.value.turns.length, availability: latest.value.availability };
       }
       const stop = (id: string) => rpc<Result<{stopped: boolean}>>('work.stop', { ref: { adapter, id } });
       if (stopFixture) {

@@ -5,6 +5,8 @@ Use the isolated daemon and pinned Bun from the Verify skill:
 ```sh
 bash .claude/skills/verify/proof-run.sh /absolute/history-evidence \
   .claude/skills/verify/antigravity-find.ts history
+bash .claude/skills/verify/proof-run.sh /absolute/history-long-evidence \
+  .claude/skills/verify/antigravity-find.ts history-long
 ```
 
 Start a daemon-owned session and request its saved messages through
@@ -12,6 +14,8 @@ Start a daemon-owned session and request its saved messages through
 message ID. Replay preserves order across chunks and excludes updates for
 other sessions or after the load response. A foreign session is unavailable.
 The three reads only initialize and load the recorded session.
+The long-message fixture verifies that a cursor retrieves the rest of a
+clipped reply without splitting a Unicode character or changing message IDs.
 
 For an attended check, start and resume a disposable session with the
 signed-in CLI. Read the saved user and agent text through the driver and
