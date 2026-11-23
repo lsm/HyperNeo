@@ -48,6 +48,7 @@ import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-to
 import { ObservedToolInventory } from './observed-tool-inventory.ts';
 import type { QueryLike } from './query-like.ts';
 import { createOxapQuery, type OxapQueryHub } from '../oxap/oxap-query.ts';
+import { OxapReopenDeliveryError, oxapReopenDeliveryFailure } from '../oxap/oxap-reopen.ts';
 import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import { codexSessionRefusal, selectSessionEngine, type SessionEngine } from './session-engine.ts';
 import type { QueryOptionsBuilder } from './query-options-builder.ts';
@@ -878,6 +879,7 @@ export class QueryRunner {
             if (!message.uuid || !live()) return;
             await messageQueue.onMessageYielded?.(message.uuid, Date.now());
             if (live()) messageQueue.acknowledgeYielded(message.uuid, queryGeneration);
+            if (live() && session.metadata.queryFailureEpisode?.failed) await this.failures.reset();
           },
           onRefused: async (message) => {
             if (!message.uuid || !live()) return;
@@ -1660,9 +1662,16 @@ export class QueryRunner {
       const cancelled = isAbortError || stateManager.getState().status === 'interrupted';
       if (isOxapHarness(engine)) {
         if (!live()) return;
-        const failure = error instanceof Error ? error : new Error(errorMessage);
+        const failure = oxapReopenDeliveryFailure(
+          error instanceof Error ? error : new Error(errorMessage)
+        );
         messageQueue.clear(cancelled ? undefined : failure);
         if (!cancelled && live()) {
+          if (failure instanceof OxapReopenDeliveryError) {
+            await this.failures.terminal(failure.message);
+            if (!live()) return;
+            await this.displayErrorAsAssistantMessage(failure.message, { markAsError: true });
+          }
           await errorManager.handleError(
             session.id,
             failure,

@@ -7,6 +7,9 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { withBusyRetry } from '../../storage/busy-retry.ts';
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { mailboxDeliveryReads } from '../../storage/repositories/mailbox-delivery-read-worker.ts';
+import type { MessageDeliveryPayload } from '../agent/message-delivery.ts';
 import { canonicalJson, normalizePromptForComparison } from '../agent/prompt-comparison.ts';
 import { emitStructuredLogEvent } from '../logger.ts';
 import { projectAdmissionMessage, type SessionMailboxEntry } from './admission-plan.ts';
@@ -234,10 +237,8 @@ export function renderMailboxFailureNotice(notice: MailboxFailureNotice): string
   });
 }
 
-export function createMailboxSenderNotifier(
-  jobQueue: JobQueueRepository
-): NonNullable<MailboxFailureDeps['notifySender']> {
-  return (senderSessionId, notice) =>
+export function createMailboxSenderNotifier(jobQueue: JobQueueRepository, wakeNeo = false) {
+  return (senderSessionId: string, notice: MailboxFailureNotice) =>
     handoffPromptToMailbox({
       to: renderAddress({ kind: 'session', sessionId: senderSessionId }),
       message: {
@@ -245,6 +246,7 @@ export function createMailboxSenderNotifier(
         message: { content: renderMailboxFailureNotice(notice) },
         parent_tool_use_id: null,
         inputKind: 'system',
+        ...(wakeNeo ? { workerReportKind: 'blocked' as const } : {}),
       },
       origin: 'system',
       jobQueue,
@@ -257,6 +259,34 @@ export function selectFailureSender(entry: MailboxEntry | null): string | null {
   return origin?.kind === 'session' && origin.sessionId !== entry.to.sessionId
     ? origin.sessionId
     : null;
+}
+
+export async function notifyFailedMailboxDelivery(
+  jobQueue: JobQueueRepository,
+  delivery: MessageDeliveryPayload,
+  reason: string
+): Promise<void> {
+  if (delivery.admissionRowid === undefined) return;
+  const payload = await gatewayFor(jobQueue.db).call(
+    mailboxDeliveryReads,
+    'admissionPayload',
+    delivery.admissionRowid
+  );
+  const entry = payload && parseMailboxEntry(payload);
+  const target = sessionFailureTarget(entry);
+  const sender = selectFailureSender(entry);
+  if (
+    sender &&
+    target?.sessionId === delivery.sessionId &&
+    target.messageUuid === delivery.messageUuid
+  ) {
+    const report = await createMailboxSenderNotifier(jobQueue, true)(sender, {
+      messageUuid: target.messageUuid,
+      targetSessionId: target.sessionId,
+      reason,
+    });
+    if (report.kind === 'rejected') throw new Error(report.reason);
+  }
 }
 
 export function notifyFailureSenderStage(ctx: MailboxFailureCtx): MailboxFailureCtx {

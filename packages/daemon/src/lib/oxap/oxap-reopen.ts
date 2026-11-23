@@ -19,6 +19,22 @@ export class OxapReopenRefusedError extends MessageDeliveryTerminalTurnError {
   }
 }
 
+export const OXAP_REOPEN_DELIVERY_FAILURE = 'Could not reopen the existing session: ';
+
+export class OxapReopenDeliveryError extends MessageDeliveryTerminalTurnError {
+  constructor(reason: string) {
+    super(`${OXAP_REOPEN_DELIVERY_FAILURE}${reason}`, 'oap_reopen_refused');
+  }
+}
+
+export function oxapReopenDeliveryFailure(error: Error): Error {
+  return error instanceof OxapHubRequestError &&
+    error.code === 'unsupported_feature' &&
+    error.feature === 'session.open.reopen'
+    ? new OxapReopenDeliveryError(error.message)
+    : error;
+}
+
 export type OxapReopenStore = Pick<
   Database,
   | 'updateSession'
@@ -203,11 +219,14 @@ export async function openOxapSession(
               decideReopenFailure(error).mode !== 'summary'
             )
               throw error;
+            if (row.adapter === 'deepseek') throw new OxapReopenDeliveryError(error.message);
             fallback = true;
           }
       }
     } else await open(client, plan);
     if (fallback) {
+      if (row.adapter === 'deepseek' && (session.sdkSessionId || status))
+        throw new OxapReopenDeliveryError('The saved DeepSeek thread is unavailable to resume.');
       recovery = {
         previous: session.sdkSessionId ?? null,
         text: recoveryContext(db.getSDKMessages(session.id, 100).messages),

@@ -10,11 +10,18 @@ class MailboxDeliveryReads {
       | undefined;
     return row?.rid;
   }
+
+  admissionPayload(rowid: number): Record<string, unknown> | null {
+    const row = this.db
+      .prepare("SELECT payload FROM job_queue WHERE rowid = ? AND queue = 'mailbox'")
+      .get(rowid) as { payload: string } | undefined;
+    return row ? JSON.parse(row.payload) : null;
+  }
 }
 
 export const mailboxDeliveryReads = defineRepositoryOp(
   'mailbox.deliveryReads',
   'read',
   MailboxDeliveryReads,
-  ['admissionRowid']
+  ['admissionRowid', 'admissionPayload']
 );
