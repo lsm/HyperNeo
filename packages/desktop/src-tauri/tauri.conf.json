@@ -80,5 +80,9 @@
       }
     }
   },
-  "plugins": {}
+  "plugins": {
+    "shell": {
+      "open": "(https?://[^\\s]+|mailto:[^\\s]+)"
+    }
+  }
 }

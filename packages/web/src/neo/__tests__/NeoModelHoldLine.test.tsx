@@ -32,7 +32,11 @@ describe('NeoModelHoldLine', () => {
     expect(navigateToSettings).not.toHaveBeenCalled();
     expect(popup).not.toHaveBeenCalled();
     fireEvent.click(app.getByRole('button', { name: 'Open Auth URL' }));
-    expect(popup).toHaveBeenCalledWith('https://example.com/oauth', '_blank');
+    expect(popup).toHaveBeenCalledWith(
+      'https://example.com/oauth',
+      '_blank',
+      'noopener,noreferrer'
+    );
     fireEvent.input(app.getByLabelText('Authorization code'), {
       target: { value: 'callback-code' },
     });

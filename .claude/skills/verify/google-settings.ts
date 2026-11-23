@@ -10,8 +10,10 @@ import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/set
 import { DatabaseCredentialStore } from '../../../packages/daemon/src/lib/credentials/credential-store.ts';
 import { googleConnectionReads } from '../../../packages/daemon/src/storage/repositories/google-connections-worker.ts';
 import { startGoogleLogin } from '../../../packages/daemon/src/lib/connections/google-login.ts';
+import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 
-const run = resolve(process.argv[2]);
+const run = resolve(process.argv.at(-1)!);
+const desktop = process.argv.includes('--desktop');
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -81,9 +83,12 @@ try {
         const file = resolve(dist, `.${path}`);
         if (!file.startsWith(`${dist}/`)) return new Response('Not found', { status: 404 });
         const asset = existsSync(file) && extname(file) ? file : join(dist, 'index.html');
-        return new Response(readFileSync(asset), { headers: { 'content-type': types[extname(asset)] ?? 'text/html' } });
+        return new Response(readFileSync(asset), { headers: {
+          'content-type': types[extname(asset)] ?? 'text/html',
+          ...(asset === join(dist, 'index.html') ? { 'Set-Cookie': `hyperneo_device=${readLocalCredential()}; Path=/; HttpOnly; SameSite=Strict` } : {}),
+        } });
       } });
-      const child = spawn('node', ['.claude/skills/verify/google-settings.mjs', String(port), fakeOrigin, run, phase], { env: process.env, stdio: 'inherit' });
+      const child = spawn('node', ['.claude/skills/verify/google-settings.mjs', String(port), fakeOrigin, run, phase, ...(desktop ? ['--desktop'] : [])], { env: process.env, stdio: 'inherit' });
       assert.equal(await new Promise((done, fail) => { child.once('error', fail); child.once('close', done); }), 0, 'isolated browser proof failed');
     } finally { server?.stop(true); await app.cleanup(); stops++; }
   }

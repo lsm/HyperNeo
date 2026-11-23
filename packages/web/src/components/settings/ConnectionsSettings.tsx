@@ -1,3 +1,4 @@
+import { isDesktopLinkHost, openExternalLink } from '../../lib/external-links.ts';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { connectionManager } from '../../lib/connection-manager';
@@ -181,8 +182,11 @@ export function ConnectionsSettings() {
     setBusy(true);
     setError('');
     setProvider(command.provider);
+    const desktop = isDesktopLinkHost();
     const window =
-      command.action === 'connect' ? globalThis.window.open('about:blank', '_blank') : null;
+      !desktop && command.action === 'connect'
+        ? globalThis.window.open('about:blank', '_blank')
+        : null;
     if (window) window.opener = null;
     try {
       const receipt = await reload(command.provider, command);
@@ -196,7 +200,8 @@ export function ConnectionsSettings() {
         popup.current?.close();
         popup.current = window;
         setConsentUrls((urls) => ({ ...urls, [command.provider]: receipt.authorizeUrl }));
-        if (window) window.location.href = receipt.authorizeUrl;
+        if (desktop) openExternalLink(receipt.authorizeUrl);
+        else if (window) window.location.href = receipt.authorizeUrl;
         setSetup(null);
         return;
       }
@@ -256,6 +261,11 @@ export function ConnectionsSettings() {
               href={consentUrls[view.provider]}
               target="_blank"
               rel="noopener noreferrer"
+              onClick={(event) => {
+                if (!isDesktopLinkHost()) return;
+                event.preventDefault();
+                openExternalLink(event.currentTarget.href);
+              }}
             >
               {t(statusText.continue)}
             </a>

@@ -17,6 +17,12 @@ Chromium. It never opens the human's browser profile or a real Google account.
 The browser's requests are restricted to loopback ports other than 8399. Fake
 consent still uses the real PKCE loopback exchange and signed OIDC validation.
 
+Pass `--desktop` after the proof script path to exercise the desktop handoff.
+The native bridge fixture must receive the consent URL while Settings stays in
+place and creates no popup. The helper completes consent in a separate test
+page. Check the real system-browser handoff separately with an isolated desktop
+build and synthetic URL.
+
 At Settings > Connections: capture the empty view, enter synthetic desktop OAuth
 client details, approve fake consent and observe the account, health and granted
 Gmail/Calendar access. Capture pending, connected and mobile states. A wrong
