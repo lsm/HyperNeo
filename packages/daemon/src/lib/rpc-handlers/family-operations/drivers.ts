@@ -11,6 +11,10 @@ import { createWorkerNameSource } from '../../drivers/worker-names.ts';
 import { PACKAGE_DOWNLOAD_WAIT_MS } from '../../agent/npm-package-download.ts';
 import { findExecutable } from '../../drivers/find-executable.ts';
 import { createAntigravityAdapter } from '../../drivers/antigravity-adapter.ts';
+import {
+  createCursorDesktopDiscovery,
+  cursorDesktopStatePath,
+} from '../../drivers/cursor-desktop-discovery.ts';
 import { gitWorktreeProject } from '../../drivers/worktree-project.ts';
 import { resolveNewSessionModel } from '../../session/new-session-model.ts';
 import {
@@ -638,6 +642,11 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     copilotCli.length ? copilotCli : existsSync(copilotDesktopPath) ? [copilotDesktop] : [];
   const antigravityPath =
     findExecutable('agy') ?? findExecutable('agy', join(homedir(), '.local/bin'));
+  const cursorState = cursorDesktopStatePath(homedir());
+  const cursorDesktop = createCursorDesktopDiscovery(
+    (query) => context.deps.db.readCursorDesktopAsync({ statePath: cursorState, query }),
+    machine
+  );
   const adapters = [
     createHyperneoAdapter({
       readTurnEnds: (sessionId, since) =>
@@ -696,6 +705,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       ...(context.extensionAdapters?.({ searchChats: ownChats }) ?? []),
       ...adapters.slice(1),
       ...copilot(),
+      ...(existsSync(cursorState) ? [cursorDesktop] : []),
     ];
   };
   const folder = neoUserFolder(context.deps.config.workspaceRoot);
