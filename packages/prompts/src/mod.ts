@@ -181,6 +181,12 @@ import mddriversClaudeDesktopWakeRequest from './drivers/claude-desktop-wake-req
 import mddriversClaudeRcToggleRequest from './drivers/claude-rc-toggle-request.md' with {
   type: 'text',
 };
+import mddriversClaudeDesktopHelperBrief from './drivers/claude-desktop-helper-brief.md' with {
+  type: 'text',
+};
+import mddriversClaudeDesktopHelperArchiveRequest from './drivers/claude-desktop-helper-archive-request.md' with {
+  type: 'text',
+};
 import mdmailboxDeliveryFailed from './mailbox/delivery-failed.md' with { type: 'text' };
 import mdmessagingReplyProtocol from './messaging/reply-protocol.md' with { type: 'text' };
 import mdmessagingReplyToTarget from './messaging/reply-to-target.md' with { type: 'text' };
@@ -467,6 +473,8 @@ const registry: Record<string, string> = {
   'drivers/claude-desktop-wake-brief.md': mddriversClaudeDesktopWakeBrief,
   'drivers/claude-desktop-wake-request.md': mddriversClaudeDesktopWakeRequest,
   'drivers/claude-rc-toggle-request.md': mddriversClaudeRcToggleRequest,
+  'drivers/claude-desktop-helper-brief.md': mddriversClaudeDesktopHelperBrief,
+  'drivers/claude-desktop-helper-archive-request.md': mddriversClaudeDesktopHelperArchiveRequest,
   'mailbox/delivery-failed.md': mdmailboxDeliveryFailed,
   'messaging/reply-protocol.md': mdmessagingReplyProtocol,
   'messaging/reply-to-target.md': mdmessagingReplyToTarget,
@@ -610,6 +618,8 @@ export const {
   CLAUDE_DESKTOP_WAKE_BRIEF,
   CLAUDE_DESKTOP_WAKE_REQUEST,
   CLAUDE_RC_TOGGLE_REQUEST,
+  CLAUDE_DESKTOP_HELPER_BRIEF,
+  CLAUDE_DESKTOP_HELPER_ARCHIVE_REQUEST,
   MAILBOX_DELIVERY_FAILED,
   MESSAGING_REPLY_PROTOCOL,
   MESSAGING_REPLY_TO_TARGET,
