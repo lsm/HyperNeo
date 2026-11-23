@@ -101,7 +101,11 @@ describe('SessionsPage', () => {
     ];
     mockListProviders.mockResolvedValue({
       providers: [
-        { providerId: 'anthropic-codex', configJson: JSON.stringify({ harness: 'oxap-codex' }) },
+        {
+          providerId: 'anthropic-codex',
+          configJson: JSON.stringify({ harness: 'oxap-codex' }),
+          readyHarnesses: ['oxap-codex'],
+        },
         { providerId: 'anthropic' },
       ],
     });
@@ -137,6 +141,71 @@ describe('SessionsPage', () => {
     );
     expect(screen.queryByRole('slider')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Sandbox' })).toBeNull();
+  });
+
+  it('sends a ready OXAP override instead of the SDK default for one new chat', async () => {
+    modelFixture.models = [
+      { id: 'codex', name: 'Codex model', provider: 'anthropic-codex', available: true },
+    ];
+    mockListProviders.mockResolvedValue({
+      providers: [{ providerId: 'anthropic-codex', readyHarnesses: ['oxap-codex'] }],
+    });
+    vi.mocked(localStorage.getItem).mockReturnValue(
+      JSON.stringify({ model: { id: 'codex', provider: 'anthropic-codex' }, sandbox: true })
+    );
+    vi.mocked(createSession).mockReturnValue(new Promise(() => {}));
+    render(<SessionsPage />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Harness: Claude Code' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'OXAP Codex' }));
+    expect(await screen.findByRole('button', { name: 'Harness: OXAP Codex' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Sandbox' })).toBeNull();
+    fireEvent.input(screen.getByPlaceholderText('Ask anything to start a new chat...'), {
+      target: { value: 'Hello' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Start chat' }));
+    expect(createSession).toHaveBeenCalledWith({
+      harness: 'oxap-codex',
+      config: { model: 'codex', provider: 'anthropic-codex' },
+    });
+  });
+
+  it('blocks an unavailable OXAP default until the user chooses Claude Code', async () => {
+    modelFixture.models = [
+      { id: 'deepseek-v4-pro', name: 'DeepSeek', provider: 'deepseek', available: true },
+    ];
+    mockListProviders.mockResolvedValue({
+      providers: [
+        {
+          providerId: 'deepseek',
+          configJson: JSON.stringify({ harness: 'oxap-deepseek' }),
+          readyHarnesses: [],
+        },
+      ],
+    });
+    vi.mocked(localStorage.getItem).mockReturnValue(
+      JSON.stringify({ model: { id: 'deepseek-v4-pro', provider: 'deepseek' } })
+    );
+    vi.mocked(createSession).mockReturnValue(new Promise(() => {}));
+    render(<SessionsPage />);
+
+    const trigger = await screen.findByRole('button', { name: 'Harness: OXAP DeepSeek' });
+    const prompt = screen.getByPlaceholderText('Ask anything to start a new chat...');
+    fireEvent.input(prompt, { target: { value: 'Hello' } });
+    expect(screen.getByRole('button', { name: 'Start chat' }).disabled).toBe(true);
+    fireEvent.keyDown(prompt, { key: 'Enter' });
+    expect(createSession).not.toHaveBeenCalled();
+
+    fireEvent.click(trigger);
+    expect(
+      screen.getByRole('menuitem', { name: /OXAP DeepSeek.*Set up in Settings/ }).disabled
+    ).toBe(true);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Claude Code' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Start chat' }));
+    expect(createSession).toHaveBeenCalledWith({
+      harness: 'sdk',
+      config: { model: 'deepseek-v4-pro', provider: 'deepseek' },
+    });
   });
 
   it('shows an error when providers cannot be loaded', async () => {

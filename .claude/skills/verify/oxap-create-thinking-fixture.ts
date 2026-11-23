@@ -13,7 +13,7 @@ serveLocalRelease('/usr/bin/true', releaseName(), `${run}/release`);
 const releaseFetch = globalThis.fetch;
 globalThis.fetch = Object.assign(async (...args: Parameters<typeof fetch>) => {
   const url = args[0] instanceof Request ? args[0].url : String(args[0]);
-  if (url.endsWith('/SHA256SUMS.txt')) await new Promise((resolve) => setTimeout(resolve, 11_000));
+  if (!harnessChoice && url.endsWith('/SHA256SUMS.txt')) await new Promise((resolve) => setTimeout(resolve, 11_000));
   return releaseFetch(...args);
 }, { preconnect: releaseFetch.preconnect }) as typeof fetch;
 const app = await createDaemonApp({
@@ -106,15 +106,17 @@ setModelsCache(
   ])
 );
 await rpc.request('models.list', {});
-const seeded = await rpc.request<{ sessionId: string }>('session.create', {
-  title: 'Synthetic sign-in', workspacePath: `${run}/home`,
-  config: { provider: 'anthropic-codex', model: 'codex-6-luna', queryMode: 'manual' },
-});
-await app.db.saveSDKMessage(seeded.sessionId, {
-  type: 'auth_status', isAuthenticating: true, uuid: crypto.randomUUID(),
-  session_id: seeded.sessionId, output: ['Open https://example.com/device.', 'Enter code SYNTHETIC'],
-});
-console.log(`AUTH_SESSION=${seeded.sessionId}`);
+if (!harnessChoice) {
+  const seeded = await rpc.request<{ sessionId: string }>('session.create', {
+    title: 'Synthetic sign-in', workspacePath: `${run}/home`,
+    config: { provider: 'anthropic-codex', model: 'codex-6-luna', queryMode: 'manual' },
+  });
+  await app.db.saveSDKMessage(seeded.sessionId, {
+    type: 'auth_status', isAuthenticating: true, uuid: crypto.randomUUID(),
+    session_id: seeded.sessionId, output: ['Open https://example.com/device.', 'Enter code SYNTHETIC'],
+  });
+  console.log(`AUTH_SESSION=${seeded.sessionId}`);
+}
 const listProviders = app.db.providers.listProviders.bind(app.db.providers);
 let failProviderList = !harnessChoice;
 app.db.providers.listProviders = () => {

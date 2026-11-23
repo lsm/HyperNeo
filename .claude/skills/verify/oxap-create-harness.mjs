@@ -1,12 +1,29 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 
-const [port, code, output] = process.argv.slice(2);
+const [port, code, output, run] = process.argv.slice(2);
 const base = `http://127.0.0.1:${port}`;
 const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, executablePath: process.env.VERIFY_BROWSER });
 const selectionKey = 'hyperneo_new_chat_selection';
+const setCodexDefault = (harness) => {
+  const { reply } = JSON.parse(execFileSync('bun', [
+    '.claude/skills/verify/rpc.ts', 'rpc:operation.invoke',
+    JSON.stringify({
+      name: 'oxap.settings.save',
+      input: {
+        providerId: 'anthropic-codex', harness,
+        ...(harness === 'oxap-codex' ? { settings: { executable: '/usr/bin/true' } } : {}),
+      },
+    }),
+  ], {
+    encoding: 'utf8',
+    env: { ...process.env, NODE_ENV: 'test', HYPERNEO_DATA_DIR: join(run, 'data'), VERIFY_PORT: port },
+  }));
+  assert.deepEqual(reply, { accepted: true });
+};
 
 try {
   const initial = await browser.newPage();
@@ -69,17 +86,30 @@ try {
       assert.equal(response.data.session.config.harness, expectedStored);
     };
 
+    setCodexDefault('sdk');
     await open('codex-6-luna', 'anthropic-codex');
     assert.equal(await page.evaluate(() => matchMedia('(pointer: coarse)').matches), touch);
+    const sdk = page.getByRole('button', { name: 'Harness: Claude Code' });
     const codex = page.getByRole('button', { name: 'Harness: OXAP Codex' });
-    await codex.waitFor({ timeout: 6000 });
+    await sdk.waitFor({ timeout: 6000 });
     await screenshot('default');
-    await submit(undefined, 'oxap-codex');
+    await submit(undefined, undefined);
+
+    await open('codex-6-luna', 'anthropic-codex');
+    await click(sdk);
+    await click(page.getByRole('menuitem', { name: 'OXAP Codex', exact: true }));
+    await codex.waitFor();
+    await page.getByRole('menuitem', { name: 'OXAP Codex', exact: true }).waitFor({ state: 'hidden' });
+    await screenshot('override');
+    await submit('oxap-codex', 'oxap-codex');
+
+    await open('codex-6-luna', 'anthropic-codex');
+    await sdk.waitFor();
+    setCodexDefault('oxap-codex');
     await open('codex-6-luna', 'anthropic-codex');
     await click(codex);
     await click(page.getByRole('menuitem', { name: 'Claude Code', exact: true }));
-    await page.getByRole('button', { name: 'Harness: Claude Code' }).waitFor();
-    await screenshot('override');
+    await sdk.waitFor();
     await submit('sdk', undefined);
     await open('deepseek-v4-pro', 'deepseek');
     await click(page.getByRole('button', { name: 'Harness: Claude Code' }));
@@ -91,7 +121,7 @@ try {
     await screenshot('disabled');
     await page.keyboard.press('Escape');
     await submit(undefined, undefined);
-    console.log(JSON.stringify({ width, touch, creations: creations.length, defaultOmitted: true, sdkOverride: true, unavailableDisabled: true }));
+    console.log(JSON.stringify({ width, touch, creations: creations.length, defaultOmitted: true, oxapOverride: true, sdkOverride: true, unavailableDisabled: true }));
     await context.close();
   }
 } finally {

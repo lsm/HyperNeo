@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { normalizeThinkingLevel } from '@hyperneo/shared';
-import { isOxapHarness, oxapHarness, OXAP_HARNESSES } from '@hyperneo/shared/types/oxap-harnesses';
+import {
+  isOxapHarness,
+  oxapHarness,
+  oxapHarnessesForProvider,
+  type OxapHarnessId,
+} from '@hyperneo/shared/types/oxap-harnesses';
 import type {
   CreateSessionRequest,
   GitBranchesResponse,
   ModelInfo,
   Provider,
-  ProviderRecord,
   ThinkingLevel,
   WorkspaceHistoryEntry,
 } from '@hyperneo/shared';
@@ -20,6 +24,7 @@ import {
   addWorkspaceToHistory,
   addFolderToProject,
   listProviders,
+  type ListedProvider,
 } from '../lib/api-helpers.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
@@ -30,12 +35,16 @@ import {
   hasNativeFolderPicker,
   NATIVE_FOLDER_PICKER_TIMEOUT_MS,
 } from '../lib/runtime-capabilities.ts';
+import { Dropdown } from '../components/ui/Dropdown.tsx';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
 import { WorkspaceChips } from '../components/WorkspaceChips.tsx';
 import { ModelPicker } from '../components/ModelPicker.tsx';
 import { findDefaultModel, useModelSwitcher } from '../hooks/useModelSwitcher.ts';
 
 type NewChatWorktreeMode = 'worktree' | 'direct';
+type NewChatHarness = 'sdk' | OxapHarnessId;
+
+const HARNESS_SETUP = 'Set up in Settings → Providers';
 
 interface NewChatModelSelection {
   id: string;
@@ -131,7 +140,7 @@ export function SessionsPage() {
   const [initialSelection] = useState<NewChatSelection>(() => loadNewChatSelection());
   const { availableModels, loading: modelLoading, reload: reloadModels } = useModelSwitcher(null);
 
-  const [providers, setProviders] = useState<ProviderRecord[] | null>(null);
+  const [providers, setProviders] = useState<ListedProvider[] | null>(null);
   const [providersError, setProvidersError] = useState<string | null>(null);
   const [providersRetry, setProvidersRetry] = useState(0);
   const [history, setHistory] = useState<WorkspaceHistoryEntry[]>([]);
@@ -154,6 +163,8 @@ export function SessionsPage() {
   const [selectedThinking, setSelectedThinking] = useState<ThinkingLevel | null>(
     initialSelection.thinkingLevel
   );
+  const [harnessChoice, setHarnessChoice] = useState<{ provider: string; id: NewChatHarness }>();
+  const [harnessMenuOpen, setHarnessMenuOpen] = useState(false);
   const [sandboxChoice, setSandboxChoice] = useState<boolean | null>(initialSelection.sandbox);
   const sandbox = sandboxChoice ?? globalSettings.value?.sandbox?.enabled ?? false;
   const thinkingLevel =
@@ -177,17 +188,34 @@ export function SessionsPage() {
     (selectedModel && selectedModelInfo
       ? selectedModelInfo.provider
       : globalSettings.value?.modelProvider) ?? activeModelInfo?.provider;
-  const mayUseOxap = Object.values(OXAP_HARNESSES).some((row) =>
-    (row.providers as readonly string[]).includes(providerId ?? '')
-  );
+  const eligibleHarnesses = oxapHarnessesForProvider(providerId ?? '');
+  const mayUseOxap = eligibleHarnesses.length > 0;
   const provider = providers?.find((record) => record.providerId === providerId);
-  let harness: unknown;
+  let configuredHarness: unknown;
   try {
-    harness = JSON.parse(provider?.configJson ?? '{}').harness;
+    configuredHarness = JSON.parse(provider?.configJson ?? '{}').harness;
   } catch {}
+  const defaultHarness =
+    isOxapHarness(configuredHarness) && eligibleHarnesses.includes(configuredHarness)
+      ? configuredHarness
+      : 'sdk';
+  const harness =
+    harnessChoice?.provider === providerId && harnessChoice ? harnessChoice.id : defaultHarness;
   const engine = isOxapHarness(harness) ? oxapHarness(harness) : undefined;
-  const isOxap = engine?.providers.includes(providerId ?? '') ?? false;
-  const thinkingAllowed = !isOxap || Boolean(engine?.thinking);
+  const isOxap = engine !== undefined;
+  const ready = (id: OxapHarnessId) => provider?.readyHarnesses?.includes(id) === true;
+  const harnessUnavailable = isOxapHarness(harness) && !ready(harness);
+  const harnessLabel = engine?.label ?? 'Claude Code';
+  const thinkingAllowed = !engine || engine.thinking;
+  const chooseHarness = (id: NewChatHarness) => {
+    if (providerId)
+      setHarnessChoice(id === defaultHarness ? undefined : { provider: providerId, id });
+  };
+
+  useEffect(() => {
+    setHarnessChoice(undefined);
+    setHarnessMenuOpen(false);
+  }, [providerId]);
 
   useEffect(() => {
     if (connectionState.value !== 'connected') return;
@@ -197,7 +225,7 @@ export function SessionsPage() {
       const current = ++request;
       setProviders(null);
       setProvidersError(null);
-      void listProviders()
+      void listProviders({ forNewSession: true })
         .then(({ providers }) => {
           if (active && current === request) setProviders(providers);
         })
@@ -390,7 +418,7 @@ export function SessionsPage() {
 
   const handleSubmit = async () => {
     const content = text.trim();
-    if (!content || submitting || (mayUseOxap && providers === null)) return;
+    if (!content || submitting || harnessUnavailable || (mayUseOxap && providers === null)) return;
     if (!canCreate) {
       toast.error('Not connected to server. Please wait...');
       return;
@@ -403,10 +431,11 @@ export function SessionsPage() {
     let createdSessionId: string | null = null;
     try {
       const req: CreateSessionRequest = {};
-      if (selectedModel && selectedModelInfo) {
+      if (harness !== defaultHarness) req.harness = harness;
+      if ((selectedModel && selectedModelInfo) || req.harness) {
         req.config = {
-          model: selectedModelInfo.id,
-          provider: selectedModelInfo.provider as Provider,
+          model: activeModelInfo?.id ?? defaultModelId,
+          provider: providerId as Provider,
         };
       }
       if (selectedThinking && thinkingAllowed) {
@@ -481,8 +510,8 @@ export function SessionsPage() {
               autoFocus
               class="w-full bg-transparent resize-none px-1.5 py-1 text-sm text-fg placeholder:text-fg-faint focus:outline-none disabled:opacity-60"
             />
-            <div class="flex items-center justify-between gap-2 pt-1">
-              <div class="flex min-w-0 items-center gap-2">
+            <div class="flex items-start justify-between gap-2 pt-1">
+              <div class="flex min-w-0 flex-wrap items-center gap-2">
                 <ModelPicker
                   menuId="new-chat-preferences"
                   activeModelInfo={activeModelInfo}
@@ -501,6 +530,41 @@ export function SessionsPage() {
                     setSelectedModel({ id: model.id, provider: model.provider });
                   }}
                 />
+                {mayUseOxap && providers !== null ? (
+                  <Dropdown
+                    position="left"
+                    isOpen={harnessMenuOpen}
+                    onOpenChange={setHarnessMenuOpen}
+                    trigger={
+                      <button
+                        type="button"
+                        aria-label={`Harness: ${harnessLabel}`}
+                        aria-haspopup="menu"
+                        aria-expanded={harnessMenuOpen}
+                        class="flex h-8 items-center gap-1.5 rounded-full border border-line px-2.5 text-xs text-fg-muted hover:text-fg"
+                      >
+                        {harnessLabel}
+                        <span aria-hidden="true">▾</span>
+                      </button>
+                    }
+                    items={[
+                      { label: 'Claude Code', onClick: () => chooseHarness('sdk') },
+                      ...eligibleHarnesses.map((id) => {
+                        const label = oxapHarness(id).label;
+                        const available = ready(id);
+                        return {
+                          label: available ? label : `${label} — ${HARNESS_SETUP}`,
+                          disabled: !available,
+                          onClick: () => chooseHarness(id),
+                        };
+                      }),
+                    ]}
+                  />
+                ) : !mayUseOxap ? (
+                  <span class="text-xs text-fg-muted" aria-label="Harness: Claude Code">
+                    Claude Code
+                  </span>
+                ) : null}
                 {!isOxap && (
                   <button
                     type="button"
@@ -535,11 +599,12 @@ export function SessionsPage() {
                   submitting ||
                   !canCreate ||
                   waitingForProjectGit ||
+                  harnessUnavailable ||
                   (mayUseOxap && providers === null)
                 }
                 title="Start chat"
                 aria-label="Start chat"
-                class="flex items-center justify-center w-8 h-8 rounded-full bg-accent-hover text-accent-fg transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
+                class="flex items-center justify-center w-8 h-8 shrink-0 rounded-full bg-accent-hover text-accent-fg transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {submitting ? (
                   <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
@@ -571,6 +636,9 @@ export function SessionsPage() {
             </div>
           </div>
 
+          {harnessUnavailable && providers !== null && !harnessMenuOpen && (
+            <p class="mt-2 px-1 text-xs text-fg-muted">{HARNESS_SETUP}</p>
+          )}
           {providersError && (
             <p role="alert" class="mt-2 px-1 text-sm text-danger">
               {providersError}{' '}
