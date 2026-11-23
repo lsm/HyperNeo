@@ -125,8 +125,10 @@ bash packages/desktop/locked-use/check-reveal.sh "$RUN"
 Pass prints `click hid 720,530` then `submitted` (the field came back and was
 submitted), `prompts=2 reveal=no_prompt` with no click and `ended unlock_failed`
 (two candidate labels, nothing clicked), `reveal=clicked` with `ended unlock_failed`
-(the click shows nothing), and `reveal=owner_input` with `ended local_input` (owner
-input during the lookup stops the click), then `guardian reveal check PASS (4
+(the click shows nothing), `reveal=owner_input` with `ended local_input` (owner
+input during the lookup stops the click), and after the click the same
+`owner_input` and `ended local_input` with no submit (owner input during the
+field's value set stops the arming), then `guardian reveal check PASS (5
 cases)`. In an attended run the same tokens appear in the `unlock_diagnostics` line
 of `HyperNeo.log`: `reveal=clicked` followed by `field_found=1` means the click
 worked; `reveal=no_user`, `no_prompt` means the lock-screen tree differs;
@@ -148,7 +150,10 @@ cargo test --locked --manifest-path packages/desktop/src-tauri/Cargo.toml --lib 
 
 The fixture prints the delayed unlock, the lock request, the confirmed relock,
 then the guardian exit. With no observed unlock it prints a lock request after the
-roughly five-second cap and exits. Both cases end in `guardian release check PASS`.
+roughly five-second cap and exits. It also answers the guardian's authorization
+socket through the real listener: an armed guardian grants once, an ask after an
+answered Allow is refused, and an ask after owner input is refused. All three
+cases end in `guardian release check PASS`.
 The Desktop tests cover refusal while a guardian is active or releasing,
 suppression on a locked launch and after owner input or a crash, and admitting
 workers again after an unlock.

@@ -4,8 +4,9 @@
 // focused user is clicked at its screen point through the HID tap, the way a physical
 // click reaches the lock screen. Modes: reveal (the guardian clicks the label and
 // submits the field), ambiguous (two candidate labels, nothing is clicked), ignored
-// (the click shows nothing, the unlock fails) and input (owner input during the lookup
-// stops the click). It never touches the real lock screen.
+// (the click shows nothing, the unlock fails), input (owner input during the lookup
+// stops the click) and arm (owner input during the field's value set stops the arming
+// and the submit). It never touches the real lock screen.
 #import <AppKit/AppKit.h>
 #import <ApplicationServices/ApplicationServices.h>
 #import <IOKit/pwr_mgt/IOPMLib.h>
@@ -69,6 +70,10 @@ static AXError fixtureCopy(AXUIElementRef item, CFStringRef attribute, CFTypeRef
 
 static AXError fixtureSet(AXUIElementRef item, CFStringRef attribute, CFTypeRef value) {
     (void)value;
+    if (strcmp(mode, "arm") == 0 && CFEqual(attribute, kAXValueAttribute) && ownerActs) {
+        dispatch_sync(dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ownerActs);
+        ownerActs = nil;
+    }
     return (__bridge NSDictionary *)item == field && CFEqual(attribute, kAXValueAttribute) ? kAXErrorSuccess : kAXErrorFailure;
 }
 
@@ -80,14 +85,17 @@ static AXError fixtureAction(AXUIElementRef item, CFStringRef action) {
 }
 
 static void fixturePost(CGEventTapLocation tap, CGEventRef event) {
-    if (tap != kCGHIDEventTap || CGEventGetType(event) != kCGEventLeftMouseUp) return;
+    if (tap != kCGHIDEventTap) return;
+    CGEventType type = CGEventGetType(event);
+    if (type != kCGEventLeftMouseDown && type != kCGEventLeftMouseUp) return;
     if (CGEventGetIntegerValueField(event, kCGEventSourceUnixProcessID) == 0) {
         puts("click carries source 0, would read as owner input");
         exit(7);
     }
+    if (type != kCGEventLeftMouseUp) return;
     CGPoint point = CGEventGetLocation(event);
     printf("click hid %.0f,%.0f\n", point.x, point.y);
-    if (strcmp(mode, "reveal") == 0 && CGRectContainsPoint(CGRectMake(620, 520, 200, 20), point) && !field) {
+    if ((strcmp(mode, "reveal") == 0 || strcmp(mode, "arm") == 0) && CGRectContainsPoint(CGRectMake(620, 520, 200, 20), point) && !field) {
         field = node(@"UserPasswordTextField", (__bridge NSString *)kAXTextFieldRole, CGRectMake(620, 560, 200, 24));
         [window replaceObjectAtIndex:2 withObject:field];
     }

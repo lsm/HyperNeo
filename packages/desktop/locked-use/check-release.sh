@@ -16,4 +16,5 @@ check() {
 
 check $'unlock observed\nlock requested\nrelock observed\nended stopped' delayed
 check $'lock requested\nended stopped' capped
-echo 'guardian release check PASS (2 cases)'
+check $'allow_answered\ngrant allowed\ngrant refused after allow\ngrant refused after owner input' grant
+echo 'guardian release check PASS (3 cases)'
