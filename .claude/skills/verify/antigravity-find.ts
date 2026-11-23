@@ -148,7 +148,7 @@ try {
   const registered = catalog.value.find((entry) => entry.id === adapter);
   results.catalog = registered ?? null;
   if (mode === 'absent') assert.equal(registered, undefined);
-  else assert(['find', 'start', 'status'].every((verb) => registered?.capabilities.includes(verb)));
+  else assert.deepEqual(registered?.capabilities, ['find', 'start', 'status', 'send']);
 
   let operations = 1;
   if (startFixture || mode === 'start-signed-out') {
@@ -217,11 +217,15 @@ try {
       assert(foreign);
       assert.equal(foreign.place.folder, undefined);
       if (resumeFixture) {
-        assert(registered?.capabilities.includes('send'));
         const refused = await send(foreign.ref.id);
         assert(!refused.ok && refused.reason === 'not_started_by_us' && refused.notSent);
-        const sent = await send(started.value.ref.id);
-        assert(sent.ok && !sent.value.delivered && sent.value.receipt, JSON.stringify(sent));
+        const [first, second] = await Promise.all([
+          send(started.value.ref.id),
+          send(started.value.ref.id),
+        ]);
+        const [sent, competing] = first.ok ? [first, second] : [second, first];
+        assert(sent.ok && !sent.value.delivered && sent.value.unconfirmed && sent.value.receipt, JSON.stringify(sent));
+        assert(!competing.ok && competing.reason === 'busy' && competing.notSent);
         const readFollowUp = () => rpc<Result<WorkDetail>>('work.status', {
           ref: started.value.ref,
           receipt: sent.value.receipt,
