@@ -8,7 +8,13 @@ function mark(element: Element, reference: string, label = reference) {
   if (element.tagName === 'A') return;
   element.setAttribute('role', 'link');
   element.setAttribute('tabindex', '0');
-  element.setAttribute('aria-label', t('artifact.openNamed', { name: label }));
+  if (!element.hasAttribute('data-markdown-file-reference'))
+    element.setAttribute('aria-label', t('artifact.openNamed', { name: label }));
+}
+
+export function isMarkdownFileReference(href: string) {
+  const path = /^file:\/[^?#]*\.([\w-]+)$/.exec(href);
+  return path !== null && PREVIEWABLE_FILE_EXTENSIONS.has(path[1].toLowerCase());
 }
 
 export function demoteLocalFileLinks(container: HTMLElement) {
@@ -46,9 +52,13 @@ export function markPreviewReferences(
     const href = anchor.getAttribute('href') ?? '';
     if (wanted.has(href)) apply(anchor, href);
   });
+  container.querySelectorAll('[data-markdown-file-reference]').forEach((element) => {
+    const reference = element.getAttribute('data-markdown-file-reference') ?? '';
+    if (wanted.has(reference)) apply(element, reference);
+  });
   container.querySelectorAll('code').forEach((code) => {
     const text = code.textContent ?? '';
-    if (!code.closest('pre') && wanted.has(text)) apply(code, text);
+    if (!code.closest('pre, [data-markdown-file-reference]') && wanted.has(text)) apply(code, text);
   });
   const patterns = [...wanted]
     .sort((a, b) => b.length - a.length)
@@ -60,7 +70,9 @@ export function markPreviewReferences(
   const pattern = new RegExp(`(${patterns.join('|')})`, 'g');
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
     acceptNode: (node) =>
-      node.parentElement?.closest('a, code, pre, [data-preview-reference]')
+      node.parentElement?.closest(
+        'a, code, pre, [data-preview-reference], [data-markdown-file-reference]'
+      )
         ? NodeFilter.FILTER_REJECT
         : NodeFilter.FILTER_ACCEPT,
   });

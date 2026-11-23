@@ -10,7 +10,11 @@ import { MermaidFigureToolbar, getMermaidForTheme } from './MermaidViewer.tsx';
 import { decideMarkdownImage, isAllowedMarkdownUrl } from './markdown-image.ts';
 import { LruCache } from '../../lib/lru-cache.ts';
 import { decideArtifactImage, decideArtifactLink } from '../../lib/artifact-link-policy.ts';
-import { demoteLocalFileLinks, markPreviewReferences } from './markdown-references.ts';
+import {
+  demoteLocalFileLinks,
+  isMarkdownFileReference,
+  markPreviewReferences,
+} from './markdown-references.ts';
 import { attachQuoteCopyButtons } from './markdown-quote-copy.tsx';
 
 interface MarkdownRendererProps {
@@ -26,7 +30,7 @@ interface MarkdownRendererProps {
 }
 
 function demoteAnchorLinks(container: HTMLElement) {
-  container.querySelectorAll('a').forEach((anchor) => {
+  container.querySelectorAll('a, [data-markdown-file-reference]').forEach((anchor) => {
     const span = document.createElement('span');
     span.setAttribute('data-demoted-link', '');
     while (anchor.firstChild) span.appendChild(anchor.firstChild);
@@ -266,7 +270,7 @@ function transformMarkdownUrlNodes(node: MarkdownImageNode, insideAnchor = false
       const href = child.properties?.href;
       if (typeof href === 'string' && !isAllowedMarkdownUrl(href, 'link')) {
         child.tagName = 'span';
-        child.properties = {};
+        child.properties = isMarkdownFileReference(href) ? { dataMarkdownFileReference: href } : {};
       }
     }
     transformMarkdownUrlNodes(child, insideAnchor || child.tagName === 'a');
