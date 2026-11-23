@@ -121,6 +121,7 @@ describe('SessionsPage', () => {
     vi.mocked(createSession).mockReturnValue(new Promise(() => {}));
     render(<SessionsPage />);
     fireEvent.click(screen.getByRole('button', { name: 'Choose model, client and thinking' }));
+    await screen.findByRole('button', { name: 'Client, OXAP Codex' });
     expect(screen.queryByRole('button', { name: /^Thinking,/ })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /^Model,/ }));
     fireEvent.click(screen.getByRole('button', { name: /Sonnet model/ }));
