@@ -35,9 +35,11 @@ mcp_audit_log. The script closes the fake host and daemon in its finally block.
 
 The same runner drives the native worker's `work.stop` through the real WebSocket
 operation. The MCP fixture supplies a synthetic turn. The stop acknowledgment
-must wait for the host acknowledgment for that turn, its next Desktop call must
-return `turn_stopped` without reaching the host, and a later turn in the same
-session must dispatch. Pass prints `work.stop journey PASS` and writes
+must name the in-flight call ID and wait for the host acknowledgment. A call
+from the stopped turn returns `turn_stopped`, and a later turn in the same
+session dispatches. The legacy-host fixture rejects the new stop command and
+accepts the existing dispatch shape. Native Stop still succeeds in that case.
+Pass prints `work.stop journey PASS` and writes
 `evidence/desktop-turn-stop.json`.
 
 Run the desktop-call operation contracts with Node 24 Vitest for the inactive,

@@ -115,7 +115,7 @@ export function createDesktopCallOperation(
           tool: input.tool,
           arguments: input.args,
           callId: randomUUID(),
-          turn: caller.desktopTurn?.id,
+          turn: caller.desktopTurn ?? undefined,
         }),
       ['input', 'outcome', 'caller'],
       'reply'

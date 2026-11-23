@@ -32,6 +32,9 @@ const app = await createDaemonApp({
 assert(![8399, 8499].includes(app.server.port));
 const requests: Record<string, unknown>[] = [];
 const cancelTurn = Promise.withResolvers<() => void>();
+const pendingDispatch = Promise.withResolvers<() => void>();
+let holdDispatch = false;
+let legacyHost = false;
 let hostBusy = false;
 let hostTimeout = false;
 let hostLocked = false;
@@ -47,7 +50,16 @@ const host = createServer(socket => {
     const request = JSON.parse(line);
     requests.push(request);
     if (request.action === 'cancelTurn') {
+      if (legacyHost) {
+        socket.end(JSON.stringify({ ok: false, error: 'unknown field `callIds`, expected a dispatch field' }) + '\n');
+        return;
+      }
       cancelTurn.resolve(() => socket.end('{"ok":true,"result":{"state":"stopped"}}\n'));
+      return;
+    }
+    assert.deepEqual(Object.keys(request).sort(), ['action', 'apps', 'arguments', 'callId', 'todo', 'todos', 'tool', 'workDir', 'worker']);
+    if (holdDispatch) {
+      pendingDispatch.resolve(() => socket.end(JSON.stringify({ ok: true, result: { call_id: request.callId, bundle_id: null, class: null, decision: 'refused', reason: 'turn_stopped', dispatched: false } }) + '\n'));
       return;
     }
     if (hostBusy) {
@@ -202,33 +214,53 @@ try {
   let turn = new DesktopTurn();
   const invokeTurn = operationInvoke(agent.getOperationMcpServer(undefined, () => turn));
   const dispatch = async () => JSON.parse((await invokeTurn({ name: 'desktop.call', input })).content[0].text);
-  assert.equal((await dispatch()).dispatched, true);
+  holdDispatch = true;
+  const inFlight = dispatch();
+  const refuseInFlight = await Promise.race([
+    pendingDispatch.promise,
+    inFlight.then((reply) => { throw new Error(`Desktop dispatch completed early: ${JSON.stringify(reply)}`); }),
+  ]);
+  holdDispatch = false;
   const first = requests.at(-1)!;
   let stopSettled = false;
-  const stop = hub.request('operation.invoke', {
+  const stopWork = () => hub.request('operation.invoke', {
     name: 'work.stop',
     input: { ref: { adapter: 'hyperneo', id: worker } },
-  }).finally(() => { stopSettled = true; });
+  });
+  const stop = stopWork().finally(() => { stopSettled = true; });
   const acknowledge = await Promise.race([
     cancelTurn.promise,
     stop.then((response) => { throw new Error(`Work stop returned without Desktop acknowledgment: ${JSON.stringify(response)}`); }),
   ]);
   try {
-    assert.deepEqual(requests.at(-1), { action: 'cancelTurn', worker, turn: first.turn });
+    assert.deepEqual(requests.at(-1), { action: 'cancelTurn', worker, callIds: [first.callId] });
     await delay(50);
     assert.equal(stopSettled, false);
   } finally {
     acknowledge();
+    refuseInFlight();
   }
   const stopped = await stop;
   assert.deepEqual(stopped, { ok: true, value: { stopped: true } });
+  assert.equal((await inFlight).reason, 'turn_stopped');
   assert.deepEqual(await dispatch(), { ok: false, reason: 'turn_stopped', decision: 'refused', dispatched: false });
   assert.equal(requests.length, 13);
   turn = new DesktopTurn();
   assert.equal((await dispatch()).dispatched, true);
-  assert.notDeepEqual(requests.at(-1)!.turn, first.turn);
-  writeFileSync(join(run, 'evidence/desktop-turn-stop.json'), JSON.stringify({ stopped, revokedTurnRefused: true, nextTurnDispatched: true, hostRequests: requests.length - 11 }, null, 2));
-  console.log('work.stop journey PASS stop_waited_for_host=1 revoked_turn_refused=1 next_turn_dispatched=1 host_requests=3');
+  assert.notEqual(requests.at(-1)!.callId, first.callId);
+
+  legacyHost = true;
+  await agent.stateManager.setProcessing('legacy-input');
+  assert.equal((await dispatch()).dispatched, true);
+  const stoppedWithLegacy = await stopWork();
+  assert.deepEqual(stoppedWithLegacy, stopped);
+  assert.deepEqual(requests.at(-1), { action: 'cancelTurn', worker, callIds: [] });
+  assert.equal((await dispatch()).reason, 'turn_stopped');
+  turn = new DesktopTurn();
+  assert.equal((await dispatch()).dispatched, true);
+  assert.equal(requests.length, 17);
+  writeFileSync(join(run, 'evidence/desktop-turn-stop.json'), JSON.stringify({ stopped, stoppedWithLegacy, revokedTurnRefused: true, nextTurnDispatched: true, hostRequests: requests.length - 11 }, null, 2));
+  console.log('work.stop journey PASS stop_waited_for_host=1 revoked_turn_refused=1 next_turn_dispatched=1 legacy_stop_degraded=1 host_requests=6');
 } finally {
   await transport.close();
   await new Promise<void>(done => host.close(() => done()));

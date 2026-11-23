@@ -13,7 +13,7 @@ mod locked_use;
 mod record;
 #[path = "desktop_target.rs"]
 mod target;
-use locked_use::Turn;
+use locked_use::Call;
 use serde_json::{json, Value};
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -59,6 +59,8 @@ pub(crate) fn inject_accept_failure() {
 }
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+const CONTROL_READ: Duration = Duration::from_secs(3);
+type CallSignals = BTreeMap<(String, String), (Instant, watch::Sender<bool>)>;
 
 // An unfiltered listing names every app's windows; keep only the todo's approved apps.
 fn scoped_windows(mut body: Value, apps: &[String]) -> Value {
@@ -103,7 +105,7 @@ struct Worker {
 }
 struct Drivers {
     workers: Mutex<BTreeMap<String, Arc<Mutex<Option<Worker>>>>>,
-    stopped_turns: StdMutex<BTreeMap<(String, String), watch::Sender<u64>>>,
+    calls: StdMutex<CallSignals>,
     binary: PathBuf,
     verification_path: String,
     records: PathBuf,
@@ -155,7 +157,7 @@ impl Drop for Settle<'_> {
 struct Request {
     action: String,
     worker: String,
-    turn: Option<(String, u64)>,
+    call_ids: Option<Vec<String>>,
     work_dir: Option<PathBuf>,
     tool: Option<String>,
     arguments: Option<Value>,
@@ -265,7 +267,7 @@ impl Control {
         tokio::spawn(gatekeeper);
         let drivers = Arc::new(Drivers {
             workers: Mutex::new(BTreeMap::new()),
-            stopped_turns: StdMutex::default(),
+            calls: StdMutex::default(),
             binary: binary.clone(),
             verification_path,
             descriptor: base.join("runtime.json"),
@@ -312,6 +314,7 @@ impl Control {
                 }
                 let state = state.clone();
                 let work = work.clone();
+                let read_by = Instant::now() + CONTROL_READ;
                 requests.spawn(async move {
                     let authorized = peer_pid(&stream).is_some_and(|pid| state.authorized(pid));
                     let (input, mut output) = stream.into_split();
@@ -324,8 +327,8 @@ impl Control {
                         return;
                     }
                     let mut line = String::new();
-                    let read = timeout(
-                        Duration::from_secs(3),
+                    let read = timeout_at(
+                        read_by,
                         BufReader::new(input.take(1 << 20)).read_line(&mut line),
                     )
                     .await;
@@ -339,10 +342,10 @@ impl Control {
                     } else {
                         match serde_json::from_str::<Request>(&line) {
                             Ok(request) if request.action == "cancelTurn" => {
-                                state.request(request).await
+                                state.request(request, read_by).await
                             }
                             Ok(request) => match work.try_acquire() {
-                                Ok(_permit) => state.request(request).await,
+                                Ok(_permit) => state.request(request, read_by).await,
                                 Err(_) => Err("desktop_busy".into()),
                             },
                             Err(error) => Err(error.into()),
@@ -452,7 +455,7 @@ impl Drivers {
         };
         process.seconds <= advertised && process.seconds + 60 >= advertised
     }
-    async fn request(&self, request: Request) -> Result<Value> {
+    async fn request(&self, request: Request, read_by: Instant) -> Result<Value> {
         #[cfg(test)]
         let deadline = if request
             .arguments
@@ -479,19 +482,40 @@ impl Drivers {
         {
             return Err("Invalid worker identifier".into());
         }
-        let mut turn = match request.turn {
-            Some((epoch, sequence)) => {
-                let mut stopped = self.stopped_turns.lock().unwrap();
-                let marker = stopped.entry((request.worker.clone(), epoch)).or_default();
-                if request.action == "cancelTurn" {
-                    marker.send_modify(|last| *last = (*last).max(sequence));
-                }
-                Some(Turn(sequence, marker.subscribe()))
+        let mut call = {
+            let mut calls = self.calls.lock().unwrap();
+            let now = Instant::now();
+            if now >= read_by {
+                return Err("Desktop request expired before admission".into());
             }
-            None => None,
+            calls.retain(|_, (until, signal)| *until > now || signal.receiver_count() != 0);
+            if let Some(ids) = &request.call_ids {
+                if request.action != "cancelTurn" {
+                    return Err("callIds are only valid for cancelTurn".into());
+                }
+                // Dispatch connections were opened before the stop. Keep early revocations
+                // until those connections either register their call or expire at admission.
+                for id in ids {
+                    let (until, signal) = calls
+                        .entry((request.worker.clone(), id.clone()))
+                        .or_insert_with(|| (now, watch::Sender::default()));
+                    *until = now + CONTROL_READ;
+                    signal.send_replace(true);
+                }
+            }
+            request
+                .call_id
+                .as_ref()
+                .filter(|_| request.action == "dispatch")
+                .map(|id| {
+                    let (_, signal) = calls
+                        .entry((request.worker.clone(), id.clone()))
+                        .or_insert_with(|| (now, watch::Sender::default()));
+                    Call(signal.subscribe())
+                })
         };
         if request.action == "cancelTurn" {
-            return if turn.is_some() && self.locked.cancel_turn(&request.worker).await {
+            return if request.call_ids.is_some() && self.locked.cancel_turn(&request.worker).await {
                 Ok(json!({"state": "stopped"}))
             } else {
                 Err("Desktop turn stop could not be confirmed".into())
@@ -645,10 +669,10 @@ impl Drivers {
         if request.action == "dispatch"
             && !self
                 .locked
-                .gate(&request.worker, screen_locked(), turn.clone())
+                .gate(&request.worker, screen_locked(), call.clone())
                 .await
         {
-            if Turn::stopped(&turn) {
+            if Call::stopped(&call) {
                 return Ok(stopped());
             }
             return Ok(finish(
@@ -770,7 +794,7 @@ impl Drivers {
             let acquired = tokio::select! {
                 biased;
                 acquired = timeout_at(deadline, slot.lock()) => acquired,
-                _ = Turn::cancelled(&mut turn) => return Ok(stopped()),
+                _ = Call::cancelled(&mut call) => return Ok(stopped()),
             };
             match acquired {
                 Ok(worker) => worker,
@@ -804,7 +828,7 @@ impl Drivers {
                     .await?
                 }
                 "dispatch" => {
-                    if Turn::stopped(&turn) {
+                    if Call::stopped(&call) {
                         return Ok(Some(stopped()));
                     }
                     if self.closing.load(std::sync::atomic::Ordering::SeqCst)
@@ -828,7 +852,7 @@ impl Drivers {
                         let live =
                             |held: &leases::Target| target::alive(&held.instance, held.window);
                         loop {
-                            if Turn::stopped(&turn) {
+                            if Call::stopped(&call) {
                                 return Ok(Some(stopped()));
                             }
                             let taken = self.leases.lock().unwrap().acquire(
@@ -868,7 +892,7 @@ impl Drivers {
                         )
                         .await?;
                     }
-                    if Turn::stopped(&turn) {
+                    if Call::stopped(&call) {
                         return Ok(Some(stopped()));
                     }
                     if screen_locked() {
@@ -887,7 +911,7 @@ impl Drivers {
                     if foreground
                         && !tokio::select! {
                             available = self.take_foreground(&worker_id, deadline) => available,
-                            _ = Turn::cancelled(&mut turn) => return Ok(Some(stopped())),
+                            _ = Call::cancelled(&mut call) => return Ok(Some(stopped())),
                         }
                     {
                         return Ok(Some(finish(
@@ -946,7 +970,7 @@ impl Drivers {
                         )));
                     }
                     let mut admission = self.may_act(&worker_id).await;
-                    if Turn::stopped(&turn) {
+                    if Call::stopped(&call) {
                         if let Some(acting) = &mut admission {
                             acting.settled = true;
                         }
@@ -1228,7 +1252,7 @@ mod peer_tests {
         let directory = tempfile::tempdir().unwrap();
         let drivers = Drivers {
             workers: Mutex::new(BTreeMap::new()),
-            stopped_turns: StdMutex::default(),
+            calls: StdMutex::default(),
             binary: PathBuf::new(),
             verification_path: String::new(),
             records: directory.path().into(),
@@ -1272,7 +1296,7 @@ mod peer_tests {
         }
         Drivers {
             workers: Mutex::new(BTreeMap::new()),
-            stopped_turns: StdMutex::default(),
+            calls: StdMutex::default(),
             binary: PathBuf::new(),
             verification_path: String::new(),
             records: directory.path().into(),
@@ -1581,7 +1605,7 @@ mod peer_tests {
         let directory = tempfile::tempdir().unwrap();
         let drivers = Arc::new(Drivers {
             workers: Mutex::new(BTreeMap::new()),
-            stopped_turns: StdMutex::default(),
+            calls: StdMutex::default(),
             binary: PathBuf::new(),
             verification_path: String::new(),
             records: directory.path().into(),

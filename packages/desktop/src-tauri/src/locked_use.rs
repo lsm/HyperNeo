@@ -50,16 +50,16 @@ const RELEASE: Duration = Duration::from_secs(15);
 const LOCK_CHECK: Duration = Duration::from_millis(250);
 
 #[derive(Clone)]
-pub(super) struct Turn(pub(super) u64, pub(super) watch::Receiver<u64>);
+pub(super) struct Call(pub(super) watch::Receiver<bool>);
 
-impl Turn {
-    pub(super) fn stopped(turn: &Option<Self>) -> bool {
-        turn.as_ref().is_some_and(|turn| *turn.1.borrow() >= turn.0)
+impl Call {
+    pub(super) fn stopped(call: &Option<Self>) -> bool {
+        call.as_ref().is_some_and(|call| *call.0.borrow())
     }
 
-    pub(super) async fn cancelled(turn: &mut Option<Self>) {
-        if let Some(Self(sequence, revoked)) = turn {
-            let _ = revoked.wait_for(|value| *value >= *sequence).await;
+    pub(super) async fn cancelled(call: &mut Option<Self>) {
+        if let Some(Self(revoked)) = call {
+            let _ = revoked.wait_for(|value| *value).await;
         } else {
             std::future::pending::<()>().await;
         }
@@ -77,7 +77,7 @@ enum Message {
     Gate {
         worker: String,
         locked: bool,
-        turn: Option<Turn>,
+        call: Option<Call>,
         reply: oneshot::Sender<Option<Grant>>,
     },
     Unclaimed {
@@ -117,7 +117,7 @@ enum State {
     },
     Starting {
         worker: String,
-        turn: Option<Turn>,
+        call: Option<Call>,
         session: u64,
         guardian: LockedUse,
         lines: Events,
@@ -126,7 +126,6 @@ enum State {
     },
     Owned {
         worker: String,
-        turn: Option<Turn>,
         session: u64,
         guardian: LockedUse,
         lines: Events,
@@ -187,12 +186,12 @@ impl Gatekeeper {
         )
     }
 
-    pub(super) async fn gate(&self, worker: &str, locked: bool, turn: Option<Turn>) -> bool {
+    pub(super) async fn gate(&self, worker: &str, locked: bool, call: Option<Call>) -> bool {
         let (reply, answer) = oneshot::channel();
         let gate = Message::Gate {
             worker: worker.to_owned(),
             locked,
-            turn,
+            call,
             reply,
         };
         if self.messages.send(gate).is_err() {
@@ -344,7 +343,7 @@ async fn run(
                 (
                     State::Starting {
                         worker,
-                        turn,
+                        call,
                         session,
                         guardian,
                         lines,
@@ -353,7 +352,7 @@ async fn run(
                     },
                     Some(GuardianEvent::Line(line)),
                 ) => {
-                    if line == "unlocked" && !Turn::stopped(&turn) {
+                    if line == "unlocked" && !Call::stopped(&call) {
                         let grant =
                             own.upgrade()
                                 .filter(|_| enabled(&worker))
@@ -363,7 +362,6 @@ async fn run(
                         match grant.map(|grant| reply.send(Some(grant))) {
                             Some(Ok(())) => State::Owned {
                                 worker,
-                                turn,
                                 session,
                                 guardian,
                                 lines,
@@ -379,7 +377,7 @@ async fn run(
                     } else {
                         let starting = State::Starting {
                             worker,
-                            turn,
+                            call,
                             session,
                             guardian,
                             lines,
@@ -425,22 +423,18 @@ async fn run(
         let Some(message) = message else {
             return;
         };
-        if matches!(&state, State::Starting { turn, .. } | State::Owned { turn, .. } if Turn::stopped(turn))
-        {
-            state = release(state);
-        }
         state = match message {
             Message::Gate {
                 worker,
                 locked,
-                turn,
+                call,
                 reply,
             } => match if matches!(state, State::Suppressed { .. }) {
                 observe_lock(state, lock_state.map_or(Some(locked), |read| read()))
             } else {
                 state
             } {
-                state if Turn::stopped(&turn) => {
+                state if Call::stopped(&call) => {
                     let _ = reply.send(None);
                     state
                 }
@@ -460,7 +454,7 @@ async fn run(
                     match started {
                         Some((guardian, lines)) => State::Starting {
                             worker,
-                            turn,
+                            call,
                             session: {
                                 ids += 1;
                                 ids
@@ -481,13 +475,11 @@ async fn run(
                     session,
                     mut guardian,
                     lines,
-                    turn: current,
                 } if owner == worker => {
                     if !locked && guardian.keep_alive().is_ok() {
                         let _ = reply.send(YES);
                         State::Owned {
                             worker: owner,
-                            turn: turn.or(current),
                             session,
                             guardian,
                             lines,
@@ -554,13 +546,11 @@ async fn run(
                 retired,
                 reply,
             } => {
-                let state = if retired {
+                if retired {
                     blocked.remove(&worker);
                     acting.remove(&worker);
-                    release_for(state, &worker)
-                } else {
-                    state
-                };
+                }
+                let state = release_for(state, &worker);
                 match &state {
                     State::Releasing {
                         worker: releasing, ..
