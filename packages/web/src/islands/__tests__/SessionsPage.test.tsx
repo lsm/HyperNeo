@@ -1,7 +1,7 @@
 // @ts-nocheck
 
 import { signal } from '@preact/signals';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
@@ -54,6 +54,7 @@ vi.mock('../../lib/connection-manager.ts', () => ({
 import { newChatProjectSignal, workspaceHistoryVersionSignal } from '../../lib/signals';
 import { SessionsPage } from '../SessionsPage';
 import { createSession } from '../../lib/api-helpers.ts';
+import { globalSettings } from '../../lib/state.ts';
 
 function folderChip() {
   return screen.getAllByText(
@@ -68,6 +69,7 @@ describe('SessionsPage', () => {
     vi.clearAllMocks();
     vi.mocked(localStorage.getItem).mockReturnValue(null);
     modelFixture.models = [];
+    globalSettings.value = null;
     mockListProviders.mockResolvedValue({ providers: [] });
     newChatProjectSignal.value = null;
     workspaceHistoryVersionSignal.value = 0;
@@ -101,7 +103,11 @@ describe('SessionsPage', () => {
     ];
     mockListProviders.mockResolvedValue({
       providers: [
-        { providerId: 'anthropic-codex', configJson: JSON.stringify({ harness: 'oxap-codex' }) },
+        {
+          providerId: 'anthropic-codex',
+          configJson: JSON.stringify({ harness: 'oxap-codex' }),
+          readyHarnesses: ['oxap-codex'],
+        },
         { providerId: 'anthropic' },
       ],
     });
@@ -114,15 +120,18 @@ describe('SessionsPage', () => {
     );
     vi.mocked(createSession).mockReturnValue(new Promise(() => {}));
     render(<SessionsPage />);
-    fireEvent.click(screen.getByRole('button', { name: 'Choose model and thinking' }));
-    await waitFor(() => expect(screen.queryByRole('slider')).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: 'Choose model, client and thinking' }));
+    await screen.findByRole('button', { name: 'Client, OXAP Codex' });
+    expect(screen.queryByRole('button', { name: /^Thinking,/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^Model(?: & thinking)?,/ }));
     fireEvent.click(screen.getByRole('button', { name: /Sonnet model/ }));
-    await waitFor(() => expect(screen.getByRole('slider')).toBeTruthy());
+    expect(screen.getByRole('searchbox', { name: 'Search models' })).toBeTruthy();
+    expect(screen.getByRole('slider', { name: 'Thinking' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Sandbox' }).getAttribute('aria-pressed')).toBe(
       'true'
     );
     fireEvent.click(screen.getByRole('button', { name: /Codex model/ }));
-    await waitFor(() => expect(screen.queryByRole('slider')).toBeNull());
+    expect(screen.queryByRole('slider', { name: 'Thinking' })).toBeNull();
     fireEvent.input(screen.getByPlaceholderText('Ask anything to start a new chat...'), {
       target: { value: 'Hello' },
     });
@@ -137,6 +146,98 @@ describe('SessionsPage', () => {
     );
     expect(screen.queryByRole('slider')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Sandbox' })).toBeNull();
+  });
+
+  it('sends a ready OXAP override instead of the SDK default for one new chat', async () => {
+    modelFixture.models = [
+      { id: 'codex', name: 'Codex model', provider: 'anthropic-codex', available: true },
+    ];
+    mockListProviders.mockResolvedValue({
+      providers: [{ providerId: 'anthropic-codex', readyHarnesses: ['oxap-codex'] }],
+    });
+    vi.mocked(localStorage.getItem).mockReturnValue(
+      JSON.stringify({ model: { id: 'codex', provider: 'anthropic-codex' }, sandbox: true })
+    );
+    vi.mocked(createSession).mockReturnValue(new Promise(() => {}));
+    render(<SessionsPage />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Choose model, client and thinking' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Client,/ }));
+    const client = await screen.findByRole('group', { name: 'Client' });
+    fireEvent.click(within(client).getByRole('button', { name: 'OXAP Codex' }));
+    expect(
+      screen.getByRole('button', { name: 'Choose model, client and thinking' }).textContent
+    ).toContain('OXAP Codex');
+    expect(screen.queryByRole('button', { name: 'Sandbox' })).toBeNull();
+    fireEvent.input(screen.getByPlaceholderText('Ask anything to start a new chat...'), {
+      target: { value: 'Hello' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Start chat' }));
+    expect(createSession).toHaveBeenCalledWith({
+      harness: 'oxap-codex',
+      config: { model: 'codex', provider: 'anthropic-codex' },
+    });
+  });
+
+  it('lets the daemon pick the model when overriding the harness without a catalog match', async () => {
+    globalSettings.value = { modelProvider: 'anthropic-codex' };
+    mockListProviders.mockResolvedValue({
+      providers: [{ providerId: 'anthropic-codex', readyHarnesses: ['oxap-codex'] }],
+    });
+    vi.mocked(createSession).mockReturnValue(new Promise(() => {}));
+    render(<SessionsPage />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Choose model, client and thinking' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Client,/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'OXAP Codex' }));
+    fireEvent.input(screen.getByPlaceholderText('Ask anything to start a new chat...'), {
+      target: { value: 'Hello' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Start chat' }));
+
+    expect(createSession).toHaveBeenCalledWith({
+      harness: 'oxap-codex',
+      config: { provider: 'anthropic-codex' },
+    });
+  });
+
+  it('blocks an unavailable OXAP default until the user chooses Claude Code', async () => {
+    modelFixture.models = [
+      { id: 'deepseek-v4-pro', name: 'DeepSeek', provider: 'deepseek', available: true },
+    ];
+    mockListProviders.mockResolvedValue({
+      providers: [
+        {
+          providerId: 'deepseek',
+          configJson: JSON.stringify({ harness: 'oxap-deepseek' }),
+          readyHarnesses: [],
+        },
+      ],
+    });
+    vi.mocked(localStorage.getItem).mockReturnValue(
+      JSON.stringify({ model: { id: 'deepseek-v4-pro', provider: 'deepseek' } })
+    );
+    vi.mocked(createSession).mockReturnValue(new Promise(() => {}));
+    render(<SessionsPage />);
+
+    const trigger = screen.getByRole('button', { name: 'Choose model, client and thinking' });
+    const prompt = screen.getByPlaceholderText('Ask anything to start a new chat...');
+    fireEvent.input(prompt, { target: { value: 'Hello' } });
+    expect(screen.getByRole('button', { name: 'Start chat' }).disabled).toBe(true);
+    fireEvent.keyDown(prompt, { key: 'Enter' });
+    expect(createSession).not.toHaveBeenCalled();
+
+    fireEvent.click(trigger);
+    fireEvent.click(await screen.findByRole('button', { name: /^Client, OXAP DeepSeek/ }));
+    expect(
+      (await screen.findByRole('button', { name: /OXAP DeepSeek.*Set up in Settings/ })).disabled
+    ).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Claude Code' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Start chat' }));
+    expect(createSession).toHaveBeenCalledWith({
+      harness: 'sdk',
+      config: { model: 'deepseek-v4-pro', provider: 'deepseek' },
+    });
   });
 
   it('shows an error when providers cannot be loaded', async () => {
@@ -169,8 +270,9 @@ describe('SessionsPage', () => {
     );
     vi.mocked(createSession).mockReturnValue(new Promise(() => {}));
     render(<SessionsPage />);
-    fireEvent.click(screen.getByRole('button', { name: 'Choose model and thinking' }));
-    expect(screen.getByRole('slider')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Choose model, client and thinking' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Model & thinking,/ }));
+    expect(screen.getByRole('slider', { name: 'Thinking' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Sandbox' }).getAttribute('aria-pressed')).toBe(
       'true'
     );

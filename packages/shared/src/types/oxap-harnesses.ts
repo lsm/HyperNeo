@@ -67,6 +67,12 @@ export function oxapHarness(harness: OxapHarnessId): OxapHarness {
   return OXAP_HARNESSES[harness];
 }
 
+export function oxapHarnessesForProvider(provider: string): OxapHarnessId[] {
+  return Object.keys(OXAP_HARNESSES)
+    .filter(isOxapHarness)
+    .filter((harness) => oxapHarness(harness).providers.includes(provider));
+}
+
 export function oxapSupportsImages(harness: OxapHarnessId, model: string | undefined): boolean {
   return (
     harness === 'oxap-deepseek' &&

@@ -326,6 +326,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
     providerRepo: deps.db.providers,
     credentialManager: providerCredentialManager,
     internalEventBus: deps.internalEventBus,
+    oxapSettings: deps.oxapSettings,
   });
 
   setupRewindHandlers(deps.messageHub, deps.sessionManager, deps.internalEventBus);
