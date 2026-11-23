@@ -181,9 +181,6 @@ export function AddProviderModal({
       );
       onProviderAdded();
 
-      if (response.authUrl) {
-        window.open(response.authUrl, '_blank');
-      }
       setOauthFlow({
         providerId: preset.providerId,
         providerName: preset.displayName,
