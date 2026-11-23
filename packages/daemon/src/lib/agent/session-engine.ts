@@ -7,6 +7,7 @@ import {
   type OxapHarness,
 } from '@hyperneo/shared/types/oxap-harnesses';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { savedOxapAdapter } from '../oxap/oxap-hub-config.ts';
 
 export type SessionEngine = NonNullable<SessionConfig['harness']>;
 
@@ -156,13 +157,8 @@ function openGate(
   const harness = selectSessionEngine(config.harness);
   if (!isOxapHarness(harness) || !config.provider)
     return { reason: 'This chat has no OXAP provider.' };
-  let current: SessionEngine;
-  try {
-    current = engineForProvider(config.provider, () => record);
-  } catch {
-    current = 'sdk';
-  }
-  if (current !== harness)
+  const saved = record && savedOxapAdapter({ providerId: config.provider, ...record });
+  if (saved?.harness !== harness)
     return {
       reason: `This chat ran on ${oxapHarness(harness).label}, which this provider no longer uses; start a new chat`,
     };

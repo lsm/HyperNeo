@@ -1,7 +1,6 @@
 import { isAbsolute } from 'node:path';
 import type { ProviderRecord } from '@hyperneo/shared';
-import type { OxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
-import { engineForProvider } from '../agent/session-engine.ts';
+import { OXAP_HARNESSES, type OxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 
 export interface OxapHubConfig {
   adapters: Record<string, Record<string, unknown>>;
@@ -10,27 +9,39 @@ export interface OxapHubConfig {
 
 type Records = readonly Pick<ProviderRecord, 'providerId' | 'configJson'>[];
 
-export function harnessOf(record: Pick<ProviderRecord, 'providerId' | 'configJson'>) {
-  try {
-    return engineForProvider(record.providerId, () => record);
-  } catch {
-    return 'sdk';
-  }
-}
+type ProviderConfig = Pick<ProviderRecord, 'providerId' | 'configJson'>;
 
-export function harnessSettings(
-  record: Pick<ProviderRecord, 'configJson'>
-): Record<string, string> {
-  const value = (JSON.parse(record.configJson ?? '{}') as { harnessSettings?: unknown })
-    .harnessSettings;
-  return value && typeof value === 'object' ? (value as Record<string, string>) : {};
+export function savedOxapAdapter(
+  record: ProviderConfig,
+  harnesses: Readonly<Record<string, OxapHarness>> = OXAP_HARNESSES
+) {
+  let settings: Record<string, string> | undefined;
+  try {
+    const config = JSON.parse(record.configJson ?? '{}') as { harnessSettings?: unknown } | null;
+    const value = config?.harnessSettings;
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      settings = value as Record<string, string>;
+    }
+  } catch {
+    return undefined;
+  }
+  if (!settings) return undefined;
+  const entry = Object.entries(harnesses).find(([, row]) =>
+    row.providers.includes(record.providerId)
+  );
+  if (!entry || missingSetting(entry[1], settings)) return undefined;
+  const [harness, row] = entry;
+  return { harness, row, settings };
 }
 
 export function missingSetting(
   row: OxapHarness,
   settings: Readonly<Record<string, string>>
 ): string | undefined {
-  return row.settings.find((name) => !isAbsolute(settings[name] ?? ''));
+  return row.settings.find((name) => {
+    const value = settings[name];
+    return typeof value !== 'string' || !isAbsolute(value);
+  });
 }
 
 export function buildHubConfig(
@@ -42,12 +53,9 @@ export function buildHubConfig(
   const config: OxapHubConfig = { adapters: {}, environment: {} };
   const owners: Record<string, string> = {};
   for (const record of records) {
-    const harness = harnessOf(record);
-    if (harness === 'sdk') continue;
-    const row = harnesses[harness];
-    const settings = harnessSettings(record);
-    const missing = missingSetting(row, settings);
-    if (missing) continue;
+    const saved = savedOxapAdapter(record, harnesses);
+    if (!saved) continue;
+    const { row, settings } = saved;
     const names = row.environment.filter((name) => environment[name] !== undefined);
     for (const name of names) config.environment[name] = environment[name]!;
     if (row.key && keys[record.providerId] !== undefined) {

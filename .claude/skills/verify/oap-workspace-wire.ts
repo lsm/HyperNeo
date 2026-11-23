@@ -12,7 +12,7 @@ import { OxapHubRequestError } from '../../../packages/daemon/src/lib/oxap/oxap-
 import { decideReopenFailure } from '../../../packages/daemon/src/lib/oxap/oxap-session-open.ts';
 import { getSdkStartupGate } from '../../../packages/daemon/src/lib/agent/sdk-startup-gate.ts';
 import { deliverAgentMessageToTarget, type AgentMessageDeliveryDeps } from '../../../packages/daemon/src/lib/messaging/delivery-pipeline.ts';
-import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
+import { createLocalSocket, readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 import { resolveNeoEntry } from '../../../packages/shared/src/web-entry.ts';
@@ -118,7 +118,10 @@ async function waitFor(predicate: () => boolean, label: string, timeoutMs = 2000
     await new Promise((done) => setTimeout(done, 20));
   }
 }
-async function verifyNoticeInBrowser(currentApp: NonNullable<typeof app>, sessionId: string, text: string, assistantUuid?: string): Promise<void> {
+async function verifyInBrowser(
+  currentApp: NonNullable<typeof app>,
+  target: { sessionId: string; text: string; assistantUuid?: string } | { executable: string; replacement: string }
+): Promise<void> {
   assert(process.env.VERIFY_BROWSER);
   const root = resolve('packages/web/dist');
   assert(existsSync(join(root, 'index.html')), 'build the web bundle before the browser proof');
@@ -144,14 +147,24 @@ async function verifyNoticeInBrowser(currentApp: NonNullable<typeof app>, sessio
   assert.notEqual(web.port, 8399);
   assert.notEqual(web.port, 8499);
   try {
+    if ('executable' in target) {
+      const browser = Bun.spawn([
+        'node', '.claude/skills/verify/oxap-retained-executable-web.mjs',
+        String(web.port), target.executable, target.replacement, run,
+      ], { stdin: new Blob([readLocalCredential()]), stdout: 'inherit', stderr: 'inherit' });
+      assert.equal(await browser.exited, 0, 'The retained executable browser journey failed');
+      Object.assign(evidence, { editedExecutableWithSdkDefault: true });
+      return;
+    }
     const { chromium } = createRequire(import.meta.url)('playwright');
     const browser = await chromium.launch({ headless: true, executablePath: process.env.VERIFY_BROWSER });
     try {
       const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: 'en-US' });
       const base = `http://127.0.0.1:${web.port}`;
       await context.route('**/*', (route: { request(): { url(): string }; continue(): void; abort(): void }) => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
-      await context.addCookies([{ name: 'hyperneo_device', value: readFileSync(join(run, 'data/local-rpc.credential'), 'utf8'), url: base }]);
+      await context.addCookies([{ name: 'hyperneo_device', value: readLocalCredential(), url: base }]);
       const page = await context.newPage();
+      const { sessionId, text, assistantUuid } = target;
       await page.goto(`${base}/session/${sessionId}`);
       const notice = page.getByText(text, { exact: true }).last();
       try {
@@ -175,7 +188,7 @@ async function verifyNoticeInBrowser(currentApp: NonNullable<typeof app>, sessio
       Object.assign(evidence, { browserPort: web.port, ...(mode === 'recovery-claim' ? { visibleUserMessageRendered: true } : { visibleNoticeRendered: true }), ...(assistantUuid ? { assistantBubbleCount: 1 } : {}) });
       await context.close();
     } finally { await browser.close(); }
-  } finally { web.stop(true); }
+  } finally { await web.stop(true); }
 }
 try {
   answerCodexProbeLocally();
@@ -196,8 +209,12 @@ try {
   transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false, createSocket: createLocalSocket });
   hub.registerTransport(transport);
   await transport.initialize();
-  await hub.request('providers.create', { params: { providerId: 'anthropic', displayName: 'Synthetic provider', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-devproxy-test-key' } });
-  await hub.request('providers.create', oxapCodexProvider);
+  if (mode === 'settings-restart-web') {
+    await hub.request('providers.create', { params: oxapCodexProvider.params });
+  } else {
+    await hub.request('providers.create', { params: { providerId: 'anthropic', displayName: 'Synthetic provider', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-devproxy-test-key' } });
+    await hub.request('providers.create', oxapCodexProvider);
+  }
   const saved = await hub.request('operation.invoke', { name: 'oxap.settings.save', input: { providerId: 'anthropic-codex', harness: 'oxap-codex', settings: { executable: peer } } });
   assert.deepEqual(saved, { accepted: true });
   const installed = app.settingsManager.getGlobalSettings().oxapHub;
@@ -259,7 +276,7 @@ try {
     writeFileSync(join(run, 'codex-home/finish-login'), 'synthetic');
     await waitFor(() => calls().some((call) => call.request.method === 'thread/start'), 'thread opens after retry');
     Object.assign(evidence, { crashReported: true, retryOpened: true, pass: true });
-  } else if (mode === 'settings-restart') {
+  } else if (['settings-restart', 'settings-restart-web'].includes(mode)) {
     const turn = async (content: string, count: number) => {
       await hub.request('message.send', { sessionId: firstId, content });
       await waitFor(() => {
@@ -288,7 +305,13 @@ try {
     assert.equal(servedConfig().adapters['anthropic-codex']?.executable, secondPeer);
     assert.deepEqual(errors, []);
     assert.equal(app.db.getSession(firstId)?.config.harness, 'oxap-codex');
-    Object.assign(evidence, { port: app.server.port, resavedExecutable: secondPeer, hubRestartedOnSave: true, turnsAcrossRestart: 3, relativePathRefused: true, pass: true });
+    let turnsAcrossRestart = 3;
+    if (mode === 'settings-restart-web') {
+      await verifyInBrowser(app, { executable: secondPeer, replacement: peer });
+      await turn('Synthetic turn after editing the retained executable', ++turnsAcrossRestart);
+      assert.equal(servedConfig().adapters['anthropic-codex']?.executable, peer);
+    }
+    Object.assign(evidence, { port: app.server.port, resavedExecutable: secondPeer, hubRestartedOnSave: true, turnsAcrossRestart, relativePathRefused: true, pass: true });
   } else if (mode === 'model-id') {
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic model selection' });
     await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'result') && !first.queryPromise, 'turn with a chosen model');
@@ -310,7 +333,7 @@ try {
     assert(assistant && assistant.type === 'assistant' && assistant.uuid);
     assert.deepEqual(assistant.message.content.map((block) => block.type === 'text' ? block.text : null), [expected]);
     assert.equal(rows.filter((row) => row.type === 'stream_event').length, 0);
-    await verifyNoticeInBrowser(app, firstId, expected, assistant.uuid);
+    await verifyInBrowser(app, { sessionId: firstId, text: expected, assistantUuid: assistant.uuid });
     Object.assign(evidence, { port: app.server.port, textDeltas: 96, storedAssistantRows: 1, joinedText: expected, pass: true });
   } else if (mode === 'feature-refusal') {
     await first.oxap!.hub;
@@ -377,7 +400,7 @@ try {
     assert(excerpt?.includes('Synthetic prior completed turn'));
     assert(!excerpt.includes('Synthetic hold for crash'));
     assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 2);
-    if (mode === 'recovery-web') await verifyNoticeInBrowser(app, firstId, 'The previous OXAP Codex thread cannot be resumed. A new thread will use a saved conversation excerpt with your next message.');
+    if (mode === 'recovery-web') await verifyInBrowser(app, { sessionId: firstId, text: 'The previous OXAP Codex thread cannot be resumed. A new thread will use a saved conversation excerpt with your next message.' });
     const newHub = await liveHub(app);
     const newChild = (newHub as unknown as { child: { kill(signal: string): boolean; once(event: string, callback: () => void): void } }).child;
     const newExit = new Promise<void>((resolveExit) => newChild.once('close', resolveExit));
@@ -495,7 +518,7 @@ try {
     assert.equal(turns.length, 3);
     assert(!JSON.stringify(turns[2]).includes('Synthetic saved conversation excerpt'));
     assert(JSON.stringify(turns[2]).includes('Synthetic second explicit request'));
-    if (process.env.VERIFY_BROWSER) await verifyNoticeInBrowser(app, firstId, 'Synthetic second explicit request');
+    if (process.env.VERIFY_BROWSER) await verifyInBrowser(app, { sessionId: firstId, text: 'Synthetic second explicit request' });
     Object.assign(evidence, { port: app.server.port, submittedAgentForwardedWithoutExcerpt: true, presetRecoveryClaimedBeforeSubmit: true, markerCleanupFailed: true, markerSurvivedRestart: true, excerptAttachedOnce: true, explicitTurns: 2, automaticResends: 0, pass: true });
   } else if (mode === 'fresh-clear') {
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic original conversation' });
@@ -615,7 +638,7 @@ try {
     assert.equal(app.db.getSession(firstId)?.sdkSessionId, saved);
     assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 1);
     assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
-    if (mode.endsWith('-web')) await verifyNoticeInBrowser(app, firstId, 'The previous OXAP Codex thread cannot be resumed. No new thread was started.');
+    if (mode.endsWith('-web')) await verifyInBrowser(app, { sessionId: firstId, text: 'The previous OXAP Codex thread cannot be resumed. No new thread was started.' });
     Object.assign(evidence, { port: app.server.port, visibleNoticeSaved: true, noticeCount: notices.length, priorThreadIdPreserved: true, newThreads: 0, automaticResends: 0, pass: true });
   } else if (mode === 'reopen') {
     const seen: Array<{ type: string; uuid?: string }> = [];
