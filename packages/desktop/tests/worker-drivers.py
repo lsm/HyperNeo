@@ -1082,6 +1082,67 @@ open(sys.argv[2], 'w').write(reply.decode())
         return self.call('dispatch', worker, tool=tool, arguments=arguments,
                          callId='call-' + tool, **params)
 
+    def turn_guardian(self, wait_for_unlock=False):
+        guardian = self.binary.with_name('hyperneo-locked-use')
+        started, exited = (self.root / name for name in ('covered', 'exited'))
+        start = 'sleep 1' if wait_for_unlock else ''
+        guardian.write_text(f"#!/bin/sh\n"
+                            f"touch '{started}'\necho 'covered 1'\n{start}\n"
+                            f"echo unlocked\nwhile read line; do :; done\n"
+                            f"touch '{exited}'\necho 'ended owner_gone'\n")
+        guardian.chmod(0o700)
+        return started, exited
+
+    def dispatch_turn(self, turn, **arguments):
+        params = {} if os.getenv('HYPERNEO_TURN_STOP_BASELINE') else {'turn': turn}
+        reply = self.dispatch('list_windows', arguments, workDir=str(self.work), **params)
+        self.assertTrue(reply['ok'], reply)
+        return reply['result']
+
+    def assert_turn_stopped(self, reply):
+        self.assertEqual((reply['decision'], reply['reason'], reply['dispatched']),
+                         ('refused', 'turn_stopped', False), reply)
+
+    def cancel_turn(self, turn):
+        baseline = os.getenv('HYPERNEO_TURN_STOP_BASELINE')
+        reply = self.call('cancelTurn', **({} if baseline else {'turn': turn}))
+        if not baseline:
+            self.assertEqual(reply, {'ok': True, 'result': {'state': 'stopped'}})
+
+    def test_turn_stop_releases_starting_guardian(self):
+        started, exited = self.turn_guardian(wait_for_unlock=True)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(self.dispatch_turn, 1, fixture_screen_locked=True)
+            wait_until(started.exists)
+            self.cancel_turn(1)
+            self.assertTrue(exited.exists())
+            self.assert_turn_stopped(pending.result(timeout=5))
+            self.assertFalse(list(self.work.glob('d-*')))
+        print('startup: stopped turn refused; guardian exited; no driver started')
+
+    def test_turn_stop_releases_owned_guardian_and_allows_next_turn(self):
+        _, exited = self.turn_guardian()
+        self.assertEqual(self.dispatch_turn(1, fixture_screen_locked=True)['reason'], 'screen_locked')
+        self.assertTrue(self.dispatch_turn(1)['dispatched'])
+        self.cancel_turn(1)
+        self.assertTrue(exited.exists())
+        self.assert_turn_stopped(self.dispatch_turn(1))
+        self.assertTrue(self.dispatch_turn(2)['dispatched'])
+        print('owned: guardian exited; stopped turn refused; next turn dispatched')
+
+    def test_turn_stop_cancels_queued_call_before_worker_slot_frees(self):
+        timeline = self.root / 'timeline'
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(self.dispatch_turn, 1, fixture_timeline=str(timeline))
+            wait_until(timeline.exists)
+            queued = pool.submit(self.dispatch_turn, 1)
+            wait_until(lambda: self.call('fixture-slots')['result']['references'] == 3)
+            self.cancel_turn(1)
+            self.assert_turn_stopped(queued.result(timeout=5))
+            first.result(timeout=8)
+        self.assertTrue(self.dispatch_turn(2)['dispatched'])
+        print('queued: stopped turn refused; next turn dispatched')
+
     def test_unfiltered_window_listing_keeps_only_approved_apps(self):
         dock = int(subprocess.check_output(['/usr/bin/pgrep', '-x', 'Dock']).split()[0])
         pid = finder()
