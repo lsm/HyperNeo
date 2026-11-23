@@ -173,7 +173,7 @@ export function createAntigravityAdapter(
   return {
     ...control,
     id: ADAPTER,
-    capabilities: ['find', 'start', 'status', 'send'],
+    capabilities: ['find', 'start', 'status', 'send', 'stop'],
     async find(query) {
       if (query.spaceId) return [];
       const ownedFolders = new Map(

@@ -164,7 +164,7 @@ try {
   const registered = catalog.value.find((entry) => entry.id === adapter);
   results.catalog = registered ?? null;
   if (mode === 'absent') assert.equal(registered, undefined);
-  else assert.deepEqual(registered?.capabilities, ['find', 'start', 'status', 'send']);
+  else assert.deepEqual(registered?.capabilities, ['find', 'start', 'status', 'send', 'stop']);
 
   let operations = 1;
   if (startFixture || mode === 'start-signed-out') {
@@ -259,7 +259,6 @@ try {
         const busy = await send(started.value.ref.id);
         assert(!busy.ok && busy.reason === 'busy' && busy.notSent);
         if (stopFixture) {
-          assert(registered?.capabilities.includes('stop'));
           let reports = 0;
           const stopping = [1, 2].map(async () => {
             const result = await stop(started.value.ref.id);
