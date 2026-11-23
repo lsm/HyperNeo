@@ -32,6 +32,7 @@ pub(crate) fn start(
         let mut covered = false;
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
             covered |= line.starts_with("covered ");
+            log::info!("Locked Use guardian: {line}");
             let _ = lines.send(line);
         }
         let ended = child.wait().is_ok_and(|status| status.success());
