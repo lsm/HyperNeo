@@ -7,7 +7,7 @@ import {
 } from '../../../../src/lib/agent/query-failure-episode.ts';
 
 describe('Query failure episode', () => {
-  it('retains a bounded useful error when a provider returns a large failure', async () => {
+  it.each(['retryable', 'terminal'] as const)('bounds a large %s provider error', async (kind) => {
     const session = { id: 'large-error', metadata: {} } as Session;
     const db = {
       getSession: () => session,
@@ -15,7 +15,9 @@ describe('Query failure episode', () => {
     } as unknown as Database;
     const governor = new QueryFailureGovernor(session, db);
     const id = await governor.admit(() => true);
-    const episode = await governor.failure(`Original cause: ${'x'.repeat(100_000)}`, id);
+    const error = `Original cause: ${'x'.repeat(100_000)}`;
+    const episode =
+      kind === 'terminal' ? await governor.terminal(error) : await governor.failure(error, id);
     expect(episode.error.startsWith('Original cause: ')).toBe(true);
     expect(episode.error.length).toBeLessThanOrEqual(4096);
     expect(session.metadata.queryFailureEpisode?.error).toBe(episode.error);
