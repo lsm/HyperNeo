@@ -133,14 +133,16 @@ try {
     assert.equal(await model.locator(':scope > svg').count(), 0, 'The picker has no trailing chevron');
     await screenshot('default');
     await click(model);
-    const modelRow = page.getByRole('button', { name: /^Model,/ });
+    const modelRow = page.getByRole('button', { name: /^Model & thinking,/ });
     assert.match(await modelRow.innerText(), /Synthetic Codex/);
     const search = page.getByRole('searchbox', { name: 'Search models' });
+    const thinking = page.getByRole('slider', { name: 'Thinking' });
     assert.equal(await search.isVisible(), false);
     await click(modelRow);
     assert.equal(await search.isVisible(), true);
     assert.equal(await search.evaluate((input) => document.activeElement === input), false);
     assert.equal(await choices.isVisible(), false);
+    assert.equal(await thinking.isVisible(), true);
     const selected = page.getByRole('button', { name: /Synthetic Codex/, pressed: true });
     const keyboard = tablets.has(width) && width > tablets.get(width);
     if (keyboard) {
@@ -156,9 +158,12 @@ try {
     assert(modelItem && list && modelItem.y >= list.y - 1 &&
       modelItem.y + modelItem.height <= list.y + list.height + 1,
       `The selected model can be browsed at ${width}px`);
+    const slider = await thinking.boundingBox();
+    assert(slider && list.height >= 80 && slider.y >= list.y + list.height - 1,
+      `Thinking stays visible below the scrollable model list at ${width}px`);
     if (keyboard) {
       const menu = await page.getByRole('group', { name: 'Model, client and thinking settings' }).boundingBox();
-      assert(menu && menu.y >= 0 && menu.y + menu.height <= 280,
+      assert(menu && menu.y >= 0 && menu.y + menu.height <= 280 && slider.y + slider.height <= 280,
         `The model picker clears the keyboard at ${width}px`);
       await page.evaluate(() => {
         document.documentElement.classList.remove('keyboard-open');
@@ -168,6 +173,7 @@ try {
     await click(page.getByRole('button', { name: 'Back to settings' }));
     await click(clientRow);
     assert.equal(await search.isVisible(), false);
+    assert.equal(await thinking.isVisible(), false);
     assert.equal(await choices.getByRole('button', { name: 'Claude Code', exact: true }).getAttribute('aria-pressed'), 'true');
     await page.keyboard.press('Escape');
     await submit(undefined, undefined);

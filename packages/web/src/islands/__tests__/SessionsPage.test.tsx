@@ -123,17 +123,15 @@ describe('SessionsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Choose model, client and thinking' }));
     await screen.findByRole('button', { name: 'Client, OXAP Codex' });
     expect(screen.queryByRole('button', { name: /^Thinking,/ })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: /^Model,/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Model(?: & thinking)?,/ }));
     fireEvent.click(screen.getByRole('button', { name: /Sonnet model/ }));
-    fireEvent.click(screen.getByRole('button', { name: /^Thinking,/ }));
-    await waitFor(() => expect(screen.getByRole('slider')).toBeTruthy());
+    expect(screen.getByRole('searchbox', { name: 'Search models' })).toBeTruthy();
+    expect(screen.getByRole('slider', { name: 'Thinking' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Sandbox' }).getAttribute('aria-pressed')).toBe(
       'true'
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Back to settings' }));
-    fireEvent.click(screen.getByRole('button', { name: /^Model,/ }));
     fireEvent.click(screen.getByRole('button', { name: /Codex model/ }));
-    expect(screen.queryByRole('button', { name: /^Thinking,/ })).toBeNull();
+    expect(screen.queryByRole('slider', { name: 'Thinking' })).toBeNull();
     fireEvent.input(screen.getByPlaceholderText('Ask anything to start a new chat...'), {
       target: { value: 'Hello' },
     });
@@ -273,8 +271,8 @@ describe('SessionsPage', () => {
     vi.mocked(createSession).mockReturnValue(new Promise(() => {}));
     render(<SessionsPage />);
     fireEvent.click(screen.getByRole('button', { name: 'Choose model, client and thinking' }));
-    fireEvent.click(screen.getByRole('button', { name: /^Thinking,/ }));
-    expect(screen.getByRole('slider')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /^Model & thinking,/ }));
+    expect(screen.getByRole('slider', { name: 'Thinking' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Sandbox' }).getAttribute('aria-pressed')).toBe(
       'true'
     );

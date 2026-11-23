@@ -11,9 +11,9 @@ At 1280 px and at 320, 390, 744, 820, 1024 and 1180 px with a coarse pointer,
 the journey checks that
 the model picker, round Sandbox button and send button stay on one line. The
 model picker shows the Claude Code provider default beside the Codex model and
-shows the choices under Client. Open Model to browse and search without the
-Client and Thinking sections taking up room. Opening the menu or Model view
-leaves the search field unfocused. Starting a chat with the default client omits
+shows the choices under Client. Open Model & thinking to browse and search models while the Thinking slider
+stays visible beneath the scrollable list. Client opens in its own view.
+Opening the menu or model view leaves the search field unfocused. Starting a chat with the default client omits
 the override.
 Choosing OXAP Codex sends the override and stores OXAP. Reopening the form
 shows the provider default again. Changing the provider default in settings then
@@ -30,5 +30,6 @@ Keep `client-picker-default-1280.png`, `client-picker-override-1280.png`,
 For native tablet verification, open an isolated fixture in iPad Simulator
 Safari and check portrait and landscape. Capture the composer and the Client
 view for the provider default, a selected override, and an unavailable client.
-Open Model and tap Search separately to check that only the deliberate search
-opens the software keyboard. Use simulator screenshots for this check.
+Open Model & thinking and tap Search separately to check that only the
+deliberate search opens the software keyboard and models and Thinking remain
+visible above it. Use simulator screenshots for this check.

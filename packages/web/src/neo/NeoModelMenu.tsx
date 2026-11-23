@@ -51,7 +51,7 @@ export function NeoModelMenu({
 }) {
   const position = { left: '-left-10 sm:left-0', right: 'right-0', trigger: 'left-0' }[align];
   const [query, setQuery] = useState('');
-  const [section, setSection] = useState<'Settings' | 'Model' | 'Client' | 'Thinking'>('Settings');
+  const [section, setSection] = useState<'Settings' | 'Model' | 'Client'>('Settings');
   const back = useRef<HTMLButtonElement>(null);
   const modelRow = useRef<HTMLButtonElement>(null);
   const search = useRef<HTMLInputElement>(null);
@@ -65,20 +65,12 @@ export function NeoModelMenu({
     setQuery('');
     setSection(next);
   };
+  const modelTitle = showThinking ? 'Model & thinking' : 'Model';
   const rows =
     summary &&
     ([
-      { name: 'Model', value: summary.model, available: true },
-      { name: 'Client', value: summary.client, available: !!children },
-      ...(showThinking
-        ? [
-            {
-              name: 'Thinking',
-              value: THINKING_OPTIONS.find(({ value }) => value === level)?.label ?? 'Off',
-              available: true,
-            } as const,
-          ]
-        : []),
+      { name: 'Model', label: modelTitle, value: summary.model, available: true },
+      { name: 'Client', label: 'Client', value: summary.client, available: !!children },
     ] as const);
   const showModels = !summary || section === 'Model';
   const visible = filterModelsBySearch(models, query);
@@ -116,11 +108,11 @@ export function NeoModelMenu({
             </button>
           )}
           <h2 class="text-sm font-medium">
-            {section !== 'Settings'
-              ? section
-              : summary
-                ? 'Model, client & thinking'
-                : 'Model & thinking'}
+            {section === 'Client'
+              ? 'Client'
+              : section === 'Model' || !summary
+                ? modelTitle
+                : 'Chat settings'}
           </h2>
         </div>
         <button
@@ -134,17 +126,17 @@ export function NeoModelMenu({
       </div>
       {rows && section === 'Settings' && (
         <div class="min-h-0 overflow-y-auto px-3 pb-3">
-          {rows.map(({ name, value, available }) => (
+          {rows.map(({ name, label, value, available }) => (
             <button
               key={name}
               ref={name === 'Model' ? modelRow : undefined}
               type="button"
               disabled={!available}
-              aria-label={`${name}, ${value}`}
+              aria-label={`${label}, ${value}`}
               class="flex min-h-11 w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm text-fg hover:bg-fill-soft disabled:hover:bg-transparent"
               onClick={() => openSection(name)}
             >
-              <span>{name}</span>
+              <span>{label}</span>
               <span class="min-w-0 flex-1 truncate text-right text-fg-muted">{value}</span>
               {available && (
                 <NeoIcon name="chevron" class="!rotate-90 !h-3.5 !w-3.5 shrink-0 text-fg-faint" />
@@ -214,10 +206,7 @@ export function NeoModelMenu({
                   aria-pressed={selected}
                   disabled={busy || item.available === false}
                   title={item.available === false ? 'Not runnable on this account' : undefined}
-                  onClick={() => {
-                    onModel(item);
-                    if (summary) openSection('Settings');
-                  }}
+                  onClick={() => onModel(item)}
                   class={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors focus-visible:outline-accent disabled:opacity-50 ${selected ? 'bg-accent/10 text-accent' : 'text-fg-soft hover:bg-fill-soft'}`}
                 >
                   <span class="min-w-0 flex-1">
@@ -245,19 +234,20 @@ export function NeoModelMenu({
         )}
       </div>
       {(!summary || section === 'Client') && children}
-      {showThinking && (!summary || section === 'Thinking') && (
-        <div
-          class={`border-t border-line bg-surface/40 p-3 ${summary ? 'min-h-0 overflow-y-auto' : 'shrink-0'}`}
-        >
-          <div class="mb-2 flex items-center justify-between">
-            <span class="text-xs font-medium text-fg-muted">Thinking</span>
-            <span class="text-[10px] text-fg-faint">{working ? scope.working : scope.idle}</span>
-          </div>
+      {showThinking && showModels && (
+        <div class={`shrink-0 border-t border-line bg-surface/40 ${summary ? 'px-3' : 'p-3'}`}>
+          {!summary && (
+            <div class="mb-2 flex items-center justify-between">
+              <span class="text-xs font-medium text-fg-muted">Thinking</span>
+              <span class="text-[10px] text-fg-faint">{working ? scope.working : scope.idle}</span>
+            </div>
+          )}
           <ThinkingSlider
             level={level}
             options={THINKING_OPTIONS}
             busy={busy}
             onThinking={onThinking}
+            compact={!!summary}
           />
         </div>
       )}
@@ -280,11 +270,13 @@ function ThinkingSlider({
   options,
   busy,
   onThinking,
+  compact,
 }: {
   level: ThinkingLevel;
   options: { value: ThinkingLevel; label: string }[];
   busy: boolean;
   onThinking: (level: ThinkingLevel) => void;
+  compact: boolean;
 }) {
   const [preview, setPreview] = useState<number | null>(null);
   const selected = nearestOptionIndex(level, options);
@@ -294,7 +286,8 @@ function ThinkingSlider({
     if (options[index] && options[index].value !== level) onThinking(options[index].value);
   };
   return (
-    <div class="flex items-center gap-3 rounded-xl bg-surface px-3 py-2">
+    <div class={`flex items-center gap-3 ${compact ? '' : 'rounded-xl bg-surface px-3 py-2'}`}>
+      {compact && <span class="shrink-0 text-xs font-medium text-fg-muted">Thinking</span>}
       <div class="relative min-w-0 flex-1">
         <input
           type="range"
@@ -307,17 +300,19 @@ function ThinkingSlider({
           aria-valuetext={options[shown].label}
           onInput={(event) => setPreview(Number((event.target as HTMLInputElement).value))}
           onChangeCapture={(event) => pick(Number((event.target as HTMLInputElement).value))}
-          class="w-full cursor-pointer accent-accent disabled:cursor-not-allowed disabled:opacity-50"
+          class={`w-full cursor-pointer accent-accent disabled:cursor-not-allowed disabled:opacity-50 ${compact ? 'block h-11' : ''}`}
         />
-        <div aria-hidden="true" class="mt-0.5 flex justify-between px-[7px]">
-          {options.map((option, index) => (
-            <span
-              key={option.value}
-              title={option.label}
-              class={`h-1 w-1 rounded-full ${index <= shown ? 'bg-accent' : 'bg-line-strong'}`}
-            />
-          ))}
-        </div>
+        {!compact && (
+          <div aria-hidden="true" class="mt-0.5 flex justify-between px-[7px]">
+            {options.map((option, index) => (
+              <span
+                key={option.value}
+                title={option.label}
+                class={`h-1 w-1 rounded-full ${index <= shown ? 'bg-accent' : 'bg-line-strong'}`}
+              />
+            ))}
+          </div>
+        )}
       </div>
       <span
         class="w-[4.5rem] shrink-0 text-right text-xs font-medium text-accent"
