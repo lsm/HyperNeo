@@ -18,7 +18,7 @@ import { answerCodexProbeLocally, serveLocalRelease } from './oxap-codex-provide
 const [binary, version, sha256, ...args] = process.argv.slice(2);
 const mode = args.length === 2 ? args[0] : 'first';
 const runArgument = args.at(-1)!;
-assert(['first', 'recovery', 'pending', 'flash', 'image', 'flash-web', 'pro-web', 'flash-recovery', 'sdk-default', 'locked-recovery'].includes(mode));
+assert(['first', 'recovery', 'pending', 'flash', 'image', 'flash-web', 'pro-web', 'flash-recovery', 'sdk-default', 'locked-recovery', 'refused-reopen'].includes(mode));
 const run = resolve(runArgument);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -75,9 +75,10 @@ try {
   evidence.harnessSave = saved;
   assert.deepEqual(saved, { accepted: true });
   assert.deepEqual(releaseRequests, ['SHA256SUMS.txt', `${version}.tar.gz`]);
-  const flash = ['flash', 'image', 'flash-web', 'flash-recovery', 'locked-recovery'].includes(mode);
+  const flash = ['flash', 'image', 'flash-web', 'flash-recovery', 'locked-recovery', 'refused-reopen'].includes(mode);
   const web = mode.endsWith('-web');
   const locked = mode === 'locked-recovery';
+  const refusesReopen = mode === 'refused-reopen';
   if (locked) writeFileSync(join(workspace, 'verify-native-lease'), '');
   const withImage = mode === 'image' || mode === 'flash-web';
   const model = flash ? 'deepseek-v4-flash' : 'deepseek-v4-pro';
@@ -194,7 +195,7 @@ try {
     );
     evidence.existingSwitchRefused = true;
   }
-  if (['recovery', 'pending', 'flash-recovery', 'sdk-default', 'locked-recovery'].includes(mode)) {
+  if (['recovery', 'pending', 'flash-recovery', 'sdk-default', 'locked-recovery', 'refused-reopen'].includes(mode)) {
     while (app.sessionManager.getCachedSession(sessionId)?.queryPromise) {
       assert(Date.now() < deadline, 'The first query did not finish shutting down');
       await Bun.sleep(25);
@@ -209,7 +210,8 @@ try {
         },
       });
     }
-    if (locked) {
+    if (locked || refusesReopen) {
+      if (refusesReopen) writeFileSync(join(workspace, 'verify-refuse-reopen'), '');
       await transport.close();
       await app.cleanup();
       app = await boot();
@@ -236,20 +238,22 @@ try {
       }, caller);
       assert(sent.kind === 'completed');
       assert.match(JSON.stringify(sent.value), /"delivered":false/);
-      const reason = 'unsupported input: session.open.reopen (unsatisfiable)';
+      const reason = locked
+        ? 'unsupported input: session.open.reopen (unsatisfiable)'
+        : 'the adapter does not advertise a feature the request elected';
       const end = Date.now() + 10000;
-      const getMessages = (id: string) => app.db.getSDKMessages(id, 50).messages;
-      while (!JSON.stringify(getMessages(sender)).includes(reason) && Date.now() < end) await Bun.sleep(25);
+      const senderMessages = () => app.db.getSDKMessagesByType(sender, 'user');
+      while (!JSON.stringify(senderMessages()).includes(reason) && Date.now() < end) await Bun.sleep(25);
       const status = await invokeOperation(registry, 'work.status', { ref }, caller);
       Object.assign(evidence, {
         nativeIdPreserved: app.db.getSession(sessionId)?.sdkSessionId === nativeId,
         failedInputs: app.db.getUserMessagesByStatus(sessionId, 'failed', 50).total,
-        chatReason: JSON.stringify(getMessages(sessionId)).includes(reason),
-        senderReason: JSON.stringify(getMessages(sender)).includes(reason),
+        chatReason: JSON.stringify(app.db.getSDKMessages(sessionId, 50).messages).includes(reason),
+        senderReason: JSON.stringify(senderMessages()).includes(reason),
         statusFailedWithReason: JSON.stringify(status).includes('"status":"failed"') && JSON.stringify(status).includes(reason),
-        lockRefusal: await Bun.file(join(workspace, 'verify-native-lease-refused')).exists(),
+        lockRefusal: locked && await Bun.file(join(workspace, 'verify-native-lease-refused')).exists(),
       });
-      assert.equal(evidence.lockRefusal, true, 'The recovered runtime must hold the original native lease');
+      assert.equal(evidence.lockRefusal, locked, 'The recovered runtime must hold the original native lease');
       assert.equal(evidence.nativeIdPreserved, true);
       assert.equal(evidence.failedInputs, 1);
       assert.equal(evidence.senderReason, true, 'The originating sender should get the refusal reason');

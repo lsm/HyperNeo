@@ -193,6 +193,8 @@ import { registerMailboxJobs } from './lib/mailbox/registration.ts';
 import { boundDeliveryContent } from './lib/handoffs/bound-delivery.ts';
 import { resolveMailboxSession } from './lib/mailbox/session-lookup.ts';
 import { MAILBOX_LANE } from './lib/mailbox/enqueue.ts';
+import { notifyFailedMailboxDelivery } from './lib/mailbox/failure.ts';
+import { OXAP_REOPEN_DELIVERY_FAILURE } from './lib/oxap/oxap-reopen.ts';
 import { settleMessageDeliveryDeadLetter } from './lib/job-handlers/message-delivery-dead-letter.ts';
 import { asMessageDeliveryPayload } from './lib/agent/message-delivery.ts';
 import { deliveryMetrics } from './lib/agent/message-delivery-metrics.ts';
@@ -1664,6 +1666,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           deliveryMetrics.recordDeadLetter();
           const payload = asMessageDeliveryPayload(job.payload);
           if (!payload) return;
+          if (job.error?.startsWith(OXAP_REOPEN_DELIVERY_FAILURE)) {
+            void notifyFailedMailboxDelivery(jobQueue, payload, job.error).catch((error) =>
+              logError('[Daemon] Could not report a failed worker input:', error)
+            );
+          }
           const store = reactiveDb?.db;
           if (!store) return;
           const session =

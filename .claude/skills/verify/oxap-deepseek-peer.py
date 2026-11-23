@@ -39,7 +39,9 @@ for line in sys.stdin:
             "serverInfo": {"name": "deepseek-harness-sdk-runtime", "version": "0.0.1"}
         })
     elif method == "session/resume":
-        if use_lease and not acquire_lease(request["params"]["sessionId"]):
+        if os.path.exists("verify-refuse-reopen"):
+            emit(id=request["id"], error={"code": -32000, "message": "session is unavailable"})
+        elif use_lease and not acquire_lease(request["params"]["sessionId"]):
             open("verify-native-lease-refused", "w").close()
             emit(id=request["id"], error={"code": -32000, "message": "session is already open"})
         else:

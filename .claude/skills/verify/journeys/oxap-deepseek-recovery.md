@@ -20,4 +20,7 @@ Use `locked-recovery` to exercise `work.send` after restarting the daemon.
 The synthetic peer takes an exclusive lease on its native session. Reopening
 takes that same lease, so a concurrent resume is refused. The check requires
 the failed input and its reason in the worker chat, the reason in the originating
-sender's chat, and failed work status with the same reason.
+sender's durable inbox, and failed work status with the same reason.
+
+Use `refused-reopen` for a refusal from the first native resume attempt.
+The same sender and chat checks apply, and the worker retains its native ID.
