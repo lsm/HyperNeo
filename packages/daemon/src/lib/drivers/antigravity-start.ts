@@ -49,7 +49,10 @@ const Completion = z.object({ stopReason: z.string() });
 type Gate<Value> = { value: Value } | { reason: Rejected };
 type Receipt = NonNullable<WorkDelivery['receipt']>;
 type StopResult = Result<{ stopped: boolean }>;
-type CancelPrompt = () => Promise<StopResult>;
+type ActivePrompt = {
+  stop: () => Promise<StopResult>;
+  steer: (message: string) => Result<WorkDelivery>;
+};
 
 function admitStart(request: StartRequest, closing: boolean): Gate<StartRequest> {
   if (closing)
@@ -118,11 +121,12 @@ export function createAntigravityStart(
   executable: string,
   machine: string,
   adapter: string,
-  readOwnedFolder: (id: string) => Promise<string | undefined> = async () => undefined
+  readOwnedFolder: (id: string) => Promise<string | undefined> = async () => undefined,
+  readTurns?: NonNullable<WorkAdapter['readTurns']>
 ) {
   const running = new Set<ProcessJsonRpcTransport>();
   const compactions = new Map<AbortController, ReturnType<typeof compactAntigravity>>();
-  const activePrompts = new Map<string, CancelPrompt>();
+  const activePrompts = new Map<string, ActivePrompt>();
   const sessions = new Map<string, WorkDetail>();
   const completed = new Set<string>();
   const reserved = new Set<string>();
@@ -226,13 +230,33 @@ export function createAntigravityStart(
     return { reason: configured };
   };
 
+  const readSteeredReply = async (id: string, message: string) => {
+    if (!readTurns || closing) return undefined;
+    try {
+      const history = await readTurns(id, undefined, 1, 0);
+      const [input, answer] = history?.turns ?? [];
+      if (
+        input?.role === 'user' &&
+        input.textComplete !== false &&
+        input.text === message &&
+        answer?.role === 'assistant'
+      ) {
+        return { text: answer.text, cut: answer.textComplete === false };
+      }
+    } catch {
+      return undefined;
+    }
+  };
+
   const launchTurn = (
     opened: Opened,
     target: Pick<WorkDetail, 'title' | 'place'>,
     message: string,
-    receipt?: Receipt
+    receipt?: Receipt,
+    supersededMessage?: string
   ): WorkDetail => {
     const { id, cwd, transport, collectReply, close, readReply } = opened;
+    const steered = supersededMessage !== undefined;
     const work: WorkDetail = {
       ref: { adapter, id },
       ...antigravityIdentity(opened.options),
@@ -246,19 +270,25 @@ export function createAntigravityStart(
     completed.delete(id);
     sessions.set(id, receipt ? { ...work, inputEvidence: { receipt, state: 'pending' } } : work);
     let promptEnded = false;
+    const isCurrent = () => activePrompts.get(id) === activePrompt;
     const endPrompt = () => {
       promptEnded = true;
-      collectReply(false);
+      if (isCurrent()) collectReply(false);
     };
     const finish = async (status: WorkDetail['status'], detail: string) => {
+      if (!isCurrent()) return;
       endPrompt();
       await close();
+      const savedReply =
+        steered && supersededMessage !== message && status === 'done'
+          ? await readSteeredReply(id, message)
+          : undefined;
       const at = Date.now();
-      const reply = readReply();
+      const reply = steered ? (savedReply?.text ?? '') : readReply();
       let inputEvidence: WorkDetail['inputEvidence'];
       if (receipt)
         inputEvidence =
-          status === 'done'
+          status === 'done' && (!steered || savedReply)
             ? {
                 receipt,
                 state: 'observed',
@@ -267,7 +297,7 @@ export function createAntigravityStart(
                   { at: work.lastActivityAt, role: 'user', text: message },
                   ...(reply ? [{ at, role: 'agent' as const, text: reply }] : []),
                 ],
-                exchangeCut: reply.length === MAX_REPLY_CHARS,
+                exchangeCut: savedReply?.cut ?? reply.length === MAX_REPLY_CHARS,
                 ...(reply ? { replyAt: at } : {}),
               }
             : { receipt, state: 'unavailable' };
@@ -277,7 +307,12 @@ export function createAntigravityStart(
         lastActivityAt: at,
         ...(reply ? { lastReply: reply, lastReplyAt: at } : {}),
         turnEnds: [
-          { id: receipt?.inputId ?? id, at, startedAt: work.lastActivityAt, message: detail },
+          {
+            id: receipt?.inputId ?? id,
+            at,
+            startedAt: work.lastActivityAt,
+            message: steered && status === 'done' ? (savedReply?.text ?? detail) : detail,
+          },
         ],
         ...(inputEvidence ? { inputEvidence } : {}),
       });
@@ -289,7 +324,7 @@ export function createAntigravityStart(
         sessions.delete(oldest);
       }
     };
-    collectReply(true);
+    collectReply(!steered);
     const promptResult = transport
       .sendRequest(
         'session/prompt',
@@ -299,6 +334,7 @@ export function createAntigravityStart(
       .then((response) => Completion.safeParse('result' in response ? response.result : undefined));
     void promptResult.then(
       async (result) => {
+        if (!isCurrent()) return;
         const saved = await saveSession(transport, id);
         if (!saved) {
           return finish(
@@ -307,9 +343,9 @@ export function createAntigravityStart(
           );
         }
         if (result.success && result.data.stopReason === 'end_turn')
-          return finish('done', readReply());
+          return finish('done', steered ? 'The saved steering reply is unavailable.' : readReply());
         if (result.success && result.data.stopReason === 'cancelled')
-          return finish('stopped', readReply());
+          return finish('stopped', steered ? '' : readReply());
         return finish(
           'failed',
           'Antigravity did not complete the turn. Check the CLI session before retrying.'
@@ -324,9 +360,9 @@ export function createAntigravityStart(
         )
     );
     let stopResult: Promise<StopResult> | undefined;
-    const cancelPrompt: CancelPrompt = () => {
+    const cancelPrompt = () => {
       if (stopResult) return stopResult;
-      if (!promptEnded && activePrompts.get(id) === cancelPrompt) {
+      if (!promptEnded && isCurrent()) {
         transport.sendNotification('session/cancel', { sessionId: id });
       }
       const detail = 'Antigravity did not confirm cancellation. Check work.status before retrying.';
@@ -341,7 +377,20 @@ export function createAntigravityStart(
       );
       return stopResult;
     };
-    activePrompts.set(id, cancelPrompt);
+    const activePrompt: ActivePrompt = {
+      stop: cancelPrompt,
+      steer: (nextMessage) => {
+        if (closing) return reject('unreachable', 'The Antigravity driver is shutting down.', true);
+        if (promptEnded || stopResult)
+          return reject('not_open', 'There is no active Antigravity prompt to steer.', true);
+        if (steered)
+          return reject('busy', 'An Antigravity steering request is already active.', true);
+        const nextReceipt = { executionId: id, inputId: crypto.randomUUID() };
+        launchTurn(opened, target, nextMessage, nextReceipt, message);
+        return { ok: true, value: { delivered: false, unconfirmed: true, receipt: nextReceipt } };
+      },
+    };
+    activePrompts.set(id, activePrompt);
     return work;
   };
 
@@ -449,7 +498,7 @@ export function createAntigravityStart(
     .pipe(compactIdle, ['ref', 'compaction'], 'compaction')
     .endAsync('compaction') as (ref: WorkRef) => ReturnType<typeof compactAntigravity>;
 
-  const selectPrompt = (ref: WorkRef): Gate<CancelPrompt | null> =>
+  const selectPrompt = (ref: WorkRef): Gate<ActivePrompt | null> =>
     ref.adapter === adapter && sessions.has(ref.id)
       ? { value: activePrompts.get(ref.id) ?? null }
       : {
@@ -464,8 +513,8 @@ export function createAntigravityStart(
     .input(['ref'])
     .pipe(selectPrompt, 'ref', 'result:stopped')
     .pipe(
-      (prompt: CancelPrompt | null): Promise<StopResult> | StopResult =>
-        prompt ? prompt() : { ok: true, value: { stopped: false } },
+      (prompt: ActivePrompt | null): Promise<StopResult> | StopResult =>
+        prompt ? prompt.stop() : { ok: true, value: { stopped: false } },
       'stopped',
       'stopped'
     )
@@ -492,6 +541,13 @@ export function createAntigravityStart(
   return {
     start: (request: StartRequest) => launchStart(request, closing),
     send,
+    async steer(ref: WorkRef, message: string): Promise<Result<WorkDelivery>> {
+      const prompt = ref.adapter === adapter ? activePrompts.get(ref.id) : undefined;
+      return (
+        prompt?.steer(message) ??
+        reject('not_open', 'There is no active Antigravity prompt to steer.', true)
+      );
+    },
     status,
     stop,
     compact,
