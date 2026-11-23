@@ -14,35 +14,18 @@ type AdmissionGate = { value: MarkdownImageCandidate } | { reason: MarkdownImage
 
 const uriSchemePattern = /^([a-zA-Z][a-zA-Z0-9+.-]*):/;
 
-const delegatableHrefSchemes = new Set([
-  'http',
-  'https',
-  'mailto',
-  'tel',
-  'ftp',
-  'ftps',
-  'irc',
-  'ircs',
-  'urn',
-]);
-
-function normalizeUri(uri: string) {
-  return uri.replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, '').replace(/[\t\n\r]/g, '');
+function urlScheme(url: string) {
+  const normalized = url
+    .replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, '')
+    .replace(/[\t\n\r]/g, '');
+  return uriSchemePattern.exec(normalized)?.[1].toLowerCase();
 }
 
-function isAllowedImageSrc(src: string) {
-  const normalized = normalizeUri(src);
-  const schemeMatch = uriSchemePattern.exec(normalized);
-  if (!schemeMatch) return true;
-  const scheme = schemeMatch[1].toLowerCase();
-  if (scheme === 'http' || scheme === 'https') return true;
-  return scheme === 'data' && /^data:image\//i.test(normalized);
-}
-
-export function isNavigatableHref(href: string) {
-  const schemeMatch = uriSchemePattern.exec(normalizeUri(href));
-  if (!schemeMatch) return true;
-  return delegatableHrefSchemes.has(schemeMatch[1].toLowerCase());
+export function isAllowedMarkdownUrl(url: string, kind: 'link' | 'image') {
+  const scheme = urlScheme(url);
+  return (
+    !scheme || scheme === 'http' || scheme === 'https' || (kind === 'link' && scheme === 'mailto')
+  );
 }
 
 function toDowngrade(candidate: MarkdownImageCandidate): MarkdownImageAdmission {
@@ -56,7 +39,7 @@ export function gateSrcPresent(candidate: MarkdownImageCandidate): AdmissionGate
 }
 
 export function gateSchemeAllowed(candidate: MarkdownImageCandidate): AdmissionGate {
-  if (!isAllowedImageSrc(candidate.src)) return { reason: toDowngrade(candidate) };
+  if (!isAllowedMarkdownUrl(candidate.src, 'image')) return { reason: toDowngrade(candidate) };
   return { value: candidate };
 }
 

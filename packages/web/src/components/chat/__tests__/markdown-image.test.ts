@@ -3,16 +3,14 @@ import {
   decideMarkdownImage,
   gateSchemeAllowed,
   gateSrcPresent,
-  isNavigatableHref,
+  isAllowedMarkdownUrl,
 } from '../markdown-image';
 
 describe('markdown-image admission', () => {
-  it('admits http, https, data image, and scheme-less srcs unchanged', () => {
+  it('admits http, https, and scheme-less srcs unchanged', () => {
     const srcs = [
       'https://e.com/a.png',
       'http://e.com/a.png',
-      'data:image/png;base64,iVBORw0KGgo=',
-      'DATA:IMAGE/PNG;base64,iVBORw0KGgo=',
       './assets/pic.png',
       '//cdn.e.com/a.png',
     ];
@@ -26,13 +24,15 @@ describe('markdown-image admission', () => {
     }
   });
 
-  it('downgrades javascript, unknown, and non-image data srcs to literal text', () => {
+  it('downgrades unsupported image schemes to literal text', () => {
     const srcs = [
       'javascript:alert(1)',
       'JaVaScRiPt:alert(1)',
       'vbscript:m(1)',
       'ftp://e.com/a.png',
+      'DATA:IMAGE/PNG;base64,iVBORw0KGgo=',
       'data:text/html;base64,PGI+',
+      'mailto:user@example.com',
     ];
     for (const src of srcs) {
       expect(decideMarkdownImage({ src, alt: 'x', title: '' })).toEqual({
@@ -65,32 +65,25 @@ describe('markdown-image admission', () => {
     });
   });
 
-  it('gateSchemeAllowed rejects non-image schemes', () => {
+  it('gateSchemeAllowed rejects data images', () => {
     expect(
       gateSchemeAllowed({ src: 'data:image/png;base64,iVBORw0KGgo=', alt: '', title: '' })
     ).toEqual({
-      value: { src: 'data:image/png;base64,iVBORw0KGgo=', alt: '', title: '' },
+      reason: { kind: 'downgrade', text: '![](data:image/png;base64,iVBORw0KGgo=)' },
     });
     expect(gateSchemeAllowed({ src: 'data:text/html,hi', alt: '', title: '' })).toEqual({
       reason: { kind: 'downgrade', text: '![](data:text/html,hi)' },
     });
   });
 
-  it('delegates hrefs for navigatable schemes only', () => {
-    const navigatable = [
-      'https://e.com',
-      'http://e.com',
-      'mailto:a@b.c',
-      'tel:+15551234',
-      '/page',
-      './page',
-    ];
+  it('admits links with approved schemes or relative destinations', () => {
+    const navigatable = ['https://e.com', 'http://e.com', 'mailto:a@b.c', '/page', './page'];
     for (const href of navigatable) {
-      expect(isNavigatableHref(href)).toBe(true);
+      expect(isAllowedMarkdownUrl(href, 'link')).toBe(true);
     }
-    const unsafe = ['javascript:alert(1)', 'vbscript:m(1)', 'data:text/html,hi', 'JAVASCRIPT:x'];
+    const unsafe = ['javascript:alert(1)', 'vbscript:m(1)', 'data:text/html,hi', 'tel:+15551234'];
     for (const href of unsafe) {
-      expect(isNavigatableHref(href)).toBe(false);
+      expect(isAllowedMarkdownUrl(href, 'link')).toBe(false);
     }
   });
 
@@ -99,7 +92,7 @@ describe('markdown-image admission', () => {
       kind: 'downgrade',
       text: '![x](\u0000javascript:alert(1))',
     });
-    expect(isNavigatableHref('\u0001javascript:alert(1)')).toBe(false);
-    expect(isNavigatableHref('\u0000https://e.com')).toBe(true);
+    expect(isAllowedMarkdownUrl('\u0001javascript:alert(1)', 'link')).toBe(false);
+    expect(isAllowedMarkdownUrl('\u0000https://e.com', 'link')).toBe(true);
   });
 });

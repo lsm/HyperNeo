@@ -380,17 +380,6 @@ describe('MarkdownRenderer', () => {
       );
     });
 
-    it('should render a data image url', async () => {
-      const dataUrl = 'data:image/png;base64,iVBORw0KGgo=';
-      const { container } = render(<MarkdownRenderer content={`![pic](${dataUrl})`} />);
-      await waitFor(() => {
-        expect(container.querySelector('img')).toBeTruthy();
-      });
-      expect(container.querySelector('img')?.getAttribute('src')).toBe(dataUrl);
-      expect(container.querySelector('img')?.getAttribute('alt')).toBe('pic');
-      expect(container.querySelector('img')?.getAttribute('loading')).toBe('lazy');
-    });
-
     it('should keep relative image urls unresolved like links', async () => {
       const { container } = render(<MarkdownRenderer content={'![local](./assets/pic.png)'} />);
       await waitFor(() => {
@@ -480,75 +469,21 @@ describe('MarkdownRenderer', () => {
       expect(event.defaultPrevented).toBe(false);
     });
 
-    it('should open the image instead of following an unsafe author link href', async () => {
-      const openMock = vi.spyOn(window, 'open').mockImplementation(() => null);
+    it('should link an allowed image directly when the author destination is refused', async () => {
       const { container } = render(
-        <MarkdownRenderer content={'[![x](https://example.com/ok.png)](javascript:alert(1))'} />
+        <MarkdownRenderer
+          content={'[![chart](https://example.com/chart.png) caption](example:destination)'}
+        />
       );
       await waitFor(() => {
-        expect(container.querySelector('img')).toBeTruthy();
+        expect(container.querySelector('a.markdown-image-link img')).toBeTruthy();
       });
-      const event = new MouseEvent('click', { bubbles: true, cancelable: true });
-      container.querySelector('img')?.dispatchEvent(event);
-      expect(event.defaultPrevented).toBe(true);
-      expect(openMock).toHaveBeenCalledWith(
-        'https://example.com/ok.png',
-        '_blank',
-        'noopener,noreferrer'
+      expect(container.querySelector('a')?.getAttribute('href')).toBe(
+        'https://example.com/chart.png'
       );
-      openMock.mockRestore();
-    });
-
-    it('should intercept keyboard activation of an image-only link with an unsafe href', async () => {
-      const openMock = vi.spyOn(window, 'open').mockImplementation(() => null);
-      const { container } = render(
-        <MarkdownRenderer content={'[![x](https://example.com/ok.png)](vbscript:msgbox(1))'} />
-      );
-      await waitFor(() => {
-        expect(container.querySelector('a img')).toBeTruthy();
-      });
-      const event = new MouseEvent('click', { bubbles: true, cancelable: true });
-      container.querySelector('a')?.dispatchEvent(event);
-      expect(event.defaultPrevented).toBe(true);
-      expect(openMock).toHaveBeenCalledWith(
-        'https://example.com/ok.png',
-        '_blank',
-        'noopener,noreferrer'
-      );
-      openMock.mockRestore();
-    });
-
-    it('should show an overlay for svg data images on click', async () => {
-      const { container } = render(
-        <MarkdownRenderer content={'![s](data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=)'} />
-      );
-      await waitFor(() => {
-        expect(container.querySelector('img')).toBeTruthy();
-      });
-      const event = new MouseEvent('click', { bubbles: true, cancelable: true });
-      container.querySelector('img')?.dispatchEvent(event);
-      expect(event.defaultPrevented).toBe(true);
-      const overlayImg = document.body.querySelector('.markdown-image-overlay img');
-      expect(overlayImg?.getAttribute('src')).toBe('data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=');
-      document.body
-        .querySelector('.markdown-image-overlay')
-        ?.dispatchEvent(new MouseEvent('click'));
-      expect(document.body.querySelector('.markdown-image-overlay')).toBeFalsy();
-    });
-
-    it('should remove the svg overlay when the renderer unmounts', async () => {
-      const { container, unmount } = render(
-        <MarkdownRenderer content={'![s](data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=)'} />
-      );
-      await waitFor(() => {
-        expect(container.querySelector('img')).toBeTruthy();
-      });
-      container
-        .querySelector('img')
-        ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-      expect(document.body.querySelector('.markdown-image-overlay')).toBeTruthy();
-      unmount();
-      expect(document.body.querySelector('.markdown-image-overlay')).toBeFalsy();
+      expect(container.querySelectorAll('a')).toHaveLength(1);
+      expect(container.querySelector('a')?.textContent).not.toContain('caption');
+      expect(container.textContent).toContain('caption');
     });
 
     it('should delegate mailto linked images to the author link', async () => {
@@ -586,144 +521,6 @@ describe('MarkdownRenderer', () => {
       });
       const src = container.querySelector('img')?.getAttribute('src') || '';
       expect(src).not.toMatch(/^[\u0000-\u0020]*javascript:/i);
-    });
-
-    it('should block caption clicks on image links with unsafe hrefs', async () => {
-      const openMock = vi.spyOn(window, 'open').mockImplementation(() => null);
-      const { container } = render(
-        <MarkdownRenderer
-          content={'[![ok](https://example.com/ok.png) caption](javascript:alert(1))'}
-        />
-      );
-      await waitFor(() => {
-        expect(container.querySelector('a img')).toBeTruthy();
-      });
-      const event = new MouseEvent('click', { bubbles: true, cancelable: true });
-      container.querySelector('a')?.dispatchEvent(event);
-      expect(event.defaultPrevented).toBe(true);
-      expect(openMock).toHaveBeenCalledWith(
-        'https://example.com/ok.png',
-        '_blank',
-        'noopener,noreferrer'
-      );
-      openMock.mockRestore();
-    });
-
-    it('should open a data image through a blob url on click', async () => {
-      const openMock = vi.spyOn(window, 'open').mockImplementation(() => null);
-      const originalCreateObjectURL = URL.createObjectURL;
-      URL.createObjectURL = vi.fn(() => 'blob:mock-url');
-
-      try {
-        const dataUrl = 'data:image/png;base64,iVBORw0KGgo=';
-        const { container } = render(<MarkdownRenderer content={`![pic](${dataUrl})`} />);
-        await waitFor(() => {
-          expect(container.querySelector('img')).toBeTruthy();
-        });
-        expect(container.querySelector('a.markdown-image-link')?.getAttribute('href')).toBe(
-          dataUrl
-        );
-        container
-          .querySelector('img')
-          ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-        expect(openMock).toHaveBeenCalledWith('blob:mock-url', '_blank', 'noopener,noreferrer');
-        openMock.mockClear();
-        container
-          .querySelector('a.markdown-image-link')
-          ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-        expect(openMock).toHaveBeenCalledWith('blob:mock-url', '_blank', 'noopener,noreferrer');
-        openMock.mockClear();
-        container
-          .querySelector('a.markdown-image-link')
-          ?.dispatchEvent(
-            new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 })
-          );
-        expect(openMock).toHaveBeenCalledWith('blob:mock-url', '_blank', 'noopener,noreferrer');
-      } finally {
-        URL.createObjectURL = originalCreateObjectURL;
-        openMock.mockRestore();
-      }
-    });
-
-    it('should dismiss the svg overlay with Escape after focus leaves it', async () => {
-      const { container } = render(
-        <MarkdownRenderer content={'![s](data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=)'} />
-      );
-      await waitFor(() => {
-        expect(container.querySelector('img')).toBeTruthy();
-      });
-      container
-        .querySelector('img')
-        ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-      expect(document.body.querySelector('.markdown-image-overlay')).toBeTruthy();
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      expect(document.body.querySelector('.markdown-image-overlay')).toBeFalsy();
-    });
-
-    it('should open smuggled-mime data urls in the overlay instead of a typeless blob', async () => {
-      const openMock = vi.spyOn(window, 'open').mockImplementation(() => null);
-      const { container } = render(
-        <MarkdownRenderer content={'![p](data:image/png%09text/html;base64,PHNjcmlwdD4=)'} />
-      );
-      await waitFor(() => {
-        expect(container.querySelector('img')).toBeTruthy();
-      });
-      container
-        .querySelector('img')
-        ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-      expect(openMock).not.toHaveBeenCalled();
-      expect(document.body.querySelector('.markdown-image-overlay img')?.getAttribute('src')).toBe(
-        'data:image/png%09text/html;base64,PHNjcmlwdD4='
-      );
-      document.body
-        .querySelector('.markdown-image-overlay')
-        ?.dispatchEvent(new MouseEvent('click'));
-      openMock.mockRestore();
-    });
-
-    it('should only remove the overlay on its own renderer unmount', async () => {
-      const first = render(
-        <MarkdownRenderer content={'![s](data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=)'} />
-      );
-      await waitFor(() => {
-        expect(first.container.querySelector('img')).toBeTruthy();
-      });
-      first.container
-        .querySelector('img')
-        ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-      expect(document.body.querySelector('.markdown-image-overlay')).toBeTruthy();
-      const second = render(<MarkdownRenderer content="plain" />);
-      second.unmount();
-      expect(document.body.querySelector('.markdown-image-overlay')).toBeTruthy();
-      first.unmount();
-      expect(document.body.querySelector('.markdown-image-overlay')).toBeFalsy();
-    });
-
-    it('should decode percent-encoded data url bytes without utf-8 corruption', async () => {
-      const openMock = vi.spyOn(window, 'open').mockImplementation(() => null);
-      const originalCreateObjectURL = URL.createObjectURL;
-      let captured: Blob | null = null;
-      URL.createObjectURL = vi.fn((blob: Blob) => {
-        captured = blob;
-        return 'blob:mock-url';
-      });
-
-      try {
-        const dataUrl = 'data:image/png,%89%50%4E%47%0D%0A';
-        const { container } = render(<MarkdownRenderer content={`![p](${dataUrl})`} />);
-        await waitFor(() => {
-          expect(container.querySelector('img')).toBeTruthy();
-        });
-        container
-          .querySelector('img')
-          ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-        expect(openMock).toHaveBeenCalledWith('blob:mock-url', '_blank', 'noopener,noreferrer');
-        const bytes = new Uint8Array(await (captured as Blob).arrayBuffer());
-        expect(Array.from(bytes)).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]);
-      } finally {
-        URL.createObjectURL = originalCreateObjectURL;
-        openMock.mockRestore();
-      }
     });
   });
 
@@ -2096,15 +1893,15 @@ describe('MarkdownRenderer', () => {
       });
     });
 
-    it('should keep non-slash URI autolinks as links', async () => {
+    it('should keep mailto autolinks and neutralize unsupported URI autolinks', async () => {
       const { container } = render(
         <MarkdownRenderer content={'<mailto:user@example.com>\n\n<urn:isbn:9780131103627>'} />
       );
       await waitFor(() => {
         const links = container.querySelectorAll('a');
-        expect(links).toHaveLength(2);
+        expect(links).toHaveLength(1);
         expect(links[0]?.getAttribute('href')).toBe('mailto:user@example.com');
-        expect(links[1]?.getAttribute('href')).toBe('urn:isbn:9780131103627');
+        expect(container.textContent).toContain('urn:isbn:9780131103627');
         expect(container.querySelector('pre code.language-html')).toBeFalsy();
       });
     });
