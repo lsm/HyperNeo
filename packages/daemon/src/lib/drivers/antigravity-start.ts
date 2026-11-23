@@ -195,10 +195,10 @@ export function createAntigravityStart(
       return { reason: opened };
     }
     const id = opened.value;
-    const activate = () => {
-      sessionId = id;
+    const collectReply = (collect: boolean) => {
+      sessionId = collect ? id : undefined;
     };
-    return { value: { id, cwd, transport, activate, close, readReply: () => reply } };
+    return { value: { id, cwd, transport, collectReply, close, readReply: () => reply } };
   };
 
   type Opened = NonNullable<Awaited<ReturnType<typeof connect>>['value']>;
@@ -208,7 +208,7 @@ export function createAntigravityStart(
     message: string,
     receipt?: Receipt
   ): WorkDetail => {
-    const { id, cwd, transport, activate, close, readReply } = opened;
+    const { id, cwd, transport, collectReply, close, readReply } = opened;
     const work: WorkDetail = {
       ref: { adapter, id },
       title: target.title,
@@ -221,6 +221,7 @@ export function createAntigravityStart(
     completed.delete(id);
     sessions.set(id, receipt ? { ...work, inputEvidence: { receipt, state: 'pending' } } : work);
     const finish = async (status: WorkDetail['status'], detail: string) => {
+      collectReply(false);
       await close();
       const at = Date.now();
       const reply = readReply();
@@ -257,12 +258,13 @@ export function createAntigravityStart(
         sessions.delete(oldest);
       }
     };
-    activate();
+    collectReply(true);
     void transport
-      .sendRequest('session/prompt', {
-        sessionId: id,
-        prompt: [{ type: 'text', text: message }],
-      })
+      .sendRequest(
+        'session/prompt',
+        { sessionId: id, prompt: [{ type: 'text', text: message }] },
+        { onResponseFrame: () => collectReply(false) }
+      )
       .then(
         async (response) => {
           const result = Completion.safeParse('result' in response ? response.result : undefined);

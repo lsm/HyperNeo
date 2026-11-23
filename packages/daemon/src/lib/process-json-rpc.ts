@@ -246,7 +246,10 @@ export class ProcessJsonRpcTransport {
   sendRequest(
     method: string,
     params?: unknown,
-    options?: { onSubmitted?: () => void | Promise<void> }
+    options?: {
+      onSubmitted?: () => void | Promise<void>;
+      onResponseFrame?: (response: JsonRpcResponse) => void;
+    }
   ): Promise<JsonRpcResponse> {
     if (this.closed) {
       return Promise.reject(new Error('Transport is closed'));
@@ -278,6 +281,14 @@ export class ProcessJsonRpcTransport {
           reject(new Error(`Submission check timed out after ${timeoutMs}ms: ${method}`));
         }, timeoutMs);
         this.pendingRequests.set(id, { resolve: () => {}, reject, timer: hold });
+        try {
+          options?.onResponseFrame?.(response);
+        } catch (error) {
+          clearTimeout(hold);
+          this.pendingRequests.delete(id);
+          reject(error);
+          return;
+        }
         void submitted.then((failure) => {
           clearTimeout(hold);
           if (this.pendingRequests.get(id)?.timer === hold) this.pendingRequests.delete(id);
