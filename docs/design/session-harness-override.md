@@ -43,6 +43,10 @@ OXAP id means that harness. Creation resolves it once:
 - The requested value must be `sdk` or a row that lists the provider, and must
   be ready for a new session. Otherwise creation fails with a plain message.
 
+A clone passes its source session's harness (`sdk` when none is stored) as
+this parameter, since `buildCloneParams` strips `config.harness`. A clone keeps
+the source's quota path in both directions.
+
 No column, no table, no second field. The session record already holds the
 harness, and existing code reads it from there.
 
