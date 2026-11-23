@@ -1,7 +1,7 @@
 // @ts-nocheck
 
 import { signal } from '@preact/signals';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
@@ -120,7 +120,7 @@ describe('SessionsPage', () => {
     );
     vi.mocked(createSession).mockReturnValue(new Promise(() => {}));
     render(<SessionsPage />);
-    fireEvent.click(screen.getByRole('button', { name: 'Choose model and thinking' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Choose model, client and thinking' }));
     await waitFor(() => expect(screen.queryByRole('slider')).toBeNull());
     fireEvent.click(screen.getByRole('button', { name: /Sonnet model/ }));
     await waitFor(() => expect(screen.getByRole('slider')).toBeTruthy());
@@ -158,11 +158,12 @@ describe('SessionsPage', () => {
     vi.mocked(createSession).mockReturnValue(new Promise(() => {}));
     render(<SessionsPage />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Choose model and thinking' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'OXAP Codex' }));
-    expect(screen.getByRole('button', { name: 'Choose model and thinking' }).textContent).toContain(
-      'OXAP Codex'
-    );
+    fireEvent.click(screen.getByRole('button', { name: 'Choose model, client and thinking' }));
+    const client = await screen.findByRole('group', { name: 'Client' });
+    fireEvent.click(within(client).getByRole('button', { name: 'OXAP Codex' }));
+    expect(
+      screen.getByRole('button', { name: 'Choose model, client and thinking' }).textContent
+    ).toContain('OXAP Codex');
     expect(screen.queryByRole('button', { name: 'Sandbox' })).toBeNull();
     fireEvent.input(screen.getByPlaceholderText('Ask anything to start a new chat...'), {
       target: { value: 'Hello' },
@@ -182,7 +183,7 @@ describe('SessionsPage', () => {
     vi.mocked(createSession).mockReturnValue(new Promise(() => {}));
     render(<SessionsPage />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Choose model and thinking' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Choose model, client and thinking' }));
     fireEvent.click(await screen.findByRole('button', { name: 'OXAP Codex' }));
     fireEvent.input(screen.getByPlaceholderText('Ask anything to start a new chat...'), {
       target: { value: 'Hello' },
@@ -214,7 +215,7 @@ describe('SessionsPage', () => {
     vi.mocked(createSession).mockReturnValue(new Promise(() => {}));
     render(<SessionsPage />);
 
-    const trigger = screen.getByRole('button', { name: 'Choose model and thinking' });
+    const trigger = screen.getByRole('button', { name: 'Choose model, client and thinking' });
     const prompt = screen.getByPlaceholderText('Ask anything to start a new chat...');
     fireEvent.input(prompt, { target: { value: 'Hello' } });
     expect(screen.getByRole('button', { name: 'Start chat' }).disabled).toBe(true);
@@ -263,7 +264,7 @@ describe('SessionsPage', () => {
     );
     vi.mocked(createSession).mockReturnValue(new Promise(() => {}));
     render(<SessionsPage />);
-    fireEvent.click(screen.getByRole('button', { name: 'Choose model and thinking' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Choose model, client and thinking' }));
     expect(screen.getByRole('slider')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Sandbox' }).getAttribute('aria-pressed')).toBe(
       'true'

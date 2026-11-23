@@ -60,7 +60,7 @@ export function NeoModelMenu({
     <div
       id={id}
       role="group"
-      aria-label="Model and thinking settings"
+      aria-label={children ? 'Model, client and thinking settings' : 'Model and thinking settings'}
       class={`neo-arrive absolute bottom-full ${position} z-30 mb-3 flex w-[360px] max-w-[calc(100vw-64px)] flex-col overflow-hidden rounded-2xl border border-line-strong bg-surface-raised shadow-xl`}
       style={{
         maxHeight:
@@ -76,7 +76,9 @@ export function NeoModelMenu({
       }}
     >
       <div class="flex shrink-0 items-center justify-between px-4 pb-2 pt-3">
-        <h2 class="text-sm font-medium">Model & thinking</h2>
+        <h2 class="text-sm font-medium">
+          {children ? 'Model, client & thinking' : 'Model & thinking'}
+        </h2>
         <button
           type="button"
           aria-label="Close model settings"

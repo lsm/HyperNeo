@@ -173,8 +173,10 @@ export function ModelPicker({
         onClick={() => setOpen(!open)}
         disabled={waiting || disabled}
         title={title}
-        aria-label="Choose model and thinking"
-        aria-description={newChatHarness && `Harness: ${newChatHarness.label}`}
+        aria-label={
+          newChatHarness ? 'Choose model, client and thinking' : 'Choose model and thinking'
+        }
+        aria-description={newChatHarness && `Client: ${newChatHarness.label}`}
         aria-expanded={open}
         aria-controls={menuId}
         class="flex h-8 max-w-full items-center gap-1.5 rounded-full border px-2.5 text-xs text-fg-soft transition-colors hover:brightness-110 shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
@@ -238,8 +240,8 @@ export function ModelPicker({
           onClose={close}
         >
           {!!newChatHarness?.options.length && (
-            <fieldset class="shrink-0 border-t border-line px-3 py-2" aria-label="Harness">
-              <p class="px-2 pb-1 text-xs font-medium text-fg-muted">Harness</p>
+            <fieldset class="shrink-0 border-t border-line px-3 py-2" aria-label="Client">
+              <p class="px-2 pb-1 text-xs font-medium text-fg-muted">Client</p>
               {newChatHarness.options.map(({ label, selected, unavailableReason, onSelect }) => (
                 <button
                   key={label}

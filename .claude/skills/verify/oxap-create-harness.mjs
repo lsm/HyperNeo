@@ -68,8 +68,8 @@ try {
       }, { selectionKey, id, provider });
       await page.reload();
     };
-    const model = page.getByRole('button', { name: 'Choose model and thinking' });
-    const choices = page.getByRole('group', { name: 'Harness', exact: true });
+    const model = page.getByRole('button', { name: 'Choose model, client and thinking' });
+    const choices = page.getByRole('group', { name: 'Client', exact: true });
     const choose = async (name) => {
       await click(model);
       await click(choices.getByRole('button', { name, exact: true }));
@@ -94,7 +94,7 @@ try {
       }
       if (width !== 320) {
         await page.screenshot({
-          path: join(output, `model-picker-${name}-${width}.png`), animations: 'disabled',
+          path: join(output, `client-picker-${name}-${width}.png`), animations: 'disabled',
         });
       }
     };
@@ -120,6 +120,7 @@ try {
     assert.equal(await page.evaluate(() => matchMedia('(pointer: coarse)').matches), touch);
     await model.waitFor();
     assert.match(await model.innerText(), /Claude Code/);
+    assert.equal(await model.getAttribute('aria-description'), 'Client: Claude Code');
     assert.equal(await model.locator(':scope > svg').count(), 0, 'The picker has no trailing chevron');
     await screenshot('default');
     await click(model);
@@ -147,7 +148,7 @@ try {
     await click(model);
     const unavailable = choices.getByRole('button', { name: /OXAP DeepSeek.*Set up in Settings/ });
     assert.equal(await unavailable.isDisabled(), true);
-    const menu = page.getByRole('group', { name: 'Model and thinking settings' });
+    const menu = page.getByRole('group', { name: 'Model, client and thinking settings' });
     const bounds = await menu.boundingBox();
     assert(bounds && bounds.x >= 0 && bounds.x + bounds.width <= width + 1);
     assert(bounds.y >= 8, `The picker is clipped at the top at ${width}px`);
