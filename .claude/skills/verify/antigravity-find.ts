@@ -35,8 +35,10 @@ if (mode === 'start') {
 import assert from 'node:assert/strict';
 import { appendFileSync, existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
-assert.deepEqual(process.argv.slice(2), ['acp', '--sandbox', '--disable-telemetry']);
-assert.equal(process.cwd(), ${JSON.stringify(workspaceRoot)});
+const discovery = !process.argv.includes('--sandbox');
+assert.deepEqual(process.argv.slice(2), discovery
+  ? ['acp', '--disable-telemetry'] : ['acp', '--sandbox', '--disable-telemetry']);
+assert.equal(process.cwd(), discovery ? process.env.HOME : ${JSON.stringify(workspaceRoot)});
 const sessionId = 'owned-1';
 const emit = (message) => process.stdout.write(JSON.stringify({jsonrpc: '2.0', ...message}) + '\\n');
 const note = (id, text) => emit({method:'session/update',params:{sessionId:id,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text}}}});
@@ -44,10 +46,17 @@ let promptId;
 for await (const line of createInterface({input: process.stdin})) {
   const {id, method, params, result} = JSON.parse(line);
   appendFileSync(${JSON.stringify(journal)}, JSON.stringify({method, params, result}) + '\\n');
-  if (method === 'initialize') emit({id,result:{protocolVersion:1}});
+  if (method === 'initialize') emit({id,result:{protocolVersion:1,agentCapabilities:{sessionCapabilities:{list:{},close:{}}}}});
+  else if (method === 'session/list') emit({id,result:{sessions:[
+    {sessionId,cwd:process.cwd(),title:'Owned fixture'},
+    {sessionId:'foreign',cwd:process.cwd(),title:'External fixture'},
+  ]}});
   else if (method === 'session/new') {
     assert.deepEqual(params,{cwd:${JSON.stringify(workspaceRoot)},mcpServers:[]});
     emit({id,result:{sessionId}});
+  } else if (method === 'session/close') {
+    assert.deepEqual(params,{sessionId});
+    emit({id,result:{}});
   } else if (method === 'session/prompt') {
     assert.deepEqual(params,{sessionId,prompt:[{type:'text',text:'Reply with a greeting.'}]});
     promptId = id;
@@ -167,8 +176,18 @@ try {
       assert.deepEqual(settled.value.turnEnds?.map((turn) => turn.message), ['Hello']);
       results.settled = settled;
       const requests = readFileSync(journal, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
-      assert.deepEqual(requests.map((request) => request.method), ['initialize', 'session/new', 'session/prompt', undefined]);
+      assert.deepEqual(requests.map((request) => request.method), ['initialize', 'session/new', 'session/prompt', undefined, 'session/close']);
       assert.deepEqual(requests[3].result, { outcome: { outcome: 'cancelled' } });
+      const find = async (folder?: string) => (await rpc<z.infer<typeof FindWorkResultSchema>>('work.find', {
+        adapters: [adapter], localOnly: true, ...(folder ? { folder } : {}),
+      })).places.flatMap((place) => place.work);
+      const scoped = await find(workspaceRoot);
+      assert.deepEqual(scoped.map((item) => [item.ref.id, item.place.folder]), [['owned-1', workspaceRoot]]);
+      const wrongFolder = await find(join(run, 'home'));
+      assert.equal(wrongFolder.length, 0);
+      const foreign = (await find()).find((item) => item.ref.id === 'foreign');
+      assert(foreign);
+      assert.equal(foreign.place.folder, undefined);
     }
   } else if (mode !== 'absent') {
     operations += 1;

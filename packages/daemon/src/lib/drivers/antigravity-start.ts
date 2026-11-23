@@ -9,8 +9,13 @@ import type { StartRequest, WorkAdapter, WorkDetail } from './types.ts';
 import { reject } from './work-operations.ts';
 
 const START_TIMEOUT_MS = 15_000;
+const CLOSE_TIMEOUT_MS = 3_000;
 const RETAINED_TURNS = 100;
 const MAX_REPLY_CHARS = 16_000;
+const Init = z.object({
+  protocolVersion: z.literal(1),
+  agentCapabilities: z.object({ sessionCapabilities: z.object({ close: z.object({}) }) }),
+});
 const Session = z.object({ sessionId: z.string().min(1) });
 const Update = Session.extend({
   update: z.object({
@@ -20,20 +25,25 @@ const Update = Session.extend({
 });
 const Completion = z.object({ stopReason: z.string() });
 
+async function within<T>(pending: Promise<T>, ms: number, detail: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, refuse) => {
+    timer = setTimeout(() => refuse(new Error(detail)), ms);
+  });
+  try {
+    return await Promise.race([pending, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function openSession(transport: ProcessJsonRpcTransport, cwd: string) {
   const initialized = await transport.sendRequest('initialize', {
     protocolVersion: 1,
     clientCapabilities: {},
   });
-  if (
-    !('result' in initialized) ||
-    !z.object({ protocolVersion: z.literal(1) }).safeParse(initialized.result).success
-  ) {
-    return reject(
-      'unreachable',
-      'Antigravity did not initialize an ACP version 1 connection.',
-      true
-    );
+  if (!('result' in initialized) || !Init.safeParse(initialized.result).success) {
+    return reject('unreachable', 'Antigravity must support ACP version 1 session close.', true);
   }
   const opened = await transport.sendRequest('session/new', { cwd, mcpServers: [] });
   if ('error' in opened) {
@@ -108,26 +118,19 @@ export function createAntigravityStart(executable: string, machine: string, adap
       running.delete(transport);
     };
 
-    let timer: ReturnType<typeof setTimeout> | undefined;
     let opened: Awaited<ReturnType<typeof openSession>>;
     try {
-      opened = await Promise.race([
+      opened = await within(
         openSession(transport, cwd),
-        new Promise<never>((_, refuse) => {
-          timer = setTimeout(
-            () => refuse(new Error('Antigravity session creation timed out.')),
-            START_TIMEOUT_MS
-          );
-        }),
-      ]);
+        START_TIMEOUT_MS,
+        'Antigravity session creation timed out.'
+      );
     } catch (error) {
       opened = reject(
         'unreachable',
         error instanceof Error ? error.message : 'Antigravity could not start.',
         true
       );
-    } finally {
-      clearTimeout(timer);
     }
     if (!opened.ok) {
       await close();
@@ -171,8 +174,23 @@ export function createAntigravityStart(executable: string, machine: string, adap
         prompt: [{ type: 'text', text: request.message }],
       })
       .then(
-        (response) => {
+        async (response) => {
           const result = Completion.safeParse('result' in response ? response.result : undefined);
+          const saved = await within(
+            transport.sendRequest('session/close', { sessionId: id }),
+            CLOSE_TIMEOUT_MS,
+            'Antigravity could not confirm session persistence.'
+          ).then(
+            (closed) => 'result' in closed,
+            () => false
+          );
+          if (!saved) {
+            finish(
+              'failed',
+              'Antigravity did not confirm saved history. Check the CLI session before retrying.'
+            );
+            return;
+          }
           if (result.success && result.data.stopReason === 'end_turn') finish('done', reply);
           else if (result.success && result.data.stopReason === 'cancelled')
             finish('stopped', reply);

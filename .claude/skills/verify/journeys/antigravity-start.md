@@ -16,6 +16,10 @@ fixture holds the turn open until `work.status` reports it running. The permissi
 request is cancelled, and the final reply comes from the session that was started.
 An unrelated session update must not alter that reply. A foreign session has no
 owned status and an unsupported model is rejected before creating the child.
+The agent acknowledges `session/close` before the driver reports the turn done.
+When the agent lists the subprocess launch directory for every session, a
+folder search matches the recorded owned workspace. An external session with
+no verified workspace only appears in unscoped discovery.
 
 The real signed-out CLI must report that sign-in is needed before any prompt is
 submitted. Require both wrapper exits to be zero and check `antigravity-find.json`
