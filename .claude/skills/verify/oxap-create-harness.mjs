@@ -68,12 +68,17 @@ try {
       }, { selectionKey, id, provider });
       await page.reload();
     };
+    const model = page.getByRole('button', { name: 'Choose model and thinking' });
+    const choices = page.getByRole('group', { name: 'Harness', exact: true });
+    const choose = async (name) => {
+      await click(model);
+      await click(choices.getByRole('button', { name, exact: true }));
+      await choices.waitFor({ state: 'hidden' });
+    };
     const screenshot = async (name) => {
       const sandbox = page.getByRole('button', { name: 'Sandbox', exact: true });
-      const model = page.getByRole('button', { name: 'Choose model and thinking' });
-      const harness = page.getByRole('button', { name: /^Harness:/ });
       const start = page.getByRole('button', { name: 'Start chat' });
-      const controls = [model, harness, ...(await sandbox.count() ? [sandbox] : []), start];
+      const controls = [model, ...(await sandbox.count() ? [sandbox] : []), start];
       const boxes = await Promise.all(controls.map((control) => control.boundingBox()));
       const middle = (box) => box.y + box.height / 2;
       assert(boxes.every(Boolean), `${name} controls are visible at ${width}px`);
@@ -89,7 +94,7 @@ try {
       }
       if (width !== 320) {
         await page.screenshot({
-          path: join(output, `one-line-${name}-${width}.png`), animations: 'disabled',
+          path: join(output, `model-picker-${name}-${width}.png`), animations: 'disabled',
         });
       }
     };
@@ -113,44 +118,46 @@ try {
     setCodexDefault('sdk');
     await open('codex-6-luna', 'anthropic-codex');
     assert.equal(await page.evaluate(() => matchMedia('(pointer: coarse)').matches), touch);
-    const sdk = page.getByRole('button', { name: 'Harness: Claude Code' });
-    const codex = page.getByRole('button', { name: 'Harness: OXAP Codex' });
-    await sdk.waitFor({ timeout: 6000 });
+    await model.waitFor();
+    assert.match(await model.innerText(), /Claude Code/);
+    assert.equal(await model.locator(':scope > svg').count(), 0, 'The picker has no trailing chevron');
     await screenshot('default');
+    await click(model);
+    assert.equal(await choices.getByRole('button', { name: 'Claude Code', exact: true }).getAttribute('aria-pressed'), 'true');
+    await page.keyboard.press('Escape');
     await submit(undefined, undefined);
 
     await open('codex-6-luna', 'anthropic-codex');
-    await click(sdk);
-    await click(page.getByRole('menuitem', { name: 'OXAP Codex', exact: true }));
-    await codex.waitFor();
-    await page.getByRole('menuitem', { name: 'OXAP Codex', exact: true }).waitFor({ state: 'hidden' });
+    await choose('OXAP Codex');
+    assert.match(await model.innerText(), /OXAP Codex/);
     await screenshot('override');
     await submit('oxap-codex', 'oxap-codex');
 
     await open('codex-6-luna', 'anthropic-codex');
-    await sdk.waitFor();
+    assert.match(await model.innerText(), /Claude Code/);
     setCodexDefault('oxap-codex');
     await open('codex-6-luna', 'anthropic-codex');
-    await click(codex);
-    await click(page.getByRole('menuitem', { name: 'Claude Code', exact: true }));
-    await sdk.waitFor();
+    const configured = choices.getByRole('button', { name: 'OXAP Codex', exact: true, pressed: true });
+    await click(model);
+    await configured.waitFor();
+    await click(choices.getByRole('button', { name: 'Claude Code', exact: true }));
+    assert.match(await model.innerText(), /Claude Code/);
     await submit('sdk', undefined);
     await open('deepseek-v4-pro', 'deepseek');
-    await click(page.getByRole('button', { name: 'Harness: Claude Code' }));
-    const unavailable = page.getByRole('menuitem', { name: /OXAP DeepSeek.*Set up in Settings/ });
+    await click(model);
+    const unavailable = choices.getByRole('button', { name: /OXAP DeepSeek.*Set up in Settings/ });
     assert.equal(await unavailable.isDisabled(), true);
-    const menu = page.getByRole('menu').filter({ has: unavailable });
+    const menu = page.getByRole('group', { name: 'Model and thinking settings' });
     const bounds = await menu.boundingBox();
     assert(bounds && bounds.x >= 0 && bounds.x + bounds.width <= width + 1);
+    assert(bounds.y >= 8, `The picker is clipped at the top at ${width}px`);
     await screenshot('disabled');
     await page.keyboard.press('Escape');
     await submit(undefined, undefined);
     setCodexDefault('sdk');
     await open();
-    await sdk.waitFor();
-    await click(sdk);
-    await click(page.getByRole('menuitem', { name: 'OXAP Codex', exact: true }));
-    await codex.waitFor();
+    await choose('OXAP Codex');
+    assert.match(await model.innerText(), /OXAP Codex/);
     const { request, session } = await submit('oxap-codex', 'oxap-codex');
     assert.deepEqual(request.config, { provider: 'anthropic-codex' }, 'An override should omit an unknown model');
     assert.equal(session.config.model, 'codex-6-luna', 'The daemon should resolve the configured fallback');

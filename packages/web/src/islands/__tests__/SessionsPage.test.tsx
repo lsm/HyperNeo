@@ -158,9 +158,11 @@ describe('SessionsPage', () => {
     vi.mocked(createSession).mockReturnValue(new Promise(() => {}));
     render(<SessionsPage />);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Harness: Claude Code' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'OXAP Codex' }));
-    expect(await screen.findByRole('button', { name: 'Harness: OXAP Codex' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Choose model and thinking' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'OXAP Codex' }));
+    expect(screen.getByRole('button', { name: 'Choose model and thinking' }).textContent).toContain(
+      'OXAP Codex'
+    );
     expect(screen.queryByRole('button', { name: 'Sandbox' })).toBeNull();
     fireEvent.input(screen.getByPlaceholderText('Ask anything to start a new chat...'), {
       target: { value: 'Hello' },
@@ -180,8 +182,8 @@ describe('SessionsPage', () => {
     vi.mocked(createSession).mockReturnValue(new Promise(() => {}));
     render(<SessionsPage />);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Harness: Claude Code' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'OXAP Codex' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Choose model and thinking' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'OXAP Codex' }));
     fireEvent.input(screen.getByPlaceholderText('Ask anything to start a new chat...'), {
       target: { value: 'Hello' },
     });
@@ -212,7 +214,7 @@ describe('SessionsPage', () => {
     vi.mocked(createSession).mockReturnValue(new Promise(() => {}));
     render(<SessionsPage />);
 
-    const trigger = await screen.findByRole('button', { name: 'Harness: OXAP DeepSeek' });
+    const trigger = screen.getByRole('button', { name: 'Choose model and thinking' });
     const prompt = screen.getByPlaceholderText('Ask anything to start a new chat...');
     fireEvent.input(prompt, { target: { value: 'Hello' } });
     expect(screen.getByRole('button', { name: 'Start chat' }).disabled).toBe(true);
@@ -221,9 +223,9 @@ describe('SessionsPage', () => {
 
     fireEvent.click(trigger);
     expect(
-      screen.getByRole('menuitem', { name: /OXAP DeepSeek.*Set up in Settings/ }).disabled
+      (await screen.findByRole('button', { name: /OXAP DeepSeek.*Set up in Settings/ })).disabled
     ).toBe(true);
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Claude Code' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Claude Code' }));
     fireEvent.click(screen.getByRole('button', { name: 'Start chat' }));
     expect(createSession).toHaveBeenCalledWith({
       harness: 'sdk',

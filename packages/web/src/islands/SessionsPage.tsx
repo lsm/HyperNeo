@@ -35,8 +35,6 @@ import {
   hasNativeFolderPicker,
   NATIVE_FOLDER_PICKER_TIMEOUT_MS,
 } from '../lib/runtime-capabilities.ts';
-import { Dropdown } from '../components/ui/Dropdown.tsx';
-import { NeoIcon } from '../neo/NeoIcon.tsx';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
 import { WorkspaceChips } from '../components/WorkspaceChips.tsx';
 import { ModelPicker } from '../components/ModelPicker.tsx';
@@ -167,7 +165,6 @@ export function SessionsPage() {
     initialSelection.thinkingLevel
   );
   const [harnessChoice, setHarnessChoice] = useState<{ provider: string; id: NewChatHarness }>();
-  const [harnessMenuOpen, setHarnessMenuOpen] = useState(false);
   const [sandboxChoice, setSandboxChoice] = useState<boolean | null>(initialSelection.sandbox);
   const sandbox = sandboxChoice ?? globalSettings.value?.sandbox?.enabled ?? false;
   const thinkingLevel =
@@ -217,7 +214,6 @@ export function SessionsPage() {
 
   useEffect(() => {
     setHarnessChoice(undefined);
-    setHarnessMenuOpen(false);
   }, [providerId]);
 
   useEffect(() => {
@@ -515,6 +511,26 @@ export function SessionsPage() {
               <div class="flex min-w-0 items-center gap-2">
                 <ModelPicker
                   menuId="new-chat-preferences"
+                  align="trigger"
+                  newChatHarness={{
+                    label: harnessLabel,
+                    options:
+                      mayUseOxap && providers !== null
+                        ? [
+                            {
+                              label: 'Claude Code',
+                              selected: harness === 'sdk',
+                              onSelect: () => chooseHarness('sdk'),
+                            },
+                            ...eligibleHarnesses.map((id) => ({
+                              label: oxapHarness(id).label,
+                              selected: harness === id,
+                              unavailableReason: ready(id) ? undefined : HARNESS_SETUP,
+                              onSelect: () => chooseHarness(id),
+                            })),
+                          ]
+                        : [],
+                  }}
                   activeModelInfo={activeModelInfo}
                   activeModelLabel={activeModelLabel}
                   availableModels={availableModels}
@@ -531,52 +547,6 @@ export function SessionsPage() {
                     setSelectedModel({ id: model.id, provider: model.provider });
                   }}
                 />
-                {mayUseOxap && providers !== null ? (
-                  <Dropdown
-                    position="left"
-                    class="shrink-0"
-                    isOpen={harnessMenuOpen}
-                    onOpenChange={setHarnessMenuOpen}
-                    trigger={
-                      <button
-                        type="button"
-                        aria-label={`Harness: ${harnessLabel}`}
-                        aria-haspopup="menu"
-                        aria-expanded={harnessMenuOpen}
-                        title={`Harness: ${harnessLabel}`}
-                        class={`${CHAT_ICON_CONTROL} border-line text-fg-muted hover:text-fg`}
-                      >
-                        <NeoIcon name="chip" class="!h-4 !w-4" />
-                      </button>
-                    }
-                    items={[
-                      {
-                        label: 'Claude Code',
-                        icon: <NeoIcon name="check" class={harness === 'sdk' ? '' : 'invisible'} />,
-                        onClick: () => chooseHarness('sdk'),
-                      },
-                      ...eligibleHarnesses.map((id) => {
-                        const label = oxapHarness(id).label;
-                        const available = ready(id);
-                        return {
-                          label: available ? label : `${label} — ${HARNESS_SETUP}`,
-                          disabled: !available,
-                          icon: <NeoIcon name="check" class={harness === id ? '' : 'invisible'} />,
-                          onClick: () => chooseHarness(id),
-                        };
-                      }),
-                    ]}
-                  />
-                ) : !mayUseOxap ? (
-                  <span
-                    role="img"
-                    aria-label="Harness: Claude Code"
-                    title="Harness: Claude Code"
-                    class={`${CHAT_ICON_CONTROL} border-transparent text-fg-muted`}
-                  >
-                    <NeoIcon name="chip" class="!h-4 !w-4" />
-                  </span>
-                ) : null}
                 {!isOxap && (
                   <button
                     type="button"
@@ -653,7 +623,7 @@ export function SessionsPage() {
             </div>
           </div>
 
-          {harnessUnavailable && providers !== null && !harnessMenuOpen && (
+          {harnessUnavailable && providers !== null && (
             <p class="mt-2 px-1 text-xs text-fg-muted">{HARNESS_SETUP}</p>
           )}
           {providersError && (

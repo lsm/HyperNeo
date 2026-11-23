@@ -4,6 +4,7 @@ import {
   type ModelInfo,
   type ThinkingLevel,
 } from '@hyperneo/shared';
+import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import {
   filterModelsBySearch,
@@ -28,6 +29,7 @@ export function NeoModelMenu({
   onClose,
   onReload,
   align = 'left',
+  children,
 }: {
   id?: string;
   models: ModelInfo[];
@@ -42,8 +44,10 @@ export function NeoModelMenu({
   onThinking: (level: ThinkingLevel) => void;
   onClose: () => void;
   onReload?: () => void;
-  align?: 'left' | 'right';
+  align?: 'left' | 'right' | 'trigger';
+  children?: ComponentChildren;
 }) {
+  const position = { left: '-left-10 sm:left-0', right: 'right-0', trigger: 'left-0' }[align];
   const [query, setQuery] = useState('');
   const search = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -57,8 +61,13 @@ export function NeoModelMenu({
       id={id}
       role="group"
       aria-label="Model and thinking settings"
-      class={`neo-arrive absolute bottom-full ${align === 'right' ? 'right-0' : '-left-10 sm:left-0'} z-30 mb-3 flex w-[360px] max-w-[calc(100vw-64px)] flex-col overflow-hidden rounded-2xl border border-line-strong bg-surface-raised shadow-xl`}
-      style={{ maxHeight: 'min(580px, calc(100dvh - var(--neo-composer-height, 190px) - 90px))' }}
+      class={`neo-arrive absolute bottom-full ${position} z-30 mb-3 flex w-[360px] max-w-[calc(100vw-64px)] flex-col overflow-hidden rounded-2xl border border-line-strong bg-surface-raised shadow-xl`}
+      style={{
+        maxHeight:
+          align === 'trigger'
+            ? 'min(580px, calc(50dvh - 32px))'
+            : 'min(580px, calc(100dvh - var(--neo-composer-height, 190px) - 90px))',
+      }}
       onKeyDown={(event) => {
         if (event.key === 'Escape') {
           event.stopPropagation();
@@ -165,6 +174,7 @@ export function NeoModelMenu({
           </button>
         )}
       </div>
+      {children}
       {showThinking && (
         <div class="shrink-0 border-t border-line bg-surface/40 p-3">
           <div class="mb-2 flex items-center justify-between">

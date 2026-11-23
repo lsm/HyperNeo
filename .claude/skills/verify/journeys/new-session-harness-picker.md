@@ -8,9 +8,9 @@ bash .claude/skills/verify/oxap-create-thinking.sh /absolute/fresh/evidence-dire
 ```
 
 At 1280 px and at 390 and 320 px with a coarse pointer, the journey checks that
-the model, harness, Sandbox and send controls stay on one line. The harness
-and Sandbox controls are round icon buttons. The harness button identifies the
-Claude Code provider default beside the Codex model. Starting that chat omits the override.
+the model picker, round Sandbox button and send button stay on one line. The
+model picker shows the Claude Code provider default beside the Codex model and
+contains the harness choices. Starting that chat omits the override.
 Choosing OXAP Codex sends the override and stores OXAP. Reopening the form
 shows the provider default again. Changing the provider default in settings then
 allows the journey to verify the reverse override to Claude Code. DeepSeek's
@@ -20,5 +20,5 @@ an override sends the provider alone and the daemon resolves the fallback.
 The journey forwards real create requests and holds the first message at the
 browser boundary.
 
-Keep `one-line-default-1280.png`, `one-line-override-1280.png`,
-`one-line-disabled-1280.png` and their `-390.png` counterparts.
+Keep `model-picker-default-1280.png`, `model-picker-override-1280.png`,
+`model-picker-disabled-1280.png` and their `-390.png` counterparts.
