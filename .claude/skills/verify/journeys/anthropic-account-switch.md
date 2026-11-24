@@ -14,3 +14,8 @@ bash .claude/skills/verify/resource-check.sh && \
 The proof prints `PASS requests=2 replacementAccountRetained=true
 persistedAccountMatches=true` when the replacement identity remains visible to
 Settings and is persisted after the old response completes.
+
+Build the web bundle and append `--web` after `verify` to open Settings →
+Providers in a paired browser. Supply the browser dependency and executable
+through `NODE_PATH` and `VERIFY_BROWSER` when required. The proof checks for
+one visible replacement account and saves `settings.png`.

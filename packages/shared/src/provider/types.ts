@@ -89,6 +89,7 @@ export type TokenRefreshOutcome = 'refreshed' | 'transient' | 'definitive';
 
 export type TokenRefreshResult =
   | TokenRefreshOutcome
+  | 'superseded'
   | { outcome: 'transient' | 'definitive'; oauthError: string };
 
 export interface Provider {

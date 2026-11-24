@@ -455,6 +455,9 @@ export function setupAuthHandlers(
       try {
         bumpProviderCatalogEpoch(providerId);
         const outcome = await provider.refreshToken();
+        if (outcome === 'superseded') {
+          return { success: false, error: 'The provider login changed during refresh.' };
+        }
         if (outcome !== 'refreshed') {
           let previousCredentials: ProviderCredentials | null = null;
           try {
