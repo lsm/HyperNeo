@@ -1121,6 +1121,7 @@ describe('ProvidersSettings', () => {
           displayName: 'Anthropic',
           isAuthenticated: true,
           method: 'oauth',
+          credentialSource: 'hyperneo',
           user: { email: 'replacement@example.test' },
         },
       ],
@@ -1129,6 +1130,7 @@ describe('ProvidersSettings', () => {
     render(<ProvidersSettings />);
 
     expect(await screen.findByText('Signed in as replacement@example.test')).toBeTruthy();
+    expect(screen.getByText('Credential source: HyperNeo')).toBeTruthy();
   });
 
   it('shows OAuth logout button for authenticated OAuth provider', async () => {

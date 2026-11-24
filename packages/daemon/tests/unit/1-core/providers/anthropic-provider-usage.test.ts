@@ -39,15 +39,19 @@ function controlResponse(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function mockSdk(getUsage: () => Promise<unknown>) {
+function mockSdk(
+  getUsage: () => Promise<unknown>,
+  inspectEnv?: (env: Record<string, string | undefined>) => void
+) {
   const calls = { usage: 0, interrupted: 0 };
   mock.module('@anthropic-ai/claude-agent-sdk', () => ({
-    query: () => ({
+    query: ({ options }: { options: { env: Record<string, string | undefined> } }) => ({
       interrupt: async () => {
         calls.interrupted++;
       },
       usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => {
         calls.usage++;
+        inspectEnv?.(options.env);
         return getUsage();
       },
     }),
@@ -104,6 +108,24 @@ describe('AnthropicProvider.getUsage', () => {
       reason: 'not_supported',
     });
     expect(calls.usage).toBe(0);
+  });
+
+  it('uses the configured subscription when an inherited bearer is present', async () => {
+    let usesSelectedCredential = false;
+    mockSdk(
+      async () => controlResponse(),
+      (env) => {
+        usesSelectedCredential =
+          !env.ANTHROPIC_AUTH_TOKEN && env.CLAUDE_CODE_OAUTH_TOKEN === subscription.accessToken;
+      }
+    );
+    const instance = new AnthropicProvider({ ANTHROPIC_AUTH_TOKEN: 'synthetic-inherited-bearer' });
+    instance.setCredentials(subscription);
+
+    const result = await instance.getUsage();
+
+    expect(result.supported).toBe(true);
+    expect(usesSelectedCredential).toBe(true);
   });
 
   it('falls back to the latest stored event per window when the control request fails', async () => {
