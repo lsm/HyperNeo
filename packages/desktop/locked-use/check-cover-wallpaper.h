@@ -131,7 +131,8 @@ static BOOL checkFile(NSString *name, NSURL *url, NSString *expectedIO, BOOL exp
     CGImageRef image = decodeWallpaper(url, CGSizeMake(90, 60));
     BOOL pass = (image != NULL) == expectedImage && [ioTrace isEqualToString:expectedIO];
     if (image) {
-        pass &= CGImageGetWidth(image) <= 90 && CGImageGetHeight(image) <= 60;
+        size_t width = CGImageGetWidth(image), height = CGImageGetHeight(image);
+        pass &= width >= 90 && height >= 60 && (width == 90 || height == 60);
         CGImageRelease(image);
     }
     printf("wallpaper %s %s\n", name.UTF8String, pass ? "PASS" : "FAIL");
@@ -140,11 +141,13 @@ static BOOL checkFile(NSString *name, NSURL *url, NSString *expectedIO, BOOL exp
     return pass;
 }
 
-static BOOL checkMismatchedAspect(NSURL *url) {
-    CGImageRef image = decodeWallpaper(url, CGSizeMake(96, 192));
-    BOOL pass = image && CGImageGetWidth(image) == 96 && CGImageGetHeight(image) == 54;
+static BOOL checkDecodedSize(NSString *name, NSURL *url, CGSize display, CGSize expected) {
+    CGImageRef image = decodeWallpaper(url, display);
+    size_t width = image ? CGImageGetWidth(image) : 0;
+    size_t height = image ? CGImageGetHeight(image) : 0;
+    BOOL pass = width == expected.width && height == expected.height;
     if (image) CGImageRelease(image);
-    printf("wallpaper landscape source on portrait display %s\n", pass ? "PASS" : "FAIL");
+    printf("wallpaper %s %s (%zux%zu)\n", name.UTF8String, pass ? "PASS" : "FAIL", width, height);
     return pass;
 }
 
@@ -153,7 +156,9 @@ static int checkPaths(void) {
     NSURL *library = [NSURL URLWithString:@"file:///Library/Desktop%20Pictures/direct.png"];
     NSURL *aerial = [NSURL URLWithString:@"file:///System/Library/CoreServices/DefaultDesktop.heic"];
     BOOL pass = checkFile(@"system", system, @"OSRC", YES);
-    pass &= checkMismatchedAspect(system);
+    pass &= checkDecodedSize(@"landscape source on portrait display", system, CGSizeMake(64, 72), CGSizeMake(128, 72));
+    pass &= checkDecodedSize(@"native source smaller than display", system, CGSizeMake(240, 180), CGSizeMake(192, 108));
+    pass &= checkDecodedSize(@"extreme crop falls back", system, CGSizeMake(4, 72), CGSizeZero);
     pass &= checkFile(@"library", library, @"OSRC", YES);
     pass &= checkFile(@"aerial", aerial, @"OPLCOSRC", YES);
     pass &= checkFile(@"relative-link", aerial, @"OPLCOSRC", YES);
