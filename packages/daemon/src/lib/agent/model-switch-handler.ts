@@ -419,7 +419,11 @@ export class ModelSwitchHandler {
         throw new Error('Session has no provider configured');
       }
 
-      const invalid = await this.invalidModel(newModel, newProvider, commit?.thinkingLevel);
+      const invalid = await this.invalidModel(
+        newModel,
+        newProvider,
+        commit?.thinkingLevel ?? thinkingLevel
+      );
       if (invalid) {
         logger.error(invalid);
         return { success: false, model: session.config.model, error: invalid };

@@ -31,7 +31,6 @@ import {
   isCuratedOutModel,
   markRefreshAttemptedFor,
 } from '../model-service.js';
-import { invokeOperation } from '../operations/invoke.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import { getProviderRegistry, inferProviderForModel } from '../providers/registry.js';
 import {
@@ -45,7 +44,6 @@ import {
   codexSessionRefusal,
   engineForProvider,
   oxapModelSwitchRefusal,
-  thinkingRefusal,
 } from '../agent/session-engine.ts';
 import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import { validateImageSizes } from '../session/message-persistence.ts';
@@ -822,27 +820,12 @@ export function setupSessionHandlers(
       throw new Error('Session not found');
     }
 
-    const thinkingLevel = normalizeThinkingLevel(level);
-    const { harness, model } = agentSession.getSessionData().config;
-    if (harness === 'oxap-codex') {
-      const refusal = thinkingRefusal(harness, level, model);
-      if (refusal) throw new Error(refusal);
-      const outcome = await invokeOperation(
-        sessionManager.getOperationRegistry(),
-        'session.runtimeSettings.update',
-        { sessionId: targetSessionId, thinkingLevel },
-        { source: 'rpc' }
-      );
-      const result =
-        outcome.kind === 'completed'
-          ? (outcome.value as { ok: boolean; reason?: string })
-          : undefined;
-      if (!result?.ok)
-        throw new Error(result?.reason ?? 'Could not change the Codex thinking level.');
-      return { success: true, thinkingLevel };
-    }
-
-    const result = await setSessionThinkingLevel(sessionManager, agentSession, thinkingLevel);
+    const result = await setSessionThinkingLevel(
+      sessionManager,
+      agentSession,
+      normalizeThinkingLevel(level),
+      level
+    );
     if (!result.success) throw new Error(result.error);
     return result;
   });

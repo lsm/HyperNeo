@@ -19,6 +19,7 @@ import { resolveHyperneoThinking } from '../drivers/start-configuration.ts';
 import { matchModelIdOrName, usableModels } from '../usable-models.ts';
 import { getAvailableModels, isCuratedOutModel } from '../model-service.ts';
 import { inferProviderForModel } from '../providers/registry.ts';
+import { invokeOperation } from '../operations/invoke.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { admitSpaceCaller } from '../operations/space-caller-admission.ts';
 import {
@@ -28,13 +29,37 @@ import {
 } from './runtime-settings-read-operation.ts';
 
 export async function setSessionThinkingLevel(
-  sessions: Pick<SessionManager, 'updateSession'>,
+  sessions: Pick<SessionManager, 'getOperationRegistry' | 'updateSession'>,
   agent: AgentSession,
-  thinkingLevel: ThinkingLevel
+  thinkingLevel: ThinkingLevel,
+  requestedLevel: string = thinkingLevel
 ) {
   const { id, config } = agent.getSessionData();
-  const error = thinkingRefusal(config.harness, thinkingLevel);
+  const oxap = config.harness === 'oxap-codex';
+  const error = thinkingRefusal(
+    config.harness,
+    oxap ? requestedLevel : thinkingLevel,
+    config.model
+  );
   if (error) return { success: false as const, error };
+  if (oxap) {
+    const outcome = await invokeOperation(
+      sessions.getOperationRegistry(),
+      'session.runtimeSettings.update',
+      { sessionId: id, thinkingLevel },
+      { source: 'internal' }
+    );
+    const result =
+      outcome.kind === 'completed'
+        ? (outcome.value as { ok: boolean; reason?: string })
+        : undefined;
+    return result?.ok
+      ? { success: true as const, thinkingLevel }
+      : {
+          success: false as const,
+          error: result?.reason ?? 'Could not change the Codex thinking level.',
+        };
+  }
   await sessions.updateSession(id, { config: { ...config, thinkingLevel } });
   await agent.applyThinkingLevel();
   return { success: true as const, thinkingLevel };

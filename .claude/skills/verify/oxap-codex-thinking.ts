@@ -131,24 +131,29 @@ process.exit(await child.exited);
   assert.equal((await session()).config.thinkingLevel, 'think24k');
   const daemon = app;
   const wire = await daemon.oxapEngine.getHub(() => readHubOptions(daemon.oxapSettings));
-  const ultraRequest = (type: string, id: string) => ({
+  const reasoningRequest = (type: string, id: string, reasoning_level = 'ultra') => ({
     protocol: 'open-agent-protocol',
     version: '0.1',
     profile: 'open-agent-protocol.agent-control-core',
     type,
     id: crypto.randomUUID(),
     ...(type === 'session.open.request' ? {} : { session_id: id }),
-    payload: { session_id: id, reasoning_level: 'ultra' },
+    payload: { session_id: id, reasoning_level },
   });
   await assert.rejects(wire.request('open', {
     adapter: 'anthropic-codex',
     directory: workspace,
-    request: ultraRequest('session.open.request', 'unsupported-ultra-probe'),
+    request: reasoningRequest('session.open.request', 'unsupported-ultra-probe'),
   }), { code: 'schema_invalid' });
   await assert.rejects(wire.request('settings', {
     session_id: sessionId,
-    request: ultraRequest('session.settings.update.request', sessionId),
+    request: reasoningRequest('session.settings.update.request', sessionId),
   }), { code: 'schema_invalid' });
+  const off = await wire.request('settings', {
+    session_id: sessionId,
+    request: reasoningRequest('session.settings.update.request', sessionId, 'off'),
+  }) as { payload?: { reasoning_level?: string } };
+  assert.equal(off.payload?.reasoning_level, 'off');
   for (const [level, effort] of [['think8k', 'low'], ['think16k', 'medium'], ['think32k', 'xhigh']]) {
     assert.deepEqual(await change(level), { success: true, thinkingLevel: level });
     await turn(effort);
@@ -199,7 +204,7 @@ process.exit(await child.exited);
   await turn('max');
   assert.equal((await session()).sdkSessionId, thread);
   assert.equal(requests.length, 6);
-  const evidence = { version, published, requests, sameThreadAfterReopen: true, ultraOpen: 'schema_invalid', ultraLive: 'schema_invalid' };
+  const evidence = { version, published, requests, sameThreadAfterReopen: true, ultraOpen: 'schema_invalid', ultraLive: 'schema_invalid', acceptedOffWireLevel: off.payload.reasoning_level };
   await writeFile(join(run, 'evidence', 'thinking.json'), JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify(evidence));
 } finally {

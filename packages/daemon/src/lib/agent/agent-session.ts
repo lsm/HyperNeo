@@ -1925,7 +1925,7 @@ export class AgentSession
     provider: string,
     thinkingLevel?: ThinkingLevel
   ): Promise<{ success: boolean; model: string; error?: string; pending?: PendingModelSwitch }> {
-    const invalid = await this.modelSwitchHandler.invalidModel(model, provider);
+    const invalid = await this.modelSwitchHandler.invalidModel(model, provider, thinkingLevel);
     if (invalid) {
       await this.applyPendingModelSwitch();
       return { success: false, model: this.session.config.model, error: invalid };
