@@ -362,8 +362,9 @@ try {
       const nativeId = app.db.getSession(firstId)?.sdkSessionId;
       assert(nativeId);
       if (livePeer) {
+        await waitFor(() => !first.queryPromise, 'first turn finished');
         const switched = await switchModel();
-        assert.equal(switched.success, true, JSON.stringify(switched));
+        assert(switched.success && !switched.pending, JSON.stringify(switched));
       }
       assert.match(app.db.getSession(firstId)?.config.model ?? '', /^(codex|gpt)-5\.6-luna$/);
       await send(livePeer ? 'Repeat the exact marker from your previous reply, then append SAME-THREAD. Use no tools.' : 'Synthetic turn after model switch', 2, livePeer ? 'SAME-THREAD' : 'synthetic reply');

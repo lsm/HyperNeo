@@ -20,7 +20,7 @@ For an explicitly requested live Codex proof, append the absolute path of a
 wrapper that runs the real Codex CLI with its existing signed-in home. Clear
 `CODEX_HOME` in the wrapper, set `HOME` to the signed-in home, and pass all
 arguments to Codex. The daemon and hub retain the disposable home and data
-directory. The live switch runs after the first reply. The second reply
+directory. The live switch waits for the first turn to finish. The second reply
 recalls a marker from that conversation. The third reply recalls the marker
 again after the disposable hub restarts and resumes the original thread.
 Use new evidence directories for the live runs.
