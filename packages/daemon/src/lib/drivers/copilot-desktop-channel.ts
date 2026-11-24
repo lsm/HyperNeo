@@ -161,6 +161,20 @@ export function callCopilotDesktop<T>(
         }
         if (frame.data.type === 'error') {
           if (
+            request.type === 'create_repository_from_path' &&
+            frame.data.request_id === undefined &&
+            frame.data.session_id === undefined &&
+            typeof frame.data.message === 'string' &&
+            frame.data.message.startsWith(
+              'Invalid message format: unknown variant `create_repository_from_path`, expected '
+            )
+          ) {
+            finish(
+              reject('unsupported', 'Copilot Desktop does not support repository creation.', true)
+            );
+            return;
+          }
+          if (
             typeof request.request_id === 'string' &&
             frame.data.request_id === request.request_id &&
             (frame.data.session_id === undefined || frame.data.session_id === request.session_id)

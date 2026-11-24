@@ -21,7 +21,7 @@ type Controls = Pick<
 >;
 const Id = z.string().regex(/^[\w-]{1,128}$/);
 const Queue = z.array(z.object({ id: Id, message_id: Id.optional() }));
-const Project = z.object({ id: Id });
+const Repository = z.object({ id: Id });
 const Workspace = z.object({ id: Id, displayPath: z.string() });
 const CreatedSession = z.object({
   session_id: Id,
@@ -110,16 +110,28 @@ export function createCopilotDesktopControl(
       if (!statSync(path.value).isDirectory())
         return reject('invalid_place', 'Copilot Desktop needs a directory.', true);
       const canonical = realpathSync(path.value);
-      const projectRequest = randomUUID();
-      const project = await run(
-        { type: 'create_project_from_path', path: canonical, request_id: projectRequest },
+      const repositoryRequest = randomUUID();
+      let repository = await run(
+        { type: 'create_repository_from_path', path: canonical, request_id: repositoryRequest },
         (frame) =>
-          (frame.type === 'project_created' || frame.type === 'project_updated') &&
-          frame.request_id === projectRequest
-            ? Project.safeParse(frame.project).data
+          (frame.type === 'repository_created' || frame.type === 'repository_updated') &&
+          frame.request_id === repositoryRequest
+            ? Repository.safeParse(frame.repository).data
             : undefined
       );
-      if (!project.ok) return { ...project, notSent: true };
+      const legacy = !repository.ok && repository.reason === 'unsupported';
+      if (legacy) {
+        const projectRequest = randomUUID();
+        repository = await run(
+          { type: 'create_project_from_path', path: canonical, request_id: projectRequest },
+          (frame) =>
+            (frame.type === 'project_created' || frame.type === 'project_updated') &&
+            frame.request_id === projectRequest
+              ? Repository.safeParse(frame.project).data
+              : undefined
+        );
+      }
+      if (!repository.ok) return { ...repository, notSent: true };
       const requestId = randomUUID();
       const created = await run(
         {
@@ -127,7 +139,7 @@ export function createCopilotDesktopControl(
             request.inPlace || request.prepareFolder || !existsSync(join(canonical, '.git'))
               ? 'create_folder_workspace'
               : 'create_worktree_workspace',
-          project_id: project.value.id,
+          [legacy ? 'project_id' : 'repository_id']: repository.value.id,
           name: request.sessionTitle ?? request.title,
           request_id: requestId,
         },

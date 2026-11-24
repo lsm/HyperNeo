@@ -46,7 +46,9 @@ read window and confirm the next completed turn is still returned. In `both`
 mode, search for a Desktop session whose title and workspace name are missing.
 
 Use `control` and `both-control` with the same command to attach a synthetic
-authenticated Desktop peer. Start work through HyperNeo with a model and effort.
+authenticated Desktop peer. `control` uses the App 1.5 repository protocol.
+`both-control` rejects the new command before dispatch and exercises the legacy
+App 1.4 project protocol. Start work through HyperNeo with a model and effort.
 Check an App settings mismatch prevents the initial prompt, and the accepted
 settings come back from the stored session. Submit and withdraw one queued message, stop
 the initial turn, send a follow-up, read its reply with the receipt, then
@@ -74,7 +76,10 @@ The proof creates a disposable local folder and one App session without a
 daemon. It checks the effective model and effort in the runtime's start
 event, stops a live turn, confirms that a withdrawn input did not run, reads
 the follow-up by its receipt, and archives the session with the folder retained.
-The script emits action results and the requested settings.
+Use a model and effort available to the App's signed-in account. The script
+emits action results and the requested settings.
+Use `--attended --defaults` for a lifecycle run on an account without a model
+and effort pair to select. That run makes no assertion about explicit settings.
 Append `compact` to exercise manual compaction and confirm that the App
 journal records it as applied before the test session is archived.
 
