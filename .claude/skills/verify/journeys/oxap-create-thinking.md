@@ -8,12 +8,12 @@ Model. The list shows the Codex model, and the form hides Thinking and Sandbox
 even with persisted `off` thinking and enabled sandbox selections. Creating a
 chat succeeds and the session model picker hides thinking. Light and dark
 screenshots show the form. The fixture supplies a synthetic model catalog and
-does not make a model turn.
+a fake Codex CLI that answers `app-server --help`. It makes no model turn.
 
 The same journey checks that selecting **Attach image** in an OXAP Codex chat
 shows guidance naming the client, model and image-capable option. The chat hides
 Tools. The journey captures chat and provider settings in both themes and checks
-the selected client, executable and OXAP installation. Set
+the selected client, Codex CLI path and OXAP installation. Set
 `OXAP_UI_BEFORE=1` when running the same script on the baseline to capture the
 old chat and provider settings without requiring the new controls. Compare the
 resulting `oxap-chat-*` and `oxap-provider-*` screenshots.
