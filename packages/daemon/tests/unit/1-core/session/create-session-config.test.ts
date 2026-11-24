@@ -170,8 +170,8 @@ describe('admitCreateSessionConfig', () => {
 });
 
 describe('admitUpdateSessionConfig', () => {
-  const oxap = { harness: 'oxap-codex', provider: 'anthropic-codex' } as const;
-  const sdk = { provider: 'anthropic' } as const;
+  const oxap = { harness: 'oxap-codex', provider: 'anthropic-codex', model: 'gpt-5.5' } as const;
+  const sdk = { provider: 'anthropic', model: 'sonnet' } as const;
   const engineOf = (provider: string) => (provider.endsWith('codex') ? 'oxap-codex' : 'sdk');
 
   it('refuses adding tool guards or worker operations to a Codex session', () => {
