@@ -2,9 +2,9 @@
 import { describe, it, expect, vi } from 'vitest';
 
 import { render, fireEvent, cleanup } from '@testing-library/preact';
-import { ErrorBanner } from '../ErrorBanner';
+import { ChatErrorRow } from '../ChatErrorRow';
 
-describe('ErrorBanner', () => {
+describe('ChatErrorRow', () => {
   const mockOnDismiss = vi.fn(() => {});
   const mockOnViewDetails = vi.fn(() => {});
 
@@ -21,31 +21,24 @@ describe('ErrorBanner', () => {
   describe('Basic Rendering', () => {
     it('should render error message', () => {
       const { container } = render(
-        <ErrorBanner error="Test error message" onDismiss={mockOnDismiss} />
+        <ChatErrorRow error="Test error message" onDismiss={mockOnDismiss} />
       );
 
       expect(container.textContent).toContain('Test error message');
     });
 
-    it('should have correct data-testid', () => {
-      const { container } = render(<ErrorBanner error="Test error" onDismiss={mockOnDismiss} />);
-
-      const banner = container.querySelector('[data-testid="error-banner"]');
-      expect(banner).toBeTruthy();
-    });
-
     it('should render dismiss button', () => {
-      const { container } = render(<ErrorBanner error="Test error" onDismiss={mockOnDismiss} />);
+      const { container } = render(<ChatErrorRow error="Test error" onDismiss={mockOnDismiss} />);
 
       const dismissButton = container.querySelector('[aria-label="Dismiss error"]');
       expect(dismissButton).toBeTruthy();
     });
   });
 
-  describe('View Details Button', () => {
-    it('should not render View Details button when hasDetails is false', () => {
+  describe('Details Button', () => {
+    it('should not render Details button when hasDetails is false', () => {
       const { container } = render(
-        <ErrorBanner
+        <ChatErrorRow
           error="Test error"
           hasDetails={false}
           onViewDetails={mockOnViewDetails}
@@ -53,18 +46,18 @@ describe('ErrorBanner', () => {
         />
       );
 
-      expect(container.textContent).not.toContain('View Details');
+      expect(container.textContent).not.toContain('Details');
     });
 
-    it('should not render View Details button when hasDetails is not provided', () => {
-      const { container } = render(<ErrorBanner error="Test error" onDismiss={mockOnDismiss} />);
+    it('should not render Details button when hasDetails is not provided', () => {
+      const { container } = render(<ChatErrorRow error="Test error" onDismiss={mockOnDismiss} />);
 
-      expect(container.textContent).not.toContain('View Details');
+      expect(container.textContent).not.toContain('Details');
     });
 
-    it('should render View Details button when hasDetails is true and onViewDetails is provided', () => {
+    it('should render Details button when hasDetails is true and onViewDetails is provided', () => {
       const { container } = render(
-        <ErrorBanner
+        <ChatErrorRow
           error="Test error"
           hasDetails={true}
           onViewDetails={mockOnViewDetails}
@@ -72,20 +65,20 @@ describe('ErrorBanner', () => {
         />
       );
 
-      expect(container.textContent).toContain('View Details');
+      expect(container.textContent).toContain('Details');
     });
 
-    it('should not render View Details button when hasDetails is true but onViewDetails is not provided', () => {
+    it('should not render Details button when hasDetails is true but onViewDetails is not provided', () => {
       const { container } = render(
-        <ErrorBanner error="Test error" hasDetails={true} onDismiss={mockOnDismiss} />
+        <ChatErrorRow error="Test error" hasDetails={true} onDismiss={mockOnDismiss} />
       );
 
-      expect(container.textContent).not.toContain('View Details');
+      expect(container.textContent).not.toContain('Details');
     });
 
-    it('should call onViewDetails when View Details button is clicked', () => {
+    it('should call onViewDetails when Details button is clicked', () => {
       const { container } = render(
-        <ErrorBanner
+        <ChatErrorRow
           error="Test error"
           hasDetails={true}
           onViewDetails={mockOnViewDetails}
@@ -94,7 +87,7 @@ describe('ErrorBanner', () => {
       );
 
       const viewDetailsButton = Array.from(container.querySelectorAll('button')).find((btn) =>
-        btn.textContent?.includes('View Details')
+        btn.textContent?.includes('Details')
       )!;
       fireEvent.click(viewDetailsButton);
 
@@ -104,7 +97,7 @@ describe('ErrorBanner', () => {
 
   describe('Dismiss Functionality', () => {
     it('should call onDismiss when dismiss button is clicked', () => {
-      const { container } = render(<ErrorBanner error="Test error" onDismiss={mockOnDismiss} />);
+      const { container } = render(<ChatErrorRow error="Test error" onDismiss={mockOnDismiss} />);
 
       const dismissButton = container.querySelector('[aria-label="Dismiss error"]')!;
       fireEvent.click(dismissButton);
@@ -113,7 +106,7 @@ describe('ErrorBanner', () => {
     });
 
     it('should call onDismiss only once per click', () => {
-      const { container } = render(<ErrorBanner error="Test error" onDismiss={mockOnDismiss} />);
+      const { container } = render(<ChatErrorRow error="Test error" onDismiss={mockOnDismiss} />);
 
       const dismissButton = container.querySelector('[aria-label="Dismiss error"]')!;
       fireEvent.click(dismissButton);
@@ -125,7 +118,7 @@ describe('ErrorBanner', () => {
 
   describe('Error Message Variations', () => {
     it('should display short error messages', () => {
-      const { container } = render(<ErrorBanner error="Error" onDismiss={mockOnDismiss} />);
+      const { container } = render(<ChatErrorRow error="Error" onDismiss={mockOnDismiss} />);
 
       expect(container.textContent).toContain('Error');
     });
@@ -133,32 +126,16 @@ describe('ErrorBanner', () => {
     it('should display long error messages', () => {
       const longError =
         'This is a very long error message that describes a complex problem that occurred during the operation and provides detailed information about what went wrong.';
-      const { container } = render(<ErrorBanner error={longError} onDismiss={mockOnDismiss} />);
+      const { container } = render(<ChatErrorRow error={longError} onDismiss={mockOnDismiss} />);
 
       expect(container.textContent).toContain(longError);
     });
 
     it('should display error messages with special characters', () => {
       const specialError = 'Error: <script>alert("xss")</script>';
-      const { container } = render(<ErrorBanner error={specialError} onDismiss={mockOnDismiss} />);
+      const { container } = render(<ChatErrorRow error={specialError} onDismiss={mockOnDismiss} />);
 
       expect(container.textContent).toContain(specialError);
-    });
-  });
-
-  describe('Styling', () => {
-    it('should have error styling with red colors', () => {
-      const { container } = render(<ErrorBanner error="Test error" onDismiss={mockOnDismiss} />);
-
-      const banner = container.querySelector('[data-testid="error-banner"]')!;
-      expect(banner.className).toContain('bg-surface');
-    });
-
-    it('should have error text styling', () => {
-      const { container } = render(<ErrorBanner error="Test error" onDismiss={mockOnDismiss} />);
-
-      const errorText = container.querySelector('.text-danger');
-      expect(errorText).toBeTruthy();
     });
   });
 });

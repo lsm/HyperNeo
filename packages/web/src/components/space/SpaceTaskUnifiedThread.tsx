@@ -16,7 +16,7 @@ export interface CooldownBannerMember {
   retryAt: number;
 }
 
-export interface AuthErrorBannerMember {
+export interface AuthErrorMember {
   sessionId: string;
   label: string;
   message: string;
@@ -33,7 +33,7 @@ interface SpaceTaskUnifiedThreadProps {
   overlayTaskId?: string;
   overlayTaskReadonly?: boolean;
   cooldownBannerMembers?: CooldownBannerMember[];
-  authErrorBannerMembers?: AuthErrorBannerMember[];
+  authErrorMembers?: AuthErrorMember[];
   onShowScrollButtonChange?: (showScrollButton: boolean) => void;
   onScrollToBottomChange?: (scrollToBottom: ((smooth?: boolean) => void) | null) => void;
   onScrollerChange?: (scroller: HTMLDivElement | null) => void;
@@ -50,7 +50,7 @@ export function SpaceTaskUnifiedThread({
   overlayTaskId,
   overlayTaskReadonly,
   cooldownBannerMembers = [],
-  authErrorBannerMembers = [],
+  authErrorMembers = [],
   onShowScrollButtonChange,
   onScrollToBottomChange,
   onScrollerChange,
@@ -64,10 +64,11 @@ export function SpaceTaskUnifiedThread({
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const parsedRows = useMemo(() => rows.map(parseThreadRow), [rows]);
+  const hasAuthErrors = authErrorMembers.length > 0;
   const { showScrollButton, scrollToBottom } = useAutoScroll({
     containerRef,
     endRef: messagesEndRef,
-    messageCount: isLoading || isReconnecting ? 0 : rows.length,
+    messageCount: isLoading || isReconnecting ? 0 : rows.length + authErrorMembers.length,
     resetKey: taskId,
   });
 
@@ -83,7 +84,7 @@ export function SpaceTaskUnifiedThread({
   useEffect(() => {
     onScrollerChange?.(containerRef.current);
     return () => onScrollerChange?.(null);
-  }, [onScrollerChange, parsedRows.length, isLoading, isReconnecting]);
+  }, [onScrollerChange, parsedRows.length, isLoading, isReconnecting, hasAuthErrors]);
 
   if (isLoading || isReconnecting) {
     return (
@@ -105,7 +106,7 @@ export function SpaceTaskUnifiedThread({
     );
   }
 
-  if (parsedRows.length === 0) {
+  if (parsedRows.length === 0 && !hasAuthErrors) {
     return (
       <div class="h-full overflow-y-auto">
         <div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6 text-center">
@@ -125,11 +126,9 @@ export function SpaceTaskUnifiedThread({
   const bottomInsetClasses =
     bottomInsetPx === undefined ? `${bottomInsetClass} ${bottomScrollPaddingClass}` : '';
 
-  const hasBanners = cooldownBannerMembers.length > 0 || authErrorBannerMembers.length > 0;
-
   return (
     <div class="h-full min-h-0 flex flex-col relative" data-testid="space-task-unified-thread">
-      {hasBanners && (
+      {cooldownBannerMembers.length > 0 && (
         <div class="flex-shrink-0 px-4 pt-3 space-y-2" data-testid="space-task-thread-banner-stack">
           {cooldownBannerMembers.map((m) => (
             <div key={`cooldown-${m.sessionId}`} data-testid="space-thread-cooldown-banner">
@@ -144,9 +143,6 @@ export function SpaceTaskUnifiedThread({
               />
             </div>
           ))}
-          {authErrorBannerMembers.map((m) => (
-            <ProviderAuthErrorBanner key={`auth-${m.sessionId}`} member={m} />
-          ))}
         </div>
       )}
       <div
@@ -155,13 +151,18 @@ export function SpaceTaskUnifiedThread({
         style={dynamicBottomInsetStyle}
       >
         <div class="min-h-[calc(100%+1px)]">
-          <MinimalThreadFeed
-            parsedRows={parsedRows}
-            activeAgentLabels={activeAgentLabels}
-            activeTurnSummaries={activeTurnSummaries}
-            overlayTaskId={overlayTaskId}
-            overlayTaskReadonly={overlayTaskReadonly}
-          />
+          {parsedRows.length > 0 && (
+            <MinimalThreadFeed
+              parsedRows={parsedRows}
+              activeAgentLabels={activeAgentLabels}
+              activeTurnSummaries={activeTurnSummaries}
+              overlayTaskId={overlayTaskId}
+              overlayTaskReadonly={overlayTaskReadonly}
+            />
+          )}
+          {authErrorMembers.map((member) => (
+            <ProviderAuthErrorRow key={member.sessionId} member={member} />
+          ))}
           {footer && <div class="px-4 pb-4">{footer}</div>}
           <div ref={messagesEndRef} />
         </div>
@@ -170,13 +171,10 @@ export function SpaceTaskUnifiedThread({
   );
 }
 
-function ProviderAuthErrorBanner({ member }: { member: AuthErrorBannerMember }) {
+function ProviderAuthErrorRow({ member }: { member: AuthErrorMember }) {
   const providerLabel = member.providerId ? getProviderLabel(member.providerId) : 'Provider';
   return (
-    <div
-      class="flex items-center gap-2 px-3 py-2 rounded border bg-danger/10 border-danger/40 text-danger"
-      data-testid="space-thread-auth-error-banner"
-    >
+    <div class="mx-4 my-3 flex flex-wrap items-center gap-2 rounded-xl border border-danger/30 bg-danger/5 px-3 py-2 text-danger">
       <svg
         class="w-3.5 h-3.5 shrink-0 text-danger"
         fill="none"
@@ -191,7 +189,7 @@ function ProviderAuthErrorBanner({ member }: { member: AuthErrorBannerMember }) 
           d="M12 9v2m0 4h.01M5 19h14a2 2 0 001.84-2.75L13.74 4a2 2 0 00-3.48 0L3.16 16.25A2 2 0 005 19z"
         />
       </svg>
-      <span class="text-xs flex-1 min-w-0">
+      <span role="alert" class="min-w-0 flex-1 text-xs">
         <span class="font-medium text-danger-soft/80 uppercase tracking-wide mr-1">
           {member.label}
         </span>

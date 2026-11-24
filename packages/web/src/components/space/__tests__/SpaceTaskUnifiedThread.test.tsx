@@ -205,7 +205,7 @@ describe('SpaceTaskUnifiedThread', () => {
       render(
         <SpaceTaskUnifiedThread
           taskId="task-1"
-          authErrorBannerMembers={[
+          authErrorMembers={[
             {
               sessionId: 'worker-1',
               label: 'Coder Agent',

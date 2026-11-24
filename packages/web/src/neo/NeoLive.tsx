@@ -951,28 +951,6 @@ export function NeoLive() {
               {t('live.connecting')}
             </p>
           )}
-          {neo.error && (
-            <div
-              role="alert"
-              class="mb-5 rounded-xl border border-danger/30 bg-danger/5 p-4 text-sm"
-            >
-              <p class="break-words text-danger">{neo.error}</p>
-              <Button variant="ghost" size="sm" class="mt-2" onClick={neo.retry}>
-                {t('live.reconnect')}
-              </Button>
-              <a href="/settings" class="ml-3 text-accent" target="_blank" rel="noreferrer">
-                {t('live.settingsLink')}
-              </a>
-            </div>
-          )}
-          {neo.store.loadErrorKind.value && (
-            <div role="alert" class="mb-4 text-sm text-danger">
-              <p>{publicConversation ? t('live.controlsFailed') : t('live.conversationFailed')}</p>
-              <Button variant="ghost" size="sm" onClick={() => void neo.open()}>
-                {t('live.tryAgain')}
-              </Button>
-            </div>
-          )}
           {ready && neo.sessionId ? (
             <NeoConversation
               onQuote={ready ? (quote) => setQuoted({ scope: neo.sessionId!, quote }) : undefined}
@@ -1124,6 +1102,28 @@ export function NeoLive() {
                 <p class="mt-2 text-xs">{t('live.emptyHint')}</p>
               </div>
             )}
+          {neo.error && (
+            <div
+              role="alert"
+              class="mt-4 rounded-xl border border-danger/30 bg-danger/5 p-4 text-sm"
+            >
+              <p class="break-words text-danger">{neo.error}</p>
+              <Button variant="ghost" size="sm" class="mt-2" onClick={neo.retry}>
+                {t('live.reconnect')}
+              </Button>
+              <a href="/settings" class="ml-3 text-accent" target="_blank" rel="noreferrer">
+                {t('live.settingsLink')}
+              </a>
+            </div>
+          )}
+          {neo.store.loadErrorKind.value && (
+            <div role="alert" class="mt-4 text-sm text-danger">
+              <p>{publicConversation ? t('live.controlsFailed') : t('live.conversationFailed')}</p>
+              <Button variant="ghost" size="sm" onClick={() => void neo.open()}>
+                {t('live.tryAgain')}
+              </Button>
+            </div>
+          )}
         </div>
         <div
           ref={sceneSheet}
