@@ -1,15 +1,16 @@
 import { isAbsolute } from 'node:path';
 import { generateUUID, type ProviderRecord, type Session } from '@hyperneo/shared';
-import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
+import { isOxapHarness, oxapCodexReasoning } from '@hyperneo/shared/types/oxap-harnesses';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { OxapQueryRuntime } from '../agent/query-runner.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { OxapEngine, OxapEngineOptions } from './oxap-engine.ts';
 import { OxapHubRequestError, type OxapHubClient } from './oxap-hub-client.ts';
+import { updateOxapReasoning } from './oxap-query-hub.ts';
 import type { OxapQueryHub } from './oxap-query.ts';
 import { withOxapRecovery } from './oxap-recovery.ts';
 import { openOxapSession, type OxapReopenStore, type OxapReopenEvents } from './oxap-reopen.ts';
-import { decideOxapOpen } from '../agent/session-engine.ts';
+import { decideOxapOpen, thinkingRefusal } from '../agent/session-engine.ts';
 import { canonicalModelId } from '../model-service.ts';
 import { checkCodexLogin } from './oxap-codex-login.ts';
 import { savedOxapAdapter } from './oxap-hub-config.ts';
@@ -25,9 +26,15 @@ function validateSession(session: Session): { sessionId: string; directory: stri
 function openPlan(
   input: { sessionId: string; directory: string },
   id: string,
-  open: { adapter: string } | string
+  open: { adapter: string } | string,
+  session: Session
 ): OpenPlan {
   if (typeof open === 'string') throw new Error(open);
+  const { harness, model, thinkingLevel } = session.config;
+  const reasoning =
+    harness === 'oxap-codex' && !thinkingRefusal(harness, thinkingLevel, model)
+      ? oxapCodexReasoning(thinkingLevel)
+      : undefined;
   return {
     ...input,
     request: {
@@ -39,7 +46,10 @@ function openPlan(
         profile: 'open-agent-protocol.agent-control-core',
         type: 'session.open.request',
         id,
-        payload: { session_id: input.sessionId },
+        payload: {
+          session_id: input.sessionId,
+          ...(reasoning ? { reasoning_level: reasoning } : {}),
+        },
       },
     },
   };
@@ -53,7 +63,7 @@ const prepareOpen = (superpipe({})('oap.runtime.open') as PipelineAPI)
     ['session', 'record'],
     'open'
   )
-  .pipe(openPlan, ['placement', 'id', 'open'], 'plan')
+  .pipe(openPlan, ['placement', 'id', 'open', 'session'], 'plan')
   .end('plan') as (session: Session, id: string, record: ProviderRecord | null) => OpenPlan;
 
 type SessionSlot = {
@@ -151,6 +161,29 @@ export function createOxapRuntime(
     }
     const runtime: OxapQueryRuntime = {
       openDirectorySupported: true,
+      async applyThinking(level) {
+        if (
+          session.config.harness !== 'oxap-codex' ||
+          !slot?.client ||
+          !slot.hub ||
+          !engine.isCurrentHub(slot.client)
+        )
+          return;
+        const client = slot.client;
+        const status = (await client.request('work.status', { session_id: session.id })) as {
+          held?: boolean;
+        };
+        if (status.held === false) {
+          const record = session.config.provider ? providerRecord(session.config.provider) : null;
+          const plan = prepareOpen(session, generateUUID(), record);
+          if (!db || !messageHub) throw new Error('Codex OAP session storage is unavailable');
+          await openOxapSession(client, plan, session, db, messageHub, events, () => {
+            if (slot.deleted) throw new Error('Codex session was deleted');
+          });
+          return;
+        }
+        await updateOxapReasoning(client, session.id, level);
+      },
       clear() {
         return clearSession(runtime, session, slot, db);
       },

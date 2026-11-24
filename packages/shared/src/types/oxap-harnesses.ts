@@ -1,3 +1,6 @@
+import type { ModelInfo } from '../models.ts';
+import { THINKING_OPTIONS, type ThinkingLevel } from '../types.ts';
+
 export type OxapHarness = {
   label: string;
   adapter: string;
@@ -20,7 +23,7 @@ export const OXAP_HARNESSES = {
     label: 'OXAP Codex',
     adapter: 'codex',
     providers: ['anthropic-codex'],
-    thinking: false,
+    thinking: true,
     settings: ['executable'],
     environment: ['HOME', 'CODEX_HOME'],
     entry: (settings: Readonly<Record<string, string>>, environment: readonly string[]) => ({
@@ -87,4 +90,32 @@ export function isOxapModelLocked(
   nativeSessionId: string | null | undefined
 ): boolean {
   return harness === 'oxap-deepseek' && !!nativeSessionId;
+}
+
+const codexEfforts: Partial<Record<ThinkingLevel, string>> = {
+  off: 'none',
+  think8k: 'low',
+  think16k: 'medium',
+  think24k: 'high',
+  think32k: 'xhigh',
+  think48k: 'max',
+};
+
+export function oxapThinkingOptions(harness: unknown, model: ModelInfo | null | undefined) {
+  if (!isOxapHarness(harness)) return THINKING_OPTIONS;
+  if (harness !== 'oxap-codex') return [];
+  return THINKING_OPTIONS.filter(({ value }) =>
+    model?.codexReasoning?.levels.includes(codexEfforts[value] ?? '')
+  );
+}
+
+export function oxapCodexReasoning(level: ThinkingLevel | undefined): string | undefined {
+  const effort = level && codexEfforts[level];
+  return effort === 'none' ? 'off' : effort;
+}
+
+export function oxapCodexDefaultThinking(model: ModelInfo | null | undefined) {
+  return oxapThinkingOptions('oxap-codex', model).find(
+    ({ value }) => codexEfforts[value] === model?.codexReasoning?.defaultLevel
+  )?.value;
 }

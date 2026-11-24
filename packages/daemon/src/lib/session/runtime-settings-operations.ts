@@ -193,8 +193,12 @@ function gateHarness(target: ResolvedTarget, deps: RuntimeSettingsDependencies) 
   const switched = provider ? decideSwitch(current, provider, deps.engineOf(provider)) : true;
   const reason =
     switched === true
-      ? (oxapModelSwitchRefusal(current, target.snapshot.sdkSessionId, input.model) ??
-        thinkingRefusal(current.harness, input.thinkingLevel))
+      ? (oxapModelSwitchRefusal(
+          current,
+          target.snapshot.sdkSessionId,
+          input.model,
+          input.thinkingLevel
+        ) ?? thinkingRefusal(current.harness, input.thinkingLevel, input.model ?? current.model))
       : switched;
   return reason ? { reason: { ok: false, reason } as Failure } : { value: target };
 }
@@ -205,7 +209,7 @@ async function applySettings(
   deps: RuntimeSettingsDependencies
 ) {
   const { snapshot, live, input } = target;
-  const current = JSON.parse(snapshot.config) as { model: string; provider?: Provider };
+  const current = JSON.parse(snapshot.config) as Session['config'];
   const model = input.model ?? current.model;
   const provider = input.provider ?? current.provider ?? inferProviderForModel(model);
   const { thinkingLevel } = input;
@@ -226,6 +230,8 @@ async function applySettings(
     });
     if (!switched.success)
       return { reason: { ok: false, reason: switched.error ?? 'model_switch_failed' } as Failure };
+    if (thinkingLevel !== undefined && current.harness === 'oxap-codex')
+      await live.applyThinkingLevel();
   } else {
     if (
       (await deps.commit(snapshot, {

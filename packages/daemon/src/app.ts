@@ -3,6 +3,7 @@ import { NEO_FRONT_INFERENCE } from './lib/job-queue-constants.ts';
 import { NEO_DRIVER_REFRESH } from './lib/neo/driver-refresh.ts';
 import { createPeerPairRoute } from './routes/neo-peer.ts';
 import { collectDaemonScratch } from './lib/drivers/daemon-scratch.ts';
+import { setProviderRepository } from './lib/model-service.ts';
 import { createCodexSetupHost } from './lib/drivers/codex-setup-host.ts';
 import { createCodexSetup } from './lib/drivers/codex-setup.ts';
 import {
@@ -422,6 +423,7 @@ export interface DaemonAppContext {
 }
 
 async function invalidateInFlightModelLoads(): Promise<void> {
+  setProviderRepository(null);
   try {
     const { clearModelsCache } = await import('./lib/model-service.ts');
     clearModelsCache();
@@ -513,6 +515,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const reactiveDb = createReactiveDatabase(db);
     startupTimer.start('database + auth initialize');
     await db.initialize(reactiveDb);
+    setProviderRepository(db.providers);
     const usageDb = db.getDatabase();
     setRateLimitEventReader(() => gatewayFor(usageDb).run(anthropicRateLimitEventsRead, 200));
     if (process.env['NODE_ENV'] !== 'test') db.warmEmbedder();

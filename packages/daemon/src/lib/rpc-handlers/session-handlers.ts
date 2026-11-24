@@ -31,6 +31,7 @@ import {
   isCuratedOutModel,
   markRefreshAttemptedFor,
 } from '../model-service.js';
+import { invokeOperation } from '../operations/invoke.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import { getProviderRegistry, inferProviderForModel } from '../providers/registry.js';
 import {
@@ -374,7 +375,8 @@ export function setupSessionHandlers(
       const locked = oxapModelSwitchRefusal(
         existing.config,
         existing.sdkSessionId,
-        updates.config?.model
+        updates.config?.model,
+        updates.config?.thinkingLevel
       );
       if (locked) throw new Error(locked);
     }
@@ -820,8 +822,28 @@ export function setupSessionHandlers(
     }
 
     const thinkingLevel = normalizeThinkingLevel(level);
-    const refusal = thinkingRefusal(agentSession.getSessionData().config.harness, thinkingLevel);
+    const { harness, model } = agentSession.getSessionData().config;
+    const refusal = thinkingRefusal(
+      harness,
+      harness === 'oxap-codex' ? level : thinkingLevel,
+      model
+    );
     if (refusal) throw new Error(refusal);
+    if (harness === 'oxap-codex') {
+      const outcome = await invokeOperation(
+        sessionManager.getOperationRegistry(),
+        'session.runtimeSettings.update',
+        { sessionId: targetSessionId, thinkingLevel },
+        { source: 'rpc' }
+      );
+      const result =
+        outcome.kind === 'completed'
+          ? (outcome.value as { ok: boolean; reason?: string })
+          : undefined;
+      if (!result?.ok)
+        throw new Error(result?.reason ?? 'Could not change the Codex thinking level.');
+      return { success: true, thinkingLevel };
+    }
 
     await sessionManager.updateSession(targetSessionId, {
       config: {
@@ -939,6 +961,7 @@ export function setupSessionHandlers(
           autoCompactPercent: m.autoCompactPercent,
           thinkingModes: m.thinkingModes,
           effortLevels: m.effortLevels,
+          codexReasoning: m.codexReasoning,
           available: m.available !== false && !unavailable.has(m.provider ?? ''),
           type: 'model' as const,
         })),

@@ -4,11 +4,12 @@ Build the web UI, then run `bash .claude/skills/verify/oxap-create-thinking.sh <
 
 A failed provider lookup shows an error and Retry restores the form. Open the
 new-chat settings after the picker reports OXAP Codex as the client, then open
-Model. The list shows the Codex model, and the form hides Thinking and Sandbox
-even with persisted `off` thinking and enabled sandbox selections. Creating a
-chat succeeds and the session model picker hides thinking. Light and dark
-screenshots show the form. The fixture supplies a synthetic model catalog and
-does not make a model turn.
+Model. The Codex model publishes Low, High and Ultra. The picker offers Low
+and High because the pinned OXAP protocol cannot represent Ultra. Persisted
+`off` is ignored for this model and Sandbox stays hidden. Select High and
+create a chat. In the seeded idle chat, change High to Low and reload. The
+touch viewport still shows Low. Retain `oxap-thinking-desktop.png` and
+`oxap-thinking-phone.png`. This browser fixture runs without a model turn.
 
 The same journey checks that the OXAP chat explains its text-only input, disables
 image attachment, and hides Tools. It captures chat and provider settings in
@@ -35,5 +36,15 @@ A synthetic auth status card displays a URL followed by punctuation. The browser
 checks the link destination excludes that punctuation and keeps `auth-link.png`.
 
 Retain the OXAP and SDK picker and tools screenshots in both themes. The picker
-checks that OXAP omits SDK models and thinking, while SDK shows thinking and the
+checks that OXAP omits SDK models, while SDK shows thinking and the
 Tools/MCP panel. Settings show path, version and hash after the fixture install.
+
+For the runtime proof, run
+`bash .claude/skills/verify/proof-run.sh <new-absolute-evidence-dir> .claude/skills/verify/oxap-codex-thinking.ts <absolute-pinned-oxap> <absolute-codex>`.
+This starts an isolated daemon with the real pinned hub and Codex app-server.
+A proxy supplies a synthetic account status, and a loopback Responses endpoint
+records only the model and effort. The journey checks the native catalog and
+three turns, High on open, Low on a live update, and Low on the same native
+thread after restarting the hub. It also checks that an unpublished level is
+refused and preserves the current selection. Retain `thinking.json` and the
+wrapper exit status.

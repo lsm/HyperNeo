@@ -1,3 +1,6 @@
+import { startCodexBootstrapServer } from './drivers/codex-app-server.ts';
+import { readCodexModels } from './drivers/codex-start-configuration.ts';
+import { savedOxapAdapter } from './oxap/oxap-hub-config.ts';
 import { runLagPhase } from './event-loop-activity.ts';
 import {
   resolveAutoCompactPercent,
@@ -839,11 +842,42 @@ async function loadProviderModelsBounded(
   }
 }
 
+async function nativeOxapCodexModels(provider: string, executable: string): Promise<ModelInfo[]> {
+  const server = await startCodexBootstrapServer(executable);
+  try {
+    const catalog = await readCodexModels(server);
+    if ('reason' in catalog) throw new Error(catalog.reason.detail);
+    return catalog.value.map(({ id, aliases, efforts, defaultLevel }) => ({
+      id,
+      name: aliases?.[1] || id,
+      alias: '',
+      family: 'gpt',
+      provider,
+      contextWindow: 128000,
+      description: '',
+      releaseDate: '',
+      available: true,
+      ...findInModels(CODEX_STATIC_MODEL_METADATA, id),
+      codexReasoning: { levels: [...efforts], defaultLevel },
+    }));
+  } finally {
+    await server.close();
+  }
+}
+
 async function loadProviderModels(
   provider: Provider,
   options?: { forceRemote?: boolean }
 ): Promise<ProviderModelLoadResult> {
   try {
+    const record = providerRepositoryRef?.getProviderByProviderId(provider.id);
+    const saved = record && savedOxapAdapter(record);
+    if (saved?.harness === 'oxap-codex') {
+      const models = await nativeOxapCodexModels(provider.id, saved.settings.executable).catch(
+        () => []
+      );
+      if (models.length > 0) return { status: 'loaded', models };
+    }
     if (!(await provider.isAvailable())) {
       return { status: 'unavailable', models: [] };
     }

@@ -286,7 +286,7 @@ describe('session.runtimeSettings.update on a cold chat and an OXAP provider', (
     });
     expect(result).toEqual({
       ok: false,
-      reason: expect.stringContaining('OXAP Codex does not take a thinking level'),
+      reason: expect.stringContaining('does not publish support for this thinking level'),
     });
     expect(h.persisted.size).toBe(0);
   });

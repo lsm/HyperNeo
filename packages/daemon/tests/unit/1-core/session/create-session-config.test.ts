@@ -254,7 +254,7 @@ describe('admitUpdateSessionConfig', () => {
 
   it('refuses a thinking level for an OXAP row without thinking support', () => {
     expect(() => admitUpdateSessionConfig({ thinkingLevel: 'think16k' }, undefined, oxap)).toThrow(
-      /OXAP Codex does not take a thinking level/
+      /does not publish support for this thinking level/
     );
     expect(admitUpdateSessionConfig({ thinkingLevel: 'think16k' }, undefined, sdk)).toEqual({
       thinkingLevel: 'think16k',

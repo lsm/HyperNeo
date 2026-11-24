@@ -98,7 +98,7 @@ try {
   await refuse('Wrong provider', codex, 'oxap-deepseek', /cannot run on oxap-deepseek/);
   await refuse('Unknown harness', codex, 'unknown', /Unknown session harness/);
   await refuse('Nested harness', { ...codex, harness: 'oxap-codex' }, undefined, /harness/);
-  await refuse('Explicit OXAP thinking', { ...codex, thinkingLevel: 'think16k' }, 'oxap-codex', /does not take a thinking level/);
+  await refuse('Unpublished OXAP thinking', { ...codex, thinkingLevel: 'think16k' }, 'oxap-codex', /does not publish support for this thinking level/);
   await refuse('Explicit OXAP restriction', { ...codex, permissionMode: 'plan' }, 'oxap-codex', /this restriction is not supported/);
 
   await refuse('Missing executable settings', deepseek, 'oxap-deepseek', /needs an absolute executable path/);

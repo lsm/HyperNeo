@@ -28,6 +28,7 @@ try {
       hasTouch: phone,
     });
     const page = await context.newPage();
+    assert.equal(await page.evaluate(() => matchMedia('(pointer: coarse)').matches), phone);
     await page.goto(`${base}/sessions`);
     if (theme === 'light') {
       await page.getByRole('alert').getByText('Synthetic provider lookup failure').waitFor();
@@ -54,7 +55,7 @@ try {
       .getByRole('button', { name: 'Choose model, client and thinking' })
       .and(page.locator('[aria-description="Client: OXAP Codex"]'))
       .click();
-    await page.getByRole('button', { name: 'Model, Synthetic Codex' }).click();
+    await page.getByRole('button', { name: /Model(?: & thinking)?, Synthetic Codex/ }).click();
     await page.getByRole('group', { name: 'Models', exact: true }).getByText('Synthetic Codex').waitFor();
     const newThinking = page.getByRole('slider', { name: 'Thinking' });
     await newThinking.waitFor({ timeout: 5000 });
@@ -70,10 +71,13 @@ try {
       assert.equal(await page.getByText('OXAP Codex does not take a thinking level.').count(), 0);
       sessionPath = new URL(page.url()).pathname;
     }
-    if (theme === 'dark') {
-      await page.goto(`${base}${sessionPath}`);
-      await page.getByRole('button', { name: 'Choose model and thinking' }).waitFor();
+    if (!phone) {
+      const settingsId = /SETTINGS_SESSION=([^\s]+)/.exec(readFileSync(`${output}/daemon.log`, 'utf8'))?.[1];
+      assert(settingsId);
+      sessionPath = `/session/${settingsId}`;
     }
+    await page.goto(`${base}${sessionPath}`);
+    await page.getByRole('button', { name: 'Choose model and thinking' }).waitFor();
     if (!before) {
       await page.getByText(/This harness accepts text only/).waitFor();
       await page.getByTitle('More options').click();

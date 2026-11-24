@@ -366,6 +366,7 @@ export interface OxapQueryRuntime {
   openDirectorySupported: boolean;
   hub: OxapQueryHub | Promise<OxapQueryHub>;
   clear?(): Promise<void>;
+  applyThinking?(level: string): Promise<void>;
 }
 
 export interface QueryRunnerContext {

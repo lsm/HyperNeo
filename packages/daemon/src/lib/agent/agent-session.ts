@@ -37,7 +37,7 @@ import type {
 import { generateUUID, DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
 import type { McpSetServersResult } from '@hyperneo/shared/sdk';
 import type { SessionToolInventory } from '@hyperneo/shared/types/observed-tool-inventory';
-import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
+import { isOxapHarness, oxapCodexReasoning } from '@hyperneo/shared/types/oxap-harnesses';
 import { sdkFallbackProviders } from './session-engine.ts';
 import type { Database } from '../../storage/database.ts';
 import type { SDKTranscriptCheck } from '../sdk-session-file-manager.ts';
@@ -1988,6 +1988,11 @@ export class AgentSession
   }
 
   async applyThinkingLevel(): Promise<void> {
+    if (isOxapHarness(this.session.config.harness)) {
+      const reasoning = oxapCodexReasoning(this.session.config.thinkingLevel);
+      if (reasoning) await this.oxap?.applyThinking?.(reasoning);
+      return;
+    }
     const level = this.optionsBuilder.getEffectiveThinkingLevel();
     getProviderRegistry()
       .get(this.session.config.provider ?? '')

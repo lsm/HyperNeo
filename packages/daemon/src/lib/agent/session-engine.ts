@@ -4,9 +4,11 @@ import {
   isOxapModelLocked,
   OXAP_HARNESSES,
   oxapHarness,
+  oxapThinkingOptions,
   type OxapHarness,
 } from '@hyperneo/shared/types/oxap-harnesses';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { findInModels, getAvailableModels } from '../model-service.ts';
 import { savedOxapAdapter } from '../oxap/oxap-hub-config.ts';
 
 export type SessionEngine = NonNullable<SessionConfig['harness']>;
@@ -177,18 +179,31 @@ export const decideOxapOpen = (superpipe({})('oap.session.open') as PipelineAPI)
 
 export function thinkingRefusal(
   harness: SessionConfig['harness'],
-  thinkingLevel: unknown
+  thinkingLevel: unknown,
+  model?: string
 ): string | undefined {
-  if (thinkingLevel === undefined || thinkingLevel === 'off' || !isOxapHarness(harness))
-    return undefined;
+  if (thinkingLevel === undefined || !isOxapHarness(harness)) return undefined;
+  if (harness === 'oxap-codex') {
+    const info =
+      model &&
+      findInModels(
+        getAvailableModels().filter((m) => m.provider === 'anthropic-codex'),
+        model
+      );
+    return oxapThinkingOptions(harness, info || null).some(({ value }) => value === thinkingLevel)
+      ? undefined
+      : `OXAP Codex model ${model ?? 'selection'} does not publish support for this thinking level.`;
+  }
+  if (thinkingLevel === 'off') return undefined;
   const row = oxapHarness(harness);
   return row.thinking ? undefined : `${row.label} does not take a thinking level.`;
 }
 
 export function oxapModelSwitchRefusal(
-  config: Pick<SessionConfig, 'harness' | 'model'>,
+  config: Pick<SessionConfig, 'harness' | 'model' | 'thinkingLevel'>,
   nativeSessionId: string | null | undefined,
-  model: string | undefined
+  model: string | undefined,
+  thinkingLevel = config.thinkingLevel
 ): string | undefined {
   if (
     model !== undefined &&
@@ -196,5 +211,13 @@ export function oxapModelSwitchRefusal(
     isOxapModelLocked(config.harness, nativeSessionId)
   )
     return 'This DeepSeek thread has a fixed model. Start a new chat to use another model.';
+  if (
+    config.harness === 'oxap-codex' &&
+    model &&
+    model !== config.model &&
+    !thinkingRefusal(config.harness, config.thinkingLevel, config.model)
+  ) {
+    return thinkingRefusal(config.harness, thinkingLevel, model);
+  }
   return undefined;
 }

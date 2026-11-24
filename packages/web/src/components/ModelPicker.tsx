@@ -24,7 +24,7 @@ interface ModelPickerProps {
   provider?: string;
   loading: boolean;
   thinkingLevel: ThinkingLevel;
-  showThinking?: boolean;
+  thinkingOptions?: typeof THINKING_OPTIONS;
   onSelectModel: (model: ModelInfo) => void;
   onSelectThinking: (level: ThinkingLevel) => void;
   onReload?: () => void;
@@ -60,7 +60,7 @@ export function ModelPicker({
   provider,
   loading,
   thinkingLevel,
-  showThinking = true,
+  thinkingOptions = THINKING_OPTIONS,
   onSelectModel,
   onSelectThinking,
   onReload,
@@ -150,9 +150,9 @@ export function ModelPicker({
     activeProvider,
     activeModelInfo?.id
   );
-  const options = THINKING_OPTIONS;
+  const showThinking = thinkingOptions.length > 0;
   const level = thinkingLevel;
-  const thinking = options.find((option) => option.value === level)?.label ?? 'Off';
+  const thinking = thinkingOptions.find((option) => option.value === level)?.label ?? 'Default';
   const label = activeModelInfo
     ? shortenModelName(activeModelInfo.name, activeProvider)
     : activeModelLabel;
@@ -230,6 +230,7 @@ export function ModelPicker({
           current={activeModelInfo ?? undefined}
           level={level}
           showThinking={showThinking}
+          thinkingOptions={thinkingOptions}
           busy={busy}
           align={align}
           loading={loading}
