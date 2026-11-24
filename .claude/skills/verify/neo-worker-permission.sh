@@ -9,7 +9,7 @@ printf '#!/usr/bin/env bun\nawait import(%s);\n' "\"$FIXTURE\"" > "$RUN/bin/clau
 printf '#!/usr/bin/env bun\nprocess.argv.push("--synthetic-desktop-import");\nawait import(%s);\n' "\"$FIXTURE\"" > "$RUN/bin/script"
 chmod 700 "$RUN/bin/claude" "$RUN/bin/script"
 RC=$(uuidgen | tr 'A-Z' 'a-z')
-for args in "claude -p --session-id $RC -n rc-toggle --permission-mode bypassPermissions -- Synthetic-RC-helper" \
+for args in "claude -p --session-id $RC -n neo-helper --permission-mode bypassPermissions -- Synthetic-RC-helper" \
   "script -q /dev/null claude --desktop --resume $RC"; do
   (cd "$RUN/workspace" && env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/bin" $args)
 done

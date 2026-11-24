@@ -41,14 +41,14 @@ Check `evidence/observed.json` and `native-events.jsonl`:
 - Two sends to the stopped imported target run `claude -p --resume` in auto,
   return confirmed receipts and create no helpers or additional Desktop imports.
   They never request a Desktop warm spawn, which can be refused at its cap.
-- The existing synthetic rc-toggle, also in auto, receives its native RC
+- The existing synthetic neo-helper, also in auto, receives its native RC
   request and sets the target's RC field. It is never replaced or granted new
   permissions. This synthetic result is not proof of a live phone connection.
 - The synthetic global settings sentinel remains unchanged.
 
 The focused `claude-remote-control.test.ts` and `claude-desktop-adapter.test.ts`
 contracts cover ownership refusal, receiver-mode retries, error details,
-headless input receipts, and retention of existing authorized rc-toggle.
+headless input receipts, and retention of existing authorized neo-helper.
 Historical native-message receipt decoding remains covered for earlier sends.
 
 Real Desktop permission-mode and governor behavior requires an explicitly

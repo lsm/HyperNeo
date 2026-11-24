@@ -94,7 +94,10 @@ import {
 import { readHyperneoSdkSessions } from '../../drivers/claude-feed.ts';
 import { createClaudeCodeAdapter } from '../../drivers/claude-code-adapter.ts';
 import { startWorkSessionSync } from '../../drivers/work-session-sync.ts';
-import { withClaudeRemoteControl } from '../../drivers/claude-remote-control.ts';
+import {
+  runClaudeHelperArchive,
+  withClaudeRemoteControl,
+} from '../../drivers/claude-remote-control.ts';
 import {
   connectCodexAppServer,
   startCodexBootstrapServer,
@@ -460,7 +463,11 @@ function claudeDesktopAdapters(
     searchChats: (text) => searchChats(text, ['claude']),
     permissionMode,
   };
-  return [withClaudeRemoteControl(createClaudeDesktopAdapter(deps), deps)];
+  const adapter = createClaudeDesktopAdapter({
+    ...deps,
+    archiveInApp: (target) => runClaudeHelperArchive(target, deps),
+  });
+  return [withClaudeRemoteControl(adapter, deps)];
 }
 
 function copilotAdapters(

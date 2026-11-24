@@ -283,7 +283,7 @@ New work started through HyperNeo requests Full Access through the supported per
 
 - Codex: `thread/start` sends `approvalPolicy: "never"` and `sandbox: "danger-full-access"`. The opening turn request carries the public `turn/start` fields `approvalPolicy: "never"` and `sandboxPolicy: {type: "dangerFullAccess"}` so desktop handoff does not lose the requested permissions. The pre-existing undocumented desktop ownership/IPC handoff is unchanged; no private permission setter, session database edit or global configuration change is introduced. A server policy rejection is returned without a weaker-permission retry.
 - Claude Code CLI: the short creating turn passes `--permission-mode` from `neo.workerPermissionMode`, disables tools/MCP for preparation and waits for exit. The actual task arrives later through Desktop's native messaging tool; the creating turn never receives it.
-- Claude Code Desktop: the human chose B1 option B (message `4aa1e100-4e51-4d38-b9cd-5e44268a7343`): accept `acceptEdits` after handoff. CLI2.1.302 rejects a permission flag with `--desktop`; Desktop3.6556.1 explicitly downgrades imported bypass to acceptEdits. Report actual `permissionMode`, `needs_you` and native `waitingFor`; do not approve prompts, rewrite native records or change global `defaultMode`. The existing authorized `rc-toggle` handles RC; no replacement RC helper is created. A queued RC request is not a connected session or phone-view confirmation. The standalone `claude-code` adapter still has no creation API.
+- Claude Code Desktop: the human chose B1 option B (message `4aa1e100-4e51-4d38-b9cd-5e44268a7343`): accept `acceptEdits` after handoff. CLI2.1.302 rejects a permission flag with `--desktop`; Desktop3.6556.1 explicitly downgrades imported bypass to acceptEdits. Report actual `permissionMode`, `needs_you` and native `waitingFor`; do not approve prompts, rewrite native records or change global `defaultMode`. The `neo-helper` session handles RC and archiving; HyperNeo creates it when it is missing. A queued RC request is not a connected session or phone-view confirmation. The standalone `claude-code` adapter still has no creation API.
 
 Interface evidence (2026-10-16): both `codex-cli 0.160.1` and the desktop-bundled `codex-cli 0.162.0-alpha.17.2` public `codex app-server generate-json-schema` outputs include both permission fields and the above sandbox enum values; `claude 2.1.295 --help` exposes `--permission-mode`. See the official [Codex App Server protocol](https://learn.chatgpt.com/docs/app-server), [Codex Full Access definition](https://learn.chatgpt.com/docs/sandboxing), [Claude CLI reference](https://code.claude.com/docs/en/cli-reference), and [Desktop permission settings](https://code.claude.com/docs/en/desktop#choose-a-permission-mode). Unit tests exercise the real adapter creation functions with recorded transport/process arguments; they do not establish that a live Desktop application accepted or displayed the requested mode.
 
@@ -452,7 +452,7 @@ sequenceDiagram
     A->>App: desktop-wake Haiku helper calls native send_message
     App-->>A: target user-input receipt
     A-->>H: receipt, actual acceptEdits mode and pending permission wait
-    A->>App: existing authorized rc-toggle requests Remote Control
+    A->>App: neo-helper requests Remote Control
     Note over A,App: Request alone does not prove RC connected or phone visibility
   end
 ```

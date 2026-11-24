@@ -1,12 +1,21 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
 import type { ClaudeDesktopAdapterDeps } from '../../../../src/lib/drivers/claude-desktop-adapter';
 import {
+  awaitAppArchive,
   findRcToggle,
   openRcToggle,
+  runClaudeHelperArchive,
   requireDisconnectedTarget,
   runClaudeDesktopWake,
   runClaudeRemoteControlRequest,
@@ -30,11 +39,11 @@ function record(id: string, fields: Record<string, unknown> = {}) {
 const target = { sessionId: 'local_t1', title: 'Fix the parser' };
 
 describe('findRcToggle', () => {
-  test('prefers a live rc-toggle, then the newest, and skips archived or other sessions', () => {
+  test('prefers a live neo-helper, then the newest, and skips archived or other sessions', () => {
     const records = [
-      record('old', { title: 'rc-toggle', lastActivityAt: 9 }),
-      record('live', { title: 'rc-toggle', lastActivityAt: 1 }),
-      record('gone', { title: 'rc-toggle', isArchived: true, lastActivityAt: 99 }),
+      record('old', { title: 'neo-helper', lastActivityAt: 9 }),
+      record('live', { title: 'neo-helper', lastActivityAt: 1 }),
+      record('gone', { title: 'neo-helper', isArchived: true, lastActivityAt: 99 }),
       record('other', { title: 'something else', lastActivityAt: 50 }),
     ];
     expect(findRcToggle(records, [{ sessionId: 'cli-live', status: 'idle' }])).toMatchObject({
@@ -57,7 +66,9 @@ describe('requireDisconnectedTarget', () => {
     expect('reason' in requireDisconnectedTarget(target, [connected])).toBe(true);
     const off = record('t1', { remoteControlUserEnabled: false });
     expect('reason' in requireDisconnectedTarget(target, [off])).toBe(true);
-    expect('reason' in requireDisconnectedTarget({ ...target, title: 'rc-toggle' }, [])).toBe(true);
+    expect('reason' in requireDisconnectedTarget({ ...target, title: 'neo-helper' }, [])).toBe(
+      true
+    );
   });
 });
 
@@ -124,7 +135,7 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
           live.push({
             sessionId: args[args.indexOf('--resume') + 1],
             status: 'idle',
-            name: 'rc-toggle',
+            name: 'neo-helper',
             pid: 1,
             owner: 'desktop',
           });
@@ -191,7 +202,7 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
   });
 
   test('refuses a CLI-owned RC helper without sending or changing its permissions', async () => {
-    write(record('rc', { title: 'rc-toggle', cwd: '/Users/test' }));
+    write(record('rc', { title: 'neo-helper', cwd: '/Users/test' }));
     live = [{ sessionId: 'cli-rc', status: 'idle', pid: 1, owner: 'cli' }];
     let sends = 0;
     expect(
@@ -211,21 +222,143 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
     expect(spawned).toEqual([]);
   });
 
-  test('reports a failed auto relay after opening rc-toggle in Desktop', async () => {
-    write(record('rc', { title: 'rc-toggle', cwd: '/Users/test' }));
+  test('reports a failed auto relay after opening neo-helper in Desktop', async () => {
+    write(record('rc', { title: 'neo-helper', cwd: '/Users/test' }));
     const outcome = await runClaudeRemoteControlRequest(target, deps(), new Map());
     expect(outcome).toMatchObject({ ok: false, reason: 'not_delivered' });
     expect(spawned[0].args[spawned[0].args.indexOf('--resume') + 1]).toBe('cli-rc');
     expect(relayed()).toContain('Please turn on Remote Control');
   });
 
-  test('requires the existing authorized rc-toggle instead of creating a replacement', async () => {
-    expect(await runClaudeRemoteControlRequest(target, deps(), new Map())).toMatchObject({
+  test('creates and opens neo-helper with its brief when none exists', async () => {
+    await runClaudeRemoteControlRequest(target, deps(), new Map());
+    const prepare = spawned.find((call) => call.args.includes('--session-id'))!.args;
+    expect(prepare[prepare.indexOf('-n') + 1]).toBe('neo-helper');
+    expect(prepare.at(-1)).toContain('You are neo-helper');
+    expect(prepare.at(-1)).toContain('archive_session');
+    const opened = spawned.find((call) => call.args.includes('--desktop'))!.args;
+    expect(opened[opened.indexOf('--resume') + 1]).toBe('new-rc');
+    expect(relayed()).toContain('Please turn on Remote Control');
+  });
+
+  function helperTranscript() {
+    write(record('rc', { title: 'neo-helper', cwd: '/Users/test' }));
+    live = [{ sessionId: 'cli-rc', pid: 1, name: 'neo-helper', owner: 'desktop', status: 'idle' }];
+    const project = join(dir, 'projects/-Users-test');
+    mkdirSync(project, { recursive: true });
+    const transcript = join(project, 'cli-rc.jsonl');
+    writeFileSync(transcript, '');
+    return transcript;
+  }
+
+  test('asks neo-helper to archive and confirms only from the app record', async () => {
+    const transcript = helperTranscript();
+    write(record('t1'));
+    let now = 0;
+    const base = deps();
+    const result = await runClaudeHelperArchive(target, {
+      ...base,
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+      spawn: (args, options) => {
+        const child = base.spawn(args, options);
+        if (args.includes('HyperNeo relay')) {
+          writeFileSync(
+            transcript,
+            JSON.stringify({
+              type: 'user',
+              uuid: 'archive-request',
+              content: `<cross-session-message>${args.at(-1)}</cross-session-message>`,
+            }) + '\n'
+          );
+          write(record('t1', { isArchived: true, archiveSetAtMs: 1 }));
+        }
+        return child;
+      },
+    });
+    expect(result).toEqual({ ok: true, value: { archived: true } });
+    expect(relayed()).toContain('Please archive the Claude Code session local_t1 (Fix the parser)');
+  });
+
+  test('asks neo-helper again only after ten minutes, and right away after a failed send', async () => {
+    const transcript = helperTranscript();
+    write(record('t1'));
+    let now = 0;
+    let accept = false;
+    const base = deps();
+    const archiveDeps = {
+      ...base,
+      now: () => now,
+      sleep: async (ms: number) => {
+        now += ms;
+      },
+      spawn: ((args, options) => {
+        const child = base.spawn(args, options);
+        if (accept && args.includes('HyperNeo relay'))
+          appendFileSync(
+            transcript,
+            JSON.stringify({
+              type: 'user',
+              uuid: `request-${now}`,
+              content: `<cross-session-message>${args.at(-1)}</cross-session-message>`,
+            }) + '\n'
+          );
+        return child;
+      }) as ClaudeDesktopAdapterDeps['spawn'],
+    };
+    const requests = () => spawned.filter((call) => call.args.includes('HyperNeo relay')).length;
+    expect(await runClaudeHelperArchive(target, archiveDeps)).toMatchObject({ ok: false });
+    expect(await runClaudeHelperArchive(target, archiveDeps)).toMatchObject({ ok: false });
+    expect(requests()).toBe(2);
+    accept = true;
+    expect(await runClaudeHelperArchive(target, archiveDeps)).toMatchObject({
+      ok: false,
+      detail: expect.stringContaining('was asked to archive'),
+    });
+    expect(requests()).toBe(3);
+    expect(await runClaudeHelperArchive(target, archiveDeps)).toMatchObject({
       ok: false,
       reason: 'not_delivered',
-      detail: expect.stringContaining('existing authorized rc-toggle'),
+      detail: expect.stringContaining('waiting for Claude Desktop'),
     });
-    expect(spawned).toEqual([]);
+    expect(requests()).toBe(3);
+    now += 10 * 60_000;
+    await runClaudeHelperArchive(target, archiveDeps);
+    expect(requests()).toBe(4);
+  });
+
+  test('never asks neo-helper to archive itself', async () => {
+    const result = await runClaudeHelperArchive(
+      { sessionId: 'local_helper', title: 'neo-helper' },
+      deps()
+    );
+    expect(result).toEqual({
+      ok: false,
+      reason: 'unsupported',
+      detail: 'neo-helper never archives itself.',
+    });
+    expect(spawned).toHaveLength(0);
+  });
+
+  test('reports an archive the app has not made yet without waiting or touching the record', async () => {
+    write(record('t1', { isArchived: true }));
+    const before = readFileSync(join(dir, 'acct/scope/local_t1.json'), 'utf8');
+    let now = 0;
+    const result = await awaitAppArchive({ ok: true, value: { delivered: true } }, target, {
+      ...deps(),
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+    });
+    expect(result).toMatchObject({ ok: false, reason: 'not_delivered' });
+    expect(now).toBe(0);
+    expect(readFileSync(join(dir, 'acct/scope/local_t1.json'), 'utf8')).toBe(before);
+    expect(
+      await awaitAppArchive({ ok: false, reason: 'busy', detail: 'live turn' }, target, deps())
+    ).toEqual({ ok: false, reason: 'busy', detail: 'live turn' });
   });
 
   test('concurrent native wakes share one helper preparation and import', async () => {
@@ -280,7 +413,7 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
     expect(desktopArgs[desktopArgs.indexOf('--resume') + 1]).toBe('cli-old');
   });
 
-  test.each(['desktop-wake', 'rc-toggle'])(
+  test.each(['desktop-wake', 'neo-helper'])(
     'a dead %s is reused without leaking replacement records',
     async (title) => {
       const old = record('old', { title, cwd: '/Users/test' });
@@ -315,6 +448,40 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
       expect(spawned.filter((call) => call.args.includes('--desktop'))).toHaveLength(1);
     }
   );
+
+  test('a helper Desktop cannot open is created once and retried only after ten minutes', async () => {
+    let now = 0;
+    const base = deps();
+    const openDeps = {
+      ...base,
+      now: () => now,
+      sleep: async (ms: number) => {
+        now += ms;
+      },
+      spawn: ((args, options) => {
+        const child = base.spawn(args, options);
+        live = [];
+        return child;
+      }) as ClaudeDesktopAdapterDeps['spawn'],
+    };
+    const created = () => spawned.filter((call) => call.args.includes('--session-id'));
+    const imports = () => spawned.filter((call) => call.args.includes('--desktop'));
+    expect(await openRcToggle([], [], openDeps)).toMatchObject({
+      reason: { reason: 'not_delivered', detail: expect.stringContaining('did not open') },
+    });
+    expect(created()).toHaveLength(1);
+    expect(imports()).toHaveLength(1);
+    expect(await openRcToggle([], [], openDeps)).toMatchObject({
+      reason: { reason: 'not_delivered', detail: expect.stringContaining('after ten minutes') },
+    });
+    expect(imports()).toHaveLength(1);
+    now += 10 * 60_000;
+    await openRcToggle([], [], openDeps);
+    expect(created()).toHaveLength(1);
+    expect(imports()).toHaveLength(2);
+    const id = created()[0].args[created()[0].args.indexOf('--session-id') + 1];
+    expect(imports()[1].args[imports()[1].args.indexOf('--resume') + 1]).toBe(id);
+  });
 
   test.each(['auto', 'default', 'acceptEdits', 'bypassPermissions'])(
     'a live %s target receives directly using fresh mode without a helper',
