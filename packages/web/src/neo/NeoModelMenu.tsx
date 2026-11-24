@@ -21,6 +21,7 @@ export function NeoModelMenu({
   level,
   showThinking = true,
   thinkingOptions = THINKING_OPTIONS,
+  namedThinking = false,
   busy,
   loading,
   working,
@@ -39,6 +40,7 @@ export function NeoModelMenu({
   level: ThinkingLevel;
   showThinking?: boolean;
   thinkingOptions?: typeof THINKING_OPTIONS;
+  namedThinking?: boolean;
   busy: boolean;
   loading: boolean;
   working: boolean;
@@ -244,13 +246,35 @@ export function NeoModelMenu({
               <span class="text-[10px] text-fg-faint">{working ? scope.working : scope.idle}</span>
             </div>
           )}
-          <ThinkingSlider
-            level={level}
-            options={thinkingOptions}
-            busy={busy}
-            onThinking={onThinking}
-            compact={!!summary}
-          />
+          {namedThinking ? (
+            <div class={summary ? 'py-2' : ''}>
+              <div role="group" aria-label="Thinking levels" class="flex flex-wrap gap-1">
+                {thinkingOptions.map(({ value, label }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={value === level}
+                    disabled={busy}
+                    onClick={() => onThinking(value)}
+                    class={`min-h-8 min-w-11 rounded-lg border px-2 text-xs focus-visible:outline-accent pointer-coarse:min-h-11 ${value === level ? 'border-accent/40 bg-accent/10 text-accent' : 'border-line text-fg-soft hover:bg-fill-soft'}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {current?.codexReasoning?.levels.includes('ultra') && (
+                <p class="mt-1.5 text-xs text-fg-muted">OXAP cannot send ultra.</p>
+              )}
+            </div>
+          ) : (
+            <ThinkingSlider
+              level={level}
+              options={thinkingOptions}
+              busy={busy}
+              onThinking={onThinking}
+              compact={!!summary}
+            />
+          )}
         </div>
       )}
     </div>

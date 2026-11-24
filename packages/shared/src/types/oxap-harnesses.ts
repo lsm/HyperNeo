@@ -104,9 +104,10 @@ const codexEfforts: Partial<Record<ThinkingLevel, string>> = {
 export function oxapThinkingOptions(harness: unknown, model: ModelInfo | null | undefined) {
   if (!isOxapHarness(harness)) return THINKING_OPTIONS;
   if (harness !== 'oxap-codex') return [];
-  return THINKING_OPTIONS.filter(({ value }) =>
-    model?.codexReasoning?.levels.includes(codexEfforts[value] ?? '')
-  );
+  return THINKING_OPTIONS.flatMap(({ value }) => {
+    const label = codexEfforts[value];
+    return label && model?.codexReasoning?.levels.includes(label) ? [{ value, label }] : [];
+  });
 }
 
 export function oxapCodexReasoning(level: ThinkingLevel | undefined): string | undefined {

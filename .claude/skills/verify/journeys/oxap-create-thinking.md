@@ -4,8 +4,8 @@ Build the web UI, then run `bash .claude/skills/verify/oxap-create-thinking.sh <
 
 A failed provider lookup shows an error and Retry restores the form. Open the
 new-chat settings after the picker reports OXAP Codex as the client, then open
-Model. The Codex model publishes Low, High and Ultra. The picker offers Low
-and High because the pinned OXAP protocol cannot represent Ultra. Persisted
+Model. The synthetic catalog publishes `low`, `high` and `ultra`. The picker offers
+buttons named `low` and `high` because the pinned OXAP protocol rejects `ultra`. Persisted
 `off` is ignored for this model and Sandbox stays hidden. Select High and
 create a chat. In the seeded idle chat, change High to Low and reload. The
 touch viewport still shows Low. Retain `oxap-thinking-desktop.png` and
@@ -44,7 +44,10 @@ For the runtime proof, run
 This starts an isolated daemon with the real pinned hub and Codex app-server.
 A proxy supplies a synthetic account status, and a loopback Responses endpoint
 records only the model and effort. The journey checks the native catalog and
-three turns, High on open, Low on a live update, and Low on the same native
-thread after restarting the hub. It also checks that an unpublished level is
-refused and preserves the current selection. Retain `thinking.json` and the
-wrapper exit status.
+all five GPT-6 Luna efforts across open and live updates. It sends `max`
+again on the same native thread after restarting the hub. It checks both
+models' `ultra` refusals and verifies that OXAP returns `schema_invalid`
+on both open and live update. To also capture both models
+on desktop and phone, build web and set `VERIFY_BROWSER` and `NODE_PATH` with
+Node 24 on PATH. The browser picks `max` before the live turn. Retain the four
+screenshots, `thinking.json`, and the wrapper exit status.

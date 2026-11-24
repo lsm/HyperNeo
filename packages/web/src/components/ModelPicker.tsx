@@ -25,6 +25,7 @@ interface ModelPickerProps {
   loading: boolean;
   thinkingLevel: ThinkingLevel;
   thinkingOptions?: typeof THINKING_OPTIONS;
+  namedThinking?: boolean;
   onSelectModel: (model: ModelInfo) => void;
   onSelectThinking: (level: ThinkingLevel) => void;
   onReload?: () => void;
@@ -61,6 +62,7 @@ export function ModelPicker({
   loading,
   thinkingLevel,
   thinkingOptions = THINKING_OPTIONS,
+  namedThinking = harness === 'oxap-codex',
   onSelectModel,
   onSelectThinking,
   onReload,
@@ -231,6 +233,7 @@ export function ModelPicker({
           level={level}
           showThinking={showThinking}
           thinkingOptions={thinkingOptions}
+          namedThinking={namedThinking}
           busy={busy}
           align={align}
           loading={loading}

@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { clearModelsCache, refreshModels } from '../../../packages/daemon/src/lib/model-service.ts';
+import { readHubOptions } from '../../../packages/daemon/src/lib/oxap/oxap-settings.ts';
 import { releaseName } from '../../../packages/daemon/src/lib/oxap/oxap-install.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
@@ -128,10 +129,33 @@ process.exit(await child.exited);
   assert(thread);
   await assert.rejects(change('think64k'), /does not publish support/);
   assert.equal((await session()).config.thinkingLevel, 'think24k');
+  const daemon = app;
+  const wire = await daemon.oxapEngine.getHub(() => readHubOptions(daemon.oxapSettings));
+  const ultraRequest = (type: string, id: string) => ({
+    protocol: 'open-agent-protocol',
+    version: '0.1',
+    profile: 'open-agent-protocol.agent-control-core',
+    type,
+    id: crypto.randomUUID(),
+    ...(type === 'session.open.request' ? {} : { session_id: id }),
+    payload: { session_id: id, reasoning_level: 'ultra' },
+  });
+  await assert.rejects(wire.request('open', {
+    adapter: 'anthropic-codex',
+    directory: workspace,
+    request: ultraRequest('session.open.request', 'unsupported-ultra-probe'),
+  }), { code: 'schema_invalid' });
+  await assert.rejects(wire.request('settings', {
+    session_id: sessionId,
+    request: ultraRequest('session.settings.update.request', sessionId),
+  }), { code: 'schema_invalid' });
+  for (const [level, effort] of [['think8k', 'low'], ['think16k', 'medium'], ['think32k', 'xhigh']]) {
+    assert.deepEqual(await change(level), { success: true, thinkingLevel: level });
+    await turn(effort);
+  }
   const evidenceDir = join(run, 'evidence');
   await mkdir(evidenceDir);
   if (process.env.VERIFY_BROWSER) {
-    const daemon = app;
     const dist = resolve('packages/web/dist');
     const preview = Bun.serve({
       hostname: '127.0.0.1',
@@ -174,8 +198,8 @@ process.exit(await child.exited);
   clearModelsCache();
   await turn('max');
   assert.equal((await session()).sdkSessionId, thread);
-  assert.equal(requests.length, 3);
-  const evidence = { version, published, requests, sameThreadAfterReopen: true, ultraRefused: true };
+  assert.equal(requests.length, 6);
+  const evidence = { version, published, requests, sameThreadAfterReopen: true, ultraOpen: 'schema_invalid', ultraLive: 'schema_invalid' };
   await writeFile(join(run, 'evidence', 'thinking.json'), JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify(evidence));
 } finally {

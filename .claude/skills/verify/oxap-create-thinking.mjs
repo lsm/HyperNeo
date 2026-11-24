@@ -57,11 +57,11 @@ try {
       .click();
     await page.getByRole('button', { name: /Model(?: & thinking)?, Synthetic Codex/ }).click();
     await page.getByRole('group', { name: 'Models', exact: true }).getByText('Synthetic Codex').waitFor();
-    const newThinking = page.getByRole('slider', { name: 'Thinking' });
+    const newThinking = page.getByRole('group', { name: 'Thinking levels' });
     await newThinking.waitFor({ timeout: 5000 });
-    assert.equal(await newThinking.getAttribute('max'), '1');
-    await newThinking.press('End');
-    assert.equal(await newThinking.getAttribute('aria-valuetext'), 'High');
+    assert.deepEqual(await newThinking.getByRole('button').allTextContents(), ['low', 'high']);
+    await newThinking.getByRole('button', { name: 'high', exact: true }).click();
+    await newThinking.getByRole('button', { name: 'high', pressed: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Sandbox' }).count(), 0);
     await page.screenshot({ path: `${output}/oxap-create-${theme}.png`, animations: 'disabled' });
     if (theme === 'light') {
@@ -91,17 +91,17 @@ try {
     }
     await page.getByRole('button', { name: 'Choose model and thinking' }).click();
     const oxapMenu = page.getByRole('group', { name: 'Model and thinking settings' });
-    const thinking = oxapMenu.getByRole('slider', { name: 'Thinking' });
+    const thinking = oxapMenu.getByRole('group', { name: 'Thinking levels' });
     await thinking.waitFor();
-    assert.equal(await thinking.getAttribute('max'), '1');
-    assert.equal(await thinking.getAttribute('aria-valuetext'), phone ? 'Low' : 'High');
+    assert.deepEqual(await thinking.getByRole('button').allTextContents(), ['low', 'high']);
+    await thinking.getByRole('button', { name: phone ? 'low' : 'high', pressed: true }).waitFor();
     assert.equal(await oxapMenu.getByText('Synthetic SDK Model').count(), 0);
     await page.screenshot({ path: `${output}/oxap-thinking-${phone ? 'phone' : 'desktop'}.png`, animations: 'disabled' });
     if (!phone) {
-      await thinking.press('Home');
-      await page.getByRole('img', { name: 'Thinking: Low' }).waitFor();
+      await thinking.getByRole('button', { name: 'low', exact: true }).click();
+      await page.getByRole('img', { name: 'Thinking: low' }).waitFor();
       await page.reload();
-      await page.getByRole('img', { name: 'Thinking: Low' }).waitFor();
+      await page.getByRole('img', { name: 'Thinking: low' }).waitFor();
       await page.getByRole('button', { name: 'Choose model and thinking' }).click();
     }
     await page.getByRole('button', { name: 'Close model settings' }).click();

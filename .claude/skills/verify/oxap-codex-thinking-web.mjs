@@ -29,6 +29,7 @@ try {
       const group = page.getByRole('group', { name: 'Thinking levels' });
       await group.waitFor({ timeout: 5000 });
       assert.deepEqual(await group.getByRole('button').allTextContents(), levels);
+      assert.equal(await page.getByText('OXAP cannot send ultra.', { exact: true }).count(), name === 'gpt-6.2-sol' ? 1 : 0);
       const max = group.getByRole('button', { name: 'max', exact: true });
       if (name === 'gpt-6-luna' && !touch) await use(max);
       await group.getByRole('button', { name: 'max', pressed: true, exact: true }).waitFor();

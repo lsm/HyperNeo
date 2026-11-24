@@ -210,9 +210,13 @@ export function thinkingRefusal(
 ): string | undefined {
   if (thinkingLevel === undefined || !isOxapHarness(harness)) return undefined;
   if (harness === 'oxap-codex') {
-    return oxapThinkingOptions(harness, publishedCodexModel(model)).some(
-      ({ value }) => value === thinkingLevel
+    const info = publishedCodexModel(model);
+    if (
+      (thinkingLevel === 'think64k' || thinkingLevel === 'ultra') &&
+      info?.codexReasoning?.levels.includes('ultra')
     )
+      return 'OXAP cannot send ultra to this Codex model.';
+    return oxapThinkingOptions(harness, info).some(({ value }) => value === thinkingLevel)
       ? undefined
       : `OXAP Codex model ${model ?? 'selection'} does not publish support for this thinking level.`;
   }
