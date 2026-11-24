@@ -20,7 +20,6 @@ import {
   thinkingDeltaSSE,
 } from '../provider-anthropic-compat/translator.js';
 import { getModelContextWindow as getCodexModelContextWindow } from '../codex-models.js';
-import type { AnthropicErrorType } from '../shared/error-envelope.js';
 import {
   anthropicErrorTypeForHttpStatus,
   httpStatusForSymbolicErrorType,
@@ -1188,30 +1187,20 @@ async function streamResponsesToAnthropic({
           event.error ??
           responseError ??
           (Object.keys(topLevelError).length > 0 ? topLevelError : undefined);
-        const normalized = normalizeOpenAiUpstreamError(
-          JSON.stringify({ error: errorBody ?? {} }),
-          200
-        );
+        const errorText = JSON.stringify({
+          type: topLevelError.type,
+          code: topLevelError.code,
+          error: errorBody ?? {},
+        });
+        const status = readEmbeddedErrorStatus(errorText);
+        const normalized = normalizeOpenAiUpstreamError(errorText, status ?? 200);
         const bodyMessage =
           errorBody && typeof (errorBody as Record<string, unknown>).message === 'string'
             ? ((errorBody as Record<string, unknown>).message as string)
             : undefined;
-        let errorType: AnthropicErrorType;
-        if (normalized) {
-          errorType = normalized.type;
-        } else {
-          const symbolicStatus =
-            httpStatusForSymbolicErrorType(
-              typeof topLevelError.type === 'string' ? topLevelError.type : undefined
-            ) ??
-            httpStatusForSymbolicErrorType(
-              typeof topLevelError.code === 'string' ? topLevelError.code : undefined
-            );
-          errorType =
-            symbolicStatus !== undefined
-              ? anthropicErrorTypeForHttpStatus(symbolicStatus)
-              : 'api_error';
-        }
+        const errorType =
+          normalized?.type ??
+          (status === undefined ? 'api_error' : anthropicErrorTypeForHttpStatus(status));
         send(errorSSE(errorType, bodyMessage ?? streamErrorMessage(event)));
         send(messageStopSSE());
         closeController();
