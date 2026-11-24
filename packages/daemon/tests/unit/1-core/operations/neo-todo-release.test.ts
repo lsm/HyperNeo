@@ -849,7 +849,7 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
       expect(h.store.getTodo(first.id)?.state).toBe('doing');
       expect(h.store.getTodo(second.id)?.state).toBe('todo');
       finish();
-      while (!h.sessions.readRef(first.id)) await Bun.sleep(1);
+      while (!h.sessions.readRef(first.id)) await new Promise((done) => setTimeout(done, 1));
       expect(h.events).toEqual(['compacting', 'start other', `send ${worker.id}`]);
     } finally {
       h.db.close();
