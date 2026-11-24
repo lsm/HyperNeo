@@ -63,7 +63,7 @@ fn last_daemon_error<R: Runtime>(app: &tauri::AppHandle<R>) -> Option<String> {
 		.and_then(|state| state.last_daemon_error.lock().ok().and_then(|guard| guard.clone()))
 }
 
-#[cfg(all(target_os = "macos", not(debug_assertions)))]
+#[cfg(target_os = "macos")]
 fn spawn_sidecar(
 	command: tauri_plugin_shell::process::Command,
 ) -> std::io::Result<(
@@ -121,6 +121,8 @@ fn spawn_sidecar(
 }
 
 const DAEMON_PORT: u16 = 9283;
+// Must match DEVICE_COOKIE in packages/daemon/src/lib/pairing/upgrade-auth.ts.
+const DEVICE_COOKIE: &str = "hyperneo_device";
 
 #[derive(serde::Deserialize)]
 struct RuntimeDescriptor {
@@ -310,10 +312,44 @@ async fn probe_daemon(client: &reqwest::Client, url: &str, attempts: u32, delay:
 	false
 }
 
-fn navigate<R: Runtime>(window: &tauri::WebviewWindow<R>, url: &str, startup: &StartupState) {
+// The desktop app owns this daemon, so it signs its own window in as the local
+// device instead of sending the user to the pairing page. The credential is the
+// owner-only local-rpc.credential the daemon enrolls at startup.
+fn authorize_local_device<R: Runtime>(window: &tauri::WebviewWindow<R>, settings: &DesktopSettings) {
+	let Some(credential) = std::fs::read_to_string(settings.data_dir.join("local-rpc.credential"))
+		.ok()
+		.map(|raw| raw.trim().to_string())
+		.filter(|value| {
+			value.len() == 43
+				&& value
+					.bytes()
+					.all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+		})
+	else {
+		log::warn!("No local device credential found; the window will show the pairing page");
+		return;
+	};
+	let cookie = tauri::webview::cookie::Cookie::build((DEVICE_COOKIE, credential))
+		.domain("127.0.0.1")
+		.path("/")
+		.http_only(true)
+		.same_site(tauri::webview::cookie::SameSite::Strict)
+		.build();
+	if let Err(error) = window.set_cookie(cookie) {
+		log::error!("Failed to sign the window in as the local device: {}", error);
+	}
+}
+
+fn navigate<R: Runtime>(
+	window: &tauri::WebviewWindow<R>,
+	url: &str,
+	startup: &StartupState,
+	settings: &DesktopSettings,
+) {
 	if startup.finished.swap(true, Ordering::SeqCst) {
 		return;
 	}
+	authorize_local_device(window, settings);
 	match tauri::Url::parse(url) {
 		Ok(parsed) => {
 			if let Err(error) = window.navigate(parsed) {
@@ -522,9 +558,8 @@ pub fn run() {
 			// Attach-first keeps the configured data dir off a running daemon's
 			// SQLite PID lock; a stale or absent advert leaves the sidecar to fail
 			// there, and that failure is reported in the window.
-			// In debug mode the developer runs `make dev` separately and the webview
-			// points straight at devUrl, so there's nothing to spawn.
-			#[cfg(not(debug_assertions))]
+			// Debug builds follow the same attach-or-spawn path so a dev build can
+			// start its own daemon, without a separate `make dev`.
 			{
 				use tauri_plugin_shell::process::CommandEvent;
 				use tauri_plugin_shell::ShellExt;
@@ -552,7 +587,7 @@ pub fn run() {
 						);
 						if probe_daemon(&client, &url, 6, Duration::from_millis(200)).await {
 							log::info!("Attaching to the running daemon at {}", url);
-							navigate(&window, &url, &startup);
+							navigate(&window, &url, &startup, &settings);
 							return;
 						}
 						log::warn!("The advertised daemon at {} did not answer; spawning one", url);
@@ -665,7 +700,7 @@ pub fn run() {
 					// 3. Wait for the daemon, then move the webview off the splash.
 					let url = daemon_url(settings.port);
 					if probe_daemon(&client, &url, 30, Duration::from_millis(500)).await {
-						navigate(&window, &url, &startup);
+						navigate(&window, &url, &startup, &settings);
 					} else {
 						fail_startup(
 							&app_handle,
@@ -675,15 +710,6 @@ pub fn run() {
 						);
 					}
 				});
-			}
-
-			#[cfg(debug_assertions)]
-			{
-				log::info!(
-					"Development mode: expecting hyperneo daemon at {}",
-					daemon_url(DAEMON_PORT)
-				);
-				log::info!("Run 'make dev PORT=9283' from the monorepo root to start the daemon");
 			}
 
 			Ok(())

@@ -5,8 +5,10 @@
   "identifier": "io.hyperneo.app",
   "build": {
     "frontendDist": "loading",
-    "devUrl": "http://localhost:9283",
-    "beforeDevCommand": "echo 'Make sure hyperneo daemon is running: cd ../.. && make dev PORT=9283'",
+    "beforeDevCommand": {
+      "script": "bun run build:sidecar && mkdir -p \"${CARGO_TARGET_DIR:-src-tauri/target}/debug\" && cp \"src-tauri/binaries/hyperneo-$(rustc --print host-tuple)\" \"${CARGO_TARGET_DIR:-src-tauri/target}/debug/hyperneo\"",
+      "wait": true
+    },
     "beforeBuildCommand": "echo 'Sidecar will be bundled with the app'"
   },
   "app": {
