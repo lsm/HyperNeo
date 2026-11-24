@@ -78,7 +78,10 @@ descriptors, session metadata, or bindings. Native requests travel only over
 the private adapter pipe. Production and verification logs redact both header
 values and any captured native config. Neither the bearer nor the reference
 appears on a command line, in a process environment, in HyperNeo's database,
-or in a URL.
+or in a URL. The containment inventory also includes every rollout and config
+file Codex writes under its home: Codex receives `http_headers`, and whether
+it persists that per-thread config is unverified. Any bearer or reference hit
+in those files blocks the release.
 
 ## Reopen restores the binding, not a secret
 
@@ -174,14 +177,17 @@ resume can work. Stale capability files are removed at daemon startup.
 2. **OXAP create:** add one-time capability resolution and Codex remote
    attachment on `thread/start`; prove two sessions receive only their own
    tools, a caller naming another session without its fresh reference is
-   refused, and secret canaries stay out of published state and logs.
+   refused, and secret canaries stay out of published state, logs, and every
+   Codex-home rollout and config file.
 3. **OXAP reopen:** persist source IDs, require fresh references on explicit
    reopen, retain resolved sources only in memory for idle wake, emit
    `config.mcp_servers` on `thread/resume`, and prove a real Codex resume
    after a model turn and process restart.
 4. **OXAP release:** tag the release, publish checksums, and run the native
    start/resume, cross-client refusal, and two-session isolation gates against
-   that artifact.
+   that artifact. Repeat the bearer and reference canary scan over all
+   Codex-home rollout and config files after the real resume and process
+   restart; any hit blocks the release.
 5. **HyperNeo transport:** extract shared operation tool registration and add
    the loopback server, grants, and revocation. Prove parity with the Claude
    handler, cross-session bearer refusal, and post-close revocation directly.
