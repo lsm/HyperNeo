@@ -9,10 +9,8 @@ import type { ReadWorkResultSchema } from '../../../packages/daemon/src/lib/driv
 import type { Result, WorkDelivery, WorkDetail, WorkStarted } from '../../../packages/daemon/src/lib/drivers/types.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
-import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
-import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
-import { readWorkCompaction } from '../../../packages/daemon/src/storage/repositories/work-started-sessions-worker.ts';
+import { queueNextTodo } from './worker-reuse-todo.ts';
 import type { z } from 'zod';
 
 const run = process.argv.at(-1)!;
@@ -441,52 +439,20 @@ try {
           metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 },
         });
         new NeoRepository(db).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
-        const todos = new NeoAskTodoRepository(db);
-        const sessions = new NeoTodoSessionRepository(db);
-        const todoId = 'compact-fixture';
-        todos.openAsk({ id: 'compact-ask', projectId: null, sessionId: root, originMessageId: null, title: 'Keep worker', request: 'Keep this worker for another turn', createdAt: now });
-        todos.addTodo(todoId, 'compact-ask', { title: 'First turn', doneWhen: 'Greet', check: null, instruction: 'Greet the user', named: null }, now);
-        sessions.create(todoId, { verb: 'start', adapter, place: input.place });
-        sessions.recordRef(todoId, started.value.ref, now);
-        db.prepare("UPDATE neo_todos SET state='done', finished_at=? WHERE id=?").run(now, todoId);
-        const refresh = async () => {
-          await app.jobProcessor.stop();
-          db.prepare("UPDATE job_queue SET run_at=0 WHERE queue='neo.work.driver.refresh' AND status='pending'").run();
-          const job = db.prepare("SELECT id FROM job_queue WHERE queue='neo.work.driver.refresh' AND status='pending' LIMIT 1").get() as { id: string } | null;
-          assert(job);
-          await app.jobProcessor.tick();
-          const deadline = Date.now() + 5_000;
-          while (Date.now() < deadline) {
-            const row = db.prepare('SELECT status,error FROM job_queue WHERE id=?').get(job.id) as { status: string; error: string | null };
-            if (row.status === 'completed') return;
-            assert(!['failed','dead'].includes(row.status), row.error ?? row.status);
-            await Bun.sleep(25);
-          }
-          assert.fail('Neo worker refresh did not finish');
-        };
         const countCompactions = () => (readFileSync(journal, 'utf8').match(/"method":"compact"/g) ?? []).length;
-        await refresh();
+        const delivered = queueNextTodo(db, started.value, root);
         const startDeadline = Date.now() + 5_000;
         while (!countCompactions() && Date.now() < startDeadline) await Bun.sleep(25);
-        assert.equal(countCompactions(), 1, 'The kept worker runs one native compaction');
+        assert.equal(countCompactions(), 1, 'Reuse runs one native compaction before the next todo');
+        assert.equal(delivered(), false, 'The next todo must wait for the compaction');
         const busy = await send(started.value.ref.id);
         assert(!busy.ok && busy.reason === 'busy' && busy.notSent);
         writeFileSync(releaseCompaction, '');
-        const readCompaction = () => readWorkCompaction(db, started.value.ref);
         const completionDeadline = Date.now() + 5_000;
-        while (!readCompaction().compactedAt && !readCompaction().failure && Date.now() < completionDeadline)
-          await Bun.sleep(25);
-        const finished = readCompaction();
-        if (compactUnconfirmed) {
-          assert.equal(finished.compactedAt, null);
-          assert.equal(finished.failure?.count, 1);
-        } else {
-          assert(finished.compactedAt && finished.compactedAt >= now);
-          assert.equal(finished.failure, null);
-        }
-        await refresh();
+        while (!delivered() && Date.now() < completionDeadline) await Bun.sleep(25);
+        assert(delivered(), 'The next todo must reach the worker after the compaction');
         assert.equal(countCompactions(), 1);
-        results.compaction = { confirmed: !!finished.compactedAt, attempts: countCompactions() };
+        results.compaction = { unconfirmed: compactUnconfirmed, attempts: countCompactions() };
       }
       if (historyFixture) {
         const read = (options: object) => rpc<z.infer<typeof ReadWorkResultSchema>>('work.read', {

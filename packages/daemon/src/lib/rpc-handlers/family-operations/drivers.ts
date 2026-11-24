@@ -911,6 +911,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       }
       return { mode: facts.mode, sameAsk: facts.sameAsk };
     },
+    warn: (message: string, error: unknown) => log.warn(message, error),
     markUnusable: (ref: StartedWork, reason: string) =>
       gatewayFor(db()).call(workStartedSessionWrites, 'markUnusable', ref, reason),
     roleContext: async (todoId: string, adapter: string, preparationPack?: string) => {
