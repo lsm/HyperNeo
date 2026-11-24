@@ -10,6 +10,8 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 export interface OxapTranslatorState {
   sessionId: string;
   terminal: boolean;
+  model?: string;
+  startedAtMs?: number;
   tools: ReadonlyArray<{ id: string; settled: boolean }>;
   pending: ReadonlyArray<PendingMessage>;
   segments: ReadonlyArray<{ key: string | null; next: number }>;
@@ -29,6 +31,8 @@ interface PendingMessage {
 export interface OxapTranslatorEvent {
   type: string;
   id: string;
+  timestamp_ms?: number;
+  elapsedMs?: number;
   payload: Record<string, unknown>;
 }
 
@@ -83,7 +87,7 @@ function assistantMessage(
       id: pending.key === null ? pending.id : `${pending.key}:${pending.segment}`,
       type: 'message',
       role: 'assistant',
-      model: '',
+      model: state.model ?? '',
       container: null,
       context_management: null,
       diagnostics: null,
@@ -175,7 +179,7 @@ function toolUse(
       id: event.id,
       type: 'message',
       role: 'assistant',
-      model: '',
+      model: state.model ?? '',
       container: null,
       context_management: null,
       diagnostics: null,
@@ -237,6 +241,14 @@ function translateTool(state: OxapTranslatorState, event: OxapTranslatorEvent): 
   return { state: { ...state, tools }, messages };
 }
 
+function durationMs(state: OxapTranslatorState, event: OxapTranslatorEvent): number | undefined {
+  const reported = count(event.payload.duration_ms);
+  if (reported > 0) return reported;
+  if (state.startedAtMs !== undefined && count(event.timestamp_ms) >= state.startedAtMs)
+    return count(event.timestamp_ms) - state.startedAtMs;
+  return event.elapsedMs;
+}
+
 function terminalMessage(state: OxapTranslatorState, event: OxapTranslatorEvent): SDKResultMessage {
   const failed = event.type !== 'run.completed';
   const error = record(event.payload.error);
@@ -246,12 +258,10 @@ function terminalMessage(state: OxapTranslatorState, event: OxapTranslatorEvent)
     type: 'result' as const,
     uuid: eventUuid(state.sessionId, event.id),
     session_id: state.sessionId,
-    duration_ms: 0,
-    duration_api_ms: 0,
-    num_turns: 1,
+    duration_ms: durationMs(state, event),
+    num_turns: state.startedAtMs !== undefined || !failed ? 1 : undefined,
     is_error: failed,
     stop_reason: reason,
-    total_cost_usd: 0,
     usage: usageFor(event),
     modelUsage: {},
     permission_denials: [],
@@ -263,17 +273,31 @@ function terminalMessage(state: OxapTranslatorState, event: OxapTranslatorEvent)
         : typeof event.payload.reason === 'string'
           ? event.payload.reason
           : event.type;
-    return { ...base, subtype: 'error_during_execution', errors: [message] };
+    return {
+      ...base,
+      subtype: 'error_during_execution',
+      errors: [message],
+    } as unknown as SDKResultMessage;
   }
   return {
     ...base,
     subtype: 'success',
     result: typeof response.content === 'string' ? response.content : '',
-  };
+  } as unknown as SDKResultMessage;
 }
 
 function translate(state: OxapTranslatorState, event: OxapTranslatorEvent): OxapTranslation {
   if (state.terminal) return { state, messages: [] };
+  if (event.type === 'run.started') {
+    return {
+      state: {
+        ...state,
+        model: typeof event.payload.model_id === 'string' ? event.payload.model_id : state.model,
+        startedAtMs: count(event.payload.started_at_ms) || count(event.timestamp_ms) || undefined,
+      },
+      messages: [],
+    };
+  }
   if (event.type === 'content.delta') {
     return translateContent(state, event);
   }
@@ -295,11 +319,13 @@ function translate(state: OxapTranslatorState, event: OxapTranslatorEvent): Oxap
     };
   }
   if (['run.completed', 'run.failed', 'run.cancelled'].includes(event.type)) {
+    const model = event.payload.model_id;
+    const completed = { ...state, model: typeof model === 'string' && model ? model : state.model };
     return {
-      state: { ...state, terminal: true, pending: [] },
+      state: { ...completed, terminal: true, pending: [] },
       messages: [
-        ...state.pending.map((message) => assistantMessage(state, message)),
-        terminalMessage(state, event),
+        ...state.pending.map((message) => assistantMessage(completed, message)),
+        terminalMessage(completed, event),
       ],
     };
   }

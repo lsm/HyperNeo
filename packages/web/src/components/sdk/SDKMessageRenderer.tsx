@@ -1,3 +1,4 @@
+import type { OxapInitDetails } from '@hyperneo/shared/types/oxap-harnesses';
 import type { ChatErrorRowAction } from '../ChatErrorRow.tsx';
 import { ChevronRightGlyph } from '../icons/common-glyphs.tsx';
 import type { JSX } from 'preact';
@@ -126,6 +127,7 @@ function isSubagentMessage(
 
 function isRenderableSystemMessage(message: SDKMessage): boolean {
   if (!isSDKSystemMessage(message)) return false;
+  if (isSDKSystemInit(message) && 'oxap' in message) return true;
   const subtype = (message as { subtype?: unknown }).subtype as string;
   return !isHiddenSystemSubtype(subtype);
 }
@@ -154,6 +156,7 @@ function isToolResultUserMessage(message: SDKMessage): boolean {
 
 function SystemInitPill({ message }: { message: SystemInitMessage }) {
   const [expanded, setExpanded] = useState(false);
+  const oxap = (message as { oxap?: OxapInitDetails }).oxap;
 
   return (
     <div class="py-1 px-2">
@@ -168,7 +171,11 @@ function SystemInitPill({ message }: { message: SystemInitMessage }) {
           viewBox="0 0 24 24"
           pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
         />
-        <span class="font-medium">{message.model ?? 'unknown model'}</span>
+        <span class="font-medium">
+          {[oxap && 'Session Started', message.model || 'unknown model']
+            .filter(Boolean)
+            .join(' · ')}
+        </span>
         {message.mcp_servers && message.mcp_servers.length > 0 && (
           <span>
             · {message.mcp_servers.length} MCP server
@@ -180,6 +187,16 @@ function SystemInitPill({ message }: { message: SystemInitMessage }) {
 
       {expanded && (
         <div class="mt-1.5 ml-5 space-y-1.5 text-[10px] text-fg-faint">
+          {oxap && (
+            <div>
+              {[oxap.client, `OXAP ${oxap.version}`, message.permissionMode]
+                .filter(Boolean)
+                .join(' · ')}
+            </div>
+          )}
+          {oxap?.contextWindow !== undefined && (
+            <div>Context window: {oxap.contextWindow.toLocaleString()} tokens</div>
+          )}
           {message.cwd && (
             <div>
               <span class="font-semibold text-fg-muted">cwd: </span>
@@ -193,9 +210,11 @@ function SystemInitPill({ message }: { message: SystemInitMessage }) {
               {message.mcp_servers.map((server: { name: string; status: string }) => (
                 <span key={server.name} class="font-mono">
                   {server.name}
-                  <span class={server.status === 'connected' ? 'text-success' : ''}>
-                    ({server.status})
-                  </span>{' '}
+                  {server.status && (
+                    <span class={server.status === 'connected' ? 'text-success' : ''}>
+                      ({server.status})
+                    </span>
+                  )}{' '}
                 </span>
               ))}
             </div>
@@ -267,7 +286,7 @@ function SDKMessageRendererImpl({
   }
 
   if (isSDKSystemInit(sdkMessage)) {
-    if (taskContext) {
+    if (taskContext || 'oxap' in sdkMessage) {
       return <SystemInitPill message={sdkMessage as SystemInitMessage} />;
     }
     return null;

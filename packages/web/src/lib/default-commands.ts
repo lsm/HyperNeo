@@ -115,7 +115,7 @@ export const DEFAULT_COMMANDS: readonly CommandDescriptor[] = [
   },
   {
     id: 'settings.models',
-    label: 'Settings: Sessions & Harness',
+    label: 'Settings: Sessions & Clients',
     category: 'settings',
     keywords: ['model', 'switch'],
     run: () => {

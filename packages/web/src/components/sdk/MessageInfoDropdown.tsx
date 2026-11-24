@@ -7,7 +7,7 @@ interface Props {
 }
 
 export function MessageInfoDropdown({ sessionInfo }: Props) {
-  const simplifiedModel = sessionInfo.model.replace('claude-', '').replace('anthropic.', '');
+  const simplifiedModel = sessionInfo.model?.replace('claude-', '').replace('anthropic.', '');
 
   const displayTools = sessionInfo.tools ?? [];
 
@@ -25,7 +25,7 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
         <div class="text-sm">
           <span class="font-medium text-info-soft">Session Started</span>
           <span class="text-info ml-2">
-            {simplifiedModel} • {sessionInfo.permissionMode}
+            {[simplifiedModel, sessionInfo.permissionMode].filter(Boolean).join(' • ')}
           </span>
         </div>
       </div>
