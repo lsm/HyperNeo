@@ -61,10 +61,10 @@ test('marks an unset worker permission and an unset sandbox by their effective v
   ).toBeTruthy();
 });
 
-test('links to Sessions & Harness and to Coding pack settings', () => {
+test('links to Sessions & Clients and to Coding pack settings', () => {
   settle({});
   render(<NeoModelSettings />);
-  fireEvent.click(screen.getByRole('button', { name: 'Sessions & Harness →' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Sessions & Clients →' }));
   expect(navigateToSettings).toHaveBeenLastCalledWith('harness');
   fireEvent.click(screen.getByRole('button', { name: 'Coding pack settings →' }));
   expect(navigateToSettings).toHaveBeenLastCalledWith('coding-pack');
