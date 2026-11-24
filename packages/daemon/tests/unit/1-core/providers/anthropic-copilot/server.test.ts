@@ -1382,8 +1382,9 @@ describe('startEmbeddedServer', () => {
     }
   });
 
-  it('rejects top-level user images on tool_result continuations', async () => {
+  it('delivers top-level user images and text through the last tool_result on continuation', async () => {
     let toolHandler: ((args: unknown, inv: unknown) => Promise<unknown>) | undefined;
+    let toolOutcome: Record<string, unknown> | undefined;
     const toolSession = new MockCopilotSession();
     const toolClient = makeMockClient(() => toolSession);
 
@@ -1408,7 +1409,16 @@ describe('startEmbeddedServer', () => {
               toolName: 'screenshot',
               arguments: { command: 'screenshot' },
             }
-          ).catch(() => {});
+          )
+            .then((result) => {
+              toolOutcome = result as Record<string, unknown>;
+              toolSession.emit('assistant.message', {
+                content: 'I see the pasted image',
+                phase: 'final_answer',
+              });
+              toolSession.emit('session.idle', {});
+            })
+            .catch(() => {});
         }
       });
       return 'send-result';
@@ -1450,6 +1460,7 @@ describe('startEmbeddedServer', () => {
                 tool_use_id: 'tc_image',
                 content: 'screenshot captured',
               },
+              { type: 'text', text: 'what does this show?' },
               {
                 type: 'image',
                 source: { type: 'base64', media_type: 'image/png', data: 'QUJD' },
@@ -1459,11 +1470,12 @@ describe('startEmbeddedServer', () => {
         ],
       });
 
-      expect(r2.status).toBe(400);
-      const body = JSON.parse(r2.rawBody ?? '{}') as Record<string, unknown>;
-      const err = body['error'] as Record<string, unknown>;
-      expect(err['type']).toBe('invalid_request_error');
-      expect(err['message']).toMatch(/image/i);
+      expect(r2.status).toBe(200);
+      expect(toolOutcome).toEqual({
+        textResultForLlm: 'screenshot captured\n\n[User]: what does this show?',
+        binaryResultsForLlm: [{ type: 'image', data: 'QUJD', mimeType: 'image/png' }],
+        resultType: 'success',
+      });
     } finally {
       await ts.stop();
     }

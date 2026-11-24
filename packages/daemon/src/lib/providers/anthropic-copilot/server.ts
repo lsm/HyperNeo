@@ -13,12 +13,13 @@ import { isAnthropicRequest, type AnthropicMessage, type AnthropicRequest } from
 import {
   collectImages,
   messageTopLevelImages,
+  messageTopLevelText,
   formatAnthropicPrompt,
   extractSystemText,
   extractToolResultIds,
 } from './prompt.js';
 import { createVisionGate, omittedImageText } from './vision.js';
-import { ConversationManager } from './conversation.js';
+import { ConversationManager, attachUserImagesToToolResults } from './conversation.js';
 import {
   createReasoningSupport,
   fitReasoningEffort,
@@ -245,7 +246,7 @@ async function handleMessages(
       return;
     }
     if (continuation) {
-      const { conv, toolResults } = continuation;
+      const { conv } = continuation;
       const lastMessage = body.messages.at(-1);
       let pendingImages;
       try {
@@ -259,15 +260,11 @@ async function handleMessages(
         );
         return;
       }
-      if (pendingImages.length > 0) {
-        sendJsonError(
-          out,
-          400,
-          'invalid_request_error',
-          'Image blocks outside tool_result content cannot be forwarded while a tool call is pending'
-        );
-        return;
-      }
+      const toolResults = attachUserImagesToToolResults(
+        continuation.toolResults,
+        lastMessage ? messageTopLevelText(lastMessage) : '',
+        pendingImages
+      );
       try {
         collectImages(body.messages);
       } catch (err) {
