@@ -17,8 +17,10 @@ static NSColor *coverBlue(void) {
         NSSize size = self.wallpaper.size;
         CGFloat scale = MAX(NSWidth(frame) / size.width, NSHeight(frame) / size.height);
         NSSize scaled = NSMakeSize(size.width * scale, size.height * scale);
-        [self.wallpaper drawInRect:NSMakeRect(NSMidX(frame) - scaled.width / 2, NSMidY(frame) - scaled.height / 2,
-                                             scaled.width, scaled.height)];
+        NSRect destination = NSMakeRect(NSMidX(frame) - scaled.width / 2, NSMidY(frame) - scaled.height / 2,
+                                        scaled.width, scaled.height);
+        [self.wallpaper drawInRect:destination fromRect:NSZeroRect operation:NSCompositingOperationSourceOver
+                          fraction:1 respectFlipped:YES hints:@{NSImageHintInterpolation: @(NSImageInterpolationHigh)}];
     }
 
     NSString *title = @"HyperNeo is using this Mac";

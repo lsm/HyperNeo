@@ -79,6 +79,7 @@ static CGImageRef decodeWallpaper(NSURL *url, CGSize pixels) CF_RETURNS_RETAINED
     }
     CGImageRef image = NULL;
     if (width > 0 && height > 0) {
+        // Keep both decoded dimensions within the display even when the drawn crop must upscale.
         double scale = MIN(pixels.width / width, pixels.height / height);
         double maxEdge = MAX(1, floor(MAX(width, height) * MIN(1, scale)));
         NSDictionary *options = @{

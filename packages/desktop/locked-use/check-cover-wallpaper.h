@@ -140,11 +140,20 @@ static BOOL checkFile(NSString *name, NSURL *url, NSString *expectedIO, BOOL exp
     return pass;
 }
 
+static BOOL checkMismatchedAspect(NSURL *url) {
+    CGImageRef image = decodeWallpaper(url, CGSizeMake(96, 192));
+    BOOL pass = image && CGImageGetWidth(image) == 96 && CGImageGetHeight(image) == 54;
+    if (image) CGImageRelease(image);
+    printf("wallpaper landscape source on portrait display %s\n", pass ? "PASS" : "FAIL");
+    return pass;
+}
+
 static int checkPaths(void) {
     NSURL *system = [NSURL URLWithString:@"file:///System/Library/direct.png"];
     NSURL *library = [NSURL URLWithString:@"file:///Library/Desktop%20Pictures/direct.png"];
     NSURL *aerial = [NSURL URLWithString:@"file:///System/Library/CoreServices/DefaultDesktop.heic"];
     BOOL pass = checkFile(@"system", system, @"OSRC", YES);
+    pass &= checkMismatchedAspect(system);
     pass &= checkFile(@"library", library, @"OSRC", YES);
     pass &= checkFile(@"aerial", aerial, @"OPLCOSRC", YES);
     pass &= checkFile(@"relative-link", aerial, @"OPLCOSRC", YES);
