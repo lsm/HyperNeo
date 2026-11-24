@@ -59,6 +59,7 @@ describe('createCopilotDiscovery.find', () => {
         work: [
           {
             ref: { adapter: 'copilot-cli', id: 'live' },
+            copilotClient: 'cli',
             title: 'Fixing the bug',
             place: { machine: 'laptop', folder: '/repo', name: 'repo' },
             status: 'running',
