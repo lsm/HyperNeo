@@ -53,8 +53,9 @@ Start work through HyperNeo with a model and effort.
 Check an App settings mismatch prevents the initial prompt, and the accepted
 settings come back from the stored session. Submit and withdraw one queued message, stop
 the initial turn, send a follow-up, read its reply with the receipt, then
-rename and archive the same work. In dual mode, the startup reference must
-come from the Desktop peer. Neo's driver refresh must compact the idle
+rename and archive the same work. In dual mode, a fresh Auto start must use
+the Desktop peer and an Auto follow-up must reuse its available CLI worker.
+Neo's driver refresh must compact the idle
 Desktop worker once before it sends the next todo of the same ask. An unrelated
 completion must not count as compaction. The local channel also requires the OS listener
 to belong to the advertised PID before authenticating. The focused daemon

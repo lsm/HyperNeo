@@ -28,7 +28,7 @@ const cli = !['desktop', 'control', 'compact-failure', 'compact-refused'].includ
 const desktop = mode !== 'cli';
 writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
 if (cli) {
-  prepareCopilotFixture(run);
+  prepareCopilotFixture(run, mode === 'both-control' ? ['--durable-inputs'] : []);
   process.env.COPILOT_CLI_PATH = join(run, 'bin/copilot');
   if (mode === 'cli-failure') writeFileSync(join(home, 'copilot-list-failure'), '');
 }
@@ -120,16 +120,23 @@ try {
     mkdirSync(folder);
     const messageCount = peer.messages.length;
     const forced = await rpc<Result<WorkStarted>>('work.start', {
-      adapter, copilotClient: 'cli', title: 'Explicit CLI', model: 'synthetic-model', message: 'hold',
+      adapter, copilotClient: 'cli', title: 'Explicit CLI', model: 'synthetic-model', message: 'settled',
       place: { machine: hostname(), folder, name: 'Fixture' },
     });
     assert.equal(peer.messages.length, messageCount);
     if (cli) {
       assert(forced.ok && forced.value.copilotClient === 'cli', JSON.stringify(forced));
-      const stopped = await rpc<Result<{ stopped: boolean }>>('work.stop', { ref: forced.value.ref });
-      assert(stopped.ok && stopped.value.stopped);
+      assert(forced.value.receipt);
+      let idle = false;
+      for (let attempt = 0; !idle && attempt < 50; attempt++) {
+        const status = await rpc<Result<WorkDetail>>('work.status', { ref: forced.value.ref, receipt: forced.value.receipt });
+        idle = status.ok && status.value.status === 'done' && !!status.value.lastReply;
+        if (!idle) await Bun.sleep(100);
+      }
+      assert(idle, 'the CLI worker must be idle before the follow-up');
       const now = Date.now();
       const db = app.db.getDatabase();
+      db.prepare("INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at) VALUES ('core', 'global', '', 'sessionReuse', ?, 'human', ?)").run(JSON.stringify('per_ask'), now);
       const asks = new NeoAskTodoRepository(db);
       const workers = new NeoTodoSessionRepository(db);
       const sessionId = 'cli-reuse-neo';
@@ -141,7 +148,7 @@ try {
       workers.bind('cli-reuse-first', forced.value.ref, now);
       asks.updateTodo(asks.getTodo('cli-reuse-first')!, { state: 'done', finishedAt: now }, now);
       const outcome = await invokeOperation(app.sessionManager.getOperationRegistry(), 'work.start', {
-        adapter, title: 'Continue CLI', message: 'Continue the same ask.', place: forced.value.place, todoId: 'cli-reuse-next',
+        adapter, title: 'Continue CLI', message: 'settled', place: forced.value.place, todoId: 'cli-reuse-next',
       }, { source: 'internal', role: 'neo', sessionId });
       assert(outcome.kind === 'completed', JSON.stringify(outcome));
       const reused = outcome.value as Result<WorkStarted>;

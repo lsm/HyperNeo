@@ -866,7 +866,6 @@ export async function reuseIdleWorker(
   if ((input.model || input.effort) && !configured) return null;
   if (configured && !configured.ok) return configured;
   const requested = configured?.ok ? configured.value : null;
-  const preferredCopilotClient = adapter.copilotClients?.[0];
   const groups = await adapter.find({ folder, includeClosed: false, limit: 50 });
   const discovered = groups.flatMap((group) => group.work);
   if (prior && !discovered.some((work) => work.ref.id === prior.id) && adapter.status) {
@@ -875,26 +874,24 @@ export async function reuseIdleWorker(
       .catch(() => null);
     if (priorStatus?.ok) discovered.push(priorStatus.value);
   }
-  const candidates = discovered
-    .filter((work) => !preferredCopilotClient || work.copilotClient === preferredCopilotClient)
-    .map((work) => ({
-      work,
-      free:
-        matches(work.ref.id) &&
-        (prior
-          ? work.ref.id === prior.id
-          : (!!free?.has(work.ref.id) || canShare(work.ref.id)) &&
-            (canShare(work.ref.id) || !policy || sameAsk(work.ref.id)) &&
-            !context?.roles.some(
-              (row) =>
-                row.adapter === work.ref.adapter &&
-                row.id === work.ref.id &&
-                row.role !== role &&
-                !context.shares[role]?.shareWith?.includes(row.role)
-            )),
-      sameAskAt: free && 'get' in free ? (free.get(work.ref.id)?.sameAskAt ?? null) : null,
-      settledAt: free && 'get' in free ? (free.get(work.ref.id)?.settledAt ?? null) : null,
-    }));
+  const candidates = discovered.map((work) => ({
+    work,
+    free:
+      matches(work.ref.id) &&
+      (prior
+        ? work.ref.id === prior.id
+        : (!!free?.has(work.ref.id) || canShare(work.ref.id)) &&
+          (canShare(work.ref.id) || !policy || sameAsk(work.ref.id)) &&
+          !context?.roles.some(
+            (row) =>
+              row.adapter === work.ref.adapter &&
+              row.id === work.ref.id &&
+              row.role !== role &&
+              !context.shares[role]?.shareWith?.includes(row.role)
+          )),
+    sameAskAt: free && 'get' in free ? (free.get(work.ref.id)?.sameAskAt ?? null) : null,
+    settledAt: free && 'get' in free ? (free.get(work.ref.id)?.settledAt ?? null) : null,
+  }));
   const sameAskCandidates = candidates.filter(
     ({ work }) =>
       matches(work.ref.id) &&
