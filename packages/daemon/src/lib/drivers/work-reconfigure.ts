@@ -8,8 +8,7 @@ import {
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../storage/database.ts';
-import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
-import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
+import { neoTodoSessionReads } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { workStartedSessionReads } from '../../storage/repositories/work-started-sessions-worker.ts';
 import { isNeoConversationSession } from '../neo/publication-read-operation.ts';
 import { getAvailableModels, resolveSessionContextModelInfo } from '../model-service.ts';
@@ -35,14 +34,21 @@ const ResultSchema = workResultSchema(
   })
 );
 type Input = z.infer<typeof InputSchema>;
-type Deps = { db: Database; sessions: SessionManager };
+type Deps = {
+  db: Database;
+  sessions: SessionManager;
+  readBinding: (id: string) => Parameters<typeof isNeoConversationSession>[1];
+};
 const refuse = (reason: Rejected['reason'], detail: string) => ({
   reason: reject(reason, detail),
 });
 
-async function admitTarget({ ref }: Input, caller: OperationCaller, { db, sessions }: Deps) {
-  const raw = db.getDatabase();
-  const binding = caller.sessionId && new NeoRepository(raw).getBindingBySession(caller.sessionId);
+async function admitTarget(
+  { ref }: Input,
+  caller: OperationCaller,
+  { db, sessions, readBinding }: Deps
+) {
+  const binding = caller.sessionId && readBinding(caller.sessionId);
   if (!binding || !isNeoConversationSession(caller, binding))
     return refuse('human_only', 'This action needs a bound Neo session.');
   if (ref.adapter !== 'hyperneo' || ref.daemon)
@@ -53,7 +59,7 @@ async function admitTarget({ ref }: Input, caller: OperationCaller, { db, sessio
   if (!session || session.status !== 'active') return refuse('not_open', 'The session is closed.');
   if (
     session.metadata?.titleSetBy === 'user' ||
-    new NeoTodoSessionRepository(raw).wasNamedByHuman(ref)
+    (await db.gateway.call(neoTodoSessionReads, 'wasNamedByHuman', ref))
   )
     return refuse('human_only', 'Ask the person who named this session to use the chat picker.');
   return { value: session } as const;

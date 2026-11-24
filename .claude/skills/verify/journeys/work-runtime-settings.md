@@ -9,7 +9,7 @@ bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
 ```
 
 The script opens a worker on a disposable daemon, waits for its first reply,
-and invokes `work.reconfigure` through the Neo MCP entry point. It submits a
+and discovers and invokes `work.reconfigure` through the Neo MCP entry point. It submits a
 second turn to the same ref and inspects the actual model request. The model and
 effort must change, both turns must finish, and the second request must include
 the first turn's input. It also checks an effort-only receipt and refusals for

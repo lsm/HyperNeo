@@ -936,6 +936,7 @@ export const neoTodoSessionReads = defineRepositoryOp(
     'workerName',
     'syncedActivity',
     'syncedLive',
+    'wasNamedByHuman',
     'finishedWorkers',
     'reuseFacts',
     'workerCompactionFacts',

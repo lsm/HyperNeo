@@ -1032,17 +1032,19 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       ? null
       : readWorkTurnPage(db(), sessionId, around, before, after, cursor);
   };
+  const readBinding = (sessionId: string) => new NeoRepository(db()).getBindingBySession(sessionId);
   return [
     createFindWorkOperation(deps),
     createWorkCleanupRuntime(context),
     health.operation,
     ...createWorkVerbOperations({ ...deps, queueInput: workerInputs.accept }),
-    createWorkReconfigureOperation({ db: context.deps.db, sessions: context.deps.sessionManager }),
+    createWorkReconfigureOperation({
+      db: context.deps.db,
+      sessions: context.deps.sessionManager,
+      readBinding,
+    }),
     createNeoSessionArchiveOperation({ ...deps, db: context.deps.db }),
-    createNeoSessionUnarchiveOperation(
-      (sessionId) => new NeoRepository(db()).getBindingBySession(sessionId),
-      context.deps.sessionManager
-    ),
+    createNeoSessionUnarchiveOperation(readBinding, context.deps.sessionManager),
     ...createWorkerOwnershipBackfillOperations(context.deps.db),
     createReadWorkOperation({
       readTurns,

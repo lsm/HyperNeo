@@ -105,6 +105,9 @@ try {
     const response = await mcp({ name, input });
     return JSON.parse((response.content[0] as { text: string }).text);
   };
+  const discovery = await invokeAsNeo('operations.list', { prefix: 'work' });
+  evidence.discoverable = discovery.names.includes('work.reconfigure');
+  assert.equal(evidence.discoverable, true);
   evidence.completedTurns = await completed(ref.id, 1);
   const { value: status } = await invokeAsNeo('work.status', { ref });
   assert.deepEqual(status.ref, ref);
