@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { describe, it, expect, vi } from 'vitest';
 
-import { render, fireEvent, cleanup } from '@testing-library/preact';
+import { render, fireEvent, cleanup, screen, within } from '@testing-library/preact';
 import { ChatErrorRow } from '../ChatErrorRow';
 
 describe('ChatErrorRow', () => {
@@ -33,6 +33,39 @@ describe('ChatErrorRow', () => {
       const dismissButton = container.querySelector('[aria-label="Dismiss error"]');
       expect(dismissButton).toBeTruthy();
     });
+  });
+
+  it('shows a source title and the actionable cause before Details opens', () => {
+    render(
+      <ChatErrorRow
+        error="An unexpected error occurred. Please try again."
+        details={{
+          title: 'Codex could not start',
+          message: 'No executable was found at the configured path.\nFull client log',
+          recoverySuggestions: ['Check the configured Codex executable path.'],
+        }}
+        onViewDetails={mockOnViewDetails}
+        onDismiss={mockOnDismiss}
+      />
+    );
+    const row = within(screen.getByRole('alert'));
+    expect(row.getByText('Codex could not start', { selector: 'strong' })).toBeTruthy();
+    expect(row.getByText('Check the configured Codex executable path.')).toBeTruthy();
+    expect(row.queryByText(/full client log/i)).toBeNull();
+  });
+
+  it.each([
+    ['Usage limit reached. Try again after 9 PM.', 'Usage limit reached', 'Try again after 9 PM.'],
+    [
+      'Lost connection: Check your network and retry.',
+      'Lost connection',
+      'Check your network and retry.',
+    ],
+  ])('shows the failure and next step from %s', (error, title, cause) => {
+    render(<ChatErrorRow error={error} onDismiss={mockOnDismiss} />);
+    const row = within(screen.getByRole('alert'));
+    expect(row.getByText(title, { selector: 'strong' })).toBeTruthy();
+    expect(row.getByText(cause)).toBeTruthy();
   });
 
   describe('Details Button', () => {
