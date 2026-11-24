@@ -423,6 +423,27 @@ describe('translateOxapEvent tool and usage fixtures', () => {
     ]);
     expect(translateOxapEvent(last.state, completed).messages).toEqual([]);
   });
+  it('reports the started model and elapsed time without fabricating a cost', () => {
+    const started = translateOxapEvent(initialOxapTranslatorState('session-1'), {
+      type: 'run.started',
+      id: 'started',
+      payload: { model_id: 'gpt-6-luna', started_at_ms: 100 },
+    });
+    const text = translateOxapEvent(started.state, {
+      type: 'content.delta',
+      id: 'text',
+      payload: { part: { type: 'text', text: 'Hello' } },
+    });
+    const terminal = { ...usageFixture, timestamp_ms: 1800 };
+    const ended = translateOxapEvent(text.state, terminal);
+    expect(ended.messages).toMatchObject([
+      { type: 'assistant', message: { model: 'gpt-6-luna' } },
+      { type: 'result', duration_ms: 1700, num_turns: 1, usage: { output_tokens: 100 } },
+    ]);
+    expect(ended.messages[1]).not.toHaveProperty('total_cost_usd');
+    expect(ended.messages[1]).not.toHaveProperty('duration_api_ms');
+  });
+
   it('preserves fixture usage on the terminal result', () => {
     expect(
       translateOxapEvent(initialOxapTranslatorState('session-1'), usageFixture).messages
