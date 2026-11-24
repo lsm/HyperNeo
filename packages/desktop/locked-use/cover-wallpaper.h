@@ -7,6 +7,7 @@
 static NSString *const SystemWallpaperRoot = @"/System/Library/";
 static NSString *const LibraryWallpaperRoot = @"/Library/Desktop Pictures/";
 static const off_t WallpaperByteLimit = 64 * 1024 * 1024;
+static const double WallpaperPixelLimit = 32 * 1024 * 1024;
 
 static NSString *wallpaperPath(NSString *path) {
     if (![path hasPrefix:@"/"]) return nil;
@@ -78,20 +79,29 @@ static CGImageRef decodeWallpaper(NSURL *url, CGSize pixels) CF_RETURNS_RETAINED
         height = swap;
     }
     CGImageRef image = NULL;
+    CGSize bounds = CGSizeZero;
     if (width > 0 && height > 0) {
-        // Keep both decoded dimensions within the display even when the drawn crop must upscale.
-        double scale = MIN(pixels.width / width, pixels.height / height);
-        double maxEdge = MAX(1, floor(MAX(width, height) * MIN(1, scale)));
-        NSDictionary *options = @{
-            (__bridge NSString *)kCGImageSourceCreateThumbnailFromImageAlways: @YES,
-            (__bridge NSString *)kCGImageSourceCreateThumbnailWithTransform: @YES,
-            (__bridge NSString *)kCGImageSourceShouldCacheImmediately: @YES,
-            (__bridge NSString *)kCGImageSourceThumbnailMaxPixelSize: @(maxEdge),
-        };
-        image = CGImageSourceCreateThumbnailAtIndex(source, 0, (__bridge CFDictionaryRef)options);
+        // Size the thumbnail for the visible crop, without asking ImageIO to enlarge the source.
+        double sourceEdge = MAX(width, height);
+        double scaledEdge = MAX(pixels.width * sourceEdge / width, pixels.height * sourceEdge / height);
+        double maxEdge = MIN(sourceEdge, ceil(scaledEdge));
+        bounds = CGSizeMake(ceil(width * maxEdge / sourceEdge), ceil(height * maxEdge / sourceEdge));
+        double pixelBudget = MIN(WallpaperPixelLimit, 8 * pixels.width * pixels.height);
+        if (bounds.width * bounds.height <= pixelBudget) {
+            NSDictionary *options = @{
+                (__bridge NSString *)kCGImageSourceCreateThumbnailFromImageAlways: @YES,
+                (__bridge NSString *)kCGImageSourceCreateThumbnailWithTransform: @YES,
+                (__bridge NSString *)kCGImageSourceShouldCacheImmediately: @YES,
+                (__bridge NSString *)kCGImageSourceThumbnailMaxPixelSize: @(maxEdge),
+            };
+            image = CGImageSourceCreateThumbnailAtIndex(source, 0, (__bridge CFDictionaryRef)options);
+        }
     }
     CFRelease(source);
-    if (image && (CGImageGetWidth(image) > pixels.width || CGImageGetHeight(image) > pixels.height)) {
+    if (!image) return NULL;
+    size_t decodedWidth = CGImageGetWidth(image), decodedHeight = CGImageGetHeight(image);
+    if (decodedWidth > bounds.width || decodedHeight > bounds.height
+        || decodedWidth < MIN(pixels.width, width) || decodedHeight < MIN(pixels.height, height)) {
         CGImageRelease(image);
         return NULL;
     }
