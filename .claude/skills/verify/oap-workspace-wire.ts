@@ -14,7 +14,8 @@ import { getSdkStartupGate } from '../../../packages/daemon/src/lib/agent/sdk-st
 import { deliverAgentMessageToTarget, type AgentMessageDeliveryDeps } from '../../../packages/daemon/src/lib/messaging/delivery-pipeline.ts';
 import { createLocalSocket, readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
-import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
+import { type LiveQueryDeltaEvent, MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
+import type { SDKMessage } from '../../../packages/shared/src/sdk';
 import { resolveNeoEntry } from '../../../packages/shared/src/web-entry.ts';
 
 const [binary, version, sha256, mode, ...paths] = process.argv.slice(2);
@@ -318,9 +319,21 @@ try {
     }
     Object.assign(evidence, { port: app.server.port, resavedExecutable: secondPeer, hubRestartedOnSave: true, turnsAcrossRestart, relativePathRefused: true, pass: true });
   } else if (mode === 'folderless' || mode === 'model-switch') {
-    const replies = () => app!.db.getSDKMessages(firstId, 1000).messages.flatMap((row) =>
+    const chatRows = new Map<string, SDKMessage>();
+    const replyText = (rows: Iterable<SDKMessage>) => Array.from(rows).flatMap((row) =>
       row.type === 'assistant' ? row.message.content.flatMap((part) => part.type === 'text' ? [part.text] : []) : []
     );
+    const replies = () => replyText(app!.db.getSDKMessages(firstId, 1000).messages);
+    hub.onEvent('liveQuery.delta', (event) => {
+      const delta = event as LiveQueryDeltaEvent;
+      if (delta.subscriptionId !== 'oxap-chat') return;
+      for (const row of [...(delta.added ?? []), ...(delta.updated ?? [])] as (SDKMessage & { id: string })[]) {
+        chatRows.set(row.id, row);
+      }
+    });
+    await hub.request('liveQuery.subscribe', {
+      queryName: 'messages.bySession', params: [firstId, 50], subscriptionId: 'oxap-chat',
+    });
     const send = async (content: string, count: number, expected: string) => {
       await hub.request('message.send', { sessionId: firstId, content });
       await waitFor(() => replies().length >= count || errors.length > 0, `assistant reply ${count}`, livePeer ? 45000 : undefined);
@@ -358,8 +371,18 @@ try {
       const turns = calls().filter((call) => call.request.method === 'turn/start');
       if (!livePeer) assert.deepEqual(turns.map((call) => call.request.params?.model), ['gpt-6-luna', 'gpt-5.6-luna']);
       assert.equal(app.db.getSession(firstId)?.sdkSessionId, nativeId);
+      if (livePeer) {
+        await waitFor(() => !first.queryPromise, 'switched turn finished');
+        await app.oxapEngine.restart();
+        await send('Repeat the exact marker from your first reply, then append RESUMED. Use no tools.', 3, 'RESUMED');
+        assert(replies().some((reply) => reply.includes('JADE-ORBIT-25') && reply.includes('RESUMED')));
+        assert.equal(app.db.getSession(firstId)?.sdkSessionId, nativeId);
+        Object.assign(evidence, { threadResumed: true });
+      }
       Object.assign(evidence, { threadPreserved: true, model: app.db.getSession(firstId)?.config.model });
     }
+    await waitFor(() => replyText(chatRows.values()).length === replies().length, 'replies visible in the chat reader');
+    assert.deepEqual(replyText(chatRows.values()).sort(), replies().sort());
     Object.assign(evidence, { replies: replies().length, pass: true });
   } else if (mode === 'model-id') {
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic model selection' });

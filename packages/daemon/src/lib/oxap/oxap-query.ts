@@ -223,6 +223,7 @@ export class OxapQuery implements QueryLike {
           if (isTerminal(event)) {
             terminal = true;
             this.activeRun = undefined;
+            this.hub.release?.(this.owner);
           }
           for (const message of translated) {
             if (!this.isLive() && !this.canSettleInterrupted()) return;
