@@ -17,7 +17,9 @@ import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/set
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 import { resolveNeoEntry } from '../../../packages/shared/src/web-entry.ts';
 
-const [binary, version, sha256, mode, runArgument] = process.argv.slice(2);
+const [binary, version, sha256, mode, ...paths] = process.argv.slice(2);
+const runArgument = paths.pop()!;
+const livePeer = paths[0];
 const run = resolve(runArgument);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -90,6 +92,8 @@ for line in sys.stdin:
    continue
   for index in range(${['recovery-claim', 'recovery-web', 'recovery', 'recovery-empty'].includes(mode) ? 1 : 96}):
    emit({'method':'item/agentMessage/delta','params':{'threadId':thread,'turnId':turn,'itemId':'text-'+turn,'delta':'synthetic reply' if index==0 else '.'}})
+  if 'Synthetic turn while switching models' in json.dumps(request):
+   while not os.path.exists(os.path.join(os.environ['CODEX_HOME'],'finish-switch-turn')): time.sleep(0.01)
   emit({'method':'turn/completed','params':{'threadId':thread,'turn':{'id':turn,'status':'completed'}}})
  if method=='turn/interrupt':
   emit({'method':'turn/completed','params':{'threadId':request['params']['threadId'],'turn':{'id':request['params']['turnId'],'status':'interrupted'}}})
@@ -97,8 +101,9 @@ open(os.path.join(os.environ['CODEX_HOME'],'closed-'+str(os.getpid())),'w').clos
 `);
 chmodSync(peer, 0o700);
 if (mode === 'retry') writeFileSync(join(run, 'codex-home/fail-first'), 'synthetic');
+assert(!livePeer || mode === 'folderless' || mode === 'model-switch');
 process.env.CODEX_HOME = join(run, 'codex-home');
-process.env.CODEX_CLI_PATH = mode === 'login-device' ? join(run, 'missing-codex') : peer;
+process.env.CODEX_CLI_PATH = livePeer ?? (mode === 'login-device' ? join(run, 'missing-codex') : peer);
 assert.equal(version, releaseName(), 'supply the pinned OXAP release binary for this platform');
 const stateDirectory = join(run, 'data', 'oap');
 let releaseRequests: string[] = [];
@@ -107,7 +112,7 @@ const liveHub = (current: NonNullable<typeof app>) => current.oxapEngine.getHub(
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let transport: WebSocketClientTransport | undefined;
 let releaseResult: (() => void) | undefined;
-const evidence: Record<string, unknown> = { synthetic: true, mode, binaryVersion: version, binarySha256: sha256 };
+const evidence: Record<string, unknown> = { synthetic: !livePeer, mode, binaryVersion: version, binarySha256: sha256 };
 const calls = () => existsSync(join(run, 'codex-home/calls.jsonl'))
   ? readFileSync(join(run, 'codex-home/calls.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line) as { cwd: string; codexHome?: string; pid: number; request: { method?: string; params?: { cwd?: string; approvalPolicy?: string; sandbox?: string; developerInstructions?: string; capabilities?: { experimentalApi?: boolean } } } })
   : [];
@@ -215,15 +220,15 @@ try {
     await hub.request('providers.create', { params: { providerId: 'anthropic', displayName: 'Synthetic provider', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-devproxy-test-key' } });
     await hub.request('providers.create', oxapCodexProvider);
   }
-  const saved = await hub.request('operation.invoke', { name: 'oxap.settings.save', input: { providerId: 'anthropic-codex', harness: 'oxap-codex', settings: { executable: peer } } });
+  const saved = await hub.request('operation.invoke', { name: 'oxap.settings.save', input: { providerId: 'anthropic-codex', harness: 'oxap-codex', settings: { executable: livePeer ?? peer } } });
   assert.deepEqual(saved, { accepted: true });
   const installed = app.settingsManager.getGlobalSettings().oxapHub;
   assert.deepEqual(installed && { version: installed.version, sha256: installed.sha256 }, { version, sha256 });
   assert.deepEqual(releaseRequests, ['SHA256SUMS.txt', `${version}.tar.gz`]);
   Object.assign(evidence, { installedFromRelease: true, installedVersion: installed?.version, providerConfig: JSON.parse(app.db.providers.getProviderByProviderId('anthropic-codex')?.configJson ?? '{}') });
   if (mode === 'bad-pin') app.settingsManager.updateGlobalSettings({ oxapHub: { ...installed!, sha256: '0'.repeat(64) } });
-  const makeSession = async (workspace: string) => hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, workspace), title: 'Synthetic OAP workspace', config: { model: OXAP_CODEX_MODEL, provider: 'anthropic-codex' } });
-  const { sessionId: firstId } = await makeSession('workspace-a');
+  const makeSession = async (workspace?: string) => hub.request<{ sessionId: string }>('session.create', { workspacePath: workspace && join(run, workspace), title: 'Synthetic OAP workspace', config: { model: OXAP_CODEX_MODEL, provider: 'anthropic-codex' } });
+  const { sessionId: firstId } = await makeSession(mode === 'folderless' ? undefined : 'workspace-a');
   const first = app.sessionManager.getSession(firstId);
   assert(first);
   if (mode === 'login-device') {
@@ -312,6 +317,50 @@ try {
       assert.equal(servedConfig().adapters['anthropic-codex']?.executable, peer);
     }
     Object.assign(evidence, { port: app.server.port, resavedExecutable: secondPeer, hubRestartedOnSave: true, turnsAcrossRestart, relativePathRefused: true, pass: true });
+  } else if (mode === 'folderless' || mode === 'model-switch') {
+    const replies = () => app!.db.getSDKMessages(firstId, 1000).messages.flatMap((row) =>
+      row.type === 'assistant' ? row.message.content.flatMap((part) => part.type === 'text' ? [part.text] : []) : []
+    );
+    const send = async (content: string, count: number, expected: string) => {
+      await hub.request('message.send', { sessionId: firstId, content });
+      await waitFor(() => replies().length >= count || errors.length > 0, `assistant reply ${count}`, livePeer ? 45000 : undefined);
+      assert.deepEqual(errors, []);
+      assert.equal(replies().length, count);
+      assert(replies().some((reply) => reply.includes(expected)), JSON.stringify(replies()));
+      console.log(`Assistant reply ${count}: ${expected}`);
+    };
+    process.chdir(join(run, 'workspace-a'));
+    const switchModel = () => hub.request<{ success: boolean; pending?: unknown }>('session.model.switch', {
+      sessionId: firstId, model: 'codex-5.6-luna', provider: 'anthropic-codex',
+    });
+    if (mode === 'model-switch' && !livePeer) {
+      await hub.request('message.send', { sessionId: firstId, content: 'Synthetic turn while switching models' });
+      await waitFor(() => calls().some((call) => call.request.method === 'turn/start'), 'first turn started');
+      const queued = await switchModel();
+      assert(queued.success && queued.pending, JSON.stringify(queued));
+      writeFileSync(join(run, 'codex-home/finish-switch-turn'), '');
+      await waitFor(() => replies().length === 1 && /^(codex|gpt)-5\.6-luna$/.test(app!.db.getSession(firstId)?.config.model ?? ''), 'first reply and selected model');
+    } else {
+      await send(livePeer ? 'Reply exactly JADE-ORBIT-25. Use no tools.' : 'Synthetic first turn', 1, livePeer ? 'JADE-ORBIT-25' : 'synthetic reply');
+    }
+    if (mode === 'folderless') {
+      if (!livePeer) assert.equal(calls().find((call) => call.request.method === 'thread/start')?.cwd, process.cwd());
+    } else {
+      const nativeId = app.db.getSession(firstId)?.sdkSessionId;
+      assert(nativeId);
+      if (livePeer) {
+        const switched = await switchModel();
+        assert.equal(switched.success, true, JSON.stringify(switched));
+      }
+      assert.match(app.db.getSession(firstId)?.config.model ?? '', /^(codex|gpt)-5\.6-luna$/);
+      await send(livePeer ? 'Repeat the exact marker from your previous reply, then append SAME-THREAD. Use no tools.' : 'Synthetic turn after model switch', 2, livePeer ? 'SAME-THREAD' : 'synthetic reply');
+      if (livePeer) assert(replies().some((reply) => reply.includes('JADE-ORBIT-25') && reply.includes('SAME-THREAD')));
+      const turns = calls().filter((call) => call.request.method === 'turn/start');
+      if (!livePeer) assert.deepEqual(turns.map((call) => call.request.params?.model), ['gpt-6-luna', 'gpt-5.6-luna']);
+      assert.equal(app.db.getSession(firstId)?.sdkSessionId, nativeId);
+      Object.assign(evidence, { threadPreserved: true, model: app.db.getSession(firstId)?.config.model });
+    }
+    Object.assign(evidence, { replies: replies().length, pass: true });
   } else if (mode === 'model-id') {
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic model selection' });
     await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'result') && !first.queryPromise, 'turn with a chosen model');
