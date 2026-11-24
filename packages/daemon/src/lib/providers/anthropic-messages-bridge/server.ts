@@ -3,7 +3,11 @@ import { Logger } from '../../logger.js';
 import { createHttpWsServer } from '../../runtime-server/index.js';
 import type { AnthropicRequest } from '../provider-anthropic-compat/translator.js';
 import { sendJsonError, sendRetryableUpstreamError } from '../shared/json-error-response.js';
-import { isJsonContentType, normalizeUpstreamError } from '../shared/normalize-upstream-error.js';
+import {
+  isJsonContentType,
+  normalizeUpstreamError,
+  readUnsupportedImageError,
+} from '../shared/normalize-upstream-error.js';
 
 const logger = new Logger('anthropic-messages-bridge-server');
 
@@ -230,6 +234,12 @@ export async function createAnthropicMessagesBridgeServer(
 
       if (!upstreamResponse.ok) {
         const text = await upstreamResponse.text();
+        const unsupportedImage = readUnsupportedImageError(text);
+        if (unsupportedImage) {
+          return sendJsonError(400, 'invalid_request_error', unsupportedImage, {
+            'x-should-retry': 'false',
+          });
+        }
         const normalized = normalizeUpstreamError(text, upstreamResponse.status);
         if (normalized) {
           logger.warn(
