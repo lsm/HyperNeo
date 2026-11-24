@@ -6,7 +6,7 @@ The package ships the `hyperneo` daemon as a Tauri **sidecar** (an external bina
 bundled and launched by the Rust shell) and renders the existing web UI inside
 a native webview. There is no separate frontend code — Tauri opens a small
 loading splash, polls the daemon's `GET /` readiness route, and then navigates
-the webview to `http://localhost:9283` once the daemon is ready.
+the webview to the daemon once it is ready.
 
 If a daemon is already running it advertises itself in `<data-dir>/runtime.json`
 (`~/.hyperneo/runtime.json` by default); the shell attaches to that instance
@@ -43,7 +43,7 @@ the app retains its default data directory, port 9283, and workspace.
 
 - [Rust toolchain](https://rustup.rs/) — `rustc` 1.77+ on the host.
 - [Tauri CLI](https://v2.tauri.app/start/prerequisites/) — `cargo install tauri-cli` (or `cargo install tauri-cli --version "^2"` to pin to v2).
-- Bun ≥ 1.3.8 (already required by the monorepo).
+- Bun 1.4.4 (the monorepo pin).
 - Platform-specific build tools (Xcode CLT on macOS, MSVC build tools on Windows, the standard `webkit2gtk` stack on Linux). See the Tauri prerequisites page above for the per-OS list.
 
 ## Layout
@@ -51,39 +51,32 @@ the app retains its default data directory, port 9283, and workspace.
 ```
 packages/desktop/
 ├── package.json              # @hyperneo/desktop, scripts that wrap cargo tauri
-├── build-sidecar.sh          # builds the daemon and copies it into src-tauri/binaries/
+├── build-sidecar.ts          # builds the daemon and copies it into src-tauri/binaries/
 ├── README.md
 └── src-tauri/
     ├── Cargo.toml
-    ├── tauri.conf.json       # productName: "HyperNeo", devUrl: http://localhost:9283
+    ├── tauri.conf.json       # product, window and build configuration
     ├── build.rs
     ├── capabilities/         # Tauri permission manifests
     ├── icons/                # bundle + tray icons
     ├── loading/index.html    # splash shown until the daemon answers GET /
     ├── src/{main.rs,lib.rs}  # Rust shell: tray, global shortcut, sidecar mgmt
-    └── binaries/             # populated by build-sidecar.sh — gitignored
+    └── binaries/             # populated by build-sidecar.ts — gitignored
 ```
 
 ## Development
 
-The Rust shell does **not** spawn the sidecar in debug builds; it expects you
-to run the daemon yourself so `cargo tauri dev` doesn't fight a real binary.
-
-In one terminal, from the monorepo root:
-
-```bash
-make dev DB_PATH=/tmp/beokai-9283 PORT=9283
-```
-
-In another:
+Install dependencies from the monorepo root with `bun install --frozen-lockfile`.
 
 ```bash
 cd packages/desktop
 bun run dev
 ```
 
-The webview opens directly on `http://localhost:9283`. Hot-reload of the web
-UI works exactly the same as in the browser — Tauri only owns the window.
+The Tauri dev hook builds the host daemon and copies it next to the debug app.
+The app attaches to a running daemon advertised in the configured data directory
+or starts the sidecar itself. The default address is `http://127.0.0.1:9283`.
+Restart the dev command to rebuild changes to the web UI embedded in the sidecar.
 
 ## Build
 
@@ -144,8 +137,7 @@ Tauri's [sidecar](https://v2.tauri.app/develop/sidecar/) feature lets the
 desktop app ship and launch a precompiled child process. The Rust shell:
 
 - Attaches to a daemon advertised in the configured data directory when one is
-  running; otherwise spawns the sidecar with the configured settings (release
-  mode only).
+  running; otherwise spawns the sidecar with the configured settings.
 - Streams stdout/stderr into the Tauri log plugin.
 - Polls the configured port for up to ~15 s and then navigates the main window
   from `loading/index.html` to the live UI.
