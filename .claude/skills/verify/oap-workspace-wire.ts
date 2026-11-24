@@ -19,6 +19,10 @@ import { resolveNeoEntry } from '../../../packages/shared/src/web-entry.ts';
 
 const [binary, version, sha256, mode, runArgument] = process.argv.slice(2);
 const run = resolve(runArgument);
+if (mode === 'no-replay') {
+  process.env.HYPERNEO_HUMAN_SEND_SILENCE_MS = '250';
+  process.env.HYPERNEO_SDK_STREAM_SILENCE_TIMEOUT_MS = '1500';
+}
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -312,6 +316,44 @@ try {
       assert.equal(servedConfig().adapters['anthropic-codex']?.executable, peer);
     }
     Object.assign(evidence, { port: app.server.port, resavedExecutable: secondPeer, hubRestartedOnSave: true, turnsAcrossRestart, relativePathRefused: true, pass: true });
+  } else if (mode === 'no-replay') {
+    const snapshot = () => app!.db.getDatabase().prepare(
+      `SELECT seq, timestamp, consumed_seq AS consumedSeq FROM sdk_messages
+       WHERE session_id = ? AND message_type = 'user' AND send_status = 'consumed'
+       ORDER BY seq`
+    ).all(firstId) as Array<{ seq: number; timestamp: string; consumedSeq: number }>;
+    const turns = () => calls().filter((call) => call.request.method === 'turn/start').length;
+    const sendAndWait = async (content: string, count: number) => {
+      await hub.request('message.send', { sessionId: firstId, content });
+      await waitFor(
+        () => snapshot().length === count &&
+          app!.db.getSDKMessages(firstId, 1000).messages.filter((row) => row.type === 'result' && !row.is_error).length === count,
+        content
+      );
+    };
+
+    await sendAndWait('Synthetic first prompt', 1);
+    const firstRow = snapshot()[0];
+    assert(firstRow?.consumedSeq);
+    await new Promise((done) => setTimeout(done, 3_500));
+    Object.assign(evidence, { turnsAfterSilence: turns(), firstRowUnchanged: JSON.stringify(snapshot()[0]) === JSON.stringify(firstRow) });
+    assert.equal(turns(), 1, 'one send should start one native turn after the silence watchdog runs');
+    assert.deepEqual(snapshot(), [firstRow]);
+
+    assert.deepEqual(await hub.request('operation.invoke', { name: 'oxap.settings.save', input: { providerId: 'anthropic-codex', harness: 'sdk' } }), { accepted: true });
+    await transport.close();
+    await app.cleanup();
+    app = await createDaemonApp({ config: { ...config, disableWorktrees: true, disableGoalProcessing: true }, verbose: false });
+    hub = new MessageHub({ defaultSessionId: 'global' });
+    transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false, createSocket: createLocalSocket });
+    hub.registerTransport(transport);
+    await transport.initialize();
+    await sendAndWait('Synthetic second prompt after restart', 2);
+    await new Promise((done) => setTimeout(done, 3_500));
+    assert.equal(turns(), 2);
+    assert.deepEqual(snapshot()[0], firstRow);
+    assert.deepEqual(errors, []);
+    Object.assign(evidence, { turnsAfterRestart: turns(), pass: true });
   } else if (mode === 'model-id') {
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic model selection' });
     await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'result') && !first.queryPromise, 'turn with a chosen model');
