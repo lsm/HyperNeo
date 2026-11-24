@@ -121,6 +121,7 @@ fn spawn_sidecar(
 }
 
 const DAEMON_PORT: u16 = 9283;
+const LOCAL_DAEMON_HOST: &str = "127.0.0.1";
 // Must match DEVICE_COOKIE in packages/daemon/src/lib/pairing/upgrade-auth.ts.
 const DEVICE_COOKIE: &str = "hyperneo_device";
 
@@ -284,7 +285,7 @@ fn read_runtime_descriptor(settings: &DesktopSettings) -> Option<RuntimeDescript
 }
 
 fn daemon_url(port: u16) -> String {
-	format!("http://127.0.0.1:{port}")
+	format!("http://{LOCAL_DAEMON_HOST}:{port}")
 }
 
 // Bounded per attempt: an advertised host may be non-loopback, and a
@@ -330,7 +331,7 @@ fn authorize_local_device<R: Runtime>(window: &tauri::WebviewWindow<R>, settings
 		return;
 	};
 	let cookie = tauri::webview::cookie::Cookie::build((DEVICE_COOKIE, credential))
-		.domain("127.0.0.1")
+		.domain(LOCAL_DAEMON_HOST)
 		.path("/")
 		.http_only(true)
 		.same_site(tauri::webview::cookie::SameSite::Strict)
@@ -349,9 +350,15 @@ fn navigate<R: Runtime>(
 	if startup.finished.swap(true, Ordering::SeqCst) {
 		return;
 	}
-	authorize_local_device(window, settings);
 	match tauri::Url::parse(url) {
 		Ok(parsed) => {
+			if parsed.host_str() == Some(LOCAL_DAEMON_HOST) {
+				authorize_local_device(window, settings);
+			} else {
+				log::warn!(
+					"Automatic sign-in skipped for the advertised daemon host. Pair manually if prompted."
+				);
+			}
 			if let Err(error) = window.navigate(parsed) {
 				log::error!("Failed to navigate the window to {}: {}", url, error);
 			}

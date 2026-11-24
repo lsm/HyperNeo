@@ -76,6 +76,7 @@ bun run dev
 The Tauri dev hook builds the host daemon and copies it next to the debug app.
 The app attaches to a running daemon advertised in the configured data directory
 or starts the sidecar itself. The default address is `http://127.0.0.1:9283`.
+The app uses the same local-device sign-in as a release build.
 Restart the dev command to rebuild changes to the web UI embedded in the sidecar.
 
 ## Build
@@ -139,8 +140,11 @@ desktop app ship and launch a precompiled child process. The Rust shell:
 - Attaches to a daemon advertised in the configured data directory when one is
   running; otherwise spawns the sidecar with the configured settings.
 - Streams stdout/stderr into the Tauri log plugin.
-- Polls the configured port for up to ~15 s and then navigates the main window
-  from `loading/index.html` to the live UI.
+- Waits for the daemon to answer, then navigates from the splash to the live UI.
+  For a daemon at `127.0.0.1`, the app uses the owner-only local credential to
+  sign in as the local device and skip pairing. If the credential is missing
+  or invalid, the cookie cannot be installed, or the daemon advertises a
+  different host, pair manually when prompted.
 - On failure (spawn error, early sidecar exit, or readiness timeout) renders the
   reason — including the daemon's own error line — inside the splash instead of
   spinning forever.
