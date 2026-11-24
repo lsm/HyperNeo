@@ -1,5 +1,6 @@
 import type { ContextInfo, ModelInfo, SessionConfig, ThinkingLevel } from '@hyperneo/shared';
 import {
+  isOxapHarness,
   oxapCodexDefaultThinking,
   oxapThinkingOptions,
 } from '@hyperneo/shared/types/oxap-harnesses';
@@ -132,7 +133,11 @@ export default function SessionStatusBar({
 
         <div class="h-6 w-px bg-fg-faint" />
 
-        <ContextUsageBar contextUsage={contextUsage} maxContextTokens={maxContextTokens} />
+        <ContextUsageBar
+          contextUsage={contextUsage}
+          maxContextTokens={maxContextTokens}
+          unavailable={isOxapHarness(harness) && !contextUsage}
+        />
       </div>
     </ContentContainer>
   );

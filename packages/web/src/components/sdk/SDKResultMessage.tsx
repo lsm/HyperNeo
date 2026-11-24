@@ -12,6 +12,11 @@ interface Props {
 
 export function SDKResultMessage({ message }: Props) {
   const [showDetails, setShowDetails] = useState(false);
+  const cost = message.total_cost_usd?.toFixed(4);
+  const elapsed =
+    message.duration_ms != null ? `${(message.duration_ms / 1000).toFixed(2)}s` : undefined;
+  const apiTime = message.duration_api_ms;
+  const turns = message.num_turns;
   const isSuccess = isSDKResultSuccess(message) && message.is_error !== true;
   const errors = isSDKResultError(message)
     ? message.errors
@@ -58,10 +63,18 @@ export function SDKResultMessage({ message }: Props) {
           <span class="font-medium text-success-soft">
             {inputTokens}→{outputTokens} tokens
           </span>
-          <span class="text-success-soft">•</span>
-          <span class="font-mono text-success-soft">${message.total_cost_usd.toFixed(4)}</span>
-          <span class="text-success-soft">•</span>
-          <span class="text-success-soft">{(message.duration_ms / 1000).toFixed(2)}s</span>
+          {cost != null && (
+            <>
+              <span class="text-success-soft">•</span>
+              <span class="font-mono text-success-soft">${cost}</span>
+            </>
+          )}
+          {elapsed != null && (
+            <>
+              <span class="text-success-soft">•</span>
+              <span class="text-success-soft">{elapsed}</span>
+            </>
+          )}
         </div>
         <ChevronDownGlyph
           class={`w-4 h-4 text-success transition-transform ${showDetails ? 'rotate-180' : ''}`}
@@ -105,7 +118,7 @@ export function SDKResultMessage({ message }: Props) {
             />
             <StatCard
               label="Cost"
-              value={`$${message.total_cost_usd.toFixed(4)}`}
+              value={cost === undefined ? undefined : `$${cost}`}
               icon={
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path
@@ -120,7 +133,7 @@ export function SDKResultMessage({ message }: Props) {
             />
             <StatCard
               label="Duration"
-              value={`${(message.duration_ms / 1000).toFixed(2)}s`}
+              value={elapsed}
               icon={
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path
@@ -164,12 +177,13 @@ export function SDKResultMessage({ message }: Props) {
             </div>
           )}
 
-          <div class="text-xs text-fg-muted">
-            Completed in {message.num_turns} turn
-            {message.num_turns !== 1 ? 's' : ''}
-            {' • '}
-            API time: {(message.duration_api_ms / 1000).toFixed(2)}s
-          </div>
+          {(turns != null || apiTime != null) && (
+            <div class="text-xs text-fg-muted">
+              {turns != null && `Completed in ${turns} turn${turns === 1 ? '' : 's'}`}
+              {turns != null && apiTime != null && ' • '}
+              {apiTime != null && `API time: ${(apiTime / 1000).toFixed(2)}s`}
+            </div>
+          )}
 
           {Object.keys(message.modelUsage).length > 0 && (
             <div>
@@ -292,10 +306,11 @@ function StatCard({
   highlight = false,
 }: {
   label: string;
-  value: string;
+  value?: string;
   icon: unknown;
   highlight?: boolean;
 }) {
+  if (value === undefined) return null;
   return (
     <div class={`${highlight ? 'bg-surface-raised border border-line' : ''} p-2 rounded`}>
       <div class="flex items-center gap-1 text-fg-muted mb-1">

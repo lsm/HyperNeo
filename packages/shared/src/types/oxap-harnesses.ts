@@ -1,6 +1,12 @@
 import type { ModelInfo } from '../models.ts';
 import { THINKING_OPTIONS, type ThinkingLevel } from '../types.ts';
 
+export type OxapInitDetails = {
+  client: string;
+  version: string;
+  contextWindow?: number;
+};
+
 export type OxapHarness = {
   label: string;
   adapter: string;

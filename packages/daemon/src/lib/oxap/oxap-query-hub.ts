@@ -217,10 +217,15 @@ const planResubmit = (superpipe({})('oap.query.reconcileSubmit') as PipelineAPI)
 
 export function createOxapQueryHub(
   client: OxapHubClient,
-  model?: { adapter: string; id: () => string | undefined }
+  model?: {
+    adapter: string;
+    id: () => string | undefined;
+    onFirstEvent?: (event: Event) => Promise<void>;
+  }
 ): OxapQueryHub {
   const uncertainSessions = new Set<string>();
   let selects: boolean | undefined;
+  let initialized = false;
   let active: Stream | undefined;
   let starting: { owner: symbol } | undefined;
   return {
@@ -319,7 +324,12 @@ export function createOxapQueryHub(
         for await (const [value] of stream.events) {
           if (value instanceof Error) throw value;
           if (typeof value.session_id === 'string' && value.session_id !== sessionId) continue;
-          if (value.run_id === expectedRunId) yield value;
+          if (value.run_id !== expectedRunId) continue;
+          if (!initialized && model?.onFirstEvent) {
+            await model.onFirstEvent(value);
+            initialized = true;
+          }
+          yield value;
         }
       } finally {
         signal.removeEventListener('abort', abort);
