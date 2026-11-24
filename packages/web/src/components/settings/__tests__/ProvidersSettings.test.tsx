@@ -1110,6 +1110,27 @@ describe('ProvidersSettings', () => {
     });
   });
 
+  it('shows the signed-in Claude account on the Anthropic provider row', async () => {
+    mockListProviders.mockResolvedValue({
+      providers: [createMockProvider('1', 'anthropic', { authType: 'oauth', available: true })],
+    });
+    mockListProviderAuthStatus.mockResolvedValue({
+      providers: [
+        {
+          id: 'anthropic',
+          displayName: 'Anthropic',
+          isAuthenticated: true,
+          method: 'oauth',
+          user: { email: 'replacement@example.test' },
+        },
+      ],
+    });
+
+    render(<ProvidersSettings />);
+
+    expect(await screen.findByText('Signed in as replacement@example.test')).toBeTruthy();
+  });
+
   it('shows OAuth logout button for authenticated OAuth provider', async () => {
     const providers = [
       createMockProvider('1', 'anthropic-copilot', {
