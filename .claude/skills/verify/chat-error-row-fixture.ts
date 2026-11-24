@@ -94,7 +94,7 @@ export async function seedChatErrorCases(app: DaemonAppContext, run: string, wor
       path: `/session/${duplicateStartup}`,
       request,
       title: 'Could not start Codex CLI',
-      cause: 'At "/example/tools/oxap". Usage: oxap [OPTIONS] <COMMAND>.',
+      cause: 'At "/example/tools/oxap". Usage: oxap [OPTIONS] <COMMAND>. Check the Codex CLI path in Settings → Providers.',
       userMessage: 'Could not start Codex CLI at "/example/tools/oxap". Usage: oxap [OPTIONS] <COMMAND>. Check the Codex CLI path in Settings → Providers.',
       category: 'validation',
       code: 'UNKNOWN',

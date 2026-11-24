@@ -15,8 +15,12 @@ browser pairs once and checks each case in fresh desktop and touch-phone context
 in light and dark. The error title and cause are readable before Details opens.
 The row follows the failed request, scrolls out of view with it, reappears on
 reload and can be dismissed. Details opens the full technical message.
+A separate Codex startup case saves the same diagnostic both as an assistant
+message and session error. Require exactly one transcript card before and after
+reload, with the explicit launch title, executable path and startup diagnostic,
+and the complete saved diagnostic under Details.
 
 The browser also opens Neo's public conversation with a rate-limit failure and
 a Space task with an authentication failure. Both show the summary after the
-request. The journey writes 14 screenshots and observed results. Inspect them
+request. The journey writes 18 screenshots and observed results. Inspect them
 for clipping and placement. No provider request is sent.

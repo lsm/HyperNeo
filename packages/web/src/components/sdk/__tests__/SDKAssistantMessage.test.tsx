@@ -509,7 +509,7 @@ describe('SDKAssistantMessage', () => {
     });
 
     it('shows a stopped failure episode inside the card with its raw error collapsed', () => {
-      const message = createErrorMessage();
+      const message = createErrorMessage('API Error: 529 overloaded');
       const { container } = render(
         <SDKAssistantMessage
           message={message}

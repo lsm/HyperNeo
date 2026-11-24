@@ -83,6 +83,7 @@ import { connectionState, globalSettings } from '../lib/state.ts';
 import { toast } from '../lib/toast.ts';
 import type { StructuredError } from '../types/error.ts';
 import {
+  matchingSessionErrorCard,
   type StoppedEpisode,
   stopBannerHidden,
   stoppedErrorCardUuid,
@@ -962,8 +963,19 @@ export default function ChatContainer({
 
   const sessionStateLoaded = store.sessionState.value !== null;
   const messagesLoaded = store.messagesLoaded.value;
+  const showStoreError = !localError && !retryStatusMessage && !!storeError;
+  const matchingCard =
+    showStoreError && errorDetails?.metadata?.kind !== 'package_download_failure'
+      ? matchingSessionErrorCard(messages, storeError?.message, errorDetails?.message)
+      : undefined;
+  const waitingForTranscript =
+    showStoreError &&
+    !store.messagesTooLarge.value &&
+    (!messagesLoaded || (store.sdkMessages.value.length > 0 && messages.length === 0));
   const inlineError =
     error &&
+    !matchingCard &&
+    !waitingForTranscript &&
     !stopBannerHidden(stoppedEpisode, stoppedCardUuid, {
       loaded: messagesLoaded,
       tooLarge: store.messagesTooLarge.value,
@@ -1295,6 +1307,11 @@ export default function ChatContainer({
                           }
                           stopped={
                             msg.uuid && msg.uuid === stoppedCardUuid ? stoppedEpisode : undefined
+                          }
+                          errorActions={
+                            matchingCard && msg.uuid === matchingCard && errorActions.length
+                              ? errorActions
+                              : undefined
                           }
                         />
                       </div>

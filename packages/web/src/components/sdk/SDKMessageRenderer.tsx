@@ -1,3 +1,4 @@
+import type { ChatErrorRowAction } from '../ChatErrorRow.tsx';
 import { ChevronRightGlyph } from '../icons/common-glyphs.tsx';
 import type { JSX } from 'preact';
 import { memo } from 'preact/compat';
@@ -79,6 +80,7 @@ interface Props {
   replacementStatus?: MessageReplacementStatus;
   isLiveTail?: boolean;
   stopped?: StoppedEpisode;
+  errorActions?: ChatErrorRowAction[];
   disableDeliveryRetry?: boolean;
 }
 
@@ -244,6 +246,7 @@ function SDKMessageRendererImpl({
   replacementStatus,
   isLiveTail = false,
   stopped,
+  errorActions,
   disableDeliveryRetry,
 }: Props) {
   const minimal = useChatDisplayMode() === 'minimal';
@@ -341,6 +344,7 @@ function SDKMessageRendererImpl({
         isRunning={isRunning}
         runningToolUseIds={runningToolUseIds}
         stopped={stopped}
+        errorActions={errorActions}
       />
     );
   } else if (isSDKResultMessage(sdkMessage)) {
@@ -428,6 +432,7 @@ function areMessageRendererPropsEqual(prev: Props, next: Props): boolean {
     prev.replacementStatus === next.replacementStatus &&
     prev.isLiveTail === next.isLiveTail &&
     prev.stopped === next.stopped &&
+    prev.errorActions === next.errorActions &&
     prev.disableDeliveryRetry === next.disableDeliveryRetry
   );
 }

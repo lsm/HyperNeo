@@ -61,6 +61,16 @@ try {
       const title = transcript.getByText(fixture.title, { exact: true });
       const cause = transcript.getByText(fixture.cause, { exact: true });
       await request.waitFor();
+      if (fixture.name === 'duplicate-startup') {
+        await transcript.getByTestId('assistant-message').filter({ hasText: fixture.title }).waitFor();
+        const duplicate = transcript.getByTestId('chat-error-row').filter({ hasText: fixture.title });
+        const duplicateCount = await duplicate.count();
+        if (duplicateCount) {
+          await duplicate.scrollIntoViewIfNeeded();
+          await page.screenshot({ path: join(evidence, 'duplicate-before.png'), animations: 'disabled' });
+        }
+        assert.equal(duplicateCount, 0, 'the saved transcript card and session row display the same failure');
+      }
       await title.waitFor();
       await cause.waitFor();
       await page.waitForFunction((theme) => document.documentElement.dataset.theme === theme, colorScheme);
@@ -84,17 +94,21 @@ try {
 
       const use = (button) => hasTouch ? button.tap() : button.click();
       if (fixture.name === 'duplicate-startup') {
-        const verifySingleCard = async () => {
-          await title.waitFor();
-          assert.equal(await title.count(), 1);
-          assert.equal(await transcript.getByTestId('chat-error-row').count(), 0);
-          assert.equal(await transcript.getByText('API Error', { exact: true }).count(), 0);
-        };
+        const verifySingleCard = () => page.waitForFunction((expectedTitle) => {
+          const messages = document.querySelector('[data-messages-container]');
+          if (!messages) return false;
+          const titles = [...messages.querySelectorAll('strong')].map((node) => node.textContent);
+          return titles.filter((text) => text === expectedTitle).length === 1
+            && !titles.includes('API Error')
+            && !messages.querySelector('[data-testid="chat-error-row"]');
+        }, fixture.title);
         await verifySingleCard();
         const details = transcript.locator('details').filter({ hasText: fixture.message });
         assert.equal(await details.evaluate((element) => element.open), false);
         await use(details.getByText('Details', { exact: true }));
-        await details.locator('pre').getByText(fixture.message, { exact: true }).waitFor();
+        const log = details.locator('pre');
+        await log.waitFor();
+        assert.equal(await log.innerText(), fixture.message);
         await page.reload();
         await verifySingleCard();
       } else if (sharedChat) {

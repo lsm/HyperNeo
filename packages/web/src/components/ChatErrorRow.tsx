@@ -77,16 +77,7 @@ export function ChatErrorRow({
             {retrying ? t('download.retrying') : t('chat.retry')}
           </button>
         )}
-        {actions?.map((action) => (
-          <button
-            key={action.label}
-            type="button"
-            onClick={action.onClick}
-            class="text-xs px-3 py-1 rounded-md bg-danger/20 hover:bg-danger/30 text-danger-soft hover:text-danger-soft transition-colors border border-danger/30"
-          >
-            {action.label}
-          </button>
-        ))}
+        {actions && <ChatErrorActions actions={actions} />}
         {hasDetails && onViewDetails && (
           <button
             type="button"
@@ -107,6 +98,19 @@ export function ChatErrorRow({
       </div>
     </div>
   );
+}
+
+export function ChatErrorActions({ actions }: { actions: ChatErrorRowAction[] }) {
+  return actions.map((action) => (
+    <button
+      key={action.label}
+      type="button"
+      onClick={action.onClick}
+      class="text-xs px-3 py-1 rounded-md bg-danger/20 hover:bg-danger/30 text-danger-soft hover:text-danger-soft transition-colors border border-danger/30"
+    >
+      {action.label}
+    </button>
+  ));
 }
 
 function downloadMessage(message: string): string {
