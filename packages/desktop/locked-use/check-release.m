@@ -6,6 +6,8 @@
 #include <sys/un.h>
 
 static BOOL locked = YES;
+static BOOL checkHandoff;
+static BOOL failRelock;
 static NSTimeInterval stopping;
 
 static CFDictionaryRef fixtureSession(void) {
@@ -15,11 +17,17 @@ static CFDictionaryRef fixtureSession(void) {
 static void fixtureLock(void) {
     if (locked && NSProcessInfo.processInfo.systemUptime - stopping < 4.5) exit(5);
     puts("lock requested");
-    if (!locked) {
+    if (!locked && !failRelock) {
         [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:NO block:^(NSTimer *timer) {
             (void)timer;
             locked = YES;
             puts("relock observed");
+            if (checkHandoff) {
+                [NSTimer scheduledTimerWithTimeInterval:0.6 repeats:NO block:^(NSTimer *handoff) {
+                    (void)handoff;
+                    puts("handoff interval elapsed");
+                }];
+            }
         }];
     }
 }
@@ -98,7 +106,13 @@ int main(int argc, const char *argv[]) {
             return 4;
         }
         guardian.allowAnswered = YES;
-        if (argc == 2 && strcmp(argv[1], "delayed") == 0) {
+        const char *scenario = argc == 2 ? argv[1] : "";
+        checkHandoff = strcmp(scenario, "input") == 0;
+        failRelock = strcmp(scenario, "relock_failed") == 0;
+        if (checkHandoff || failRelock) {
+            locked = NO;
+            guardian.unlocked = YES;
+        } else if (strcmp(scenario, "delayed") == 0) {
             [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:NO block:^(NSTimer *timer) {
                 (void)timer;
                 locked = NO;
@@ -110,7 +124,8 @@ int main(int argc, const char *argv[]) {
             exit(4);
         }];
         stopping = NSProcessInfo.processInfo.systemUptime;
-        [guardian end:@"stopped"];
+        if (checkHandoff) [guardian ownerDidAct];
+        else [guardian end:@"stopped"];
         [NSRunLoop.currentRunLoop run];
         return 4;
     }

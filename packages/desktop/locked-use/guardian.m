@@ -307,9 +307,11 @@ static void clickPrompt(CGPoint point) {
     BOOL locked = screenLocked();
     __block BOOL awaitingUnlock = self.allowAnswered && !self.unlocked && locked;
     NSTimeInterval started = NSProcessInfo.processInfo.systemUptime;
+    __block NSTimeInterval lockedSince = 0;
     if (!locked) lockScreen();
     [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *timer) {
-        NSTimeInterval elapsed = NSProcessInfo.processInfo.systemUptime - started;
+        NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+        NSTimeInterval elapsed = now - started;
         BOOL locked = screenLocked();
         if (awaitingUnlock) {
             if (locked && elapsed < 5) return;
@@ -317,12 +319,18 @@ static void clickPrompt(CGPoint point) {
             awaitingUnlock = NO;
             return;
         }
-        if (locked || elapsed >= 10) {
-            [timer invalidate];
-            [self reportUnlockDiagnostics];
-            say([NSString stringWithFormat:@"ended %@%@", reason, locked ? @"" : @" relock_failed"]);
-            exit(locked ? 0 : 3);
+        // The lock flag can precede the visible lock screen. Keep the covers through the handoff.
+        if (!locked) {
+            if (lockedSince && elapsed < 10) lockScreen();
+            lockedSince = 0;
+        } else if (!lockedSince) {
+            lockedSince = now;
         }
+        if (elapsed < 10 && (!lockedSince || now - lockedSince < 0.75)) return;
+        [timer invalidate];
+        [self reportUnlockDiagnostics];
+        say([NSString stringWithFormat:@"ended %@%@", reason, locked ? @"" : @" relock_failed"]);
+        exit(locked ? 0 : 3);
     }];
 }
 

@@ -7,14 +7,16 @@ clang -fobjc-arc -Wall -Werror -framework AppKit -framework ApplicationServices 
     -framework IOKit -framework Security -o "$run/check-release" check-release.m
 
 check() {
-    local expected="$1" result
-    shift
-    result="$("$run/check-release" "$@")"
+    local expected_status="$1" expected="$2" result status=0
+    shift 2
+    result="$("$run/check-release" "$@")" || status=$?
     printf '%s\n' "$result"
-    [[ "$result" == "$expected" ]]
+    [[ "$status" == "$expected_status" && "$result" == "$expected" ]]
 }
 
-check $'unlock observed\nlock requested\nrelock observed\nended stopped' delayed
-check $'lock requested\nended stopped' capped
-check $'allow_answered\ngrant allowed\ngrant refused after allow\ngrant refused after owner input' grant
-echo 'guardian release check PASS (3 cases)'
+check 0 $'owner_input\nlock requested\nrelock observed\nhandoff interval elapsed\nended local_input' input
+check 0 $'unlock observed\nlock requested\nrelock observed\nended stopped' delayed
+check 0 $'lock requested\nended stopped' capped
+check 3 $'lock requested\nended stopped relock_failed' relock_failed
+check 0 $'allow_answered\ngrant allowed\ngrant refused after allow\ngrant refused after owner input' grant
+echo 'guardian release check PASS (5 cases)'

@@ -161,12 +161,15 @@ touch "packages/desktop/src-tauri/binaries/hyperneo-$(rustc --print host-tuple)"
 cargo test --locked --manifest-path packages/desktop/src-tauri/Cargo.toml --lib locked_use::
 ```
 
-The fixture prints the delayed unlock, the lock request, the confirmed relock,
-then the guardian exit. With no observed unlock it prints a lock request after the
-roughly five-second cap and exits. It also answers the guardian's authorization
-socket through the real listener: an armed guardian grants once, an ask after an
-answered Allow is refused, and an ask after owner input is refused. All three
-cases end in `guardian release check PASS`.
+The fixture checks that after owner input and relock the guardian stays alive
+through the cover handoff interval. It also checks delayed unlock, a lock request
+at the roughly five-second cap with no observed unlock, and exit with
+`relock_failed` if the lock flag never returns by the ten-second release deadline.
+The last case exercises the real authorization listener: an armed guardian
+grants once, then refuses after an answered Allow or owner input. All five cases
+end in `guardian release check PASS`. The lock flag does not show when the lock
+screen draws. The guardian holds the covers for 750 ms after seeing it, within
+the release deadline. Check the visible handoff in the attended run.
 The Desktop tests cover refusal while a guardian is active or releasing,
 suppression on a locked launch and after owner input or a crash, and admitting
 workers again after an unlock.
@@ -200,7 +203,10 @@ they never reach the guardian. The diagnostics contain no UI values or input.
    relock while the guardian is still exiting. Use the mouse and one or two
    password characters, first without Return and then with Return. Confirm that
    the guardian disarms and the log records zero further HyperNeo Allow replies
-   until a normal manual unlock.
+   until a normal manual unlock. With an external display attached, watch both
+   displays from owner input until the lock screen takes over. There should be
+   no desktop flash on either display. Check the same handoff for idle expiry
+   and for an orderly stop or guardian stdin close.
 3. Request a second worker while the first owns the Mac and again while it is
    releasing. Confirm both requests are refused. Interrupt a session with
    owner input and immediately request another session. Confirm refusal and zero
