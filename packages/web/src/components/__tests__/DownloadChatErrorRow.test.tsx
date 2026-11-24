@@ -22,9 +22,7 @@ describe('ChatErrorRow', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(retryClaudeDownload).toHaveBeenCalledTimes(1));
-    expect(
-      await screen.findByText("Can't download Claude Code: registry unavailable.")
-    ).toBeTruthy();
+    expect(await screen.findByText('registry unavailable.')).toBeTruthy();
   });
 
   it('clears the error after a successful download', async () => {
@@ -80,9 +78,7 @@ describe('ChatErrorRow', () => {
     );
     render(<ChatErrorRow downloadFailure error="Download failed." onDismiss={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(
-      await screen.findByText('Claude Code is still downloading. Try again shortly.')
-    ).toBeTruthy();
+    expect(await screen.findByText('Claude Code is still downloading')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
   });
 
@@ -90,9 +86,7 @@ describe('ChatErrorRow', () => {
     vi.mocked(retryClaudeDownload).mockRejectedValue(new Error('Not connected to transport'));
     render(<ChatErrorRow downloadFailure error="Download failed." onDismiss={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(
-      await screen.findByText("Can't retry the Claude Code download. Try again shortly.")
-    ).toBeTruthy();
+    expect(await screen.findByText("Can't retry the Claude Code download")).toBeTruthy();
   });
 
   it('does not start another download while retry is pending', async () => {

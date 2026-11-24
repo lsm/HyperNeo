@@ -168,7 +168,8 @@ describe('ChatErrorRow', () => {
       const specialError = 'Error: <script>alert("xss")</script>';
       const { container } = render(<ChatErrorRow error={specialError} onDismiss={mockOnDismiss} />);
 
-      expect(container.textContent).toContain(specialError);
+      expect(container.querySelector('strong')?.textContent).toBe('<script>alert("xss")</script>');
+      expect(container.querySelector('script')).toBeNull();
     });
   });
 });

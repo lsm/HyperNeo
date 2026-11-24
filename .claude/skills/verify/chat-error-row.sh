@@ -27,7 +27,7 @@ trap 'exit 143' TERM
 isolated=(env -i PATH="$RUN/bin:$PATH" HOME="$RUN/home" TMPDIR="$RUN/tmp"
   HYPERNEO_DATA_DIR="$RUN/data" VERIFY_MOCK_PORT="$VERIFY_MOCK_PORT" HYPERNEO_SPACE=on NODE_ENV=test)
 "${isolated[@]}" bun "$VERIFY/error-workflow-seed.ts" "$RUN" --chat-error-row
-"${isolated[@]}" bun "$VERIFY/error-workflow-server.ts" "$RUN" "$PORT" > "$RUN/daemon.log" 2>&1 &
+"${isolated[@]}" bun "$VERIFY/error-workflow-server.ts" "$RUN" "$PORT" --chat-error-row > "$RUN/daemon.log" 2>&1 &
 daemon_pid=$!
 for _ in $(seq 1 30); do
   kill -0 "$daemon_pid"

@@ -1,3 +1,4 @@
+import { ChatErrorMessage } from '../components/ChatErrorMessage.tsx';
 import { NeoSendFlight, type NeoSendFlightRequest } from './NeoSendFlight.tsx';
 import { resolveNeoCardReply } from './public-conversation.ts';
 import {
@@ -1107,7 +1108,9 @@ export function NeoLive() {
               role="alert"
               class="mt-4 rounded-xl border border-danger/30 bg-danger/5 p-4 text-sm"
             >
-              <p class="break-words text-danger">{neo.error}</p>
+              <div class="text-danger">
+                <ChatErrorMessage message={neo.error} />
+              </div>
               <Button variant="ghost" size="sm" class="mt-2" onClick={neo.retry}>
                 {t('live.reconnect')}
               </Button>
@@ -1118,7 +1121,11 @@ export function NeoLive() {
           )}
           {neo.store.loadErrorKind.value && (
             <div role="alert" class="mt-4 text-sm text-danger">
-              <p>{publicConversation ? t('live.controlsFailed') : t('live.conversationFailed')}</p>
+              <ChatErrorMessage
+                message={
+                  publicConversation ? t('live.controlsFailed') : t('live.conversationFailed')
+                }
+              />
               <Button variant="ghost" size="sm" onClick={() => void neo.open()}>
                 {t('live.tryAgain')}
               </Button>

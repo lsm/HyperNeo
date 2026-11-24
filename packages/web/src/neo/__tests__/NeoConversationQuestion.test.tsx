@@ -127,10 +127,12 @@ describe('NeoConversation native question feedback', () => {
       const { store, refresh } = await mount();
       if (kind === 'respond') fireEvent.click(await option());
       fireEvent.click(action(kind === 'respond'));
-      const expected = disconnected
-        ? 'Connection lost. Reconnect and try again.'
-        : 'Native reply rejected';
-      expect((await screen.findByRole('alert')).textContent).toBe(expected);
+      const alert = await screen.findByRole('alert');
+      expect(alert.querySelector('strong')?.textContent).toBe(
+        disconnected ? 'Connection lost' : 'Native reply rejected'
+      );
+      if (disconnected)
+        expect(alert.querySelector('p')?.textContent).toBe('Reconnect and try again.');
       expect(toastsSignal.value).toEqual([]);
       expect(action(kind === 'respond').hasAttribute('disabled')).toBe(false);
       expect(request).toHaveBeenCalledWith(

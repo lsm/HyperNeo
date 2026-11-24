@@ -8,7 +8,7 @@ import { pairMessageCopyBrowser } from './neo-whole-message-copy-web.mjs';
 const [run, port, evidence] = process.argv.slice(2);
 assert(run && evidence && Number(port) > 0 && Number(port) !== 8399);
 const pairBase = `http://127.0.0.1:${port}`;
-const { worker } = JSON.parse(await readFile(join(run, 'evidence/error-workflow-seed.json')));
+const { cases, raw } = JSON.parse(await readFile(join(run, 'evidence/chat-error-cases.json')));
 const pairing = JSON.parse(
   execFileSync(
     'bun',
@@ -30,9 +30,14 @@ const results = [];
 await mkdir(evidence, { recursive: true });
 try {
   const storageState = await pairMessageCopyBrowser(browser, { pairBase, pairCode: pairing.reply.code });
-  for (const [layout, width, height] of [['desktop', 1280, 900], ['phone', 390, 844]]) {
-    const hasTouch = layout === 'phone';
-    for (const colorScheme of ['light', 'dark']) {
+  for (const fixture of cases) {
+    const sharedChat = fixture.name !== 'neo' && fixture.name !== 'space';
+    const layouts = sharedChat
+      ? [['desktop', 1280, 900, 'light'], ['desktop', 1280, 900, 'dark'],
+         ['phone', 390, 844, 'light'], ['phone', 390, 844, 'dark']]
+      : [['desktop', 1280, 900, 'light']];
+    for (const [layout, width, height, colorScheme] of layouts) {
+      const hasTouch = layout === 'phone';
       const context = await browser.newContext({
         storageState,
         viewport: { width, height },
@@ -46,46 +51,72 @@ try {
       );
       const page = await context.newPage();
       page.setDefaultTimeout(8000);
-      await page.goto(`${pairBase}/session/${worker}`);
-      const chat = page.getByTestId('chat-container');
-      const title = chat.getByTestId('chat-header-title');
-      const request = chat.getByText('Synthetic request that failed', { exact: true });
-      const error = chat.getByText('Synthetic error report', { exact: true });
-      const messages = chat.locator('[data-messages-container]');
-      await title.waitFor();
+      await page.goto(`${pairBase}${fixture.path}`);
+      const transcript = fixture.name === 'neo'
+        ? page.getByRole('region', { name: 'Conversation with Neo' })
+        : fixture.name === 'space'
+          ? page.getByTestId('space-task-unified-thread')
+          : page.locator('[data-messages-container]');
+      const request = transcript.getByText(fixture.request, { exact: true });
+      const title = transcript.getByText(fixture.title, { exact: true });
+      const cause = transcript.getByText(fixture.cause, { exact: true });
       await request.waitFor();
-      await error.waitFor();
+      await title.waitFor();
+      await cause.waitFor();
       await page.waitForFunction((theme) => document.documentElement.dataset.theme === theme, colorScheme);
       assert.equal(await page.evaluate(() => matchMedia('(pointer: coarse)').matches), hasTouch);
-      await request.scrollIntoViewIfNeeded();
-      await page.screenshot({ path: join(evidence, `${layout}-${colorScheme}.png`), animations: 'disabled' });
+      const heading = await title.evaluate((el) => ({
+        bold: Number(getComputedStyle(el).fontWeight) >= 600,
+        fits: el.scrollWidth <= el.clientWidth,
+      }));
+      assert(heading.bold && heading.fits, JSON.stringify(heading));
+      assert(await cause.evaluate((el) => el.scrollWidth <= el.clientWidth));
+      assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      assert(await title.evaluate(
+        (element, requestElement) =>
+          Boolean(requestElement.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING),
+        await request.elementHandle()
+      ));
+      assert.equal(await transcript.getByText(raw, { exact: false }).count(), 0);
+      await cause.scrollIntoViewIfNeeded();
+      const screenshot = sharedChat ? `${fixture.name}-${layout}-${colorScheme}.png` : `${fixture.name}.png`;
+      await page.screenshot({ path: join(evidence, screenshot), animations: 'disabled' });
 
-      const inline = await messages.getByText('Synthetic error report', { exact: true }).count() === 1;
-      const afterRequest = await request.evaluate(
-        (element) => Boolean(element.compareDocumentPosition(
-          [...document.querySelectorAll('p')].find((paragraph) => paragraph.textContent === 'Synthetic error report')
-        ) & Node.DOCUMENT_POSITION_FOLLOWING)
-      );
-      const errorBox = await error.boundingBox();
-      const headerBox = await title.boundingBox();
-      const aboveTitle = errorBox.y < headerBox.y;
-      const fits = await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth);
       const use = (button) => hasTouch ? button.tap() : button.click();
-      await use(chat.getByRole('button', { name: /^(View )?Details$/ }));
-      const dialog = page.getByRole('dialog');
-      await dialog.getByText(/technical details/i).waitFor();
-      await use(dialog.getByRole('button', { name: 'Close', exact: true }));
-      await page.reload();
-      await error.waitFor();
-
-      await messages.evaluate((element) => { element.scrollTop = 0; });
-      const scrollsWithMessages = await error.evaluate((element) => {
-        const scroller = document.querySelector('[data-messages-container]');
-        return element.getBoundingClientRect().top >= scroller.getBoundingClientRect().bottom;
+      if (sharedChat) {
+        const chat = page.getByTestId('chat-container');
+        const header = chat.getByTestId('chat-header-title');
+        assert((await title.boundingBox()).y > (await header.boundingBox()).y);
+        await use(transcript.getByRole('button', { name: 'Details', exact: true }));
+        const dialog = page.getByRole('dialog');
+        await use(dialog.getByRole('button', { name: /technical details/i }));
+        await dialog.getByText(raw, { exact: false }).waitFor();
+        await use(dialog.getByRole('button', { name: 'Close', exact: true }));
+        await page.reload();
+        await request.waitFor();
+        await cause.waitFor();
+        await page.waitForFunction(() => {
+          const scroller = document.querySelector('[data-messages-container]');
+          return scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop < 5;
+        });
+        await transcript.evaluate((element) => {
+          element.dispatchEvent(new WheelEvent('wheel', { deltaY: -1000 }));
+          element.scrollTop = 0;
+        });
+        await page.waitForFunction((element) => {
+          const scroller = element.closest('[data-messages-container]');
+          return element.getBoundingClientRect().top >= scroller.getBoundingClientRect().bottom;
+        }, await title.elementHandle());
+        await use(transcript.getByRole('button', { name: 'Dismiss error' }));
+        await title.waitFor({ state: 'hidden' });
+      }
+      if (fixture.name === 'space') {
+        await transcript.getByRole('button', { name: 'Re-authenticate Anthropic' }).waitFor();
+      }
+      results.push({
+        case: fixture.name, layout, colorScheme, title: fixture.title, cause: fixture.cause,
+        screenshot, detailsDismissReloadAndScroll: sharedChat,
       });
-      await use(chat.getByRole('button', { name: /^Dismiss( error)?$/i }));
-      await error.waitFor({ state: 'hidden' });
-      results.push({ layout, colorScheme, inline, afterRequest, aboveTitle, fits, scrollsWithMessages, details: true, reload: true, dismiss: true });
       await context.close();
     }
   }
@@ -93,8 +124,5 @@ try {
   await browser.close();
   await writeFile(join(evidence, 'observed.json'), JSON.stringify(results, null, 2));
 }
-assert.equal(results.length, 4);
-for (const result of results) {
-  assert(result.inline && result.afterRequest && !result.aboveTitle && result.fits && result.scrollsWithMessages, JSON.stringify(result));
-}
-console.log(`PASS: ${results.length} layouts verified Details, Dismiss, reload, and scroll placement.`);
+assert.equal(results.length, 14);
+console.log(`PASS: ${results.length} layouts verified inline error summaries, including Neo and Space.`);

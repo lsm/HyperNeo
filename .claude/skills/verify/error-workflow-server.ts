@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
+import { seedChatErrorCases } from './chat-error-row-fixture.ts';
 const run = resolve(process.argv[2]), port = Number(process.argv[3]);
 assert(process.env.NODE_ENV === 'test' && process.env.HOME === `${run}/home` && process.env.HYPERNEO_DATA_DIR === `${run}/data` && port !== 8399);
 const mock = Bun.spawn(['bun', '.claude/skills/verify/mock-api.ts'], { stdout: Bun.file(`${run}/mock-api.log`), stderr: Bun.file(`${run}/mock-api.log`) });
@@ -11,7 +12,12 @@ writeFileSync(`${run}/mock-api.pid`, String(mock.pid));
 const app = await createDaemonApp({ config: getConfig({ port, host: '127.0.0.1', dbPath: `${run}/data/daemon.db` }), verbose: false });
 const { worker } = JSON.parse(readFileSync(`${run}/evidence/error-workflow-seed.json`, 'utf8'));
 const details = { category: 'system', code: 'SYNTHETIC', message: 'Synthetic technical detail. '.repeat(45), userMessage: 'Synthetic error report', recoverable: true, timestamp: new Date().toISOString(), metadata: { synthetic: true }, stack: 'Synthetic stack line\n'.repeat(20) };
-await app.internalEventBus.publishAsync('session.error', { sessionId: worker, error: details.userMessage, details });
+if (process.argv.includes('--chat-error-row')) {
+  const fixture = await seedChatErrorCases(app, run, worker);
+  writeFileSync(`${run}/evidence/chat-error-cases.json`, JSON.stringify(fixture, null, 2));
+} else {
+  await app.internalEventBus.publishAsync('session.error', { sessionId: worker, error: details.userMessage, details });
+}
 app.server.stop();
 const root = resolve('packages/web/dist');
 const server = Bun.serve({ hostname: '127.0.0.1', port, websocket: createWebSocketHandlers(app.transport, app.sessionManager), async fetch(req, server) {
@@ -26,7 +32,8 @@ const server = Bun.serve({ hostname: '127.0.0.1', port, websocket: createWebSock
   }
   const file = resolve(root, '.' + path);
   if (file.startsWith(root + '/') && await Bun.file(file).exists()) return new Response(Bun.file(file));
-  return new Response(Bun.file(`${root}/index.html`));
+  const entry = path === '/neo' || path.startsWith('/neo/') ? 'neo/index.html' : 'index.html';
+  return new Response(Bun.file(`${root}/${entry}`));
 } });
 writeFileSync(`${run}/daemon.pid`, String(process.pid));
 writeFileSync(`${run}/evidence/error-event.json`, JSON.stringify({ sessionId: worker, details, source: 'actual daemon internal event bus' }, null, 2));

@@ -1,3 +1,4 @@
+import { ChatErrorMessage } from '../ChatErrorMessage.tsx';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef } from 'preact/hooks';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
@@ -189,14 +190,12 @@ function ProviderAuthErrorRow({ member }: { member: AuthErrorMember }) {
           d="M12 9v2m0 4h.01M5 19h14a2 2 0 001.84-2.75L13.74 4a2 2 0 00-3.48 0L3.16 16.25A2 2 0 005 19z"
         />
       </svg>
-      <span role="alert" class="min-w-0 flex-1 text-xs">
+      <div role="alert" class="min-w-0 flex-1 text-xs">
         <span class="font-medium text-danger-soft/80 uppercase tracking-wide mr-1">
           {member.label}
         </span>
-        <span class="break-words">
-          {member.message || `${providerLabel} authentication failed.`}
-        </span>
-      </span>
+        <ChatErrorMessage message={member.message || `${providerLabel} authentication failed.`} />
+      </div>
       <button
         type="button"
         onClick={() => navigateToSettings('providers')}

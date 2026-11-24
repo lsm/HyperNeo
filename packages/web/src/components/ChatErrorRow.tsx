@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { retryClaudeDownload } from '../lib/api-helpers.ts';
 import { t } from '../lib/i18n/index.ts';
+import { ChatErrorMessage, type ChatErrorDetails } from './ChatErrorMessage.tsx';
 
 const DOWNLOAD_STILL_RUNNING = 'Claude Code is still downloading. Try again shortly.';
 
@@ -12,6 +13,7 @@ export interface ChatErrorRowAction {
 export interface ChatErrorRowProps {
   error: string;
   hasDetails?: boolean;
+  details?: ChatErrorDetails;
   onViewDetails?: () => void;
   onDismiss: () => void;
   actions?: ChatErrorRowAction[];
@@ -22,6 +24,7 @@ export interface ChatErrorRowProps {
 export function ChatErrorRow({
   error,
   hasDetails = false,
+  details,
   onViewDetails,
   onDismiss,
   actions,
@@ -60,9 +63,9 @@ export function ChatErrorRow({
       data-testid="chat-error-row"
       class={`my-3 mr-4 w-fit max-w-[calc(100%-2rem)] rounded-xl border border-danger/30 bg-danger/5 px-3 py-2 ${alignEnd ? 'ml-auto' : 'ml-4'}`}
     >
-      <p role="alert" class="break-words text-sm text-danger">
-        {message}
-      </p>
+      <div role="alert" class="text-sm text-danger">
+        <ChatErrorMessage message={message} details={downloadFailure ? undefined : details} />
+      </div>
       <div class="mt-2 flex flex-wrap gap-2">
         {downloadFailure && (
           <button

@@ -9,11 +9,14 @@ VERIFY_MOCK_PORT=9428 bash .claude/skills/verify/with-run.sh \
   bash .claude/skills/verify/chat-error-row.sh 9427 /absolute/evidence
 ```
 
-The fixture publishes a structured failure through the isolated daemon's real
-session event bus after seeding a scrollable transcript. The browser pairs once
-and uses fresh desktop and touch-phone contexts in light and dark. It checks
-that the error follows the failed request, scrolls away with the transcript,
-opens Technical Details, reappears on reload and can be dismissed. It writes four
-screenshots and observed results, including the old placement when run against
-the baseline build. Inspect those screenshots for clipping and placement. This
-journey does not send a provider request.
+The fixture publishes realistic startup, usage-limit and connection failures
+through the isolated daemon's session event bus after seeding transcripts. The
+browser pairs once and checks each case in fresh desktop and touch-phone contexts
+in light and dark. The error title and cause are readable before Details opens.
+The row follows the failed request, scrolls out of view with it, reappears on
+reload and can be dismissed. Details opens the full technical message.
+
+The browser also opens Neo's public conversation with a rate-limit failure and
+a Space task with an authentication failure. Both show the summary after the
+request. The journey writes 14 screenshots and observed results. Inspect them
+for clipping and placement. No provider request is sent.

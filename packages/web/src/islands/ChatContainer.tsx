@@ -1327,7 +1327,8 @@ export default function ChatContainer({
                 !retryStatusMessage &&
                 errorDetails?.metadata?.kind === 'package_download_failure'
               }
-              hasDetails={!!storeError?.details}
+              details={localError || retryStatusMessage ? undefined : errorDetails}
+              hasDetails={!localError && !retryStatusMessage && !!errorDetails}
               onViewDetails={errorDialog.open}
               onDismiss={() => {
                 setLocalError(null);
