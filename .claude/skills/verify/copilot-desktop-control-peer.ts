@@ -45,17 +45,19 @@ export async function startCopilotDesktopPeer(home: string, state: string, compa
   let kickoff = true;
   let path: string;
   let title: string;
+  const startCommand = legacy ? 'create_project_from_path' : 'create_repository_from_path';
   server.on('connection', (peer) => peer.on('message', (raw) => {
     const message = JSON.parse(raw.toString());
     const reply = (type: string, fields: object = {}) => peer.send(JSON.stringify({ type, session_id: ref.id, request_id: message.request_id, ...fields }));
     messages.push(message.type);
     switch (message.type) {
+      case 'list_repositories':
+        return legacy
+          ? peer.send(JSON.stringify({ type: 'error', message: 'Invalid message format: unknown variant `list_repositories`, expected `create_project_from_path` or `list_projects`' }))
+          : reply('repository_list', { repositories: [] });
       case 'create_repository_from_path':
       case 'create_project_from_path': {
-        const supported = legacy ? 'create_project_from_path' : 'create_repository_from_path';
-        if (message.type !== supported) return peer.send(JSON.stringify({
-          type: 'error', message: 'Invalid message format: unknown variant `' + message.type + '`, expected `' + supported + '`',
-        }));
+        assert.equal(message.type, startCommand);
         path = message.path;
         db.prepare('INSERT OR IGNORE INTO projects VALUES (?, ?, ?)').run(project, 'Disposable project', path);
         return legacy
@@ -145,6 +147,7 @@ export async function startCopilotDesktopPeer(home: string, state: string, compa
     }
   }));
   return {
+    startCommand,
     messages,
     ref,
     async close() {
@@ -171,6 +174,7 @@ export async function verifyCopilotDesktopControl(
   };
   const bad = await rpc<Result<WorkStarted>>('work.start', { ...request, copilotClient: 'desktop', effort: 'low' });
   assert(!bad.ok && bad.reason === 'unreachable' && !bad.notSent, JSON.stringify(bad));
+  assert.deepEqual(peer.messages.slice(0, 2), ['list_repositories', peer.startCommand]);
   assert(!peer.messages.includes('send_message'));
   const started = await rpc<Result<WorkStarted>>('work.start', { ...request, copilotClient });
   assert(started.ok, JSON.stringify(started));

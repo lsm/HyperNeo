@@ -110,36 +110,43 @@ export function createCopilotDesktopControl(
       if (!statSync(path.value).isDirectory())
         return reject('invalid_place', 'Copilot Desktop needs a directory.', true);
       const canonical = realpathSync(path.value);
-      const repositoryRequest = randomUUID();
-      let repository = await run(
-        { type: 'create_repository_from_path', path: canonical, request_id: repositoryRequest },
+      const endpoint = readCopilotDesktopEndpoint(deps.homeDir);
+      if (!endpoint) return reject('unreachable', COPILOT_DESKTOP_UNAVAILABLE, true);
+      const runStart: typeof run = (frame, accept, timeoutMs) =>
+        callCopilotDesktop(endpoint, frame, accept, timeoutMs);
+      const probeRequest = randomUUID();
+      const probe = await runStart(
+        { type: 'list_repositories', request_id: probeRequest },
         (frame) =>
-          (frame.type === 'repository_created' || frame.type === 'repository_updated') &&
+          frame.type === 'repository_list' && frame.request_id === probeRequest ? true : undefined,
+        5000
+      );
+      const legacy = !probe.ok && probe.reason === 'unsupported';
+      if (!probe.ok && !legacy)
+        return reject(
+          'unreachable',
+          'Copilot Desktop did not confirm which startup protocol it supports. No session was created.',
+          true
+        );
+      const repositoryRequest = randomUUID();
+      const framePrefix = legacy ? 'project' : 'repository';
+      const repository = await runStart(
+        { type: `create_${framePrefix}_from_path`, path: canonical, request_id: repositoryRequest },
+        (frame) =>
+          (frame.type === `${framePrefix}_created` || frame.type === `${framePrefix}_updated`) &&
           frame.request_id === repositoryRequest
-            ? Repository.safeParse(frame.repository).data
+            ? Repository.safeParse(frame[framePrefix]).data
             : undefined
       );
-      const legacy = !repository.ok && repository.reason === 'unsupported';
-      if (legacy) {
-        const projectRequest = randomUUID();
-        repository = await run(
-          { type: 'create_project_from_path', path: canonical, request_id: projectRequest },
-          (frame) =>
-            (frame.type === 'project_created' || frame.type === 'project_updated') &&
-            frame.request_id === projectRequest
-              ? Repository.safeParse(frame.project).data
-              : undefined
-        );
-      }
       if (!repository.ok) return { ...repository, notSent: true };
       const requestId = randomUUID();
-      const created = await run(
+      const created = await runStart(
         {
           type:
             request.inPlace || request.prepareFolder || !existsSync(join(canonical, '.git'))
               ? 'create_folder_workspace'
               : 'create_worktree_workspace',
-          [legacy ? 'project_id' : 'repository_id']: repository.value.id,
+          [`${framePrefix}_id`]: repository.value.id,
           name: request.sessionTitle ?? request.title,
           request_id: requestId,
         },
@@ -153,7 +160,7 @@ export function createCopilotDesktopControl(
       if (!isAbsolute(workspace.displayPath))
         return reject('unreachable', 'Copilot Desktop did not confirm the workspace directory.');
       const sessionRequest = randomUUID();
-      const started = await run(
+      const started = await runStart(
         {
           type: 'create_session',
           request_id: sessionRequest,

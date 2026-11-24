@@ -47,8 +47,9 @@ mode, search for a Desktop session whose title and workspace name are missing.
 
 Use `control` and `both-control` with the same command to attach a synthetic
 authenticated Desktop peer. `control` uses the App 1.5 repository protocol.
-`both-control` rejects the new command before dispatch and exercises the legacy
-App 1.4 project protocol. Start work through HyperNeo with a model and effort.
+`both-control` rejects the read-only repository probe and exercises the legacy
+App 1.4 project protocol. Check the probe happens before either creation command.
+Start work through HyperNeo with a model and effort.
 Check an App settings mismatch prevents the initial prompt, and the accepted
 settings come back from the stored session. Submit and withdraw one queued message, stop
 the initial turn, send a follow-up, read its reply with the receipt, then

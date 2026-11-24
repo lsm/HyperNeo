@@ -161,16 +161,17 @@ export function callCopilotDesktop<T>(
         }
         if (frame.data.type === 'error') {
           if (
-            request.type === 'create_repository_from_path' &&
+            request.type === 'list_repositories' &&
             frame.data.request_id === undefined &&
             frame.data.session_id === undefined &&
             typeof frame.data.message === 'string' &&
             frame.data.message.startsWith(
-              'Invalid message format: unknown variant `create_repository_from_path`, expected '
-            )
+              'Invalid message format: unknown variant `list_repositories`, expected '
+            ) &&
+            frame.data.message.includes('`create_project_from_path`')
           ) {
             finish(
-              reject('unsupported', 'Copilot Desktop does not support repository creation.', true)
+              reject('unsupported', 'Copilot Desktop uses the legacy project protocol.', true)
             );
             return;
           }
