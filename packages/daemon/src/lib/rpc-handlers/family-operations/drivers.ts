@@ -123,6 +123,7 @@ import {
 import { sessionSender } from '../../messaging/message-send.ts';
 import { renderAddress } from '../../mailbox/address.ts';
 import { createWorkerOwnershipBackfillOperations } from '../../neo/worker-ownership-backfill.ts';
+import { createWorkReconfigureOperation } from '../../drivers/work-reconfigure.ts';
 import { createNeoSessionArchiveOperation } from '../../neo/session-archive-operation.ts';
 import { createNeoSessionUnarchiveOperation } from '../../neo/session-unarchive-operation.ts';
 import { reject } from '../../drivers/work-operations.ts';
@@ -1031,16 +1032,19 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       ? null
       : readWorkTurnPage(db(), sessionId, around, before, after, cursor);
   };
+  const readBinding = (sessionId: string) => new NeoRepository(db()).getBindingBySession(sessionId);
   return [
     createFindWorkOperation(deps),
     createWorkCleanupRuntime(context),
     health.operation,
     ...createWorkVerbOperations({ ...deps, queueInput: workerInputs.accept }),
+    createWorkReconfigureOperation({
+      db: context.deps.db,
+      sessions: context.deps.sessionManager,
+      readBinding,
+    }),
     createNeoSessionArchiveOperation({ ...deps, db: context.deps.db }),
-    createNeoSessionUnarchiveOperation(
-      (sessionId) => new NeoRepository(db()).getBindingBySession(sessionId),
-      context.deps.sessionManager
-    ),
+    createNeoSessionUnarchiveOperation(readBinding, context.deps.sessionManager),
     ...createWorkerOwnershipBackfillOperations(context.deps.db),
     createReadWorkOperation({
       readTurns,

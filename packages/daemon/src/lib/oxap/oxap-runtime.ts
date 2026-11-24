@@ -13,12 +13,13 @@ import { decideOxapOpen } from '../agent/session-engine.ts';
 import { canonicalModelId } from '../model-service.ts';
 import { checkCodexLogin } from './oxap-codex-login.ts';
 import { savedOxapAdapter } from './oxap-hub-config.ts';
+import { recordOxapInit } from './oxap-init.ts';
 
 type OpenPlan = { sessionId: string; directory: string; request: Record<string, unknown> };
 
 function validateSession(session: Session): { sessionId: string; directory: string } {
-  const directory = session.worktree?.worktreePath ?? session.workspacePath;
-  if (!directory || !isAbsolute(directory)) throw new Error('Codex workspace must be absolute');
+  const directory = session.worktree?.worktreePath ?? session.workspacePath ?? process.cwd();
+  if (!isAbsolute(directory)) throw new Error('Codex workspace must be absolute');
   return { sessionId: session.id, directory };
 }
 
@@ -184,13 +185,25 @@ export function createOxapRuntime(
                   if (!executable) throw new Error('Codex executable is not configured');
                   await checkLogin(session.id, db, messageHub, executable);
                 }
-                await openOxapSession(client, plan, session, db, messageHub, events, () => {
+                const ensureLive = () => {
                   if (slot.deleted) throw new Error('Codex session was deleted');
-                });
+                };
+                await openOxapSession(client, plan, session, db, messageHub, events, ensureLive);
                 if (slot.deleted) throw new Error('Codex session was deleted');
                 slot.hub = withOxapRecovery(
                   engine.createQueryHub(client, {
                     adapter,
+                    onFirstEvent: (event) =>
+                      recordOxapInit(
+                        client,
+                        plan,
+                        session,
+                        record && savedOxapAdapter(record),
+                        event.payload,
+                        db,
+                        messageHub,
+                        ensureLive
+                      ),
                     id: () => {
                       const model = slot.session.config.model;
                       return model && canonicalModelId(adapter, model);

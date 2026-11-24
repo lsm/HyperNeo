@@ -830,11 +830,11 @@ export function ProvidersSettings() {
         );
         setHubBinary(snapshot.settings?.settings?.oxapHub);
       } catch {
-        toast.warning('Harness saved, but the hub path could not be refreshed.');
+        toast.warning('Client saved. Could not refresh OXAP installation details.');
       }
-      toast.success('Harness saved');
+      toast.success('Client saved');
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to save harness');
+      toast.error(error instanceof Error ? error.message : 'Could not save client');
     } finally {
       setPendingId(null);
     }
@@ -960,7 +960,7 @@ export function ProvidersSettings() {
               class="text-accent hover:underline"
               onClick={() => navigateToSettings('harness')}
             >
-              Sessions &amp; Harness
+              Sessions &amp; Clients
             </button>
             .
           </p>
@@ -1139,9 +1139,9 @@ export function ProvidersSettings() {
                         {eligible.length > 0 && (
                           <div class="pt-3 space-y-2">
                             <label class="block text-sm">
-                              Harness
+                              Client
                               <select
-                                aria-label="Harness"
+                                aria-label="Client"
                                 value={draft.harness}
                                 onChange={(e) =>
                                   setHarnessDrafts((prev) => ({
@@ -1183,7 +1183,7 @@ export function ProvidersSettings() {
                             )}
                             {selectedOxap && (
                               <div class="text-sm">
-                                <p>Hub binary</p>
+                                <p>OXAP installation</p>
                                 {installedHub ? (
                                   <dl class="mt-1 space-y-1 text-xs text-fg-muted break-all">
                                     <div>
@@ -1200,13 +1200,13 @@ export function ProvidersSettings() {
                                     </div>
                                   </dl>
                                 ) : (
-                                  <p class="text-xs text-fg-muted">Hub not installed</p>
+                                  <p class="text-xs text-fg-muted">OXAP is not installed</p>
                                 )}
                               </div>
                             )}
                             {(selectedOxap || hasExecutableField) && (
                               <p class="text-xs text-fg-muted">
-                                Saving restarts the hub and interrupts active OXAP runs.
+                                Saving restarts OXAP and interrupts active chats using OXAP clients.
                               </p>
                             )}
                             <Button
@@ -1215,7 +1215,7 @@ export function ProvidersSettings() {
                               disabled={isPending}
                               onClick={() => void saveHarness(provider, draft, hasExecutableField)}
                             >
-                              Save harness
+                              Save client
                             </Button>
                           </div>
                         )}

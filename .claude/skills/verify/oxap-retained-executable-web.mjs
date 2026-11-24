@@ -17,15 +17,15 @@ try {
   const page = await context.newPage();
   const openProvider = async () => {
     await page.getByText('Synthetic OXAP Codex', { exact: true }).first().click();
-    assert.equal(await page.getByLabel('Harness', { exact: true }).inputValue(), 'sdk');
+    assert.equal(await page.getByLabel('Client', { exact: true }).inputValue(), 'sdk');
     return page.getByLabel('Codex CLI path');
   };
   await page.goto(`${base}/settings?tab=providers`);
   const field = await openProvider();
   assert.equal(await field.inputValue(), executable);
   await field.fill(replacement);
-  await page.getByRole('button', { name: 'Save harness' }).click();
-  await page.getByText('Harness saved', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Save client' }).click();
+  await page.getByText('Client saved', { exact: true }).waitFor();
   await page.reload();
   assert.equal(await (await openProvider()).inputValue(), replacement);
   await page.screenshot({ path: join(run, 'evidence/oxap-sdk-provider.png'), animations: 'disabled' });

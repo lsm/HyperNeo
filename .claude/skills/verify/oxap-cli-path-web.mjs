@@ -33,18 +33,17 @@ try {
         await page.goto(`${base}/settings?tab=providers`);
         assert.equal(await page.evaluate(() => matchMedia('(pointer: coarse)').matches), touch);
         await press(page.getByText('Synthetic OXAP Codex', { exact: true }).first());
-        await page.getByLabel('Harness', { exact: true }).selectOption('oxap-codex');
+        await page.getByLabel('Client', { exact: true }).selectOption('oxap-codex');
         const field = page.getByLabel('Codex CLI path');
         assert.equal(await field.inputValue(), target.detected);
         assert.equal(await field.getAttribute('placeholder'), 'Absolute path to codex');
         await screen('settings');
         await field.fill(target.wrongPath);
-        await press(page.getByRole('button', { name: 'Save harness' }));
+        await press(page.getByRole('button', { name: 'Save client' }));
         await page.getByText(new RegExp('did not respond as the Codex CLI')).waitFor();
       } else {
         await page.goto(`${base}/session/${target.sessions[device]}`);
         assert.equal(await page.evaluate(() => matchMedia('(pointer: coarse)').matches), touch);
-        await page.getByText('This harness accepts text only', { exact: false }).waitFor();
         await page.getByText('Ready', { exact: true }).waitFor();
         const composer = page.getByPlaceholder('Ask or make anything...');
         await composer.pressSequentially('Send with a previously saved wrong CLI');

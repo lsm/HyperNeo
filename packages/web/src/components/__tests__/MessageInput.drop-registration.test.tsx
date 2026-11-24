@@ -84,7 +84,11 @@ vi.mock('../../lib/connection-manager', () => ({
   },
 }));
 
+import ToastContainer from '../../islands/ToastContainer.tsx';
+import { toastsSignal } from '../../lib/toast.ts';
 import MessageInput from '../MessageInput';
+
+const imageNotice = /OXAP Codex.*mock-model.*Send text.*DeepSeek V4 Flash/;
 
 function makeFileList(files: File[]): FileList {
   return {
@@ -103,6 +107,7 @@ describe('MessageInput registerDropTarget', () => {
     handlePaste.mockClear();
     openFilePicker.mockClear();
     menuOpen = false;
+    toastsSignal.value = [];
     mockAgentWorking.value = false;
     Object.defineProperty(window, 'matchMedia', {
       writable: true,
@@ -183,21 +188,26 @@ describe('MessageInput registerDropTarget', () => {
 
     expect(handleFileDrop).not.toHaveBeenCalled();
   });
-  it('disables image attach with a reason for a text-only harness', () => {
+  it('explains the image limit after Attach image is selected', async () => {
     menuOpen = true;
-    const { getByRole } = render(
-      <MessageInput sessionId="s1" onSend={vi.fn()} harness="oxap-codex" />
+    const { queryByText, getByRole, findByText } = render(
+      <>
+        <MessageInput sessionId="s1" onSend={vi.fn()} harness="oxap-codex" />
+        <ToastContainer />
+      </>
     );
-    const button = getByRole('button', { name: 'Attach image' });
-    expect(button.disabled).toBe(true);
-    expect(button.title).toContain('text only');
-    fireEvent.click(button);
+    expect(queryByText(/text only|cannot attach images/i)).toBeNull();
+    fireEvent.click(getByRole('button', { name: 'Attach image' }));
+    expect(await findByText(imageNotice)).toBeTruthy();
     expect(openFilePicker).not.toHaveBeenCalled();
   });
 
-  it('prevents pasted images in a text-only harness', () => {
-    const { getByRole, getByText } = render(
-      <MessageInput sessionId="s1" onSend={vi.fn()} harness="oxap-codex" />
+  it('explains the image limit after an image paste', async () => {
+    const { getByRole, findByText } = render(
+      <>
+        <MessageInput sessionId="s1" onSend={vi.fn()} harness="oxap-codex" />
+        <ToastContainer />
+      </>
     );
     const event = new Event('paste', { bubbles: true, cancelable: true });
     Object.defineProperty(event, 'clipboardData', {
@@ -206,22 +216,26 @@ describe('MessageInput registerDropTarget', () => {
     fireEvent(getByRole('textbox'), event);
     expect(event.defaultPrevented).toBe(true);
     expect(handlePaste).not.toHaveBeenCalled();
-    expect(getByText(/accepts text only/)).toBeTruthy();
+    expect(await findByText(imageNotice)).toBeTruthy();
   });
 
-  it('does not accept dropped images in a text-only harness', () => {
+  it('explains the image limit after an image drop', async () => {
     let target: ((files: FileList) => void) | null = null;
-    render(
-      <MessageInput
-        sessionId="s1"
-        onSend={vi.fn()}
-        harness="oxap-codex"
-        registerDropTarget={(fn) => {
-          target = fn;
-        }}
-      />
+    const { findByText } = render(
+      <>
+        <MessageInput
+          sessionId="s1"
+          onSend={vi.fn()}
+          harness="oxap-codex"
+          registerDropTarget={(fn) => {
+            target = fn;
+          }}
+        />
+        <ToastContainer />
+      </>
     );
     target!(makeFileList([new File(['x'], 'a.png', { type: 'image/png' })]));
     expect(handleFileDrop).not.toHaveBeenCalled();
+    expect(await findByText(imageNotice)).toBeTruthy();
   });
 });

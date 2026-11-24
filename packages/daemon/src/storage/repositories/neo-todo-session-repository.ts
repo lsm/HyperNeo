@@ -739,6 +739,19 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     ).map((row) => row.todoId);
   }
 
+  wasNamedByHuman(ref: WorkRef): boolean {
+    return !!this.db
+      .prepare(
+        `SELECT 1 FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
+        WHERE json_extract(t.named, '$.session') IS NOT NULL
+          AND COALESCE(json_extract(s.ref, '$.adapter'), json_extract(s.target, '$.ref.adapter')) = ?
+          AND COALESCE(json_extract(s.ref, '$.id'), json_extract(s.target, '$.ref.id')) = ?
+          AND COALESCE(json_extract(s.ref, '$.daemon'), json_extract(s.target, '$.ref.daemon')) IS ?
+        LIMIT 1`
+      )
+      .get(ref.adapter, ref.id, ref.daemon ?? null);
+  }
+
   finishedWorkers(since: number): {
     todoId: string;
     target: NeoDriverTarget;
@@ -923,6 +936,7 @@ export const neoTodoSessionReads = defineRepositoryOp(
     'workerName',
     'syncedActivity',
     'syncedLive',
+    'wasNamedByHuman',
     'finishedWorkers',
     'reuseFacts',
     'workerCompactionFacts',

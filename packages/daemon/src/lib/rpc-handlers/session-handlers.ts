@@ -38,12 +38,12 @@ import {
   isCloneChoice,
   type ResolveClones,
 } from '../session/clone-cascade.ts';
+import { setSessionThinkingLevel } from '../session/runtime-settings-operations.ts';
 import { admitUpdateSessionConfig } from '../session/create-session-config.ts';
 import {
   codexSessionRefusal,
   engineForProvider,
   oxapModelSwitchRefusal,
-  thinkingRefusal,
 } from '../agent/session-engine.ts';
 import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import { validateImageSizes } from '../session/message-persistence.ts';
@@ -819,19 +819,13 @@ export function setupSessionHandlers(
       throw new Error('Session not found');
     }
 
-    const thinkingLevel = normalizeThinkingLevel(level);
-    const refusal = thinkingRefusal(agentSession.getSessionData().config.harness, thinkingLevel);
-    if (refusal) throw new Error(refusal);
-
-    await sessionManager.updateSession(targetSessionId, {
-      config: {
-        ...agentSession.getSessionData().config,
-        thinkingLevel,
-      },
-    });
-    await agentSession.applyThinkingLevel();
-
-    return { success: true, thinkingLevel };
+    const result = await setSessionThinkingLevel(
+      sessionManager,
+      agentSession,
+      normalizeThinkingLevel(level)
+    );
+    if (!result.success) throw new Error(result.error);
+    return result;
   });
 
   messageHub.onRequest('session.thinking.get', async (data) => {
