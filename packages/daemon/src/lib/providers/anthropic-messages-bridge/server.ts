@@ -101,10 +101,12 @@ function enforceThinking(
   const text = new TextDecoder().decode(bodyBytes);
   const body: Partial<AnthropicRequest> & { chat_template_kwargs?: Record<string, unknown> } =
     JSON.parse(text);
-  if (desired?.type === 'disabled' && disableThinkingWithChatTemplate) {
+  if (desired?.type === 'disabled') {
     body.thinking = desired;
-    body.chat_template_kwargs = { ...body.chat_template_kwargs, enable_thinking: false };
-  } else if (desired?.type !== 'enabled') {
+    if (disableThinkingWithChatTemplate) {
+      body.chat_template_kwargs = { ...body.chat_template_kwargs, enable_thinking: false };
+    }
+  } else if (desired === undefined) {
     delete body.thinking;
   } else if (typeof body.max_tokens !== 'number' || body.max_tokens <= desired.budget_tokens) {
     return bodyBytes;

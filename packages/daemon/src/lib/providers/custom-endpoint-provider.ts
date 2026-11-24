@@ -424,9 +424,7 @@ export class CustomEndpointProvider implements Provider {
           apiKey,
           headers: this.config.headers,
           thinkingSupported: caps.thinking,
-          disableThinkingWithChatTemplate: /(?:^|\/)spark-x2\.6-4b(?:$|-)/i.test(
-            providerModelStringFor(params.model)
-          ),
+          disableThinkingWithChatTemplate: this.config.llamaCppThinkingOff,
           ...(fetchImpl ? { fetchImpl } : {}),
         });
       }
