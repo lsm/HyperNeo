@@ -6,6 +6,8 @@ import type {
   SessionRuntimeSettingsSnapshot,
   RuntimeSettingsPatch,
 } from '../../storage/repositories/session-runtime-settings-write.ts';
+import type { AgentSession } from '../agent/agent-session.ts';
+import type { SessionManager } from './session-manager.ts';
 import { snapshotProcessingStatus } from '../agent/model-switch-handler.ts';
 import {
   decideSwitch,
@@ -24,6 +26,19 @@ import {
   readRuntimeSettings,
   type RuntimeSettingsReadDependencies,
 } from './runtime-settings-read-operation.ts';
+
+export async function setSessionThinkingLevel(
+  sessions: Pick<SessionManager, 'updateSession'>,
+  agent: AgentSession,
+  thinkingLevel: ThinkingLevel
+) {
+  const { id, config } = agent.getSessionData();
+  const error = thinkingRefusal(config.harness, thinkingLevel);
+  if (error) return { success: false as const, error };
+  await sessions.updateSession(id, { config: { ...config, thinkingLevel } });
+  await agent.applyThinkingLevel();
+  return { success: true as const, thinkingLevel };
+}
 
 export interface RuntimeSettingsDependencies extends RuntimeSettingsReadDependencies {
   readonly capture: (id: string) => SessionRuntimeSettingsSnapshot | null;

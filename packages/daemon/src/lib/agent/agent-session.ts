@@ -33,6 +33,7 @@ import type {
   SessionType,
   SkillEnablementOverride,
   SystemPromptConfig,
+  ThinkingLevel,
 } from '@hyperneo/shared';
 import { generateUUID, DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
 import type { McpSetServersResult } from '@hyperneo/shared/sdk';
@@ -1870,14 +1871,22 @@ export class AgentSession
     newModel: string,
     newProvider: string,
     nonInterrupting = false,
-    commit?: RuntimeSettingsCommit
+    commit?: RuntimeSettingsCommit,
+    thinkingLevel?: ThinkingLevel
   ): Promise<ModelSwitchResult> {
-    const result = await (commit
-      ? this.modelSwitchHandler.switchModel(newModel, newProvider, nonInterrupting, commit)
-      : nonInterrupting
-        ? this.modelSwitchHandler.switchModel(newModel, newProvider, true)
-        : this.modelSwitchHandler.switchModel(newModel, newProvider));
-    if (result.success) await this.rateLimitWatchdog.forgetModelLimits();
+    const args: [boolean?, RuntimeSettingsCommit?, boolean?, ThinkingLevel?] =
+      thinkingLevel !== undefined
+        ? [false, undefined, false, thinkingLevel]
+        : commit
+          ? [nonInterrupting, commit]
+          : nonInterrupting
+            ? [true]
+            : [];
+    const result = await this.modelSwitchHandler.switchModel(newModel, newProvider, ...args);
+    if (result.success) {
+      if (thinkingLevel !== undefined) await this.applyThinkingLevel();
+      await this.rateLimitWatchdog.forgetModelLimits();
+    }
     return result;
   }
 
@@ -1901,18 +1910,20 @@ export class AgentSession
   requestModelSwitch(
     model: string,
     provider: string,
-    stillWanted?: () => boolean
+    stillWanted?: () => boolean,
+    thinkingLevel?: ThinkingLevel
   ): Promise<{ success: boolean; model: string; error?: string; pending?: PendingModelSwitch }> {
     return this.queueModelSwitch(async () =>
       stillWanted && !stillWanted()
         ? { success: false, model: this.session.config.model, error: 'The switch was superseded' }
-        : this.runModelSwitchRequest(model, provider)
+        : this.runModelSwitchRequest(model, provider, thinkingLevel)
     );
   }
 
   private async runModelSwitchRequest(
     model: string,
-    provider: string
+    provider: string,
+    thinkingLevel?: ThinkingLevel
   ): Promise<{ success: boolean; model: string; error?: string; pending?: PendingModelSwitch }> {
     const invalid = await this.modelSwitchHandler.invalidModel(model, provider);
     if (invalid) {
@@ -1922,9 +1933,10 @@ export class AgentSession
     const live = await this.modelSwitchHandler.canSwitchLive(model, provider);
     if (modelSwitchTiming(this.stateManager.getState().status, live) === 'now') {
       await this.setPendingModelSwitch(undefined);
-      return this.handleModelSwitch(model, provider);
+      return this.handleModelSwitch(model, provider, false, undefined, thinkingLevel);
     }
-    const pending = { model, provider, requestedAt: Date.now() };
+    const pending: PendingModelSwitch = { model, provider, requestedAt: Date.now() };
+    if (thinkingLevel !== undefined) pending.thinkingLevel = thinkingLevel;
     await this.setPendingModelSwitch(pending);
     const applied =
       modelSwitchTiming(this.stateManager.getState().status) === 'now' &&
@@ -1947,7 +1959,8 @@ export class AgentSession
     const pending = this.session.metadata?.pendingModelSwitch;
     if (!pending || modelSwitchTiming(this.stateManager.getState().status) !== 'now') return false;
     await this.setPendingModelSwitch(undefined);
-    const result = await this.handleModelSwitch(pending.model, pending.provider);
+    const { model, provider, thinkingLevel } = pending;
+    const result = await this.handleModelSwitch(model, provider, false, undefined, thinkingLevel);
     if (!result.success && !result.reported) {
       const message = `The switch to ${pending.model} requested during the last turn failed: ${result.error ?? 'unknown error'}`;
       this.logger.warn(message);

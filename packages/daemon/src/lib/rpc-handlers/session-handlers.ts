@@ -39,6 +39,7 @@ import {
   isCloneChoice,
   type ResolveClones,
 } from '../session/clone-cascade.ts';
+import { setSessionThinkingLevel } from '../session/runtime-settings-operations.ts';
 import { admitUpdateSessionConfig } from '../session/create-session-config.ts';
 import {
   codexSessionRefusal,
@@ -823,13 +824,9 @@ export function setupSessionHandlers(
 
     const thinkingLevel = normalizeThinkingLevel(level);
     const { harness, model } = agentSession.getSessionData().config;
-    const refusal = thinkingRefusal(
-      harness,
-      harness === 'oxap-codex' ? level : thinkingLevel,
-      model
-    );
-    if (refusal) throw new Error(refusal);
     if (harness === 'oxap-codex') {
+      const refusal = thinkingRefusal(harness, level, model);
+      if (refusal) throw new Error(refusal);
       const outcome = await invokeOperation(
         sessionManager.getOperationRegistry(),
         'session.runtimeSettings.update',
@@ -845,15 +842,9 @@ export function setupSessionHandlers(
       return { success: true, thinkingLevel };
     }
 
-    await sessionManager.updateSession(targetSessionId, {
-      config: {
-        ...agentSession.getSessionData().config,
-        thinkingLevel,
-      },
-    });
-    await agentSession.applyThinkingLevel();
-
-    return { success: true, thinkingLevel };
+    const result = await setSessionThinkingLevel(sessionManager, agentSession, thinkingLevel);
+    if (!result.success) throw new Error(result.error);
+    return result;
   });
 
   messageHub.onRequest('session.thinking.get', async (data) => {

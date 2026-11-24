@@ -94,6 +94,7 @@ export const NEO_RARE_OPERATION_NAMES = [
   'work.cleanup.sweep',
   'work.project.addFolder',
   'work.queue',
+  'work.reconfigure',
   'work.start',
   'work.stop',
   'work.turns',
