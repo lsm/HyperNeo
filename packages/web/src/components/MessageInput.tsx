@@ -1,5 +1,5 @@
 import { generateUUID } from '@hyperneo/shared';
-import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
+import { isOxapHarness, oxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import type {
   MessageDeliveryMode,
   MessageImage,
@@ -261,6 +261,15 @@ export default function MessageInput({
     loading: modelLoading,
     switchModel,
   } = useModelSwitcher(sessionId, pendingModelSwitch);
+  const clientName = isOxapHarness(harness) ? oxapHarness(harness).label : 'This client';
+  const modelName =
+    currentModelInfo?.name || currentModel || store?.sessionInfo.value?.config.model;
+  const explainImageLimit = useCallback(() => {
+    const model = modelName ? ` with ${modelName}` : '';
+    toast.info(
+      `${clientName} cannot attach images${model}. Send text here, or start a chat with OXAP DeepSeek and DeepSeek V4 Flash for images.`
+    );
+  }, [clientName, modelName]);
   const pendingModelName = pendingModelSwitch
     ? (availableModels.find(
         (m) => m.id === pendingModelSwitch.model && m.provider === pendingModelSwitch.provider
@@ -316,10 +325,15 @@ export default function MessageInput({
 
   useEffect(() => {
     registerDropTarget?.((files) => {
-      if (!disabled && !textOnly) void handleFileDrop(files);
+      if (disabled) return;
+      if (!textOnly) {
+        void handleFileDrop(files);
+      } else if (Array.from(files).some((file) => file.type.startsWith('image/'))) {
+        explainImageLimit();
+      }
     });
     return () => registerDropTarget?.(null);
-  }, [disabled, textOnly, handleFileDrop, registerDropTarget]);
+  }, [disabled, textOnly, explainImageLimit, handleFileDrop, registerDropTarget]);
 
   useEffect(() => {
     onDraftActiveChange?.(content.trim().length > 0);
@@ -1298,11 +1312,6 @@ export default function MessageInput({
             />
           )}
 
-          {textOnly && (
-            <p class="mb-1 text-xs text-fg-muted">
-              This harness accepts text only; images cannot be attached, pasted, or dropped.
-            </p>
-          )}
           <div class="flex items-end gap-3">
             <InputActionsMenu
               isOpen={actionsMenu.isOpen}
@@ -1315,8 +1324,7 @@ export default function MessageInput({
               modelLoading={modelLoading}
               onModelSwitch={handleModelSwitch}
               onOpenTools={() => onOpenTools?.()}
-              onAttachFile={openFilePicker}
-              attachmentReason={textOnly ? 'This harness accepts text only.' : undefined}
+              onAttachFile={textOnly ? explainImageLimit : openFilePicker}
               showTools={!isOxapHarness(harness)}
               coordinatorMode={coordinatorMode}
               coordinatorSwitching={coordinatorSwitching}
@@ -1382,7 +1390,12 @@ export default function MessageInput({
                   ? undefined
                   : textOnly
                     ? (e) => {
-                        if (e.clipboardData?.files.length) e.preventDefault();
+                        const files = e.clipboardData?.files;
+                        if (!files?.length) return;
+                        e.preventDefault();
+                        if (Array.from(files).some((file) => file.type.startsWith('image/'))) {
+                          explainImageLimit();
+                        }
                       }
                     : handlePaste
               }

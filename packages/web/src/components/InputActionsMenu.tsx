@@ -18,7 +18,6 @@ export interface InputActionsMenuProps {
   onModelSwitch?: (model: ModelInfo) => void;
   onOpenTools: () => void;
   onAttachFile: () => void;
-  attachmentReason?: string;
   showTools?: boolean;
   coordinatorMode?: boolean;
   coordinatorSwitching?: boolean;
@@ -43,7 +42,6 @@ export function InputActionsMenu({
   onModelSwitch: _onModelSwitch,
   onOpenTools,
   onAttachFile,
-  attachmentReason,
   showTools = true,
   coordinatorMode = false,
   coordinatorSwitching = false,
@@ -77,7 +75,7 @@ export function InputActionsMenu({
   };
 
   const handleAttachClick = () => {
-    if (!disabled && !attachmentReason) {
+    if (!disabled) {
       onAttachFile();
       onClose();
     }
@@ -226,11 +224,10 @@ export function InputActionsMenu({
           <button
             type="button"
             onClick={handleAttachClick}
-            disabled={disabled || !!attachmentReason}
-            title={attachmentReason}
+            disabled={disabled}
             class={cn(
               'w-full px-4 py-3 text-left flex items-center gap-3 transition-colors text-fg-soft hover:bg-fill-strong/50',
-              (disabled || !!attachmentReason) && 'opacity-50 cursor-not-allowed'
+              disabled && 'opacity-50 cursor-not-allowed'
             )}
           >
             <svg
