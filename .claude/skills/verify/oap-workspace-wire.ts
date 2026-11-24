@@ -147,6 +147,14 @@ async function verifyInBrowser(
   assert.notEqual(web.port, 8399);
   assert.notEqual(web.port, 8499);
   try {
+    if (mode === 'image-wording' && 'sessionId' in target) {
+      const browser = Bun.spawn([
+        'node', '.claude/skills/verify/oxap-image-wording-web.mjs',
+        String(web.port), target.sessionId, run,
+      ], { stdin: new Blob([readLocalCredential()]), stdout: 'inherit', stderr: 'inherit' });
+      assert.equal(await browser.exited, 0, 'The image wording browser journey failed');
+      return;
+    }
     if ('executable' in target) {
       const browser = Bun.spawn([
         'node', '.claude/skills/verify/oxap-retained-executable-web.mjs',
@@ -226,7 +234,11 @@ try {
   const { sessionId: firstId } = await makeSession('workspace-a');
   const first = app.sessionManager.getSession(firstId);
   assert(first);
-  if (mode === 'login-device') {
+  if (mode === 'image-wording') {
+    await verifyInBrowser(app, { sessionId: firstId, text: '' });
+    assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 0);
+    Object.assign(evidence, { nativeTurns: 0, pass: true });
+  } else if (mode === 'login-device') {
     const { sessionId: secondId } = await makeSession('workspace-b');
     await Promise.all([
       hub.request('message.send', { sessionId: firstId, content: 'Synthetic sign in' }),
