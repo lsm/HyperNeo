@@ -432,7 +432,7 @@ export function SpaceTaskPane({
         })),
     [activityMembers]
   );
-  const authErrorBannerMembers = useMemo(
+  const authErrorMembers = useMemo(
     () =>
       activityMembers
         .filter((m) => m.sessionId && m.sessionError?.category === 'provider_auth_error')
@@ -1036,7 +1036,7 @@ export function SpaceTaskPane({
                 overlayTaskId={task.id}
                 overlayTaskReadonly={!taskAgentsLive}
                 cooldownBannerMembers={cooldownBannerMembers}
-                authErrorBannerMembers={authErrorBannerMembers}
+                authErrorMembers={authErrorMembers}
                 onShowScrollButtonChange={setShowScrollButton}
                 onScrollToBottomChange={(scrollToBottom) => {
                   scrollToBottomRef.current = scrollToBottom;

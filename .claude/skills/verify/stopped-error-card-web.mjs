@@ -65,9 +65,10 @@ try {
   };
   await settled();
   const card = page.locator('.bg-danger\\/10').filter({ hasText: 'API Error' }).last();
+  const sessionError = page.getByTestId('chat-error-row').or(page.getByTestId('error-banner'));
   const state = async () => ({
-    banners: await page.getByTestId('error-banner').count(),
-    bannerText: await page.getByTestId('error-banner').allInnerTexts(),
+    banners: await sessionError.count(),
+    bannerText: await sessionError.allInnerTexts(),
     apiErrorCards: await page.locator('.bg-danger\\/10').filter({ hasText: 'API Error' }).count(),
     stopNote: (await card.getByText('Stopped after 3 failures. Send a message to recover.').count()) > 0,
     details: await card.locator('details').count(),
@@ -87,7 +88,7 @@ try {
     await page.screenshot({ path: join(run, 'evidence', 'stopped-error-after-expanded.png') });
     await page.addInitScript(() => {
       new MutationObserver(() => {
-        const banner = document.querySelector('[data-testid="error-banner"]');
+        const banner = document.querySelector('[data-testid="chat-error-row"], [data-testid="error-banner"]');
         if (banner && !window.bannerSeen) window.bannerSeen = `${performance.now() | 0}ms ${document.querySelectorAll('[data-message-id]').length} messages: ${banner.textContent.slice(0, 120)}`;
       }).observe(document, { childList: true, subtree: true });
     });
@@ -140,4 +141,4 @@ if (mode === 'after') {
   assert.deepEqual(observed.reloaded, { bannerSeen: false, stopNote: true });
   assert.deepEqual(observed.recovered, { apiErrorCards: 4, stopNotes: 0 });
 }
-console.log(`PASS (${mode}): stopped query error shown ${mode === 'after' ? 'once, inside its API Error card' : 'as banner plus card'}`);
+console.log(`PASS (${mode}): stopped query error shown ${mode === 'after' ? 'once, inside its API Error card' : 'as a separate error plus card'}`);

@@ -1,5 +1,10 @@
+import type { ChatMessage } from '@hyperneo/shared';
 import { describe, expect, it } from 'vitest';
-import { stopBannerHidden, stoppedErrorCardUuid } from '../stopped-error-card.ts';
+import {
+  matchingSessionErrorCard,
+  stopBannerHidden,
+  stoppedErrorCardUuid,
+} from '../stopped-error-card.ts';
 
 const episode = {
   id: 'e',
@@ -11,6 +16,30 @@ const episode = {
 const user = { type: 'user', uuid: 'u1' };
 const card = { type: 'assistant', uuid: 'a1', error: 'server_error' };
 const result = { type: 'result', uuid: 'r1' };
+
+describe('matchingSessionErrorCard', () => {
+  const diagnostic = 'Could not start Codex CLI. Check the configured executable.';
+  const prompt = {
+    ...user,
+    message: { content: 'Start the task' },
+  } as unknown as ChatMessage;
+  const failure = {
+    ...card,
+    message: { content: [{ type: 'text', text: diagnostic }] },
+  } as unknown as ChatMessage;
+
+  it('keeps the transcript card for the exact session error', () => {
+    expect(matchingSessionErrorCard([prompt, failure], diagnostic)).toBe('a1');
+  });
+
+  it('keeps a separate session error for a different failure', () => {
+    expect(matchingSessionErrorCard([prompt, failure], 'Lost connection')).toBeUndefined();
+  });
+
+  it('ignores the old card after a later user message', () => {
+    expect(matchingSessionErrorCard([prompt, failure, prompt], diagnostic)).toBeUndefined();
+  });
+});
 
 describe('stoppedErrorCardUuid', () => {
   it('picks the API Error card that ended the stopped turn', () => {

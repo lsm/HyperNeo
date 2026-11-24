@@ -26,8 +26,7 @@ import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
 import { ChatComposer } from '../components/ChatComposer.tsx';
 import { ChatHeader } from '../components/ChatHeader.tsx';
 import { CloneChoiceDialog } from '../components/CloneChoiceDialog.tsx';
-import type { ErrorBannerAction } from '../components/ErrorBanner.tsx';
-import { ErrorBanner } from '../components/ErrorBanner.tsx';
+import { ChatErrorRow, type ChatErrorRowAction } from '../components/ChatErrorRow.tsx';
 import { DesktopControl } from '../components/DesktopControl.tsx';
 import { ErrorDialog } from '../components/ErrorDialog.tsx';
 import { ImageDropOverlay } from '../components/ImageDropOverlay.tsx';
@@ -84,6 +83,7 @@ import { connectionState, globalSettings } from '../lib/state.ts';
 import { toast } from '../lib/toast.ts';
 import type { StructuredError } from '../types/error.ts';
 import {
+  matchingSessionErrorCard,
   type StoppedEpisode,
   stopBannerHidden,
   stoppedErrorCardUuid,
@@ -929,7 +929,7 @@ export default function ChatContainer({
   const errorDetails = storeError?.details as StructuredError | undefined;
   const errorCategory = errorDetails?.category;
   const errorProviderId = errorDetails?.metadata?.providerId as string | undefined;
-  const errorActions = useMemo((): ErrorBannerAction[] => {
+  const errorActions = useMemo((): ChatErrorRowAction[] => {
     if (!errorDetails || !errorCategory) return [];
     const providerLabel = errorProviderId ? getProviderLabel(errorProviderId) : 'Provider';
     if (errorCategory === ErrorCategory.PROVIDER_AUTH_ERROR) {
@@ -944,7 +944,7 @@ export default function ChatContainer({
     }
     if (errorCategory === ErrorCategory.PROVIDER_UNAVAILABLE) {
       const defaultAnthropicModel = availableModels.find((m) => m.provider === 'anthropic');
-      const actions: ErrorBannerAction[] = [];
+      const actions: ChatErrorRowAction[] = [];
       if (defaultAnthropicModel) {
         actions.push({
           label: 'Switch to Anthropic',
@@ -963,6 +963,28 @@ export default function ChatContainer({
 
   const sessionStateLoaded = store.sessionState.value !== null;
   const messagesLoaded = store.messagesLoaded.value;
+  const showStoreError = !localError && !retryStatusMessage && !!storeError;
+  const matchingCard =
+    showStoreError && errorDetails?.metadata?.kind !== 'package_download_failure'
+      ? matchingSessionErrorCard(messages, storeError?.message, errorDetails?.message)
+      : undefined;
+  const waitingForTranscript =
+    showStoreError &&
+    !store.messagesTooLarge.value &&
+    (!messagesLoaded || (store.sdkMessages.value.length > 0 && messages.length === 0));
+  const inlineError =
+    error &&
+    !matchingCard &&
+    !waitingForTranscript &&
+    !stopBannerHidden(stoppedEpisode, stoppedCardUuid, {
+      loaded: messagesLoaded,
+      tooLarge: store.messagesTooLarge.value,
+      stored: store.sdkMessages.value.length,
+      shown: messages.length,
+    })
+      ? error
+      : null;
+
   const loading = computeChatLoading({
     error,
     isRecovering,
@@ -1075,30 +1097,6 @@ export default function ChatContainer({
           </div>
         </div>
       )}
-
-      {error &&
-        !stopBannerHidden(stoppedEpisode, stoppedCardUuid, {
-          loaded: messagesLoaded,
-          tooLarge: store.messagesTooLarge.value,
-          stored: store.sdkMessages.value.length,
-          shown: messages.length,
-        }) && (
-          <ErrorBanner
-            error={error}
-            downloadFailure={
-              !localError &&
-              !retryStatusMessage &&
-              errorDetails?.metadata?.kind === 'package_download_failure'
-            }
-            hasDetails={!!storeError?.details}
-            onViewDetails={errorDialog.open}
-            onDismiss={() => {
-              setLocalError(null);
-              store.clearError();
-            }}
-            actions={errorActions.length > 0 ? errorActions : undefined}
-          />
-        )}
 
       {showRecovering && (
         <div
@@ -1226,7 +1224,7 @@ export default function ChatContainer({
                 onConfirm={() => setShowWorkspaceSelector(false)}
                 onSkip={() => setShowWorkspaceSelector(false)}
               />
-            ) : (
+            ) : inlineError ? null : (
               <div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6">
                 <div class="text-center">
                   <div class="text-5xl mb-4">💬</div>
@@ -1236,7 +1234,7 @@ export default function ChatContainer({
               </div>
             )
           ) : (
-            <ContentContainer className="space-y-0 min-h-[calc(100%+1px)]">
+            <ContentContainer className={inlineError ? undefined : 'min-h-[calc(100%+1px)]'}>
               {hasMoreMessages && messages.length > 0 && (
                 <div class="flex items-center justify-center py-4">
                   <Button
@@ -1310,6 +1308,11 @@ export default function ChatContainer({
                           stopped={
                             msg.uuid && msg.uuid === stoppedCardUuid ? stoppedEpisode : undefined
                           }
+                          errorActions={
+                            matchingCard && msg.uuid === matchingCard && errorActions.length
+                              ? errorActions
+                              : undefined
+                          }
                         />
                       </div>
                       {view && turnAt?.[idx + 1] !== turn && (
@@ -1332,6 +1335,25 @@ export default function ChatContainer({
             </ContentContainer>
           )}
 
+          {inlineError && (
+            <ChatErrorRow
+              error={inlineError}
+              alignEnd={messages.at(-1)?.type === 'user'}
+              downloadFailure={
+                !localError &&
+                !retryStatusMessage &&
+                errorDetails?.metadata?.kind === 'package_download_failure'
+              }
+              details={localError || retryStatusMessage ? undefined : errorDetails}
+              hasDetails={!localError && !retryStatusMessage && !!errorDetails}
+              onViewDetails={errorDialog.open}
+              onDismiss={() => {
+                setLocalError(null);
+                store.clearError();
+              }}
+              actions={errorActions.length > 0 ? errorActions : undefined}
+            />
+          )}
           {modelHold && <ModelHoldLine hold={modelHold} class="px-4 py-2" />}
           <div ref={messagesEndRef} />
         </div>

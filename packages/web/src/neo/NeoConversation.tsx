@@ -1,3 +1,4 @@
+import { ChatErrorMessage, type ChatErrorDetails } from '../components/ChatErrorMessage.tsx';
 import type { NeoCardReply } from '@hyperneo/shared/types/neo-publication';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { SessionStore } from '../lib/session-store.ts';
@@ -53,6 +54,7 @@ export function NeoConversation({
   const sentHere = useMemo(() => new Set<string>(), [sessionId]);
   pendingAsks?.forEach((ask) => sentHere.add(ask.requestId));
   const state = store.agentState.value;
+  const error = store.error.value;
   const pending = state.status === 'waiting_for_input' ? state.pendingQuestion : null;
   const epoch = useMemo(
     () => (pending ? Object.freeze({ store, sessionId, toolUseId: pending.toolUseId }) : null),
@@ -135,21 +137,21 @@ export function NeoConversation({
             }}
           />
         )}
-        {store.error.value && (
-          <p
+        {error && (
+          <div
             role="alert"
             class="rounded-xl border border-danger/30 bg-danger/5 p-4 text-sm text-danger"
           >
-            {store.error.value.message}
-          </p>
+            <ChatErrorMessage message={error.message} details={error.details as ChatErrorDetails} />
+          </div>
         )}
         {replyError && (
-          <p
+          <div
             role="alert"
             class="rounded-xl border border-danger/30 bg-danger/5 p-4 text-sm text-danger"
           >
-            {replyError}
-          </p>
+            <ChatErrorMessage message={replyError} />
+          </div>
         )}
       </section>
     </>
