@@ -101,6 +101,18 @@ const driverWorkCall = (
 ) => buildDriverWorkCall(target, work, goal, withWorkGoal);
 
 describe('driverWorkCall', () => {
+  test('passes an explicit Copilot client from the todo target to work.start', () => {
+    const target = NeoTodoTargetSchema.parse({
+      ...startTarget,
+      adapter: 'copilot-cli',
+      copilotClient: 'desktop',
+    });
+    expect(driverWorkCall(target, work)).toMatchObject({
+      name: 'work.start',
+      input: { adapter: 'copilot-cli', copilotClient: 'desktop' },
+    });
+  });
+
   test('start descriptions require a generic sessionTitle and forbid the task title for Codex', () => {
     for (const schema of [StartWorkInputSchema, NeoTodoTargetSchema.options[0]]) {
       const description = schema.shape.sessionTitle.description ?? '';

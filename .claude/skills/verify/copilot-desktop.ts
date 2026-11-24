@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { appendFileSync, chmodSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
@@ -103,15 +103,30 @@ try {
     });
   }
   const adapter = 'copilot-cli';
-  const registered = await rpc<Result<{ id: string; capabilities: string[]; steerBehavior?: string }[]>>('work.adapters', {});
+  const registered = await rpc<Result<{ id: string; displayName?: string; copilotClients?: string[]; capabilities: string[]; steerBehavior?: string }[]>>('work.adapters', {});
   assert(registered.ok);
   const listed = registered.value.filter((entry) => entry.id.startsWith('copilot-'));
   assert.equal(listed.length, 1);
   assert.equal(listed[0].id, adapter);
+  assert.equal(listed[0].displayName, 'Copilot');
+  assert.deepEqual(listed[0].copilotClients, [...(peer ? ['desktop'] : []), ...(cli ? ['cli'] : [])]);
   assert.equal(listed[0].capabilities.includes('start'), cli || !!peer);
   assert.equal(listed[0].capabilities.includes('steer'), cli || !!peer);
   if (peer) {
-    await verifyCopilotDesktopControl(rpc, run, peer, async (work) => {
+    const folder = join(run, 'forced-cli');
+    mkdirSync(folder);
+    const messageCount = peer.messages.length;
+    const forced = await rpc<Result<WorkStarted>>('work.start', {
+      adapter, copilotClient: 'cli', title: 'Explicit CLI', model: 'synthetic-model', message: 'hold',
+      place: { machine: hostname(), folder, name: 'Fixture' },
+    });
+    assert.equal(peer.messages.length, messageCount);
+    if (cli) {
+      assert(forced.ok && forced.value.copilotClient === 'cli', JSON.stringify(forced));
+      const stopped = await rpc<Result<{ stopped: boolean }>>('work.stop', { ref: forced.value.ref });
+      assert(stopped.ok && stopped.value.stopped);
+    } else assert(!forced.ok && forced.notSent && /CLI is unavailable/.test(forced.detail));
+    await verifyCopilotDesktopControl(rpc, run, peer, cli ? 'auto' : 'desktop', async (work) => {
       const delivered = queueNextTodo(app.db.getDatabase(), work, 'fixture-neo');
       for (let attempt = 0; !delivered() && attempt < 240; attempt++) await Bun.sleep(50);
       assert(delivered(), 'the next todo must reach the worker whether or not compaction succeeds');
@@ -219,9 +234,13 @@ try {
       model: 'synthetic-model',
       message: 'hold',
     };
+    const desktopOnly = await rpc<Result<WorkStarted>>('work.start', { ...request, copilotClient: 'desktop' });
+    assert(!desktopOnly.ok && desktopOnly.notSent && /Copilot Desktop is unavailable/.test(desktopOnly.detail), JSON.stringify(desktopOnly));
+    assert(!existsSync(join(folder, 'calls.jsonl')));
     const effort = { ...request, model: 'synthetic-effort-model', effort: 'high' };
     const start = await rpc<Result<WorkStarted>>('work.start', mode === 'cli' ? effort : request);
     assert(start.ok, JSON.stringify(start));
+    assert.equal(start.value.copilotClient, 'cli');
     const { ref } = start.value;
     if (mode === 'cli') {
       assert.equal(start.value.model, effort.model);

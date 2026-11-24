@@ -6,6 +6,7 @@ import { CopilotClient, RuntimeConnection, type SessionMetadata } from '@github/
 import { buildSafeProcessEnv } from '../safe-process-env.ts';
 import { isTempCwd } from './claude-feed.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
+import { COPILOT_ADAPTER_ID } from './types.ts';
 import type { FindQuery, PlaceGroup, WorkAdapter, WorkStatus, WorkSummary } from './types.ts';
 
 const SESSIONS_PER_PLACE = 20;
@@ -26,7 +27,7 @@ export interface CopilotSession {
 }
 
 export const COPILOT_CLIENT = {
-  id: 'copilot-cli',
+  id: COPILOT_ADAPTER_ID,
   bin: 'copilot',
   app: {
     path: '/Applications/GitHub Copilot.app',
@@ -223,6 +224,7 @@ export function buildCopilotGroups(
       .slice(0, query.all ? undefined : SESSIONS_PER_PLACE)
       .map((session) => ({
         ref: { adapter: COPILOT_CLIENT.id, id: session.sessionId },
+        copilotClient: 'cli',
         title: session.title,
         place,
         status: copilotStatus(session, now),

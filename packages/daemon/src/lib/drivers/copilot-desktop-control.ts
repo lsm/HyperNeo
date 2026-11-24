@@ -11,6 +11,7 @@ import type { CopilotDesktopSession } from './copilot-desktop-adapter.ts';
 import { selectLocalStartFolder, type StartFolderDeps } from './start-folder.ts';
 import { workStartConfiguration } from './start-configuration.ts';
 import { workStartPreparation } from './start-preparation.ts';
+import { COPILOT_DESKTOP_UNAVAILABLE } from './types.ts';
 import type { Result, WorkAdapter, WorkDelivery, WorkRef, WorkSummary } from './types.ts';
 import { reject } from './work-operations.ts';
 
@@ -56,7 +57,7 @@ export function createCopilotDesktopControl(
     const endpoint = readCopilotDesktopEndpoint(deps.homeDir);
     return endpoint
       ? callCopilotDesktop(endpoint, request, accept, timeoutMs)
-      : reject('unreachable', 'Open the signed-in Copilot Desktop app.', true);
+      : reject('unreachable', COPILOT_DESKTOP_UNAVAILABLE, true);
   };
   const target = async (ref: WorkRef, closed = false) => {
     const session = Id.safeParse(ref.id).success ? await deps.find(ref.id) : undefined;

@@ -12,7 +12,12 @@ Repeat for `desktop` and `cli`. Each run starts the real daemon and invokes
 its public operations. The standalone Desktop state and transcripts are
 synthetic. The CLI uses the pinned SDK with the framed-protocol fixture.
 
-A single Copilot adapter should appear in each mode. When both discovery
+A single adapter named Copilot should appear in each mode with the available
+start clients. An explicit Desktop selection must report disconnection without
+sending a CLI prompt. With a Desktop peer attached, an explicit CLI selection
+must reach the CLI without calling the peer, or report that the CLI is missing.
+Automatic starts report the actual client and prefer the available Desktop
+peer. When both discovery
 sources contain the same identity, the Desktop title, workspace link, and saved
 status win. Verify Desktop history, exact input lookup, and settled turn facts.
 The daemon must refuse sends to a Desktop-owned session and preserve the App

@@ -151,6 +151,7 @@ export async function verifyCopilotDesktopControl(
   rpc: <T>(name: string, input: object) => Promise<T>,
   run: string,
   peer: Awaited<ReturnType<typeof startCopilotDesktopPeer>>,
+  copilotClient: 'auto' | 'desktop',
   verifyCompaction: (work: WorkStarted) => Promise<void>
 ) {
   const folder = join(run, 'desktop-workspace');
@@ -160,11 +161,12 @@ export async function verifyCopilotDesktopControl(
     place: { machine: hostname(), folder: realpathSync(folder), name: 'Fixture' },
     title: 'Desktop work', model: 'desktop-model', effort: 'high', message: 'Initial prompt',
   };
-  const bad = await rpc<Result<WorkStarted>>('work.start', { ...request, effort: 'low' });
+  const bad = await rpc<Result<WorkStarted>>('work.start', { ...request, copilotClient: 'desktop', effort: 'low' });
   assert(!bad.ok && bad.reason === 'unreachable' && !bad.notSent, JSON.stringify(bad));
   assert(!peer.messages.includes('send_message'));
-  const started = await rpc<Result<WorkStarted>>('work.start', request);
+  const started = await rpc<Result<WorkStarted>>('work.start', { ...request, copilotClient });
   assert(started.ok, JSON.stringify(started));
+  assert.equal(started.value.copilotClient, 'desktop');
   const { ref } = started.value;
   assert.deepEqual(ref, peer.ref);
   assert.equal(started.value.model, request.model);
