@@ -12,6 +12,8 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include "cover-view.h"
+#include "cover-wallpaper.h"
 
 static NSString *const OwnerRequirement =
     @"anchor apple generic and identifier \"io.hyperneo.app\" and certificate leaf[subject.OU] = \"P5R65T296V\"";
@@ -154,11 +156,35 @@ static void clickPrompt(CGPoint point) {
 @property(nonatomic) int listener;
 @property(nonatomic) dispatch_source_t listening;
 @property(nonatomic, copy) NSString *socketPath;
-@property(nonatomic) NSDate *started;
+@property(nonatomic) pid_t ownerPID;
 @property(nonatomic) NSMutableString *unlockTrace;
 @end
 
 @implementation Guardian
+
+- (void)loadWallpaperForScreen:(NSScreen *)screen window:(NSWindow *)window {
+    NSTimeInterval deadline = NSProcessInfo.processInfo.systemUptime + 2;
+    NSURL *url = [NSWorkspace.sharedWorkspace desktopImageURLForScreen:screen];
+    if (!url) return;
+    CGSize pixels = [screen convertRectToBacking:screen.frame].size;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        if (NSProcessInfo.processInfo.systemUptime >= deadline) return;
+        CGImageRef image;
+        @autoreleasepool {
+            image = decodeWallpaper(url, pixels);
+        }
+        if (!image) return;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (!self.ending && [self.covers containsObject:window]
+                && NSProcessInfo.processInfo.systemUptime < deadline) {
+                CoverView *view = (CoverView *)window.contentView;
+                view.wallpaper = [[NSImage alloc] initWithCGImage:image size:NSZeroSize];
+                view.needsDisplay = YES;
+            }
+            CGImageRelease(image);
+        });
+    });
+}
 
 - (void)cover {
     NSArray<NSScreen *> *screens = NSScreen.screens;
@@ -173,31 +199,16 @@ static void clickPrompt(CGPoint point) {
                                                          backing:NSBackingStoreBuffered defer:NO screen:screen];
         if (!window) return [self end:@"cover_mismatch"];
         window.releasedWhenClosed = NO;
-        window.backgroundColor = [NSColor colorWithRed:0.04 green:0.11 blue:0.26 alpha:0.999];
-        window.opaque = NO;
+        window.backgroundColor = coverBlue();
+        window.opaque = YES;
         window.level = CGShieldingWindowLevel() + 1;
         window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorStationary
             | NSWindowCollectionBehaviorFullScreenAuxiliary;
         window.ignoresMouseEvents = YES;
         window.canHide = NO;
         window.sharingType = NSWindowSharingNone;
-        NSTextField *title = [NSTextField labelWithString:@"HyperNeo is using this Mac"];
-        title.font = [NSFont systemFontOfSize:44 weight:NSFontWeightBold];
-        title.textColor = NSColor.whiteColor;
-        NSTextField *since = [NSTextField labelWithString:[NSString stringWithFormat:@"Working since %@",
-            [NSDateFormatter localizedStringFromDate:self.started dateStyle:NSDateFormatterNoStyle timeStyle:NSDateFormatterShortStyle]]];
-        since.font = [NSFont systemFontOfSize:20 weight:NSFontWeightMedium];
-        since.textColor = [NSColor colorWithRed:0.55 green:0.78 blue:1 alpha:1];
-        NSTextField *hint = [NSTextField labelWithString:@"To stop, touch the keyboard, mouse or trackpad. The Mac locks again right away."];
-        hint.font = [NSFont systemFontOfSize:20];
-        hint.textColor = [NSColor colorWithWhite:0.85 alpha:1];
-        NSStackView *stack = [NSStackView stackViewWithViews:@[ title, since, hint ]];
-        stack.orientation = NSUserInterfaceLayoutOrientationVertical;
-        stack.spacing = 18;
-        stack.translatesAutoresizingMaskIntoConstraints = NO;
-        [window.contentView addSubview:stack];
-        [stack.centerXAnchor constraintEqualToAnchor:window.contentView.centerXAnchor].active = YES;
-        [stack.centerYAnchor constraintEqualToAnchor:window.contentView.centerYAnchor].active = YES;
+        CoverView *view = [[CoverView alloc] initWithFrame:content];
+        window.contentView = view;
         [self.covers addObject:window];
         [window orderFrontRegardless];
         if (!NSEqualRects(window.frame, screen.frame)) return [self end:@"cover_mismatch"];
@@ -205,6 +216,14 @@ static void clickPrompt(CGPoint point) {
     for (NSWindow *window in previous) [window orderOut:nil];
     [self.covers removeObjectsInRange:NSMakeRange(0, previous.count)];
     say([NSString stringWithFormat:@"covered %lu", (unsigned long)self.covers.count]);
+    NSImage *icon = self.ownerPID ? [NSRunningApplication runningApplicationWithProcessIdentifier:self.ownerPID].icon : nil;
+    for (NSUInteger index = 0; index < screens.count; index++) {
+        NSWindow *window = self.covers[index];
+        CoverView *view = (CoverView *)window.contentView;
+        view.icon = icon;
+        view.needsDisplay = YES;
+        [self loadWallpaperForScreen:screens[index] window:window];
+    }
 }
 
 - (BOOL)listen {
@@ -307,31 +326,51 @@ static void clickPrompt(CGPoint point) {
     BOOL locked = screenLocked();
     __block BOOL awaitingUnlock = self.allowAnswered && !self.unlocked && locked;
     NSTimeInterval started = NSProcessInfo.processInfo.systemUptime;
-    __block NSTimeInterval lockedSince = 0;
+    const NSTimeInterval fadeDuration = 0.3;
+    const NSTimeInterval fadeTick = 1.0 / 60;
+    __block NSTimeInterval lockedSince = 0, fadeStarted = 0;
     if (!locked) lockScreen();
-    [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *timer) {
+    NSTimer *release = [NSTimer scheduledTimerWithTimeInterval:fadeTick repeats:YES block:^(NSTimer *timer) {
         NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
         NSTimeInterval elapsed = now - started;
         BOOL locked = screenLocked();
-        if (awaitingUnlock) {
-            if (locked && elapsed < 5) return;
-            lockScreen();
-            awaitingUnlock = NO;
-            return;
+        if (elapsed >= 10) {
+            for (NSWindow *window in self.covers) window.alphaValue = 1;
+        } else {
+            if (!fadeStarted) timer.fireDate = [NSDate dateWithTimeIntervalSinceNow:0.1];
+            if (awaitingUnlock) {
+                if (locked && elapsed < 5) return;
+                lockScreen();
+                awaitingUnlock = NO;
+                return;
+            }
+            // The lock flag can precede the visible lock screen. Keep the covers through the handoff.
+            if (!locked) {
+                if (fadeStarted) {
+                    for (NSWindow *window in self.covers) window.alphaValue = 1;
+                    fadeStarted = 0;
+                }
+                if (lockedSince) lockScreen();
+                lockedSince = 0;
+                return;
+            }
+            if (!lockedSince) lockedSince = now;
+            if (!fadeStarted) {
+                if (now - lockedSince < 0.75 || elapsed + fadeDuration >= 10) return;
+                fadeStarted = now;
+                timer.fireDate = [NSDate dateWithTimeIntervalSinceNow:fadeTick];
+                return;
+            }
+            CGFloat alpha = MAX(0, 1 - (now - fadeStarted) / fadeDuration);
+            for (NSWindow *window in self.covers) window.alphaValue = alpha;
+            if (alpha > 0) return;
         }
-        // The lock flag can precede the visible lock screen. Keep the covers through the handoff.
-        if (!locked) {
-            if (lockedSince && elapsed < 10) lockScreen();
-            lockedSince = 0;
-        } else if (!lockedSince) {
-            lockedSince = now;
-        }
-        if (elapsed < 10 && (!lockedSince || now - lockedSince < 0.75)) return;
         [timer invalidate];
         [self reportUnlockDiagnostics];
         say([NSString stringWithFormat:@"ended %@%@", reason, locked ? @"" : @" relock_failed"]);
         exit(locked ? 0 : 3);
     }];
+    release.fireDate = [NSDate dateWithTimeIntervalSinceNow:0.1];
 }
 
 - (void)ownerDidAct {
@@ -358,7 +397,8 @@ int main(int argc, const char *argv[]) {
     @autoreleasepool {
         double seconds = argc > 1 ? atof(argv[1]) : 0;
         if (seconds <= 0) seconds = 60;
-        if (!ownerIsHyperNeo(getppid())) return say(@"ended untrusted_owner"), 2;
+        pid_t ownerPID = getppid();
+        if (!ownerIsHyperNeo(ownerPID)) return say(@"ended untrusted_owner"), 2;
         NSMutableArray<NSString *> *refused = [NSMutableArray array];
         if (!pluginInstalled()) [refused addObject:@"not_installed"];
         if (!screenLocked()) [refused addObject:@"not_locked"];
@@ -371,7 +411,7 @@ int main(int argc, const char *argv[]) {
         }
         [NSApplication sharedApplication].activationPolicy = NSApplicationActivationPolicyAccessory;
         Guardian *guardian = [Guardian new];
-        guardian.started = NSDate.date;
+        guardian.ownerPID = ownerPID;
         guardian.axTrusted = axTrusted;
         IOPMAssertionID awake = 0;
         IOPMAssertionCreateWithName(kIOPMAssertPreventUserIdleDisplaySleep, kIOPMAssertionLevelOn,
