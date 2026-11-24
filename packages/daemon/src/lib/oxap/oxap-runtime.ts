@@ -19,8 +19,8 @@ import { recordOxapInit } from './oxap-init.ts';
 type OpenPlan = { sessionId: string; directory: string; request: Record<string, unknown> };
 
 function validateSession(session: Session): { sessionId: string; directory: string } {
-  const directory = session.worktree?.worktreePath ?? session.workspacePath;
-  if (!directory || !isAbsolute(directory)) throw new Error('Codex workspace must be absolute');
+  const directory = session.worktree?.worktreePath ?? session.workspacePath ?? process.cwd();
+  if (!isAbsolute(directory)) throw new Error('Codex workspace must be absolute');
   return { sessionId: session.id, directory };
 }
 
