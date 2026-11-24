@@ -83,7 +83,21 @@ try {
       await page.screenshot({ path: join(evidence, screenshot), animations: 'disabled' });
 
       const use = (button) => hasTouch ? button.tap() : button.click();
-      if (sharedChat) {
+      if (fixture.name === 'duplicate-startup') {
+        const verifySingleCard = async () => {
+          await title.waitFor();
+          assert.equal(await title.count(), 1);
+          assert.equal(await transcript.getByTestId('chat-error-row').count(), 0);
+          assert.equal(await transcript.getByText('API Error', { exact: true }).count(), 0);
+        };
+        await verifySingleCard();
+        const details = transcript.locator('details').filter({ hasText: fixture.message });
+        assert.equal(await details.evaluate((element) => element.open), false);
+        await use(details.getByText('Details', { exact: true }));
+        await details.locator('pre').getByText(fixture.message, { exact: true }).waitFor();
+        await page.reload();
+        await verifySingleCard();
+      } else if (sharedChat) {
         const chat = page.getByTestId('chat-container');
         const header = chat.getByTestId('chat-header-title');
         assert((await title.boundingBox()).y > (await header.boundingBox()).y);
@@ -115,7 +129,8 @@ try {
       }
       results.push({
         case: fixture.name, layout, colorScheme, title: fixture.title, cause: fixture.cause,
-        screenshot, detailsDismissReloadAndScroll: sharedChat,
+        screenshot, detailsDismissReloadAndScroll: sharedChat && fixture.name !== 'duplicate-startup',
+        singleCard: fixture.name === 'duplicate-startup',
       });
       await context.close();
     }
@@ -124,5 +139,5 @@ try {
   await browser.close();
   await writeFile(join(evidence, 'observed.json'), JSON.stringify(results, null, 2));
 }
-assert.equal(results.length, 14);
+assert.equal(results.length, 18);
 console.log(`PASS: ${results.length} layouts verified inline error summaries, including Neo and Space.`);

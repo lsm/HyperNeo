@@ -42,6 +42,7 @@ export async function seedChatErrorCases(app: DaemonAppContext, run: string, wor
     }
   };
 
+  const duplicateStartup = crypto.randomUUID();
   const usage = crypto.randomUUID();
   const connection = crypto.randomUUID();
   const taskSession = crypto.randomUUID();
@@ -58,6 +59,7 @@ export async function seedChatErrorCases(app: DaemonAppContext, run: string, wor
   });
   writeTranscript(taskSession, 'Deployment task agent', { spaceId: space.id, taskId: task.id });
   tasks.updateTask(task.id, { taskAgentSessionId: taskSession });
+  writeTranscript(duplicateStartup, 'Deployment readiness');
   writeTranscript(usage, 'Deployment readiness');
   writeTranscript(connection, 'Deployment readiness');
 
@@ -85,6 +87,18 @@ export async function seedChatErrorCases(app: DaemonAppContext, run: string, wor
       code: 'NOT_FOUND',
       message: 'spawn /example/tools/codex-old ENOENT',
       explicitTitle: true,
+    },
+    {
+      name: 'duplicate-startup',
+      sessionId: duplicateStartup,
+      path: `/session/${duplicateStartup}`,
+      request,
+      title: 'Could not start Codex CLI',
+      cause: 'At "/example/tools/oxap". Usage: oxap [OPTIONS] <COMMAND>.',
+      userMessage: 'Could not start Codex CLI at "/example/tools/oxap". Usage: oxap [OPTIONS] <COMMAND>. Check the Codex CLI path in Settings → Providers.',
+      category: 'validation',
+      code: 'UNKNOWN',
+      message: 'Could not start Codex CLI at "/example/tools/oxap". Usage: oxap [OPTIONS] <COMMAND>. Check the Codex CLI path in Settings → Providers.',
     },
     {
       name: 'usage-limit',
@@ -136,6 +150,19 @@ export async function seedChatErrorCases(app: DaemonAppContext, run: string, wor
     },
   ];
   for (const entry of cases) {
+    if (entry.name === 'duplicate-startup') {
+      assert(messages.saveSDKMessage(
+        entry.sessionId,
+        {
+          type: 'assistant',
+          uuid: crypto.randomUUID(),
+          session_id: entry.sessionId,
+          parent_tool_use_id: null,
+          error: 'invalid_request',
+          message: { role: 'assistant', content: [{ type: 'text', text: entry.message }] },
+        } as unknown as SDKMessage
+      ));
+    }
     await app.internalEventBus.publishAsync('session.error', {
       sessionId: entry.sessionId,
       error: entry.userMessage,
