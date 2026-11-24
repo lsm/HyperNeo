@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { answerCodexProbeLocally, OXAP_CODEX_MODEL, oxapCodexProvider, serveLocalRelease } from './oxap-codex-provider.ts';
@@ -14,11 +14,16 @@ import { getSdkStartupGate } from '../../../packages/daemon/src/lib/agent/sdk-st
 import { deliverAgentMessageToTarget, type AgentMessageDeliveryDeps } from '../../../packages/daemon/src/lib/messaging/delivery-pipeline.ts';
 import { createLocalSocket, readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
-import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
+import { type LiveQueryDeltaEvent, type LiveQuerySnapshotEvent, MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 import { resolveNeoEntry } from '../../../packages/shared/src/web-entry.ts';
 
-const [binary, version, sha256, mode, runArgument] = process.argv.slice(2);
-const run = resolve(runArgument);
+const [binary, version, sha256, mode, ...args] = process.argv.slice(2);
+const run = resolve(args.at(-1)!);
+const [nativeCodex, nativeHome] = mode === 'no-replay' ? args.slice(0, -1) : [];
+if (nativeCodex || nativeHome) {
+  assert(nativeCodex && isAbsolute(nativeCodex));
+  assert(nativeHome && isAbsolute(nativeHome) && nativeHome !== join(run, 'home'));
+}
 if (mode === 'no-replay') {
   process.env.HYPERNEO_HUMAN_SEND_SILENCE_MS = '250';
   process.env.HYPERNEO_SDK_STREAM_SILENCE_TIMEOUT_MS = '1500';
@@ -100,6 +105,28 @@ for line in sys.stdin:
 open(os.path.join(os.environ['CODEX_HOME'],'closed-'+str(os.getpid())),'w').close()
 `);
 chmodSync(peer, 0o700);
+if (nativeCodex) {
+  writeFileSync(peer, `#!/usr/bin/python3
+import json, os, subprocess, sys
+
+os.environ['HOME'] = ${JSON.stringify(nativeHome)}
+os.environ['CODEX_HOME'] = os.path.join(os.environ['HOME'], '.codex')
+with subprocess.Popen([${JSON.stringify(nativeCodex)}, *sys.argv[1:]], stdin=subprocess.PIPE) as child:
+    if 'app-server' in sys.argv[1:]:
+        try:
+            for line in sys.stdin.buffer:
+                method = json.loads(line).get('method')
+                if method in ('thread/start', 'thread/resume', 'turn/start'):
+                    with open(${JSON.stringify(join(run, 'codex-home/calls.jsonl'))}, 'a') as output:
+                        output.write(json.dumps({'request': {'method': method}}) + '\\n')
+                child.stdin.write(line)
+                child.stdin.flush()
+        except BrokenPipeError:
+            pass
+    child.stdin.close()
+    sys.exit(child.wait())
+`);
+}
 if (mode === 'retry') writeFileSync(join(run, 'codex-home/fail-first'), 'synthetic');
 process.env.CODEX_HOME = join(run, 'codex-home');
 process.env.CODEX_CLI_PATH = mode === 'login-device' ? join(run, 'missing-codex') : peer;
@@ -111,7 +138,7 @@ const liveHub = (current: NonNullable<typeof app>) => current.oxapEngine.getHub(
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let transport: WebSocketClientTransport | undefined;
 let releaseResult: (() => void) | undefined;
-const evidence: Record<string, unknown> = { synthetic: true, mode, binaryVersion: version, binarySha256: sha256 };
+const evidence: Record<string, unknown> = { synthetic: !nativeCodex, mode, binaryVersion: version, binarySha256: sha256 };
 const calls = () => existsSync(join(run, 'codex-home/calls.jsonl'))
   ? readFileSync(join(run, 'codex-home/calls.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line) as { cwd: string; codexHome?: string; pid: number; request: { method?: string; params?: { cwd?: string; approvalPolicy?: string; sandbox?: string; developerInstructions?: string; capabilities?: { experimentalApi?: boolean } } } })
   : [];
@@ -213,7 +240,7 @@ try {
   transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false, createSocket: createLocalSocket });
   hub.registerTransport(transport);
   await transport.initialize();
-  if (mode === 'settings-restart-web') {
+  if (mode === 'settings-restart-web' || nativeCodex) {
     await hub.request('providers.create', { params: oxapCodexProvider.params });
   } else {
     await hub.request('providers.create', { params: { providerId: 'anthropic', displayName: 'Synthetic provider', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-devproxy-test-key' } });
@@ -317,6 +344,24 @@ try {
     }
     Object.assign(evidence, { port: app.server.port, resavedExecutable: secondPeer, hubRestartedOnSave: true, turnsAcrossRestart, relativePathRefused: true, pass: true });
   } else if (mode === 'no-replay') {
+    const observedResults = new Set<string>();
+    const recordResults = (rows: unknown[]) => {
+      for (const row of rows as Array<{ id: string; type: string; is_error?: boolean }>) {
+        if (row.type === 'result' && !row.is_error) observedResults.add(row.id);
+      }
+    };
+    const subscribe = async () => {
+      observedResults.clear();
+      hub.onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (snapshot) => {
+        if (snapshot.subscriptionId === 'replay-chat') recordResults(snapshot.rows);
+      });
+      hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (delta) => {
+        if (delta.subscriptionId === 'replay-chat') recordResults([...(delta.added ?? []), ...(delta.updated ?? [])]);
+      });
+      await hub.request('liveQuery.subscribe', {
+        queryName: 'messages.bySession', params: [firstId, 50], subscriptionId: 'replay-chat',
+      });
+    };
     const snapshot = () => app!.db.getDatabase().prepare(
       `SELECT seq, timestamp, consumed_seq AS consumedSeq FROM sdk_messages
        WHERE session_id = ? AND message_type = 'user' AND send_status = 'consumed'
@@ -326,13 +371,14 @@ try {
     const sendAndWait = async (content: string, count: number) => {
       await hub.request('message.send', { sessionId: firstId, content });
       await waitFor(
-        () => snapshot().length === count &&
-          app!.db.getSDKMessages(firstId, 1000).messages.filter((row) => row.type === 'result' && !row.is_error).length === count,
-        content
+        () => snapshot().length === count && observedResults.size === count,
+        content,
+        nativeCodex ? 60_000 : 20_000
       );
     };
 
-    await sendAndWait('Synthetic first prompt', 1);
+    await subscribe();
+    await sendAndWait('Reply with FIRST.', 1);
     const firstRow = snapshot()[0];
     assert(firstRow?.consumedSeq);
     await new Promise((done) => setTimeout(done, 3_500));
@@ -341,6 +387,12 @@ try {
     assert.deepEqual(snapshot(), [firstRow]);
 
     assert.deepEqual(await hub.request('operation.invoke', { name: 'oxap.settings.save', input: { providerId: 'anthropic-codex', harness: 'sdk' } }), { accepted: true });
+    if (!nativeCodex) {
+      await app.db.updateSession(firstId, {
+        processingState: JSON.stringify({ status: 'processing', phase: 'responding' }),
+      });
+      assert(app.db.listProcessingSessionIds().includes(firstId));
+    }
     await transport.close();
     await app.cleanup();
     app = await createDaemonApp({ config: { ...config, disableWorktrees: true, disableGoalProcessing: true }, verbose: false });
@@ -348,12 +400,16 @@ try {
     transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false, createSocket: createLocalSocket });
     hub.registerTransport(transport);
     await transport.initialize();
-    await sendAndWait('Synthetic second prompt after restart', 2);
+    await subscribe();
+    await sendAndWait('Reply with SECOND.', 2);
     await new Promise((done) => setTimeout(done, 3_500));
     assert.equal(turns(), 2);
     assert.deepEqual(snapshot()[0], firstRow);
+    assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 1);
+    assert.equal(calls().filter((call) => call.request.method === 'thread/resume').length, 1);
     assert.deepEqual(errors, []);
     Object.assign(evidence, { turnsAfterRestart: turns(), pass: true });
+    console.log('Native turn/start count: 1 before restart, 2 total. First prompt row unchanged.');
   } else if (mode === 'model-id') {
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic model selection' });
     await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'result') && !first.queryPromise, 'turn with a chosen model');
@@ -899,3 +955,4 @@ try {
   evidence.cleaned = true;
   writeFileSync(join(run, 'evidence/oap-workspace-wire.json'), JSON.stringify(evidence, null, 2));
 }
+if (mode === 'no-replay') process.exit(0);
