@@ -90,6 +90,7 @@ function setup() {
   let onStatus = () => {};
   let folder = pushedCheckout();
   let next = worker;
+  let onStart: ((input: Record<string, unknown>) => unknown) | undefined;
   const reuse = (mode: string) =>
     db
       .prepare(
@@ -100,6 +101,7 @@ function setup() {
       .run(JSON.stringify(mode));
   reuse('per_todo');
   const invoke = recordedWorkInvoke(sessions.inputs, async (caller, name, input) => {
+    if (name === 'work.start' && onStart) return completed(onStart(input));
     if (name === 'work.start')
       return completed({
         ok: true,
@@ -195,6 +197,9 @@ function setup() {
     },
     setFolder: (next: string) => {
       folder = next;
+    },
+    setOnStart: (next: typeof onStart) => {
+      onStart = next;
     },
     setOnStatus: (next: () => void) => {
       onStatus = next;
@@ -805,6 +810,22 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
       });
       await h.start(next.id);
       expect(h.events).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('leaves a todo removed while its start was refused as removed', async () => {
+    const h = setup();
+    try {
+      const next = h.add(started);
+      h.setOnStart(() => {
+        h.store.updateTodo(h.store.getTodo(next.id)!, { state: 'removed' }, Date.now());
+        return { ok: false, reason: 'todo_required', detail: 'closed', notSent: true };
+      });
+      expect(await h.start(next.id)).toMatchObject({ ok: true, todo: { state: 'removed' } });
+      expect(h.notices).toEqual([]);
+      expect(h.store.getTodo(next.id)?.state).toBe('removed');
     } finally {
       h.db.close();
     }

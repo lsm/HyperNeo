@@ -974,6 +974,11 @@ export async function reuseIdleWorker(
       caller,
       deps.warn ?? (() => {})
     );
+    if (todoId && caller.sessionId && deps.isOpenTodo?.(todoId, caller.sessionId) === false) {
+      reuseHolds.delete(key);
+      await deps.unclaimWorker?.(todoId, work.ref, input.role);
+      return reject('todo_required', 'This todo closed before its worker was messaged.', true);
+    }
     const sent = await adapter.send!(work.ref, message, { from, caller }).catch(
       (error: unknown) => {
         reuseHolds.delete(key);

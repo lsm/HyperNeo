@@ -46,7 +46,7 @@ function harness(
     compact?: boolean | 'throws';
   },
   history?: ReadonlyMap<string, { sameAskAt: number | null; settledAt: number | null }>,
-  claim?: Pick<WorkVerbDeps, 'claimWorker' | 'unclaimWorker'>
+  claim?: Pick<WorkVerbDeps, 'claimWorker' | 'unclaimWorker' | 'isOpenTodo'>
 ) {
   const sent: string[] = [];
   const events: string[] = [];
@@ -248,6 +248,27 @@ describe('work.start session reuse preference', () => {
       expect(run.events).toEqual([`compact ${own}`, `send ${own}`]);
     }
   );
+
+  test('does not message a todo that closed while its worker compacted', async () => {
+    const own = 'closed-while-compacting';
+    const undone: string[] = [];
+    const run = harness(
+      [{ id: own, status: 'done' }],
+      [own],
+      { adapter: 'claude-desktop', reuse: 'long_lived', sameAsk: [own], compact: true },
+      undefined,
+      {
+        claimWorker: async () => true,
+        unclaimWorker: async (_todoId, ref) => void undone.push(ref.id),
+        isOpenTodo: () => !run.events.includes(`compact ${own}`),
+      }
+    );
+    const result = await run.start(neo, false, { todoId: 'next' });
+    expect(result).toMatchObject({ ok: false, reason: 'todo_required', notSent: true });
+    expect(run.events).toEqual([`compact ${own}`]);
+    expect(run.started).toEqual([]);
+    expect(undone).toEqual([own]);
+  });
 
   test('per ask waits when that matter’s worker is busy', async () => {
     const run = harness([{ id: 'own', status: 'running' }], [], {
