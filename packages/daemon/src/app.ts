@@ -1614,12 +1614,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         ),
     });
 
+    const { prepare: prepareSdkHumanSend } = humanSend;
     messageDeliveryProcessor.register(
       MESSAGE_DELIVERY,
       createMessageDeliveryHandler({
         jobQueue,
         prepareHumanSend: async (sessionId) =>
-          usesOxap(sessionId) ? 'deliver' : humanSend.prepare(sessionId),
+          usesOxap(sessionId) ? 'deliver' : prepareSdkHumanSend(sessionId),
         watchHumanSend: (sessionId, uuid) => {
           if (!usesOxap(sessionId)) humanSend.watch(sessionId, uuid);
         },

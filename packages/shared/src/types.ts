@@ -337,6 +337,7 @@ export interface SessionProgress {
 }
 
 export interface PendingModelSwitch {
+  thinkingLevel?: ThinkingLevel;
   model: string;
   provider: string;
   requestedAt: number;
