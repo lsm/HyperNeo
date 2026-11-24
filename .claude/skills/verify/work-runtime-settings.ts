@@ -4,6 +4,7 @@ import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
+import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { createMockApiServer } from '../../../packages/daemon/tests/helpers/mock-api-server.ts';
 
@@ -91,28 +92,52 @@ try {
   const start = await hub.request<{ ok: boolean; value: { ref: { adapter: string; id: string } } }>('operation.invoke', {
     name: 'work.start',
     input: { adapter: 'hyperneo', place: { machine: hostname(), folder: run, name: "Synthetic" }, title: 'Synthetic worker',
-      message: first, model: 'claude-haiku-4-5-20251001', effort: 'off' },
+      message: first, model: 'claude-haiku-5-5', effort: 'off' },
   });
   assert.equal(start.ok, true, JSON.stringify(start));
   const { ref } = start.value;
+  const neoId = 'neo:synthetic';
+  assert(new NeoRepository(app.db.getDatabase()).reserveBinding({ sessionId: neoId, projectId: null, kind: 'neo' }));
   const mcp = createOperationMcpHandler(app.sessionManager.getOperationRegistry(), () => ({
-    role: 'neo', sessionId: 'neo:synthetic',
+    role: 'neo', sessionId: neoId,
   }));
-  const reconfigure = async (input: unknown) => {
-    const response = await mcp({ name: 'work.reconfigure', input });
+  const invokeAsNeo = async (name: string, input: unknown) => {
+    const response = await mcp({ name, input });
     return JSON.parse((response.content[0] as { text: string }).text);
   };
   evidence.completedTurns = await completed(ref.id, 1);
-  const receipt = await reconfigure({ ref, model: 'claude-sonnet-4-6', effort: 'high' });
+  const { value: status } = await invokeAsNeo('work.status', { ref });
+  assert.deepEqual(status.ref, ref);
+  const reconfigure = (input: unknown) => invokeAsNeo('work.reconfigure', input);
+  const { sessionId: humanId } = await hub.request<{ sessionId: string }>('session.create', {
+    workspacePath: run, title: 'Human session', config: { model: 'claude-haiku-5-5', provider: 'anthropic' },
+  });
+  const refusals = await Promise.all([
+    reconfigure({ ref: { ...ref, id: humanId }, effort: 'high' }),
+    reconfigure({ ref: { ...ref, adapter: 'codex-desktop' }, effort: 'high' }),
+    reconfigure({ ref, model: 'missing-model' }),
+    reconfigure({ ref, effort: 'not-an-effort' }),
+  ]);
+  evidence.refusals = refusals.map(({ reason }) => reason);
+  assert.deepEqual(evidence.refusals, ['not_started_by_us', 'not_supported', 'unsupported_model', 'unsupported_effort']);
+  const receipt = await reconfigure({ ref: status.ref, model: 'claude-sonnet-5-5', effort: 'high' });
   evidence.receipt = receipt;
   assert.equal(receipt.ok, true, JSON.stringify(receipt));
-  assert.equal(receipt.value.previous.model, 'claude-haiku-4-5-20251001');
-  assert.equal(receipt.value.next.model, 'claude-sonnet-4-6');
+  assert.equal(receipt.value.previous.model, 'claude-haiku-5-5');
+  assert.equal(receipt.value.next.model, 'claude-sonnet-5-5');
   assert.equal(receipt.value.next.effort, 'high');
+  assert.equal(receipt.value.appliesFrom, 'next-turn');
   await hub.request('message.send', { sessionId: ref.id, content: second });
   evidence.completedTurns = await completed(ref.id, 2);
   assert(turns.some((turn) => turn.first && !turn.second && turn.model.startsWith('claude-haiku-')));
-  assert(turns.some((turn) => turn.first && turn.second && turn.model === 'claude-sonnet-4-6' && turn.effort === 'high'));
+  assert(turns.some((turn) => turn.first && turn.second && turn.model === 'claude-sonnet-5-5' && turn.effort === 'high'));
+  const effortOnly = await reconfigure({ ref, effort: 'medium' });
+  evidence.effortOnly = effortOnly;
+  assert.deepEqual(effortOnly.value.next, { model: 'claude-sonnet-5-5', effort: 'medium' });
+  await hub.request('session.update', { sessionId: ref.id, title: 'Named by a person', metadata: { titleSetBy: 'user' } });
+  const named = await reconfigure({ ref, model: 'claude-haiku-5-5' });
+  evidence.named = named.reason;
+  assert.equal(named.reason, 'human_only');
   console.log(`PASS: ${evidence.completedTurns} turns on one ref; next request used Sonnet with high effort and retained prior input.`);
 } finally {
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
