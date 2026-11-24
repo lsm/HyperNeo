@@ -986,11 +986,13 @@ export default function ChatContainer({
   const harness = session?.config?.harness;
   const imagesSupported =
     !isOxapHarness(harness) || oxapSupportsImages(harness, session?.config.model);
-  const dropEnabled =
-    !readonly && session?.status !== 'archived' && !composerDisabled && imagesSupported;
-  const { isDragging, dragHandlers } = useImageDropZone((files) => {
-    void dropFilesRef.current?.(files);
-  }, dropEnabled);
+  const canHandleDrop = !readonly && session?.status !== 'archived' && !composerDisabled;
+  const handleImageDrop = (files: FileList) => dropFilesRef.current?.(files);
+  const { isDragging, dragHandlers } = useImageDropZone(
+    handleImageDrop,
+    canHandleDrop && imagesSupported,
+    canHandleDrop && !imagesSupported ? handleImageDrop : undefined
+  );
 
   const handleUnavailableRetry = useCallback(() => {
     store.select(sessionId);
@@ -1229,9 +1231,7 @@ export default function ChatContainer({
                 <div class="text-center">
                   <div class="text-5xl mb-4">💬</div>
                   <p class="text-lg text-fg-soft mb-2">No messages yet</p>
-                  <p class="text-sm text-fg-faint">
-                    Start a conversation with Claude to see the magic happen
-                  </p>
+                  <p class="text-sm text-fg-faint">Send a message to get started.</p>
                 </div>
               </div>
             )

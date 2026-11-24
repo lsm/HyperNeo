@@ -5,7 +5,7 @@ export default function ToastContainer() {
   const toasts = toastsSignal.value;
 
   return (
-    <div class="fixed top-4 right-4 z-50 flex flex-col gap-3 pointer-events-none max-w-sm w-full">
+    <div class="fixed inset-x-4 top-4 z-50 ml-auto flex max-w-sm flex-col gap-3 pointer-events-none">
       {toasts.slice(-3).map((toast) => (
         <div key={toast.id} class="pointer-events-auto">
           <ToastItem toast={toast} />

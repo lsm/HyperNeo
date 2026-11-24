@@ -19,12 +19,20 @@ try {
   const input = composer.getByRole('textbox');
   const picker = composer.getByRole('button', { name: 'Choose model and thinking' });
   const options = composer.getByTitle('More options');
+  const guidance = page.getByRole('alert').filter({
+    hasText: /OXAP DeepSeek.*cannot attach images.*DeepSeek.V4.Pro.*DeepSeek V4 Flash/i,
+  });
+  const verifyGuidance = async () => {
+    await guidance.waitFor();
+    assert.equal(await composer.getByRole('button', { name: 'Remove attachment' }).count(), 0);
+    await guidance.getByRole('button', { name: 'Dismiss notification' }).click();
+    await guidance.waitFor({ state: 'detached' });
+  };
   await input.waitFor();
+  assert.equal(await guidance.count(), 0);
   await options.click();
   const attach = composer.getByRole('button', { name: 'Attach image' });
   await attach.waitFor();
-  assert.equal(await attach.isEnabled(), flash);
-  assert.equal(await composer.getByText(/accepts text only/).isVisible(), !flash);
   await page.screenshot({
     path: join(run, 'evidence', `${mode}-attachment.png`),
     clip: { x: 280, y: 550, width: 840, height: 220 },
@@ -38,7 +46,8 @@ try {
     await remove.waitFor();
     await remove.click();
   } else {
-    await options.click();
+    await attach.click();
+    await verifyGuidance();
   }
 
   for (const eventType of ['drop', 'paste']) {
@@ -54,7 +63,7 @@ try {
       await remove.waitFor();
       if (eventType === 'drop') await remove.click();
     } else {
-      assert.equal(await remove.count(), 0);
+      await verifyGuidance();
     }
   }
 
