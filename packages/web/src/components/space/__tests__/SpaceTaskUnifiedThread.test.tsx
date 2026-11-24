@@ -205,7 +205,7 @@ describe('SpaceTaskUnifiedThread', () => {
       render(
         <SpaceTaskUnifiedThread
           taskId="task-1"
-          authErrorBannerMembers={[
+          authErrorMembers={[
             {
               sessionId: 'worker-1',
               label: 'Coder Agent',
@@ -216,10 +216,12 @@ describe('SpaceTaskUnifiedThread', () => {
         />
       );
 
-      const banner = screen.getByTestId('space-thread-auth-error-banner');
+      const banner = screen.getByText('Anthropic authentication failed.');
+      const feed = screen.getByTestId('space-task-event-feed-minimal');
+      expect(feed.closest('.overflow-y-auto')?.contains(banner)).toBe(true);
+      expect(feed.compareDocumentPosition(banner) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       expect(banner).toBeTruthy();
-      expect(banner.textContent).toContain('Coder Agent');
-      expect(banner.textContent).toContain('Anthropic authentication failed.');
+      expect(screen.getAllByText('Coder Agent').length).toBeGreaterThan(0);
       expect(screen.getByText('Re-authenticate Anthropic')).toBeTruthy();
     });
   });
