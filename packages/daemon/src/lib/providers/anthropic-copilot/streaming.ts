@@ -2,7 +2,8 @@ import { sendNodeJsonError as sendJsonError } from '../shared/json-error-respons
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { CopilotSession, MessageOptions, SessionEvent } from '@github/copilot-sdk';
 import type { ToolBridgeRegistry } from './tool-bridge.js';
-import type { ToolResult } from './conversation.js';
+import { attachUserImagesToToolResults, type ToolResult } from './conversation.js';
+import type { BridgeImage } from './prompt.js';
 import { AnthropicStreamWriter, estimateTokens } from './sse.js';
 import type { ContextUsageStore, CopilotUsageInfoData } from './context-usage.js';
 import type { AnthropicErrorType } from '../shared/error-envelope.js';
@@ -18,6 +19,11 @@ export interface StreamingContextUsageOptions {
   store: ContextUsageStore;
   requestKey: string;
   outputTokenLimit?: number;
+}
+
+export interface ResumeUserInput {
+  text: string;
+  images: BridgeImage[];
 }
 
 function classifyError(message: string): { status: number; type: AnthropicErrorType } {
@@ -230,8 +236,14 @@ export function resumeSessionStreaming(
   toolResults: ToolResult[],
   onDone: () => void = () => {},
   inputText = '',
-  contextUsage?: StreamingContextUsageOptions
+  contextUsage?: StreamingContextUsageOptions,
+  userInput?: ResumeUserInput
 ): Promise<StreamingOutcome> {
+  const resolveAll = (results: ToolResult[]) => {
+    for (const { toolUseId, result, isError, images } of results) {
+      registry.resolveToolResult(toolUseId, result, isError, images);
+    }
+  };
   return streamSession(
     session,
     model,
@@ -239,9 +251,32 @@ export function resumeSessionStreaming(
     res,
     registry,
     (_finish, _writeFailed) => {
-      for (const { toolUseId, result, isError, images } of toolResults) {
-        registry.resolveToolResult(toolUseId, result, isError, images);
+      if (!userInput) {
+        resolveAll(toolResults);
+        return;
       }
+      session
+        .send({
+          prompt: userInput.text || 'See the attached image.',
+          attachments: userInput.images.map((i) => ({
+            type: 'blob' as const,
+            data: i.data,
+            mimeType: i.mediaType,
+          })),
+          mode: 'immediate',
+        })
+        .then(
+          () => resolveAll(toolResults),
+          (err: unknown) => {
+            logger.warn(
+              'Failed to steer Copilot session with user images, using tool result:',
+              err
+            );
+            resolveAll(
+              attachUserImagesToToolResults(toolResults, userInput.text, userInput.images)
+            );
+          }
+        );
     },
     onDone,
     inputText,

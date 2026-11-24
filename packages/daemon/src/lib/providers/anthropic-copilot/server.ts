@@ -19,7 +19,7 @@ import {
   extractToolResultIds,
 } from './prompt.js';
 import { createVisionGate, omittedImageText } from './vision.js';
-import { ConversationManager, attachUserImagesToToolResults } from './conversation.js';
+import { ConversationManager } from './conversation.js';
 import {
   createReasoningSupport,
   fitReasoningEffort,
@@ -246,7 +246,7 @@ async function handleMessages(
       return;
     }
     if (continuation) {
-      const { conv } = continuation;
+      const { conv, toolResults } = continuation;
       const lastMessage = body.messages.at(-1);
       let pendingImages;
       try {
@@ -260,11 +260,6 @@ async function handleMessages(
         );
         return;
       }
-      const toolResults = attachUserImagesToToolResults(
-        continuation.toolResults,
-        lastMessage ? messageTopLevelText(lastMessage) : '',
-        pendingImages
-      );
       try {
         collectImages(body.messages);
       } catch (err) {
@@ -276,7 +271,7 @@ async function handleMessages(
         );
         return;
       }
-      const deliveredImages = toolResults.flatMap((r) => r.images ?? []);
+      const deliveredImages = [...toolResults.flatMap((r) => r.images ?? []), ...pendingImages];
       const fit = await visionGate(body.model, deliveredImages);
       if ('error' in fit) {
         sendJsonError(out, 400, 'invalid_request_error', fit.error);
@@ -290,6 +285,20 @@ async function handleMessages(
         const notes = Array.from({ length: drop }, () => omittedImageText(fit.limit));
         return { ...r, result: [r.result, ...notes].join('\n'), images: r.images?.slice(drop) };
       });
+      const keptUserImages = pendingImages.slice(skip);
+      const userInput = keptUserImages.length
+        ? {
+            text: [
+              lastMessage ? messageTopLevelText(lastMessage) : '',
+              ...Array.from({ length: pendingImages.length - keptUserImages.length }, () =>
+                omittedImageText(fit.limit)
+              ),
+            ]
+              .filter(Boolean)
+              .join('\n'),
+            images: keptUserImages,
+          }
+        : undefined;
       const usageKey = requestUsageKey(req, cwd, body.model);
       manager.acknowledgeContinuation(
         conv,
@@ -309,7 +318,8 @@ async function handleMessages(
             store: contextUsageStore,
             requestKey: usageKey,
             outputTokenLimit: body.max_tokens,
-          }
+          },
+          userInput
         );
         if (outcome.kind === 'completed') {
           manager.cleanupConversation(conv);
