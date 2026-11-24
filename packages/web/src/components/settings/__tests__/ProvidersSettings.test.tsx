@@ -646,16 +646,16 @@ describe('ProvidersSettings', () => {
     );
     render(<ProvidersSettings />);
     fireEvent.click(await screen.findByText('Codex'));
-    fireEvent.change(screen.getByLabelText('Harness', { exact: true }), {
+    fireEvent.change(screen.getByLabelText('Client', { exact: true }), {
       target: { value: 'oxap-codex' },
     });
-    expect(screen.getByText('Hub not installed')).toBeTruthy();
+    expect(screen.getByText('OXAP is not installed')).toBeTruthy();
     expect(screen.getByPlaceholderText('Absolute path to OXAP Codex executable')).toBeTruthy();
     expect(screen.getByText('An absolute path is required.')).toBeTruthy();
-    fireEvent.input(screen.getByLabelText('Harness executable'), {
+    fireEvent.input(screen.getByLabelText('Client executable'), {
       target: { value: '/synthetic/codex' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Save harness' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save client' }));
     await waitFor(() =>
       expect(mockRequest).toHaveBeenCalledWith(
         'operation.invoke',
@@ -684,13 +684,13 @@ describe('ProvidersSettings', () => {
     mockRequest.mockResolvedValue({ accepted: true });
     render(<ProvidersSettings />);
     fireEvent.click(await screen.findByText('DeepSeek'));
-    expect((screen.getByLabelText('Harness', { exact: true }) as HTMLSelectElement).value).toBe(
+    expect((screen.getByLabelText('Client', { exact: true }) as HTMLSelectElement).value).toBe(
       'sdk'
     );
-    const executable = screen.getByLabelText('Harness executable') as HTMLInputElement;
+    const executable = screen.getByLabelText('Client executable') as HTMLInputElement;
     expect(executable.value).toBe('/synthetic/dsh');
     fireEvent.input(executable, { target: { value: '/synthetic/dsh-updated' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save harness' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save client' }));
     await waitFor(() =>
       expect(mockRequest).toHaveBeenCalledWith(
         'operation.invoke',
@@ -747,9 +747,9 @@ describe('ProvidersSettings', () => {
     });
   });
 
-  it('links the provider default explanation to Sessions & Harness', async () => {
+  it('links the provider default explanation to Sessions & Clients', async () => {
     render(<ProvidersSettings />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Sessions & Harness' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Sessions & Clients' }));
     expect(mockNavigateToSettings).toHaveBeenCalledWith('harness');
   });
 

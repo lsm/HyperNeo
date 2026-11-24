@@ -13,7 +13,8 @@ export interface DragHandlers {
 
 export function useImageDropZone(
   onFiles: FileDropHandler,
-  enabled: boolean
+  enabled: boolean,
+  onBlockedFiles?: FileDropHandler
 ): {
   isDragging: boolean;
   dragHandlers: DragHandlers;
@@ -61,13 +62,12 @@ export function useImageDropZone(
       e.preventDefault();
       e.stopPropagation();
       setIsDragging(false);
-      if (!enabled) return;
       const files = e.dataTransfer?.files;
       if (files && files.length > 0) {
-        void onFiles(files);
+        void (enabled ? onFiles : onBlockedFiles)?.(files);
       }
     },
-    [enabled, onFiles]
+    [enabled, onFiles, onBlockedFiles]
   );
 
   return {

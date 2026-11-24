@@ -11,9 +11,10 @@ hidden. Select `high` and create a chat. In the seeded idle chat, change `high`
 to `low` and reload. The touch viewport still shows `low`. Retain `oxap-thinking-desktop.png` and
 `oxap-thinking-phone.png`. This browser fixture runs without a model turn.
 
-The same journey checks that the OXAP chat explains its text-only input, disables
-image attachment, and hides Tools. It captures chat and provider settings in
-both themes and checks the selected harness, executable and hub binary. Set
+The same journey checks that selecting **Attach image** in an OXAP Codex chat
+shows guidance naming the client, model and image-capable option. The chat hides
+Tools. The journey captures chat and provider settings in both themes and checks
+the selected client, executable and OXAP installation. Set
 `OXAP_UI_BEFORE=1` when running the same script on the baseline to capture the
 old chat and provider settings without requiring the new controls. Compare the
 resulting `oxap-chat-*` and `oxap-provider-*` screenshots.
@@ -29,7 +30,7 @@ It also replaces the fixture hub after an 11-second synthetic release download. 
 installer validates and installs a local fixture archive; the UI stays pending
 beyond the default timeout, then shows success and the saved hub after reload.
 
-In each theme the OXAP actions menu shows exactly one separator above the disabled
+In each theme the OXAP actions menu shows exactly one separator above the
 attachment action. Keep `oxap-menu-light.png` and `oxap-menu-dark.png`.
 
 A synthetic auth status card displays a URL followed by punctuation. The browser
