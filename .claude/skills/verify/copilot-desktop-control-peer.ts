@@ -7,7 +7,7 @@ import { WebSocketServer } from 'ws';
 import type { Result, WorkDetail, WorkStarted, WorkDelivery } from '../../../packages/daemon/src/lib/drivers/types.ts';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 
-export async function startCopilotDesktopPeer(home: string, state: string, compaction: 'applied' | 'failed' | 'refused' = 'applied') {
+export async function startCopilotDesktopPeer(home: string, state: string, compaction: 'applied' | 'failed' | 'refused' = 'applied', legacy = false) {
   const dir = join(home, '.copilot/run');
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const secret = randomUUID();
@@ -50,12 +50,20 @@ export async function startCopilotDesktopPeer(home: string, state: string, compa
     const reply = (type: string, fields: object = {}) => peer.send(JSON.stringify({ type, session_id: ref.id, request_id: message.request_id, ...fields }));
     messages.push(message.type);
     switch (message.type) {
-      case 'create_project_from_path':
+      case 'create_repository_from_path':
+      case 'create_project_from_path': {
+        const supported = legacy ? 'create_project_from_path' : 'create_repository_from_path';
+        if (message.type !== supported) return peer.send(JSON.stringify({
+          type: 'error', message: 'Invalid message format: unknown variant `' + message.type + '`, expected `' + supported + '`',
+        }));
         path = message.path;
         db.prepare('INSERT OR IGNORE INTO projects VALUES (?, ?, ?)').run(project, 'Disposable project', path);
-        return reply('project_created', { project: { id: project } });
+        return legacy
+          ? reply('project_created', { project: { id: project } })
+          : reply('repository_created', { repository: { id: project } });
+      }
       case 'create_folder_workspace':
-        assert.equal(message.project_id, project);
+        assert.equal(legacy ? message.project_id : message.repository_id, project);
         assert.equal(message.kickoff_prompt, undefined);
         title = message.name;
         return reply('workspace_created', { workspace: { id: workspace, displayPath: path } });

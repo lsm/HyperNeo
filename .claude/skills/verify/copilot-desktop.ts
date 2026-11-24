@@ -67,7 +67,7 @@ if (desktop) {
 const before = desktop ? readFileSync(state) : null;
 const compaction = mode === 'compact-failure' ? 'failed' : mode === 'compact-refused' ? 'refused' : 'applied';
 const peer = ['control', 'both-control', 'compact-failure', 'compact-refused'].includes(mode)
-  ? await startCopilotDesktopPeer(home, state, compaction)
+  ? await startCopilotDesktopPeer(home, state, compaction, mode === 'both-control')
   : undefined;
 globalThis.fetch = (() => { throw new Error('External HTTP disabled'); }) as typeof fetch;
 process.chdir(run);
