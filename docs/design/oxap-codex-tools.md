@@ -52,27 +52,33 @@ token in the endpoint URL. HyperNeo is a separate stdio peer, so Decision
 would share identity or race credentials between chats.
 
 OXAP adds one hub-local option, `--session-tool-sources <directory>`. The
-directory is operator-owned mode 0700. HyperNeo atomically writes one mode
-0600 JSON file per OXAP session containing its source descriptor and
-`Authorization: Bearer <credential>`. The public open still carries only
-`{ id: "hyperneo-operations", kind: "remote" }`.
+directory is operator-owned mode 0700. For every external create or reopen,
+HyperNeo atomically writes a new mode 0600 capability file containing the OXAP
+session ID, source descriptor, and `Authorization: Bearer <credential>`. Its
+filename is a fresh 256-bit random reference, not the session ID.
 
-For each create or reopen, the hub reads that session's file afresh. It
-resolves the attachment only when the file's OXAP session ID and source ID
-match the open exactly; a missing, invalid, stale, or duplicate source is an
-`unsatisfiable` attachment. This ownership check prevents one OXAP client
-from naming another chat's source and inheriting its identity. Resolution
-adds headers only after public request validation, in the adapter-private
-attachment. The existing internal `ConfiguredSource.headers` field can carry
-them, but the current stdio serializer must stop dropping them
+The attachment adds one member requiring an OAP decision:
+`{ id, kind, credential_ref }`. The hub accepts only the reference's canonical
+base64url form, resolves it inside the fixed directory, and requires the
+file's session and source IDs to match the open exactly. It claims the file
+atomically before calling the adapter and deletes it after use. A missing,
+invalid, cross-session, duplicate, or replayed reference is `unsatisfiable`.
+Knowing another chat's session ID therefore proves nothing: the caller must
+also possess the fresh one-time capability. The reference is never the bearer
+and never reaches Codex.
+
+Resolution adds headers only after public request validation, in the
+adapter-private attachment. The existing internal `ConfiguredSource.headers`
+field can carry them, but the current stdio serializer must stop dropping them
 ([field](https://github.com/lsm/oxap/blob/6a8a6275e01b42d614e1a87da6cc3d72dfff6e5d/zig/src/adapter/contract.zig#L120-L130),
 [serializer](https://github.com/lsm/oxap/blob/6a8a6275e01b42d614e1a87da6cc3d72dfff6e5d/zig/src/hub/stdio.zig#L228-L243)).
 
-Headers never enter OAP state, catalogs, source descriptors, session metadata,
-or bindings. Native requests travel only over the private adapter pipe.
-Production and verification logs redact both header values and any captured
-native config. The credential never appears on a command line, in a process
-environment, in HyperNeo's database, or in a URL.
+Headers and credential references never enter OAP state, catalogs, source
+descriptors, session metadata, or bindings. Native requests travel only over
+the private adapter pipe. Production and verification logs redact both header
+values and any captured native config. Neither the bearer nor the reference
+appears on a command line, in a process environment, in HyperNeo's database,
+or in a URL.
 
 ## Reopen restores the binding, not a secret
 
@@ -86,18 +92,24 @@ populate it ([schema](https://github.com/lsm/oxap/blob/6a8a6275e01b42d614e1a87da
 
 Amend Decisions 0008 and 0040 together with this rule: source IDs are part of
 the session binding; their credentials are not. Create records the IDs. An
-explicit reopen may repeat exactly those IDs, while an omitted set and an
-idle-park wake restore them from the binding. A reopen cannot add, remove, or
-replace a source. Every path resolves the IDs through the trusted per-session
-source directory again, and failure refuses the reopen rather than dropping
-the tools. This preserves Decision 0008's non-revocable attachment while
-making Decision 0040's close-and-reopen a detach of the same logical session.
+external explicit reopen must repeat exactly those IDs with a fresh
+`credential_ref` for each; an omitted, added, removed, or replaced source is
+refused. Every external open resolves new capability files, and failure
+refuses the reopen rather than dropping the tools.
 
-The same decision records that trusted headers are adapter-private attachment
-material, never public wire or descriptor fields. The per-session directory
-is hub configuration, not an OAP schema change. Accepting literal headers
-from stdio clients would be a different, wider protocol decision and is not
-part of this design.
+An idle-park wake is different: no external open exists to authenticate. The
+hub keeps the resolved adapter-private attachment in its in-memory
+`OpenedWith` record and reuses it with the bound IDs on wake. It never writes
+that material to the binding. This preserves Decision 0008's non-revocable
+attachment while making Decision 0040's close-and-reopen a detach of the same
+logical session.
+
+The same decision defines `credential_ref` as a one-time, attachment-only
+capability and trusted headers as adapter-private material. Neither is a
+public descriptor or binding field. The capability directory is hub
+configuration; the reference is the one public schema addition. Accepting
+literal headers from stdio clients would be a different, wider protocol
+decision and is not part of this design.
 
 ## HyperNeo's external operations endpoint
 
@@ -125,12 +137,12 @@ catalog and policy checks.
 
 ### Desktop keeps todo and turn scope
 
-The OXAP query branch creates the same per-attempt `DesktopTurn` and live
-callback as the Claude branch. The external caller resolver reads that
-current attempt on every call; interrupt stores and cancels the same turn
-([Claude turn wiring](https://github.com/lsm/HyperNeo/blob/c46d70db3311741898c1ccc2c72f7aa4c5162e80/packages/daemon/src/lib/agent/query-runner.ts#L1068-L1076),
-[interrupt](https://github.com/lsm/HyperNeo/blob/c46d70db3311741898c1ccc2c72f7aa4c5162e80/packages/daemon/src/lib/agent/agent-session.ts#L1347-L1370)).
-A stopped or completed turn refuses new desktop calls with `turn_stopped`.
+This design does not admit an OXAP desktop worker. Current Codex admission
+refuses Space sessions, `workerOperations`, and tool guards
+([admission](https://github.com/lsm/HyperNeo/blob/c46d70db3311741898c1ccc2c72f7aa4c5162e80/packages/daemon/src/lib/agent/session-engine.ts#L98-L121)).
+An approved desktop-todo run is therefore not an acceptance gate for these
+slices. A later worker-admission design must first map those protections to
+OXAP without weakening them.
 
 No desktop gate changes. `desktop.call` still requires an MCP worker caller,
 the worker's active approved todo, its work directory, and its approved apps
@@ -138,35 +150,46 @@ the worker's active approved todo, its work directory, and its approved apps
 An ordinary OXAP chat has no approved worker todo and is refused by those
 existing gates. Attaching the server never grants desktop access.
 
+Before a future admitted worker can use it, the OXAP query branch must create
+the same per-attempt `DesktopTurn` and live callback as the Claude branch;
+interrupt must cancel that exact turn
+([Claude turn wiring](https://github.com/lsm/HyperNeo/blob/c46d70db3311741898c1ccc2c72f7aa4c5162e80/packages/daemon/src/lib/agent/query-runner.ts#L1068-L1076),
+[interrupt](https://github.com/lsm/HyperNeo/blob/c46d70db3311741898c1ccc2c72f7aa4c5162e80/packages/daemon/src/lib/agent/agent-session.ts#L1347-L1370)).
+That prerequisite belongs to the later worker design, not the transport PR.
+
 ### Revocation
 
-HyperNeo revokes the grant, deletes its trusted source file, and closes its
-MCP transports when the HyperNeo session is deleted or archived; daemon
+HyperNeo revokes the grant, deletes its unused capability files, and closes
+its MCP transports when the HyperNeo session is deleted or archived; daemon
 shutdown revokes all grants. A later reopen creates a fresh grant and file.
 The old bearer then receives 401 and cannot invoke even a read operation.
 OXAP's native close/reopen is only a detach: it retains the HyperNeo grant so
-resume can work. Stale per-session files are removed at daemon startup.
+resume can work. Stale capability files are removed at daemon startup.
 
 ## Pull request order
 
-1. **OXAP protocol:** amend the reopen and trusted-header decisions, with
-   conformance cases for repeated, omitted, changed, and unavailable sources.
-2. **OXAP create:** add trusted per-session source resolution and Codex remote
+1. **OXAP protocol:** amend the credential-reference, reopen, and
+   trusted-header decisions. Include missing, invalid, cross-session,
+   replayed, omitted, changed, and unavailable source cases.
+2. **OXAP create:** add one-time capability resolution and Codex remote
    attachment on `thread/start`; prove two sessions receive only their own
-   tools and secret canaries stay out of published state and logs.
-3. **OXAP reopen:** persist source IDs, restore them on explicit and idle
-   reopen, emit `config.mcp_servers` on `thread/resume`, and prove a real
-   Codex resume after a model turn and process restart.
+   tools, a caller naming another session without its fresh reference is
+   refused, and secret canaries stay out of published state and logs.
+3. **OXAP reopen:** persist source IDs, require fresh references on explicit
+   reopen, retain resolved sources only in memory for idle wake, emit
+   `config.mcp_servers` on `thread/resume`, and prove a real Codex resume
+   after a model turn and process restart.
 4. **OXAP release:** tag the release, publish checksums, and run the native
-   start/resume and two-session isolation gates against that artifact.
+   start/resume, cross-client refusal, and two-session isolation gates against
+   that artifact.
 5. **HyperNeo transport:** extract shared operation tool registration and add
-   the loopback server, grants, revocation, and OXAP per-attempt desktop
-   scope. Prove parity with the Claude handler and cancellation directly.
-6. **HyperNeo wiring:** pin the released OXAP, write and resolve the one
-   trusted source in the OXAP open plan, and update the verify journey. Run a
-   real OXAP Codex chat through operations discovery and `message.send`, then
-   an approved desktop todo, interruption, cross-session token refusal, and
-   post-close revocation.
+   the loopback server, grants, and revocation. Prove parity with the Claude
+   handler, cross-session bearer refusal, and post-close revocation directly.
+6. **HyperNeo wiring:** pin the released OXAP, write and consume one capability
+   in each external open plan, and update the verify journey. Run a real OXAP
+   Codex chat through operations discovery and `message.send`, verify its
+   ordinary-chat desktop refusal, and repeat the cross-client and revocation
+   proofs through the released path.
 
 No slice adds runtime attach/detach, a general credential broker, remote
-network access, or a second operation catalog.
+network access, a second operation catalog, or OXAP desktop-worker admission.
