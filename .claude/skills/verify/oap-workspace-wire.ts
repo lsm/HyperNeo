@@ -271,15 +271,46 @@ try {
     assert.equal(result.accepted, false);
     assert(result.reason?.includes(wrongPath));
     if (sessions) await verifyInBrowser(app, { cliPath: { sessions, launchError: errors[0] } });
+    const failedDelivery = async (sessionId: string) => {
+      await waitFor(() => app!.db.getUserMessagesByStatus(sessionId, 'failed').total === 1, 'message failed without retry');
+      const [message] = app!.db.getUserMessagesByStatus(sessionId, 'failed').messages;
+      const jobs = app!.jobQueue.listJobs({ queue: 'message_delivery' }).filter(
+        (job) => job.payload.sessionId === sessionId && job.payload.messageUuid === message.uuid
+      );
+      assert.deepEqual(jobs.map(({ status, retryCount }) => ({ status, retryCount })), [
+        { status: 'dead', retryCount: 0 },
+      ]);
+      return message;
+    };
+    const failed = await failedDelivery(firstId);
+    if (sessions) {
+      for (const sessionId of Object.values(sessions)) await failedDelivery(sessionId);
+    }
+    const usageFailureCount = sessions ? 3 : 1;
+    await waitFor(() => errors.length >= usageFailureCount, 'one startup diagnostic per send');
+    assert.deepEqual(errors, Array(usageFailureCount).fill(errors[0]));
+    const missing = await makeSession('workspace-b');
+    unlinkSync(peer);
+    const previousErrors = errors.length;
+    await hub.request('message.send', { sessionId: missing.sessionId, content: 'Send with a removed CLI' });
+    await failedDelivery(missing.sessionId);
+    await waitFor(() => errors.length > previousErrors, 'removed CLI diagnostic');
+    assert.equal(errors.length, previousErrors + 1);
+    assert(errors.at(-1)?.includes(peer));
+    assert(errors.at(-1)?.includes('Settings'));
     await waitFor(() => !first.queryPromise, 'failed query stopped');
     assert.deepEqual(await hub.request('operation.invoke', {
       name: 'oxap.settings.save',
       input: { providerId: 'anthropic-codex', harness: 'oxap-codex', settings: { executable: repaired } },
     }), { accepted: true });
-    await hub.request('message.send', { sessionId: firstId, content: 'Send after repairing the Codex CLI path' });
+    const retry = await hub.request<{ retried: boolean }>('session.messages.retry', {
+      sessionId: firstId, messageDbId: failed.dbId,
+    });
+    assert.equal(retry.retried, true);
     await waitFor(() => app!.db.getSDKMessages(firstId).messages.some((message) => message.type === 'result' && !message.is_error), 'reply in repaired chat');
-    Object.assign(evidence, { port: app.server.port, refusedWrongCli: true, repairedChatReplied: true, browserViewports: sessions ? 2 : 0, pass: true });
-    console.log('Verified 1 rejected save, 1 startup diagnostic and 1 reply in the repaired chat.');
+    assert.equal(errors.length, previousErrors + 1);
+    Object.assign(evidence, { port: app.server.port, refusedWrongCli: true, automaticRetries: 0, manualRetryReplied: true, browserViewports: sessions ? 2 : 0, pass: true });
+    console.log(`Verified ${usageFailureCount + 1} terminal deliveries with zero automatic retries and 1 successful manual retry after repair.`);
   } else if (mode === 'login-device') {
     const { sessionId: secondId } = await makeSession('workspace-b');
     await Promise.all([

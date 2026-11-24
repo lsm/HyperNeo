@@ -53,6 +53,8 @@ try {
           .getByText(target.launchError, { exact: true });
         await error.waitFor({ timeout: 20_000 });
         assert.equal(await page.getByText('Create a new session', { exact: true }).count(), 0);
+        await page.getByRole('button', { name: 'Retry', exact: true }).waitFor();
+        assert.equal(await page.getByTestId('user-delivery-retry-countdown').count(), 0);
         await page.getByRole('button', { name: 'Dismiss notification' }).first()
           .waitFor({ state: 'hidden', timeout: 15_000 });
         await error.scrollIntoViewIfNeeded();
