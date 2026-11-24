@@ -162,7 +162,27 @@ describe('ModelPicker', () => {
       expect(container.querySelector('[role="alert"]')).toBeNull();
     });
 
-    it('hides OXAP providers from SDK chats', async () => {
+    it('offers another model from the current SDK chat provider after its default client changes', async () => {
+      mockListProviders.mockResolvedValue({
+        providers: [
+          { providerId: 'anthropic-codex', configJson: JSON.stringify({ harness: 'oxap-codex' }) },
+        ],
+      });
+      const current = makeModel('codex-a', 'anthropic-codex', 'Codex A');
+      const alternate = makeModel('codex-b', 'anthropic-codex', 'Codex B');
+      const { container, getByRole } = renderPicker({
+        harness: 'sdk',
+        provider: 'anthropic-codex',
+        activeModelInfo: current,
+        availableModels: [current, alternate],
+      });
+      await openDropdown(container);
+      const option = getByRole('button', { name: /^Codex B ·/ });
+      fireEvent.click(option);
+      expect(onSelectModel).toHaveBeenCalledWith(alternate);
+    });
+
+    it('hides other OXAP providers from SDK chats', async () => {
       mockListProviders.mockResolvedValue({
         providers: [
           { providerId: 'anthropic-codex', configJson: JSON.stringify({ harness: 'oxap-codex' }) },

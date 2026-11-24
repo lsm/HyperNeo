@@ -1,9 +1,9 @@
 #!/bin/bash
 set -euo pipefail
-OUT=${1:?usage: oxap-create-thinking.sh evidence-dir [harness]}
+OUT=${1:?usage: oxap-create-thinking.sh evidence-dir [thinking|harness|claude-picker]}
 MODE=${2:-thinking}
 case "$MODE" in
-  thinking|harness) ;;
+  thinking|harness|claude-picker) ;;
   *) exit 2 ;;
 esac
 cd "$(dirname "$0")/../../.."
@@ -25,6 +25,7 @@ for i in {1..30}; do
   if ! kill -0 "$PID" 2>/dev/null; then cat "$OUT/daemon.log"; exit 1; fi
   sleep 1
 done
-grep -q READY "$OUT/daemon.log"
-CODE=$(env -i HOME="$RUN/home" PATH="$PATH" TMPDIR="$RUN/tmp" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" VERIFY_PORT=31397 bun .claude/skills/verify/rpc.ts device.pair.create '{"kind":"human","name":"Synthetic browser"}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["reply"]["code"])')
-NODE_PATH="${PLAYWRIGHT_NODE_PATH:?set PLAYWRIGHT_NODE_PATH}" "${VERIFY_NODE:-node}" ".claude/skills/verify/oxap-create-$MODE.mjs" 31397 "$CODE" "$OUT" "$RUN"
+PORT=$(awk '/^READY [0-9]+$/ {print $2}' "$OUT/daemon.log")
+test -n "$PORT"
+CODE=$(env -i HOME="$RUN/home" PATH="$PATH" TMPDIR="$RUN/tmp" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" VERIFY_PORT="$PORT" bun .claude/skills/verify/rpc.ts device.pair.create '{"kind":"human","name":"Synthetic browser"}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["reply"]["code"])')
+NODE_PATH="${PLAYWRIGHT_NODE_PATH:?set PLAYWRIGHT_NODE_PATH}" "${VERIFY_NODE:-node}" ".claude/skills/verify/oxap-create-$MODE.mjs" "$PORT" "$CODE" "$OUT" "$RUN"
