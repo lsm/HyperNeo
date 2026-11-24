@@ -40,6 +40,12 @@ Retain the OXAP and SDK picker and tools screenshots in both themes. The picker
 checks that OXAP omits SDK models, while SDK shows thinking and the
 Tools/MCP panel. Settings show path, version and hash after the fixture install.
 
+Run the same wrapper with `<evidence-dir> claude-picker` to check an existing
+Claude Code chat on the OpenAI provider while its default Client is OXAP Codex.
+The browser captures the new-chat and existing-chat menus, selects the second
+OpenAI model in the existing chat, and checks that the choice survives reload.
+This uses a synthetic OpenAI login and catalog and does not send a model turn.
+
 For the runtime proof, run
 `bash .claude/skills/verify/proof-run.sh <new-absolute-evidence-dir> .claude/skills/verify/oxap-codex-thinking.ts <absolute-pinned-oxap> <absolute-codex>`.
 This starts an isolated daemon with the real pinned hub and Codex app-server.
