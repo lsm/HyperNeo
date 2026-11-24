@@ -4,11 +4,11 @@ Build the web UI, then run `bash .claude/skills/verify/oxap-create-thinking.sh <
 
 A failed provider lookup shows an error and Retry restores the form. Open the
 new-chat settings after the picker reports OXAP Codex as the client, then open
-Model. The synthetic catalog publishes `low`, `high` and `ultra`. The picker offers
-buttons named `low` and `high` because the pinned OXAP protocol rejects `ultra`. Persisted
-`off` is ignored for this model and Sandbox stays hidden. Select High and
-create a chat. In the seeded idle chat, change High to Low and reload. The
-touch viewport still shows Low. Retain `oxap-thinking-desktop.png` and
+Model. The synthetic catalog publishes `low`, `high` and `ultra`. The slider has
+stops for `low` and `high`, shows the selected name, and explains that OXAP
+cannot send `ultra`. Persisted `off` is ignored for this model and Sandbox stays
+hidden. Select `high` and create a chat. In the seeded idle chat, change `high`
+to `low` and reload. The touch viewport still shows `low`. Retain `oxap-thinking-desktop.png` and
 `oxap-thinking-phone.png`. This browser fixture runs without a model turn.
 
 The same journey checks that the OXAP chat explains its text-only input, disables
@@ -49,5 +49,6 @@ again on the same native thread after restarting the hub. It checks both
 models' `ultra` refusals and verifies that OXAP returns `schema_invalid`
 on both open and live update. To also capture both models
 on desktop and phone, build web and set `VERIFY_BROWSER` and `NODE_PATH` with
-Node 24 on PATH. The browser picks `max` before the live turn. Retain the four
+Node 24 on PATH. The browser verifies five slider stops and selects `max` before
+the live turn. Retain the four
 screenshots, `thinking.json`, and the wrapper exit status.

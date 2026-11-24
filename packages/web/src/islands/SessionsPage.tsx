@@ -546,7 +546,7 @@ export function SessionsPage() {
                   loading={modelLoading}
                   thinkingLevel={thinkingLevel}
                   thinkingOptions={thinkingOptions}
-                  namedThinking={harness === 'oxap-codex'}
+                  showCodexUltraNote={harness === 'oxap-codex'}
                   onSelectThinking={setSelectedThinking}
                   onReload={() => void reloadModels()}
                   onSelectModel={(model) => {

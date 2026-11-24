@@ -25,7 +25,7 @@ interface ModelPickerProps {
   loading: boolean;
   thinkingLevel: ThinkingLevel;
   thinkingOptions?: typeof THINKING_OPTIONS;
-  namedThinking?: boolean;
+  showCodexUltraNote?: boolean;
   onSelectModel: (model: ModelInfo) => void;
   onSelectThinking: (level: ThinkingLevel) => void;
   onReload?: () => void;
@@ -62,7 +62,7 @@ export function ModelPicker({
   loading,
   thinkingLevel,
   thinkingOptions = THINKING_OPTIONS,
-  namedThinking = harness === 'oxap-codex',
+  showCodexUltraNote = harness === 'oxap-codex',
   onSelectModel,
   onSelectThinking,
   onReload,
@@ -233,7 +233,11 @@ export function ModelPicker({
           level={level}
           showThinking={showThinking}
           thinkingOptions={thinkingOptions}
-          namedThinking={namedThinking}
+          thinkingNote={
+            showCodexUltraNote && activeModelInfo?.codexReasoning?.levels.includes('ultra')
+              ? 'OXAP cannot send ultra.'
+              : undefined
+          }
           busy={busy}
           align={align}
           loading={loading}
