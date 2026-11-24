@@ -628,7 +628,9 @@ describe('ProvidersSettings', () => {
 
   it('saves the selected harness through the OXAP operation', async () => {
     const provider = createMockProvider('1', 'anthropic-codex', { displayName: 'Codex' });
-    mockListProviders.mockResolvedValue({ providers: [provider] });
+    mockListProviders.mockResolvedValue({
+      providers: [{ ...provider, detectedHarnessExecutable: '/detected/codex' }],
+    });
     mockRequest.mockImplementation(async (method: string) =>
       method === 'operation.invoke'
         ? { accepted: true }
@@ -650,9 +652,10 @@ describe('ProvidersSettings', () => {
       target: { value: 'oxap-codex' },
     });
     expect(screen.getByText('Hub not installed')).toBeTruthy();
-    expect(screen.getByPlaceholderText('Absolute path to OXAP Codex executable')).toBeTruthy();
-    expect(screen.getByText('An absolute path is required.')).toBeTruthy();
-    fireEvent.input(screen.getByLabelText('Harness executable'), {
+    const field = screen.getByLabelText('Codex CLI path') as HTMLInputElement;
+    expect(field.placeholder).toBe('Absolute path to codex');
+    expect(field.value).toBe('/detected/codex');
+    fireEvent.input(field, {
       target: { value: '/synthetic/codex' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save harness' }));
@@ -687,7 +690,7 @@ describe('ProvidersSettings', () => {
     expect((screen.getByLabelText('Harness', { exact: true }) as HTMLSelectElement).value).toBe(
       'sdk'
     );
-    const executable = screen.getByLabelText('Harness executable') as HTMLInputElement;
+    const executable = screen.getByLabelText('DeepSeek harness path') as HTMLInputElement;
     expect(executable.value).toBe('/synthetic/dsh');
     fireEvent.input(executable, { target: { value: '/synthetic/dsh-updated' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save harness' }));

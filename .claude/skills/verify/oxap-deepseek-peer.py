@@ -9,6 +9,10 @@ def emit(**frame):
     print(json.dumps({"jsonrpc": "2.0", **frame}), flush=True)
 
 
+if sys.argv[1:] == ['--help']:
+    print('Usage: dsh [--profile] <name> [options]')
+    sys.exit(0)
+
 assert sys.argv[1:] == ['--profile', 'sdk']
 assert os.environ.get('DEEPSEEK_API_KEY') == 'synthetic-deepseek-proof'
 

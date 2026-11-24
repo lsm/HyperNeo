@@ -18,7 +18,7 @@ try {
   const openProvider = async () => {
     await page.getByText('Synthetic OXAP Codex', { exact: true }).first().click();
     assert.equal(await page.getByLabel('Harness', { exact: true }).inputValue(), 'sdk');
-    return page.getByLabel('Harness executable');
+    return page.getByLabel('Codex CLI path');
   };
   await page.goto(`${base}/settings?tab=providers`);
   const field = await openProvider();
