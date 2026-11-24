@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { QueryLike } from '../agent/query-like.ts';
 import type {
   Provider,
@@ -10,7 +13,6 @@ import type {
   ListRemoteModelsOptions,
   ProviderUsageResult,
   TokenRefreshResult,
-  UsageWindow,
 } from '@hyperneo/shared/provider';
 import type { SDKControlGetUsageResponse } from '@hyperneo/shared/sdk';
 import type { ModelInfo } from '@hyperneo/shared';
@@ -31,11 +33,7 @@ import {
 } from './anthropic-subscription-oauth.js';
 import { Logger } from '../logger.js';
 import { PROVIDER_MODEL_LOAD_TIMEOUT_MS } from './discovery-refresh-pipeline.js';
-import {
-  readStoredRateLimitEvents,
-  usageWindowsFromControl,
-  usageWindowsFromEvents,
-} from './anthropic-usage-source.ts';
+import { usageWindowsFromControl } from './anthropic-usage-source.ts';
 
 const logger = new Logger('anthropic-provider');
 
@@ -84,6 +82,7 @@ export class AnthropicProvider implements Provider {
   private modelCache: ModelInfo[] | null = null;
   private readonly sdkModelResolutions = new Map<string, string>();
   private credentials: ProviderCredentials | null = null;
+  private requiresOwnLogin = false;
   private credentialsVersion = 0;
   private credentialSignature: string | undefined;
   private readonly credentialListeners = new Set<
@@ -104,6 +103,7 @@ export class AnthropicProvider implements Provider {
   ) {}
 
   setCredentials(credentials: ProviderCredentials): void {
+    if (credentials.type === 'oauth') this.requireOwnLogin();
     const signature = JSON.stringify(credentials);
     if (signature !== this.credentialSignature) {
       this.credentialsVersion++;
@@ -111,6 +111,10 @@ export class AnthropicProvider implements Provider {
     }
     this.credentialSignature = signature;
     this.credentials = credentials;
+  }
+
+  requireOwnLogin(): void {
+    this.requiresOwnLogin = true;
   }
 
   getCredentials(): ProviderCredentials | null {
@@ -224,7 +228,10 @@ export class AnthropicProvider implements Provider {
         redirectUri: CLAUDE_SUBSCRIPTION_OAUTH_CONFIG.manualRedirectUrl,
         fetchImpl: this.fetchImpl,
       });
-      this.applyClaudeSubscriptionTokens(tokens);
+      if (this.activeOAuthFlow !== flow) return { ok: false, error: 'Login was cancelled.' };
+      const credentials = this.toClaudeSubscriptionCredentials(tokens, null);
+      this.setCredentials(credentials);
+      this.notifyCredentialsChanged(credentials);
       flow.finish?.();
       return { ok: true };
     } catch (error) {
@@ -232,12 +239,6 @@ export class AnthropicProvider implements Provider {
       flow.finish?.(error instanceof Error ? error : new Error(message));
       return { ok: false, error: message };
     }
-  }
-
-  private applyClaudeSubscriptionTokens(tokens: ClaudeSubscriptionTokenResponse): void {
-    const credentials = this.toClaudeSubscriptionCredentials(tokens, this.credentials);
-    this.setCredentials(credentials);
-    this.notifyCredentialsChanged(credentials);
   }
 
   private toClaudeSubscriptionCredentials(
@@ -271,7 +272,7 @@ export class AnthropicProvider implements Provider {
       const outcome = result.definitive ? 'definitive' : 'transient';
       return result.oauthError ? { outcome, oauthError: result.oauthError } : outcome;
     }
-    this.applyClaudeSubscriptionTokens(result.token);
+    this.setCredentials(this.toClaudeSubscriptionCredentials(result.token, credentials));
     return 'refreshed';
   }
 
@@ -302,8 +303,9 @@ export class AnthropicProvider implements Provider {
   }
 
   getApiKey(): string | undefined {
+    const stored = this.storedCredentialEnvVar()?.value;
+    if (stored || this.requiresOwnLogin) return stored;
     return (
-      this.storedCredentialEnvVar()?.value ||
       this.env.ANTHROPIC_API_KEY ||
       this.env.CLAUDE_CODE_OAUTH_TOKEN ||
       this.env.ANTHROPIC_AUTH_TOKEN
@@ -321,6 +323,9 @@ export class AnthropicProvider implements Provider {
       return applyRecordedFailureToAuthStatus(this.id, {
         isAuthenticated: !!apiKey,
         method: credentials?.type ?? 'api_key',
+        credentialSource:
+          credentials || this.requiresOwnLogin ? 'hyperneo' : apiKey ? 'inherited' : undefined,
+        credentialVersion: this.credentialsVersion,
         expiresAt,
         needsRefresh: needsRefresh || undefined,
         user: account ? { email: account } : undefined,
@@ -366,21 +371,15 @@ export class AnthropicProvider implements Provider {
   }
 
   async getUsage(): Promise<ProviderUsageResult> {
-    if (this.storedCredentialEnvVar()?.key !== 'CLAUDE_CODE_OAUTH_TOKEN')
-      return { supported: false, provider: this.id, reason: 'not_supported' };
-    const windows = await this.readUsageWindows();
-    return windows.length
-      ? { supported: true, provider: this.id, windows }
-      : { supported: false, provider: this.id, reason: 'not_supported' };
-  }
-
-  private async readUsageWindows(): Promise<UsageWindow[]> {
-    try {
-      const response = await this.readControlUsage();
+    const version = this.credentialsVersion;
+    if (this.storedCredentialEnvVar()?.key === 'CLAUDE_CODE_OAUTH_TOKEN') {
+      const response = await this.readControlUsage().catch(() => null);
       const windows = usageWindowsFromControl(response);
-      if (windows) return windows;
-    } catch {}
-    return usageWindowsFromEvents(await readStoredRateLimitEvents());
+      if (windows && version === this.credentialsVersion) {
+        return { supported: true, provider: this.id, windows };
+      }
+    }
+    return { supported: false, provider: this.id, reason: 'not_supported' };
   }
 
   private async readControlUsage(): Promise<SDKControlGetUsageResponse> {
@@ -389,27 +388,39 @@ export class AnthropicProvider implements Provider {
     for (const [key, value] of Object.entries(this.buildSdkConfig().envVars)) {
       env[key] = value === '' ? undefined : value;
     }
-    const sdkQuery = query({
-      prompt: '',
-      options: {
-        model: 'default',
-        env,
-        cwd: process.cwd(),
-        maxTurns: 0,
-        pathToClaudeCodeExecutable: await awaitSDKCliPath(),
-        executable: isRunningUnderBun() ? 'bun' : undefined,
-        settings: withSdkTranscriptRetention(),
-      },
-    });
+    const cli = await awaitSDKCliPath();
+    const profile = await mkdtemp(join(tmpdir(), 'hyperneo-usage-'));
     try {
-      return (await Promise.race([
-        sdkQuery.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('SDK usage load timeout')), USAGE_QUERY_TIMEOUT_MS)
-        ),
-      ])) as SDKControlGetUsageResponse;
+      const sdkQuery = query({
+        prompt: '',
+        options: {
+          model: 'default',
+          env: { ...env, CLAUDE_CONFIG_DIR: profile },
+          cwd: profile,
+          maxTurns: 0,
+          settingSources: [],
+          pathToClaudeCodeExecutable: cli,
+          executable: isRunningUnderBun() ? 'bun' : undefined,
+          settings: withSdkTranscriptRetention(),
+        },
+      });
+      try {
+        return (await Promise.race([
+          sdkQuery.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({
+            skipBehaviors: true,
+          }),
+          new Promise<never>((_, reject) => {
+            setTimeout(
+              () => reject(new Error('SDK usage load timeout')),
+              USAGE_QUERY_TIMEOUT_MS
+            ).unref();
+          }),
+        ])) as SDKControlGetUsageResponse;
+      } finally {
+        sdkQuery.close();
+      }
     } finally {
-      sdkQuery.interrupt().catch(() => {});
+      await rm(profile, { recursive: true, force: true });
     }
   }
 
@@ -536,8 +547,11 @@ export class AnthropicProvider implements Provider {
   buildSdkConfig(): ProviderSdkConfig {
     const envVars: Record<string, string> = {};
     const stored = this.storedCredentialEnvVar();
+    if (!stored && this.requiresOwnLogin)
+      throw new Error('Sign in to Anthropic in HyperNeo Settings.');
     if (stored) {
       envVars[stored.key] = stored.value;
+      if (stored.key === 'CLAUDE_CODE_OAUTH_TOKEN') envVars.ANTHROPIC_AUTH_TOKEN = '';
       const ambient = STORED_CREDENTIAL_ENV_KEYS.find((key) => key !== stored.key);
       if (ambient && this.env[ambient]) {
         envVars[ambient] = '';

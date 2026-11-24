@@ -45,6 +45,8 @@ export type ProviderFailureErrorKind = 'transient' | 'credential';
 export interface ProviderAuthStatusInfo {
   isAuthenticated: boolean;
   method?: 'api_key' | 'oauth';
+  credentialSource?: 'hyperneo' | 'inherited';
+  credentialVersion?: number;
   expiresAt?: number;
   needsRefresh?: boolean;
   user?: {

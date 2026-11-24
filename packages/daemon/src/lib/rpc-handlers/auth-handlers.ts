@@ -160,6 +160,7 @@ export function setupAuthHandlers(
               displayName: provider.displayName,
               isAuthenticated: status.isAuthenticated,
               method: status.method,
+              credentialSource: status.credentialSource,
               expiresAt: status.expiresAt,
               needsRefresh: status.needsRefresh,
               user: status.user,
@@ -244,13 +245,15 @@ export function setupAuthHandlers(
           if (storeError) throw storeError;
           if (stripError) throw stripError;
         };
-        unsubscribe = provider.onCredentialsChanged?.((credentials) =>
-          persistCredentials(credentials).catch((error) => {
-            log.error(`Failed to persist credentials for ${providerId}:`, error);
-          })
-        );
+        if (!provider.submitOAuthCallback) {
+          unsubscribe = provider.onCredentialsChanged?.((credentials) =>
+            persistCredentials(credentials).catch((error) => {
+              log.error(`Failed to persist credentials for ${providerId}:`, error);
+            })
+          );
+        }
         const flowData = await provider.startOAuthFlow();
-        if (!provider.onCredentialsChanged) {
+        if (!provider.onCredentialsChanged && !provider.submitOAuthCallback) {
           const credentials = await provider.getCredentials?.();
           if (credentials) {
             await persistCredentials(credentials);
@@ -298,7 +301,18 @@ export function setupAuthHandlers(
 
       try {
         const result = await provider.submitOAuthCallback(callbackInput);
-        return result.ok ? { success: true } : { success: false, error: result.error };
+        if (!result.ok) return { success: false, error: result.error };
+        const credentials = await provider.getCredentials?.();
+        if (credentials?.type === 'oauth') {
+          await credentialManager?.storeOAuthTokens(providerId, credentials);
+          bumpProviderCatalogEpoch(providerId);
+          await lockedClearCacheAndNotifyProvidersChanged(
+            internalEventBus,
+            providerId,
+            providerRepo
+          );
+        }
+        return { success: true };
       } catch (error) {
         log.error(`OAuth callback relay failed for ${providerId}:`, error);
         return {

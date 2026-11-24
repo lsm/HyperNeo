@@ -106,6 +106,7 @@ async function checkSettings() {
       const email = page.getByText('Signed in as replacement@example.test', { exact: true });
       await email.waitFor({ state: 'visible' });
       assert.equal(await email.count(), 1);
+      assert.equal(await page.getByText('Credential source: HyperNeo', { exact: true }).count(), 1);
       assert.equal(await page.getByText('original@example.test', { exact: false }).count(), 0);
       mkdirSync(join(run, 'evidence'), { recursive: true });
       await page.screenshot({ path: join(run, 'evidence/settings.png'), animations: 'disabled' });
@@ -121,7 +122,11 @@ async function checkSettings() {
 try {
   assert.notEqual(app.server.port, 8399);
   await app.jobProcessor.stop();
-  const provider = new AnthropicProvider({}, 'account-switch-verify', fetchToken);
+  const provider = new AnthropicProvider(
+    { CLAUDE_CODE_OAUTH_TOKEN: 'fixture-inherited-login' },
+    'account-switch-verify',
+    fetchToken
+  );
   const original = {
     type: 'oauth' as const,
     accessToken: 'fixture-access-original',
@@ -143,15 +148,17 @@ try {
   await transport.initialize();
 
   const payload = { providerId: 'anthropic' };
-  const account = async () =>
+  const readAuth = async () =>
     (await hub.request<ListProviderAuthStatusResponse>('auth.providers', {})).providers.find(
       ({ id }) => id === 'anthropic'
-    )?.user?.email;
+    );
+  const account = async () => (await readAuth())?.user?.email;
 
   const refreshing = hub.request('auth.refresh', payload);
   await refreshStarted.promise;
   assert((await hub.request<ProviderLogoutResponse>('auth.logout', payload)).success);
   assert.equal(await account(), undefined);
+  assert.equal((await readAuth())?.isAuthenticated, false);
   const login = await hub.request<ProviderAuthResponse>('auth.login', payload);
   assert(login.success && login.authUrl);
   const state = new URL(login.authUrl).searchParams.get('state');
@@ -163,6 +170,11 @@ try {
     })).success
   );
   assert.equal(await account(), 'replacement@example.test');
+  assert.equal((await readAuth())?.credentialSource, 'hyperneo');
+  assert(
+    provider.buildSdkConfig().envVars.CLAUDE_CODE_OAUTH_TOKEN === 'fixture-access-replacement',
+    'SDK launches must use the replacement login'
+  );
   refreshResponse.resolve(tokenResponse('original'));
   await refreshing;
   assert(

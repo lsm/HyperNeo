@@ -1075,6 +1075,12 @@ export function ProvidersSettings() {
                               Signed in as {auth.user.email}
                             </div>
                           )}
+                        {auth?.credentialSource && (
+                          <div class="text-xs text-fg-muted mt-0.5">
+                            Credential source:{' '}
+                            {auth.credentialSource === 'hyperneo' ? 'HyperNeo' : 'Inherited'}
+                          </div>
+                        )}
                       </div>
 
                       <div class="flex items-center gap-2 flex-shrink-0">
