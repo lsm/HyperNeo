@@ -58,6 +58,7 @@ import { sameNeoTodoCheck } from './todo-completion.ts';
 import { planNudge } from './nudge.ts';
 import { isNeoTodoWorkerWait, planNeoTodoWaits } from './todo-worker-wait.ts';
 import { planNeoTurnReportSweep } from './turn-report-sweep.ts';
+import { compactBeforeReuse } from '../drivers/worker-compaction.ts';
 import { releaseNeoTodoWorkers, type WorkerCompact } from './todo-release.ts';
 import { neoTurnOrigin } from './turn-origin.ts';
 import { deliverNeoTurnReport } from './turn-report.ts';
@@ -450,6 +451,19 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   };
 
   const dispatch = async ({ todo, ask, target, moved, replaced }: Startable) => {
+    if (target.verb === 'send') {
+      await compactBeforeReuse(
+        {
+          ref: target.ref,
+          sameAsk: await sessions.read('reusesAskWorker', todo.id),
+          compact: deps.workerCompact?.(target.ref.adapter)?.compact,
+        },
+        caller(ask),
+        (text, error) => log.warn(text, { todoId: todo.id }, error)
+      );
+      const current = store.getTodo(todo.id);
+      if (current && current.state !== 'doing') return { ok: true as const, todo: current };
+    }
     const status = target.verb === 'send' ? await refreshIdentity(todo.id, target.ref, ask) : null;
     const prepare = deps.packs().find((pack) => pack.id === todo.check?.pack);
     const exclusions =

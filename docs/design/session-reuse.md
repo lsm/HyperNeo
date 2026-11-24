@@ -32,12 +32,17 @@ role's session on this todo, waiting if busy; else (B) a free worker allowed by 
 
 | Value | Step B | Card label |
 |---|---|---|
-| `long_lived` (default) | any free daemon worker in the folder, same ask first (today) | Long-lived sessions |
+| `long_lived` (default) | a free worker of this ask; start new if it is busy | Reuse when free |
 | `per_ask` | only a worker of this ask; wait if it is busy | One session per matter |
 | `per_todo` | none | One session per step |
 
 The first time it matters, Neo asks one card (`pack.preferences.ask`, not holding the
 work); `long_lived` applies until answered. There is no settings page.
+
+A worker reused for another todo of its ask is compacted first, inside the same dispatch, so
+the next todo never races the compaction. A failed compaction does not stop the dispatch. A
+later round of the same todo, and a session the human named, are not compacted. Nothing is
+compacted when a todo finishes: many finished workers are never reused.
 
 **Start record.** When `work.start` starts a session, the daemon records on
 `work_started_sessions`: who started it, for which ask, todo and role, the machine and

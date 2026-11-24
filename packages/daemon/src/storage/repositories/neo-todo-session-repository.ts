@@ -14,12 +14,10 @@ import {
   markWorkUnusable,
   readStartedWork,
   readTrustedWorkers,
-  readWorkCompaction,
+  readSameAskWorkers,
   recordWorkRelease,
   claimTodoWorker,
   unclaimTodoWorker,
-  type WorkCompactionFailure,
-  workStartedSessionWrites,
 } from './work-started-sessions-worker.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -111,9 +109,9 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     since: number
   ): Promise<ReturnType<NeoTodoSessionRepository['finishedWorkers']>>;
   read(
-    method: 'workerCompactionFacts',
-    ref: WorkRef
-  ): Promise<ReturnType<NeoTodoSessionRepository['workerCompactionFacts']>>;
+    method: 'reusesAskWorker',
+    todoId: string
+  ): Promise<ReturnType<NeoTodoSessionRepository['reusesAskWorker']>>;
   read(
     method: 'reuseFacts',
     todoId: string
@@ -876,24 +874,17 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     return releaseReuseFacts(this.db, todoId);
   }
 
-  workerCompactionFacts(ref: WorkRef) {
-    const own = readStartedWork(this.db, null, undefined, ref)[0];
-    if (
-      !own ||
-      own.releasedAt !== null ||
-      this.liveTodo(own.claimedBy) ||
-      this.doingTodoOn(ref, null, LIVE_TODO_STATES)
-    )
-      return undefined;
-    return readWorkCompaction(this.db, ref);
-  }
-
-  recordWorkerCompacted(ref: WorkRef, at: number): Promise<void> {
-    return gatewayFor(this.db).call(workStartedSessionWrites, 'recordCompacted', ref, at);
-  }
-
-  recordCompactionFailure(todoId: string, worker: WorkRef, failure: WorkCompactionFailure): void {
-    this.writeCoreFact(todoId, 'compaction_failure', { worker, ...failure });
+  reusesAskWorker(todoId: string): boolean {
+    const todo = new NeoAskTodoRepository(this.db).getTodo(todoId);
+    const target = this.get(todoId);
+    if (!todo || todo.named?.session || target?.verb !== 'send' || this.readRef(todoId))
+      return false;
+    const { ref } = target;
+    return (
+      !ref.daemon &&
+      !this.doingTodoOn(ref, null, ['doing', 'blocked'], todoId) &&
+      readSameAskWorkers(this.db, todo.askId, todoId, ref.adapter).some(({ id }) => id === ref.id)
+    );
   }
 
   recordReleaseKept(todoId: string, kept: unknown): void {
@@ -939,7 +930,7 @@ export const neoTodoSessionReads = defineRepositoryOp(
     'wasNamedByHuman',
     'finishedWorkers',
     'reuseFacts',
-    'workerCompactionFacts',
+    'reusesAskWorker',
   ]
 );
 export const neoTodoSessionWrites = defineRepositoryOp(
@@ -965,7 +956,6 @@ export const neoTodoSessionWrites = defineRepositoryOp(
     'unclaimWorker',
     'recordReleased',
     'recordReleaseKept',
-    'recordCompactionFailure',
     'recordReleasePending',
   ]
 );

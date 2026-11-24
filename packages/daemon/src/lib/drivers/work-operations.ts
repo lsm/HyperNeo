@@ -1,5 +1,6 @@
 import { neoToolDescription } from '@hyperneo/prompts';
 import type { WorkerInput } from '../../storage/repositories/worker-input-worker.ts';
+import { compactBeforeReuse } from './worker-compaction.ts';
 import { withWorkerProvenance } from './worker-provenance.ts';
 import type { DriverHealth } from '@hyperneo/shared/types/settings';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
@@ -118,6 +119,7 @@ export interface WorkVerbDeps {
     perRoundFields: readonly string[];
   }>;
   markUnusable?: (ref: WorkRef, reason: string) => void | Promise<void>;
+  warn?: (message: string, error: unknown) => void;
   claimWorker?: (
     ref: WorkRef,
     todoId?: string,
@@ -811,6 +813,7 @@ export async function reuseIdleWorker(
     !(policy?.mode === 'per_ask' && policy.sameAsk.length)
   )
     return null;
+  const sameAsk = (id: string) => !!policy?.sameAsk.includes(id);
   const configured =
     input.model || input.effort ? await adapter.resolveStartConfiguration!(input) : null;
   if ((input.model || input.effort) && !configured) return null;
@@ -831,9 +834,7 @@ export async function reuseIdleWorker(
       (prior
         ? work.ref.id === prior.id
         : (!!free?.has(work.ref.id) || canShare(work.ref.id)) &&
-          (canShare(work.ref.id) ||
-            policy?.mode !== 'per_ask' ||
-            policy.sameAsk.includes(work.ref.id)) &&
+          (canShare(work.ref.id) || !policy || sameAsk(work.ref.id)) &&
           !context?.roles.some(
             (row) =>
               row.adapter === work.ref.adapter &&
@@ -964,6 +965,15 @@ export async function reuseIdleWorker(
       }
       continue;
     }
+    await compactBeforeReuse(
+      {
+        ref: work.ref,
+        sameAsk: sameAsk(work.ref.id) && prior?.id !== work.ref.id && !canShare(work.ref.id),
+        compact: adapter.compact,
+      },
+      caller,
+      deps.warn ?? (() => {})
+    );
     const sent = await adapter.send!(work.ref, message, { from, caller }).catch(
       (error: unknown) => {
         reuseHolds.delete(key);
