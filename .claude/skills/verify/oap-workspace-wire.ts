@@ -396,6 +396,8 @@ try {
     }
     await waitFor(() => replyText(chatRows.values()).length === replies().length, 'replies visible in the chat reader');
     assert.deepEqual(replyText(chatRows.values()).sort(), replies().sort());
+    if (mode === 'model-switch') assert.deepEqual(await first.cancelPendingModelSwitch(), { cancelled: false });
+    await waitFor(() => first.getProcessingState().status === 'idle', 'chat turn settled');
     Object.assign(evidence, { replies: replies().length, pass: true });
   } else if (mode === 'model-id') {
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic model selection' });
