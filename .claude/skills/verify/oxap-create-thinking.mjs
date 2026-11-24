@@ -20,10 +20,12 @@ try {
   const storageState = await initial.context().storageState();
   await initial.close();
   for (const theme of ['light', 'dark']) {
+    const phone = theme === 'dark';
     const context = await browser.newContext({
       storageState,
       colorScheme: theme,
-      viewport: { width: 1280, height: 800 },
+      viewport: phone ? { width: 390, height: 844 } : { width: 1280, height: 800 },
+      hasTouch: phone,
     });
     const page = await context.newPage();
     await page.goto(`${base}/sessions`);
@@ -54,7 +56,11 @@ try {
       .click();
     await page.getByRole('button', { name: 'Model, Synthetic Codex' }).click();
     await page.getByRole('group', { name: 'Models', exact: true }).getByText('Synthetic Codex').waitFor();
-    assert.equal(await page.getByRole('slider', { name: 'Thinking' }).count(), 0);
+    const newThinking = page.getByRole('slider', { name: 'Thinking' });
+    await newThinking.waitFor({ timeout: 5000 });
+    assert.equal(await newThinking.getAttribute('max'), '1');
+    await newThinking.press('End');
+    assert.equal(await newThinking.getAttribute('aria-valuetext'), 'High');
     assert.equal(await page.getByRole('button', { name: 'Sandbox' }).count(), 0);
     await page.screenshot({ path: `${output}/oxap-create-${theme}.png`, animations: 'disabled' });
     if (theme === 'light') {
@@ -62,11 +68,7 @@ try {
       await page.getByRole('button', { name: 'Start chat' }).click();
       await page.waitForURL(/\/session\//, { timeout: 15000 });
       assert.equal(await page.getByText('OXAP Codex does not take a thinking level.').count(), 0);
-      await page.getByRole('button', { name: 'Choose model and thinking' }).click();
-      assert.equal(await page.getByRole('slider', { name: 'Thinking' }).count(), 0);
       sessionPath = new URL(page.url()).pathname;
-      console.log('OXAP session model picker hides thinking');
-      console.log('OXAP create accepted with persisted thinking=off and sandbox=true; controls absent');
     }
     if (theme === 'dark') {
       await page.goto(`${base}${sessionPath}`);
@@ -85,9 +87,19 @@ try {
     }
     await page.getByRole('button', { name: 'Choose model and thinking' }).click();
     const oxapMenu = page.getByRole('group', { name: 'Model and thinking settings' });
-    assert.equal(await oxapMenu.getByRole('slider', { name: 'Thinking' }).count(), 0);
+    const thinking = oxapMenu.getByRole('slider', { name: 'Thinking' });
+    await thinking.waitFor();
+    assert.equal(await thinking.getAttribute('max'), '1');
+    assert.equal(await thinking.getAttribute('aria-valuetext'), phone ? 'Low' : 'High');
     assert.equal(await oxapMenu.getByText('Synthetic SDK Model').count(), 0);
-    await oxapMenu.screenshot({ path: `${output}/oxap-picker-${theme}.png`, animations: 'disabled' });
+    await page.screenshot({ path: `${output}/oxap-thinking-${phone ? 'phone' : 'desktop'}.png`, animations: 'disabled' });
+    if (!phone) {
+      await thinking.press('Home');
+      await page.getByRole('img', { name: 'Thinking: Low' }).waitFor();
+      await page.reload();
+      await page.getByRole('img', { name: 'Thinking: Low' }).waitFor();
+      await page.getByRole('button', { name: 'Choose model and thinking' }).click();
+    }
     await page.getByRole('button', { name: 'Close model settings' }).click();
     await page.getByTitle('More options').click();
     assert.equal(await page.getByRole('button', { name: 'Tools', exact: true }).count(), 0);
