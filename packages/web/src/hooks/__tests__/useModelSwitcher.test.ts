@@ -557,11 +557,15 @@ describe('useModelSwitcher', () => {
         await result.current.switchModel(glmModel);
       });
 
-      expect(mockHub.request).toHaveBeenCalledWith('session.model.switch', {
-        sessionId: 'session-1',
-        model: 'glm-5.3-flash[1m]',
-        provider: 'glm',
-      });
+      expect(mockHub.request).toHaveBeenCalledWith(
+        'session.model.switch',
+        {
+          sessionId: 'session-1',
+          model: 'glm-5.3-flash[1m]',
+          provider: 'glm',
+        },
+        { timeout: 30_000 }
+      );
       expect(result.current.currentModel).toBe('glm-5.3-flash[1m]');
       expect(result.current.currentModelInfo?.provider).toBe('glm');
       expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringContaining('Switched to'));
@@ -1104,11 +1108,15 @@ describe('useModelSwitcher', () => {
       expect(result.current.switching).toBe(false);
       switchingStates.push(result.current.switching);
 
-      expect(mockHub.request).toHaveBeenCalledWith('session.model.switch', {
-        sessionId: 'session-1',
-        model: 'claude-opus-4-5-20251101',
-        provider: 'anthropic',
-      });
+      expect(mockHub.request).toHaveBeenCalledWith(
+        'session.model.switch',
+        {
+          sessionId: 'session-1',
+          model: 'claude-opus-4-5-20251101',
+          provider: 'anthropic',
+        },
+        { timeout: 30_000 }
+      );
     });
 
     it('should update currentModelInfo after successful switch', async () => {
@@ -1223,7 +1231,9 @@ describe('useModelSwitcher', () => {
       });
 
       expect(mockToastError).toHaveBeenCalledWith('Model provider information is missing');
-      expect(mockHub.request).not.toHaveBeenCalledWith('session.model.switch', expect.anything());
+      expect(mockHub.request.mock.calls.map(([method]) => method)).not.toContain(
+        'session.model.switch'
+      );
     });
   });
 
