@@ -66,7 +66,7 @@ Use one lightweight `System map` workflow, registered with the existing CI gate 
 
 On a PR event, checkout the event's merge commit, fetch the event's exact `base.sha`, and save `git diff --name-only --no-renames -z <base.sha> <merge.sha>`. Assert that the merge commit's first parent is that same SHA; never read the moving `dev` tip. Then fetch `refs/pull/<n>/head`, check out the exact PR head, install locked dependencies, and run `scripts/system-map-impact.ts`. The wrapper loads the base tree with `git show`, the head tree from the checkout, and reuses `isSource`, `impact`, and `formatImpact` for both maps. It also runs full `map` on the head.
 
-The required set is the sorted union of head `Impact.owned[].peers[]`, head `known: false` paths, and base peers for every owned `(kind, name, role)` removed from the corresponding head file. The last arm covers deleted files and definitions removed from files that remain. Importers and nearby table/event lists stay informational. Analyzer or diff failure fails the step; neither can become an empty pass.
+The required set is the sorted union of head `Impact.owned[].peers[]`, head `known: false` paths, and base peers for every owned `(kind, name, role)` removed from the corresponding head file. The saved diff is filtered through `isSource` before either impact call, so the `known: false` arm is solely deleted mapped sources; tests, scripts, native files, and documents never enter the plan. The last arm covers deleted files and definitions removed from files that remain. Importers and nearby table/event lists stay informational. Analyzer or diff failure fails the step; neither can become an empty pass.
 
 ### PR-body contract
 
