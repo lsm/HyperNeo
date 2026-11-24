@@ -6,6 +6,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { clearModelsCache, refreshModels } from '../../../packages/daemon/src/lib/model-service.ts';
 import { releaseName } from '../../../packages/daemon/src/lib/oxap/oxap-install.ts';
+import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { MessageHub, WebSocketClientTransport, type Session } from '../../../packages/shared/src/mod.ts';
 import { answerCodexProbeLocally, oxapCodexProvider } from './oxap-codex-provider.ts';
@@ -50,7 +51,7 @@ const model = Bun.serve({
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let transport: WebSocketClientTransport | undefined;
 try {
-  await writeFile(join(home, 'config.toml'), `model = "gpt-5.5"
+  await writeFile(join(home, 'config.toml'), `model = "gpt-6-luna"
 model_provider = "fixture"
 [model_providers.fixture]
 name = "Fixture"
@@ -94,14 +95,22 @@ process.exit(await child.exited);
   } });
   await refreshModels();
   const catalog = await hub.request<{ models: Array<{ id: string; codexReasoning?: { levels: string[] } }> }>('models.list', {});
-  const published = catalog.models.find(entry => entry.id === 'gpt-5.5')?.codexReasoning?.levels;
-  assert(published?.includes('low') && published.includes('high'), JSON.stringify(catalog.models));
-  const config = { model: 'gpt-5.5', provider: 'anthropic-codex', thinkingLevel: 'think24k' };
-  const create = (thinkingLevel: string) => hub.request<{ sessionId: string }>('session.create', {
-    title: 'Synthetic thinking proof', workspacePath: workspace, config: { ...config, thinkingLevel },
-  });
-  await assert.rejects(create('think64k'), /does not publish support/);
-  const { sessionId } = await create(config.thinkingLevel);
+  const luna = 'gpt-6-luna';
+  const sol = 'gpt-6.2-sol';
+  const levels = ['low', 'medium', 'high', 'xhigh', 'max'];
+  const published = Object.fromEntries([luna, sol].map(id =>
+    [id, catalog.models.find(entry => entry.id === id)?.codexReasoning?.levels]
+  ));
+  assert.deepEqual(published[luna], levels);
+  assert.deepEqual(published[sol], [...levels, 'ultra']);
+  const create = (model: string, title: string, thinkingLevel: string) =>
+    hub.request<{ sessionId: string }>('session.create', {
+      title, workspacePath: workspace, config: { model, provider: 'anthropic-codex', thinkingLevel },
+    });
+  await assert.rejects(create(luna, 'Luna ultra refusal', 'think64k'), /does not publish support/);
+  await assert.rejects(create(sol, 'Sol ultra refusal', 'think64k'), /OXAP.*cannot send ultra/);
+  const { sessionId } = await create(luna, 'GPT-6 Luna', 'think24k');
+  const { sessionId: solSessionId } = await create(sol, 'GPT-6.2 Sol', 'think48k');
   const session = async () => (await hub.request<{ session: Session }>('session.get', { sessionId })).session;
   const change = (level: string) => hub.request('session.thinking.set', { sessionId, level });
   const turn = async (effort: string) => {
@@ -112,24 +121,61 @@ process.exit(await child.exited);
       assert(Date.now() < deadline, `Turn did not settle. Observed ${JSON.stringify(requests)}`);
       await Bun.sleep(30);
     }
-    assert.deepEqual(requests[index], { model: config.model, effort });
+    assert.deepEqual(requests[index], { model: luna, effort });
   };
   await turn('high');
   const thread = (await session()).sdkSessionId;
   assert(thread);
   await assert.rejects(change('think64k'), /does not publish support/);
   assert.equal((await session()).config.thinkingLevel, 'think24k');
-  assert.deepEqual(await change('think8k'), { success: true, thinkingLevel: 'think8k' });
-  await turn('low');
-  assert.equal((await session()).config.thinkingLevel, 'think8k');
+  const evidenceDir = join(run, 'evidence');
+  await mkdir(evidenceDir);
+  if (process.env.VERIFY_BROWSER) {
+    const daemon = app;
+    const dist = resolve('packages/web/dist');
+    const preview = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      async fetch(request, server) {
+        const refusal = await daemon.guardRequest(request);
+        if (refusal) return refusal;
+        const url = new URL(request.url);
+        if (url.pathname === '/pair' && request.method === 'POST') return daemon.handlePair(request);
+        if (url.pathname === '/ws') {
+          const device = await daemon.authenticateUpgrade(request, '127.0.0.1');
+          if (server.upgrade(request, { data: { connectionSessionId: 'global', device } })) return;
+          return new Response('Upgrade failed', { status: 500 });
+        }
+        const file = Bun.file(join(dist, url.pathname.startsWith('/session/') ? 'index.html' : url.pathname));
+        return await file.exists() ? new Response(file) : new Response('Not found', { status: 404 });
+      },
+      websocket: createWebSocketHandlers(daemon.transport, daemon.sessionManager),
+    });
+    try {
+      const pairing = await hub.request<{ ok: boolean; code: string }>('operation.invoke', {
+        name: 'device.pair.create', input: { kind: 'human', name: 'Codex picker proof' },
+      });
+      assert(pairing.ok);
+      const browser = Bun.spawn(['node', '.claude/skills/verify/oxap-codex-thinking-web.mjs',
+        String(preview.port), pairing.code, sessionId, solSessionId, evidenceDir], {
+        stdout: 'inherit', stderr: 'inherit',
+      });
+      assert.equal(await browser.exited, 0, 'The browser journey failed');
+    } finally {
+      await preview.stop(true);
+    }
+  } else {
+    assert.deepEqual(await change('think48k'), { success: true, thinkingLevel: 'think48k' });
+  }
+  await turn('max');
+  assert.equal((await session()).config.thinkingLevel, 'think48k');
   await hub.request('session.resetQuery', { sessionId, restartQuery: false });
   await app.oxapEngine.restart();
   clearModelsCache();
-  await turn('low');
+  await turn('max');
   assert.equal((await session()).sdkSessionId, thread);
   assert.equal(requests.length, 3);
-  const evidence = { version, published, requests, sameThreadAfterReopen: true, unsupportedRefused: true };
-  await mkdir(join(run, 'evidence'));
+  const evidence = { version, published, requests, sameThreadAfterReopen: true, ultraRefused: true };
   await writeFile(join(run, 'evidence', 'thinking.json'), JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify(evidence));
 } finally {
