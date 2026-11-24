@@ -390,6 +390,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     )
     .endAsync('status') as (todoId: string, ref: WorkRef, ask: NeoAsk) => Promise<OperationOutcome>;
   const starting = new Set<string>();
+  const compacting = new Map<string, () => void>();
   let reportCursor = 0;
   const caller = (ask: NeoAsk) => driverWorkCaller({ originSessionId: ask.sessionId });
   const recompute = (superpipe({})('neo.todo.recompute-committed') as PipelineAPI)
@@ -452,10 +453,12 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
 
   const dispatch = async ({ todo, ask, target, moved, replaced }: Startable) => {
     if (target.verb === 'send') {
+      const sameAsk = await sessions.read('reusesAskWorker', todo.id);
+      if (sameAsk) compacting.get(todo.id)?.();
       await compactBeforeReuse(
         {
           ref: target.ref,
-          sameAsk: await sessions.read('reusesAskWorker', todo.id),
+          sameAsk,
           compact: deps.workerCompact?.(target.ref.adapter)?.compact,
         },
         caller(ask),
@@ -816,26 +819,33 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     replaced?: WorkRef
   ) => Promise<{ ok: true; todo: NeoTodo; records?: string[] } | Rejection>;
 
+  const startQueued = async (todoId: string) => {
+    try {
+      return await start(todoId);
+    } catch (error) {
+      const todo = store.getTodo(todoId);
+      if (todo)
+        await note(
+          'todo.unworked',
+          todo,
+          todo.updatedAt,
+          `Todo "${todo.title}" (${todo.id}) could not start: ${String(error)}`
+        );
+      throw error;
+    } finally {
+      compacting.delete(todoId);
+    }
+  };
+
   const queue = createWorkQueue<NudgeClaim>(
     {
       queue: () => readQueueFacts(),
       waiting: () => readQueue(Date.now()),
       claim: (todoId, now, move) => nudge(todoId, now, move),
       act: (claim, now) => act(claim, now),
-      start: async (todoId) => {
-        try {
-          return await start(todoId);
-        } catch (error) {
-          const todo = store.getTodo(todoId);
-          if (todo)
-            await note(
-              'todo.unworked',
-              todo,
-              todo.updatedAt,
-              `Todo "${todo.title}" (${todo.id}) could not start: ${String(error)}`
-            );
-          throw error;
-        }
+      start: (todoId) => {
+        const yielded = new Promise<void>((resolve) => compacting.set(todoId, resolve));
+        return Promise.race([startQueued(todoId), yielded]);
       },
     },
     deps.limits

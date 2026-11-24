@@ -30,6 +30,7 @@ type KeptWorker = {
   decision: ReuseDecision;
   hasLookup: boolean;
   canCompact: boolean;
+  keepsCold: boolean;
   lastUse: number;
   cacheUntil: number | null;
 };
@@ -38,7 +39,7 @@ const DEFAULT_CACHE_MS = 60 * 60_000;
 export function planKeptWorker(kept: KeptWorker, now: number): ReuseDecision {
   if ('value' in kept.decision || !kept.hasLookup) return kept.decision;
   const until = kept.cacheUntil ?? kept.lastUse + DEFAULT_CACHE_MS;
-  return kept.canCompact && now <= until ? kept.decision : { value: kept.ref };
+  return kept.canCompact && (kept.keepsCold || now <= until) ? kept.decision : { value: kept.ref };
 }
 
 type Released = { released: unknown };
@@ -177,11 +178,20 @@ const releaseWorker = (superpipe({})('neo.todo.release-worker') as PipelineAPI)
       sessions: NeoTodoSessionRepository,
       lookup: WorkerCompact | undefined
     ): Promise<KeptWorker> => {
-      const decision = followSessionReuse(await sessions.read('reuseFacts', row.todoId), ref);
+      const reuse = await sessions.read('reuseFacts', row.todoId);
+      const decision = followSessionReuse(reuse, ref);
       const adapter = 'reason' in decision ? lookup?.(ref.adapter) : undefined;
       const canCompact = !!adapter?.compact;
       const cacheUntil = canCompact ? ((await adapter.cacheUntil?.(ref)) ?? null) : null;
-      return { ref, decision, hasLookup: !!lookup, canCompact, lastUse: row.lastUse, cacheUntil };
+      return {
+        ref,
+        decision,
+        hasLookup: !!lookup,
+        canCompact,
+        keepsCold: reuse?.mode === 'per_ask',
+        lastUse: row.lastUse,
+        cacheUntil,
+      };
     },
     ['release', 'row', 'sessions', 'workerCompact'],
     'kept'

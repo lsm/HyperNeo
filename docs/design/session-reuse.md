@@ -40,9 +40,10 @@ The first time it matters, Neo asks one card (`pack.preferences.ask`, not holdin
 work); `long_lived` applies until answered. There is no settings page.
 
 A worker reused for another todo of its ask is compacted first, inside the same dispatch, so
-the next todo never races the compaction. A failed compaction does not stop the dispatch. A
+the next todo never races the compaction; other queued todos do not wait for it. A failed compaction does not stop the dispatch. A
 later round of the same todo, and a session the human named, are not compacted. Nothing is
-compacted when a todo finishes: many finished workers are never reused.
+compacted when a todo finishes: many finished workers are never reused. A finished worker
+that can be compacted stays until its ask settles; under `long_lived` it also goes once its prompt cache is cold.
 
 **Start record.** When `work.start` starts a session, the daemon records on
 `work_started_sessions`: who started it, for which ask, todo and role, the machine and

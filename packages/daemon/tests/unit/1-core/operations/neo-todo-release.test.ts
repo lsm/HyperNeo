@@ -147,7 +147,8 @@ function setup() {
   const add = (
     target: NeoDriverTarget,
     named: Record<string, unknown> | null = null,
-    askId = 'ask'
+    askId = 'ask',
+    createdAt = 1
   ) => {
     const todo = store.addTodo(
       crypto.randomUUID(),
@@ -161,7 +162,7 @@ function setup() {
         instruction: 'Build the rows.',
         named,
       },
-      1
+      createdAt
     );
     sessions.create(todo.id, target);
     return todo;
@@ -185,6 +186,7 @@ function setup() {
     compacted,
     events,
     start: (todoId: string) => runner.start(todoId),
+    fill: () => runner.fill(),
     setCompact: (next: WorkAdapter['compact']) => {
       compact = next;
     },
@@ -815,6 +817,45 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
     }
   });
 
+  test('starts other queued todos while a worker compacts and sends to it only once', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      let finish = () => {};
+      const gate = new Promise<void>((resolve) => (finish = resolve));
+      h.setCompact(async () => {
+        h.events.push('compacting');
+        await gate;
+        return { ok: true, value: { compacted: true } };
+      });
+      h.setOnStart(() => {
+        h.events.push('start other');
+        return {
+          ok: true,
+          value: {
+            ref: { adapter: 'hyperneo', id: 'worker-2' },
+            receipt: { executionId: 'worker-2', inputId: 'i' },
+            lastActivityAt: 1,
+          },
+        };
+      });
+      const first = h.add({ verb: 'send', ref: worker }, null, 'ask', 2);
+      const other = h.add(started, null, 'ask', 3);
+      const second = h.add({ verb: 'send', ref: worker }, null, 'ask', 4);
+      await h.fill();
+      await h.fill();
+      expect(h.events).toEqual(['compacting', 'start other']);
+      expect(h.sessions.readRef(other.id)?.id).toBe('worker-2');
+      expect(h.store.getTodo(first.id)?.state).toBe('doing');
+      expect(h.store.getTodo(second.id)?.state).toBe('todo');
+      finish();
+      while (!h.sessions.readRef(first.id)) await Bun.sleep(1);
+      expect(h.events).toEqual(['compacting', 'start other', `send ${worker.id}`]);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('leaves a todo removed while its start was refused as removed', async () => {
     const h = setup();
     try {
@@ -869,6 +910,20 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
       expect(h.compacted).toEqual([]);
       expect(h.archived).toEqual([worker]);
       expect(h.released()).toHaveLength(1);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('keeps a per_ask worker of an open ask after its prompt cache went cold', async () => {
+    const h = setup();
+    try {
+      h.reuse('per_ask');
+      h.setCacheUntil(async () => Date.now() - 60 * 60_000);
+      await h.finishTodo(h.add(started));
+      await h.refresh();
+      expect(h.archived).toEqual([]);
+      expect(kept(h)).toEqual([{ kept: 'kept_for_reuse' }]);
     } finally {
       h.db.close();
     }

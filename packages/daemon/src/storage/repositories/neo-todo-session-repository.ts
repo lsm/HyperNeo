@@ -306,18 +306,18 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
 
   queueFacts(trackerHolds: Record<string, string | null> = {}, open = this.openAskFacts()) {
     const { asks } = open;
-    const running = open.todos.flatMap((todo) =>
-      todo.state === 'doing'
-        ? [
-            {
-              group: asks.find((ask) => ask.id === todo.askId)?.projectId ?? null,
-              worker: neoWorkerKey(open.ref(todo.id)),
-              title: todo.title,
-              idle: open.idle(todo.id),
-            },
-          ]
-        : []
-    );
+    const running = open.todos.flatMap((todo) => {
+      if (todo.state !== 'doing') return [];
+      const target = open.target(todo.id);
+      return [
+        {
+          group: asks.find((ask) => ask.id === todo.askId)?.projectId ?? null,
+          worker: neoWorkerKey(open.ref(todo.id) ?? (target?.verb === 'send' ? target.ref : null)),
+          title: todo.title,
+          idle: open.idle(todo.id),
+        },
+      ];
+    });
     const waiting = asks.flatMap((ask) => {
       const asked = open.cards(ask);
       const family = open.family(ask);
