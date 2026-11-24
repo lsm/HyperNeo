@@ -18,6 +18,8 @@ const server = Bun.serve({ hostname: '127.0.0.1', port, websocket: createWebSock
   const path = new URL(req.url).pathname;
   const refused = await app.guardRequest(req);
   if (refused) return refused;
+  if (path === '/pair' && req.method === 'POST') return app.handlePair(req);
+  if (path === '/hello') return new Response('Hello World');
   if (path.startsWith('/ws')) {
     if (server.upgrade(req, { data: { connectionSessionId: 'global', device: await app.authenticateUpgrade(req, server.requestIP(req)?.address ?? null) } })) return;
     return new Response('Upgrade failed', { status: 500 });
