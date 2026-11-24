@@ -114,22 +114,24 @@ export function createCopilotDesktopControl(
       if (!endpoint) return reject('unreachable', COPILOT_DESKTOP_UNAVAILABLE, true);
       const runStart: typeof run = (frame, accept, timeoutMs) =>
         callCopilotDesktop(endpoint, frame, accept, timeoutMs);
-      const probeRequest = randomUUID();
-      const probe = await runStart(
-        { type: 'list_repositories', request_id: probeRequest },
-        (frame) =>
-          frame.type === 'repository_list' && frame.request_id === probeRequest ? true : undefined,
-        5000
-      );
-      const legacy = !probe.ok && probe.reason === 'unsupported';
-      if (!probe.ok && !legacy)
+      const probe = (type: string, replyType: string) => {
+        const requestId = randomUUID();
+        return runStart(
+          { type, request_id: requestId },
+          (frame) =>
+            frame.type === replyType && frame.request_id === requestId ? true : undefined,
+          5000
+        );
+      };
+      const modern = (await probe('list_repositories', 'repository_list')).ok;
+      if (!modern && !(await probe('list_projects', 'project_list')).ok)
         return reject(
           'unreachable',
           'Copilot Desktop did not confirm which startup protocol it supports. No session was created.',
           true
         );
       const repositoryRequest = randomUUID();
-      const framePrefix = legacy ? 'project' : 'repository';
+      const framePrefix = modern ? 'repository' : 'project';
       const repository = await runStart(
         { type: `create_${framePrefix}_from_path`, path: canonical, request_id: repositoryRequest },
         (frame) =>

@@ -53,8 +53,11 @@ export async function startCopilotDesktopPeer(home: string, state: string, compa
     switch (message.type) {
       case 'list_repositories':
         return legacy
-          ? peer.send(JSON.stringify({ type: 'error', message: 'Invalid message format: unknown variant `list_repositories`, expected `create_project_from_path` or `list_projects`' }))
+          ? peer.close()
           : reply('repository_list', { repositories: [] });
+      case 'list_projects':
+        assert(legacy);
+        return reply('project_list', { projects: [] });
       case 'create_repository_from_path':
       case 'create_project_from_path': {
         assert.equal(message.type, startCommand);
@@ -174,7 +177,10 @@ export async function verifyCopilotDesktopControl(
   };
   const bad = await rpc<Result<WorkStarted>>('work.start', { ...request, copilotClient: 'desktop', effort: 'low' });
   assert(!bad.ok && bad.reason === 'unreachable' && !bad.notSent, JSON.stringify(bad));
-  assert.deepEqual(peer.messages.slice(0, 2), ['list_repositories', peer.startCommand]);
+  const expectedStartup = peer.startCommand === 'create_project_from_path'
+    ? ['list_repositories', 'list_projects', peer.startCommand]
+    : ['list_repositories', peer.startCommand];
+  assert.deepEqual(peer.messages.slice(0, expectedStartup.length), expectedStartup);
   assert(!peer.messages.includes('send_message'));
   const started = await rpc<Result<WorkStarted>>('work.start', { ...request, copilotClient });
   assert(started.ok, JSON.stringify(started));
