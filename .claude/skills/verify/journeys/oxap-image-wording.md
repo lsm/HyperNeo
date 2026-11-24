@@ -14,4 +14,6 @@ The browser opens an OXAP Codex chat in desktop and touch phone viewports.
 The composer starts without a permanent warning. Selecting **Attach image**
 shows the client, model and what to use for images. It opens no file picker.
 Pasting and dropping an image on desktop show the same guidance. Compare the
-idle and attachment screenshots. This journey sends zero turns to Codex.
+idle and attachment screenshots. On desktop, open the OXAP provider settings
+and save the client. Confirm the installation and save labels. This journey
+sends zero turns to Codex.

@@ -217,7 +217,7 @@ try {
   transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false, createSocket: createLocalSocket });
   hub.registerTransport(transport);
   await transport.initialize();
-  if (mode === 'settings-restart-web') {
+  if (mode === 'settings-restart-web' || mode === 'image-wording') {
     await hub.request('providers.create', { params: oxapCodexProvider.params });
   } else {
     await hub.request('providers.create', { params: { providerId: 'anthropic', displayName: 'Synthetic provider', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-devproxy-test-key' } });

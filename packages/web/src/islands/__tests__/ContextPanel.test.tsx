@@ -352,7 +352,7 @@ describe('ContextPanel', () => {
       expect(nav.getAllByRole('button').map((button) => button.textContent)).toEqual([
         'Preferences',
         'Neo',
-        'Sessions & Harness',
+        'Sessions & Clients',
         'Connections & Services',
         'Capabilities',
         'Voice',

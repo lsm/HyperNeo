@@ -97,24 +97,24 @@ try {
     await page.goto(`${base}/settings?tab=providers`);
     await page.getByText('Synthetic OXAP Codex', { exact: true }).first().click();
     if (!before) {
-      assert.equal(await page.getByLabel('Harness', { exact: true }).inputValue(), 'oxap-codex');
-      await page.getByLabel('Harness executable').waitFor();
+      assert.equal(await page.getByLabel('Client', { exact: true }).inputValue(), 'oxap-codex');
+      await page.getByLabel('Client executable').waitFor();
       await page.getByText('synthetic-fixture', { exact: true }).waitFor();
     }
     await page.screenshot({ path: `${output}/oxap-provider-${theme}.png`, animations: 'disabled' });
     if (!before && theme === 'dark') {
-      const executable = page.getByLabel('Harness executable');
+      const executable = page.getByLabel('Client executable');
       const savedExecutable = await executable.inputValue();
       await executable.fill('relative');
-      await page.getByRole('button', { name: 'Save harness' }).click();
+      await page.getByRole('button', { name: 'Save client' }).click();
       await page.getByText(/needs an absolute executable path/).waitFor();
       await executable.fill(savedExecutable);
-      await page.getByLabel('Harness', { exact: true }).selectOption('sdk');
-      await page.getByRole('button', { name: 'Save harness' }).click();
-      await page.getByText('Harness saved').waitFor();
+      await page.getByLabel('Client', { exact: true }).selectOption('sdk');
+      await page.getByRole('button', { name: 'Save client' }).click();
+      await page.getByText('Client saved').waitFor();
       await page.reload();
       await page.getByText('Synthetic OXAP Codex', { exact: true }).first().click();
-      assert.equal(await page.getByLabel('Harness', { exact: true }).inputValue(), 'sdk');
+      assert.equal(await page.getByLabel('Client', { exact: true }).inputValue(), 'sdk');
       console.log('Invalid executable refused; switching back to Claude Code persisted');
       const created = JSON.parse(execFileSync('bun', ['.claude/skills/verify/rpc.ts', 'rpc:session.create', JSON.stringify({ title: 'Provider retry proof', workspacePath: `${run}/home`, config: { provider: 'anthropic', model: 'synthetic-sdk', queryMode: 'manual' } })], { encoding: 'utf8', env: { ...process.env, HYPERNEO_DATA_DIR: `${run}/data`, VERIFY_PORT: port } })).reply;
       assert(created.sessionId);
@@ -131,16 +131,16 @@ try {
       console.log('SDK picker kept its model after lookup failure and recovered on retry');
       await page.goto(`${base}/settings?tab=providers`);
       await page.getByText('Synthetic OXAP Codex', { exact: true }).first().click();
-      await page.getByLabel('Harness', { exact: true }).selectOption('oxap-codex');
-      await page.getByLabel('Harness executable').fill('/synthetic/codex');
-      await page.getByRole('button', { name: 'Save harness' }).click();
+      await page.getByLabel('Client', { exact: true }).selectOption('oxap-codex');
+      await page.getByLabel('Client executable').fill('/synthetic/codex');
+      await page.getByRole('button', { name: 'Save client' }).click();
       await page.waitForTimeout(10_500);
-      assert.equal(await page.getByRole('button', { name: 'Save harness' }).isDisabled(), true);
+      assert.equal(await page.getByRole('button', { name: 'Save client' }).isDisabled(), true);
       assert.equal(await page.getByText(/Request timeout/).count(), 0);
-      await page.getByText('Harness saved').waitFor({ timeout: 15000 });
+      await page.getByText('Client saved').waitFor({ timeout: 15000 });
       await page.reload();
       await page.getByText('Synthetic OXAP Codex', { exact: true }).first().click();
-      assert.equal(await page.getByLabel('Harness', { exact: true }).inputValue(), 'oxap-codex');
+      assert.equal(await page.getByLabel('Client', { exact: true }).inputValue(), 'oxap-codex');
       await page.getByText('Version:', { exact: true }).waitFor();
       await page.getByText('SHA-256:', { exact: true }).waitFor();
       for (const appearance of ['light', 'dark']) {

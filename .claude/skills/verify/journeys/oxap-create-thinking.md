@@ -12,7 +12,7 @@ does not make a model turn.
 
 The same journey checks that the OXAP chat explains its text-only input, disables
 image attachment, and hides Tools. It captures chat and provider settings in
-both themes and checks the selected harness, executable and hub binary. Set
+both themes and checks the selected client, executable and OXAP installation. Set
 `OXAP_UI_BEFORE=1` when running the same script on the baseline to capture the
 old chat and provider settings without requiring the new controls. Compare the
 resulting `oxap-chat-*` and `oxap-provider-*` screenshots.

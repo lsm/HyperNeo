@@ -45,6 +45,9 @@ try {
     assert.equal(chooser, null);
     await notice.waitFor({ timeout: 5000 });
     assert.match(await notice.innerText(), /luna/i);
+    const alert = page.getByRole('alert').filter({ has: notice });
+    const bounds = await alert.boundingBox();
+    assert(bounds && bounds.x >= 0 && bounds.x + bounds.width <= viewport.width);
     await screenshot('attach');
     console.log(`${name}: attach showed model guidance without opening a file picker`);
     if (!hasTouch) {
@@ -65,6 +68,15 @@ try {
         await notice.waitFor({ timeout: 5000 });
         console.log(`desktop: ${action} showed model guidance`);
       }
+      await page.goto(`${base}/settings?tab=providers`);
+      await page.getByText('Synthetic OXAP Codex', { exact: true }).first().click();
+      assert.equal(await page.getByLabel('Client', { exact: true }).inputValue(), 'oxap-codex');
+      await page.getByLabel('Client executable').waitFor();
+      await page.getByText('OXAP installation', { exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Save client' }).click();
+      await page.getByText('Client saved', { exact: true }).waitFor();
+      await screenshot('settings');
+      console.log('desktop: OXAP provider settings label the client and confirm the save');
     }
     await context.close();
   }
