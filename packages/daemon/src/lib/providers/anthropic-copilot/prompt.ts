@@ -44,6 +44,15 @@ export function messageTopLevelImages(msg: AnthropicMessage): BridgeImage[] {
   return images;
 }
 
+export function messageTopLevelText(msg: AnthropicMessage): string {
+  if (typeof msg.content === 'string') return msg.content;
+  const texts: string[] = [];
+  for (const block of msg.content) {
+    if (block.type === 'text' && block.text) texts.push(block.text);
+  }
+  return texts.join('\n');
+}
+
 export function collectImages(messages: AnthropicMessage[]): BridgeImage[] {
   const images: BridgeImage[] = [];
   for (const msg of messages) {
