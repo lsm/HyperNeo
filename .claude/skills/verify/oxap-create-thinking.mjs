@@ -206,3 +206,5 @@ try {
 } finally {
   await browser.close();
 }
+console.log('Codex thinking picker verified on desktop and touch viewports');
+process.exit(0);
