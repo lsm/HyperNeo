@@ -170,6 +170,7 @@ export function persistNeoIntakeTransaction(
         jobQueue,
         hold,
         deferPostSaveSideEffects,
+        promptFollows: true,
       });
     const prompt = ensurePromptInTransaction({
       db,
