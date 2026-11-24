@@ -1,0 +1,43 @@
+name: System map
+
+on:
+  pull_request:
+    branches: [dev]
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  system-map:
+    name: System map
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Save the exact event diff and check out the PR head
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MERGE_SHA: ${{ github.sha }}
+          PR_NUMBER: ${{ github.event.number }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          bash scripts/system-map-diff.sh "$BASE_SHA" "$MERGE_SHA" > "$RUNNER_TEMP/system-map-paths"
+          git fetch --no-tags --depth=1 origin "refs/pull/$PR_NUMBER/head"
+          git checkout --detach "$HEAD_SHA"
+
+      - uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.4.4
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Check system-map attestation
+        run: bun scripts/system-map-impact.ts --check "$GITHUB_EVENT_PATH" "$RUNNER_TEMP/system-map-paths"
