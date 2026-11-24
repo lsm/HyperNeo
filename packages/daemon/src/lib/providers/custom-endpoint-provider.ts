@@ -53,7 +53,7 @@ interface CustomEndpointBridge {
   stop(): void;
   setSessionThinkingConfig?(
     sessionId: string,
-    thinking: { type: 'enabled'; budget_tokens: number } | undefined
+    thinking: { type: 'enabled'; budget_tokens: number } | { type: 'disabled' } | undefined
   ): void;
 }
 
@@ -289,7 +289,9 @@ export class CustomEndpointProvider implements Provider {
     const thinking =
       tokens !== undefined
         ? ({ type: 'enabled' as const, budget_tokens: tokens } as const)
-        : undefined;
+        : thinkingLevel === 'off' && this.type === 'anthropic-messages'
+          ? { type: 'disabled' as const }
+          : undefined;
     for (const bridge of this.bridges.values()) {
       if (bridge.setSessionThinkingConfig) {
         bridge.setSessionThinkingConfig(sessionId, thinking);
@@ -422,6 +424,9 @@ export class CustomEndpointProvider implements Provider {
           apiKey,
           headers: this.config.headers,
           thinkingSupported: caps.thinking,
+          disableThinkingWithChatTemplate: /(?:^|\/)spark-x2\.6-4b(?:$|-)/i.test(
+            providerModelStringFor(params.model)
+          ),
           ...(fetchImpl ? { fetchImpl } : {}),
         });
       }
