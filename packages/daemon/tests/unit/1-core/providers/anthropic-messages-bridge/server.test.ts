@@ -111,9 +111,12 @@ describe.skipIf(!isBun)(
     it('preserves the unsupported-image message and declines retries', async () => {
       const message =
         'image input is not supported - hint: if this is unexpected, you may need to provide the mmproj';
-      server = await makeServer(async () =>
-        Response.json({ error: { code: 500, type: 'server_error', message } }, { status: 500 })
+      const upstream = Object.assign(
+        async () =>
+          Response.json({ error: { code: 500, type: 'server_error', message } }, { status: 500 }),
+        { preconnect: () => {} }
       );
+      server = await makeServer(upstream);
 
       const res = await postMessages(server.port, {
         model: 'text-only',
