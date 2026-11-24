@@ -1,3 +1,9 @@
+export type OxapInitDetails = {
+  client: string;
+  version: string;
+  contextWindow?: number;
+};
+
 export type OxapHarness = {
   label: string;
   adapter: string;

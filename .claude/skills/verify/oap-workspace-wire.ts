@@ -153,6 +153,14 @@ async function verifyInBrowser(
   assert.notEqual(web.port, 8399);
   assert.notEqual(web.port, 8499);
   try {
+    if (mode === 'image-wording' && 'sessionId' in target) {
+      const browser = Bun.spawn([
+        'node', '.claude/skills/verify/oxap-image-wording-web.mjs',
+        String(web.port), target.sessionId, run,
+      ], { stdin: new Blob([readLocalCredential()]), stdout: 'inherit', stderr: 'inherit' });
+      assert.equal(await browser.exited, 0, 'The image wording browser journey failed');
+      return;
+    }
     if ('executable' in target) {
       const browser = Bun.spawn([
         'node', '.claude/skills/verify/oxap-retained-executable-web.mjs',
@@ -215,7 +223,7 @@ try {
   transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false, createSocket: createLocalSocket });
   hub.registerTransport(transport);
   await transport.initialize();
-  if (mode === 'settings-restart-web') {
+  if (mode === 'settings-restart-web' || mode === 'image-wording') {
     await hub.request('providers.create', { params: oxapCodexProvider.params });
   } else {
     await hub.request('providers.create', { params: { providerId: 'anthropic', displayName: 'Synthetic provider', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-devproxy-test-key' } });
@@ -232,7 +240,11 @@ try {
   const { sessionId: firstId } = await makeSession(mode === 'folderless' ? undefined : 'workspace-a');
   const first = app.sessionManager.getSession(firstId);
   assert(first);
-  if (mode === 'login-device') {
+  if (mode === 'image-wording') {
+    await verifyInBrowser(app, { sessionId: firstId, text: '' });
+    assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 0);
+    Object.assign(evidence, { nativeTurns: 0, pass: true });
+  } else if (mode === 'login-device') {
     const { sessionId: secondId } = await makeSession('workspace-b');
     await Promise.all([
       hub.request('message.send', { sessionId: firstId, content: 'Synthetic sign in' }),

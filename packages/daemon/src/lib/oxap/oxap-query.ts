@@ -27,7 +27,7 @@ export type OxapQueryHub = {
 };
 
 type OxapQueryTranslator = {
-  beginRun?(): void;
+  beginRun?(startedAt: number): void;
   translate(event: OxapEvent): SDKMessage[];
   flush?(): SDKMessage[];
   settlesTool?(event: OxapEvent): boolean;
@@ -142,6 +142,7 @@ export class OxapQuery implements QueryLike {
         settle();
         if (this.runSettled === settled) this.runSettled = undefined;
       };
+      const startedAt = performance.now();
       this.pendingRun = this.hub
         .submit(
           this.sessionId,
@@ -163,7 +164,7 @@ export class OxapQuery implements QueryLike {
       const runId = await this.pendingRun;
       this.pendingRun = undefined;
       try {
-        this.translator.beginRun?.();
+        this.translator.beginRun?.(startedAt);
         if (this.closed || this.interrupted || !this.isLive()) {
           await this.cancelActive();
           if (this.closed || (!this.isLive() && !this.canSettleInterrupted())) {
@@ -298,10 +299,12 @@ export class OxapQuery implements QueryLike {
 export function createOxapQuery(options: Omit<OxapQueryOptions, 'translator'>): OxapQuery {
   let state = initialOxapTranslatorState(options.sessionId);
   let runScope = '';
+  let startedAt = 0;
   return new OxapQuery({
     ...options,
     translator: {
-      beginRun: () => {
+      beginRun: (runStartedAt) => {
+        startedAt = runStartedAt;
         state = initialOxapTranslatorState(options.sessionId);
         runScope = generateUUID();
       },
@@ -341,6 +344,8 @@ export function createOxapQuery(options: Omit<OxapQueryOptions, 'translator'>): 
         const result = translateOxapEvent(state, {
           type: event.type,
           id: `${runScope}:${event.id}`,
+          timestamp_ms: typeof event.timestamp_ms === 'number' ? event.timestamp_ms : undefined,
+          elapsedMs: Math.round(performance.now() - startedAt),
           payload: event.payload as Record<string, unknown>,
         });
         state = result.state;

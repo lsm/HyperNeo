@@ -112,7 +112,11 @@ export default function SessionStatusBar({
 
         <div class="h-6 w-px bg-fg-faint" />
 
-        <ContextUsageBar contextUsage={contextUsage} maxContextTokens={maxContextTokens} />
+        <ContextUsageBar
+          contextUsage={contextUsage}
+          maxContextTokens={maxContextTokens}
+          unavailable={isOxapHarness(harness) && !contextUsage}
+        />
       </div>
     </ContentContainer>
   );
