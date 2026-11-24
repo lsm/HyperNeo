@@ -73,15 +73,20 @@ try {
       await page.getByRole('button', { name: 'Choose model and thinking' }).waitFor();
     }
     if (!before) {
-      await page.getByText(/This harness accepts text only/).waitFor();
+      const guidance = page.getByRole('alert').filter({
+        hasText: /OXAP Codex.*cannot attach images.*Synthetic Codex.*DeepSeek V4 Flash/,
+      });
+      assert.equal(await guidance.count(), 0);
       await page.getByTitle('More options').click();
       const attach = page.getByRole('button', { name: 'Attach image' });
-      assert.equal(await attach.isDisabled(), true);
       const separators = await attach.evaluate(el => [...el.parentElement.children].filter(child => child.classList.contains('h-px') && getComputedStyle(child).display !== 'none').length);
       await page.screenshot({ path: `${output}/oxap-menu-${theme}.png`, animations: 'disabled' });
       assert.equal(separators, 1, 'OXAP attachment menu must show one separator');
       assert.equal(await page.getByRole('button', { name: 'Tools', exact: true }).count(), 0);
-      await page.getByTitle('More options').click();
+      await attach.click();
+      await guidance.waitFor();
+      await guidance.getByRole('button', { name: 'Dismiss notification' }).click();
+      await guidance.waitFor({ state: 'detached' });
     }
     await page.getByRole('button', { name: 'Choose model and thinking' }).click();
     const oxapMenu = page.getByRole('group', { name: 'Model and thinking settings' });
