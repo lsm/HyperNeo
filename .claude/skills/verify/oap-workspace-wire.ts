@@ -226,7 +226,25 @@ try {
   const { sessionId: firstId } = await makeSession('workspace-a');
   const first = app.sessionManager.getSession(firstId);
   assert(first);
-  if (mode === 'login-device') {
+  if (mode === 'cli-path') {
+    const wrongCli = '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "oxap 1.0"; exit 0; fi\nprintf "\\nunknown argument: app-server\\nusage: oxap\\n" >&2\nexit 2\n';
+    writeFileSync(peer, wrongCli);
+    await hub.request('message.send', { sessionId: firstId, content: 'Send with a previously saved wrong CLI' });
+    await waitFor(() => errors.length > 0, 'launch failure in chat');
+    Object.assign(evidence, { launchError: errors[0] });
+    assert(errors[0].includes(peer), errors[0]);
+    assert(errors[0].includes('unknown argument: app-server'), errors[0]);
+    assert(errors[0].includes('Settings'), errors[0]);
+    const wrongPath = join(run, 'wrong-cli');
+    writeFileSync(wrongPath, wrongCli, { mode: 0o700 });
+    const result = await hub.request<{ accepted: boolean; reason?: string }>('operation.invoke', {
+      name: 'oxap.settings.save',
+      input: { providerId: 'anthropic-codex', harness: 'oxap-codex', settings: { executable: wrongPath } },
+    });
+    assert.equal(result.accepted, false);
+    assert(result.reason?.includes(wrongPath));
+    Object.assign(evidence, { refusedWrongCli: true, pass: true });
+  } else if (mode === 'login-device') {
     const { sessionId: secondId } = await makeSession('workspace-b');
     await Promise.all([
       hub.request('message.send', { sessionId: firstId, content: 'Synthetic sign in' }),
