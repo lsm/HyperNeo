@@ -124,7 +124,9 @@ static BOOL fullFrames(const char *phase) {
         printf("%s display %lu frame %.0f,%.0f %.0fx%.0f expected %.0f,%.0f %.0fx%.0f\n", phase,
                (unsigned long)(i + 1), actual.origin.x, actual.origin.y, actual.size.width, actual.size.height,
                expected.origin.x, expected.origin.y, expected.size.width, expected.size.height);
-        full &= NSEqualRects(actual, expected);
+        BOOL opaque = visibleWindows[i].opaque && visibleWindows[i].backgroundColor.alphaComponent == 1;
+        if (!opaque) printf("%s display %lu is not opaque\n", phase, (unsigned long)(i + 1));
+        full &= NSEqualRects(actual, expected) && opaque;
     }
     return full;
 }
