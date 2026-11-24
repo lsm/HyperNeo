@@ -1,6 +1,6 @@
 # Create a chat with an OXAP provider
 
-Build the web UI, then run `bash .claude/skills/verify/oxap-create-thinking.sh <evidence-dir>` with pinned Bun, Node 24, `PLAYWRIGHT_NODE_PATH` and `VERIFY_BROWSER` set. It owns an isolated daemon, seeds an OXAP provider, hub, and synthetic model, pairs a browser and cleans up. Port 31397 must be free.
+Build the web UI, then run `bash .claude/skills/verify/oxap-create-thinking.sh <evidence-dir>` with pinned Bun, Node 24, `PLAYWRIGHT_NODE_PATH` and `VERIFY_BROWSER` set. It starts an isolated daemon on a free loopback port, seeds an OXAP provider, hub, and synthetic model, pairs a browser and cleans up.
 
 A failed provider lookup shows an error and Retry restores the form. Open the
 new-chat settings after the picker reports OXAP Codex as the client, then open
@@ -38,3 +38,9 @@ checks the link destination excludes that punctuation and keeps `auth-link.png`.
 Retain the OXAP and SDK picker and tools screenshots in both themes. The picker
 checks that OXAP omits SDK models and thinking, while SDK shows thinking and the
 Tools/MCP panel. Settings show path, version and hash after the fixture install.
+
+Run the same wrapper with `<evidence-dir> claude-picker` to check an existing
+Claude Code chat on the OpenAI provider while its default Client is OXAP Codex.
+The browser captures the new-chat and existing-chat menus, selects the second
+OpenAI model in the existing chat, and checks that the choice survives reload.
+This uses a synthetic OpenAI login and catalog and does not send a model turn.
