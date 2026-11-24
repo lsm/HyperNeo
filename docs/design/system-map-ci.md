@@ -41,9 +41,11 @@ No uncovered PR recorded why the command was absent. Fifteen had no mapped sourc
 
 ### Impact noise measurement
 
-For the earlier sample of 40 merged code PRs (#11521–#11612), I checked out each squash commit and ran `bun run system-map impact --diff <merge-commit>^`. The unique name-linked outside files had median 0 and maximum 80 (#11531); 25 PRs had zero. Importer references had median 2.5 and maximum 278, and can repeat a file across planned paths. Eleven PRs had no mapped source diff, and none had an unmapped planned source. Median/max invocation time was 0.26/0.54 s. A full current `map` run took 2.95 s.
+For the earlier sample of 40 merged code PRs (#11521–#11612), I checked out each squash commit and ran `bun run system-map impact --diff <merge-commit>^`. The unique name-linked outside files had median 0 and maximum 80 (#11531); 25 PRs had zero. Importer references had median 2.5 and maximum 278, and can repeat a file across planned paths. Median/max invocation time was 0.26/0.54 s. A full current `map` run took 2.95 s.
 
-This supports gating the explicitly listed name-linked peers and deleted sources, not importer counts.
+I then reran the actual required set with base and head maps. The 40 PRs had no deleted sources or removed definitions, so the result stayed median 0, maximum 80, and 406 required paths in 15 PRs. Five deletion PRs (#11401, #11092, #11048, #10697, #10443) added 10 deleted paths across 101 required paths; none had an outside consumer of a removed definition, so that branch is a fixture-test requirement rather than measured historical noise.
+
+A claim-only alternative needs one attestation and zero path entries per PR, but accounts for none of those 406 paths or the 10 deleted paths. The measured gate adds path entries only in 15 of 40 PRs and catches removed consumers, so it is the smallest useful choice between those two; importer counts stay ungated.
 
 ## Required reading
 
@@ -60,15 +62,15 @@ The tool has four levels; none is a general function call graph.
 
 ## Smallest CI enforcement
 
-Extend the existing PR-only `changes` job, which already runs for docs-only PRs. Do not put this in `check`, which docs skip. Add no job, service, scheduled index, or PR-comment bot.
+Use one lightweight `System map` workflow, registered with the existing CI gate and reusing `scripts/system-map.ts` and `test:system-map`. Keep the main CI workflow's triggers unchanged: body and label events rerun only this check, not the test suites. Add no external service or PR-comment bot.
 
-The existing step first computes and saves the NUL-delimited two-dot PR diff at the merge commit. New steps then set up Bun, fetch `refs/pull/<n>/head`, check out the exact PR head SHA, install the locked dependencies, and run a `scripts/system-map-impact.ts` wrapper. The wrapper reuses `isSource`, `impact`, `formatImpact`, and the repository loader. It runs full `map` plus `impact` on the saved changed-file list at that head. Using the saved merge diff avoids both a full-history fetch and reverse changes from an advanced base.
+On a PR event, checkout the event's merge commit, fetch the event's exact `base.sha`, and save `git diff --name-only --no-renames -z <base.sha> <merge.sha>`. Assert that the merge commit's first parent is that same SHA; never read the moving `dev` tip. Then fetch `refs/pull/<n>/head`, check out the exact PR head, install locked dependencies, and run `scripts/system-map-impact.ts`. The wrapper loads the base tree with `git show`, the head tree from the checkout, and reuses `isSource`, `impact`, and `formatImpact` for both maps. It also runs full `map` on the head.
 
-CI derives a sorted required-path set from unique `Impact.owned[].peers[]` paths and `known: false` planned paths. Importers and nearby table/event lists stay informational. Analyzer or diff failure fails the step; neither can become an empty pass.
+The required set is the sorted union of head `Impact.owned[].peers[]`, head `known: false` paths, and base peers for every owned `(kind, name, role)` removed from the corresponding head file. The last arm covers deleted files and definitions removed from files that remain. Importers and nearby table/event lists stay informational. Analyzer or diff failure fails the step; neither can become an empty pass.
 
 ### PR-body contract
 
-A mapped-code PR needs an `impact` read claim. A PR changing `docs/design/` needs `map` and `impact` claims, even though its own document is unmapped; the design author ran `impact` on planned files, not just the Markdown. A mixed PR needs both. Every non-exempt PR uses one visible block, including zero-peer results:
+Every PR has one attestation block. Code needs `impact`, plus `map` when it has no mapped sources. A `docs/design/` change needs `map` and `impact`; other inert docs need `map`. Mixed changes need both. The design author's `impact` claim covers planned files, not just the Markdown. A maintainer-controlled `revert` label waives only path entries, never these read claims:
 
 ````markdown
 ```system-map-impact
@@ -81,16 +83,18 @@ A mapped-code PR needs an `impact` read claim. A PR changing `docs/design/` need
 
 A validation failure produces one error: `System map check failed: <read/path/reason counts>; head/base <current|stale>. Run system-map-impact.ts --print and use the collapsed CI report and replacement block; author read entries are claims.` Analyzer failures instead report the command and head that failed.
 
-Tests-only, native-only, scripts-only, dependency-only, and non-design inert-doc PRs need no body block. A maintainer-controlled `revert` label also waives it. These exemptions waive only the attestation: CI still executes `map` and `impact` on the head. Native files in a mixed mapped-source PR remain ignored, deleted mapped sources require entries, and a dependency bump with mapped source is not exempt.
+Tests-only, native-only, scripts-only, and dependency-only PRs still attest to the required reads; their empty required-path sets need no entries. Native files in a mixed PR remain ignored, deleted mapped sources require entries, and a dependency bump with mapped source is not exempt. The achievable gate is current attestation plus exact analysis, not proof of reading, so there is no broader silent waiver.
 
-Add `edited` to the existing `pull_request` trigger while retaining `opened`, `synchronize`, and `reopened`. Body edits revalidate; new heads invalidate the block. The wrapper reads event data and makes no GitHub API calls, so fork PRs need no secrets. Existing checkout and fetch work adds one small head fetch; analysis is about 3 s from the measured `map` plus sub-second `impact`, inside the current three-minute job. Bun and dependency setup time was not measured.
+The workflow triggers on `opened`, `synchronize`, `reopened`, `edited`, `labeled`, and `unlabeled` PR events, so body edits and the revert waiver revalidate without running main CI. PR runs read event data and make no GitHub API calls, including for forks.
+
+The same workflow also triggers on pushes to `dev`. For every open PR targeting `dev`, it immediately marks the `System map` check `in_progress`, reads the head SHA and current PR file list with `pull-requests: read`, and uses the pushed SHA as `base`. It runs the same base/head analysis and updates that required check with `checks: write`; a mid-run failure leaves a non-green status rather than a stale pass. The PR-files API avoids waiting for a newly computed merge ref. This base-push fanout reruns only the lightweight check, never full CI. Its total runtime is unmeasured; per-PR analysis is about 3 s plus a second impact pass, while Bun, dependency setup, and API fanout time were not measured.
 
 ### What CI proves
 
-The CI log proves that `map` and `impact` completed on the exact PR head and that the body accounts for the computed path set. `read` entries and reasons are author claims: CI cannot prove the author read any output, ran the same commands locally, or used the result. Design planned-file analysis and `where`/`routes` coverage are likewise claims, not head executions inferred by CI.
+The CI log proves that `map` and base/head `impact` completed at the recorded SHAs, including removed-definition links, and that the body accounts for the computed path set. `read` entries and reasons are author claims: CI cannot prove the author read any output, ran the same commands locally, or used the result. Design planned-file analysis and `where`/`routes` coverage are likewise claims, not executions inferred by CI.
 
 A false positive gets a reason explaining the wrong link. Missing links still need human feedback. Replace routine #10836 comments with the CI log and body block; keep that issue for missed/wrong links and runtime problems.
 
-Implementation tests cover peer de-duplication, ignored importers, deleted sources, code/design read requirements, body-validation failures, exemptions, and fail-closed analyzer errors in the existing `test:system-map` leg.
+Implementation tests cover the exact-base assertion, peer de-duplication, removed-definition peers, deleted sources, ignored importers, every category's attestation, body-validation failures, the revert path-only waiver, label/base revalidation, and fail-closed analyzer errors in the existing `test:system-map` leg.
 
 **Question for the human:** is a general function call graph wanted later? This design deliberately does not add one.
