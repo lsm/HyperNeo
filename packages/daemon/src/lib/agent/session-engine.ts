@@ -1,9 +1,15 @@
-import type { GlobalSettings, ProviderRecord, SessionConfig } from '@hyperneo/shared';
+import type {
+  GlobalSettings,
+  ProviderRecord,
+  SessionConfig,
+  ThinkingLevel,
+} from '@hyperneo/shared';
 import {
   isOxapHarness,
   isOxapModelLocked,
   OXAP_HARNESSES,
   oxapHarness,
+  oxapCodexReasoning,
   oxapThinkingOptions,
   type OxapHarness,
 } from '@hyperneo/shared/types/oxap-harnesses';
@@ -177,6 +183,26 @@ export const decideOxapOpen = (superpipe({})('oap.session.open') as PipelineAPI)
   record: Pick<ProviderRecord, 'configJson'> | null
 ) => { adapter: string } | string;
 
+function publishedCodexModel(model: string | undefined) {
+  return model
+    ? findInModels(
+        getAvailableModels().filter((entry) => entry.provider === 'anthropic-codex'),
+        model
+      )
+    : undefined;
+}
+
+export function savedOxapCodexReasoning(model: string, thinkingLevel: ThinkingLevel | undefined) {
+  if (thinkingLevel === undefined) return undefined;
+  const info = publishedCodexModel(model);
+  if (
+    (info?.codexReasoning || thinkingLevel === 'off') &&
+    !oxapThinkingOptions('oxap-codex', info).some(({ value }) => value === thinkingLevel)
+  )
+    return undefined;
+  return oxapCodexReasoning(thinkingLevel);
+}
+
 export function thinkingRefusal(
   harness: SessionConfig['harness'],
   thinkingLevel: unknown,
@@ -184,13 +210,9 @@ export function thinkingRefusal(
 ): string | undefined {
   if (thinkingLevel === undefined || !isOxapHarness(harness)) return undefined;
   if (harness === 'oxap-codex') {
-    const info =
-      model &&
-      findInModels(
-        getAvailableModels().filter((m) => m.provider === 'anthropic-codex'),
-        model
-      );
-    return oxapThinkingOptions(harness, info || null).some(({ value }) => value === thinkingLevel)
+    return oxapThinkingOptions(harness, publishedCodexModel(model)).some(
+      ({ value }) => value === thinkingLevel
+    )
       ? undefined
       : `OXAP Codex model ${model ?? 'selection'} does not publish support for this thinking level.`;
   }

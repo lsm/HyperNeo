@@ -283,13 +283,13 @@ export function useModelSwitcher(
       const modelInfos = mapRawModelsToModelInfos(models);
       setAvailableModels(modelInfos);
 
-      if (fetchedModelId && fetchedProvider && !fetchedModelInfo) {
+      if (fetchedModelId && fetchedProvider && !fetchedModelInfo?.codexReasoning) {
         const matched = modelInfos.find(
           (m) =>
             (m.id === fetchedModelId || m.alias === fetchedModelId) &&
             m.provider === fetchedProvider
         );
-        if (matched) setCurrentModelInfo(matched);
+        if (matched && (!fetchedModelInfo || matched.codexReasoning)) setCurrentModelInfo(matched);
       }
     } catch {
     } finally {

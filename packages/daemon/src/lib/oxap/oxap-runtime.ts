@@ -1,6 +1,6 @@
 import { isAbsolute } from 'node:path';
 import { generateUUID, type ProviderRecord, type Session } from '@hyperneo/shared';
-import { isOxapHarness, oxapCodexReasoning } from '@hyperneo/shared/types/oxap-harnesses';
+import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { OxapQueryRuntime } from '../agent/query-runner.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -10,7 +10,7 @@ import { updateOxapReasoning } from './oxap-query-hub.ts';
 import type { OxapQueryHub } from './oxap-query.ts';
 import { withOxapRecovery } from './oxap-recovery.ts';
 import { openOxapSession, type OxapReopenStore, type OxapReopenEvents } from './oxap-reopen.ts';
-import { decideOxapOpen, thinkingRefusal } from '../agent/session-engine.ts';
+import { decideOxapOpen, savedOxapCodexReasoning } from '../agent/session-engine.ts';
 import { canonicalModelId } from '../model-service.ts';
 import { checkCodexLogin } from './oxap-codex-login.ts';
 import { savedOxapAdapter } from './oxap-hub-config.ts';
@@ -32,9 +32,7 @@ function openPlan(
   if (typeof open === 'string') throw new Error(open);
   const { harness, model, thinkingLevel } = session.config;
   const reasoning =
-    harness === 'oxap-codex' && !thinkingRefusal(harness, thinkingLevel, model)
-      ? oxapCodexReasoning(thinkingLevel)
-      : undefined;
+    harness === 'oxap-codex' ? savedOxapCodexReasoning(model, thinkingLevel) : undefined;
   return {
     ...input,
     request: {
