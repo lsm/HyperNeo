@@ -118,6 +118,7 @@ try {
       assert.equal(peer.messages.filter(message => message === 'execute_session_command').length, 1);
       if (compaction === 'applied')
         assert.match(readFileSync(join(home, '.copilot/session-state', work.ref.id, 'events.jsonl'), 'utf8'), /session\.compaction_complete/);
+      app.db.getDatabase().prepare("UPDATE neo_todos SET state = 'done', finished_at = ? WHERE id = 'compact-next'").run(Date.now());
       console.log(`PASS Desktop compaction ${compaction} ran once before the next todo was sent.`);
     });
   } else {
