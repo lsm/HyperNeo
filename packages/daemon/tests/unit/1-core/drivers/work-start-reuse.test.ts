@@ -25,6 +25,7 @@ function harness(
     id: string;
     status: WorkStatus;
     liveStatus?: WorkStatus;
+    copilotClient?: 'cli' | 'desktop';
     turnQuestion?: WorkTurnQuestion;
     folder?: string;
     refusal?: 'not_open' | 'uncertain' | 'throws';
@@ -44,6 +45,7 @@ function harness(
     sameAsk?: string[];
     reconfigure?: 'applies' | 'refused' | 'unchanged';
     compact?: boolean | 'throws';
+    copilotClients?: WorkAdapter['copilotClients'];
   },
   history?: ReadonlyMap<string, { sameAskAt: number | null; settledAt: number | null }>,
   claim?: Pick<WorkVerbDeps, 'claimWorker' | 'unclaimWorker' | 'isOpenTodo'>
@@ -56,6 +58,7 @@ function harness(
   const waiting: string[] = [];
   const adapter: WorkAdapter = {
     id: config?.adapter ?? 'claude-desktop',
+    copilotClients: config?.copilotClients,
     supportsStartEffort: true,
     resolveStartConfiguration: config
       ? async (request) => {
@@ -100,6 +103,7 @@ function harness(
             title: worker.id,
             place: { ...place, folder: worker.folder ?? place.folder },
             status: worker.status,
+            copilotClient: worker.copilotClient,
             lastActivityAt: 1,
           })),
       },
@@ -407,27 +411,30 @@ describe('work.start against a worker release', () => {
 });
 
 describe('work.start reuses an idle worker', () => {
-  test('offers a follow-up to its most recently used same-ask worker first', async () => {
-    const run = harness(
-      [
-        { id: 'affinity-other', status: 'done' },
-        { id: 'affinity-older', status: 'done' },
-        { id: 'affinity-latest', status: 'done' },
-      ],
-      ['affinity-other', 'affinity-older', 'affinity-latest'],
-      undefined,
-      new Map([
-        ['affinity-other', { sameAskAt: null, settledAt: 1 }],
-        ['affinity-older', { sameAskAt: 10, settledAt: null }],
-        ['affinity-latest', { sameAskAt: 20, settledAt: null }],
-      ])
-    );
-    expect((await run.start(neo, false, { todoId: 'follow-up' })).value?.ref.id).toBe(
-      'affinity-latest'
-    );
-    expect(run.sent).toEqual(['affinity-latest']);
-    expect(run.started).toEqual([]);
-  });
+  test.each(['claude-desktop', 'copilot-cli'])(
+    'offers a follow-up to its most recently used same-ask worker first (%s)',
+    async (adapter) => {
+      const run = harness(
+        [
+          { id: 'affinity-other', status: 'done', copilotClient: 'desktop' },
+          { id: 'affinity-older', status: 'done', copilotClient: 'desktop' },
+          { id: 'affinity-latest', status: 'done', copilotClient: 'cli' },
+        ],
+        ['affinity-other', 'affinity-older', 'affinity-latest'],
+        { adapter, copilotClients: adapter === 'copilot-cli' ? ['desktop', 'cli'] : undefined },
+        new Map([
+          ['affinity-other', { sameAskAt: null, settledAt: 1 }],
+          ['affinity-older', { sameAskAt: 10, settledAt: null }],
+          ['affinity-latest', { sameAskAt: 20, settledAt: null }],
+        ])
+      );
+      expect((await run.start(neo, false, { todoId: 'follow-up' })).value?.ref.id).toBe(
+        'affinity-latest'
+      );
+      expect(run.sent).toEqual(['affinity-latest']);
+      expect(run.started).toEqual([]);
+    }
+  );
 
   test('skips a busy same-ask worker and offers another free same-ask worker', async () => {
     const run = harness(
