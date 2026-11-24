@@ -133,24 +133,34 @@ process.exit(await child.exited);
   const daemon = app;
   const wire = await daemon.oxapEngine.getHub(() => readHubOptions(daemon.oxapSettings));
   const nativeRequest = wire.request.bind(wire);
-  let failApply = true;
-  wire.request = async (operation, parameters) => {
-    if (operation === 'settings' && failApply) {
-      failApply = false;
-      await nativeRequest(operation, parameters);
-      throw new OxapHubRequestError('timeout', 'Synthetic lost settings acknowledgment');
+  const verifyLostReceipt = async (update: () => Promise<unknown>) => {
+    let failApply = true;
+    wire.request = async (operation, parameters) => {
+      if (operation === 'settings' && failApply) {
+        failApply = false;
+        await nativeRequest(operation, parameters);
+        throw new OxapHubRequestError('timeout', 'Synthetic lost settings acknowledgment');
+      }
+      return nativeRequest(operation, parameters);
+    };
+    try {
+      await assert.rejects(update);
+      const saved = (await session()).config;
+      assert.equal(saved.model, luna);
+      assert.equal(saved.thinkingLevel, 'think24k');
+      await turn('high');
+      assert.equal((await session()).sdkSessionId, thread);
+      assert.equal(failApply, false);
+    } finally {
+      wire.request = nativeRequest;
     }
-    return nativeRequest(operation, parameters);
   };
-  try {
-    await assert.rejects(change('think48k'));
-    assert.equal((await session()).config.thinkingLevel, 'think24k');
-    await turn('high');
-    assert.equal((await session()).sdkSessionId, thread);
-    assert.equal(failApply, false);
-  } finally {
-    wire.request = nativeRequest;
-  }
+  await verifyLostReceipt(() => change('think48k'));
+  await hub.request('session.resetQuery', { sessionId, restartQuery: false });
+  await verifyLostReceipt(() => hub.request('operation.invoke', {
+    name: 'session.runtimeSettings.update',
+    input: { sessionId, model: sol, thinkingLevel: 'think48k' },
+  }));
 
   const reasoningRequest = (type: string, id: string, reasoning_level = 'ultra') => ({
     protocol: 'open-agent-protocol',
@@ -224,7 +234,7 @@ process.exit(await child.exited);
   clearModelsCache();
   await turn('max');
   assert.equal((await session()).sdkSessionId, thread);
-  assert.equal(requests.length, 7);
+  assert.equal(requests.length, 8);
   const evidence = { version, published, requests, sameThreadAfterReopen: true, ultraOpen: 'schema_invalid', ultraLive: 'schema_invalid', acceptedOffWireLevel: off.payload.reasoning_level, recoveredLostSettingsAck: true };
   await writeFile(join(run, 'evidence', 'thinking.json'), JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify(evidence));

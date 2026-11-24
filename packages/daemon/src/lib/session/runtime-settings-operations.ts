@@ -270,21 +270,34 @@ async function applySettings(
     });
     if (!switched.success)
       return { reason: { ok: false, reason: switched.error ?? 'model_switch_failed' } as Failure };
-    if (thinkingLevel !== undefined && current.harness === 'oxap-codex')
-      await live.applyThinkingLevel();
   } else {
-    if (
-      (await deps.commit(snapshot, {
-        model: input.model !== undefined || input.provider !== undefined ? model : undefined,
-        provider: input.model !== undefined || input.provider !== undefined ? provider : undefined,
-        thinkingLevel,
-      })) !== 'won'
-    )
-      return { reason: { ok: false, reason: 'session_settings_changed' } as Failure };
-    if (live && thinkingLevel !== undefined) {
-      live.getSessionData().config.thinkingLevel = thinkingLevel;
+    const persist = async () => {
+      const stillReady = gateReady(target, input, deps);
+      if ('reason' in stillReady) return { success: false as const, error: stillReady.reason };
+      if (
+        !currentOwner() ||
+        (await deps.commit(snapshot, {
+          model: input.model !== undefined || input.provider !== undefined ? model : undefined,
+          provider:
+            input.model !== undefined || input.provider !== undefined ? provider : undefined,
+          thinkingLevel,
+        })) !== 'won'
+      )
+        return {
+          success: false as const,
+          error: { ok: false, reason: 'session_settings_changed' } as Failure,
+        };
+      if (live && thinkingLevel !== undefined)
+        live.getSessionData().config.thinkingLevel = thinkingLevel;
+      return { success: true as const };
+    };
+    const result =
+      current.harness === 'oxap-codex' && live && thinkingLevel !== undefined
+        ? await live.commitThinkingLevel(thinkingLevel, persist)
+        : await persist();
+    if (!result.success) return { reason: result.error };
+    if (live && thinkingLevel !== undefined && current.harness !== 'oxap-codex')
       await live.applyThinkingLevel();
-    }
     await deps.notify(snapshot.id).catch(() => {});
   }
   return { value: target };

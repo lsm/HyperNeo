@@ -46,7 +46,10 @@ This starts an isolated daemon with the real pinned hub and Codex app-server.
 A proxy supplies a synthetic account status, and a loopback Responses endpoint
 records only the model and effort. The journey checks the native catalog and
 all five GPT-6 Luna efforts across open and live updates. It sends `max`
-again on the same native thread after restarting the hub. It checks both
+again on the same native thread after restarting the hub. It drops two acknowledgments
+after the hub applies a setting, once for a picker change and once for a joint
+model and effort change. Both requests fail, and the following turns use the
+previous effort on the same thread. It checks both
 models' `ultra` refusals and verifies that OXAP returns `schema_invalid`
 on both open and live update. To also capture both models
 on desktop and phone, build web and set `VERIFY_BROWSER` and `NODE_PATH` with

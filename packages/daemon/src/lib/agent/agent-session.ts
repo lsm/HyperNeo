@@ -1882,7 +1882,12 @@ export class AgentSession
           : nonInterrupting
             ? [true]
             : [];
-    const result = await this.modelSwitchHandler.switchModel(newModel, newProvider, ...args);
+    const switchModel = () => this.modelSwitchHandler.switchModel(newModel, newProvider, ...args);
+    const effort = commit?.thinkingLevel ?? thinkingLevel;
+    const result =
+      effort === undefined
+        ? await switchModel()
+        : await this.commitThinkingLevel(effort, switchModel);
     if (result.success) {
       if (thinkingLevel !== undefined) await this.applyThinkingLevel();
       await this.rateLimitWatchdog.forgetModelLimits();
@@ -2000,12 +2005,18 @@ export class AgentSession
     return this.sdkRuntimeConfig.setMaxThinkingTokens(tokens);
   }
 
+  commitThinkingLevel<T extends { success: boolean }>(
+    level: ThinkingLevel,
+    persist: () => Promise<T>
+  ): Promise<T> {
+    const reasoning = oxapCodexReasoning(level);
+    return this.session.config.harness === 'oxap-codex' && reasoning && this.oxap?.commitThinking
+      ? this.oxap.commitThinking(reasoning, persist)
+      : persist();
+  }
+
   async applyThinkingLevel(): Promise<void> {
-    if (isOxapHarness(this.session.config.harness)) {
-      const reasoning = oxapCodexReasoning(this.session.config.thinkingLevel);
-      if (reasoning) await this.oxap?.applyThinking?.(reasoning);
-      return;
-    }
+    if (isOxapHarness(this.session.config.harness)) return;
     const level = this.optionsBuilder.getEffectiveThinkingLevel();
     getProviderRegistry()
       .get(this.session.config.provider ?? '')
