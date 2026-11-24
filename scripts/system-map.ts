@@ -305,10 +305,19 @@ export function formatImpact(impacts: readonly Impact[]): string {
   return lines.join('\n');
 }
 
-function git(root: string, ...args: string[]): string[] {
+function gitOutput(root: string, ...args: string[]): Buffer {
   const result = Bun.spawnSync(['git', '-C', root, '-c', 'core.quotePath=false', ...args]);
-  if (result.exitCode !== 0) throw new Error(result.stderr.toString().trim());
-  return result.stdout.toString().split('\0').filter(Boolean);
+  if (result.exitCode !== 0) {
+    throw new Error(`git ${args.join(' ')}: ${result.stderr.toString().trim()}`);
+  }
+  return result.stdout;
+}
+
+function git(root: string, ...args: string[]): string[] {
+  return gitOutput(root, ...args)
+    .toString()
+    .split('\0')
+    .filter(Boolean);
 }
 
 export function readRepositorySources(root: string, includeUntracked = false): Map<string, string> {
@@ -426,16 +435,55 @@ function drillDownMap(routes: DrillRoute[], changed: string[]): string {
   return [...index, ...sections].join('\n');
 }
 
-function loadRepository(root: string): SystemMap {
-  const sources = readRepositorySources(root);
+function readRevision(root: string, revision: string): Map<string, string> {
+  const entries = git(
+    root,
+    'ls-tree',
+    '-r',
+    '-z',
+    '--format=%(objectname)%x09%(objectsize)%x09%(path)',
+    revision,
+    '--',
+    'packages'
+  ).flatMap((entry) => {
+    const header = /^(\w+)\t(\d+)\t/.exec(entry);
+    if (!header) return [];
+    const path = entry.slice(header[0].length);
+    return isSource(path) || /^packages\/[^/]+\/package\.json$/.test(path)
+      ? [{ object: header[1], size: Number(header[2]), path }]
+      : [];
+  });
+  const files = new Map<string, string>();
+  for (let index = 0; index < entries.length; index += 128) {
+    const batch = entries.slice(index, index + 128);
+    const output = gitOutput(root, 'show', '--no-textconv', ...batch.map(({ object }) => object));
+    let offset = 0;
+    for (const { path, size } of batch) {
+      files.set(path, output.toString('utf8', offset, offset + size));
+      offset += size;
+    }
+    if (offset !== output.length)
+      throw new Error(`git show returned an unexpected size for ${revision}`);
+  }
+  return files;
+}
+
+export function loadRepository(root: string, revision?: string): SystemMap {
+  const files = revision ? readRevision(root, revision) : undefined;
+  const sources = files
+    ? new Map([...files].filter(([path]) => isSource(path)))
+    : readRepositorySources(root);
+  const manifests = files
+    ? [...files.keys()].filter((path) => !isSource(path))
+    : readdirSync(join(root, 'packages'))
+        .map((name) => `packages/${name}/package.json`)
+        .filter((path) => existsSync(join(root, path)));
   const packages = new Map<string, PackageEntry>();
-  for (const name of readdirSync(join(root, 'packages'))) {
-    const file = join(root, 'packages', name, 'package.json');
-    if (!existsSync(file)) continue;
-    const manifest = JSON.parse(readFileSync(file, 'utf8'));
+  for (const path of manifests) {
+    const manifest = JSON.parse(files?.get(path) ?? readFileSync(join(root, path), 'utf8'));
     const exports = Object.entries(typeof manifest.exports === 'object' ? manifest.exports : {});
     packages.set(manifest.name, {
-      dir: `packages/${name}`,
+      dir: dirname(path),
       exports: Object.fromEntries(exports.filter(([, target]) => typeof target === 'string')),
       main: manifest.main ?? 'src/index.ts',
     });
