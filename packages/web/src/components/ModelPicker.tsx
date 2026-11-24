@@ -142,9 +142,8 @@ export function ModelPicker({
       isOxapHarness(harness)
         ? model.provider === provider
         : harness === undefined ||
-          (oxapProviders === null
-            ? model.provider === (provider ?? activeProvider)
-            : !oxapProviders.has(model.provider))
+          model.provider === (provider ?? activeProvider) ||
+          (oxapProviders !== null && !oxapProviders.has(model.provider))
     ),
     isOxapHarness(harness) ? new Map() : providerAuthStatuses,
     activeProvider,
