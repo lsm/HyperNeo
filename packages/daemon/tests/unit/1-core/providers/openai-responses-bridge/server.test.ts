@@ -1601,16 +1601,19 @@ describe('openai-responses-bridge server', () => {
     server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
-      fetchImpl: async () =>
-        sse([
-          {
-            event: 'error',
-            data: {
-              type: 'error',
-              error: { message, type: 'invalid_request_error', param: null, code: null },
+      fetchImpl: Object.assign(
+        async () =>
+          sse([
+            {
+              event: 'error',
+              data: {
+                type: 'error',
+                error: { message, type: 'invalid_request_error', param: null, code: null },
+              },
             },
-          },
-        ]),
+          ]),
+        { preconnect: () => undefined }
+      ),
     });
 
     const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
