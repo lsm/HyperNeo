@@ -87,14 +87,20 @@ Tests-only, native-only, scripts-only, and dependency-only PRs still attest to t
 
 The workflow triggers on `opened`, `synchronize`, `reopened`, `edited`, `labeled`, and `unlabeled` PR events, so body edits and the revert waiver revalidate without running main CI. PR runs read event data and make no GitHub API calls, including for forks.
 
-The same workflow also triggers on pushes to `dev`. For every open PR targeting `dev`, it immediately marks the `System map` check `in_progress`, reads the head SHA and current PR file list with `pull-requests: read`, and uses the pushed SHA as `base`. It runs the same base/head analysis and updates that required check with `checks: write`; a mid-run failure leaves a non-green status rather than a stale pass. The PR-files API avoids waiting for a newly computed merge ref. This base-push fanout reruns only the lightweight check, never full CI. Its total runtime is unmeasured; per-PR analysis is about 3 s plus a second impact pass, while Bun, dependency setup, and API fanout time were not measured.
+There is no `dev`-push fanout, live PR-files read, or Checks API write. A base push can leave an older advisory CI result, but that result never authorizes a merge.
+
+### Merge-time gate
+
+Before the existing `prepareCodingMerge` returns its squash command (`packages/daemon/src/lib/neo/packs/coding/merge-gates.ts:109-137`), it calls `system-map-impact.ts --merge`. The gate reads current head, base, body, labels, and prospective merge SHA, then requires that merge commit's parents to be exactly that base and head. It fetches those commits and derives changed paths from the same snapshot with NUL-delimited `git diff --name-only --no-renames -z <base> <merge>`. A missing or inconsistent merge snapshot refuses the merge; no API file list or moving branch tip is consulted.
+
+The gate records the snapshot, runs the same base/head analysis, and validates the current body attestation and labels. Immediately before `gh pr merge --match-head-commit`, it re-reads every field and the merge parents; any change refuses. Human merges use the same wrapper. Thus an older run finishing late, a queued revalidation, or a failed/never-started run cannot turn an old pass into merge authorization. Merge-time analysis adds the same roughly 3 s plus a second impact pass; setup time was not measured.
 
 ### What CI proves
 
-The CI log proves that `map` and base/head `impact` completed at the recorded SHAs, including removed-definition links, and that the body accounts for the computed path set. `read` entries and reasons are author claims: CI cannot prove the author read any output, ran the same commands locally, or used the result. Design planned-file analysis and `where`/`routes` coverage are likewise claims, not executions inferred by CI.
+The CI log proves that `map` and base/head `impact` completed at the recorded SHAs, including removed-definition links, and that the body accounts for the computed path set. `read` entries and reasons are author claims: CI cannot prove the author read any output, ran the same commands locally, or used the result. Design planned-file analysis and `where`/`routes` coverage are likewise claims, not executions inferred by CI. The fresh merge-time receipt, not a green CI status, is the merge authorization.
 
 A false positive gets a reason explaining the wrong link. Missing links still need human feedback. Replace routine #10836 comments with the CI log and body block; keep that issue for missed/wrong links and runtime problems.
 
-Implementation tests cover the exact-base assertion, peer de-duplication, removed-definition peers, deleted sources, ignored importers, every category's attestation, body-validation failures, the revert path-only waiver, label/base revalidation, and fail-closed analyzer errors in the existing `test:system-map` leg.
+Implementation tests cover the exact-base assertion, peer de-duplication, removed-definition peers, deleted sources, ignored importers, every category's attestation, body-validation failures, the revert path-only waiver, label revalidation, inconsistent merge snapshots and final-snapshot refusal, and fail-closed analyzer errors in the existing `test:system-map` leg.
 
 **Question for the human:** is a general function call graph wanted later? This design deliberately does not add one.
