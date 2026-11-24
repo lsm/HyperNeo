@@ -4,6 +4,17 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.62.5] - 2026-11-24
+
+- Start Copilot sessions on the selected client (#11659).
+- Deliver images sent while a Copilot tool call is pending (#11665).
+- Remove asks with only held work from Neo's waiting list (#11657).
+- Let Neo change worker runtime settings and compact reused workers before their next todo (#11634, #11652).
+- Show chat failures inline and give web model switches more time to finish (#11615, #11656).
+- Restore OpenAI model choices in existing Claude Code chats and honor Thinking Off on custom endpoints (#11642, #11646).
+- Fix OXAP chat sends and clarify which images a chat can accept (#11631, #11619, #11626).
+- API compatibility since v0.62.4. Adds worker reconfiguration and optional fields for Copilot client selection and adapter display names. The pinned phone inventory reports 0 breaking, 0 risky, and 0 safe changes.
+
 ## [0.62.4] - 2026-11-23
 
 - End Locked Use when a native worker turn stops, including during unlock (#11602).
