@@ -21,7 +21,8 @@ const { catalog, curatedOut } = vi.hoisted(() => ({
   curatedOut: vi.fn((model: string) => model.endsWith('-hidden')),
 }));
 
-vi.mock('../../../../src/lib/model-service.ts', () => ({
+vi.mock('../../../../src/lib/model-service.ts', async (original) => ({
+  ...(await original<typeof import('../../../../src/lib/model-service.ts')>()),
   getAvailableModels: () => catalog(),
   isCuratedOutModel: (_model: string, _provider: string) => curatedOut(_model),
 }));
