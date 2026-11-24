@@ -85,22 +85,18 @@ A validation failure produces one error: `System map check failed: <read/path/re
 
 Tests-only, native-only, scripts-only, and dependency-only PRs still attest to the required reads; their empty required-path sets need no entries. Native files in a mixed PR remain ignored, deleted mapped sources require entries, and a dependency bump with mapped source is not exempt. The achievable gate is current attestation plus exact analysis, not proof of reading, so there is no broader silent waiver.
 
-The workflow triggers on `opened`, `synchronize`, `reopened`, `edited`, `labeled`, and `unlabeled` PR events, so body edits and the revert waiver revalidate without running main CI. PR runs read event data and make no GitHub API calls, including for forks.
+The workflow triggers on `opened`, `synchronize`, `reopened`, `edited`, `labeled`, and `unlabeled` PR events, so body edits and the revert waiver revalidate without running main CI. PR runs read event data and make no GitHub API calls, including for forks. Per-PR analysis is about 3 s plus a second impact pass; Bun and dependency setup time were not measured.
 
-There is no `dev`-push fanout, live PR-files read, or Checks API write. A base push can leave an older advisory CI result, but that result never authorizes a merge.
+### Limits
 
-### Merge-time gate
-
-Before the existing `prepareCodingMerge` returns its squash command (`packages/daemon/src/lib/neo/packs/coding/merge-gates.ts:109-137`), it calls `system-map-impact.ts --merge`. The gate reads current head, base, body, labels, and prospective merge SHA, then requires that merge commit's parents to be exactly that base and head. It fetches those commits and derives changed paths from the same snapshot with NUL-delimited `git diff --name-only --no-renames -z <base> <merge>`. A missing or inconsistent merge snapshot refuses the merge; no API file list or moving branch tip is consulted.
-
-The gate records the snapshot, runs the same base/head analysis, and validates the current body attestation and labels. Immediately before `gh pr merge --match-head-commit`, it re-reads every field and the merge parents; any change refuses. Human merges use the same wrapper. Thus an older run finishing late, a queued revalidation, or a failed/never-started run cannot turn an old pass into merge authorization. Merge-time analysis adds the same roughly 3 s plus a second impact pass; setup time was not measured.
+The required `System map` status is the only merge gate; there is no daemon or merge-wrapper change. GitHub's required-status setting plus **Require branches to be up to date before merging** covers most stale-base cases. A base push after the last run can still leave an older result until another PR event, and a body edit or label change can race the merge. Direct GitHub merges receive those branch protections, but a required CI check cannot make those windows atomic or prove that an author read the output.
 
 ### What CI proves
 
-The CI log proves that `map` and base/head `impact` completed at the recorded SHAs, including removed-definition links, and that the body accounts for the computed path set. `read` entries and reasons are author claims: CI cannot prove the author read any output, ran the same commands locally, or used the result. Design planned-file analysis and `where`/`routes` coverage are likewise claims, not executions inferred by CI. The fresh merge-time receipt, not a green CI status, is the merge authorization.
+The CI log proves that `map` and base/head `impact` completed at the recorded SHAs, including removed-definition links, and that the body accounts for the computed path set. `read` entries and reasons are author claims: CI cannot prove the author read any output, ran the same commands locally, or used the result. Design planned-file analysis and `where`/`routes` coverage are likewise claims, not executions inferred by CI.
 
 A false positive gets a reason explaining the wrong link. Missing links still need human feedback. Replace routine #10836 comments with the CI log and body block; keep that issue for missed/wrong links and runtime problems.
 
-Implementation tests cover the exact-base assertion, peer de-duplication, removed-definition peers, deleted sources, ignored importers, every category's attestation, body-validation failures, the revert path-only waiver, label revalidation, inconsistent merge snapshots and final-snapshot refusal, and fail-closed analyzer errors in the existing `test:system-map` leg.
+Implementation tests cover the exact-base assertion, peer de-duplication, removed-definition peers, deleted sources, ignored importers, every category's attestation, body-validation failures, the revert path-only waiver, label revalidation, and fail-closed analyzer errors in the existing `test:system-map` leg.
 
 **Question for the human:** is a general function call graph wanted later? This design deliberately does not add one.
