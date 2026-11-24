@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { clearModelsCache, refreshModels } from '../../../packages/daemon/src/lib/model-service.ts';
+import { OxapHubRequestError } from '../../../packages/daemon/src/lib/oxap/oxap-hub-client.ts';
 import { readHubOptions } from '../../../packages/daemon/src/lib/oxap/oxap-settings.ts';
 import { releaseName } from '../../../packages/daemon/src/lib/oxap/oxap-install.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
@@ -131,6 +132,26 @@ process.exit(await child.exited);
   assert.equal((await session()).config.thinkingLevel, 'think24k');
   const daemon = app;
   const wire = await daemon.oxapEngine.getHub(() => readHubOptions(daemon.oxapSettings));
+  const nativeRequest = wire.request.bind(wire);
+  let failApply = true;
+  wire.request = async (operation, parameters) => {
+    if (operation === 'settings' && failApply) {
+      failApply = false;
+      await nativeRequest(operation, parameters);
+      throw new OxapHubRequestError('timeout', 'Synthetic lost settings acknowledgment');
+    }
+    return nativeRequest(operation, parameters);
+  };
+  try {
+    await assert.rejects(change('think48k'));
+    assert.equal((await session()).config.thinkingLevel, 'think24k');
+    await turn('high');
+    assert.equal((await session()).sdkSessionId, thread);
+    assert.equal(failApply, false);
+  } finally {
+    wire.request = nativeRequest;
+  }
+
   const reasoningRequest = (type: string, id: string, reasoning_level = 'ultra') => ({
     protocol: 'open-agent-protocol',
     version: '0.1',
@@ -203,8 +224,8 @@ process.exit(await child.exited);
   clearModelsCache();
   await turn('max');
   assert.equal((await session()).sdkSessionId, thread);
-  assert.equal(requests.length, 6);
-  const evidence = { version, published, requests, sameThreadAfterReopen: true, ultraOpen: 'schema_invalid', ultraLive: 'schema_invalid', acceptedOffWireLevel: off.payload.reasoning_level };
+  assert.equal(requests.length, 7);
+  const evidence = { version, published, requests, sameThreadAfterReopen: true, ultraOpen: 'schema_invalid', ultraLive: 'schema_invalid', acceptedOffWireLevel: off.payload.reasoning_level, recoveredLostSettingsAck: true };
   await writeFile(join(run, 'evidence', 'thinking.json'), JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify(evidence));
 } finally {
