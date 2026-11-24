@@ -363,7 +363,8 @@ export class ModelSwitchHandler {
     newProvider: string,
     nonInterrupting = false,
     commit?: RuntimeSettingsCommit,
-    deferQueryStart = false
+    deferQueryStart = false,
+    thinkingLevel?: ThinkingLevel
   ): Promise<ModelSwitchResult> {
     if (commit && !nonInterrupting)
       throw new Error('runtime settings commit requires the non-interrupting opt-in');
@@ -379,6 +380,7 @@ export class ModelSwitchHandler {
     } = this.ctx;
 
     const previousModel = session.config.model;
+    const previousThinking = session.config.thinkingLevel;
     const originalProvider = session.config.provider;
     const originalPair = { model: previousModel, provider: originalProvider };
     const generation = this.ctx.getQueryGeneration?.();
@@ -425,6 +427,7 @@ export class ModelSwitchHandler {
 
       if (
         !commit &&
+        thinkingLevel === undefined &&
         currentResolvedModel === resolvedModel &&
         session.config.provider === newProvider
       ) {
@@ -486,17 +489,19 @@ export class ModelSwitchHandler {
         if (!durableCommit)
           return { success: false, model: session.config.model, error: 'session_settings_changed' };
       }
+      const nextThinking = commit?.thinkingLevel ?? thinkingLevel;
+      const thinkingPatch = nextThinking === undefined ? {} : { thinkingLevel: nextThinking };
       if (!this.isQueryActiveOrStarting()) {
         this.ctx.stopLoginHolds?.();
         session.config.model = resolvedModel;
         session.config.provider = nextProvider;
-        if (commit?.thinkingLevel !== undefined)
-          session.config.thinkingLevel = commit.thinkingLevel;
+        Object.assign(session.config, thinkingPatch);
         if (!commit) {
           await db.updateSession(session.id, {
             config: {
               model: resolvedModel,
               provider: nextProvider,
+              ...thinkingPatch,
             } as SessionConfig,
           });
         }
@@ -526,10 +531,12 @@ export class ModelSwitchHandler {
         this.ctx.stopLoginHolds?.();
         session.config.model = resolvedModel;
         session.config.provider = nextProvider;
+        Object.assign(session.config, thinkingPatch);
         await db.updateSession(session.id, {
           config: {
             model: resolvedModel,
             provider: nextProvider,
+            ...thinkingPatch,
           } as SessionConfig,
         });
 
@@ -590,6 +597,7 @@ export class ModelSwitchHandler {
 
       session.config.model = previousModel;
       session.config.provider = originalProvider;
+      session.config.thinkingLevel = previousThinking;
       session.sdkSessionId = previousSdkSessionId;
       session.sdkOriginPath = previousSdkOriginPath;
       session.metadata = previousMetadata;
@@ -597,6 +605,7 @@ export class ModelSwitchHandler {
         config: {
           model: previousModel,
           provider: originalProvider,
+          ...(thinkingLevel === undefined ? {} : { thinkingLevel: previousThinking }),
         } as SessionConfig,
         sdkSessionId: previousSdkSessionId,
         sdkOriginPath: previousSdkOriginPath,
