@@ -26,13 +26,20 @@ try {
       await page.goto(`${pairBase}/session/${sessionId}`);
       await page.getByText(title, { exact: true }).first().waitFor();
       await use(page.getByRole('button', { name: 'Choose model and thinking' }));
-      const group = page.getByRole('group', { name: 'Thinking levels' });
-      await group.waitFor({ timeout: 5000 });
-      assert.deepEqual(await group.getByRole('button').allTextContents(), levels);
+      const slider = page.getByRole('slider', { name: 'Thinking' });
+      await slider.waitFor({ timeout: 5000 });
+      assert.equal(await slider.getAttribute('min'), '0');
+      assert.equal(await slider.getAttribute('max'), String(levels.length - 1));
+      assert.equal(await slider.getAttribute('step'), '1');
+      const stops = await slider.locator('..').locator('[title]').evaluateAll(
+        (ticks) => ticks.map((tick) => tick.getAttribute('title'))
+      );
+      assert.deepEqual(stops, levels);
       assert.equal(await page.getByText('OXAP cannot send ultra.', { exact: true }).count(), name === 'gpt-6.2-sol' ? 1 : 0);
-      const max = group.getByRole('button', { name: 'max', exact: true });
-      if (name === 'gpt-6-luna' && !touch) await use(max);
-      await group.getByRole('button', { name: 'max', pressed: true, exact: true }).waitFor();
+      if (name === 'gpt-6-luna' && !touch) await slider.press('End');
+      await page.getByRole('img', { name: 'Thinking: max', exact: true }).waitFor();
+      assert.equal(await slider.getAttribute('aria-valuetext'), 'max');
+      assert.equal(await page.getByTestId('thinking-slider-label').textContent(), 'max');
       await page.screenshot({ path: `${output}/${name}-${touch ? 'phone' : 'desktop'}.png`, animations: 'disabled' });
     }
     await context.close();
