@@ -16,8 +16,19 @@ export async function announceOxapNotice(
     parent_tool_use_id: null,
     message: { role: 'assistant', content: [{ type: 'text', text, citations: null }] },
   } as unknown as SDKMessage;
+  await publishOxapMessage(sessionId, message, db, hub, ensureLive);
+}
+
+export async function publishOxapMessage(
+  sessionId: string,
+  message: SDKMessage,
+  db: OxapReopenStore,
+  hub: OxapReopenEvents,
+  ensureLive: () => void
+): Promise<void> {
+  ensureLive();
   if (!(await db.saveSDKMessage(sessionId, message)))
-    throw new Error('Could not save the Codex recovery notice');
+    throw new Error('Could not save the OXAP chat message');
   ensureLive();
   hub.event(
     'state.sdkMessages.delta',

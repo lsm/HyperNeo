@@ -90,19 +90,22 @@ try {
   });
   const rows = () => app.db.getSDKMessages(sessionId, 100).messages;
   const prompt = 'Reply with exactly OXAP-TELEMETRY-OK. Do not use any tools.';
-  const sent = await hub.request('message.send', { sessionId, content: prompt });
-  console.log('Message send:', JSON.stringify(sent));
   const errors: string[] = [];
   app.internalEventBus.subscribe('session.errorObserved', ({ sessionId: id, details }) => {
     const error = details as { userMessage?: string } | undefined;
     if (id === sessionId && error?.userMessage) errors.push(error.userMessage);
   }, { subscriberName: 'oxap-chat-telemetry-proof' });
-  const deadline = Date.now() + 90_000;
-  while (!rows().some((row) => row.type === 'result')) {
-    assert.deepEqual(errors, []);
-    assert(Date.now() < deadline, 'Codex run did not settle');
-    await Bun.sleep(100);
-  }
+  const runTurn = async (expectedResults: number) => {
+    const sent = await hub.request('message.send', { sessionId, content: prompt });
+    assert(sent);
+    const deadline = Date.now() + 90_000;
+    while (rows().filter((row) => row.type === 'result').length < expectedResults) {
+      assert.deepEqual(errors, []);
+      assert(Date.now() < deadline, 'Codex run did not settle');
+      await Bun.sleep(100);
+    }
+  };
+  await runTurn(1);
   const inits = rows().filter((row) => row.type === 'system' && row.subtype === 'init');
   const assistants = rows().filter((row) => row.type === 'assistant');
   const results = rows().filter((row) => row.type === 'result');
@@ -132,17 +135,40 @@ try {
         const result = page.getByRole('button', { name: /→.* tokens/ }).last();
         await result.waitFor({ timeout: 5_000 });
         resultText = await result.innerText();
+        const init = page.getByRole('button', { name: /Session Started.*gpt-6-luna/ });
+        if (inits.length > 0) {
+          await init.waitFor({ timeout: 5_000 });
+          await init.click();
+          await page.getByText(/Codex.*OXAP.*on-request/).waitFor({ timeout: 5_000 });
+          await page.locator('[title="Context usage unavailable"]').waitFor({ timeout: 5_000 });
+          await result.click();
+          await page.getByText('Completed in 1 turn', { exact: true }).waitFor({ timeout: 5_000 });
+          assert.equal(await page.getByText('Cost', { exact: true }).count(), 0);
+        }
         await page.screenshot({ path: join(evidence, `${name}.png`), animations: 'disabled' });
       } finally {
         await context.close();
       }
     }
     assert.equal(inits.length, 1, 'one initialization message');
+    assert.equal(inits[0].model, 'gpt-6-luna');
     assert.equal(results.length, 1, 'one result');
-    assert(assistants.length && observed.replies.every(Boolean), 'assistant model is shown');
+    assert.deepEqual(observed.replies, ['gpt-6-luna']);
     assert(results[0].duration_ms > 0, 'elapsed duration is measured');
     assert.equal(results[0].total_cost_usd, undefined, 'unreported cost is absent');
     assert(!resultText.includes('$0.0000'), 'result row hides unreported cost');
+    assert(results[0].usage.input_tokens > 0, 'the run reported input tokens');
+    assert(results[0].usage.output_tokens > 0, 'the run reported output tokens');
+    const countInits = () => rows().filter((row) => row.type === 'system' && row.subtype === 'init').length;
+    await runTurn(2);
+    assert.equal(countInits(), 1, 'a second turn on the same thread adds no init');
+    const nativeId = app.db.getSession(sessionId)?.sdkSessionId;
+    assert(nativeId);
+    await app.oxapEngine.restart();
+    await runTurn(3);
+    assert.equal(app.db.getSession(sessionId)?.sdkSessionId, nativeId);
+    assert.equal(countInits(), 2, 'one more init after reopening the native thread');
+    console.log('Reviewed 2 viewports, 3 completed turns, and 2 session init messages.');
   } finally {
     await browser.close();
   }
