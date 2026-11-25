@@ -100,6 +100,7 @@ import {
 } from '../../drivers/claude-remote-control.ts';
 import {
   connectCodexAppServer,
+  connectRecoveredCodexAppServer,
   startCodexBootstrapServer,
 } from '../../drivers/codex-app-server.ts';
 import { startCodexDesktopTurn } from '../../drivers/codex-desktop-handoff.ts';
@@ -521,7 +522,8 @@ function codexDesktopAdapters(
   ) => Promise<CodexSnapshot>,
   searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>,
   prepareExecution: WorkExecutionPreparer,
-  admitWork: FamilyOperationContext['deps']['admitCodexWork']
+  admitWork: FamilyOperationContext['deps']['admitCodexWork'],
+  recoverAppServer: () => Promise<boolean>
 ): WorkAdapter[] {
   const codexHome = codexWorkerHome();
   const statePath = codexStatePath(homedir());
@@ -537,7 +539,11 @@ function codexDesktopAdapters(
       machine: hostname(),
       now: Date.now,
       spawn: spawnProcess,
-      appServer: () => connectCodexAppServer(codexAppServerSocketPath(codexHome)),
+      appServer: () =>
+        connectRecoveredCodexAppServer(
+          () => connectCodexAppServer(codexAppServerSocketPath(codexHome)),
+          recoverAppServer
+        ),
       bootstrapServer: () => startCodexBootstrapServer(),
       prepareDesktopProject: (folder) => ensureCodexDesktopProject(folder, codexHome, spawnProcess),
       startDesktopTurn: (threadId, request) =>
@@ -638,7 +644,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
         context.deps.db.readCodexSnapshotAsync(statePath, includeClosed, idPrefix, fullTitles),
       searchChats,
       prepareExecution,
-      context.deps.admitCodexWork
+      context.deps.admitCodexWork,
+      async () => (await context.deps.codexSetup?.recover()) ?? false
     );
   const copilotDesktopPath = copilotDesktopStatePath(homedir());
   const copilotDesktop = createCopilotDesktopAdapter(

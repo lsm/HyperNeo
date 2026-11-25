@@ -20,6 +20,8 @@ export class CodexRequestError extends Error {
   }
 }
 
+export class CodexConnectError extends Error {}
+
 export interface CodexSocketFile {
   exists: boolean;
   target?: string;
@@ -29,7 +31,7 @@ export function codexConnectError(
   socketPath: string,
   cause: unknown,
   socket: CodexSocketFile
-): Error {
+): CodexConnectError {
   const detail =
     socket.exists === false && socket.target
       ? `it points to ${socket.target}, which no longer exists`
@@ -40,9 +42,10 @@ export function codexConnectError(
           : typeof (cause as { message?: unknown } | null)?.message === 'string'
             ? (cause as { message: string }).message
             : String(cause);
-  return new Error(`Could not connect to the Codex app-server at ${socketPath}: ${detail}`, {
-    cause,
-  });
+  return new CodexConnectError(
+    `Could not connect to the Codex app-server at ${socketPath}: ${detail}`,
+    { cause }
+  );
 }
 
 function readCodexSocketFile(socketPath: string): CodexSocketFile {
@@ -196,6 +199,18 @@ type Pending = {
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 };
+
+export async function connectRecoveredCodexAppServer(
+  connect: () => Promise<CodexAppServer>,
+  recover: () => Promise<boolean>
+): Promise<CodexAppServer> {
+  try {
+    return await connect();
+  } catch (error) {
+    if (!(error instanceof CodexConnectError) || !(await recover())) throw error;
+    return connect();
+  }
+}
 
 export function connectCodexAppServer(
   socketPath: string,
