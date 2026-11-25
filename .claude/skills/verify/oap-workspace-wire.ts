@@ -20,8 +20,10 @@ import { resolveNeoEntry } from '../../../packages/shared/src/web-entry.ts';
 
 const [binary, version, sha256, mode, ...args] = process.argv.slice(2);
 const run = resolve(args.pop()!);
-const livePeer = mode === 'no-replay' ? undefined : args[0];
-const [nativeCodex, nativeHome] = mode === 'no-replay' ? args : [];
+const useNativeRelay = mode === 'no-replay' || mode === 'codex-turn-controls';
+const livePeer = useNativeRelay ? undefined : args[0];
+const [nativeCodex, nativeHome] = useNativeRelay ? args : [];
+if (mode === 'codex-turn-controls') assert(nativeCodex && nativeHome);
 if (nativeCodex || nativeHome) {
   assert(nativeCodex && isAbsolute(nativeCodex));
   assert(nativeHome && isAbsolute(nativeHome) && nativeHome !== join(run, 'home'));
@@ -120,7 +122,7 @@ with subprocess.Popen([${JSON.stringify(nativeCodex)}, *sys.argv[1:]], stdin=sub
         try:
             for line in sys.stdin.buffer:
                 method = json.loads(line).get('method')
-                if method in ('thread/start', 'thread/resume', 'turn/start'):
+                if method in ('thread/start', 'thread/resume', 'turn/start', 'turn/steer', 'thread/compact/start'):
                     with open(${JSON.stringify(join(run, 'codex-home/calls.jsonl'))}, 'a') as output:
                         output.write(json.dumps({'request': {'method': method}}) + '\\n')
                 child.stdin.write(line)
@@ -183,6 +185,14 @@ async function verifyInBrowser(
   assert.notEqual(web.port, 8399);
   assert.notEqual(web.port, 8499);
   try {
+    if (mode === 'codex-turn-controls' && 'sessionId' in target) {
+      const browser = Bun.spawn([
+        'node', '.claude/skills/verify/oxap-codex-turn-controls-web.mjs',
+        String(web.port), target.sessionId, run,
+      ], { stdin: new Blob([readLocalCredential()]), stdout: 'inherit', stderr: 'inherit' });
+      assert.equal(await browser.exited, 0, 'The Codex composer browser journey failed');
+      return;
+    }
     if (mode === 'image-wording' && 'sessionId' in target) {
       const browser = Bun.spawn([
         'node', '.claude/skills/verify/oxap-image-wording-web.mjs',
@@ -273,7 +283,14 @@ try {
   const { sessionId: firstId } = await makeSession(mode === 'folderless' ? undefined : 'workspace-a');
   const first = app.sessionManager.getSession(firstId);
   assert(first);
-  if (mode === 'image-wording') {
+  if (mode === 'codex-turn-controls') {
+    await verifyInBrowser(app, { sessionId: firstId, text: '' });
+    const methods = calls().map(({ request }) => request.method);
+    const nativeTurns = methods.filter((method) => method === 'turn/start').length;
+    assert.equal(nativeTurns, 2);
+    assert(!methods.includes('turn/steer') && !methods.includes('thread/compact/start'));
+    Object.assign(evidence, { nativeTurns, pass: true });
+  } else if (mode === 'image-wording') {
     await verifyInBrowser(app, { sessionId: firstId, text: '' });
     assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 0);
     Object.assign(evidence, { nativeTurns: 0, pass: true });
