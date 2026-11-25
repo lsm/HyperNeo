@@ -28,6 +28,7 @@ const workspace = join(run, 'workspace');
 const home = join(run, 'home', '.codex');
 await Promise.all([mkdir(home, { recursive: true }), mkdir(workspace)]);
 const requests: Array<{ model?: string; effort?: string }> = [];
+const resumeSol = Promise.withResolvers<void>();
 const model = Bun.serve({
   hostname: '127.0.0.1',
   port: 0,
@@ -36,6 +37,7 @@ const model = Bun.serve({
     const body = await request.json() as { model?: string; reasoning?: { effort?: string } };
     requests.push({ model: body.model, effort: body.reasoning?.effort });
     const n = requests.length;
+    if (body.model === 'gpt-6.2-sol') await resumeSol.promise;
     const item = { type: 'message', id: 'msg_' + n, role: 'assistant', status: 'completed',
       content: [{ type: 'output_text', text: 'Synthetic effort received.', annotations: [] }] };
     const response = { id: 'resp_' + n, object: 'response', created_at: 1, status: 'completed',
@@ -216,12 +218,14 @@ process.exit(await child.exited);
         name: 'device.pair.create', input: { kind: 'human', name: 'Codex picker proof' },
       });
       assert(pairing.ok);
+      await hub.request('message.send', { sessionId: solSessionId, content: 'Hold this reply for the picker check' });
       const browser = Bun.spawn(['node', '.claude/skills/verify/oxap-codex-thinking-web.mjs',
         String(preview.port), pairing.code, sessionId, solSessionId, evidenceDir], {
         stdout: 'inherit', stderr: 'inherit',
       });
       assert.equal(await browser.exited, 0, 'The browser journey failed');
     } finally {
+      resumeSol.resolve();
       await preview.stop(true);
     }
   } else {
@@ -234,7 +238,7 @@ process.exit(await child.exited);
   clearModelsCache();
   await turn('max');
   assert.equal((await session()).sdkSessionId, thread);
-  assert.equal(requests.length, 8);
+  assert.equal(requests.length, process.env.VERIFY_BROWSER ? 9 : 8);
   const evidence = { version, published, requests, sameThreadAfterReopen: true, ultraOpen: 'schema_invalid', ultraLive: 'schema_invalid', acceptedOffWireLevel: off.payload.reasoning_level, recoveredLostSettingsAck: true };
   await writeFile(join(run, 'evidence', 'thinking.json'), JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify(evidence));

@@ -41,6 +41,17 @@ try {
       assert.equal(await slider.getAttribute('aria-valuetext'), 'max');
       assert.equal(await page.getByTestId('thinking-slider-label').textContent(), 'max');
       await page.screenshot({ path: `${output}/${name}-${touch ? 'phone' : 'desktop'}.png`, animations: 'disabled' });
+      if (name === 'gpt-6.2-sol' && !touch) {
+        await page.getByRole('button', { name: 'Stop generation' }).waitFor();
+        await slider.press('Home');
+        const toast = page.getByRole('alert').filter({
+          has: page.getByRole('button', { name: 'Dismiss notification' }),
+        });
+        await toast.waitFor();
+        assert.equal(await toast.innerText(), 'Wait for the current reply to finish, then change the thinking level.');
+        assert.equal(await slider.getAttribute('aria-valuetext'), 'max');
+        await page.screenshot({ path: `${output}/busy-thinking-toast.png`, animations: 'disabled' });
+      }
     }
     await context.close();
   }
