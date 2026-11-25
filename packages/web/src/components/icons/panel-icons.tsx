@@ -35,15 +35,6 @@ export function ModelChevronUpIcon() {
   return <ChevronUpGlyph class="w-4 h-4 text-fg-muted" {...outlineAttributes} />;
 }
 
-export function QueueMoveToNextIcon() {
-  return (
-    <svg class="h-3.5 w-3.5" {...outlineAttributes} stroke-width={2.3}>
-      <path {...roundedPathAttributes} d="M12 5v14" />
-      <path {...roundedPathAttributes} d="M19 12l-7 7-7-7" />
-    </svg>
-  );
-}
-
 export function QueueMoveToSteerIcon() {
   return (
     <svg class="h-3.5 w-3.5" {...outlineAttributes} stroke-width={2.3}>

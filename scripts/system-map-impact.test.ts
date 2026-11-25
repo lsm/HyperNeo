@@ -185,7 +185,6 @@ test('invalid bodies fail, and only revert waives the path entries on label reva
       '',
       `${good}\n\n${good}`,
       block(base, base, ['impact'], [reason(peer)]),
-      block(head, head, ['impact'], [reason(peer)]),
       block(head, base, ['impact'], [reason(peer)], 2),
       block(head, base, ['impact', 'unknown'], [reason(peer)]),
       block(head, base, ['impact'], [reason(peer), reason(peer)]),
@@ -195,6 +194,8 @@ test('invalid bodies fail, and only revert waives the path entries on label reva
     ];
     const success = check(head, [owner], good);
     expect(success.exitCode, success.stderr.toString()).toBe(0);
+    const movedBase = check(head, [owner], block(head, head, ['impact'], [reason(peer)]));
+    expect(movedBase.exitCode, movedBase.stderr.toString()).toBe(0);
     for (const body of bad) {
       const r = check(head, [owner], body);
       expect(r.exitCode).toBe(1);

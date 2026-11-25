@@ -79,9 +79,9 @@ Every PR has one attestation block. Code needs `impact`, plus `map` when it has 
 ```
 ````
 
-`where` and `routes` may also appear in `read`. CI validates required claims, the current head/base, and one non-empty reason per required path. It rejects missing, extra, or duplicate paths, empty reasons, and unknown versions. `--print` generates the local block; CI prints its exact required block in a collapsed log with the full reports. No PR comment is created.
+`where` and `routes` may also appear in `read`. CI validates required claims, the current head, and one non-empty reason per required path. The block's `base` is informational: a `dev` push changes the base without changing the PR, so a base mismatch alone never fails the check. It rejects missing, extra, or duplicate paths, empty reasons, and unknown versions. `--print` generates the local block; CI prints its exact required block in a collapsed log with the full reports. No PR comment is created.
 
-A validation failure produces one error: `System map check failed: <read/path/reason counts>; head/base <current|stale>. Run system-map-impact.ts --print and use the collapsed CI report and replacement block; author read entries are claims.` Analyzer failures instead report the command and head that failed.
+A validation failure produces one error: `System map check failed: <read/path/reason counts>; head <current|stale>. Run system-map-impact.ts --print and use the collapsed CI report and replacement block; author read entries are claims.` Analyzer failures instead report the command and head that failed.
 
 Tests-only, native-only, scripts-only, and dependency-only PRs still attest to the required reads; their empty required-path sets need no entries. Native files in a mixed PR remain ignored, deleted mapped sources require entries, and a dependency bump with mapped source is not exempt. The achievable gate is current attestation plus exact analysis, not proof of reading, so there is no broader silent waiver.
 
@@ -89,7 +89,7 @@ The workflow triggers on `opened`, `synchronize`, `reopened`, `edited`, `labeled
 
 ### Limits
 
-The required `System map` status is the only merge gate; there is no daemon or merge-wrapper change. GitHub's required-status setting plus **Require branches to be up to date before merging** covers most stale-base cases. A base push after the last run can still leave an older result until another PR event, and a body edit or label change can race the merge. Direct GitHub merges receive those branch protections, but a required CI check cannot make those windows atomic or prove that an author read the output.
+The required `System map` status is the only merge gate; there is no daemon or merge-wrapper change. GitHub's required-status setting plus **Require branches to be up to date before merging** covers most stale-base cases. A base push after the last run can still leave an older result until another PR event, but it no longer invalidates the attestation, and a body edit or label change can race the merge. Direct GitHub merges receive those branch protections, but a required CI check cannot make those windows atomic or prove that an author read the output.
 
 ### What CI proves
 
