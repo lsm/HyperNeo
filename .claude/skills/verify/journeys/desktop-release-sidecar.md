@@ -10,7 +10,7 @@ directory.
 ```bash
 codesign --verify --deep --strict "$APP"
 spctl --assess --type execute --verbose=4 "$APP"
-python3 .claude/skills/verify/desktop-release-sidecar.py "$APP" "$EVIDENCE/desktop.log"
+python3 .claude/skills/verify/desktop-release-sidecar.py "$APP" "$EVIDENCE/desktop.log" "$COMMIT"
 ```
 
 Record all three exit statuses. A signing-only candidate may fail Gatekeeper
@@ -20,6 +20,7 @@ candidate is available.
 
 The launch proof uses a fresh home, data directory, workspace and loopback
 port. It requires the daemon to be a child of the app, HTTP 200 on that port
-and a closed port after cleanup. The failing release reports that its daemon
+and a closed port after cleanup. Set COMMIT to the exact candidate commit
+to check its build health and identity using the bundled CLI. The failing release reports that its daemon
 exited before the UI was ready and running the sidecar directly exits with
 SIGKILL. Retain the launch log and proof result outside the disposable run.

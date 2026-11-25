@@ -1,6 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 set +x
+umask 077
 cd "$(dirname "$0")"
 
 identity="$APPLE_SIGNING_IDENTITY"
@@ -50,3 +51,8 @@ codesign --force --sign "$identity" ${keychain_args[@]+"${keychain_args[@]}"} \
     --timestamp --options runtime --identifier io.hyperneo.locked-use src-tauri/binaries/hyperneo-locked-use
 codesign --force --sign "$identity" ${keychain_args[@]+"${keychain_args[@]}"} \
     --timestamp --options runtime src-tauri/binaries/HyperNeoLockedUse.bundle
+
+if [[ $# -gt 0 ]]; then
+    codesign --force --sign "$identity" ${keychain_args[@]+"${keychain_args[@]}"} \
+        --timestamp --options runtime --entitlements src-tauri/DaemonEntitlements.plist "$1"
+fi

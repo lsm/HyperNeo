@@ -11,7 +11,7 @@ from urllib.error import URLError
 from urllib.request import urlopen
 
 
-def verify(app, log_path):
+def verify(app, log_path, expected_commit=None):
     with tempfile.TemporaryDirectory(prefix="hn-desktop-", dir="/tmp") as run_dir:
         run = Path(run_dir)
         for name in ("home", "data", "workspace", "tmp"):
@@ -51,6 +51,20 @@ def verify(app, log_path):
                             ).strip()
                             with urlopen(url, timeout=1) as response:
                                 if response.status == 200 and parent == str(desktop.pid):
+                                    if expected_commit:
+                                        result = subprocess.run(
+                                            [macos / "hyperneo", "build"],
+                                            env={**env, "HYPERNEO_SESSION_ID": "desktop-release-proof"},
+                                            cwd=run, capture_output=True, text=True, timeout=10,
+                                        )
+                                        if result.returncode != 0:
+                                            raise RuntimeError(f"Daemon health command exited {result.returncode}")
+                                        health = json.loads(result.stdout)
+                                        if (health["health"], health["commit"], health["pid"]) != (
+                                            "ok", expected_commit, pid
+                                        ):
+                                            raise RuntimeError("Unexpected daemon health, commit or PID")
+                                        print(f"Daemon health=ok; running commit {expected_commit}")
                                     print(f"Desktop started its sidecar; GET {url} returned 200 (2/2)")
                                     return
                         except (URLError, json.JSONDecodeError, subprocess.CalledProcessError):
@@ -78,4 +92,4 @@ def verify(app, log_path):
 
 
 if __name__ == "__main__":
-    verify(Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve())
+    verify(Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve(), *sys.argv[3:])
