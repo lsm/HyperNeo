@@ -1,6 +1,10 @@
 import type { MessageHub } from '@hyperneo/shared';
 import { oxapHarnessesForProvider } from '@hyperneo/shared/types/oxap-harnesses';
-import { newSessionOxapRefusal, type OxapSettingsDeps } from '../oxap/oxap-settings.ts';
+import {
+  detectOxapExecutable,
+  newSessionOxapRefusal,
+  type OxapSettingsDeps,
+} from '../oxap/oxap-settings.ts';
 import { VOICE_CREDENTIAL_PROVIDER_ID } from './settings-handlers.ts';
 import type { CreateProviderParams, ProviderRecord, UpdateProviderParams } from '@hyperneo/shared';
 import type { ListRemoteModelsOptions, ProviderCredentials } from '@hyperneo/shared/provider';
@@ -232,9 +236,18 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         }
       })
     );
-    if ((data as { forNewSession?: boolean } | undefined)?.forNewSession !== true) {
-      return { providers: enriched };
+    const options = data as { forNewSession?: boolean; forSettings?: boolean } | undefined;
+    if (options?.forSettings === true) {
+      const providers = await Promise.all(
+        enriched.map(async (record) => {
+          const [harness] = oxapHarnessesForProvider(record.providerId);
+          const detectedHarnessExecutable = harness && (await detectOxapExecutable(harness));
+          return detectedHarnessExecutable ? { ...record, detectedHarnessExecutable } : record;
+        })
+      );
+      return { providers };
     }
+    if (options?.forNewSession !== true) return { providers: enriched };
     const installed = deps.oxapSettings?.settings().oxapHub;
     return {
       providers: await Promise.all(

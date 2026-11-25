@@ -71,7 +71,7 @@ try {
       await page.goto(`${base}/settings?tab=providers`);
       await page.getByText('Synthetic OXAP Codex', { exact: true }).first().click();
       assert.equal(await page.getByLabel('Client', { exact: true }).inputValue(), 'oxap-codex');
-      await page.getByLabel('Client executable').waitFor();
+      await page.getByLabel('Codex CLI path').waitFor();
       await page.getByText('OXAP installation', { exact: true }).waitFor();
       await page.getByRole('button', { name: 'Save client' }).click();
       await page.getByText('Client saved', { exact: true }).waitFor();
