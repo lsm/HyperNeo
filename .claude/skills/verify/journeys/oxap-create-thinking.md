@@ -60,5 +60,7 @@ models' `ultra` refusals and verifies that OXAP returns `schema_invalid`
 on both open and live update. To also capture both models
 on desktop and phone, build web and set `VERIFY_BROWSER` and `NODE_PATH` with
 Node 24 on PATH. The browser verifies five slider stops and selects `max` before
-the live turn. Retain the four
-screenshots, `thinking.json`, and the wrapper exit status.
+the live turn. While a Sol reply is in progress, changing the slider must leave
+the selection on `max` and show a toast asking the user to wait for the reply.
+Retain the four picker screenshots, `busy-thinking-toast.png`, `thinking.json`,
+and the wrapper exit status.

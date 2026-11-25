@@ -53,12 +53,21 @@ export async function setSessionThinkingLevel(
       outcome.kind === 'completed'
         ? (outcome.value as { ok: boolean; reason?: string })
         : undefined;
-    return result?.ok
-      ? { success: true as const, thinkingLevel }
-      : {
+    if (result?.ok) return { success: true as const, thinkingLevel };
+    switch (result?.reason) {
+      case 'session_busy':
+        return {
           success: false as const,
-          error: result?.reason ?? 'Could not change the Codex thinking level.',
+          error: 'Wait for the current reply to finish, then change the thinking level.',
         };
+      case 'session_settings_changed':
+        return {
+          success: false as const,
+          error: 'The chat state changed. Try changing the thinking level again.',
+        };
+      default:
+        return { success: false as const, error: 'Could not change the Codex thinking level.' };
+    }
   }
   await sessions.updateSession(id, { config: { ...config, thinkingLevel } });
   await agent.applyThinkingLevel();
