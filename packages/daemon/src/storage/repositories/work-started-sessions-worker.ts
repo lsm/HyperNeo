@@ -469,6 +469,36 @@ export function markReviewedWorkers(db: BunDatabase, refs: StartedWork[]): void 
   for (const ref of refs) update.run(ref.adapter, ref.id);
 }
 
+export function readCleanWorkerRecord(
+  db: BunDatabase,
+  todoId: string,
+  askId: string,
+  ref: StartedWork
+) {
+  const record = db
+    .prepare(`SELECT machine, folder, provider, model, effort, preparation,
+      released_at AS releasedAt FROM work_started_sessions
+      WHERE adapter = ? AND id = ? AND kind = 'worker'`)
+    .get(ref.adapter, ref.id) as {
+    machine: string | null;
+    folder: string | null;
+    provider: string | null;
+    model: string | null;
+    effort: string | null;
+    preparation: string | null;
+    releasedAt: number | null;
+  } | null;
+  const role = db
+    .prepare('SELECT 1 FROM neo_todo_roles WHERE todo_id = ? AND adapter = ? AND id = ? LIMIT 1')
+    .get(todoId, ref.adapter, ref.id);
+  const sameAsk = db
+    .prepare(`SELECT 1 FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
+      WHERE t.ask_id = ? AND t.id <> ? AND json_extract(s.ref, '$.adapter') = ?
+      AND json_extract(s.ref, '$.id') = ? AND json_extract(s.ref, '$.daemon') IS NULL LIMIT 1`)
+    .get(askId, todoId, ref.adapter, ref.id);
+  return { record, role, sameAsk };
+}
+
 export function readSameAskWorkers(
   db: BunDatabase,
   askId: string,

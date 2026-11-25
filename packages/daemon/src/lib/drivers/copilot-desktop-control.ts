@@ -1,3 +1,4 @@
+import { WORKER_COMPACTION_TIMEOUT_MS } from './worker-compaction.ts';
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { isAbsolute, join } from 'node:path';
@@ -274,7 +275,7 @@ export function createCopilotDesktopControl(
           )
             return event.data.success === true && event.data.outcome === 'applied';
         },
-        60_000
+        WORKER_COMPACTION_TIMEOUT_MS
       );
       if (!result.ok) return result;
       return result.value

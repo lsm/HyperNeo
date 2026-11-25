@@ -12,8 +12,8 @@ bash .claude/skills/verify/proof-run.sh /absolute/unconfirmed-evidence \
 Finish a worker's todo, queue the next todo of the same ask on it and run Neo's
 scheduled refresh. Verify that the worker compacts its recorded conversation
 once before that todo is sent, and that follow-up input is refused while
-compaction is active. The todo is still sent when the CLI reports only a foreign
-checkpoint and the compaction is unconfirmed.
+compaction is active. When the CLI reports only a foreign checkpoint, verify that
+the todo goes to a fresh worker and records `not_confirmed`.
 
 For an attended check with the signed-in CLI, start a disposable conversation,
 compact it after the first response, and verify that a follow-up in the same

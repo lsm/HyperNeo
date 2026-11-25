@@ -289,10 +289,10 @@ describe('neo todo runner refresh releases finished workers', () => {
             value: { archived: true },
           }
       );
-      await h.finishTodo(h.add({ verb: 'send', ref: worker }));
       h.db
         .prepare('DELETE FROM work_started_sessions WHERE adapter = ? AND id = ?')
         .run(worker.adapter, worker.id);
+      await h.finishTodo(h.add({ verb: 'send', ref: worker }));
       await h.refresh();
       await h.refresh();
       expect(
@@ -322,7 +322,9 @@ describe('neo todo runner refresh releases finished workers', () => {
             value: { archived: true },
           }
       );
-      await h.finishTodo(h.add({ verb: 'send', ref: worker }));
+      const todo = h.add({ verb: 'send', ref: worker });
+      h.sessions.recordRef(todo.id, worker);
+      await h.finishTodo(todo);
       await h.refresh();
       expect(h.archived).toEqual([worker]);
       expect(h.released()).toHaveLength(1);
@@ -370,7 +372,9 @@ describe('neo todo runner refresh releases finished workers', () => {
     const h = setup();
     try {
       h.setArchive(() => ({ ok: false, reason: 'busy' }));
-      await h.finishTodo(h.add({ verb: 'send', ref: worker }));
+      const todo = h.add({ verb: 'send', ref: worker });
+      h.sessions.recordRef(todo.id, worker);
+      await h.finishTodo(todo);
       await h.refresh();
       expect(h.archived).toEqual([worker]);
       expect(h.released()).toEqual([]);
@@ -802,6 +806,9 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
         machine: 'laptop',
         folder: h.folder(),
         harness: worker.adapter,
+        provider: 'synthetic-provider',
+        model: 'synthetic-model',
+        effort: 'high',
       });
       const fresh = { adapter: 'hyperneo', id: 'fresh' };
       let startInput: Record<string, unknown> | undefined;
@@ -817,6 +824,11 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
       expect(h.events).toEqual([]);
       expect(h.sessions.readRef(next.id)).toEqual(fresh);
       expect(startInput?.excludeRefs).toContainEqual(worker);
+      expect(startInput).toMatchObject({
+        provider: 'synthetic-provider',
+        model: 'synthetic-model',
+        effort: 'high',
+      });
     } finally {
       h.db.close();
     }
@@ -1190,7 +1202,7 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
         await h.start(next.id);
         expect(h.events).toEqual([]);
         expect(opened).toBe(scenario === 'pinned');
-        if (scenario === 'pinned') expect(checkoutHead).toBe(head);
+        if (scenario === 'pinned') expect(String(checkoutHead)).toBe(head);
         else expect(h.store.getTodo(next.id)?.state).toBe('blocked');
       } finally {
         if (cleanup) await cleanup();

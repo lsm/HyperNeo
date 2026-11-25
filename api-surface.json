@@ -24207,6 +24207,11 @@
                           },
                           "type": "object"
                         },
+                        "provider": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        },
                         "sandbox": {
                           "description": "Ask for the OS worker sandbox (writes limited to the work folder), e.g. for untrusted or external code. Applies when the human set the worker sandbox to on-demand.",
                           "type": "boolean"
@@ -24230,6 +24235,16 @@
                     },
                     {
                       "properties": {
+                        "preparationParameters": {
+                          "additionalProperties": {
+                            "$ref": "#/$defs/__schema0"
+                          },
+                          "description": "Parameters for the linked ask pack preparation stage.",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "type": "object"
+                        },
                         "ref": {
                           "properties": {
                             "adapter": {
@@ -24250,6 +24265,10 @@
                             "id"
                           ],
                           "type": "object"
+                        },
+                        "sandbox": {
+                          "description": "Ask for the OS worker sandbox (writes limited to the work folder), e.g. for untrusted or external code. Applies when the human set the worker sandbox to on-demand.",
+                          "type": "boolean"
                         },
                         "verb": {
                           "const": "send",
@@ -42314,6 +42333,11 @@
                     },
                     "type": "object"
                   },
+                  "provider": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  },
                   "sandbox": {
                     "description": "Ask for the OS worker sandbox (writes limited to the work folder), e.g. for untrusted or external code. Applies when the human set the worker sandbox to on-demand.",
                     "type": "boolean"
@@ -42337,6 +42361,16 @@
               },
               {
                 "properties": {
+                  "preparationParameters": {
+                    "additionalProperties": {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    "description": "Parameters for the linked ask pack preparation stage.",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
                   "ref": {
                     "properties": {
                       "adapter": {
@@ -42357,6 +42391,10 @@
                       "id"
                     ],
                     "type": "object"
+                  },
+                  "sandbox": {
+                    "description": "Ask for the OS worker sandbox (writes limited to the work folder), e.g. for untrusted or external code. Applies when the human set the worker sandbox to on-demand.",
+                    "type": "boolean"
                   },
                   "verb": {
                     "const": "send",
@@ -43836,6 +43874,11 @@
                     },
                     "type": "object"
                   },
+                  "provider": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  },
                   "sandbox": {
                     "description": "Ask for the OS worker sandbox (writes limited to the work folder), e.g. for untrusted or external code. Applies when the human set the worker sandbox to on-demand.",
                     "type": "boolean"
@@ -43859,6 +43902,16 @@
               },
               {
                 "properties": {
+                  "preparationParameters": {
+                    "additionalProperties": {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    "description": "Parameters for the linked ask pack preparation stage.",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
                   "ref": {
                     "properties": {
                       "adapter": {
@@ -43879,6 +43932,10 @@
                       "id"
                     ],
                     "type": "object"
+                  },
+                  "sandbox": {
+                    "description": "Ask for the OS worker sandbox (writes limited to the work folder), e.g. for untrusted or external code. Applies when the human set the worker sandbox to on-demand.",
+                    "type": "boolean"
                   },
                   "verb": {
                     "const": "send",
@@ -59625,6 +59682,11 @@
           },
           "provenance": {
             "type": "boolean"
+          },
+          "provider": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
           },
           "role": {
             "description": "Role on the todo: do, review, verify or check. Defaults to do.",

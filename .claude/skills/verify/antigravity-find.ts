@@ -4,6 +4,7 @@ import { hostname } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import type { FindWorkResultSchema } from '../../../packages/daemon/src/lib/drivers/find-operation.ts';
 import type { ReadWorkResultSchema } from '../../../packages/daemon/src/lib/drivers/read-operation.ts';
 import type { Result, WorkDelivery, WorkDetail, WorkStarted } from '../../../packages/daemon/src/lib/drivers/types.ts';
@@ -67,7 +68,7 @@ if (process.argv[2] === '--version') {
   process.exit(0);
 }
 if (process.argv[2] === '--sandbox') {
-  const args = ['--sandbox','--conversation','owned-1','--settings','{"disableSlashCommands":false}','--print','/compact','--output-format','stream-json','--print-timeout','90s'];
+  const args = ['--sandbox','--conversation','owned-1','--settings','{"disableSlashCommands":false}','--print','/compact','--output-format','stream-json','--print-timeout','180s'];
   assert.deepEqual(process.argv.slice(2), args);
   assert.equal(process.cwd(), ${JSON.stringify(workspaceRoot)});
   appendFileSync(${JSON.stringify(journal)}, JSON.stringify({method:'compact'}) + '\\n');
@@ -87,7 +88,8 @@ const discovery = !process.argv.includes('--sandbox');
 assert.deepEqual(process.argv.slice(2), discovery
   ? ['acp', '--disable-telemetry'] : ['acp', '--sandbox', '--disable-telemetry']);
 assert.equal(process.cwd(), discovery ? process.env.HOME : ${JSON.stringify(workspaceRoot)});
-const sessionId = 'owned-1';
+let sessionId = 'owned-1';
+let replacement = false;
 const emit = (...messages) => process.stdout.write(messages.map(message => JSON.stringify({jsonrpc: '2.0', ...message}) + '\\n').join(''));
 const chunk = (id, text, role='agent') => ({method:'session/update',params:{sessionId:id,update:{sessionUpdate:role+'_message_chunk',content:{type:'text',text}}}});
 const note = (id, text) => emit(chunk(id, text));
@@ -120,6 +122,10 @@ for await (const line of createInterface({input: process.stdin})) {
   ]}});
   else if (method === 'session/new') {
     assert.deepEqual(params,{cwd:${JSON.stringify(workspaceRoot)},mcpServers:[]});
+    if (${compactUnconfirmed} && existsSync(${JSON.stringify(releaseCompaction)})) {
+      sessionId = 'owned-2';
+      replacement = true;
+    }
     emit({id,result:{sessionId,configOptions:${configFixture} ? configOptions() : undefined}});
   } else if (method === 'session/set_config_option') {
     assert(${configFixture});
@@ -169,6 +175,12 @@ for await (const line of createInterface({input: process.stdin})) {
     if (resumed && ${closeError}) emit({id,error:{code:-32603,message:'Save failed'}});
     else emit({id,result:{}});
   } else if (method === 'session/prompt') {
+    if (replacement) {
+      assert.equal(params.sessionId, 'owned-2');
+      assert(params.prompt[0].text.includes('Synthetic next todo of the same ask'));
+      emit({id,result:{stopReason:'end_turn'}});
+      continue;
+    }
     if (${steerFixture}) {
       assert.equal(params.sessionId,sessionId);
       if (promptId === undefined) {
@@ -450,7 +462,13 @@ try {
         writeFileSync(releaseCompaction, '');
         const completionDeadline = Date.now() + 5_000;
         while (!delivered() && Date.now() < completionDeadline) await Bun.sleep(25);
-        assert(delivered(), 'The next todo must reach the worker after the compaction');
+        assert(delivered(), 'The next todo must be dispatched after the compaction');
+        const dispatched = new NeoTodoSessionRepository(db).readRef('compact-next');
+        assert.equal(dispatched?.id, compactUnconfirmed ? 'owned-2' : started.value.ref.id);
+        if (compactUnconfirmed) {
+          const row = db.prepare("SELECT value_json FROM pack_facts WHERE todo_id = 'compact-next' AND pack = 'core' AND key = 'worker_reuse'").get() as { value_json: string };
+          assert.equal(JSON.parse(row.value_json).reason, 'not_confirmed');
+        }
         assert.equal(countCompactions(), 1);
         results.compaction = { unconfirmed: compactUnconfirmed, attempts: countCompactions() };
       }

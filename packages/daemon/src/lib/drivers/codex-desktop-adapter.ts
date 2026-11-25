@@ -84,6 +84,7 @@ import {
 import { reject } from './work-operations.ts';
 import { cleanupOwnedWorktree, type GitCheckout, prepareWorkerFolder } from './work-placement.ts';
 import { gitWorktreeProject } from './worktree-project.ts';
+import { WORKER_COMPACTION_TIMEOUT_MS } from './worker-compaction.ts';
 
 const THREADS_PER_PLACE = 20;
 const RECENT_MS = 2 * 60_000;
@@ -1575,7 +1576,7 @@ async function compactIdleCodexThread(
           : reject('not_delivered', 'The Codex app-server did not confirm compaction.')
       );
     }
-    const deadline = Date.now() + 60_000;
+    const deadline = Date.now() + WORKER_COMPACTION_TIMEOUT_MS;
     do {
       const { lines } = await readTailLines(path, ROLLOUT_TAIL_BYTES, size);
       if (completedDesktopCompaction(lines)) return { ok: true, value: { compacted: true } };

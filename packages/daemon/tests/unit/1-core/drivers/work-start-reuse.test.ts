@@ -56,6 +56,7 @@ function harness(
   const started: string[] = [];
   const unusable: WorkRef[] = [];
   const waiting: string[] = [];
+  const compaction = config && 'compact' in config ? config.compact : true;
   const adapter: WorkAdapter = {
     id: config?.adapter ?? 'claude-desktop',
     copilotClients: config?.copilotClients,
@@ -144,13 +145,13 @@ function harness(
           };
     },
     compact:
-      config?.compact === undefined
+      compaction === undefined
         ? undefined
         : async (ref) => {
             events.push(`compact ${ref.id}`);
-            if (config.compact === 'throws') throw new Error('Synthetic compaction failure');
-            if (config.compact === 'unconfirmed') return { ok: true, value: { compacted: false } };
-            return config.compact
+            if (compaction === 'throws') throw new Error('Synthetic compaction failure');
+            if (compaction === 'unconfirmed') return { ok: true, value: { compacted: false } };
+            return compaction
               ? { ok: true, value: { compacted: true } }
               : { ok: false, reason: 'busy', detail: 'Synthetic refusal' };
           },
@@ -177,18 +178,23 @@ function harness(
           ? new Map(free.map((id) => [id, history.get(id) ?? { sameAskAt: null, settledAt: null }]))
           : new Set(free),
       markUnusable: (ref) => void unusable.push(ref),
-      ...(config?.reuse
-        ? {
-            reusePolicy: async () => ({ mode: config.reuse!, sameAsk: config.sameAsk ?? [] }),
-            todoWorker: {
-              on: () => false,
-              wait: async (_todoId: string, ref: WorkRef) => {
-                waiting.push(ref.id);
-                return config.waitResult ?? 'instruction';
-              },
-            },
-          }
-        : {}),
+      ...{
+        reusePolicy: async () => ({
+          mode: config?.reuse ?? 'long_lived',
+          sameAsk: config?.reuse
+            ? (config.sameAsk ?? [])
+            : history
+              ? free.filter((id) => history.get(id)?.sameAskAt != null)
+              : free,
+        }),
+        todoWorker: {
+          on: () => false,
+          wait: async (_todoId: string, ref: WorkRef) => {
+            waiting.push(ref.id);
+            return config?.waitResult ?? 'instruction';
+          },
+        },
+      },
       ...claim,
     })
   );
@@ -288,7 +294,7 @@ describe('work.start session reuse preference', () => {
   });
 
   test('per ask waits when that matter’s worker is busy', async () => {
-    const run = harness([{ id: 'own', status: 'running' }], [], {
+    const run = harness([{ id: 'own', status: 'running' }], ['own'], {
       adapter: 'claude-desktop',
       reuse: 'per_ask',
       sameAsk: ['own'],
@@ -299,7 +305,7 @@ describe('work.start session reuse preference', () => {
   });
 
   test('a todo that cannot be queued starts a fresh session', async () => {
-    const run = harness([{ id: 'own', status: 'running' }], [], {
+    const run = harness([{ id: 'own', status: 'running' }], ['own'], {
       adapter: 'claude-desktop',
       reuse: 'per_ask',
       sameAsk: ['own'],
@@ -310,7 +316,7 @@ describe('work.start session reuse preference', () => {
   });
 
   test('a failing busy-worker status check falls back to a fresh start', async () => {
-    const run = harness([{ id: 'own', status: 'running' }], [], {
+    const run = harness([{ id: 'own', status: 'running' }], ['own'], {
       adapter: 'claude-desktop',
       reuse: 'per_ask',
       sameAsk: ['own'],
@@ -470,7 +476,7 @@ describe('work.start reuses an idle worker', () => {
     expect(run.sent).toEqual(['busy-previous']);
   });
 
-  test('for a different ask prefers the worker whose latest ask settled longest ago', async () => {
+  test('starts fresh instead of reusing workers from a different ask', async () => {
     const run = harness(
       [
         { id: 'settled-recent', status: 'done' },
@@ -484,10 +490,8 @@ describe('work.start reuses an idle worker', () => {
         ['settled-oldest', { sameAskAt: null, settledAt: 100 }],
       ])
     );
-    expect((await run.start(neo, false, { todoId: 'different-ask' })).value?.ref.id).toBe(
-      'settled-oldest'
-    );
-    expect(run.started).toEqual([]);
+    expect((await run.start(neo, false, { todoId: 'different-ask' })).value?.ref.id).toBe('fresh');
+    expect(run.started).toEqual(['loader']);
   });
 
   test('an excluded author cannot win same-ask affinity over an independent reviewer', async () => {

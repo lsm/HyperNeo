@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { JsonRpcNotification } from '@hyperneo/shared';
 import WebSocket from 'ws';
 import { Logger } from '../logger.ts';
+import { WORKER_COMPACTION_TIMEOUT_MS } from './worker-compaction.ts';
 import { ProcessJsonRpcTransport } from '../process-json-rpc.ts';
 import { selectCodexConfiguration } from './codex-start-configuration.ts';
 
@@ -102,7 +103,7 @@ export async function compactCodexThread(
     )
       complete(params.turn.status === 'completed');
   });
-  const timeout = setTimeout(() => complete(false), 60_000);
+  const timeout = setTimeout(() => complete(false), WORKER_COMPACTION_TIMEOUT_MS);
   try {
     await server.call('thread/compact/start', { threadId });
     return await completed;
