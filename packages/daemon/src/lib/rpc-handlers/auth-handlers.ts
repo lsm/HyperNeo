@@ -23,6 +23,7 @@ import { getProviderRegistry } from '../providers/registry.ts';
 import { bumpProviderCatalogEpoch } from '../model-service.js';
 import { providerEnvCoordinator } from '../providers/provider-env-enrollment.ts';
 import { registerBuiltInProvider } from '../providers/factory.js';
+import { AnthropicProvider } from '../providers/anthropic-provider.ts';
 import { credentialIdentity } from '../providers/discovery-refresh-pipeline.ts';
 import type { ProviderRepository } from '../../storage/repositories/provider-repository.ts';
 import {
@@ -114,11 +115,13 @@ async function lockedClearCacheAndNotifyProvidersChanged(
 
 async function removeCredentialsOrKeychainError(
   credentialManager: ProviderCredentialManager | undefined,
-  providerId: string
+  providerId: string,
+  retainOwnership = false
 ): Promise<void> {
   if (!credentialManager) return;
   try {
-    await credentialManager.removeCredentials(providerId);
+    if (retainOwnership) await credentialManager.removeCredentials(providerId, true);
+    else await credentialManager.removeCredentials(providerId);
   } catch (error) {
     if (error instanceof KeychainUnavailableError) {
       log.warn(`Logout blocked for ${providerId}: ${KEYCHAIN_UNAVAILABLE_MESSAGE}`);
@@ -300,11 +303,34 @@ export function setupAuthHandlers(
       }
 
       try {
-        const result = await provider.submitOAuthCallback(callbackInput);
+        const persist = async (credentials: ProviderCredentials) => {
+          if (
+            provider instanceof AnthropicProvider &&
+            providerRepo &&
+            !providerRepo.getProviderByProviderId(providerId)
+          ) {
+            await providerWriter(providerRepo).call(providerRpcWrites, 'createProvider', {
+              providerId,
+              displayName: provider.displayName,
+              kind: 'built_in',
+              authType: 'oauth',
+              isEnabled: true,
+            });
+          }
+          if (provider instanceof AnthropicProvider) {
+            await credentialManager?.storeOAuthTokens(providerId, credentials, { login: true });
+          } else {
+            await credentialManager?.storeOAuthTokens(providerId, credentials);
+          }
+        };
+        const anthropic = provider instanceof AnthropicProvider;
+        const result = anthropic
+          ? await provider.submitOAuthCallback(callbackInput, persist)
+          : await provider.submitOAuthCallback(callbackInput);
         if (!result.ok) return { success: false, error: result.error };
         const credentials = await provider.getCredentials?.();
         if (credentials?.type === 'oauth') {
-          await credentialManager?.storeOAuthTokens(providerId, credentials);
+          if (!anthropic) await persist(credentials);
           bumpProviderCatalogEpoch(providerId);
           await lockedClearCacheAndNotifyProvidersChanged(
             internalEventBus,
@@ -337,6 +363,12 @@ export function setupAuthHandlers(
         };
       }
 
+      const anthropic = provider instanceof AnthropicProvider ? provider : null;
+      if (anthropic?.isAvailable() && !anthropic.ownsLogin && !anthropic.getCredentials()) {
+        return { success: false, error: 'The inherited login is managed outside HyperNeo.' };
+      }
+      const retainOwnership = anthropic?.ownsLogin ?? false;
+
       let storedCredentials: ProviderCredentials | null = null;
       try {
         bumpProviderCatalogEpoch(providerId);
@@ -345,7 +377,7 @@ export function setupAuthHandlers(
           () => credentialManager?.hasEnvironmentCredentials(providerId) ?? false
         );
         if (!provider.logout && hasEnvironmentCredentials) {
-          await removeCredentialsOrKeychainError(credentialManager, providerId);
+          await removeCredentialsOrKeychainError(credentialManager, providerId, retainOwnership);
           return {
             success: false,
             error: `Provider ${providerId} credentials are managed by environment variables. Remove the environment variable to log out.`,
@@ -355,7 +387,7 @@ export function setupAuthHandlers(
         try {
           storedCredentials = (await credentialManager?.getCredentials(providerId)) ?? null;
         } catch (readError) {
-          await removeCredentialsOrKeychainError(credentialManager, providerId);
+          await removeCredentialsOrKeychainError(credentialManager, providerId, retainOwnership);
           if (provider.logout) {
             try {
               await provider.logout();
@@ -393,7 +425,7 @@ export function setupAuthHandlers(
         if (provider.logout) {
           await provider.logout();
         }
-        await removeCredentialsOrKeychainError(credentialManager, providerId);
+        await removeCredentialsOrKeychainError(credentialManager, providerId, retainOwnership);
         if (!provider.logout && provider.setCredentials) {
           provider.setCredentials({ type: 'api_key', apiKey: '' });
         }
@@ -407,7 +439,7 @@ export function setupAuthHandlers(
         return { success: true };
       } catch (error) {
         try {
-          await removeCredentialsOrKeychainError(credentialManager, providerId);
+          await removeCredentialsOrKeychainError(credentialManager, providerId, retainOwnership);
         } catch (cleanupError) {
           if (!(cleanupError instanceof KeychainUnavailableError)) {
             log.error(`Cleanup after logout failure failed for ${providerId}:`, cleanupError);

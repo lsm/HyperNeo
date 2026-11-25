@@ -1003,6 +1003,8 @@ export function ProvidersSettings() {
                 const isPending = pendingId === provider.id;
                 const isCustom = provider.kind === 'custom_endpoint';
                 const auth = provider.authStatus;
+                const authType =
+                  auth?.credentialSource === 'inherited' ? auth.method : provider.authType;
                 const isAuthenticated = provider.available || auth?.isAuthenticated;
                 const needsRefresh = auth?.needsRefresh;
                 const visiblePanel = visibleModelsPanels[provider.id] ?? EMPTY_VISIBLE_MODELS_PANEL;
@@ -1046,16 +1048,16 @@ export function ProvidersSettings() {
                           </span>
                           <span
                             class={`text-[10px] px-1.5 py-0.5 rounded-full ${
-                              provider.authType === 'api_key'
+                              authType === 'api_key'
                                 ? 'bg-accent/40 text-accent-soft'
-                                : provider.authType === 'oauth'
+                                : authType === 'oauth'
                                   ? 'bg-cat-purple/40 text-cat-purple'
                                   : 'bg-surface-raised text-fg-muted'
                             }`}
                           >
-                            {provider.authType === 'api_key'
+                            {authType === 'api_key'
                               ? 'API Key'
-                              : provider.authType === 'oauth'
+                              : authType === 'oauth'
                                 ? 'OAuth'
                                 : 'None'}
                           </span>
@@ -1078,7 +1080,11 @@ export function ProvidersSettings() {
                         {auth?.credentialSource && (
                           <div class="text-xs text-fg-muted mt-0.5">
                             Credential source:{' '}
-                            {auth.credentialSource === 'hyperneo' ? 'HyperNeo' : 'Inherited'}
+                            {auth.credentialSource === 'hyperneo'
+                              ? 'HyperNeo'
+                              : auth.method === 'oauth'
+                                ? 'Claude Code'
+                                : 'Environment'}
                           </div>
                         )}
                       </div>
@@ -1276,17 +1282,18 @@ export function ProvidersSettings() {
                                   Refresh Login
                                 </Button>
                               )}
-                              {(isAuthenticated || needsRefresh) && (
-                                <Button
-                                  size="sm"
-                                  variant="secondary"
-                                  onClick={() => handleOAuthLogout(provider)}
-                                  loading={isPending}
-                                  disabled={isPending}
-                                >
-                                  Logout
-                                </Button>
-                              )}
+                              {(isAuthenticated || needsRefresh) &&
+                                auth?.credentialSource !== 'inherited' && (
+                                  <Button
+                                    size="sm"
+                                    variant="secondary"
+                                    onClick={() => handleOAuthLogout(provider)}
+                                    loading={isPending}
+                                    disabled={isPending}
+                                  >
+                                    Logout
+                                  </Button>
+                                )}
                               {(!isAuthenticated || provider.providerId === 'anthropic') && (
                                 <Button
                                   size="sm"
@@ -1300,7 +1307,7 @@ export function ProvidersSettings() {
                               )}
                             </div>
                           )}
-                          {provider.authType === 'none' && (
+                          {provider.authType === 'none' && provider.providerId !== 'anthropic' && (
                             <p class="text-xs text-fg-faint">No authentication required.</p>
                           )}
                         </div>

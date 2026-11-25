@@ -1282,6 +1282,10 @@ export class AgentSession
     await this.lifecycleManager.ensureQueryStarted(signal);
   }
 
+  hasStaleAnthropicQuery(): boolean {
+    return this.queryRunner instanceof QueryRunner && this.queryRunner.hasStaleAnthropicQuery();
+  }
+
   async startQueryAndEnqueue(
     messageId: string,
     messageContent: string | MessageContent[],
@@ -3442,7 +3446,7 @@ export class AgentSession
               return { outcome: 'blocked', retryAt: Date.now() + LOGIN_HOLD_PARK_MS };
           }
 
-          if (!this.messageQueue.isRunning()) {
+          if (!this.messageQueue.isRunning() || this.hasStaleAnthropicQuery()) {
             const startResult = await this.lifecycleManager.ensureQueryStarted(signal);
             if (startResult === 'blocked') {
               return {

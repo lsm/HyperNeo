@@ -1,8 +1,8 @@
 # Claude subscription usage through the real operation
 
 This journey starts an isolated daemon, stores a synthetic Claude subscription
-(`providers.create` with `authType: oauth`), seeds two synthetic
-`rate_limit_event` rows, and invokes `settings.provider.usage` over the
+(`providers.create` with `authType: oauth`), leaves two synthetic
+`rate_limit_event` rows in history across a login switch, and invokes `settings.provider.usage` over the
 authenticated local WebSocket RPC door. No model turn, browser, external
 provider request or real credential is involved.
 

@@ -66,6 +66,7 @@ export interface QueryLifecycleManagerContext {
   pendingRestartReason: 'settings.local.json' | null;
 
   startStreamingQuery(): Promise<void>;
+  hasStaleAnthropicQuery?(): boolean;
 
   resetTaskNotificationRequery?(): void;
 
@@ -495,6 +496,9 @@ export class QueryLifecycleManager {
       }
     }
 
+    if (messageQueue.isRunning() && this.ctx.hasStaleAnthropicQuery?.()) {
+      await this.stop({ catchQueryErrors: true });
+    }
     if (messageQueue.isRunning()) {
       if (!this.ctx.queryPromise) {
         const stalePids = this.ctx
