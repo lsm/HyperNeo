@@ -7,9 +7,13 @@ import {
   cursorPermissionOutcome,
 } from '../../../../src/lib/drivers/cursor-start.ts';
 
-type Options = { onNotification: (frame: { method: string; params: unknown }) => void };
+type Options = {
+  onNotification: (frame: { method: string; params: unknown }) => void;
+  onRequest: (frame: { id: number; method: string; params: unknown }) => void;
+};
 const peer = vi.hoisted(() => ({
   created: vi.fn(),
+  respond: vi.fn(),
   request: vi.fn(),
   notify: vi.fn(),
   close: vi.fn(),
@@ -22,6 +26,7 @@ vi.mock('../../../../src/lib/process-json-rpc.ts', async (original) => ({
     }
     sendRequest = peer.request;
     sendNotification = peer.notify;
+    sendResponse = peer.respond;
     close = peer.close;
   },
 }));
@@ -144,6 +149,37 @@ describe('createCursorStart.send', () => {
         },
       })
     );
+  });
+
+  it('does not allow a command announced only by replayed history', async () => {
+    peer.request
+      .mockResolvedValueOnce(handshake)
+      .mockImplementationOnce(async () => {
+        (peer.created.mock.lastCall![0] as Options).onNotification({
+          method: 'session/update',
+          params: {
+            sessionId: ref.id,
+            update: {
+              sessionUpdate: 'tool_call',
+              toolCallId: 'old-call',
+              rawInput: { command: 'hyperneo send s-1 --from cursor-cli:cursor-1 Done' },
+            },
+          },
+        });
+        return { result: {} };
+      })
+      .mockReturnValueOnce(new Promise(() => {}));
+
+    await fixture.driver.send(ref, 'Next');
+    (peer.created.mock.lastCall![0] as Options).onRequest({
+      id: 7,
+      method: 'session/request_permission',
+      params: {
+        toolCall: { toolCallId: 'old-call', kind: 'execute' },
+        options: [{ optionId: 'allow-once', kind: 'allow_once' }],
+      },
+    });
+    expect(peer.respond).toHaveBeenCalledWith(7, { outcome: { outcome: 'cancelled' } });
   });
 
   it('refuses sessions HyperNeo did not start', async () => {

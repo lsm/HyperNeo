@@ -166,7 +166,7 @@ export function createCursorStart(
       onNotification: ({ method, params }) => {
         if (method !== 'session/update') return;
         const call = ToolCall.safeParse(params).data?.update;
-        if (call) commands.set(call.toolCallId, call.rawInput.command);
+        if (call && collecting) commands.set(call.toolCallId, call.rawInput.command);
         const update = Update.safeParse(params);
         if (update.success && update.data.sessionId === collecting)
           reply += update.data.update.content.text.slice(0, MAX_REPLY_CHARS - reply.length);

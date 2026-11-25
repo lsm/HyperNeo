@@ -3,6 +3,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { ProcessJsonRpcTransport } from '../process-json-rpc.ts';
 import { buildSafeProcessEnv } from '../safe-process-env.ts';
+import { createCursorStart } from './cursor-start.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import type { FindQuery, PlaceGroup, WorkAdapter, WorkSummary } from './types.ts';
 
@@ -145,10 +146,20 @@ const find = (superpipe({})('cursor-discovery-find') as PipelineAPI)
   machine: string
 ) => Promise<PlaceGroup[]>;
 
-export function createCursorDiscovery(command: string, home: string, machine: string): WorkAdapter {
+export function createCursorDiscovery(
+  command: string,
+  home: string,
+  machine: string,
+  readOwnedFolders: (
+    adapter: string
+  ) => Promise<readonly [id: string, folder: string][]> = async () => []
+): WorkAdapter & { close: () => Promise<void> } {
+  const readOwnedFolder = async (id: string) =>
+    (await readOwnedFolders(ADAPTER)).find(([sessionId]) => sessionId === id)?.[1];
   return {
+    ...createCursorStart(command, machine, ADAPTER, readOwnedFolder),
     id: ADAPTER,
-    capabilities: ['find'],
+    capabilities: ['find', 'start', 'status', 'send', 'stop'],
     find: (query) => find(query, command, home, machine),
   };
 }
