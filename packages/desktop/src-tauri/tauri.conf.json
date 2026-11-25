@@ -5,8 +5,10 @@
   "identifier": "io.hyperneo.app",
   "build": {
     "frontendDist": "loading",
-    "devUrl": "http://localhost:9283",
-    "beforeDevCommand": "echo 'Make sure hyperneo daemon is running: cd ../.. && make dev PORT=9283'",
+    "beforeDevCommand": {
+      "script": "bun run build:sidecar --dev",
+      "wait": true
+    },
     "beforeBuildCommand": "echo 'Sidecar will be bundled with the app'"
   },
   "app": {
