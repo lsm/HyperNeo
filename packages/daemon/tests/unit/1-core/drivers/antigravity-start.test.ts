@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAntigravityStart } from '../../../../src/lib/drivers/antigravity-start.ts';
+import { withReplyLine } from '../../../../src/lib/messaging/session-reply.ts';
 import { JsonRpcRequestTimeoutError } from '../../../../src/lib/process-json-rpc.ts';
 
 const peer = vi.hoisted(() => ({
@@ -80,6 +81,30 @@ describe('createAntigravityStart.start', () => {
     expect(await driver.status(ref)).toMatchObject({ ok: true, value: { status: 'done' } });
     expect(peer.request).toHaveBeenLastCalledWith('session/close', { sessionId: ref.id });
     expect(peer.close).toHaveBeenCalledOnce();
+  });
+
+  it('names its own session id in the start reply line', async () => {
+    peer.request
+      .mockResolvedValueOnce({ result: { stopReason: 'end_turn' } })
+      .mockResolvedValueOnce({ result: {} });
+    await driver.start({
+      place: { machine: 'fixture', folder, name: 'Workspace' },
+      title: 'Run',
+      message: withReplyLine('Go.', 'session:neo%3Aroot', 'cli'),
+    });
+    expect(peer.request).toHaveBeenCalledWith(
+      'session/prompt',
+      {
+        sessionId: ref.id,
+        prompt: [
+          {
+            type: 'text',
+            text: withReplyLine('Go.', 'session:neo%3Aroot', 'cli', 'antigravity-cli:owned-1'),
+          },
+        ],
+      },
+      expect.anything()
+    );
   });
 
   it('reports when the turn reached its time limit', async () => {

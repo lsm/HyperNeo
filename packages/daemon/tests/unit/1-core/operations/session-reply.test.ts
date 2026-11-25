@@ -4,6 +4,7 @@ import {
   createSendMessageRedirectHook,
   replyMessageBodyLength,
   withReplyLine,
+  withOwnReplySender,
   withReplySender,
 } from '../../../../src/lib/messaging/session-reply';
 
@@ -69,6 +70,14 @@ describe('external CLI reply arguments', () => {
     const sent = withReplySender(start, 'session:neo%3Aroot', 'antigravity-cli:w1');
     expect(sent).toBe(withReplyLine('Go.', 'session:neo%3Aroot', 'cli', 'antigravity-cli:w1'));
     expect(withReplySender('Human.', 'session:neo%3Aroot', 'antigravity-cli:w1')).toBe('Human.');
+  });
+
+  test('adds the worker id to a start reply line that has no sender', () => {
+    const start = withReplyLine('Go.', 'session:neo%3Aroot', 'cli');
+    const named = withReplyLine('Go.', 'session:neo%3Aroot', 'cli', 'antigravity-cli:w1');
+    expect(withOwnReplySender(start, 'antigravity-cli:w1')).toBe(named);
+    expect(withOwnReplySender(named, 'antigravity-cli:other')).toBe(named);
+    expect(withOwnReplySender('Human.', 'antigravity-cli:w1')).toBe('Human.');
   });
 
   test('a quoted template is not mistaken for an actionable reply line to the real sender', () => {
