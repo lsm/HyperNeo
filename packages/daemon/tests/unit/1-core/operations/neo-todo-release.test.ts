@@ -1077,6 +1077,42 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
     }
   });
 
+  test('blocks a prepared replacement without checkout parameters', async () => {
+    const h = setup();
+    try {
+      configureWorkerSandbox(() => 'on-demand');
+      await h.finishTodo(h.add(started));
+      recordWorkerStarted(h.db, worker, {
+        startedBy: 'neo',
+        machine: 'laptop',
+        folder: h.folder(),
+        harness: worker.adapter,
+        preparation: { pack: 'coding', sandbox: true, parameters: {} },
+      });
+      h.packs.push({
+        id: 'coding',
+        describe: 'coding',
+        instructions: () => null,
+        prepareExecution: prepareCodingExecution,
+      });
+      h.setCompact(undefined);
+      let starts = 0;
+      h.setOnStart(() => {
+        starts++;
+        return { ok: false, reason: 'not_delivered', detail: 'unexpected' };
+      });
+      const next = h.add({ verb: 'send', ref: worker });
+      h.store.updateTodo(next, { check: { pack: 'coding', kind: 'pr', params: {} } }, Date.now());
+      await h.start(next.id);
+      expect(h.events).toEqual([]);
+      expect(starts).toBe(0);
+      expect(h.store.getTodo(next.id)?.state).toBe('blocked');
+    } finally {
+      configureWorkerSandbox(() => 'off');
+      h.db.close();
+    }
+  });
+
   test.each(['pinned', 'moved', 'missing-prerequisite'] as const)(
     'a queued %s review prepares only its pinned checkout',
     async (scenario) => {
