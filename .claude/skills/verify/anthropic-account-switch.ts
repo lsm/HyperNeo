@@ -33,6 +33,7 @@ const sdk = await import(
   '../../../packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs'
 );
 const started: { account: string; resume?: string; sessionId: string }[] = [];
+let systemAccountReads = 0;
 mock.module('@anthropic-ai/claude-agent-sdk', () => ({
   ...sdk,
   query: ({ prompt, options }: {
@@ -75,7 +76,12 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({
       setMcpServers: async () => ({ added: [], removed: [], errors: {} }),
       interrupt: async () => held.resolve(),
       close: () => held.resolve(),
-      accountInfo: async () => ({ email: `${account}@example.test` }),
+      accountInfo: async () => {
+        if (account === 'system' && ++systemAccountReads === 1) {
+          throw new Error('Synthetic account lookup unavailable');
+        }
+        return { email: `${account}@example.test` };
+      },
       usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({
         subscription_type: 'max',
         rate_limits_available: true,
@@ -282,7 +288,8 @@ async function checkSwitch() {
   assert(inherited?.isAuthenticated, 'The system login must be available before Settings login');
   assert.equal(inherited.credentialSource, 'inherited');
   assert.equal(inherited.method, 'oauth', 'The system subscription must be reported as OAuth');
-  assert.equal(inherited.user?.email, 'system@example.test');
+  assert.equal(inherited.user?.email, undefined);
+  assert.equal((await readAuth())?.user?.email, 'system@example.test');
   const inheritedUsage = await readUsage();
   assert(inheritedUsage.supported);
   assert.equal(inheritedUsage.windows[0]?.used, 98);
