@@ -9,6 +9,8 @@ bash .claude/skills/verify/proof-run.sh /absolute/unconfirmed-evidence \
   .claude/skills/verify/antigravity-find.ts compact-unconfirmed
 bash .claude/skills/verify/proof-run.sh /absolute/busy-evidence \
   .claude/skills/verify/antigravity-find.ts busy-replacement
+bash .claude/skills/verify/proof-run.sh /absolute/worktree-evidence \
+  .claude/skills/verify/antigravity-find.ts worktree-replacement
 ```
 
 Finish a worker's todo, queue the next todo of the same ask on it and run Neo's
@@ -18,6 +20,8 @@ compaction is active. When the CLI reports only a foreign checkpoint, verify tha
 the todo goes to a fresh worker and records `not_confirmed`.
 When the old worker holds another todo, verify the fresh worker starts and the
 old worker's waiting reason is cleared.
+When its recorded folder is a linked worktree, verify the replacement starts from
+the project folder instead of the old worker's checkout.
 
 For an attended check with the signed-in CLI, start a disposable conversation,
 compact it after the first response, and verify that a follow-up in the same

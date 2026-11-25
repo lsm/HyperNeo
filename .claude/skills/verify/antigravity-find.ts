@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { isAbsolute, join } from 'node:path';
@@ -35,7 +36,8 @@ const resumeFixture = mode === 'resume' || lateBatch || lateClose || stopFixture
 const longHistory = mode === 'history-long';
 const historyFixture = mode === 'history' || longHistory;
 const compactUnconfirmed = mode === 'compact-unconfirmed';
-const busyReplacement = mode === 'busy-replacement';
+const worktreeReplacement = mode === 'worktree-replacement';
+const busyReplacement = mode === 'busy-replacement' || worktreeReplacement;
 const compactFixture = mode === 'compact' || compactUnconfirmed || busyReplacement;
 const configUnsupported = mode === 'config-unsupported';
 const configUnconfirmed = mode === 'config-unconfirmed';
@@ -465,22 +467,40 @@ try {
           sessions.create(held.id, { verb: 'send', ref: started.value.ref });
           sessions.recordRef(held.id, started.value.ref);
           todos.updateTodo(held, { state: 'doing', startedAt: Date.now() }, Date.now());
+          if (worktreeReplacement) {
+            const git = (...args: string[]) => {
+              const result = spawnSync('git', ['-C', workspaceRoot, ...args], {
+                encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 'Fixture', GIT_AUTHOR_EMAIL: 'fixture@example.invalid', GIT_COMMITTER_NAME: 'Fixture', GIT_COMMITTER_EMAIL: 'fixture@example.invalid' },
+              });
+              assert.equal(result.status, 0, result.stderr);
+            };
+            git('init', '-q');
+            git('commit', '--allow-empty', '-qm', 'Fixture');
+            const linked = join(run, 'old-worker');
+            git('worktree', 'add', '-q', '--detach', linked, 'HEAD');
+            db.prepare('UPDATE work_started_sessions SET folder = ? WHERE adapter = ? AND id = ?').run(linked, adapter, started.value.ref.id);
+          }
           const next = todos.getTodo('compact-next')!;
           todos.updateTodo(next, { reason: 'Waiting for worker antigravity-cli:owned-1.' }, Date.now());
           writeFileSync(releaseCompaction, '');
+          let replacementFolder: unknown;
           const runner = createNeoTodoRunner({
             limits: () => ({ running: 99, perGroup: 99 }),
             write: gatewayFor(db).run.bind(gatewayFor(db)), store: todos, sessions,
-            invoke: (caller, name, input) => invokeOperation(app.sessionManager.getOperationRegistry(), name, input, caller),
+            invoke: (caller, name, input) => {
+              if (name === 'work.start') replacementFolder = (input.place as { folder?: string })?.folder;
+              return invokeOperation(app.sessionManager.getOperationRegistry(), name, input, caller);
+            },
             workerCompact: () => undefined, packs: () => [], tell: async () => {}, attend: async () => {}, changed: () => {},
           });
           await runner.start('compact-next');
+          if (worktreeReplacement) assert.equal(replacementFolder, workspaceRoot);
           const deadline = Date.now() + 5_000;
           while (!delivered() && Date.now() < deadline) await Bun.sleep(25);
           assert(delivered(), 'A new worker must take the waiting todo');
           assert.equal(sessions.readRef('compact-next')?.id, 'owned-2');
           assert.equal(todos.getTodo('compact-next')?.reason, null);
-          results.busyReplacement = { fresh: true, waitReasonCleared: true };
+          results.busyReplacement = { fresh: true, waitReasonCleared: true, projectFolder: worktreeReplacement };
         } else {
         const startDeadline = Date.now() + 5_000;
         while (!countCompactions() && Date.now() < startDeadline) await Bun.sleep(25);

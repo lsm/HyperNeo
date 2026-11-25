@@ -982,6 +982,35 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
     }
   });
 
+  test('starts a replacement from the project instead of the old linked worktree', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      const linked = join(scratch, crypto.randomUUID());
+      git(h.folder(), 'worktree', 'add', '--detach', linked, 'HEAD');
+      recordWorkerStarted(h.db, worker, {
+        startedBy: 'neo',
+        machine: 'laptop',
+        folder: linked,
+        harness: worker.adapter,
+      });
+      h.setCompact(undefined);
+      let place: unknown;
+      const fresh = { adapter: 'hyperneo', id: 'fresh' };
+      h.setOnStart((input) => {
+        place = input.place;
+        return { ok: true, value: { ref: fresh, receipt: { executionId: 'fresh', inputId: 'i' } } };
+      });
+      const next = h.add({ verb: 'send', ref: worker });
+      await h.start(next.id);
+      expect(h.events).toEqual([]);
+      expect(h.sessions.readRef(next.id)).toEqual(fresh);
+      expect(place).toMatchObject({ folder: h.folder() });
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('clears the old worker wait reason when starting a replacement', async () => {
     const h = setup();
     try {
