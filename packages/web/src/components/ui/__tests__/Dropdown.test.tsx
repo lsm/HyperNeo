@@ -1,6 +1,6 @@
 // @ts-nocheck
 
-import { render, cleanup, waitFor } from '@testing-library/preact';
+import { render, cleanup, waitFor, fireEvent } from '@testing-library/preact';
 import { describe, it, expect, vi } from 'vitest';
 import { Dropdown, DropdownMenuItem } from '../Dropdown';
 
@@ -34,6 +34,16 @@ describe('Dropdown', () => {
       );
       const menuItems = container.querySelectorAll('[role="menuitem"]');
       expect(menuItems.length).toBe(0);
+    });
+
+    it('scrolls a tall menu instead of clipping its rows', async () => {
+      const { container } = render(
+        <Dropdown trigger={<button>Open Menu</button>} items={defaultItems} />
+      );
+      fireEvent.click(container.querySelector('button')!);
+      await waitFor(() => expect(document.body.querySelector('[role="menu"]')).toBeTruthy());
+
+      expect(document.body.querySelector('[role="menu"]')!.className).toContain('overflow-y-auto');
     });
 
     it('should render menu items when opened', async () => {
