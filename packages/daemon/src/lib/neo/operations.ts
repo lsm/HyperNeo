@@ -802,7 +802,8 @@ export function createNeoOperations(
       service.todos,
       () => service.installedPacks(),
       () => service.db.getGlobalSettings().language,
-      () => service.refreshPackPreferences()
+      () => service.refreshPackPreferences(),
+      () => service.repo.defaultBinding()?.sessionId
     ),
     createNeoPreferenceOperation(service),
     createNeoFrontModelOperation(service),

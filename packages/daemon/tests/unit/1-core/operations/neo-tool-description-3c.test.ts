@@ -27,7 +27,7 @@ const moved = [
   {
     file: 'preference-questions.ts',
     name: 'pack.preferences.ask',
-    text: 'Ask the human to apply typed pack settings. The daemon displays and binds this exact immutable proposal as a choice to apply these settings or keep the current ones; no settings change until the human picks apply. To offer a pick among values, pass alternatives (2–5 value sets) instead of values: each becomes one option before keep, and only the option the human picks is applied. Reuse requestId for pending retries; question_closed means use a new requestId to ask again.',
+    text: 'Ask the human to apply typed pack settings. The daemon displays and binds this exact immutable proposal as a choice to apply these settings or keep the current ones; no settings change until the human picks apply. The daemon opens the card on its own ask, which holds no other work and settles once a value is applied or the current ones are kept; omit askId, which is ignored. To offer a pick among values, pass alternatives (2–5 value sets) instead of values: each becomes one option before keep, and only the option the human picks is applied. Reuse requestId for pending retries; question_closed means use a new requestId to ask again.',
   },
   {
     file: 'preference-questions.ts',
@@ -57,7 +57,7 @@ const moved = [
   {
     file: 'rule-questions.ts',
     name: 'neo.rule.ask',
-    text: 'Default path for standing-rule edits in any Neo turn: ask the human to apply or keep the exact add/remove arrays. Removal uses exact saved text. No rule changes until the human picks apply. Pending retries reuse requestId; question_closed needs a new requestId.',
+    text: 'Default path for standing-rule edits in any Neo turn: ask the human to apply or keep the exact add/remove arrays. Removal uses exact saved text. No rule changes until the human picks apply. The daemon opens the card on its own ask and settles that ask once the edit is applied or the rules are kept; omit askId, which is ignored. Pending retries reuse requestId; question_closed needs a new requestId.',
   },
   {
     file: 'rule-questions.ts',

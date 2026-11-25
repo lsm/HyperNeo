@@ -160,7 +160,8 @@ function neoOperations() {
       store,
       () => createTodoCheckPacks(db),
       () => 'en',
-      async () => {}
+      async () => {},
+      () => undefined
     ),
     ...createNeoTodoOperations(
       store,
