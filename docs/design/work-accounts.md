@@ -27,7 +27,6 @@ Steps 2 and 3 get their own designs after a week of data.
 | actual size and rework | from the pack of the todo's check |
 | outcome, questions to the human | `neo_todos`, `neo_questions`; recorded today |
 | project | the ask's project, else the repository the pack reads from the todo |
-| fresh or compacted worker | `worker_reuse` (`worker-token-cost.md`) |
 
 An account is read by joining these. There is no account table: every fact has one home.
 Only numbers and ids are stored, never conversation text, and nothing leaves the machine.
@@ -87,7 +86,8 @@ normal size are told apart.
 `work_turns` already holds one row for each finished worker turn, read by each adapter's
 `turns` and caught up after a restart. It gets one column, `usage` (JSON): per model `rounds`,
 `input` (uncached), `cacheRead`, `cacheWrite`, `output`; for the main conversation
-`context: {first, peak}`; and `complete`.
+`context: {first, peak}`; and `usageComplete`, which says whether all cost is included.
+This differs from `work_turns.complete`, which describes whether the turn was fully read.
 
 **Which todo a turn belongs to** is not stored with the turn, because a turn can be recorded
 after its todo has moved and the binding in `neo_todo_sessions` is gone (`reopen`, redispatch,
@@ -117,7 +117,7 @@ turns count for the todo under its own role.
 | others | no `usage` |
 
 A Claude turn that started a subagent has its cost in another file. It is not read here; the
-turn gets `complete: false`, so the account says it is too low. Rows from before the change
+turn gets `usageComplete: false`, so the account says it is too low. Rows from before the change
 have no `usage`.
 
 ## 3. Size and rework from packs
@@ -139,7 +139,7 @@ Step 2 is its first consumer; until then it proves that the records are complete
 ## Not in this step
 
 No routing, no report, no settings, no trial of other lines. The compaction limit is no longer
-one of the loop's knobs: nothing is compacted inside a todo (`worker-token-cost.md`). How much
+one of the loop's knobs: later rounds of the same todo are not compacted (`session-reuse.md`). How much
 context a todo adds by itself (`peak - first`) is recorded, to see work that was cut too large.
 
 ## Changes
@@ -175,8 +175,10 @@ Six PRs from `dev`, in order, failing tests first. System map read for the plann
    Estimate: 4 files, 120 lines, 150 test lines.
 
 **Done when**, one week after the last PR: at least 95% of finished todos that had a worker of
-the three adapters have kind, estimate and complete usage; and for 20 of them, picked at
-random, the totals match the harness's own records.
+the three adapters have kind and an estimate when required (or the reviewed PR's size for a
+review); at least 95% have complete usage. Turns with omitted subagent cost count as incomplete,
+not zero. For 20 todos with complete usage, picked at random, the totals match the harness's
+own records.
 
 ## Limits
 
