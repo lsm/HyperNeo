@@ -2,10 +2,12 @@
 
 Use shared isolation and cleanup in `../SKILL.md`. This proof boots one fresh
 synthetic daemon on an ephemeral loopback port with the job processor stopped,
-so no model, provider, browser or external HTTP is used.
+so no model, provider, browser or external HTTP is used. A synthetic Claude
+Desktop peer listens on a private Unix socket and acknowledges inputs in its
+synthetic transcript. The helper refuses real app launches and process discovery.
 
 ```bash
-bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
+TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
   .claude/skills/verify/neo-request-todo.ts
 ```
 
@@ -39,6 +41,14 @@ works no open todo. Observe `neo-request-todo.json` and the mailbox queue:
   delivered `<session-message>` carries no `ask` attribute;
 - a new request is delivered with its ask id; neo.todo.add refuses work on
   that request ask and leaves its reply todo intact.
+
+The helper also sends a request through the session CLI with a synthetic
+`CLAUDE_CODE_SESSION_ID` and closes it through `neo.todo.done`. Run the real
+reply job and one worker-input processor tick. The synthetic Desktop peer must
+receive exactly one answer on the live inbox and Neo must get zero failure
+notices. Check `desktop.result`, `desktop.inputs` and the wrapper exit code.
+This observes the native transport with a synthetic peer. The Claude Desktop
+GUI and a live attached daemon are outside this proof.
 
 Pass includes `work_on_request_ask=refused`. A remote requester is
 covered by unit tests with a stubbed attached-daemon forwarder. This does not show a model turn
