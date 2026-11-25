@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { replyCommandPermission } from './reply-command-permission.ts';
 
 const PermissionRequest = z.object({
   toolCall: z.object({
@@ -8,14 +9,9 @@ const PermissionRequest = z.object({
   options: z.array(z.object({ optionId: z.string(), kind: z.string() })),
 });
 
-const REPLY_COMMAND = /^hyperneo send [^;&|`$<>(){}\\\r\n]+$/;
-
 export function antigravityPermissionOutcome(params: unknown) {
   const request = PermissionRequest.safeParse(params);
-  const allow = request.success
-    ? request.data.options.find((option) => option.kind === 'allow_once')
-    : undefined;
-  return request.success && allow && REPLY_COMMAND.test(request.data.toolCall.rawInput.CommandLine)
-    ? { outcome: { outcome: 'selected', optionId: allow.optionId } }
+  return request.success
+    ? replyCommandPermission(request.data.options, request.data.toolCall.rawInput.CommandLine)
     : { outcome: { outcome: 'cancelled' } };
 }
