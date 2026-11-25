@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, spyOn, test } from 'bun:test';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,6 +10,7 @@ import type { WorkAdapter } from '../../../../src/lib/drivers/types.ts';
 import type { NeoDriverTarget } from '../../../../src/lib/neo/driver-work.ts';
 import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
+import { prepareCodingExecution } from '../../../../src/lib/neo/packs/coding/prepare-execution.ts';
 import {
   admitSessionArchive,
   NEO_TODO_RELEASE_PRINCIPAL,
@@ -104,7 +105,7 @@ function setup() {
       .run(JSON.stringify(mode));
   reuse('per_todo');
   const invoke = recordedWorkInvoke(sessions.inputs, async (caller, name, input) => {
-    if (name === 'work.start' && onStart) return completed(onStart(input));
+    if (name === 'work.start' && onStart) return completed(await onStart(input));
     if (name === 'work.start')
       return completed({
         ok: true,
@@ -1075,6 +1076,93 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
       h.db.close();
     }
   });
+
+  test.each(['pinned', 'moved', 'missing-prerequisite'] as const)(
+    'a queued %s review prepares only its pinned checkout',
+    async (scenario) => {
+      const h = setup();
+      let cleanup: (() => Promise<void>) | undefined;
+      try {
+        configureWorkerSandbox(() => 'on-demand');
+        await h.finishTodo(h.add(started));
+        recordWorkerStarted(h.db, worker, {
+          startedBy: 'neo',
+          machine: 'laptop',
+          folder: h.folder(),
+          harness: worker.adapter,
+          preparation: { pack: 'coding', sandbox: true, parameters: {} },
+        });
+        h.setCompact(undefined);
+        const head = execFileSync('git', ['rev-parse', 'HEAD'], {
+          cwd: h.folder(),
+          encoding: 'utf8',
+        }).trim();
+        git(h.folder(), 'push', '-q', 'origin', 'HEAD:refs/pull/7/head');
+        const parameters = {
+          pullRequest: 7,
+          head: scenario === 'moved' ? 'f'.repeat(40) : head,
+          role: 'review',
+          prerequisiteCommits: [scenario === 'missing-prerequisite' ? '0'.repeat(40) : head],
+        };
+        h.packs.push({
+          id: 'coding',
+          describe: 'coding',
+          instructions: () => null,
+          prepareExecution: prepareCodingExecution,
+        });
+        let opened = false;
+        let checkoutHead: string | null = null;
+        h.setOnStart(async (input) => {
+          const preparation = input.preparation as { parameters: Record<string, unknown> };
+          const destination = join(scratch, crypto.randomUUID());
+          const result = await prepareCodingExecution(
+            { directory: h.folder(), destination, parameters: preparation.parameters },
+            {
+              run: async (command, cwd) => {
+                const child = spawnSync(command[0], command.slice(1), { cwd, encoding: 'utf8' });
+                return {
+                  code: child.status ?? 1,
+                  stdout: child.stdout ?? '',
+                  stderr: child.stderr ?? '',
+                };
+              },
+            }
+          );
+          if (!result.ok) return { ok: false, reason: 'not_delivered', detail: result.reason };
+          cleanup = result.value.release;
+          checkoutHead = execFileSync('git', ['rev-parse', 'HEAD'], {
+            cwd: result.value.directory,
+            encoding: 'utf8',
+          }).trim();
+          opened = true;
+          return {
+            ok: true,
+            value: {
+              ref: { adapter: 'hyperneo', id: 'fresh' },
+              receipt: { executionId: 'fresh', inputId: 'i' },
+            },
+          };
+        });
+        const next = h.add({
+          verb: 'start',
+          adapter: 'hyperneo',
+          preparationParameters: parameters,
+          sandbox: true,
+        });
+        h.store.updateTodo(next, { check: { pack: 'coding', kind: 'pr', params: {} } }, Date.now());
+        h.queueOn(next.id);
+        await h.start(next.id);
+        expect(h.events).toEqual([]);
+        expect(opened).toBe(scenario === 'pinned');
+        if (scenario === 'pinned') expect(checkoutHead).toBe(head);
+        else expect(h.store.getTodo(next.id)?.state).toBe('blocked');
+      } finally {
+        if (cleanup) await cleanup();
+        configureWorkerSandbox(() => 'off');
+        h.db.close();
+      }
+    }
+  );
 
   test('releases a kept worker whose prompt cache went cold', async () => {
     const h = setup();
