@@ -41,7 +41,7 @@ try {
   assert(typeof prompt === 'string' && prompt.includes('no-effect review question is answered') && prompt.includes('set nextSteps to the answer'), 'Neo did not receive the answer guidance');
   assert(prompt.includes('request status active to open a replacement'), 'Neo did not receive the retirement guidance');
   evidence.neoGuidance = { delivered: true };
-  const created = await call('goal.session.create', { ownerSessionId, title: 'Explore the guide', doneTest: 'Guide published' });
+  const created = await call('goal.session.create', { ownerSessionId, title: 'Explore the guide', metric: { name: 'Failed runs per day', target: 5, direction: 'decrease', baseline: 40 } });
   assert(created.accepted, JSON.stringify(created));
   const goalId = created.goal.id;
   const db = app.db.getDatabase();
@@ -54,7 +54,7 @@ try {
     assert(mailbox);
     const runId = /runId (goal-review:[^, ]+)/.exec(mailbox.payload)?.[1];
     assert(runId);
-    const reply = await call('goal.journal.append', { ownerSessionId, goalId, runId, done: 'Reviewed', effect: 'no', worked: 'Explore' });
+    const reply = await call('goal.journal.append', { ownerSessionId, goalId, runId, done: `Review ${i + 1}: count still high`, effect: 'no', worked: 'Explore', metricPoint: { value: 38 - i, evidence: 'synthetic' } });
     assert(reply.accepted, JSON.stringify(reply));
   }
   evidence.goal = await call('goal.session.get', { ownerSessionId, goalId });
@@ -63,12 +63,20 @@ try {
   assert.equal((evidence.goal as any).goal.status, 'paused', 'three no-effect reviews pause the goal');
   assert.equal((evidence.snapshot as any).needsYou, 1, 'a human question is visible');
   assert.deepEqual((evidence.schedules as any[]).map(row => row.status), ['paused', 'paused']);
-  const questionId = (evidence.snapshot as any).humanQueue.items[0].questionId;
+  const card = (evidence.snapshot as any).humanQueue.items[0];
+  const questionId = card.questionId;
+  const question = db.prepare('SELECT kind, options, document FROM neo_questions WHERE id = ?').get(questionId) as { kind: string; options: string; document: string };
+  evidence.question = question;
+  assert.equal(question.kind, 'choice');
+  assert.deepEqual(JSON.parse(question.options), ['Continue as is', 'Stop the goal']);
+  for (const fact of ['Failed runs per day', 'baseline 40', 'latest 36', 'target 5', 'Review 1: count still high', 'Review 3: count still high'])
+    assert(question.document.includes(fact), `the card context names ${fact}`);
   evidence.earlyResume = await call('goal.session.update', { ownerSessionId, goalId, status: 'active' });
   assert.equal((evidence.earlyResume as any).accepted, false);
-  evidence.answer = await call('neo.question.answer', { questionId, answer: 'Try a new audience' });
+  evidence.answer = await call('neo.question.answer', { questionId, answer: ['Continue as is'] });
   assert.equal((evidence.answer as any).ok, true);
   evidence.resumed = await call('goal.session.update', { ownerSessionId, goalId, status: 'active', nextSteps: ['Try a new audience'] });
+  assert.equal((evidence.resumed as any).accepted, true, JSON.stringify(evidence.resumed));
   assert.equal((evidence.resumed as any).goal.status, 'active');
   const work = db.prepare("SELECT id, next_run_at, pending_job_id FROM session_schedules WHERE source_kind = 'goal' AND source_id = ?").get(goalId) as { id: string; next_run_at: number; pending_job_id: string };
   now = work.next_run_at;
@@ -87,10 +95,10 @@ try {
   const replacement = (evidence.afterRetirement as any).humanQueue.items.find((item: any) => item.text.includes('Explore another guide'));
   assert(replacement && replacement.questionId !== original.questionId, 'retiring a review question must not strand the goal');
   assert.equal((evidence.retiredResume as any).accepted, false, 'the human must answer before resumption');
-  assert((await call('neo.question.answer', { questionId: replacement.questionId, answer: 'Try a new approach' })).ok);
+  assert((await call('neo.question.answer', { questionId: replacement.questionId, answer: ['Stop the goal'] })).ok, 'the replacement keeps the answer buttons');
   evidence.resumedAfterRetirement = await call('goal.session.update', { ownerSessionId, goalId: secondId, status: 'active', nextSteps: ['Try a new approach'] });
   assert.equal((evidence.resumedAfterRetirement as any).goal.status, 'active');
-  console.log('PASS: three no-effect reviews pause the goal, show a human question, and the answer reaches the next work wake');
+  console.log('PASS: three no-effect reviews pause the goal, show a choice card with metric, reviews and work in flight, and the answer reaches the next work wake');
 } finally {
   Date.now = clock;
   writeFileSync(join(run, 'evidence/goal-review-escalation.json'), JSON.stringify(evidence, null, 2));

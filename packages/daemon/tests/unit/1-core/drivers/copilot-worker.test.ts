@@ -264,7 +264,7 @@ describe('Copilot worker construction', () => {
     expect(calls.find((c) => c.method === 'session.create').params).toMatchObject({
       sessionId: cfg.sessionId,
       model: cfg.model,
-      availableTools: [],
+      availableTools: ['bash'],
     });
     expect(calls[0].secretPresent).toBe(false);
   });
@@ -330,6 +330,41 @@ describe('Copilot worker construction', () => {
       );
       const calls = readFileSync(join(cfg.cwd, 'calls.jsonl'), 'utf8');
       expect(calls).toContain('"kind":"reject"');
+    } finally {
+      await worker.close();
+    }
+  });
+
+  test('approves only a plain hyperneo send reply and finishes the turn', async () => {
+    const cfg = config();
+    const worker = await openCopilotWorker(cfg);
+    try {
+      const receipt = await worker.submit('permission-send');
+      const state = (await eventually(
+        () => worker.snapshot(),
+        (v) => (v as { status: string }).status === 'done'
+      )) as Awaited<ReturnType<typeof worker.snapshot>>;
+      expect(state.inputs[receipt.inputId].replyReport).toBe('SENT');
+      const calls = readFileSync(join(cfg.cwd, 'calls.jsonl'), 'utf8');
+      expect(calls).toContain('"kind":"approve-once"');
+      expect(calls).not.toContain('"kind":"reject"');
+    } finally {
+      await worker.close();
+    }
+  });
+
+  test('rejects a hyperneo send that chains another command', async () => {
+    const cfg = config();
+    const worker = await openCopilotWorker(cfg);
+    try {
+      await worker.submit('permission-shell');
+      await eventually(
+        () => worker.snapshot(),
+        (v) => (v as { status: string }).status === 'needs_you'
+      );
+      const calls = readFileSync(join(cfg.cwd, 'calls.jsonl'), 'utf8');
+      expect(calls).toContain('"kind":"reject"');
+      expect(calls).not.toContain('"kind":"approve-once"');
     } finally {
       await worker.close();
     }

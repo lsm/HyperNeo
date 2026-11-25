@@ -21,6 +21,9 @@ An ask whose todos all finished wakes Neo at once instead (`mailbox`), with
 todo.”; writing the outcome afterwards does not wake again. The helper also
 requires `neo_asks` to have no `stalled_wake_at` column.
 
+An ask whose goal is active or paused is never told, finished or idle: its goal
+still needs it. Once the goal is completed its asks are told as usual.
+
 Retain `evidence/result.json` and daemon output. The unit contracts in
 `neo-stalled-asks.test.ts` additionally cover waiting/doing todos, a recent
 ask, an open child ask, archived/deleted ask sessions and a failed tell being

@@ -150,7 +150,7 @@ describe('Copilot owned input delivery', () => {
     const resume = calls.find((c) => c.method === 'session.resume');
     expect(resume?.params).toMatchObject({
       sessionId: work.ref.id,
-      availableTools: [],
+      availableTools: ['bash'],
       continuePendingWork: false,
       model: 'synthetic-model',
     });

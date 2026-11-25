@@ -162,6 +162,69 @@ describe('goal work wakes', () => {
     expect(asks.listGoalAsks(goal.id)).toHaveLength(1);
   });
 
+  test('the no-effect question shows the metric, recent reviews and work in flight, with answer buttons', async () => {
+    const goal = await create({
+      noEffectReviewLimit: 2,
+      metric: { name: 'Failed runs per day', target: 5, direction: 'decrease', baseline: 40 },
+    });
+    const asks = new NeoAskTodoRepository(db);
+    asks.openAsk({
+      id: 'synthetic-ask',
+      goalId: goal.id,
+      sessionId: 'neo:root',
+      projectId: null,
+      originMessageId: null,
+      title: 'Fix the retry loop',
+      request: 'Fix the retry loop',
+      createdAt: now,
+    });
+    asks.addTodo(
+      'synthetic-todo',
+      'synthetic-ask',
+      {
+        title: 'Ship the retry fix',
+        doneWhen: 'Merged',
+        check: null,
+        instruction: 'Continue',
+        named: null,
+      },
+      now
+    );
+    const schedule = scheduler.repo.getBySource('goal_review', goal.id)!;
+    for (const [run, value, done] of [
+      [1, 38, 'Rolling count still high'],
+      [2, 37, 'Fix deployed; 24h window still includes old failures'],
+    ] as const) {
+      scheduler.repo.recordRun({ ...schedule, nextRunAt: run }, 'fired', `message-${run}`, run);
+      expect(
+        await call('goal.journal.append', {
+          goalId: goal.id,
+          runId: `goal-review:${schedule.id}:${run}:none`,
+          done,
+          effect: 'no',
+          worked: 'Explore',
+          metricPoint: { value, evidence: 'synthetic' },
+        })
+      ).toMatchObject({ accepted: true });
+    }
+    const [question] = asks.listGoalAsks(goal.id).flatMap((ask) => asks.listQuestions(ask.id));
+    expect(question).toMatchObject({
+      kind: 'choice',
+      options: ['Continue as is', 'Stop the goal'],
+      text: expect.stringContaining('2 reviews'),
+    });
+    for (const fact of [
+      'Failed runs per day',
+      'baseline 40',
+      'latest 37',
+      'target 5',
+      'Rolling count still high',
+      'Fix deployed; 24h window still includes old failures',
+      'Ship the retry fix',
+    ])
+      expect(question.document).toContain(fact);
+  });
+
   test('the no-effect review threshold is configurable on the goal', async () => {
     const goal = await create({ noEffectReviewLimit: 2 });
     expect((await call('goal.session.get', { goalId: goal.id })).goal.noEffectReviewLimit).toBe(2);

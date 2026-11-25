@@ -11,6 +11,8 @@ import { readHubOptions } from '../../../packages/daemon/src/lib/oxap/oxap-setti
 import { OxapHubRequestError } from '../../../packages/daemon/src/lib/oxap/oxap-hub-client.ts';
 import { decideReopenFailure } from '../../../packages/daemon/src/lib/oxap/oxap-session-open.ts';
 import { getSdkStartupGate } from '../../../packages/daemon/src/lib/agent/sdk-startup-gate.ts';
+import { AnthropicToCodexBridgeProvider } from '../../../packages/daemon/src/lib/providers/anthropic-to-codex-bridge-provider.ts';
+import { getProviderRegistry } from '../../../packages/daemon/src/lib/providers/registry.ts';
 import { deliverAgentMessageToTarget, type AgentMessageDeliveryDeps } from '../../../packages/daemon/src/lib/messaging/delivery-pipeline.ts';
 import { createLocalSocket, readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
@@ -42,6 +44,9 @@ chmodSync(join(run, 'bin/gh'), 0o700);
 const peer = join(run, 'synthetic-codex');
 writeFileSync(peer, `#!/usr/bin/python3
 import json,os,sys,time,threading
+if sys.argv[1:] == ['app-server', '--help']:
+ print('Usage: codex app-server [OPTIONS]')
+ sys.exit(0)
 log=os.path.join(os.environ['CODEX_HOME'],'calls.jsonl')
 marker=os.path.join(os.environ['CODEX_HOME'],'fail-first')
 if os.path.exists(marker):
@@ -143,6 +148,8 @@ const liveHub = (current: NonNullable<typeof app>) => current.oxapEngine.getHub(
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let transport: WebSocketClientTransport | undefined;
 let releaseResult: (() => void) | undefined;
+const wrongCli = '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "oxap 1.0"; exit 0; fi\nprintf "\\nunknown argument: app-server\\nusage: oxap\\n" >&2\nexit 2\n';
+const wrongPath = join(run, 'wrong-cli');
 const evidence: Record<string, unknown> = { synthetic: !nativeCodex && !livePeer, mode, binaryVersion: version, binarySha256: sha256 };
 const calls = () => existsSync(join(run, 'codex-home/calls.jsonl'))
   ? readFileSync(join(run, 'codex-home/calls.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line) as { cwd: string; codexHome?: string; pid: number; request: { method?: string; params?: { cwd?: string; approvalPolicy?: string; sandbox?: string; developerInstructions?: string; capabilities?: { experimentalApi?: boolean } } } })
@@ -156,7 +163,10 @@ async function waitFor(predicate: () => boolean, label: string, timeoutMs = 2000
 }
 async function verifyInBrowser(
   currentApp: NonNullable<typeof app>,
-  target: { sessionId: string; text: string; assistantUuid?: string } | { executable: string; replacement: string }
+  target:
+    | { sessionId: string; text: string; assistantUuid?: string }
+    | { executable: string; replacement: string }
+    | { cliPath: { detected: string; wrongPath: string } | { sessions: Record<string, string>; executable: string } }
 ): Promise<void> {
   assert(process.env.VERIFY_BROWSER);
   const root = resolve('packages/web/dist');
@@ -183,6 +193,14 @@ async function verifyInBrowser(
   assert.notEqual(web.port, 8399);
   assert.notEqual(web.port, 8499);
   try {
+    if ('cliPath' in target) {
+      const browser = Bun.spawn([
+        'node', '.claude/skills/verify/oxap-cli-path-web.mjs',
+        String(web.port), run, JSON.stringify(target.cliPath),
+      ], { stdin: new Blob([readLocalCredential()]), stdout: 'inherit', stderr: 'inherit' });
+      assert.equal(await browser.exited, 0, 'The CLI path browser journey failed');
+      return;
+    }
     if (mode === 'image-wording' && 'sessionId' in target) {
       const browser = Bun.spawn([
         'node', '.claude/skills/verify/oxap-image-wording-web.mjs',
@@ -256,7 +274,11 @@ try {
   transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false, createSocket: createLocalSocket });
   hub.registerTransport(transport);
   await transport.initialize();
-  if (mode === 'settings-restart-web' || mode === 'image-wording' || nativeCodex) {
+  if (mode === 'cli-path-web') {
+    writeFileSync(wrongPath, wrongCli, { mode: 0o700 });
+    await hub.request('providers.create', { ...oxapCodexProvider, params: { ...oxapCodexProvider.params, configJson: '{}' } });
+    await verifyInBrowser(app, { cliPath: { detected: peer, wrongPath } });
+  } else if (mode === 'settings-restart-web' || mode === 'image-wording' || nativeCodex) {
     await hub.request('providers.create', { params: oxapCodexProvider.params });
   } else {
     await hub.request('providers.create', { params: { providerId: 'anthropic', displayName: 'Synthetic provider', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-devproxy-test-key' } });
@@ -273,7 +295,71 @@ try {
   const { sessionId: firstId } = await makeSession(mode === 'folderless' ? undefined : 'workspace-a');
   const first = app.sessionManager.getSession(firstId);
   assert(first);
-  if (mode === 'image-wording') {
+  if (mode === 'cli-path' || mode === 'cli-path-web') {
+    const repaired = join(run, 'repaired-codex');
+    copyFileSync(peer, repaired);
+    const sessions = mode === 'cli-path-web' ? {
+      desktop: (await makeSession('workspace-a')).sessionId,
+      phone: (await makeSession('workspace-a')).sessionId,
+    } : undefined;
+    writeFileSync(peer, wrongCli);
+    await hub.request('message.send', { sessionId: firstId, content: 'Send with a previously saved wrong CLI' });
+    await waitFor(() => errors.length > 0, 'launch failure in chat');
+    Object.assign(evidence, { launchError: errors[0] });
+    assert(errors[0].includes(peer), errors[0]);
+    assert(errors[0].includes('unknown argument: app-server'), errors[0]);
+    assert(errors[0].includes('Settings'), errors[0]);
+    assert(!errors[0].includes('usage: oxap'), errors[0]);
+    writeFileSync(wrongPath, wrongCli, { mode: 0o700 });
+    const result = await hub.request<{ accepted: boolean; reason?: string }>('operation.invoke', {
+      name: 'oxap.settings.save',
+      input: { providerId: 'anthropic-codex', harness: 'oxap-codex', settings: { executable: wrongPath } },
+    });
+    assert.equal(result.accepted, false);
+    assert(result.reason?.includes(wrongPath));
+    if (sessions) await verifyInBrowser(app, { cliPath: { sessions, executable: peer } });
+    const failedDelivery = async (sessionId: string) => {
+      await waitFor(() => app!.db.getUserMessagesByStatus(sessionId, 'failed').total === 1, 'message failed without retry');
+      const [message] = app!.db.getUserMessagesByStatus(sessionId, 'failed').messages;
+      const jobs = app!.jobQueue.listJobs({ queue: 'message_delivery' }).filter(
+        (job) => job.payload.sessionId === sessionId && job.payload.messageUuid === message.uuid
+      );
+      assert.equal(jobs.filter(({ status }) => status === 'dead').length, 1);
+      assert(jobs.every(({ status, retryCount }) =>
+        retryCount === 0 && (status === 'dead' || status === 'completed')
+      ));
+      return message;
+    };
+    const failed = await failedDelivery(firstId);
+    if (sessions) {
+      for (const sessionId of Object.values(sessions)) await failedDelivery(sessionId);
+    }
+    const usageFailureCount = sessions ? 3 : 1;
+    await waitFor(() => errors.length >= usageFailureCount, 'one startup diagnostic per send');
+    assert.deepEqual(errors, Array(usageFailureCount).fill(errors[0]));
+    const missing = await makeSession('workspace-b');
+    unlinkSync(peer);
+    const previousErrors = errors.length;
+    await hub.request('message.send', { sessionId: missing.sessionId, content: 'Send with a removed CLI' });
+    await failedDelivery(missing.sessionId);
+    await waitFor(() => errors.length > previousErrors, 'removed CLI diagnostic');
+    assert.equal(errors.length, previousErrors + 1);
+    assert(errors.at(-1)?.includes(peer));
+    assert(errors.at(-1)?.includes('Settings'));
+    await waitFor(() => !first.queryPromise, 'failed query stopped');
+    assert.deepEqual(await hub.request('operation.invoke', {
+      name: 'oxap.settings.save',
+      input: { providerId: 'anthropic-codex', harness: 'oxap-codex', settings: { executable: repaired } },
+    }), { accepted: true });
+    const retry = await hub.request<{ retried: boolean }>('session.messages.retry', {
+      sessionId: firstId, messageDbId: failed.dbId,
+    });
+    assert.equal(retry.retried, true);
+    await waitFor(() => app!.db.getSDKMessages(firstId).messages.some((message) => message.type === 'result' && !message.is_error), 'reply in repaired chat');
+    assert.equal(errors.length, previousErrors + 1);
+    Object.assign(evidence, { port: app.server.port, refusedWrongCli: true, automaticRetries: 0, manualRetryReplied: true, browserViewports: sessions ? 2 : 0, pass: true });
+    console.log(`Verified ${usageFailureCount + 1} terminal deliveries with zero automatic retries and 1 successful manual retry after repair.`);
+  } else if (mode === 'image-wording') {
     await verifyInBrowser(app, { sessionId: firstId, text: '' });
     assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 0);
     Object.assign(evidence, { nativeTurns: 0, pass: true });
@@ -1040,6 +1126,8 @@ try {
   if (existsSync(join(run, 'codex-home/calls.jsonl'))) copyFileSync(join(run, 'codex-home/calls.jsonl'), join(run, 'evidence/calls.jsonl'));
   await transport?.close();
   await app?.cleanup();
+  const provider = getProviderRegistry().get('anthropic-codex');
+  if (provider instanceof AnthropicToCodexBridgeProvider) provider.stopAllBridgeServers();
   evidence.cleaned = true;
   writeFileSync(join(run, 'evidence/oap-workspace-wire.json'), JSON.stringify(evidence, null, 2));
 }
