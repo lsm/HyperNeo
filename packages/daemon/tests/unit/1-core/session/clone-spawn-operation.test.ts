@@ -232,12 +232,12 @@ describe('session.clone.spawn', () => {
     expect(await run(h, { thinkingLevel: 'think16k' })).toEqual({
       accepted: false,
       reason: 'harness_unsupported',
-      message: 'OXAP Codex does not take a thinking level.',
+      message: 'OXAP Codex model gpt-5.5 does not publish support for this thinking level.',
     });
     expect(h.created).toHaveLength(1);
-    expect(await run(h, { thinkingLevel: 'off' })).toEqual({
-      accepted: true,
-      sessionId: 'child',
+    expect(await run(h, { thinkingLevel: 'off' })).toMatchObject({
+      accepted: false,
+      reason: 'harness_unsupported',
     });
   });
 

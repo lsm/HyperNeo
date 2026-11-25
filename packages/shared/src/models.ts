@@ -16,6 +16,7 @@ export interface ModelInfo {
   releaseDate: string;
   available: boolean;
   thinkingModes?: 'off' | 'on' | 'granular';
+  codexReasoning?: { levels: string[]; defaultLevel: string };
   effortLevels?: Array<'low' | 'medium' | 'high' | 'xhigh' | 'max'>;
 }
 

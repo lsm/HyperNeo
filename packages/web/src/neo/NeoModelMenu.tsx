@@ -20,6 +20,8 @@ export function NeoModelMenu({
   current,
   level,
   showThinking = true,
+  thinkingOptions = THINKING_OPTIONS,
+  thinkingNote,
   busy,
   loading,
   working,
@@ -37,6 +39,8 @@ export function NeoModelMenu({
   current?: ModelInfo;
   level: ThinkingLevel;
   showThinking?: boolean;
+  thinkingOptions?: typeof THINKING_OPTIONS;
+  thinkingNote?: string;
   busy: boolean;
   loading: boolean;
   working: boolean;
@@ -80,7 +84,7 @@ export function NeoModelMenu({
       id={id}
       role="group"
       aria-label={summary ? 'Model, client and thinking settings' : 'Model and thinking settings'}
-      class={`neo-arrive absolute bottom-full ${position} z-30 mb-3 flex w-[360px] max-w-[calc(100vw-64px)] flex-col overflow-hidden rounded-2xl border border-line-strong bg-surface-raised shadow-xl ${summary && section === 'Model' ? 'new-chat-model-search' : ''}`}
+      class={`neo-arrive absolute bottom-full ${position} z-30 mb-3 flex w-[360px] ${align === 'right' ? 'max-w-[calc(100vw-96px)] sm:max-w-[calc(100vw-64px)]' : 'max-w-[calc(100vw-64px)]'} flex-col overflow-hidden rounded-2xl border border-line-strong bg-surface-raised shadow-xl ${summary && section === 'Model' ? 'new-chat-model-search' : ''}`}
       style={{
         maxHeight:
           align === 'trigger'
@@ -244,11 +248,12 @@ export function NeoModelMenu({
           )}
           <ThinkingSlider
             level={level}
-            options={THINKING_OPTIONS}
+            options={thinkingOptions}
             busy={busy}
             onThinking={onThinking}
             compact={!!summary}
           />
+          {thinkingNote && <p class="mt-1.5 text-xs text-fg-muted">{thinkingNote}</p>}
         </div>
       )}
     </div>
