@@ -5,6 +5,7 @@ export interface UseCommandAutocompleteOptions {
   content: string;
   onSelect: (command: string) => void;
   store?: SessionStore;
+  excludedCommand?: string;
 }
 
 export interface UseCommandAutocompleteResult {
@@ -21,6 +22,7 @@ export function useCommandAutocomplete({
   content,
   onSelect,
   store = sessionStore,
+  excludedCommand,
 }: UseCommandAutocompleteOptions): UseCommandAutocompleteResult {
   const [showAutocomplete, setShowAutocomplete] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -30,14 +32,16 @@ export function useCommandAutocomplete({
 
   const prevCmdsRef = useRef<string[]>([]);
   const availableCommands = useMemo(() => {
-    const cmds = Array.isArray(rawCommands) ? rawCommands : [];
+    const cmds = Array.isArray(rawCommands)
+      ? rawCommands.filter((command) => command.toLowerCase() !== excludedCommand)
+      : [];
     const prev = prevCmdsRef.current;
     if (cmds.length === prev.length && cmds.every((c, i) => c === prev[i])) {
       return prev;
     }
     prevCmdsRef.current = cmds;
     return cmds;
-  }, [rawCommands]);
+  }, [rawCommands, excludedCommand]);
 
   useEffect(() => {
     const trimmedContent = content.trimStart();
