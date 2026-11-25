@@ -22,6 +22,7 @@ Do not add chunking, resumable offsets, a new artifact system, a database table,
 ## What happens today
 
 - The phone composer caps a draft at six attachments and 8 MiB combined, counting base64 length for images and byte length for text. A single image is already normalized to 3.75 MiB; text is capped at 128 KiB.
+- Three photos can each fit the per-file limit while their combined base64 size exceeds the draft limit. The composer rejects the third before Send, so the outgoing message contains only the first two.
 - Draft bytes are saved on the device. The durable outbox reads those bytes and base64-encodes every image for every delivery attempt.
 - Neo chats call `neo.message.send` with text plus base64 image blocks. Work chats call the legacy `message.send` RPC with an `images` array. The current Send predicate only checks for text or attachments.
 - The daemon's Neo schema accepts only text and base64 image blocks (`packages/daemon/src/lib/neo/intake.ts:35-66`). The legacy work-chat handler accepts base64 images and checks each against the 5 MiB base64 limit (`packages/daemon/src/lib/rpc-handlers/session-handlers.ts:619-655`; `packages/daemon/src/lib/session/message-persistence.ts:35-47`). The 3.75 MiB raw-image cap produces at most exactly 5 MiB of base64.
@@ -68,22 +69,24 @@ Behavior:
 
 - Reuse `authenticateUpgrade`, the paired daemon origin, and the request guards already wired in `packages/daemon/src/app.ts:1336-1366,1426-1468`. Do not accept a caller-supplied URL or follow a credentialed redirect.
 - Stream the body to a temporary file under the daemon data directory. Reject an oversized declared length before reading and stop a streamed body at the same 3.75 MiB boundary. Never buffer the whole request merely to enforce the limit.
-- Verify nonempty bytes, supported image signature, declared media type, byte count, and SHA-256. Rename atomically only after verification. The full random UUID plus hash is the capability reference; there is no public read URL.
-- Repeating PUT with the same UUID and hash is idempotent and returns the same reference. Reusing a UUID for different bytes returns `409`. Other failures are `400` for malformed metadata, `401` for pairing, `413` for size, and `415` for media type.
-- `DELETE /api/attachments/{attachmentUuid}` uses the same pairing check and is idempotent. Removal, discard, and acknowledged delivery issue it best-effort; cleanup never delays local removal or a send acknowledgement.
+- Verify nonempty bytes, supported image signature, declared media type, byte count, and SHA-256. The full random UUID plus hash is the capability reference; there is no public read URL.
+- Reserve a UUID before streaming. Matching concurrent PUTs share the first attempt's result, and conflicting metadata or hashes return `409`. Check for cancellation and atomically rename the verified temporary file under the same per-UUID coordination used for DELETE and expiry. Replaying a published upload with matching metadata returns the same reference. Other failures are `400` for malformed metadata, `401` for pairing, `413` for size, and `415` for media type.
+- `DELETE /api/attachments/{attachmentUuid}` uses the same pairing check and is idempotent. It cancels any admitted PUT and removes any published file before returning. Keep the UUID reserved until the cancelled writer has cleaned up, so it cannot publish after DELETE. The phone cancels its local task before issuing best-effort DELETE. A later PUT can stage the same bytes again.
+- Cap staging at 64 files daemon-wide (240 MiB at the per-file limit), including reservations for active writes. Return a retryable `503` when full. Release a reservation only after its file is removed or counted as published. Limit each PUT to two minutes and remove its temporary file on failure, timeout, or cancellation. Remove abandoned temporary files before serving requests after restart.
+- Published files expire seven days after publication. Sweep at startup and hourly, and reclaim expired slots before refusing a new PUT for capacity. Treat expired references as missing on read. Removal, discard, and acknowledged delivery still issue best-effort DELETE for earlier cleanup.
 
 Add a small messaging-owned store/resolver, not a new domain layer:
 
 - `packages/daemon/src/lib/messaging/attachment-upload.ts`: reference schema, size/hash verification, atomic staging, read, and delete.
 - `packages/daemon/src/lib/rpc-handlers/attachment-upload-route.ts`: paired PUT/DELETE adapter.
 
-No migration is needed. A staged upload contains only its bytes; the reference carries its hash and media metadata.
+A staged upload contains only its bytes. Its file timestamp records publication time, and the reference carries its hash and media metadata.
 
 ### Sending references
 
 Extend only the two phone-used intake contracts with optional `attachments: AttachmentRef[]`:
 
-1. `neo.message.send`: leave `content` unchanged and append resolved image blocks in attachment order after existing content blocks. Thumbnail indexes continue to refer to the final block list. Resolve before `neoIntakeMessage`, persistence, and `neoIntakeImages`, so all downstream behavior sees today's base64 shape. A replay whose `requestId` already has a stored ask returns its existing receipt before trying to resolve staged files.
+1. `neo.message.send`: keep the existing content schema for inline calls. Allow `content: []` and defer the mailbox projection only for this operation when at least one valid reference is present. Append the resolved images in attachment order after any inline blocks, then validate the nonempty content with `SessionContentSchema` and the mailbox projection before `neoIntakeMessage`, persistence, and `neoIntakeImages`. Thumbnail indexes refer to the final block list. After caller and target admission, use the stored prompt's corresponding image blocks for an existing `requestId` replay. Verify their length, hash, and media type against the references and retain the existing ask-conflict check. A matching replay returns the existing receipt even if staging has expired or been deleted.
 2. Legacy work-chat `message.send` in `session-handlers.ts`: resolve `attachments`, append them to the existing `images` array, then call the existing `validateImageSizes` and persistence path. This is not the separate `message.send` operation envelope in `messaging/message-send.ts`; that operation does not need a new contract for this phone feature.
 
 For either route, when `attachments` is present:
@@ -111,7 +114,7 @@ Text attachments use the existing inline representation and are immediately read
 - After any existing HEIC/JPEG normalization, write the local draft blob and `.uploading` before starting the request. Start one upload per selected image immediately; six is the existing maximum.
 - Upload tasks retain their originating daemon URL, credential, draft scope, UUID, and hash. Switching chats does not retarget an upload.
 - Removing an uploading image cancels its task, deletes the local draft blob, and best-effort DELETEs the remote UUID because the request may already have completed. Removing a ready or failed image does the same local removal and remote cleanup when a reference exists.
-- An acknowledged outbox entry best-effort DELETEs its references after acknowledgement. Never hold acknowledgement hostage to cleanup; a Neo retry after an ambiguous response must still find its upload because no acknowledgement occurred.
+- After acknowledgement, the outbox issues best-effort DELETE for its references and can release the local bytes.
 
 ### Retry, offline, and relaunch
 
@@ -119,7 +122,12 @@ Text attachments use the existing inline representation and are immediately read
 - An active request that fails becomes `failed`. Retry reuses the same local bytes, UUID, and hash and repeats the whole PUT. There is no partial resume. A successful idempotent replay is indistinguishable from a first upload.
 - On relaunch, restore `ready` and `failed` as saved. Restart saved `uploading` items with the same idempotent PUT. Local blob/hash validation still runs before every attempt.
 - Keep the existing outbox distinction: Neo request IDs retry safely; an ambiguous work-chat send waits for the user's retry decision. Stored references avoid re-encoding on every attempt, while local bytes remain until acknowledgement/edit/discard for recovery.
-- If the daemon reports a missing or changed reference, mark that attachment `failed`; Retry uploads it again. Do not silently switch to the old combined base64 send.
+- If the daemon reports a missing, expired, or changed reference, mark that attachment `failed`. Retry stages the saved bytes again with the same UUID and hash. If a changed file causes a UUID conflict, stage those bytes under a new upload UUID and replace the reference. Keep an affected outbox entry and its delivery state until recovery or discard.
+
+### Upgrading saved drafts and outbox entries
+
+- On draft restore, load existing attachments with their saved bytes and IDs. An image without an upload state becomes `uploading` and is saved before PUT. Inline text stays ready. Missing local bytes use the existing unavailable state. Reopening a partially migrated draft resumes from its saved states.
+- Upgrade each legacy outbox entry in place before its next permitted delivery attempt. Stage its saved images, persist each ready reference, and preserve message content, order, destination, and request ID. Legacy Neo entries with an ambiguous result retry with the original request ID, so earlier acceptance still returns one receipt. An ambiguous work-chat entry stays paused until the user chooses Retry. Migration alone never re-enqueues it. Keep local bytes and leave recoverable entries queued if staging fails.
 
 ### Send gating
 
@@ -132,7 +140,7 @@ AND no attachment is failed or locally unavailable
 AND every image has a ready reference
 ```
 
-Apply it to root Neo, work chats, voice-transcript sends, and the recording arrow. A failed or unfinished attachment blocks the whole message until it retried successfully or is removed; text alone must not bypass it. Stopping a recording to keep a draft remains available.
+Apply it to root Neo, work chats, voice-transcript sends, and the recording arrow. A failed or unfinished attachment blocks the whole message until it uploads successfully or is removed. Stopping a recording to keep a draft remains available.
 
 ## Limits and related phone work
 
@@ -157,11 +165,11 @@ The web's combined budget is unchanged by these slices.
 
 Each slice branches from the current default branch after its predecessor merges. Production-line figures are merge caps, not estimates; exceeding one means split Pin/Extract/Build/Wire work rather than widening the PR.
 
-1. **HyperNeo: paired upload endpoint and staging store** — cap 200 production lines. Add only the PUT/DELETE route, store, resolver, and focused tests. No send caller. Prove streaming limits, signature/hash checks, idempotent replay, conflict, pairing, and delete.
-2. **HyperNeo: Neo references** — cap 140 production lines. Add `attachments` to `neo.message.send`, resolve before message construction/image recording, and preserve request-ID replay before resolution. Prove ordering, thumbnail indexes, per-file acceptance, seven-image count rejection, and no combined-byte rejection.
+1. **HyperNeo: paired upload endpoint and staging store** — cap 200 production lines. Add only the PUT/DELETE route, store, resolver, and focused tests. No send caller. Prove streaming limits, signature/hash checks, pairing, capacity, expiry, and temporary-file cleanup. Race matching and conflicting PUTs and DELETE against an admitted PUT. Verify one publication, `409` for conflicting bytes, and no publication after DELETE.
+2. **HyperNeo: Neo references** — cap 140 production lines. Add `attachments` to `neo.message.send` and validate resolved content before message construction/image recording. Prove a reference-only send, rejection of an empty request, replay after staging deletion, ordering, thumbnail indexes, per-file acceptance, seven-image count rejection, and no combined-byte rejection.
 3. **HyperNeo: work-chat references** — cap 100 production lines. Add the same optional field to the legacy RPC, resolve before `validateImageSizes`, and leave generic operation/web callers untouched. Prove missing-reference refusal precedes persistence and existing base64 calls are unchanged.
 4. **iOS: upload client and attachment states** — cap 200 production lines. Add credentialed PUT/DELETE with delegate progress and redirect refusal, reference coding, durable states, and chip rendering for uploading/ready/failed. Existing drafts retain their current representation until the wiring slice, so behavior does not change yet. Include the renderer pixel-scale correction.
-5. **iOS: wire uploads and remove the combined budget** — cap 200 production lines. Wire selection, persistence, reconnection/relaunch, Retry/Remove, outbox references/cleanup, and the shared Send gate across typed and voice paths. Delete all phone combined-budget checks and replace the obsolete warning fixture. If shared store wiring exceeds the cap, split a test-only Pin PR first, not root versus work-chat gating.
+5. **iOS: wire uploads and remove the combined budget** — cap 200 production lines. Wire selection, persistence, reconnection/relaunch, Retry/Remove, outbox references/cleanup, saved-draft and outbox upgrade, and the shared Send gate across typed and voice paths. Delete all phone combined-budget checks and replace the obsolete warning fixture. If shared store wiring exceeds the cap, split a test-only Pin PR first, not root versus work-chat gating.
 
 Daemon slices 2 and 3 are independent after slice 1; iOS slice 5 requires both. No compatibility window is needed because old clients keep their existing base64 contracts and new clients require the merged daemon.
 
@@ -172,17 +180,11 @@ The feature is complete only when the real app and daemon, on the merged heads, 
 - With delayed uploads, each picked image appears in `uploading`, byte progress advances independently, and Send remains disabled until every image is ready.
 - A forced failure keeps Send disabled. Retry succeeds with the same UUID/hash; Remove also restores a sendable state when no other blockers remain.
 - Offline selection shows `Waiting for connection`; reconnect and app relaunch finish the saved uploads without reselection. Repeating PUT creates no second stored attachment.
+- A saved draft whose remote upload has expired can send after re-uploading its local bytes. Upgrade restores an existing draft and delivers a queued send with its original content and attachments.
 - Six of the existing 3.46 MiB PNG fixtures can be staged in one draft and accepted as one Neo message and one work-chat message. This is 20.76 MiB raw before base64, so it directly disproves the old 8 MiB ceiling while preserving every per-file check. No equal-slot recompression or combined-size warning occurs.
 - The daemon transcript contains six image blocks in selection order with correct thumbnails/full-image reads. A seventh image and an image over 3.75 MiB still fail locally; a tampered/missing reference is refused before persistence.
-- Typed Send, voice Send, and the recording arrow all enforce the same gate in root Neo and work chats. An ambiguous Neo send still produces one request/message; ambiguous work-chat behavior is unchanged.
+- Typed Send, voice Send, and the recording arrow all enforce the same gate in root Neo and work chats. On either side of upgrade, retrying an ambiguous Neo send still produces one request/message. An ambiguous work-chat send stays paused until the user chooses Retry.
 - Existing small-image, text-file, draft merge/edit, outbox retry, and visible composer-warning journeys still pass. Report explicit test counts and exit codes; silence is not evidence.
-
-## Open decisions for the human
-
-Safe defaults are already used above; these are scope choices, not implementation blockers.
-
-1. **Text files:** keep them inline and immediately ready (default), or later move them onto the same remote-reference channel. Uploading them now would add a second resolution path without addressing the photo problem.
-2. **Abandoned remote uploads:** normal remove/discard/acknowledged-send flows DELETE them, but offline removal or uninstall can leave an orphan. The minimal design retains orphans rather than expiring a reference still held by a saved draft. Choose a time-based GC policy separately; it must include a missing-reference re-upload journey.
 
 ## Source and design checks
 
