@@ -50,10 +50,15 @@ same numbers and review rounds per PR; revert if review rounds rise.
 Of the daemon's PR notices, two almost never lead to a push:
 
 - **The second merge notice.** A PR the daemon merges sends "Merge confirmed" and then "was
-  merged" to the same worker (271 of 311 merges). `deliverCodingPrEvents` accepts a `merged`
-  event without telling when a daemon merge receipt for that URL and head is already
-  notified. `mergeSweep` runs first in the same tick, so the receipt is there. A PR merged
-  by hand has no receipt and still sends "was merged".
+  merged" to the same worker (271 of 311 merges). The daemon merge receipt cannot decide
+  this: it is also marked notified when the worker could not be reached and Neo was woken
+  instead. So the fact is recorded per recipient, with the per-owner receipt that failing
+  reviews already use (`reviewSent` / `markReview`, keyed by event and owner): when `notify`
+  in `daemon-merge-sweep.ts` delivers "Merge confirmed" to the owner, and only then, it marks
+  the `merged` event of that PR and head as sent to that owner. `deliverCodingPrEvents` reads
+  that receipt for `merged` as it does for `failing`, and accepts the event without telling.
+  Every other case has no receipt and still sends "was merged": owner delivery failed and Neo
+  was woken, the owner changed in between, a crash before the mark, a merge by hand.
 - **The reminder while CI runs.** `waiting_ci` and `approved_pending` no longer remind the
   owner (one push in 80 reminders). If CI fails, `failing` still tells the owner at once.
   The last step still goes to Neo, so a stuck check is not lost.
@@ -72,6 +77,8 @@ Two PRs from `dev`, no migration, no new setting.
 
 1. The limit: one exported constant and the three places above.
 2. The notices: `planCodingPrNudge` skips the owner reminder for the two states and keeps the
-   escalation; `deliverCodingPrEvents` gets the receipt check. Tests: daemon merge sends one
-   notice, hand merge sends one, receipt not yet notified still sends "was merged", pending
-   CI sends no reminder and still escalates.
+   escalation; `notify` marks the per-owner receipt and `deliverCodingPrEvents` reads it. Tests
+   through the real sweep order: a daemon merge told to the owner sends one notice; **owner
+   delivery fails and Neo's wake succeeds, then the owner is reachable: the owner gets "was
+   merged" once**; an owner changed after "Merge confirmed" gets "was merged"; a hand merge
+   sends one; pending CI sends no reminder and still escalates.
