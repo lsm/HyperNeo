@@ -46,17 +46,16 @@ Check an App settings mismatch prevents the initial prompt, and the accepted
 settings come back from the stored session. Submit and withdraw one queued message, stop
 the initial turn, send a follow-up, read its reply with the receipt, then
 rename and archive the same work. In dual mode, the startup reference must
-come from the Desktop peer. Neo's driver refresh must record compaction for
-the idle Desktop worker after the matching attempt completes. An unrelated
-completion must leave the original reply intact and must not count as
-compaction. The local channel also requires the OS listener
+come from the Desktop peer. Neo's driver refresh must compact the idle
+Desktop worker once before it sends the next todo of the same ask. An unrelated
+completion must not count as compaction. The local channel also requires the OS listener
 to belong to the advertised PID before authenticating. The focused daemon
 tests cover stale advertisements, uncorrelated errors, uncertain sends and
 the pre-dispatch-only CLI fallback.
 
 Repeat with `compact-failure` and `compact-refused`. A failed completion or a
-refusal to queue must each record one failed attempt and a retry delay. The
-peer must receive one command and the prior reply must remain readable.
+refusal to queue must each still send the next todo. The peer must receive one
+compaction command.
 
 The peer proves routing and receipt handling in an isolated daemon. With
 separate approval to use the signed-in macOS App's local connection credential
@@ -75,8 +74,8 @@ Append `compact` to exercise manual compaction and confirm that the App
 journal records it as applied before the test session is archived.
 
 The CLI also exposes start, send, queue, withdraw, stop, rename, and archive
-for daemon-owned sessions. Neo can compact an idle owned CLI worker kept for
-reuse. In `cli` mode, start with an explicit model and `high` reasoning
+for daemon-owned sessions. Neo compacts an idle owned CLI worker before
+reusing it for the same ask. In `cli` mode, start with an explicit model and `high` reasoning
 effort. Verify the SDK confirms both before the first prompt, and that start
 and status report the applied effort. Unsupported effort and a runtime
 configuration mismatch both prevent prompt delivery.

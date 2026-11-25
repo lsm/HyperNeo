@@ -43,11 +43,13 @@ function harness(
     reuse?: 'long_lived' | 'per_ask' | 'per_todo';
     sameAsk?: string[];
     reconfigure?: 'applies' | 'refused' | 'unchanged';
+    compact?: boolean | 'throws';
   },
   history?: ReadonlyMap<string, { sameAskAt: number | null; settledAt: number | null }>,
-  claim?: Pick<WorkVerbDeps, 'claimWorker' | 'unclaimWorker'>
+  claim?: Pick<WorkVerbDeps, 'claimWorker' | 'unclaimWorker' | 'isOpenTodo'>
 ) {
   const sent: string[] = [];
+  const events: string[] = [];
   const messages: string[] = [];
   const started: string[] = [];
   const unusable: WorkRef[] = [];
@@ -137,8 +139,19 @@ function harness(
             },
           };
     },
+    compact:
+      config?.compact === undefined
+        ? undefined
+        : async (ref) => {
+            events.push(`compact ${ref.id}`);
+            if (config.compact === 'throws') throw new Error('Synthetic compaction failure');
+            return config.compact
+              ? { ok: true, value: { compacted: true } }
+              : { ok: false, reason: 'busy', detail: 'Synthetic refusal' };
+          },
     send: async (ref, message) => {
       messages.push(message);
+      events.push(`send ${ref.id}`);
       sent.push(ref.id);
       await Promise.resolve();
       const refusal = workers.find((worker) => worker.id === ref.id)?.refusal;
@@ -195,7 +208,7 @@ function harness(
     if (outcome.kind !== 'completed') throw new Error(outcome.message);
     return outcome.value as { ok: boolean; value?: { ref: WorkRef; reused?: true } };
   };
-  return { start, sent, started, unusable, messages, waiting, registry };
+  return { start, sent, events, started, unusable, messages, waiting, registry };
 }
 
 describe('work.start session reuse preference', () => {
@@ -208,14 +221,53 @@ describe('work.start session reuse preference', () => {
     expect(run.sent).toEqual([]);
   });
 
-  test('per ask never borrows another matter’s worker', async () => {
-    const run = harness([{ id: 'other', status: 'done' }], ['other'], {
-      adapter: 'claude-desktop',
-      reuse: 'per_ask',
-      sameAsk: [],
-    });
-    expect((await run.start(neo, false, { todoId: 'next' })).value?.ref.id).toBe('fresh');
-    expect(run.sent).toEqual([]);
+  test.each(['long_lived', 'per_ask'] as const)(
+    '%s starts a new session instead of another matter’s worker',
+    async (reuse) => {
+      const run = harness([{ id: 'other', status: 'done' }], ['other'], {
+        adapter: 'claude-desktop',
+        reuse,
+        sameAsk: [],
+      });
+      expect((await run.start(neo, false, { todoId: 'next' })).value?.ref.id).toBe('fresh');
+      expect(run.sent).toEqual([]);
+    }
+  );
+
+  test.each([true, false, 'throws'] as const)(
+    'compacts the matter’s own worker before reusing it (%s)',
+    async (compact) => {
+      const own = `compacted-${compact}`;
+      const run = harness([{ id: own, status: 'done' }], [own], {
+        adapter: 'claude-desktop',
+        reuse: 'long_lived',
+        sameAsk: [own],
+        compact,
+      });
+      expect((await run.start(neo, false, { todoId: 'next' })).value?.reused).toBe(true);
+      expect(run.events).toEqual([`compact ${own}`, `send ${own}`]);
+    }
+  );
+
+  test('does not message a todo that closed while its worker compacted', async () => {
+    const own = 'closed-while-compacting';
+    const undone: string[] = [];
+    const run = harness(
+      [{ id: own, status: 'done' }],
+      [own],
+      { adapter: 'claude-desktop', reuse: 'long_lived', sameAsk: [own], compact: true },
+      undefined,
+      {
+        claimWorker: async () => true,
+        unclaimWorker: async (_todoId, ref) => void undone.push(ref.id),
+        isOpenTodo: () => !run.events.includes(`compact ${own}`),
+      }
+    );
+    const result = await run.start(neo, false, { todoId: 'next' });
+    expect(result).toMatchObject({ ok: false, reason: 'todo_required', notSent: true });
+    expect(run.events).toEqual([`compact ${own}`]);
+    expect(run.started).toEqual([]);
+    expect(undone).toEqual([own]);
   });
 
   test('per ask waits when that matter’s worker is busy', async () => {

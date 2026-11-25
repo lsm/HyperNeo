@@ -29,51 +29,17 @@ type KeptWorker = {
   ref: WorkRef;
   decision: ReuseDecision;
   hasLookup: boolean;
-  compact: WorkAdapter['compact'];
+  canCompact: boolean;
+  keepsCold: boolean;
   lastUse: number;
-  compactedAt: number | null;
   cacheUntil: number | null;
 };
-type ReuseRelease =
-  | { value: WorkRef }
-  | { reason: Kept }
-  | { compact: NonNullable<WorkAdapter['compact']>; ref: WorkRef; kept: Kept; lastUse: number };
-const COMPACT_RETRY_MS = 5 * 60_000;
-const MAX_COMPACTION_ATTEMPTS = 3;
 const DEFAULT_CACHE_MS = 60 * 60_000;
-let compactionInFlight = false;
 
-export function releaseColdWorker(kept: KeptWorker, now: number): KeptWorker {
-  if ('value' in kept.decision || !kept.compact) return kept;
-  if (kept.compactedAt !== null && kept.compactedAt >= kept.lastUse) return kept;
+export function planKeptWorker(kept: KeptWorker, now: number): ReuseDecision {
+  if ('value' in kept.decision || !kept.hasLookup) return kept.decision;
   const until = kept.cacheUntil ?? kept.lastUse + DEFAULT_CACHE_MS;
-  return now > until ? { ...kept, decision: { value: kept.ref } } : kept;
-}
-
-function planKeptCompaction({
-  ref,
-  decision,
-  hasLookup,
-  compact,
-  lastUse,
-}: KeptWorker): ReuseRelease {
-  if ('value' in decision || !hasLookup) return decision;
-  return compact ? { compact, ref, kept: decision.reason, lastUse } : { value: ref };
-}
-
-function nextCompactionAttempt(
-  facts: ReturnType<NeoTodoSessionRepository['workerCompactionFacts']>,
-  lastUse: number,
-  now: number
-): number | null {
-  if (!facts) return null;
-  const compactedAt = facts.lateCompactedAt ?? facts.compactedAt;
-  if (compactedAt !== null && compactedAt >= lastUse) return null;
-  const { failure } = facts;
-  if (!failure || failure.attemptedAt < lastUse) return 1;
-  return failure.count < MAX_COMPACTION_ATTEMPTS && failure.retryAt <= now
-    ? failure.count + 1
-    : null;
+  return kept.canCompact && (kept.keepsCold || now <= until) ? kept.decision : { value: kept.ref };
 }
 
 type Released = { released: unknown };
@@ -136,12 +102,7 @@ export function followSessionReuse(
   facts: ReuseFacts,
   ref: WorkRef
 ): { value: WorkRef } | { reason: Kept } {
-  const keep =
-    facts?.mode === 'per_ask'
-      ? facts.hasFolder && facts.askOpen
-      : facts?.mode === 'long_lived'
-        ? facts.hasFolder && !facts.newerFree
-        : false;
+  const keep = facts && facts.mode !== 'per_todo' && facts.hasFolder && facts.askOpen;
   return keep ? { reason: { kept: 'kept_for_reuse' } } : { value: ref };
 }
 
@@ -196,7 +157,7 @@ export function readNeoTodoArchive(
 }
 
 const releaseWorker = (superpipe({})('neo.todo.release-worker') as PipelineAPI)
-  .input(['row', 'invoke', 'sessions', 'workerCompact', 'now', 'warn'])
+  .input(['row', 'invoke', 'sessions', 'workerCompact', 'now'])
   .pipe(
     async (row: FinishedWorker, sessions: NeoTodoSessionRepository) => {
       if (!row.releasedBy) return { value: row };
@@ -217,77 +178,25 @@ const releaseWorker = (superpipe({})('neo.todo.release-worker') as PipelineAPI)
       sessions: NeoTodoSessionRepository,
       lookup: WorkerCompact | undefined
     ): Promise<KeptWorker> => {
-      const decision = followSessionReuse(await sessions.read('reuseFacts', row.todoId), ref);
+      const reuse = await sessions.read('reuseFacts', row.todoId);
+      const decision = followSessionReuse(reuse, ref);
       const adapter = 'reason' in decision ? lookup?.(ref.adapter) : undefined;
-      const compact = adapter?.compact;
-      const facts = compact ? await sessions.read('workerCompactionFacts', ref) : null;
-      const cacheUntil = compact ? ((await adapter?.cacheUntil?.(ref)) ?? null) : null;
-      const hasLookup = !!lookup;
-      const lateCompactedAt = facts?.lateCompactedAt;
-      if (lateCompactedAt != null && lateCompactedAt >= row.lastUse)
-        await sessions.recordWorkerCompacted(ref, lateCompactedAt);
-      const compactedAt = lateCompactedAt ?? facts?.compactedAt ?? null;
-      return { ref, decision, hasLookup, compact, lastUse: row.lastUse, compactedAt, cacheUntil };
+      const canCompact = !!adapter?.compact;
+      const cacheUntil = canCompact ? ((await adapter.cacheUntil?.(ref)) ?? null) : null;
+      return {
+        ref,
+        decision,
+        hasLookup: !!lookup,
+        canCompact,
+        keepsCold: reuse?.mode === 'per_ask',
+        lastUse: row.lastUse,
+        cacheUntil,
+      };
     },
     ['release', 'row', 'sessions', 'workerCompact'],
     'kept'
   )
-  .pipe(releaseColdWorker, ['kept', 'now'], 'kept')
-  .pipe(planKeptCompaction, 'kept', 'compaction')
-  .pipe(
-    async (
-      plan: ReuseRelease,
-      row: FinishedWorker,
-      sessions: NeoTodoSessionRepository,
-      now: number,
-      warn: (message: string, error: unknown) => void
-    ) => {
-      if (!('compact' in plan)) return plan;
-      const kept = { reason: plan.kept };
-      if (compactionInFlight) return kept;
-      compactionInFlight = true;
-      let launched = false;
-      try {
-        const facts = await sessions.read('workerCompactionFacts', plan.ref);
-        const count = nextCompactionAttempt(facts, plan.lastUse, now);
-        if (count === null) return kept;
-        const at = Date.now();
-        const key = neoWorkerKey(plan.ref);
-        const run = async () => {
-          try {
-            const result = await plan.compact(plan.ref, { caller: daemon, from: 'neo' });
-            if (!result.ok) {
-              if (['busy', 'not_open', 'not_found', 'unreachable'].includes(result.reason)) return;
-              throw new Error(`${result.reason}: ${result.detail}`);
-            }
-            if (!result.value.compacted) return;
-            await sessions.recordWorkerCompacted(plan.ref, at);
-          } catch (error) {
-            warn(
-              `Worker ${key} compaction attempt ${count}/${MAX_COMPACTION_ATTEMPTS} failed`,
-              error
-            );
-            await sessions.write('recordCompactionFailure', row.todoId, plan.ref, {
-              count,
-              attemptedAt: at,
-              retryAt: Date.now() + COMPACT_RETRY_MS,
-            });
-          } finally {
-            compactionInFlight = false;
-          }
-        };
-        launched = true;
-        void run().catch((error) =>
-          warn(`Worker ${key} compaction failure could not be recorded`, error)
-        );
-        return kept;
-      } finally {
-        if (!launched) compactionInFlight = false;
-      }
-    },
-    ['compaction', 'row', 'sessions', 'now', 'warn'],
-    'result:release'
-  )
+  .pipe(planKeptWorker, ['kept', 'now'], 'result:release')
   .pipe(
     async (ref: WorkRef, sessions: NeoTodoSessionRepository) => {
       const fence = await sessions.write('fenceWorkerRelease', ref, Date.now());
@@ -321,8 +230,7 @@ const releaseWorker = (superpipe({})('neo.todo.release-worker') as PipelineAPI)
   invoke: Invoke,
   sessions: NeoTodoSessionRepository,
   workerCompact: WorkerCompact | undefined,
-  now: number,
-  warn: (message: string, error: unknown) => void
+  now: number
 ) => Promise<Released | Kept | Pending>;
 
 export async function releaseNeoTodoWorkers(
@@ -339,7 +247,7 @@ export async function releaseNeoTodoWorkers(
   );
   for (const row of rows) {
     try {
-      const outcome = await releaseWorker(row, invoke, sessions, workerCompact, now, warn).catch(
+      const outcome = await releaseWorker(row, invoke, sessions, workerCompact, now).catch(
         (error: unknown): Pending => ({
           code: 'error',
           pending: error instanceof Error ? error.message : String(error),

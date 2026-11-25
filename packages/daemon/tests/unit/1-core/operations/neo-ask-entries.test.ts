@@ -243,6 +243,15 @@ describe('neoAskEntryState', () => {
     expect(neoAskEntryState(ask(), [], [])).toBe('todo');
     expect(neoAskEntryState(ask('dropped'), doing, [question('open')])).toBe('dropped');
   });
+
+  test('an ask whose open cards are all held is not waiting', () => {
+    const held = { state: 'open', heldAt: 5, todos: ['t'] } as NeoQuestion;
+    const blocked = todo({ state: 'blocked', blockedBy: 'question' });
+    expect(neoAskEntryState(ask(), [blocked], [held])).toBe('doing');
+    expect(neoAskEntryState(ask(), [todo({})], [held])).toBe('todo');
+    const restored = { state: 'open', heldAt: null, todos: ['t'] } as NeoQuestion;
+    expect(neoAskEntryState(ask(), [blocked], [restored])).toBe('waiting');
+  });
 });
 
 describe('projectNeoAskEntries', () => {
