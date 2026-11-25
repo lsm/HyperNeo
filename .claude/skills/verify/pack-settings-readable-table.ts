@@ -4,6 +4,7 @@ import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/set
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
@@ -30,14 +31,16 @@ const server = Bun.serve({
       if (server.upgrade(request, { data: { connectionSessionId: 'global', device: await app.authenticateUpgrade(request, server.requestIP(request)?.address ?? null) } })) return;
       return new Response('Upgrade failed', { status: 500 });
     }
-    return new Response(files.get(new URL(request.url).pathname) ?? Bun.file(resolve('packages/web/dist/neo/index.html')));
+    const { pathname } = new URL(request.url);
+    if (pathname === '/pair' && request.method === 'POST') return app.handlePair(request);
+    return new Response(files.get(pathname) ?? Bun.file(resolve('packages/web/dist', pathname === '/neo' ? 'neo/index.html' : 'index.html')));
   },
   websocket: createWebSocketHandlers(app.transport, app.sessionManager),
 });
 let ws: WebSocket | undefined;
 try {
   await app.spaceRuntimeService.ready();
-  ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+  ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, { headers: { authorization: `Bearer ${await readLocalCredential()}` } } as never);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('connect')); });
   const rpc = (name: string, input: unknown = {}) => new Promise<any>((done, fail) => {
     const id = crypto.randomUUID();
@@ -82,7 +85,9 @@ try {
     assert.equal((await mcp('pack.preferences.ask', { askId, requestId: askId, values })).questionId, question.id);
     assert.equal((await rpc('neo.question.get', { questionId: question.id })).question.text, question.text);
     app.db.updateGlobalSettings({ language });
-    writeFileSync(join(run, 'fixture.json'), JSON.stringify({ askId: store.getQuestion(question.id)!.askId, question: store.getQuestion(question.id), language }));
+    const { code } = await rpc('device.pair.create', { kind: 'human', name: 'Synthetic settings browser' });
+    assert(code, 'no pairing code');
+    writeFileSync(join(run, 'fixture.json'), JSON.stringify({ code, askId: store.getQuestion(question.id)!.askId, question: store.getQuestion(question.id), language }));
     const browser = Bun.spawn([process.env.VERIFY_NODE!, '.claude/skills/verify/pack-settings-readable-table.mjs', String(port), run], { stdout: 'inherit', stderr: 'inherit' });
     assert.equal(await browser.exited, 0, 'headless question render failed');
     const answer = await rpc('neo.question.get', { questionId: question.id });
