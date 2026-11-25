@@ -47,6 +47,9 @@ for line in sys.stdin:
         else:
             emit(id=request["id"], result={})
     elif method == "session/prompt":
+        if os.path.exists("verify-native-prompt-count"):
+            with open("verify-native-prompt-count", "a") as counter:
+                counter.write("1")
         session_id = request["params"]["sessionId"]
         if use_lease and lease is None:
             assert acquire_lease(session_id)
