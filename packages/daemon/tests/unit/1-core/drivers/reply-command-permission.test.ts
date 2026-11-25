@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { replyCommandPermission } from '../../../../src/lib/drivers/reply-command-permission.ts';
+import {
+  isReplyCommand,
+  replyCommandPermission,
+} from '../../../../src/lib/drivers/reply-command-permission.ts';
 
 const options = [
   { optionId: 'allow', kind: 'allow_once' },
@@ -32,6 +35,14 @@ describe('replyCommandPermission', () => {
     '/usr/local/bin/hyperneo send session:abc hi',
   ])('cancels %j', (command) => {
     expect(replyCommandPermission(options, command)).toEqual(cancelled);
+  });
+
+  it('tells a reply command apart for drivers with their own permission shape', () => {
+    expect(isReplyCommand('hyperneo send session:abc --from copilot-cli:c1 --kind done ok')).toBe(
+      true
+    );
+    expect(isReplyCommand('hyperneo send session:abc hi; id')).toBe(false);
+    expect(isReplyCommand(undefined)).toBe(false);
   });
 
   it('cancels an unknown command or a request without an allow option', () => {
