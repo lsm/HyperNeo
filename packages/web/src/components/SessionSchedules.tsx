@@ -312,14 +312,11 @@ function ScheduleStrip({
       </section>
     );
   return (
-    <details
-      class="mx-4 my-2 shrink-0 rounded-lg border border-line text-xs text-fg-muted"
+    <section
+      aria-label={t('schedules.title')}
+      class="space-y-2 text-xs text-fg-muted"
       data-session-schedules={sessionId}
     >
-      <summary class="cursor-pointer px-3 py-2">
-        <span class="font-medium text-fg">{t('schedules.title')}</span>
-        {!loading && !error && <> · {rows.length}</>}
-      </summary>
       <div class="max-h-64 space-y-2 overflow-y-auto px-3 pb-3">
         <Button
           variant="ghost"
@@ -386,7 +383,7 @@ function ScheduleStrip({
           </article>
         ))}
       </div>
-    </details>
+    </section>
   );
 }
 export function SessionSchedules({

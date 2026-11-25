@@ -2,7 +2,7 @@
 
 import type { Session } from '@hyperneo/shared';
 
-import { cleanup, fireEvent, render } from '@testing-library/preact';
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sessionStore } from '../../lib/session-store';
 import { contextPanelOpenSignal, rightPanelTargetSignal } from '../../lib/signals';
@@ -47,25 +47,54 @@ describe('ChatHeader', () => {
     sessionStore.activeSessionId.value = null;
   });
 
-  describe('Display mode toggle', () => {
-    it('switches a compact chat to minimal', () => {
+  describe('View mode in the actions menu', () => {
+    beforeEach(() => {
+      connectionState.value = 'connected';
+    });
+
+    function openMenu(container: HTMLElement) {
+      fireEvent.click(container.querySelector('[data-testid="chat-menu-btn"]')!);
+      return container.querySelector('[role="menu"]')!;
+    }
+
+    it('lists Full, Compact and Minimal with the current mode checked', () => {
+      const { container } = render(
+        <ChatHeader {...defaultProps} displayMode="compact" onDisplayModeChange={vi.fn()} />
+      );
+      const items = Array.from(openMenu(container).querySelectorAll('[role="menuitem"]'));
+
+      expect(items.slice(0, 3).map((item) => item.getAttribute('title'))).toEqual([
+        'Full view',
+        'Compact view',
+        'Minimal view',
+      ]);
+      const checked = items
+        .slice(0, 3)
+        .filter((item) => item.querySelectorAll('svg').length === 2)
+        .map((item) => item.getAttribute('title'));
+      expect(checked).toEqual(['Compact view']);
+    });
+
+    it('switches the display mode when a view is picked', () => {
       const onDisplayModeChange = vi.fn();
-      const { getByTestId } = render(
+      const { container } = render(
         <ChatHeader
           {...defaultProps}
           displayMode="compact"
           onDisplayModeChange={onDisplayModeChange}
         />
       );
-      const toggle = getByTestId('display-mode-btn');
-      expect(toggle.getAttribute('title')).toBe('Compact view: switch to minimal');
-      fireEvent.click(toggle);
+      const menu = openMenu(container);
+
+      fireEvent.click(menu.querySelector('button[title="Minimal view"]')!);
       expect(onDisplayModeChange).toHaveBeenCalledWith('minimal');
     });
 
-    it('hides the toggle without a handler', () => {
-      const { queryByTestId } = render(<ChatHeader {...defaultProps} />);
-      expect(queryByTestId('display-mode-btn')).toBeNull();
+    it('hides the view options without a handler', () => {
+      const { container } = render(<ChatHeader {...defaultProps} />);
+      const menu = openMenu(container);
+
+      expect(menu.querySelector('button[title="Full view"]')).toBeNull();
     });
   });
 
@@ -192,42 +221,86 @@ describe('ChatHeader', () => {
     });
   });
 
-  describe('Info Button', () => {
+  describe('Schedules and conversation actions', () => {
     beforeEach(() => {
       rightPanelTargetSignal.value = null;
+      connectionState.value = 'connected';
     });
 
-    it('hides the info button when the header is not for the globally active session', () => {
+    function openMenu(container: HTMLElement) {
+      fireEvent.click(container.querySelector('[data-testid="chat-menu-btn"]')!);
+      return container.querySelector('[role="menu"]')!;
+    }
+
+    it('offers Schedules in the menu only for the globally active session', () => {
+      const { container } = render(<ChatHeader {...defaultProps} />);
+      expect(openMenu(container).querySelector('button[title="Schedules"]')).toBeTruthy();
+      expect(container.querySelector('[data-testid="schedules-btn"]')).toBeNull();
+      cleanup();
+
       sessionStore.activeSessionId.value = 'other';
-      const { container } = render(<ChatHeader {...defaultProps} />);
-
-      expect(container.querySelector('[data-testid="session-info-btn"]')).toBeNull();
+      const other = render(<ChatHeader {...defaultProps} />);
+      expect(openMenu(other.container).querySelector('button[title="Schedules"]')).toBeNull();
     });
 
-    it('renders exactly one far-right info button', () => {
+    it('toggles the schedules panel in the right panel from the menu', async () => {
       const { container } = render(<ChatHeader {...defaultProps} />);
 
-      const infoButtons = container.querySelectorAll('button[title="Conversation info"]');
-      expect(infoButtons.length).toBe(1);
-    });
+      fireEvent.click(openMenu(container).querySelector('button[title="Schedules"]')!);
+      expect(rightPanelTargetSignal.value).toEqual({ type: 'schedules', sessionId: 'session-1' });
+      await waitFor(() => expect(container.querySelector('[role="menu"]')).toBeNull());
 
-    it('toggles the session inspector in the right panel', () => {
-      const { container } = render(<ChatHeader {...defaultProps} />);
-      const button = container.querySelector('[data-testid="session-info-btn"]')!;
-
-      fireEvent.click(button);
-      expect(rightPanelTargetSignal.value).toEqual({ type: 'inspector', sessionId: 'session-1' });
-
-      fireEvent.click(button);
+      fireEvent.click(openMenu(container).querySelector('button[title="Schedules"]')!);
       expect(rightPanelTargetSignal.value).toBeNull();
     });
 
-    it('keeps session actions out of the header until the actions menu is opened', () => {
+    it('omits the workspace path and branch rows when the chat has neither', () => {
+      const bare = {
+        ...mockSession,
+        workspacePath: undefined,
+        worktree: undefined,
+        gitBranch: undefined,
+      };
+      const { container } = render(<ChatHeader {...defaultProps} session={bare} />);
+      const menu = openMenu(container);
+
+      expect(menu.querySelector('button[title="Copy session id"]')).toBeTruthy();
+      expect(menu.querySelector('button[title="Copy workspace path"]')).toBeNull();
+      expect(menu.querySelector('button[title="Copy branch"]')).toBeNull();
+    });
+
+    it('puts the copy icon on the right of each copy row', () => {
+      const { container } = render(<ChatHeader {...defaultProps} />);
+      const row = openMenu(container).querySelector('button[title="Copy session id"]')!;
+
+      expect(row.textContent).toBe('Session ID');
+      expect(row.querySelectorAll('svg').length).toBe(2);
+    });
+
+    it('has no info or display-mode button in the header bar', () => {
       const { container } = render(<ChatHeader {...defaultProps} />);
 
-      expect(container.textContent).not.toContain('Export chat');
-      expect(container.textContent).not.toContain('Reset agent');
-      expect(container.textContent).not.toContain('Archive chat');
+      expect(container.querySelector('[data-testid="session-info-btn"]')).toBeNull();
+      expect(container.querySelector('[data-testid="display-mode-btn"]')).toBeNull();
+    });
+
+    it('renames the chat in place from the menu', () => {
+      const { container } = render(<ChatHeader {...defaultProps} />);
+      fireEvent.click(openMenu(container).querySelector('button[title="Rename conversation"]')!);
+
+      expect(container.querySelector('[data-testid="chat-header-rename-input"]')).toBeTruthy();
+      expect(container.querySelector('[data-testid="chat-header-title"]')).toBeNull();
+    });
+
+    it('offers copy actions for the session ID, workspace path and branch', () => {
+      const { container } = render(<ChatHeader {...defaultProps} />);
+      const titles = Array.from(openMenu(container).querySelectorAll('[role="menuitem"]')).map(
+        (b) => b.getAttribute('title')
+      );
+
+      expect(titles).toEqual(
+        expect.arrayContaining(['Copy session id', 'Copy workspace path', 'Copy branch'])
+      );
     });
   });
 
@@ -249,10 +322,15 @@ describe('ChatHeader', () => {
         b.getAttribute('title')
       );
       expect(titles).toEqual([
-        'Tools',
-        'Export chat',
-        'Reset agent',
+        'Schedules',
+        'Rename conversation',
         'Move under another chat',
+        'Export chat',
+        'Copy session id',
+        'Copy workspace path',
+        'Copy branch',
+        'Tools',
+        'Reset agent',
         'Archive chat',
         'Delete chat',
       ]);
@@ -296,7 +374,14 @@ describe('ChatHeader', () => {
       const titles = Array.from(menu.querySelectorAll('[role="menuitem"]')).map((b) =>
         b.getAttribute('title')
       );
-      expect(titles).toEqual(['Export chat', 'Reset agent']);
+      expect(titles).toEqual([
+        'Schedules',
+        'Export chat',
+        'Copy session id',
+        'Copy workspace path',
+        'Copy branch',
+        'Reset agent',
+      ]);
     });
 
     it('invokes the matching handler when an item is clicked', () => {
@@ -321,22 +406,6 @@ describe('ChatHeader', () => {
       expect(
         (menu.querySelector('button[title="Archive chat"]') as HTMLButtonElement).disabled
       ).toBe(true);
-    });
-
-    it('shows the info button at every breakpoint (no longer lg-only)', () => {
-      const { container } = render(<ChatHeader {...defaultProps} />);
-
-      const infoButton = container.querySelector('button[title="Conversation info"]')!;
-      const wrapper = infoButton.parentElement;
-      expect(wrapper?.className).not.toContain('hidden');
-    });
-
-    it('still renders the info button when features.sessionInfo is false', () => {
-      const { container } = render(
-        <ChatHeader {...defaultProps} features={{ sessionInfo: false }} />
-      );
-
-      expect(container.querySelector('button[title="Conversation info"]')).toBeTruthy();
     });
 
     it('renders without error when action handlers and flags are provided', () => {

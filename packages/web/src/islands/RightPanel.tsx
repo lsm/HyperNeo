@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { IconButton } from '../components/ui/IconButton.tsx';
-import { SessionInspector } from './SessionInspector.tsx';
+import { CloseGlyph } from '../components/icons/common-glyphs.tsx';
+import { SessionSchedules } from '../components/SessionSchedules.tsx';
 import { sessionStore } from '../lib/session-store.ts';
 import {
   type ExtensionPanelTarget,
@@ -81,7 +82,7 @@ export function RightPanelToggle() {
 
   useEffect(() => {
     if (!target) return;
-    if (target.type === 'inspector') {
+    if (target.type === 'schedules') {
       if (target.sessionId !== activeSessionId) rightPanelTargetSignal.value = null;
       return;
     }
@@ -250,12 +251,34 @@ export function RightPanel() {
           >
             <div class="mx-auto h-full w-px bg-transparent transition-colors group-hover:bg-white/20 group-focus-visible:bg-white/30" />
           </div>
-          {renderedTarget?.type === 'inspector' && (
-            <SessionInspector
-              key={renderedTarget.sessionId}
-              sessionId={renderedTarget.sessionId}
-              section={renderedTarget.section}
-            />
+          {renderedTarget?.type === 'schedules' && (
+            <div class="flex h-full min-w-0 flex-col overflow-hidden" data-testid="schedules-panel">
+              <div class="flex h-[52px] flex-shrink-0 items-center gap-1 border-b border-line px-4 pr-12">
+                <h2 class="min-w-0 flex-1 truncate text-sm font-semibold text-fg">Schedules</h2>
+                <IconButton
+                  title="Close schedules"
+                  onClick={() => {
+                    rightPanelTargetSignal.value = null;
+                  }}
+                  data-testid="schedules-panel-close"
+                >
+                  <CloseGlyph
+                    class="h-4 w-4"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    stroke-width={2}
+                    pathProps={{ 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }}
+                  />
+                </IconButton>
+              </div>
+              <div class="flex-1 overflow-y-auto px-4 py-3">
+                <SessionSchedules
+                  key={renderedTarget.sessionId}
+                  sessionId={renderedTarget.sessionId}
+                />
+              </div>
+            </div>
           )}
           {renderedTarget?.type === 'extension' &&
             shellExtensions().map((extension) => extension.renderPanel(renderedTarget))}
