@@ -4,6 +4,163 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.63.1] - 2026-11-25
+
+- Let the Claude inbox accept senders on an attached daemon (#11693).
+- Let Antigravity workers run the `hyperneo send` reply command (#11698).
+- API: v0.63.0 -> v0.63.1: 0 breaking, 0 risky, 0 safe changes.
+
+## [0.63.0] - 2026-11-24
+
+- Compact a reused worker before its next todo (#11652). Let Neo change a worker's runtime settings (#11634).
+- Start Copilot sessions on the selected client and deliver images sent while a Copilot tool call is pending (#11659, #11665).
+- Show chat failures inside the conversation and keep long error toasts clear of Send (#11615, #11636).
+- Separate the Steer and Next queue display and show a sending spinner (#11663). Consolidate chat header actions into the Chat actions menu (#11661).
+- Keep OXAP chat sends working, clarify image limits, and report observed OXAP chat telemetry (#11631, #11619, #11622). Stop Claude Code retries for rejected Codex images (#11626).
+- Restore OpenAI model choices in existing Claude Code chats (#11642). Honor Thinking Off by custom endpoint protocol (#11646).
+- Stop paying for extra Neo and Codex model calls (#11650). Wait 30 seconds for web model switches (#11656).
+- Hold held-only asks out of the waiting list (#11657).
+- Remove the project `.mcp.json` (#11688).
+- API compatibility since v0.62.4. The pinned phone source inventory reports 0 breaking, 0 risky, and 0 safe changes. The full report adds 10 safe changes, including new `copilotClient` fields and the `work.reconfigure` operation.
+
+## [0.62.4] - 2026-11-23
+
+- End Locked Use when a native worker turn stops, including during unlock (#11602).
+- Hold the Locked Use covers until macOS relocks to avoid exposing the desktop (#11604).
+- Archive Claude Desktop worker sessions through the app (#11598).
+- Fix reopening DeepSeek sessions by updating OXAP (#11610).
+- API compatibility since v0.62.3. No API surface changes. The pinned phone inventory reports 0 breaking, 0 risky, and 0 safe changes.
+
+## [0.62.3] - 2026-11-23
+
+- Cover the full macOS display during Locked Use and relock after a delayed unlock (#11590, #11532).
+- Notarize and staple both macOS release disk images (#11600).
+- Add GLM-5.4 to the GLM provider catalog (#11593).
+- Discover Antigravity Desktop conversations (#11597).
+- API compatibility since v0.62.2. No API surface changes. The pinned phone inventory reports 0 breaking, 0 risky, and 0 safe changes.
+
+## [0.62.2] - 2026-11-23
+
+- Fix unlocking the macOS lock screen with Locked Use (#11573).
+
+### API compatibility
+
+Compared with v0.62.1, the pinned phone source inventory reports 0 breaking, 0 risky, and 4 safe changes. The full report flags 5 changed topic input limits and lists 11 safe changes.
+
+- Topic inputs now allow up to 12 display cells. The diff flags the removal of the previous string length limit in `neo.ask.propose`, `neo.ask.topic`, `neo.todo.add`, and `neo.topic.merge` as breaking.
+- The API adds `neo.session.unarchive`, ask topic source fields, and human queue topic lists.
+
+## [0.62.1] - 2026-11-22
+
+- Install or remove Locked Use from the HyperNeo Desktop tray on macOS (#11515).
+
+### API compatibility
+
+Compared with v0.62.0, there are no API surface changes. The pinned phone source inventory reports 0 breaking, 0 risky, and 0 safe changes.
+
+## [0.62.0] - 2026-11-22
+
+- Locked Use on macOS. HyperNeo Desktop starts the guardian so authorized desktop control can continue while the Mac is locked (#11500, #11503).
+- Add a drill-down system map and simplify the Neo Inbox (#11495, #11501).
+- Add a Codex setup command for the shared app server, ask before enabling it, and explain recovery when Codex Desktop already controls a thread (#11462, #11477, #11480).
+- Restore desktop control after the driver exits and improve screenshot sharing in Neo (#11476, #11491).
+
+### API compatibility
+
+Compared with v0.61.0, the pinned phone source inventory reports 0 breaking, 0 risky, and 0 safe changes. The full report adds one safe operation, `system.codex.setup`.
+
+## [0.61.0] - 2026-11-21
+
+- Open and control GitHub Copilot Desktop sessions, including when the CLI is unavailable. Compact idle Copilot Desktop and CLI workers, steer active Copilot turns, and pass the selected reasoning effort to Copilot CLI (#11398, #11439, #11387, #11425, #11431, #11422).
+- Approve desktop access in a macOS dialog and limit a worker to the apps you approved. Workers reserve their own windows, take turns using the foreground, report when the screen is locked, and release leftover desktop drivers after a daemon restart (#11356, #11394, #11423, #11432, #11420, #11435).
+- Add the Codex app-server bridge and its setup runtime. Use the shared app-server to create, resume and archive threads when appropriate, and explain when Codex Desktop already owns the thread (#11437, #11448, #11359, #11367, #11416, #11390).
+- Organize Neo work into Inbox, Scheduled and Goals tabs. Show queued asks as full cards and let people request work directly without a proposal card (#11371, #11375, #11364, #11414).
+- Configure voice providers in settings and manage voice keys separately for each host (#11347, #11152).
+- Restore Claude sign-in recovery, improve project grouping in the sidebar, and support the first message in OXAP DeepSeek sessions (#11381, #11368, #11408).
+
+### API compatibility
+
+Compared with v0.60.3, the pinned phone source inventory reports 4 breaking, 0 risky, and 2 safe methods. Across all schema changes, the report lists 21 breaking, 2 risky, and 38 safe changes.
+
+- Desktop app approvals move to the macOS dialog. Question results from `neo.ask.read`, `neo.open`, `neo.question.answer`, and `neo.snapshot` drop the `desktop_control` kind and its `app` and `todoTitle` fields.
+- API callers that propose work now use `neo.ask.propose` in place of `neo.ask.open`.
+
+## [0.60.3] - 2026-11-19
+
+- Let people allow desktop control from a todo card and wait for app-wide desktop approval (#11168, #11165).
+- Restore the desktop control migration for existing installations (#11273).
+- Improve desktop permission guidance and worker reuse (#11256, #11258, #11260, #11262, #11268).
+- Reuse exact-commit CI for release builds (#11281).
+
+## [0.60.2] - 2026-11-19
+
+- Connect Microsoft accounts for Outlook mail and calendar, and add Deepgram recorded voice and speech (#11077, #11099, #11103, #11106, #10885).
+- Require human approval for new work, show todo outcomes, and add the human inbox (#11071, #11056, #10795).
+- Let core choose coding sessions and allow session reuse per project (#11092, #11055).
+- Improve Claude and Codex sign-in, session routing, worker release, and review notifications (#11116, #11120, #11114, #11052).
+- Store voice provider credentials per host and give Neo resident tools their full action descriptions (#11126, #11147).
+- Keep desktop control available for blocked workers and guide macOS permissions when needed (#11134, #11145).
+- Fix fresh-install embedding startup and release SDK checks (#11182, #11136).
+- Upgrade the pinned Bun runtime to 1.4.4 and fix release-tag ratchet checks (#11141, #11229).
+
+### API compatibility
+
+Compared with v0.59.0, the pinned phone source inventory reports 4 breaking, 0 risky, and 1 safe method. Across all schema changes, the report lists 13 breaking, 0 risky, and 46 safe changes.
+
+- Question results remove `labels` and add `optionDetails` and `recommended`; `neo.question.answer` removes `when` and `where` inputs.
+- Three safe operations were added: `voice.testConnection`, `voice.testLive`, and `voice.testSpeech`.
+- The phone source inventory describes source usage, not proof of the installed binary's compatibility.
+
+## [0.60.1] - 2026-11-19
+
+- Store voice provider credentials per host (#11126).
+- Give Neo resident tools their full action descriptions (#11147).
+- Keep desktop control available for blocked workers (#11134).
+- Repair the SDK download smoke check used by release builds (#11136).
+- Upgrade the pinned Bun runtime to 1.4.4 (#11141).
+
+### API compatibility
+
+Compared with v0.60.0, the pinned phone source inventory reports 0 breaking, 0 risky, and 0 safe methods. The API adds three safe operations: `voice.testConnection`, `voice.testLive`, and `voice.testSpeech`.
+
+## [0.60.0] - 2026-11-18
+
+- Connect Microsoft accounts and use Outlook mail drafts, search, calendars, and events (#10898, #11077, #11099, #11103, #11106).
+- Add Deepgram recorded voice and speech (#10885).
+- Require human approval for new work and show todo outcomes and the human inbox (#11071, #11056, #10795).
+- Let core choose coding work sessions and allow session reuse per project (#11092, #11055).
+- Show refused Neo inputs and Front handoffs with retry actions (#11097, #11100, #11090).
+- Improve Claude Code downloads, Desktop session routing, worker release decisions, and review notifications (#11116, #11109, #11111, #11120, #11114, #10958).
+- Prompt for Codex device sign-in, configure OXAP harnesses in the UI, and forward the chat model to supported harnesses (#11052, #11089, #11023).
+- Preview legacy worker ownership and allow forgetting empty sidebar projects (#11115, #11046).
+
+
+### API compatibility
+
+Compared with v0.59.0, the pinned phone source inventory reports 4 breaking, 0 risky, and 1 safe method. Across all schema changes, the report lists 13 breaking, 0 risky, and 41 safe changes.
+
+- Question results remove `labels` and add `optionDetails` and `recommended`; `neo.question.answer` removes `when` and `where` inputs.
+- The pinned phone source inventory describes source usage, not proof of the installed binary's compatibility.
+
+## [0.59.0] - 2026-11-17
+
+- Add goal schedules, reviews, metrics, and dedicated goal sessions (#10895, #10912, #10967, #10991, #10996).
+- Let Neo organize asks into topics and merge related topics (#10946, #10966, #10972).
+- Allow the first device to connect through the first-run setup link (#10930).
+- Add OpenAI Realtime live voice and improve desktop control and error reporting (#10887, #10909).
+- Preserve sessions the daemon did not start and brief replacement coding workers (#10965, #10956).
+- Hold new starts when disk space is low and improve cleanup of finished work (#10937, #10899, #10962).
+- Improve GitHub rate-limit handling, review tracking, and worker routing (#10888, #10907, #10944).
+- Put Allow on the right of the desktop permission dialog (#10904).
+
+### API compatibility
+
+Compared with v0.58.0, the pinned phone source inventory reports 5 breaking, 1 risky, and 3 safe methods. Across all schema changes, the report lists 26 breaking, 14 risky, and 118 safe changes.
+
+- Neo ask and question results remove `startTodos`; Neo open and snapshot remove `sessionMessages`.
+- Neo ask todo union alternatives and publication text length constraints changed and require compatibility review.
+- The pinned phone source inventory describes source usage, not proof of the installed binary's compatibility.
+
 ## [0.58.0] - 2026-11-13
 
 - Rework Neo around a minimal ask/todo/card model: cards confirm, choose or reply, a card covers a list of todos, todos complete without a gate, and waiting on the human is read from cards (#10477, #10490, #10494, #10502, #10503, #10537).

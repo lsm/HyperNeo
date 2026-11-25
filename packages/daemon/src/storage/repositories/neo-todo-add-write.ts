@@ -1,8 +1,7 @@
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { z } from 'zod';
-import { neoEvidenceRefusal, withAssignedEvidence } from '../../lib/neo/core-todo-checks.ts';
-import { neoUserFolder } from '../../lib/neo/folder.ts';
+import { neoEvidencePathRefusal } from '../../lib/neo/core-todo-checks.ts';
+import { getDataDir } from '../../lib/data-dir.ts';
 import { neoTodoRepository } from '../../lib/neo/pack-contract.ts';
 import { neoTodoPolicies } from '../../lib/neo/packs/todo-policies.ts';
 import {
@@ -11,13 +10,12 @@ import {
   planNeoTodoDependencies,
 } from '../../lib/neo/todo-dependencies.ts';
 import {
-  type NeoTodoDraftSchema,
+  type ResolvedNeoTodoDraft,
   neoTodoBindRefusal,
   neoTodoPlaceRefusal,
   planNeoTodoDraft,
   recordNeoTodoTarget,
 } from '../../lib/neo/todo-operations.ts';
-import { todoEvidenceFile } from '../../lib/work-locations.ts';
 import { type ChangeRecorder, defineDbOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
@@ -26,7 +24,7 @@ import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
 type Input = {
   askId: string;
   todoId: string;
-  draft: z.infer<typeof NeoTodoDraftSchema> & { workerRemotes?: readonly string[] };
+  draft: ResolvedNeoTodoDraft;
   now: number;
   userFolder?: string;
 };
@@ -73,15 +71,14 @@ const add = (superpipe({})('neo.todo.commit-add') as PipelineAPI)
           },
         };
       const policies = neoTodoPolicies(db);
-      const check = withAssignedEvidence(input.draft.check, todoEvidenceFile(input.todoId));
-      const planned = planNeoTodoDraft({ ...input.draft, check }, policies);
+      const planned = planNeoTodoDraft(input.draft, policies);
       if ('reason' in planned) return planned;
       const draft = planned.value;
       const scope = { ask, workerRemotes: input.draft.workerRemotes };
       const repo = neoTodoRepository(draft, policies, scope);
       const placeless = neoTodoPlaceRefusal(draft, policies, scope);
       if (placeless) return { reason: { ok: false, reason: placeless } };
-      const misplaced = neoEvidenceRefusal(check, repo, input.userFolder ?? neoUserFolder());
+      const misplaced = neoEvidencePathRefusal(input.draft.check, null, getDataDir());
       if (misplaced) return { reason: { ok: false, reason: misplaced } };
       const peers = store.listTodos(ask.id);
       const accepted = planNeoTodoDraft(draft, policies, peers);

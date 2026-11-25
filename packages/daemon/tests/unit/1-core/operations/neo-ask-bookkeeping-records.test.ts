@@ -106,6 +106,23 @@ function setup(overrides: Partial<Pick<NeoTodoControls, 'resolveTarget' | 'advan
     }
   );
   const call = async (name: string, input: unknown) => {
+    const draft = input as { title?: string; request?: string };
+    if (
+      name === 'neo.ask.propose' &&
+      draft.title &&
+      draft.request &&
+      ['Recorded worker', 'Canonical target batch'].includes(draft.title) &&
+      !store.findAsk('neo', null, draft.title)
+    )
+      store.openAsk({
+        id: crypto.randomUUID(),
+        projectId: null,
+        sessionId: 'neo',
+        originMessageId: null,
+        title: draft.title,
+        request: draft.request,
+        createdAt: 1,
+      });
     const reply = await handler({ name, input });
     if (reply.isError) throw new Error(reply.content[0].text);
     return JSON.parse(reply.content[0].text);
@@ -138,7 +155,7 @@ describe('todo and ask bookkeeping records through MCP', () => {
             },
           ],
         };
-        const first = await h.call('neo.ask.open', input);
+        const first = await h.call('neo.ask.propose', input);
         expect(first.ok).toBe(true);
         if (state === 'done') {
           h.store.openAsk({
@@ -155,7 +172,7 @@ describe('todo and ask bookkeeping records through MCP', () => {
         }
         const before = h.store.listTodos(first.ask.id);
         gone = true;
-        const again = await h.call('neo.ask.open', input);
+        const again = await h.call('neo.ask.propose', input);
         expect(again).toMatchObject({
           ok: true,
           ask: { id: first.ask.id, status: state },
@@ -188,7 +205,7 @@ describe('todo and ask bookkeeping records through MCP', () => {
       });
       h.store.settleAsk(h.ask, 'done', 'Finished', 2);
       const before = h.store.listTodos(h.ask.id);
-      const reply = await h.call('neo.ask.open', {
+      const reply = await h.call('neo.ask.propose', {
         title: h.ask.title,
         request: 'Track work',
         todos: [
@@ -236,12 +253,15 @@ describe('todo and ask bookkeeping records through MCP', () => {
           target: { verb: 'send', ref: { adapter: 'hyperneo', id } },
         }));
         if (position === 0) todos.reverse();
-        const result = await h.call('neo.ask.open', {
+        const result = await h.call('neo.ask.propose', {
           title: 'Invalid target batch',
           request: 'Track batch',
           todos,
         });
-        expect(result).toEqual({ ok: false, reason: 'target_not_found: missing' });
+        expect(result).toMatchObject({
+          ok: false,
+          reason: expect.stringContaining('proposal_todos:'),
+        });
         expect(h.store.listAsks(null, 100)).toEqual(before);
         expect(starts).toEqual([]);
         expect(h.calls).toEqual([]);
@@ -265,7 +285,7 @@ describe('todo and ask bookkeeping records through MCP', () => {
       },
     });
     try {
-      const result = await h.call('neo.ask.open', {
+      const result = await h.call('neo.ask.propose', {
         title: 'Canonical target batch',
         request: 'Track batch',
         todos: ['short-a', 'short-b'].map((id) => ({
@@ -299,7 +319,11 @@ describe('todo and ask bookkeeping records through MCP', () => {
   test('refused settlement preserves failure diagnostics and keeps the ask open', async () => {
     const h = setup();
     try {
-      h.store.updateTodo(h.todo, { state: 'failed', reason: 'check_failed: build exited 7' }, 2);
+      h.store.updateTodo(
+        h.todo,
+        { state: 'blocked', blockedBy: 'failure', blockedReason: 'check_failed: build exited 7' },
+        2
+      );
       const before = h.store.getTodo(h.todo.id);
       expect(
         await h.call('neo.ask.settle', { askId: h.ask.id, status: 'done', outcome: 'Too soon' })
@@ -319,11 +343,12 @@ describe('todo and ask bookkeeping records through MCP', () => {
     try {
       const described = await h.call('operations.describe', { name: 'neo.question.ask' });
       expect(described).toMatchObject({ found: true });
+      expect(described.description).toContain('Otherwise supply retireWhen {pack,kind,params}.');
       expect(described.description).toContain(
-        'If a supplied todoId is unknown, belongs to another ask, or is done or removed'
+        'supply it explicitly for a missing check or invalid, foreign, done or removed todo'
       );
       expect(described.description).toContain(
-        'supply explicit retireWhen to open the question on the ask without linking that todo; otherwise it is refused'
+        'With an explicit check, an unusable todo produces an unlinked card and todo_closed.'
       );
     } finally {
       h.db.close();
@@ -344,7 +369,7 @@ describe('todo and ask bookkeeping records through MCP', () => {
       });
       h.store.settleAsk(h.ask, 'done', 'Finished request', 2);
       const before = h.store.listTodos(h.ask.id);
-      const result = await h.call('neo.ask.open', {
+      const result = await h.call('neo.ask.propose', {
         title: h.ask.title,
         request: 'Follow-up',
         todos: [{ after: [], title: 'New task', check: pendingTodoCheck }],

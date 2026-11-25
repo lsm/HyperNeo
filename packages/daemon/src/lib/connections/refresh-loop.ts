@@ -2,7 +2,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { googleConnectionReads } from '../../storage/repositories/google-connections-worker.ts';
-import type { ConnectionStatus } from './status.ts';
+import { googleConnections, type ConnectionStatus } from './status.ts';
 import {
   getGoogleConnectionService,
   configureGoogleConnections,
@@ -15,7 +15,9 @@ const refresh = (superpipe({})('google-connections-refresh-due') as PipelineAPI)
   .pipe((db: Database) => gatewayFor(db).call(googleConnectionReads, 'list'), 'db', 'rows')
   .pipe(
     (rows: ConnectionStatus[]) => {
-      const ids = rows.filter((row) => row.health === 'healthy').map((row) => row.id);
+      const ids = googleConnections(rows)
+        .filter((row) => row.health === 'healthy')
+        .map((row) => row.id);
       return ids.length ? { value: ids } : { reason: 'idle' };
     },
     'rows',

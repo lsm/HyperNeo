@@ -1,8 +1,8 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NeoDrawer } from '../NeoDrawer.tsx';
 import { setTheme, themeSetting, resolveTheme } from '../../lib/theme.ts';
-import { locale } from '../../lib/i18n/index.ts';
+import { applyLanguage, locale } from '../../lib/i18n/index.ts';
 
 const { invoke, hub } = vi.hoisted(() => ({ invoke: vi.fn(), hub: {} }));
 vi.mock('../../lib/connection-manager.ts', () => ({
@@ -12,6 +12,8 @@ vi.mock('../../lib/connection-manager.ts', () => ({
 }));
 vi.mock('../../lib/operations.ts', () => ({ invokeOperation: invoke }));
 vi.mock('../../components/DesktopControl.tsx', () => ({ DesktopControl: () => null }));
+const updateGlobalSettings = vi.hoisted(() => vi.fn());
+vi.mock('../../lib/api-helpers.ts', () => ({ updateGlobalSettings }));
 beforeEach(() => {
   setTheme('system');
   locale.value = 'en';
@@ -39,6 +41,60 @@ const drawer = (connection: 'connected' | 'disconnected' = 'connected') =>
   );
 
 describe('NeoDrawer', () => {
+  it('sets the server-wide language, says when the server refuses it, and clears that on reopen', async () => {
+    invoke.mockResolvedValue({ ok: true, pending: [] });
+    applyLanguage('system');
+    const view = drawer();
+    const select = screen.getByRole('combobox', { name: 'Language' }) as HTMLSelectElement;
+    expect(select.value).toBe('system');
+    expect(
+      within(select)
+        .getAllByRole('option')
+        .map((option) => option.textContent)
+    ).toEqual(['English', '简体中文', 'Follow system']);
+    updateGlobalSettings.mockResolvedValueOnce({ success: false });
+    act(() => {
+      select.value = 'zh-Hans';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(updateGlobalSettings).toHaveBeenCalledWith({ language: 'zh-Hans' });
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'Couldn’t change the language. Try again.'
+    );
+    const props = {
+      onClose: () => {},
+      connection: 'connected' as const,
+      onReconnect: () => {},
+      onRefresh: () => {},
+    };
+    view.rerender(<NeoDrawer open={false} {...props} />);
+    view.rerender(<NeoDrawer open {...props} />);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('drops a language result from before the drawer was closed and reopened', async () => {
+    invoke.mockResolvedValue({ ok: true, pending: [] });
+    applyLanguage('system');
+    const props = {
+      onClose: () => {},
+      connection: 'connected' as const,
+      onReconnect: () => {},
+      onRefresh: () => {},
+    };
+    const view = render(<NeoDrawer open {...props} />);
+    let settle = (_: { success: boolean }) => {};
+    updateGlobalSettings.mockReturnValueOnce(new Promise((resolve) => (settle = resolve)));
+    const select = screen.getByRole('combobox', { name: 'Language' }) as HTMLSelectElement;
+    act(() => {
+      select.value = 'zh-Hans';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    view.rerender(<NeoDrawer open={false} {...props} />);
+    view.rerender(<NeoDrawer open {...props} />);
+    await act(async () => settle({ success: false }));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
   it('requires the phone code for two-way approval', async () => {
     const pending = {
       id: 'scan',
@@ -123,7 +179,7 @@ describe('NeoDrawer', () => {
     const allow = await screen.findByRole('button', { name: 'Allow Synthetic relay' });
     expect(
       [...document.querySelectorAll('section')].map((section) => section.getAttribute('aria-label'))
-    ).toEqual(['Connection', 'Appearance', 'Pending devices']);
+    ).toEqual(['Connection', 'Language', 'Appearance', 'Pending devices']);
     fireEvent.click(allow);
     await waitFor(() => expect(screen.queryByText('Synthetic relay')).toBeNull());
     expect(invoke).toHaveBeenCalledWith(hub, 'device.pair.approve', { codeId: 'pending' });
@@ -204,11 +260,11 @@ describe('NeoDrawer', () => {
     const view = drawer('disconnected');
     const select = screen.getByRole('combobox', { name: 'Theme' }) as HTMLSelectElement;
     expect(select.value).toBe('system');
-    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
-      'Light',
-      'Dark',
-      'Follow system',
-    ]);
+    expect(
+      within(select)
+        .getAllByRole('option')
+        .map((option) => option.textContent)
+    ).toEqual(['Light', 'Dark', 'Follow system']);
     select.focus();
     for (const value of ['light', 'dark', 'system'] as const) {
       changeTheme(select, value);
@@ -246,11 +302,11 @@ describe('NeoDrawer', () => {
     drawer('disconnected');
     const select = screen.getByRole('combobox', { name: '主题' });
     expect(screen.getByRole('region', { name: '外观' })).toBeTruthy();
-    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
-      '浅色',
-      '深色',
-      '跟随系统',
-    ]);
+    expect(
+      within(select)
+        .getAllByRole('option')
+        .map((option) => option.textContent)
+    ).toEqual(['浅色', '深色', '跟随系统']);
     changeTheme(select, 'light');
     expect(themeSetting.value).toBe('light');
   });

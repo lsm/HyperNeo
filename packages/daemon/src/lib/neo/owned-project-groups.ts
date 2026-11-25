@@ -1,6 +1,6 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/sqlite-compat.ts';
-import { readStartedWork } from '../../storage/work-started-sessions.ts';
+import { readStartedWork } from '../../storage/repositories/work-started-sessions-worker.ts';
 import { mergePlaceGroups } from '../drivers/places.ts';
 import type { PlaceGroup, WorkSummary } from '../drivers/types.ts';
 

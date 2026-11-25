@@ -7,7 +7,13 @@ import type { Database } from '../../storage/sqlite-compat.ts';
 import { getDataDir } from '../data-dir.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { DesktopDispatchReply, dispatchDesktopCall } from './host-dispatch.ts';
-import { desktopOptIn, readDesktopTodos, type DesktopTodoRow } from './opt-in.ts';
+import {
+  desktopAllowed,
+  desktopAllowedRow,
+  desktopApps,
+  readDesktopTodos,
+  type DesktopTodoRow,
+} from './opt-in.ts';
 import catalog from './tool-catalog.json' with { type: 'json' };
 
 const arm = (tool: { name: string; description: string; inputSchema: unknown }) =>
@@ -30,12 +36,27 @@ const Refusal = z.object({
 const refuse = (reason: string) => ({
   reason: { ok: false, decision: 'refused', reason, dispatched: false },
 });
-type Binding = { todo: string; worker: string; workDir: string };
-type Facts = { todo: DesktopTodoRow | null; worker: string; workDir: string | null };
+type Binding = { todo: string; worker: string; workDir: string; apps: string[] };
+type Facts = {
+  todo: DesktopTodoRow | null;
+  worker: string;
+  workDir: string | null;
+  finished?: boolean;
+  ambiguous?: boolean;
+};
 
 export function decideDesktopCall(facts: Facts) {
+  if (!facts.todo && facts.ambiguous) return refuse('todo_ambiguous');
+  if (!facts.todo && facts.finished) return refuse('todo_not_active');
   if (!facts.todo || !facts.workDir) return refuse('desktop_not_enabled');
-  return { value: { todo: facts.todo.id, worker: facts.worker, workDir: facts.workDir } };
+  return {
+    value: {
+      todo: facts.todo.id,
+      worker: facts.worker,
+      workDir: facts.workDir,
+      apps: desktopApps(facts.todo),
+    },
+  };
 }
 
 export function createDesktopCallOperation(
@@ -53,17 +74,26 @@ export function createDesktopCallOperation(
         caller.source === 'mcp' &&
         !!caller.sessionId &&
         !!caller.role &&
+        caller.role !== 'neo' &&
         caller.principal === undefined
-          ? { value: caller.sessionId! }
-          : refuse('desktop_not_enabled'),
+          ? caller.desktopTurn === null || caller.desktopTurn?.stopped
+            ? refuse('turn_stopped')
+            : { value: caller.sessionId! }
+          : refuse('desktop_worker_only'),
       'caller',
       'result:outcome'
     )
     .pipe(
       (worker: string): Facts => {
         const session = options.getSession(worker);
+        const rows = readDesktopTodos(db, worker);
+        const todo = desktopAllowed(rows, worker);
+        const active = rows.filter((row) => row.active);
         return {
-          todo: desktopOptIn(readDesktopTodos(db, worker), worker),
+          todo,
+          ambiguous:
+            !active.some((row) => row.doing) && active.filter(desktopAllowedRow).length > 1,
+          finished: !todo && !active.length && rows.some((row) => row.finished),
           worker,
           workDir: session?.worktree?.worktreePath ?? session?.workspacePath ?? null,
         };
@@ -73,15 +103,21 @@ export function createDesktopCallOperation(
     )
     .pipe(decideDesktopCall, 'facts', 'result:outcome')
     .pipe(
-      (input: z.infer<typeof Input>, binding: Binding) =>
+      (input: z.infer<typeof Input>, binding: Binding, caller: OperationCaller) =>
         dispatchDesktopCall(options.dataDir ?? getDataDir(), {
           worker: binding.worker,
           workDir: binding.workDir,
+          apps: binding.apps,
+          todo: binding.todo,
+          todos: readDesktopTodos(db)
+            .filter(desktopAllowedRow)
+            .map((row) => row.id),
           tool: input.tool,
           arguments: input.args,
           callId: randomUUID(),
+          turn: caller.desktopTurn ?? undefined,
         }),
-      ['input', 'outcome'],
+      ['input', 'outcome', 'caller'],
       'reply'
     )
     .pipe(
@@ -116,7 +152,7 @@ export function createDesktopCallOperation(
   return defineOperation({
     name: 'desktop.call',
     description:
-      'Run an allowed desktop action for this in-process session’s approved, opted-in todo.',
+      'Run a desktop action for this in-process session’s approved todo, on an app the human approved for its ask. Only a worker session can call it; Neo gets desktop_worker_only and has no switch to turn it on.',
     inputSchema: Input,
     resultSchema: z.union([DesktopDispatchReply.extend({ ok: z.boolean() }), Refusal]),
     policy: { safetyClass: 'mutate' },

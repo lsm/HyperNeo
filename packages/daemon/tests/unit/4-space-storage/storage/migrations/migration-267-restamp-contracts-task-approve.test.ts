@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { getPresetAgentTemplates } from '../../../../../src/lib/agents/seed-agents.ts';
 import {
   QA_SYSTEM_CONTRACT,
@@ -12,6 +13,10 @@ import {
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 
 const RETIRED_NAME = 'task.resolvePendingCompletion';
+const PRE_VERDICT_REPORT_REVIEWER_CONTRACT = readFileSync(
+  new URL('fixtures/pre-verdict-report-reviewer-contract.txt', import.meta.url),
+  'utf8'
+);
 
 const SUBMIT_FOR_REVIEW_WORDING: [current: string, retired: string][] = [
   [
@@ -86,15 +91,15 @@ describe('migration 267 — restamp agent contracts naming task.resolvePendingCo
     db = makeDb();
   });
 
-  test('the recorded hashes include the current contracts with the retired operation name', () => {
+  test('the recorded hashes include the contracts current at the migration, with the retired operation name', () => {
     expect(PRE_TASK_APPROVE_CONTRACT_SHA256.Reviewer).toContain(
-      sha256(retire(REVIEWER_SYSTEM_CONTRACT))
+      sha256(retire(PRE_VERDICT_REPORT_REVIEWER_CONTRACT))
     );
     expect(PRE_TASK_APPROVE_CONTRACT_SHA256.QA).toContain(sha256(retire(QA_SYSTEM_CONTRACT)));
   });
 
   test('restamps a Reviewer and a QA agent carrying the retired contract', () => {
-    insertAgent(db, 'agent-reviewer', 'reviewer', retire(REVIEWER_SYSTEM_CONTRACT));
+    insertAgent(db, 'agent-reviewer', 'reviewer', retire(PRE_VERDICT_REPORT_REVIEWER_CONTRACT));
     insertAgent(db, 'agent-qa', 'qa', retire(QA_SYSTEM_CONTRACT));
     expect(instructionsOf(db, 'agent-reviewer')).toContain(RETIRED_NAME);
 
@@ -106,7 +111,7 @@ describe('migration 267 — restamp agent contracts naming task.resolvePendingCo
   });
 
   test('leaves an edited contract alone', () => {
-    const edited = `${retire(REVIEWER_SYSTEM_CONTRACT)}\n\nOperator addendum.`;
+    const edited = `${retire(PRE_VERDICT_REPORT_REVIEWER_CONTRACT)}\n\nOperator addendum.`;
     insertAgent(db, 'agent-edited', 'reviewer', edited);
 
     runMigration267(db);
@@ -130,7 +135,7 @@ describe('migration 267 — restamp agent contracts naming task.resolvePendingCo
     db.prepare(
       `INSERT INTO space_agent_templates (key, handle, display_name, instructions, version, created_at, updated_at)
        VALUES (?, 'reviewer', 'Reviewer', ?, 1, ?, ?)`
-    ).run('migrated.agent.agent-1', retire(REVIEWER_SYSTEM_CONTRACT), now, now);
+    ).run('migrated.agent.agent-1', retire(PRE_VERDICT_REPORT_REVIEWER_CONTRACT), now, now);
 
     runMigration267(db);
 

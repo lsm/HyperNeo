@@ -2,10 +2,9 @@
 
 When Neo calls `work.start`, the daemon first looks for a recorded worker of the same
 adapter, idle (`done`) in the same folder, that holds no open todo and was never marked
-unusable. If one exists, it receives the message and the receipt says `reused: true` with
-its ref. A todo first prefers its ask's most recently used eligible worker;
-different-ask reuse prefers the worker whose latest ask settled longest ago.
-Unknown settlement history remains a fallback. Otherwise a new session starts.
+unusable, and that already worked on the same ask. If one exists, it is compacted when its
+adapter supports it, receives the message, and the receipt says `reused: true` with its
+ref. Otherwise a new session starts; a worker of another ask is never reused.
 A human start always creates a new session. Use ask-worker-affinity.md for the
 recorded-history and pack-exclusion proof.
 
@@ -27,8 +26,30 @@ does, binds it to a finished review todo, and calls `work.start` as Neo for a bu
 todo. No model turn or provider key is needed.
 
 End state, from `evidence/work-start-reuse.json`:
+- `first.record` records the starter, ask, todo, machine, folder and harness for the new worker.
 - `humanStart.newSession` is true.
 - `neoSecond.reused` is true; its ref is an existing worker, and the session count is unchanged.
+- `sameRoleBusy.reason` is `worker_busy`: a further round waits for its assigned worker.
 - `neoThirdAllLeased.reused` is false; it is a new session, and the count grew by one.
 - `neoBuildBesideFreeHumanReviewer.gotReviewer` is false: the free human-opened
   session is never reused, so the build gets a new session and the count grows by one.
+- `mainThreadStartedSessionSql` is 0: these starts record and pick workers through the
+  database gateway, with no started-session SQL on the daemon's main connection.
+
+`evidence/session-reuse-dispatch.json` additionally records a fresh session under
+`per_todo` and a doing todo returning to the queue when its ask's workers are busy
+under `per_ask`.
+When an assigned role is busy, a new round does not start a different worker;
+if the todo cannot be queued, the refusal says no message was sent.
+The helper also forwards a start through the destination's real RPC door while
+an unrelated worker is idle. The forwarded start creates a fresh session. Remote
+`per_ask` waiting is not implemented by this route.
+Starts with no todo or a todo owned by another Neo also start fresh when the
+daemon cannot determine which matter's reuse setting applies.
+If opening the reuse question fails, work still starts using the default and Neo
+receives a note about the missing card.
+
+The helper also creates a synthetic Git repository and starts a prepared coding
+reviewer through `work.start`. It advances the synthetic pull request head and
+checks `evidence/prepared-role-reuse.json`: the next head uses the same reviewer,
+while changing a stable preparation parameter starts a different reviewer.

@@ -24,7 +24,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
-import { createWorkVerbOperations, pickRoute } from '../../../../src/lib/drivers/work-operations';
+import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
 import { createCopilotAdapter } from '../../../../src/lib/drivers/copilot-adapter';
 import type { StartRequest, WorkCallContext } from '../../../../src/lib/drivers/types';
 import { neoAttentionNotes } from '../../helpers/neo-attention-notes';
@@ -77,6 +77,71 @@ async function start(fixture: ReturnType<typeof setup>, message = fixture.reques
 }
 
 describe('owned Copilot lifecycle', () => {
+  test.each([true, false])(
+    'falls back from Desktop only before dispatch (notSent=%p)',
+    async (notSent) => {
+      const fixture = setup();
+      const adapter = createCopilotAdapter(fixture.discovery, {
+        ...fixture.deps,
+        desktop: {
+          ...fixture.discovery,
+          capabilities: ['find', 'start'],
+          start: async () => ({
+            ok: false,
+            reason: 'unreachable',
+            detail: 'Synthetic Desktop disconnect',
+            ...(notSent ? { notSent: true } : {}),
+          }),
+        },
+      });
+      owners.push(adapter);
+      const started = await adapter.start!(fixture.request, context);
+      if (notSent) expect(started).toMatchObject({ ok: true });
+      else
+        expect(started).toEqual({
+          ok: false,
+          reason: 'unreachable',
+          detail: 'Synthetic Desktop disconnect',
+        });
+      expect(existsSync(join(fixture.run, 'owned'))).toBe(notSent);
+    }
+  );
+
+  test('compacts settled work without sending a prompt and preserves its receipt', async () => {
+    const f = setup('--durable-inputs');
+    const work = await start(f, 'settled');
+    const previous = await f.adapter.status!(work.ref, undefined, work.receipt);
+    expect(previous).toMatchObject({ ok: true, value: { status: 'done', lastReply: 'REPLY_1' } });
+    expect(await f.adapter.compact!(work.ref, context)).toEqual({
+      ok: true,
+      value: { compacted: true },
+    });
+    expect(await f.adapter.status!(work.ref, undefined, work.receipt)).toEqual(previous);
+    const calls = readFileSync(join(f.run, 'calls.jsonl'), 'utf8');
+    expect(calls.match(/"method":"session\.send"/g)).toHaveLength(1);
+    expect(calls.match(/"method":"session\.history\.compact"/g)).toHaveLength(1);
+  });
+
+  test('refuses to compact while a turn is active or when Copilot reports failure', async () => {
+    const busy = setup();
+    const active = await start(busy);
+    expect(await busy.adapter.compact!(active.ref, context)).toMatchObject({
+      ok: false,
+      reason: 'busy',
+    });
+    expect(readFileSync(join(busy.run, 'calls.jsonl'), 'utf8')).not.toContain(
+      'session.history.compact'
+    );
+
+    const refused = setup('--durable-inputs');
+    writeFileSync(join(refused.run, 'refuse-compaction'), '');
+    const idle = await start(refused, 'settled');
+    expect(await refused.adapter.compact!(idle.ref, context)).toMatchObject({
+      ok: false,
+      reason: 'not_delivered',
+    });
+  });
+
   test('starts a new repository before its first commit in the project folder', async () => {
     const f = setup();
     const folder = join(f.run, 'unborn');
@@ -478,14 +543,37 @@ describe('owned Copilot lifecycle', () => {
     });
   });
 
-  test('explains strict steering refusal without sending or starting a runtime', () => {
-    const { adapter, run } = setup();
-    expect(adapter.capabilities).not.toContain('steer');
-    const result = pickRoute('steer', { adapter: adapter.id }, [adapter]);
-    expect(result).toMatchObject({
-      reason: { ok: false, reason: 'unsupported', detail: expect.stringContaining('same-turn') },
+  test('steers with immediate delivery and returns the accepted input receipt', async () => {
+    const fixture = setup();
+    const work = await start(fixture, 'hold');
+    const result = await fixture.adapter.steer!(work.ref, 'queued', context);
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        delivered: false,
+        receipt: { executionId: work.ref.id, inputId: 'input-2' },
+      },
     });
-    expect(existsSync(join(run, 'calls.jsonl'))).toBe(false);
+    const sends = readFileSync(join(fixture.run, 'calls.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+      .filter((call) => call.method === 'session.send');
+    expect(sends.map((call) => call.params.mode)).toEqual(['enqueue', 'immediate']);
+  });
+  test('completes both receipts when steering shares the current interaction', async () => {
+    const fixture = setup();
+    const work = await start(fixture, 'hold');
+    const result = await fixture.adapter.steer!(work.ref, 'steer-current', context);
+    if (!result.ok) throw new Error(JSON.stringify(result));
+    expect(result.value.steeredIntoTurnId).toBeUndefined();
+    for (const receipt of [work.receipt, result.value.receipt]) {
+      expect(receipt).toBeDefined();
+      expect(await fixture.adapter.status!(work.ref, undefined, receipt)).toMatchObject({
+        ok: true,
+        value: { status: 'done', lastReply: 'ADJUSTED_REPLY' },
+      });
+    }
   });
   test.each(['settled', 'error', 'late-settled'])(
     'reaps %s runtime without a status or stop call',
@@ -710,10 +798,13 @@ describe('owned Copilot lifecycle', () => {
       'start',
       'rename',
       'send',
+      'steer',
       'queue',
       'withdraw',
       'status',
+      'turns',
       'stop',
+      'compact',
       'archive',
     ]);
     const work = await start(fixture, 'settled');
@@ -731,7 +822,7 @@ describe('owned Copilot lifecycle', () => {
     expect(work.link).toBeUndefined();
     expect(work.watchHint).toContain('work.status');
     const calls = readFileSync(join(fixture.run, 'calls.jsonl'), 'utf8');
-    expect(calls).toContain('"availableTools":[]');
+    expect(calls).toContain('"availableTools":["bash"]');
     expect(calls).toContain('"mode":"enqueue"');
   });
 

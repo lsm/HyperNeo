@@ -36,7 +36,9 @@ function makeHub() {
       Promise.resolve(
         method === 'auth.providers'
           ? { providers: [{ id: 'anthropic', isAuthenticated: true }] }
-          : null
+          : method === 'providers.list'
+            ? { providers: [{ providerId: 'anthropic' }] }
+            : null
       )
     ),
     onEvent: vi.fn(() => () => {}),
@@ -91,6 +93,12 @@ describe('SessionStatusBar', () => {
     const picker = container.querySelector('button[aria-label="Choose model and thinking"]');
     expect(picker?.textContent).toContain('Sonnet');
     expect(picker?.getAttribute('aria-controls')).toBe('session-preferences');
+  });
+
+  it('hides thinking for a session whose harness cannot enforce it', async () => {
+    const { container, queryByRole } = renderBar({ harness: 'oxap-codex' });
+    await openPicker(container);
+    expect(queryByRole('slider', { name: 'Thinking' })).toBeNull();
   });
 
   it('switches the model from the picker menu', async () => {

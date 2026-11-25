@@ -64,18 +64,29 @@ function collectMembers(
   };
 }
 
-export const readTaskMembers = (superpipe({})('read-task-members') as PipelineAPI)
-  .input(['taskRepo', 'readCoreTask', 'nodeExecutionRepo', 'taskId'])
-  .pipe(locateTask, ['taskRepo', 'readCoreTask', 'taskId'], 'result:roster')
-  .pipe(collectMembers, ['nodeExecutionRepo', 'roster'], 'roster')
-  .end('roster') as (
-  taskRepo: ListTaskMembersDependencies['taskRepo'],
-  readCoreTask: ListTaskMembersDependencies['readCoreTask'],
-  nodeExecutionRepo: ListTaskMembersDependencies['nodeExecutionRepo'],
-  taskId: string
-) => TaskRoster | null;
+export function admitTaskMember(
+  taskId: string,
+  allowed: boolean
+): { value: string } | { reason: null } {
+  return allowed ? { value: taskId } : { reason: null };
+}
 
 export function createListTaskMembersOperation(deps: ListTaskMembersDependencies) {
+  const readTaskMembers = (
+    superpipe({
+      admitTask: deps.admitTask.bind(deps),
+      taskRepo: deps.taskRepo,
+      readCoreTask: deps.readCoreTask,
+      nodeExecutionRepo: deps.nodeExecutionRepo,
+    })('task.member.list') as PipelineAPI
+  )
+    .input(['taskId', 'caller'])
+    .pipe('admitTask', ['taskId', 'caller'], 'allowed')
+    .pipe(admitTaskMember, ['taskId', 'allowed'], 'result:roster')
+    .pipe(locateTask, ['taskRepo', 'readCoreTask', 'roster'], 'result:roster')
+    .pipe(collectMembers, ['nodeExecutionRepo', 'roster'], 'roster')
+    .end('roster') as (taskId: string, caller: OperationCaller) => TaskRoster | null;
+
   return defineOperation({
     name: 'task.member.list',
     description:
@@ -88,9 +99,6 @@ export function createListTaskMembersOperation(deps: ListTaskMembersDependencies
         members: z.array(NodeExecutionSchema),
       })
       .nullable(),
-    execute: async (input, caller) =>
-      deps.admitTask(input.taskId, caller)
-        ? readTaskMembers(deps.taskRepo, deps.readCoreTask, deps.nodeExecutionRepo, input.taskId)
-        : null,
+    execute: async (input, caller) => readTaskMembers(input.taskId, caller),
   });
 }

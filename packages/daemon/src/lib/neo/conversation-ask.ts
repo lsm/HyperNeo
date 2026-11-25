@@ -33,6 +33,7 @@ export const NeoConversationAskSchema = z
       .strict(),
     content: SessionContentSchema,
     replyTo: NeoReplyToSchema.optional(),
+    retryOf: z.uuid().optional(),
     previewContext: NeoPreviewReferenceSchema.optional(),
   })
   .strict()

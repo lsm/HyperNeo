@@ -1,152 +1,74 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import { WorkSummarySchema, type WorkRef } from '../../../drivers/types.ts';
-import type { OperationOutcome } from '../../../operations/invoke.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import type { NeoTodoTarget } from '../../driver-work.ts';
 import type { NeoWorkerTargetDecision } from '../../pack-contract.ts';
+import { codingStageTargetReads } from './stage-target-db.ts';
+import { codingSessionAssignmentReads } from './session-assignments-worker.ts';
 import {
-  codingSessionAssignmentReads,
-  codingSessionAssignmentWrites,
-} from './session-assignments-worker.ts';
-import { planCodingSessionDispatch } from './session-strategy.ts';
+  type CodingLines,
+  codingCandidateLine,
+  codingStartAlternatives,
+  rankCodingTargets,
+  lineText,
+  rankedHere,
+} from './stage-lines.ts';
 
-type Status = (ref: WorkRef) => Promise<OperationOutcome>;
-type Pooled = { ref: WorkRef; name: string; held: boolean };
-type Facts = {
-  repo: string;
-  strategy: Parameters<typeof planCodingSessionDispatch>[0]['strategy'];
-  owner: { todoId: string; session: Pooled | null } | null;
-  feature: { todoId: string; session: Pooled | null } | null;
-  successors: { todoId: string; session: Pooled | null }[];
-  pool: Pooled[];
-} | null;
-type Plan = (ReturnType<typeof planCodingSessionDispatch> | { verb: 'keep' } | { verb: 'held' }) & {
-  takeover?: { todoId: string; ref: WorkRef };
-};
-
-const WAIT = 'session_unknown: the session for this work is starting or unreachable; wait.';
-const LIVE_BUSY = new Set(['queued', 'running', 'needs_you']);
-
-async function sessionState(session: Pooled, status: Status) {
-  const outcome = await status(session.ref);
-  const reply =
-    outcome.kind === 'completed' ? (outcome.value as { ok?: boolean; value?: unknown }) : null;
-  const live = reply?.ok ? WorkSummarySchema.safeParse(reply.value) : null;
-  const state: 'available' | 'busy' | 'unknown' | 'archived' = !live?.success
-    ? 'unknown'
-    : live.data.archived
-      ? 'archived'
-      : live.data.busy || LIVE_BUSY.has(live.data.status)
-        ? 'busy'
-        : 'available';
-  return {
-    ref: session.ref,
-    name: session.name,
-    state: session.held && state !== 'unknown' && state !== 'archived' ? ('busy' as const) : state,
-  };
-}
-
-const prUrl = (todo: NeoTodo) => {
-  const urls = todo.check?.pack === 'coding' ? todo.check.params?.urls : undefined;
-  return Array.isArray(urls) && urls.length === 1 && typeof urls[0] === 'string'
-    ? urls[0]
-    : undefined;
-};
+const workKind = (todo: NeoTodo) =>
+  typeof todo.named?.workKind === 'string' ? todo.named.workKind : 'coding.write';
 
 export const decideCodingSessionTarget = (superpipe({})('coding.session-target') as PipelineAPI)
-  .input(['db', 'todo', 'target', 'status'])
+  .input(['db', 'todo', 'target', 'lines'])
   .pipe(
-    (db: Database, todo: NeoTodo, target: NeoTodoTarget) =>
-      gatewayFor(db).call(codingSessionAssignmentReads, 'dispatchFacts', {
+    async (db: Database, todo: NeoTodo, target: NeoTodoTarget, lines: CodingLines | undefined) => {
+      if (target.verb !== 'start') return { value: target };
+      const repo = await gatewayFor(db).call(codingSessionAssignmentReads, 'repo', todo.id);
+      const saved =
+        repo && rankedHere(target)
+          ? await gatewayFor(db).call(codingStageTargetReads, 'stagePreference', {
+              repo,
+              stage: 'write',
+            })
+          : {};
+      const usable = async (field: 'model' | 'effort') => {
+        const value = !target[field] && saved[field];
+        if (!value || !lines) return {};
+        const resolved = await lines.resolve({ adapter: target.adapter, [field]: value });
+        return resolved?.ok ? { [field]: value } : {};
+      };
+      const start = { ...target, ...(await usable('model')), ...(await usable('effort')) };
+      if (!lines) return { value: start };
+      const scope = await gatewayFor(db).call(codingStageTargetReads, 'lineScope', {
         todoId: todo.id,
-        featureKey: todo.askId,
-        adapter: target.verb === 'start' ? target.adapter : target.ref.adapter,
-        prUrl: prUrl(todo),
-      }),
-    ['db', 'todo', 'target'],
-    'facts'
-  )
-  .pipe(
-    async (facts: Facts, todo: NeoTodo, target: NeoTodoTarget, status: Status): Promise<Plan> => {
-      if (!facts) return { verb: 'keep' };
-      let { owner } = facts;
-      if (owner && !owner.session && owner.todoId !== todo.id) return { verb: 'held' };
-      let ownerState = owner?.session ? await sessionState(owner.session, status) : undefined;
-      for (const next of ownerState?.state === 'archived' ? facts.successors : []) {
-        if (!next.session || next.todoId === owner?.todoId) continue;
-        const nextState = await sessionState(next.session, status);
-        if (nextState.state === 'archived') continue;
-        owner = next;
-        ownerState = nextState;
-        break;
-      }
-      if (
-        ownerState?.state === 'archived' &&
-        facts.feature &&
-        facts.feature.todoId !== owner?.todoId
-      ) {
-        owner = facts.feature;
-        if (!owner.session && owner.todoId !== todo.id) return { verb: 'held' };
-        ownerState = owner.session ? await sessionState(owner.session, status) : undefined;
-      }
-      const archived = ownerState?.state === 'archived';
-      const assigned = archived ? undefined : ownerState;
-      const pool = assigned
-        ? []
-        : await Promise.all(facts.pool.map((s) => sessionState(s, status)));
+        ...(repo ? { repo } : {}),
+      });
+      const ranked = await rankCodingTargets(
+        lines,
+        workKind(todo),
+        await codingStartAlternatives(start, lines),
+        scope
+      );
+      if ('reason' in ranked) return { reason: ranked.reason };
+      const [chosen] = ranked.value;
+      if (ranked.sources[0] === start) return { value: chosen };
+      const [from, to] = await Promise.all(
+        [start, chosen].map(async (entry) =>
+          lineText((await codingCandidateLine(lines, entry)).line)
+        )
+      );
+      const why = ranked.skipped.find((text) => text.startsWith(`${from}: `));
       return {
-        ...planCodingSessionDispatch({
-          strategy: facts.strategy,
-          workType: (target.verb === 'start' && target.name) || 'dev',
-          assigned,
-          pool,
-        }),
-        ...(archived && owner?.session
-          ? { takeover: { todoId: owner.todoId, ref: owner.session.ref } }
-          : {}),
+        value: chosen,
+        note: `Started on ${to} instead of ${why ?? `${from}: the route ranks it lower`}.`,
       };
     },
-    ['facts', 'todo', 'target', 'status'],
-    'plan'
-  )
-  .pipe(
-    async (db: Database, facts: Facts, plan: Plan, todo: NeoTodo, target: NeoTodoTarget) => {
-      const binds =
-        (plan.verb === 'send' && plan.bind) ||
-        (plan.verb === 'start' && (!facts?.owner || plan.takeover) && target.verb === 'start');
-      if (!facts || facts.strategy !== 'long_lived' || !binds) return true;
-      const owner = await gatewayFor(db).call(codingSessionAssignmentWrites, 'reserveFeature', {
-        repo: facts.repo,
-        featureKey: todo.askId,
-        todoId: todo.id,
-        now: Date.now(),
-        replace: plan.takeover,
-      });
-      return owner.todoId === todo.id;
-    },
-    ['db', 'facts', 'plan', 'todo', 'target'],
-    'reserved'
-  )
-  .pipe(
-    (plan: Plan, reserved: boolean, target: NeoTodoTarget): NeoWorkerTargetDecision => {
-      if (plan.verb === 'keep') return { value: target };
-      if (plan.verb === 'held' || plan.verb === 'wait' || !reserved) return { reason: WAIT };
-      if (plan.verb !== 'start') return { value: { verb: 'send', ref: plan.ref } };
-      if (target.verb !== 'start')
-        return {
-          reason:
-            'session_start_needed: this work needs a new session; add it with a start target.',
-        };
-      return { value: plan.name ? { ...target, name: plan.name } : target };
-    },
-    ['plan', 'reserved', 'target'],
+    ['db', 'todo', 'target', 'lines'],
     'decision'
   )
   .endAsync('decision') as (
   db: Database,
   todo: NeoTodo,
   target: NeoTodoTarget,
-  status: Status
+  lines?: CodingLines
 ) => Promise<NeoWorkerTargetDecision>;

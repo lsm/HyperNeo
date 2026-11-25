@@ -20,6 +20,8 @@ connection ID reuses the encrypted client details without returning them. Discon
 disables and erases only its named bundle, preserving both metadata rows and the
 other healthy grant. Agent MCP management is refused, and no token/client secret
 may appear in RPC evidence. Both daemons and every HTTP listener close in finally.
+Two overlapping connect requests must start serially; the later attempt replaces
+the earlier one without blocking unrelated connection reads.
 
 Unit contracts also cover vault-write failure leaving reconnect-needed status,
 failed erasure staying disabled with an explicit error, stable account IDs and

@@ -68,7 +68,6 @@ afterEach(() => {
 });
 async function open() {
   await screen.findByText('Ship guide');
-  fireEvent.click(screen.getByText('Schedules'));
 }
 
 describe('SessionSchedules', () => {
@@ -79,8 +78,7 @@ describe('SessionSchedules', () => {
       name: 'schedule.session.list',
       input: { target: { adapter: 'hyperneo', id: 'root' } },
     });
-    expect(container.querySelector('details')?.open).toBe(true);
-    expect(screen.getByText('Every 60 min')).toBeTruthy();
+    expect(screen.getByText('Hourly')).toBeTruthy();
     expect(screen.queryByText(/Nudge/)).toBeNull();
     expect(screen.getByText(/Skipped · Session busy/)).toBeTruthy();
     expect([...container.querySelectorAll('time')].map((time) => time.dateTime)).toEqual([
@@ -88,10 +86,8 @@ describe('SessionSchedules', () => {
       new Date(row.lastRunAt!).toISOString(),
     ]);
   });
-  it('is collapsed initially, pauses/resumes through the operations and re-reads the facts', async () => {
-    const { container } = render(<SessionSchedules sessionId="root" />);
-    await screen.findByText('Ship guide');
-    expect(container.querySelector('details')?.open).toBe(false);
+  it('pauses/resumes through the operations and re-reads the facts', async () => {
+    render(<SessionSchedules sessionId="root" />);
     await open();
     fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
     await screen.findByRole('button', { name: 'Resume' });
@@ -133,11 +129,33 @@ describe('SessionSchedules', () => {
     ];
     render(<SessionSchedules sessionId="root" />);
     await screen.findByText('Check release');
-    fireEvent.click(screen.getByText('Schedules'));
     expect(screen.getByText('0 9 * * * · Asia/Shanghai')).toBeTruthy();
     expect(screen.getByText('Source unavailable')).toBeTruthy();
     expect(screen.getByText(/Session closed/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Resume' })).toBeNull();
+  });
+  it('shows a one-shot reminder as once at its time', async () => {
+    rows = [
+      {
+        ...row,
+        sourceKind: 'reminder',
+        sourceLabel: 'Call the venue',
+        cadence: { kind: 'once', at: 1792580400000 },
+      },
+    ];
+    render(<SessionSchedules sessionId="root" />);
+    await screen.findByText('Call the venue');
+    expect(screen.getByText(/^Once:/)).toBeTruthy();
+  });
+  it.each([
+    ['en', 'Daily limit reached'],
+    ['zh-Hans', '已达每日上限'],
+  ] as const)('labels a daily-limit skip in %s', async (language, label) => {
+    locale.value = language;
+    rows = [{ ...row, lastOutcome: 'skipped_budget', lastSkipReason: 'budget' }];
+    render(<SessionSchedules sessionId="root" />);
+    expect(await screen.findByText(new RegExp(label))).toBeTruthy();
+    expect(screen.queryByText(/budget/)).toBeNull();
   });
   it('keeps refused mutations visible and allows a fresh read without changing status', async () => {
     render(<SessionSchedules sessionId="root" />);
@@ -186,7 +204,7 @@ describe('SessionSchedules', () => {
     rerender(<SessionSchedules sessionId={null} />);
     expect(screen.queryByText('Schedules')).toBeNull();
   });
-  it('updates run facts on the visible refresh without replacing the disclosure', async () => {
+  it('updates run facts on the visible refresh without replacing the list', async () => {
     const hidden = document.hidden;
     Object.defineProperty(document, 'hidden', { value: false, configurable: true });
     vi.useFakeTimers();
@@ -195,8 +213,7 @@ describe('SessionSchedules', () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(1);
       });
-      const details = container.querySelector('details')!;
-      details.open = true;
+      const list = container.querySelector('section')!;
       rows = [{ ...row, dueCount: 0, lastOutcome: 'fired', lastSkipReason: null }];
       await act(async () => {
         await vi.advanceTimersByTimeAsync(30000);
@@ -205,8 +222,7 @@ describe('SessionSchedules', () => {
       vi.useRealTimers();
       await screen.findByText(/Delivered/);
       expect(screen.queryByText(/Nudge/)).toBeNull();
-      expect(container.querySelector('details')).toBe(details);
-      expect(details.open).toBe(true);
+      expect(container.querySelector('section')).toBe(list);
     } finally {
       vi.useRealTimers();
       Object.defineProperty(document, 'hidden', { value: hidden, configurable: true });
@@ -227,7 +243,7 @@ describe('SessionSchedules', () => {
     expect(screen.queryByText(/Nudge/)).toBeNull();
     expect(rows[0].dueCount).toBe(dueCount);
   });
-  it('keeps the count unknown while loading or failed, then shows an actual empty result', async () => {
+  it('keeps loading and failed reads visible, then shows an actual empty result', async () => {
     let reject!: (error: Error) => void;
     request.mockImplementationOnce(
       () =>
@@ -235,18 +251,13 @@ describe('SessionSchedules', () => {
           reject = fail;
         })
     );
-    const { container } = render(<SessionSchedules sessionId="root" />);
+    render(<SessionSchedules sessionId="root" />);
     await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
-    const summary = container.querySelector('summary')!;
-    expect(summary.textContent?.trim()).toBe('Schedules');
     reject(new Error('Read unavailable'));
     await screen.findByText('Read unavailable');
-    expect(summary.textContent?.trim()).toBe('Schedules');
     rows = [];
-    fireEvent.click(summary);
     fireEvent.click(screen.getByRole('button', { name: 'Refresh schedules' }));
     await screen.findByText('No schedules');
-    expect(summary.textContent?.trim()).toBe('Schedules · 0');
   });
   it.each([
     ['en', 'Reset — new progress'],
@@ -262,7 +273,7 @@ describe('SessionSchedules', () => {
     locale.value = 'zh-Hans';
     render(<SessionSchedules sessionId="root" />);
     await screen.findByText('Ship guide');
-    expect(screen.getByText('定时检查')).toBeTruthy();
+    expect(screen.getByLabelText('定时检查')).toBeTruthy();
     expect(screen.queryByText(/次提醒/)).toBeNull();
     expect(screen.getByRole('button', { name: '暂停', hidden: true })).toBeTruthy();
   });

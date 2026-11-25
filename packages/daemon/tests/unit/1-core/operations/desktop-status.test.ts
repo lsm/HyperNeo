@@ -29,18 +29,13 @@ beforeEach(async () => {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   alive = true;
   db = new Database(':memory:');
-  db.exec(`CREATE TABLE neo_asks(id TEXT, status TEXT);
-    CREATE TABLE neo_todos(id TEXT, ask_id TEXT, title TEXT, state TEXT, approved_at INTEGER, named TEXT);
+  db.exec(`CREATE TABLE neo_asks(id TEXT, status TEXT, desktop_apps TEXT);
+    CREATE TABLE neo_todos(id TEXT, ask_id TEXT, title TEXT, state TEXT, approved_at INTEGER, named TEXT, desktop_apps TEXT DEFAULT '[{"bundleId":"org.example.app","name":"app"}]');
     CREATE TABLE neo_todo_sessions(todo_id TEXT, ref TEXT);
-    INSERT INTO neo_asks VALUES('ask', 'open');`);
-  db.prepare('INSERT INTO neo_todos VALUES(?,?,?,?,?,?)').run(
-    'todo',
-    'ask',
-    'Book the dentist',
-    'doing',
-    1,
-    JSON.stringify({ desktopControl: true })
-  );
+    INSERT INTO neo_asks VALUES('ask', 'open', '[{"bundleId":"org.example.app","name":"app"}]');`);
+  db.prepare(
+    'INSERT INTO neo_todos(id, ask_id, title, state, approved_at, named) VALUES(?,?,?,?,?,?)'
+  ).run('todo', 'ask', 'Book the dentist', 'doing', 1, JSON.stringify({ desktopControl: true }));
   db.prepare('INSERT INTO neo_todo_sessions VALUES(?,?)').run(
     'todo',
     JSON.stringify({ adapter: 'hyperneo', id: worker })
@@ -81,8 +76,8 @@ const one = (state: string, todo: string | null = 'Book the dentist') => ({
   value: { workers: [{ worker, todo, state }] },
 });
 
-test('a worker whose todo did not turn on desktop control is off', async () => {
-  db.prepare('UPDATE neo_todos SET named = ?').run('{}');
+test('a worker whose todo turned desktop control off is off', async () => {
+  db.prepare('UPDATE neo_todos SET named = ?').run('{"desktopControl":false}');
   await openApp();
   expect(await status({ worker })).toMatchObject(one('off', 'Book the dentist'));
 });
@@ -117,14 +112,9 @@ test('a stop whose driver is still alive is unconfirmed', async () => {
 test('without a worker it reads every worker on a running todo', async () => {
   await openApp();
   await recordDriver();
-  db.prepare('INSERT INTO neo_todos VALUES(?,?,?,?,?,?)').run(
-    'other',
-    'ask',
-    'Plain',
-    'doing',
-    1,
-    '{}'
-  );
+  db.prepare(
+    'INSERT INTO neo_todos(id, ask_id, title, state, approved_at, named) VALUES(?,?,?,?,?,?)'
+  ).run('other', 'ask', 'Plain', 'doing', 1, '{"desktopControl":false}');
   db.prepare('INSERT INTO neo_todo_sessions VALUES(?,?)').run(
     'other',
     JSON.stringify({ adapter: 'hyperneo', id: 'worker-b' })
@@ -151,14 +141,9 @@ test('agents and Neo cannot read desktop status', async () => {
 test('a todo still starting without a worker does not break the list', async () => {
   await openApp();
   await recordDriver();
-  db.prepare('INSERT INTO neo_todos VALUES(?,?,?,?,?,?)').run(
-    'starting',
-    'ask',
-    'Starting',
-    'doing',
-    1,
-    JSON.stringify({ desktopControl: true })
-  );
+  db.prepare(
+    'INSERT INTO neo_todos(id, ask_id, title, state, approved_at, named) VALUES(?,?,?,?,?,?)'
+  ).run('starting', 'ask', 'Starting', 'doing', 1, JSON.stringify({ desktopControl: true }));
   db.prepare('INSERT INTO neo_todo_sessions VALUES(?,?)').run('starting', null);
   expect(await status({})).toMatchObject(one('running'));
 });

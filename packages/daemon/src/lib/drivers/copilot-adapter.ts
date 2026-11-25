@@ -6,20 +6,24 @@ import { basename, dirname, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import {
   COPILOT_CLI_VERSION,
+  CopilotEffortUnavailableError,
   CopilotModelUnavailableError,
   openCopilotWorker,
 } from './copilot-worker.ts';
 import { selectLocalStartFolder, type StartFolderDeps } from './start-folder.ts';
 import { workStartPreparation } from './start-preparation.ts';
+import { workStartConfiguration } from './start-configuration.ts';
 import { reject } from './work-operations.ts';
 import { errorMessage } from '../utils/error-message.ts';
 import { copilotOwnsSession, createCopilotFind } from './copilot-find.ts';
-import { readCopilotObservations } from './copilot-observations.ts';
+import { readCopilotObservations, readCopilotTurnFacts } from './copilot-observations.ts';
 import { readCopilotHistory, createCopilotInputReader } from './copilot-history.ts';
+import { COPILOT_DESKTOP_UNAVAILABLE } from './types.ts';
 import type * as W from './types.ts';
 
 type Receipt = W.WorkStarted['receipt'];
 type Worker = Awaited<ReturnType<typeof openCopilotWorker>>;
+type InputMode = NonNullable<Parameters<Worker['submit']>[1]>;
 type Snapshot = Awaited<ReturnType<Worker['snapshot']>>;
 type Record = {
   work: W.WorkStarted;
@@ -40,6 +44,7 @@ interface Deps extends StartFolderDeps {
   gitCheckout?: (folder: string) => Promise<GitCheckout | null>;
   spawn?: SpawnFn;
   projectFolder?: (folder: string) => string | Promise<string>;
+  desktop?: W.WorkAdapter;
 }
 
 export function createCopilotAdapter(
@@ -73,6 +78,7 @@ export function createCopilotAdapter(
       cwd: record.directory,
       stateDirectory: join(deps.directory, record.work.ref.id),
       model: record.work.model!,
+      effort: record.work.effort,
       env: deps.env,
       timeoutMs: deps.timeoutMs,
       resume,
@@ -106,8 +112,6 @@ export function createCopilotAdapter(
   };
   const admit = (request: W.StartRequest): Gate<W.StartRequest> => {
     if (closed) return { reason: reject('unreachable', 'Copilot owner is shutting down.') };
-    if (request.effort !== undefined)
-      return { reason: reject('unsupported_effort', 'Copilot effort is not wired yet.') };
     if (!request.model)
       return { reason: reject('unsupported_model', 'Choose an explicit Copilot model ID.') };
     const preparation = workStartPreparation.admit(request.preparation, false);
@@ -140,12 +144,16 @@ export function createCopilotAdapter(
     const record: Record = {
       work: {
         ref: { adapter: discovery.id, id: location.id },
+        copilotClient: 'cli',
         title: request.title,
         place: { ...request.place, machine: deps.machine },
         ...workExecutionLocation(location.directory, deps.machine),
         status: 'queued',
         lastActivityAt: Date.now(),
         model: request.model,
+        ...(request.effort === undefined
+          ? {}
+          : { effort: workStartConfiguration.normalize(request.effort) }),
         watchHint: 'Watch with work.status; app visibility is unverified.',
       },
       snapshot: { status: 'queued', inputs: {} },
@@ -175,6 +183,8 @@ export function createCopilotAdapter(
       live.delete(location.id);
       if (error instanceof CopilotModelUnavailableError && error.cause === undefined)
         return reject('unsupported_model', error.message);
+      if (error instanceof CopilotEffortUnavailableError && error.cause === undefined)
+        return reject('unsupported_effort', error.message);
       return reject(
         'unreachable',
         `copilot-cli:${location.id}: ${failures.map(String).join('; ')}. Check work.status; do not replay this start automatically.`
@@ -237,6 +247,7 @@ export function createCopilotAdapter(
       ok: true,
       value: {
         ...work,
+        copilotClient: 'cli',
         status: record.archived
           ? 'stopped'
           : snapshot.status === 'unreachable' || (!live.has(work.ref.id) && input?.outcome)
@@ -296,7 +307,11 @@ export function createCopilotAdapter(
       return { reason: reject('busy', 'Copilot has 64 unsettled inputs.') };
     return { value: record };
   };
-  const deliver = async (record: Record, message: string): Promise<W.Result<W.WorkDelivery>> => {
+  const deliver = async (
+    record: Record,
+    message: string,
+    mode: InputMode
+  ): Promise<W.Result<W.WorkDelivery>> => {
     const id = record.work.ref.id;
     let owned = live.get(id);
     const resumed = !owned;
@@ -306,7 +321,7 @@ export function createCopilotAdapter(
       record.pendingSubmission = true;
       save(record);
       submitAttempted = true;
-      const receipt = await owned.submit(message);
+      const receipt = await owned.submit(message, mode);
       record.snapshot = await owned.snapshot();
       if (record.snapshot.status === 'unreachable') throw new Error('Copilot lost after input ACK');
       delete record.pendingSubmission;
@@ -320,7 +335,7 @@ export function createCopilotAdapter(
         value: {
           delivered: observed,
           receipt,
-          ...(!observed ? { queuedSubmissionId: receipt.inputId } : {}),
+          ...(!observed && mode === 'enqueue' ? { queuedSubmissionId: receipt.inputId } : {}),
         },
       };
     } catch (error) {
@@ -342,12 +357,16 @@ export function createCopilotAdapter(
     }
   };
   const send = (superpipe({})('copilot-send') as PipelineAPI)
-    .input(['ref', 'message'])
+    .input(['ref', 'message', 'mode'])
     .pipe(lookup, 'ref', 'result:delivery')
     .pipe(refresh, 'delivery', 'delivery')
     .pipe(admitSend, 'delivery', 'result:delivery')
-    .pipe(deliver, ['delivery', 'message'], 'delivery')
-    .endAsync('delivery') as (ref: W.WorkRef, message: string) => Promise<W.Result<W.WorkDelivery>>;
+    .pipe(deliver, ['delivery', 'message', 'mode'], 'delivery')
+    .endAsync('delivery') as (
+    ref: W.WorkRef,
+    message: string,
+    mode: InputMode
+  ) => Promise<W.Result<W.WorkDelivery>>;
   const admitRename = (record: Record, title: string): Gate<Record> => {
     if (record.archived) return { reason: reject('not_open', 'Copilot work is archived.', true) };
     if (title.length > 100)
@@ -471,6 +490,34 @@ export function createCopilotAdapter(
       'stopped'
     )
     .endAsync('stopped') as (ref: W.WorkRef) => Promise<W.Result<{ stopped: boolean }>>;
+  const compact = (superpipe({})('copilot-compact') as PipelineAPI)
+    .input(['ref'])
+    .pipe(lookup, 'ref', 'result:compaction')
+    .pipe(refresh, 'compaction', 'compaction')
+    .pipe(
+      async (record: Record): Promise<W.Result<{ compacted: boolean }>> => {
+        if (record.archived) return reject('not_open', 'Copilot work is archived.');
+        if (closed || record.pendingSubmission || record.snapshot.status === 'unreachable')
+          return unavailable();
+        if (['queued', 'running', 'needs_you'].includes(record.snapshot.status))
+          return reject('busy', 'Copilot work still has an active input.');
+        const id = record.work.ref.id;
+        const worker = await open(record, true);
+        try {
+          return (await worker.compact())
+            ? { ok: true, value: { compacted: true } }
+            : reject('not_delivered', 'Copilot did not complete compaction.');
+        } catch (error) {
+          return reject('not_delivered', errorMessage(error));
+        } finally {
+          live.delete(id);
+          await worker.close();
+        }
+      },
+      'compaction',
+      'compaction'
+    )
+    .endAsync('compaction') as (ref: W.WorkRef) => Promise<W.Result<{ compacted: boolean }>>;
   const admitArchive = (record: Record, admit: W.ArchiveAdmission): Gate<Record> => {
     if (
       launching.has(record.work.ref.id) ||
@@ -528,6 +575,7 @@ export function createCopilotAdapter(
           ok: true,
           value: {
             ...record.work,
+            copilotClient: 'cli' as const,
             place: { ...record.work.place, folder, name: basename(folder) || folder },
             status: record.archived
               ? 'stopped'
@@ -547,23 +595,68 @@ export function createCopilotAdapter(
         };
       }, id);
       return result.ok ? result.value : undefined;
-    }
+    },
+    deps.desktop
   );
+  const owns = (id: string) => copilotOwnsSession(deps.directory, id);
+  const mutate = <T>(
+    ref: W.WorkRef,
+    verb: W.WorkVerb,
+    effect: () => Promise<W.Result<T>>,
+    desktopEffect: () => Promise<W.Result<T>> | undefined
+  ) =>
+    guard(async () => {
+      if (!owns(ref.id) && (await deps.desktop?.status?.(ref))?.ok)
+        return (
+          (deps.desktop?.capabilities.includes(verb) && (await desktopEffect())) ||
+          reject('unsupported', 'Open the Copilot app to control this Desktop-owned session.')
+        );
+      return effect();
+    }, ref.id);
+  const startPreferred: NonNullable<W.WorkAdapter['start']> = async (request, context) => {
+    if (request.copilotClient === 'cli') return start(request);
+    if (deps.desktop?.capabilities.includes('start') && deps.desktop.start) {
+      const result = await deps.desktop.start(request, context);
+      if (
+        request.copilotClient === 'desktop' ||
+        result.ok ||
+        result.reason !== 'unreachable' ||
+        !result.notSent
+      )
+        return result;
+    }
+    if (request.copilotClient === 'desktop')
+      return reject('unreachable', COPILOT_DESKTOP_UNAVAILABLE, true);
+    return start(request);
+  };
   return {
     ...discovery,
+    get copilotClients(): NonNullable<W.WorkAdapter['copilotClients']> {
+      return deps.desktop?.capabilities.includes('start') ? ['desktop', 'cli'] : ['cli'];
+    },
+    supportsStartEffort: true,
     resolveStartConfiguration: async (request) => {
+      if (deps.desktop?.capabilities.includes('start'))
+        return { ok: true, value: { model: request.model, effort: request.effort } };
       const selected = admit(request);
       return 'reason' in selected
         ? selected.reason
-        : { ok: true, value: { model: selected.value.model } };
+        : {
+            ok: true,
+            value: {
+              model: selected.value.model,
+              effort:
+                selected.value.effort && workStartConfiguration.normalize(selected.value.effort),
+            },
+          };
     },
     find,
     readInput: async (id, marker) =>
-      copilotOwnsSession(deps.directory, id)
+      owns(id)
         ? readInput(join(deps.directory, id, 'session-state', id, 'events.jsonl'), id, marker)
-        : null,
+        : (deps.desktop?.readInput?.(id, marker) ?? null),
     readTurns: (id, around, before, after, cursor) => {
-      if (!copilotOwnsSession(deps.directory, id)) return null;
+      if (!owns(id)) return deps.desktop?.readTurns?.(id, around, before, after, cursor) ?? null;
       return readCopilotHistory(
         join(deps.directory, id, 'session-state', id, 'events.jsonl'),
         id,
@@ -578,29 +671,99 @@ export function createCopilotAdapter(
       'start',
       'rename',
       'send',
+      'steer',
       'queue',
       'withdraw',
       'status',
+      'turns',
       'stop',
+      'compact',
       'archive',
     ] as const,
-    unsupportedCapabilities: {
-      steer:
-        'Copilot strict same-turn steering is unsupported: immediate input can fall back to a later turn; the pinned protocol has no expected-active-turn precondition. Use auto or queue for explicit enqueue delivery.',
-    },
-    start: (request: W.StartRequest) => {
-      const pending = guard(() => start(request));
+    steerBehavior: 'best_effort',
+    start: (request, context) => {
+      const pending = guard(() => startPreferred(request, context));
       starts.add(pending);
       void pending.finally(() => starts.delete(pending));
       return pending;
     },
-    rename: (ref, title) => guard(() => rename(ref, title), ref.id),
-    send: (ref, message) => guard(() => send(ref, message), ref.id),
-    queue: (ref, message) => guard(() => send(ref, message), ref.id),
-    withdraw: (ref, inputId) => guard(() => withdraw(ref, inputId), ref.id),
-    status: (ref, since, receipt) => guard(() => status(ref, receipt, since), ref.id),
-    stop: (ref) => guard(() => stop(ref), ref.id),
-    archive: (ref, admit) => guard(() => archive(ref, admit), ref.id),
+    rename: (ref, title, context) =>
+      mutate(
+        ref,
+        'rename',
+        () => rename(ref, title),
+        () => deps.desktop?.rename?.(ref, title, context)
+      ),
+    send: (ref, message, context) =>
+      mutate(
+        ref,
+        'send',
+        () => send(ref, message, 'enqueue'),
+        () => deps.desktop?.send?.(ref, message, context)
+      ),
+    steer: (ref, message, context) =>
+      mutate(
+        ref,
+        'steer',
+        () => send(ref, message, 'immediate'),
+        () => deps.desktop?.steer?.(ref, message, context)
+      ),
+    queue: (ref, message, context) =>
+      mutate(
+        ref,
+        'queue',
+        () => send(ref, message, 'enqueue'),
+        () => deps.desktop?.queue?.(ref, message, context)
+      ),
+    withdraw: (ref, inputId, context) =>
+      mutate(
+        ref,
+        'withdraw',
+        () => withdraw(ref, inputId),
+        () => deps.desktop?.withdraw?.(ref, inputId, context)
+      ),
+    status: (ref, since, receipt) =>
+      guard(async () => {
+        if (!owns(ref.id)) {
+          const app = await deps.desktop?.status?.(ref, since, receipt);
+          if (app && (app.ok || app.reason !== 'not_found')) return app;
+        }
+        return status(ref, receipt, since);
+      }, ref.id),
+    stop: (ref, context) =>
+      mutate(
+        ref,
+        'stop',
+        () => stop(ref),
+        () => deps.desktop?.stop?.(ref, context)
+      ),
+    compact: (ref, context) =>
+      mutate(
+        ref,
+        'compact',
+        () => compact(ref),
+        () => deps.desktop?.compact?.(ref, context)
+      ),
+    turns: (ref, cursor, limit) =>
+      guard(async () => {
+        const record = lookup(ref);
+        if ('reason' in record)
+          return (await deps.desktop?.turns?.(ref, cursor, limit)) ?? record.reason;
+        return readCopilotTurnFacts(
+          join(deps.directory, ref.id, 'session-state', ref.id, 'events.jsonl'),
+          ref.id,
+          cursor,
+          limit,
+          record.value.snapshot.inputs
+        );
+      }, ref.id),
+    archive: (ref, admit) =>
+      mutate(
+        ref,
+        'archive',
+        () => archive(ref, admit),
+        () => deps.desktop?.archive?.(ref, admit)
+      ),
     async close() {
       closed = true;
       await Promise.allSettled([...starts, ...transactions.values()]);

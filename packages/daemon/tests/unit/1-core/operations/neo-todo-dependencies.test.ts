@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { historicalAsk } from '../../helpers/accepted-ask.ts';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { createNeoAskRecordOperations } from '../../../../src/lib/neo/ask-record-operations.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
@@ -25,6 +26,7 @@ function setup() {
   createTables(db);
   createCodingPackTables(db);
   const store = new NeoAskTodoRepository(db);
+  historicalAsk(store, 'synthetic-neo', 'Plan');
   const sessions = new NeoTodoSessionRepository(db);
   const packs = createTodoCheckPacks(db);
   const runner = createNeoTodoRunner({
@@ -42,13 +44,17 @@ function setup() {
   const gateway = gatewayFor(db);
   const operations = [
     ...wireNeoTodoMutations(
-      createNeoTodoOperations(
-        store,
-        sessions,
-        controls,
-        () => packs,
-        () => null
-      ),
+      (writeHold) =>
+        createNeoTodoOperations(
+          store,
+          sessions,
+          controls,
+          () => packs,
+          () => null,
+          undefined,
+          undefined,
+          writeHold
+        ),
       {
         gateway,
         write: gateway.run.bind(gateway),
@@ -96,7 +102,7 @@ describe('todo dependencies', () => {
   test('a plan names which earlier steps each step waits for', async () => {
     const { db, invoke, step } = setup();
     try {
-      const opened = await invoke('neo.ask.open', {
+      const opened = await invoke('neo.ask.propose', {
         title: 'Plan',
         request: 'Plan with a join',
         todos: [step('A'), step('B', []), step('C', [0, 1])],
@@ -114,7 +120,7 @@ describe('todo dependencies', () => {
   test('missing, self and circular dependencies are refused', async () => {
     const { db, store, invoke, step } = setup();
     try {
-      const opened = await invoke('neo.ask.open', {
+      const opened = await invoke('neo.ask.propose', {
         title: 'Plan',
         request: 'Plan',
         todos: [step('A'), step('B', [0])],
@@ -145,13 +151,13 @@ describe('todo dependencies', () => {
   test('a bad reference anywhere in a plan refuses the whole plan before anything is saved', async () => {
     const { db, store, invoke, step } = setup();
     try {
-      const opened = await invoke('neo.ask.open', {
+      const opened = await invoke('neo.ask.propose', {
         title: 'Plan',
         request: 'Plan with a forward reference',
         todos: [step('A'), step('B', [2]), step('C')],
       });
       expect(opened).toMatchObject({ ok: false, reason: expect.stringContaining('dependency') });
-      expect(store.listOpenAsks()).toEqual([]);
+      expect(store.listTodos(store.listOpenAsks()[0].id)).toEqual([]);
     } finally {
       db.close();
     }
@@ -160,7 +166,7 @@ describe('todo dependencies', () => {
   test('start on a step that waits for unfinished steps approves it without dispatching', async () => {
     const { db, invoke, step } = setup();
     try {
-      const opened = await invoke('neo.ask.open', {
+      const opened = await invoke('neo.ask.propose', {
         title: 'Plan',
         request: 'Plan',
         todos: [step('A')],
@@ -183,8 +189,8 @@ describe('todo dependencies', () => {
     const { db, invoke, step } = setup();
     try {
       const plan = { title: 'Plan', request: 'Plan' };
-      await invoke('neo.ask.open', { ...plan, todos: [step('A'), step('B', [0])] });
-      const again = (await invoke('neo.ask.open', {
+      await invoke('neo.ask.propose', { ...plan, todos: [step('A'), step('B', [0])] });
+      const again = (await invoke('neo.ask.propose', {
         ...plan,
         todos: [step('A'), step('B', [])],
       })) as unknown as { records?: string[] };
@@ -222,7 +228,11 @@ describe('todo dependencies', () => {
       const first = store.addTodo('first', 'parent', draft('A'), 2);
       store.updateTodo(first, { state: 'done', evidence: 'Done.', startedAt: 3, finishedAt: 4 }, 4);
       const failed = store.addTodo('child-step', 'child', draft('X'), 2, 'synthetic/child');
-      store.updateTodo(failed, { state: 'failed', reason: 'Worker failed.' }, 5);
+      store.updateTodo(
+        failed,
+        { state: 'blocked', blockedBy: 'failure', blockedReason: 'Worker failed.' },
+        5
+      );
       store.settleAsk(store.getAsk('child')!, 'done', 'Done.', 6);
       const waiting = store.addTodo('waiting', 'parent', draft('B', [failed.id]), 7);
       sessions.create(waiting.id, { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } });
@@ -240,14 +250,14 @@ describe('todo dependencies', () => {
         instruction: 'Do it.',
         target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } },
       };
-      const opened = await invoke('neo.ask.open', {
+      const opened = await invoke('neo.ask.propose', {
         ...plan,
         todos: [
           { ...step('A'), ...work },
           { ...step('B', [0]), ...work },
         ],
       });
-      const again = await invoke('neo.ask.open', {
+      const again = await invoke('neo.ask.propose', {
         ...plan,
         todos: [
           { ...step('A'), ...work },
@@ -266,9 +276,9 @@ describe('todo dependencies', () => {
     const { db, store, invoke, step } = setup();
     try {
       const plan = { title: 'Plan', request: 'Plan' };
-      const opened = await invoke('neo.ask.open', { ...plan, todos: [step('A')] });
+      const opened = await invoke('neo.ask.propose', { ...plan, todos: [step('A')] });
       store.updateTodo(opened.todos[0], { state: 'done', evidence: 'Done.' }, 5);
-      const again = await invoke('neo.ask.open', {
+      const again = await invoke('neo.ask.propose', {
         ...plan,
         todos: [
           step('A'),
@@ -289,7 +299,7 @@ describe('todo dependencies', () => {
   test('what a started todo waits for cannot change under its running worker', async () => {
     const { db, store, invoke, step } = setup();
     try {
-      const opened = await invoke('neo.ask.open', {
+      const opened = await invoke('neo.ask.propose', {
         title: 'Plan',
         request: 'Plan',
         todos: [step('A'), step('B', [])],

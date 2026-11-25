@@ -1,6 +1,6 @@
 [package]
 name = "hyperneo-desktop"
-version = "0.58.0"
+version = "0.63.1"
 description = "HyperNeo - AI Assistant Desktop App"
 authors = ["HyperNeo contributors"]
 license = "Apache-2.0"
@@ -13,6 +13,7 @@ name = "hyperneo_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
+cc = "=1.2.66"
 tauri-build = { version = "2.5.4", features = [] }
 
 [dependencies]
@@ -29,12 +30,13 @@ dirs = "6"
 reqwest = { version = "0.12", features = ["json"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-cua-driver-sdk = { git = "https://github.com/lsm/cua.git", tag = "hyperneo-cua-driver-v0.44.0-1" }
+cua-driver-sdk = { git = "https://github.com/lsm/cua.git", rev = "a3320a58111cfb41fdcedb21bde43931dacfccf9" }
 libc = "=0.2.186"
 tempfile = "=3.27.0"
 core-foundation = "=0.10.1"
 core-graphics = "=0.25.0"
 security-framework = { version = "=3.7.0", features = ["OSX_10_15"] }
 dispatch2 = "=0.3.1"
-objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSString"] }
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSAlert", "NSApplication", "NSButton", "NSControl", "NSResponder", "NSView"] }
+objc2 = { version = "=0.6.4", default-features = false, features = ["std"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSBundle", "NSGeometry", "NSLocale", "NSString", "NSURL"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSAlert", "NSApplication", "NSButton", "NSControl", "NSImage", "NSImageView", "NSLayoutConstraint", "NSResponder", "NSStackView", "NSUserInterfaceLayout", "NSView", "NSWorkspace"] }

@@ -3,6 +3,7 @@ import { createGoogleDraftOperations } from './google-draft-operations.ts';
 import { createGoogleThreadOperations } from './google-thread-operations.ts';
 import { createGoogleReadOperations } from './google-read-operations.ts';
 import { randomUUID } from 'node:crypto';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
@@ -14,9 +15,14 @@ import {
 import { createCredentialStore } from '../credentials/credential-store.ts';
 import { defineOperation } from '../operations/registry.ts';
 import { ConnectionVault } from './vault.ts';
-import { googleClient, googleConnectionAttempt } from './status.ts';
+import { googleConnectionAttempt, type ConnectionStatus } from './status.ts';
 import { startGoogleLogin } from './google-login.ts';
-import { createConnectionLifecycle } from './lifecycle.ts';
+import { startMicrosoftLogin } from './microsoft-login.ts';
+import {
+  createConnectionLifecycle,
+  createGoogleConnectOperation,
+  selectLoginStatus,
+} from './lifecycle.ts';
 
 const policy = { safetyClass: 'human_only' as const, caller: 'local_user' as const };
 
@@ -30,44 +36,59 @@ export type GoogleConnectionDependencies = {
 type ServiceEntry = {
   deps: GoogleConnectionDependencies;
   closed: AbortController;
-  pending?: Promise<ReturnType<typeof createConnectionLifecycle>>;
+  pending: Map<ConnectionStatus['provider'], Promise<ReturnType<typeof createConnectionLifecycle>>>;
 };
 const services = new WeakMap<Database, ServiceEntry>();
 
 export function configureGoogleConnections(db: Database, deps: GoogleConnectionDependencies) {
-  if (!services.has(db)) services.set(db, { deps, closed: new AbortController() });
+  if (!services.has(db))
+    services.set(db, { deps, closed: new AbortController(), pending: new Map() });
   return services.get(db)!.closed;
 }
 
 export function getGoogleConnectionService(sql: Database, deps: GoogleConnectionDependencies = {}) {
+  return getConnectionService(sql, 'google', deps);
+}
+
+export function getConnectionService(
+  sql: Database,
+  provider: ConnectionStatus['provider'],
+  deps: GoogleConnectionDependencies = {}
+) {
   configureGoogleConnections(sql, deps);
   const entry = services.get(sql)!;
   entry.closed.signal.throwIfAborted();
   const configured = entry.deps;
-  let pending = entry.pending;
+  let pending = entry.pending.get(provider);
   if (!pending) {
     const gateway = gatewayFor(sql);
     pending = gateway.call(artifactIdentityWrites, 'ensure', randomUUID()).then((identity) => {
       entry.closed.signal.throwIfAborted();
       return createConnectionLifecycle({
-        read: () => gateway.call(googleConnectionReads, 'list'),
+        read: () =>
+          gateway
+            .call(googleConnectionReads, 'list')
+            .then((rows) => rows.filter((row) => row.provider === provider)),
+        provider,
         save: (connection) => gateway.call(googleConnectionWrites, 'put', connection),
         vault: new ConnectionVault(
           (configured.createStore ?? createCredentialStore)(sql),
           identity
         ),
         startLogin:
-          configured.startLogin ??
-          ((client) => startGoogleLogin(client, { fetchImpl: configured.fetchImpl })),
+          provider === 'microsoft'
+            ? (client) => startMicrosoftLogin(client, { fetchImpl: configured.fetchImpl })
+            : (configured.startLogin ??
+              ((client) => startGoogleLogin(client, { fetchImpl: configured.fetchImpl }))),
         fetchImpl: configured.fetchImpl,
         now: configured.now,
         apiTimeoutMs: configured.apiTimeoutMs,
         closed: AbortSignal.any([gateway.closeSignal, entry.closed.signal]),
       });
     });
-    entry.pending = pending;
+    entry.pending.set(provider, pending);
     void pending.catch(() => {
-      entry.pending = undefined;
+      entry.pending.delete(provider);
     });
   }
   return pending;
@@ -78,34 +99,33 @@ export function createGoogleConnectionOperations(
   deps: GoogleConnectionDependencies = {}
 ) {
   const service = () => getGoogleConnectionService(db(), deps);
+  type Service = Awaited<ReturnType<typeof service>>;
+  const login = (superpipe({})('connections.google.login') as PipelineAPI)
+    .input('input')
+    .pipe(async (_input: { loginId?: string }) => (await service()).statusFacts(), 'input', 'facts')
+    .pipe(selectLoginStatus, ['facts', 'input'], 'result')
+    .endAsync('result') as (input: { loginId?: string }) => Promise<ReturnType<Service['status']>>;
+  const disconnect = (superpipe({})('connections.google.disconnect') as PipelineAPI)
+    .input('input')
+    .pipe(
+      async (input: { connectionId: string }) => (await service()).disconnect(input.connectionId),
+      'input',
+      'result'
+    )
+    .endAsync('result') as (input: { connectionId: string }) => ReturnType<Service['disconnect']>;
   return [
     ...createGoogleReadOperations(db, service),
     ...createGoogleThreadOperations(service),
     ...createGoogleDraftOperations(db, service),
     ...createGoogleCalendarOperations(service),
-    defineOperation({
-      name: 'connections.google.connect',
-      description:
-        'Connect Google or reconnect the named account. Returns a one-use consent URL, never credentials.',
-      policy,
-      inputSchema: googleClient
-        .partial()
-        .extend({ connectionId: z.string().min(1).max(200).optional() })
-        .strict()
-        .refine(
-          (input) => input.clientId || (input.connectionId && !input.clientSecret),
-          'Provide clientId, or connectionId to reuse saved client details.'
-        ),
-      resultSchema: googleConnectionAttempt,
-      execute: async (input) => (await service()).connect(input),
-    }),
+    createGoogleConnectOperation(service),
     defineOperation({
       name: 'connections.google.login',
       description: 'Read the status of this instance’s current Google consent attempt.',
       policy,
       inputSchema: z.object({ loginId: z.string().min(1).max(200).optional() }).strict(),
       resultSchema: googleConnectionAttempt,
-      execute: async ({ loginId }) => (await service()).status(loginId),
+      execute: login,
     }),
     defineOperation({
       name: 'connections.google.disconnect',
@@ -114,7 +134,7 @@ export function createGoogleConnectionOperations(
       policy,
       inputSchema: z.object({ connectionId: z.string().min(1).max(200) }).strict(),
       resultSchema: z.object({ ok: z.boolean(), reason: z.string().optional() }),
-      execute: async ({ connectionId }) => (await service()).disconnect(connectionId),
+      execute: disconnect,
     }),
   ];
 }

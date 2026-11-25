@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import {
+  configureLogger,
+  getLoggerConfig,
+  LogLevel,
+  subscribeToStructuredLogs,
+} from '../../../../src/lib/logger.ts';
 import { createNeoSessionArchiveOperation } from '../../../../src/lib/neo/session-archive-operation.ts';
 import {
   createOperationRegistry,
@@ -8,6 +14,7 @@ import {
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import type { ArchiveAdmission, WorkRef } from '../../../../src/lib/drivers/types.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
+import { recordWorkerStarted } from '../../../../src/storage/repositories/work-started-sessions-worker.ts';
 import { NEO_WORK_CLOSED_DONE_PREFIX } from '@hyperneo/shared/types/neo-snapshot';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
@@ -70,6 +77,31 @@ describe('neo.session.archive', () => {
   });
   afterEach(() => db.close());
 
+  test('reports the completed archive when its provenance write fails', async () => {
+    recordWorkerStarted(db.getDatabase(), ref);
+    db.getDatabase().exec(`CREATE TRIGGER archive_record_fault BEFORE UPDATE OF archived_at ON work_started_sessions
+      BEGIN SELECT RAISE(FAIL, 'synthetic provenance failure'); END`);
+    const priorLogging = getLoggerConfig();
+    configureLogger({ level: LogLevel.WARN });
+    const messages: { message: string; level: string }[] = [];
+    const unsubscribe = subscribeToStructuredLogs((event) => messages.push(event));
+    try {
+      expect(await invoke(ref, caller)).toMatchObject({
+        value: { ok: true, value: { archived: true } },
+      });
+      expect(archive).toHaveBeenCalledTimes(1);
+      expect(
+        messages.some(
+          (event) =>
+            event.level === 'warn' && event.message.includes('Archive provenance write failed')
+        )
+      ).toBe(true);
+    } finally {
+      unsubscribe();
+      configureLogger(priorLogging);
+    }
+  });
+
   test('preserves the retained worktree receipt through operation validation', async () => {
     const worktree = {
       directory: '/owned/worktrees/worker',
@@ -95,6 +127,7 @@ describe('neo.session.archive', () => {
           .run('todo', JSON.stringify({ verb: 'send', ref: target }), JSON.stringify(target));
       };
       todo(ref);
+      recordWorkerStarted(db.getDatabase(), ref);
       expect(await invoke(ref, actor)).toMatchObject({
         value: {
           ok: false,
@@ -109,9 +142,51 @@ describe('neo.session.archive', () => {
   );
 
   test('admits the bound Neo session as well as the ordinary local user', async () => {
+    recordWorkerStarted(db.getDatabase(), ref);
     expect(await invoke(ref, caller)).toMatchObject({ value: { ok: true } });
     expect(await invoke(ref, user)).toMatchObject({ value: { ok: true } });
     expect(archive).toHaveBeenCalledTimes(2);
+  });
+
+  test('keeps an unmarked session for Neo while allowing a human to archive it', async () => {
+    expect(await invoke(ref, caller)).toMatchObject({
+      value: { ok: false, reason: 'not_started_by_us' },
+    });
+    expect(archive).not.toHaveBeenCalled();
+    expect(await invoke(ref, user)).toMatchObject({ value: { ok: true } });
+  });
+
+  test("checks Neo's started-session record through the database gateway", async () => {
+    const raw = db.getDatabase();
+    const prepare = raw.prepare.bind(raw);
+    const inGateway = () => {
+      const flags = raw as unknown as { isTransaction?: boolean; inTransaction?: boolean };
+      return flags.isTransaction ?? flags.inTransaction ?? false;
+    };
+    const direct: string[] = [];
+    const watched = async (call: () => Promise<unknown>) => {
+      raw.prepare = ((sql: string) => {
+        if (sql.includes('work_started_sessions') && !inGateway()) direct.push(sql);
+        return prepare(sql);
+      }) as typeof raw.prepare;
+      try {
+        return await call();
+      } finally {
+        raw.prepare = prepare;
+      }
+    };
+    expect(await watched(() => invoke(ref, caller))).toMatchObject({
+      value: { ok: false, reason: 'not_started_by_us' },
+    });
+    recordWorkerStarted(raw, ref);
+    expect(await watched(() => invoke(ref, caller))).toMatchObject({ value: { ok: true } });
+    expect(direct).toEqual([]);
+  });
+
+  test('forwards a remote Neo archive without a local ownership record', async () => {
+    const target = { ...ref, daemon: 'remote' };
+    expect(await invoke(target, caller)).toMatchObject({ value: { ok: true } });
+    expect(remote.invoke).toHaveBeenCalledWith('remote', 'neo.session.archive', { ref }, undefined);
   });
 
   test.each(['worker_binding', 'unbound', 'no_session', 'internal', 'untrusted_rpc'])(

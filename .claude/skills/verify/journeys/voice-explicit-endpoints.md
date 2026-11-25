@@ -12,7 +12,7 @@ VERIFY_PORT=19311 bun .claude/skills/verify/voice-explicit-endpoints.ts > "$RUN/
 
 The helper owns an ephemeral loopback HTTP ASR server and closes it in finally.
 It uses only the isolated daemon supplied by VERIFY_PORT. It sets an empty live
-URL with mode streaming, records audio through the public stream RPC, and observes
+URL with mode streaming, including an empty configured live part, records audio through the public stream RPC, and observes
 batch transcription. Its ASR receives the configured version path and query
 verbatim, then a full transcription URL including a trailing slash and query.
 A direct voice.transcribe request also succeeds with the full stored URL.

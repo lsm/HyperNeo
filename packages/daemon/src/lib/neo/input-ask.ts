@@ -15,7 +15,7 @@ export const noNeoInputReads: NeoInputReads = { input: () => null, publication: 
 
 type Binding = { value: { askId: string } } | { reason: { ok: false; reason: string } };
 
-const words = (content: NeoConversationAsk['content']) =>
+export const neoInputWords = (content: NeoConversationAsk['content']) =>
   typeof content === 'string'
     ? content
     : content
@@ -77,7 +77,7 @@ export async function resolveNeoInputAsk(
   store: NeoAskTodoRepository,
   reads: NeoInputReads,
   caller: OperationCaller,
-  request: { input?: string; askId?: string },
+  request: { input?: string; askId?: string; topic?: string },
   title: string
 ): Promise<Binding> {
   if (!request.input)
@@ -95,7 +95,7 @@ export async function resolveNeoInputAsk(
     return {
       reason: {
         ok: false,
-        reason: `unknown_input: ${request.input} is not a human message you received.`,
+        reason: `unknown_input: "${request.input.slice(0, 80)}" is not the id of a human message you received. Pass the id attribute of its <human-message id="..."> tag, not the message text.`,
       },
     };
   const { sessionId, messageId } = human.askOrigin;
@@ -117,7 +117,8 @@ export async function resolveNeoInputAsk(
           .split('\n')[0]
           .replace(/^[#*\s]+|\*+/g, '')
           .slice(0, 120) || title,
-      request: words(human.content) || title,
+      ...(request.topic ? { topic: request.topic } : {}),
+      request: neoInputWords(human.content) || title,
     });
     if (typeof winner !== 'string') return { reason: { ok: false, reason: winner.reason } };
     if ('bind' in plan && winner !== plan.bind)

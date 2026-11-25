@@ -1,6 +1,4 @@
-import { createNeoRelayOperations } from './relay-answer.ts';
 import { WorkRefSchema } from '../drivers/types.ts';
-import { neoAskInputWrites } from '../../storage/repositories/neo-ask-input-worker.ts';
 import { NEO_ANSWER_NOTE } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { neoToolDescription } from '@hyperneo/prompts';
 import { createPeerOperations } from './peer-operations.ts';
@@ -41,10 +39,12 @@ import type { NeoProject } from '@hyperneo/shared/types/neo-context';
 import { type NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { NEO_STANDING_RULE_MAX_CHARS, neoStandingRules } from '@hyperneo/shared/types/settings';
 import { createNeoIntakeOperation } from './intake.ts';
+import { createNeoRetryOperation } from './retry-operation.ts';
 import { createNeoReorganizeOperation, type NeoReorganizeRuntime } from './reorganize-operation.ts';
+import { createNeoProjectListOperation } from './project-list-operation.ts';
 import { readNeoProjectIdentities } from './project-merge.ts';
+import { createNeoProjectSavePipeline } from './project-save.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
-import { createNeoPublicationOperation } from './publication-operation.ts';
 import { createNeoConversationReadOperation } from './conversation-read-operation.ts';
 import { NeoConversationReader } from '../../storage/repositories/neo-conversation-reader.ts';
 import { createNeoPublicationReadOperation } from './publication-read-operation.ts';
@@ -75,6 +75,7 @@ import { resolveNeoTodoTarget } from './todo-target.ts';
 import { wireNeoTodoMutations } from './todo-mutation-operation.ts';
 import { createArtifactRefReader } from '../artifacts/read-operations.ts';
 import { createNeoAskRecordOperations } from './ask-record-operations.ts';
+import { NeoTopicLabelSchema } from './ask-topic.ts';
 import { SessionGoalRepository } from '../../storage/repositories/session-goal-repository.ts';
 import {
   createNeoDoneTodosOperation,
@@ -86,17 +87,16 @@ import {
   projectNeoAskEntries,
   summarizeNeoAskEntry,
 } from './ask-entries.ts';
-import {
-  createPackPreferenceOperations,
-  listPackPreferences,
-  PackSettingSchema,
-} from './preference-operations.ts';
+import { createPackPreferenceOperations, PackSettingSchema } from './preference-operations.ts';
 import { createNeoPreferenceOperation } from './model-preference.ts';
 import { createNeoFrontModelOperation } from './front-model-preference.ts';
 import { readNeoRuleApproval } from '../../storage/repositories/neo-rule-answer.ts';
 
 import { createRestartReservationOperation } from '../system/restart-reservation.ts';
 import { voiceStreamsBusy } from '../rpc-handlers/voice-handlers.ts';
+import { guardRetainedPackPipeline } from './pack-pipeline.ts';
+import { validatePackRunner } from './pack-runner.ts';
+import { admitNeoCaller, type Rejection } from './admission.ts';
 
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
 
@@ -158,7 +158,7 @@ const SnapshotOk = z.object({
             todos: z.array(z.object({ id: z.string(), title: z.string() })),
           }),
           z.object({
-            state: z.literal('progress'),
+            state: z.enum(['progress', 'waiting']),
             askId: z.string(),
             todoId: z.string(),
             title: z.string(),
@@ -169,6 +169,7 @@ const SnapshotOk = z.object({
         ])
       ),
       counts: z.record(z.string(), z.record(NeoHumanQueueState, z.number().int().nonnegative())),
+      topics: z.record(z.string(), NeoTopicLabelSchema).optional(),
     })
     .optional()
     .describe(
@@ -260,8 +261,6 @@ const Save = z.object({
   context: z.string().max(16000),
   expectedRevision: z.number().int().min(0),
 });
-type SaveRequest = z.infer<typeof Save>;
-
 export { requireNeoProjectSaveId } from './project-save.ts';
 const SessionMute = z.object({ key: z.string().trim().min(1).max(400), muted: z.boolean() });
 const SessionMuteResult = z.union([
@@ -289,7 +288,6 @@ const PackReadResult = z.union([
     instructions: z.string(),
   }),
 ]);
-type Rejection = { ok: false; reason: string };
 
 export function neoSnapshotRevision<T extends { ok: boolean }>(
   snapshot: T,
@@ -307,20 +305,6 @@ export function neoSnapshotRevision<T extends { ok: boolean }>(
         note: `unchanged since rev ${rev}: nothing changed since your last read. ${NEO_SNAPSHOT_UNCHANGED_GUIDANCE}`,
       }
     : { ...snapshot, rev };
-}
-
-function admitNeoCaller(
-  service: NeoService,
-  caller: OperationCaller,
-  name: string
-): { value: OperationCaller } | { reason: Rejection } {
-  if (isLocalUser(caller)) return { value: caller };
-  const binding = caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null;
-  if (caller.source !== 'mcp' || binding?.kind !== 'neo')
-    return { reason: { ok: false, reason: 'This operation belongs to Neo.' } };
-  if (['neo.restart', 'neo.session.track', 'neo.front.set'].includes(name))
-    return { reason: { ok: false, reason: 'This action needs the user.' } };
-  return { value: caller };
 }
 
 export function neoReorganizeRuntime(
@@ -377,6 +361,18 @@ export function neoReorganizeRuntime(
   };
 }
 
+function createNeoProjectSaveOperation(service: NeoService) {
+  const execute = createNeoProjectSavePipeline(service.repo, service.notifyChanged);
+  return defineOperation({
+    name: 'neo.project.save',
+    description: neoToolDescription('neo.project.save'),
+    inputSchema: Save,
+    resultSchema: z.union([Failure, z.object({ ok: z.literal(true), project: Project })]),
+    policy: { safetyClass: 'mutate', roles: ['neo'] },
+    execute,
+  });
+}
+
 export function createNeoOperations(
   service: NeoService,
   identity: NeoProjectIdentityPolicy,
@@ -428,13 +424,16 @@ export function createNeoOperations(
       ? (service.repo.projectMerges.resolve(requested) ?? requested)
       : undefined;
     const detailed = caller.source === 'rpc';
-    const { asks, unlisted, openWork, facts, historyCursor } = await service.todos.read(
-      'snapshot',
-      scope,
-      10,
-      true
-    );
     const humanQueue = detailed ? await service.humanQueue() : null;
+    const { asks, unlisted, openWork, facts, historyCursor, queueTopics } =
+      await service.todos.read(
+        'snapshot',
+        scope,
+        10,
+        true,
+        undefined,
+        Object.keys(humanQueue?.counts ?? {})
+      );
     const { todoAsks, pinned } = neoSnapshotAskEntries(
       projectNeoAskEntries(asks, facts, service.installedPacks()),
       detailed ? 20 : undefined
@@ -547,9 +546,9 @@ export function createNeoOperations(
         : {}),
       mutedSessions: service.db.getGlobalSettings?.().neo?.mutedSessions ?? [],
       preferences: service.modelPreference(),
-      ...(detailed ? { packPreferences: listPackPreferences(service.db.getDatabase()) } : {}),
+      ...(detailed ? { packPreferences: service.packPreferences() } : {}),
       todoAsks: entries.map(summarizeNeoAskEntry),
-      ...(humanQueue ? { humanQueue } : {}),
+      ...(humanQueue ? { humanQueue: { ...humanQueue, topics: queueTopics } } : {}),
       ...counts,
       historyCursor,
       ...(!detailed && Object.keys(more).length ? { more } : {}),
@@ -711,8 +710,6 @@ export function createNeoOperations(
     );
     return { ...view, sessionId };
   });
-  const save = (input: SaveRequest, caller: OperationCaller) =>
-    service.repo.saveProjectCurrent(input, caller);
   const readPack = path('neo.pack.read', ({ id }: z.infer<typeof PackRead>) => {
     const pack = service.pack(id);
     if (!pack)
@@ -762,13 +759,13 @@ export function createNeoOperations(
         speech: service.speech.restartBusy(),
       };
     }),
-    ...createNeoRelayOperations(service),
     ...createPeerOperations(service),
     ...service.speech.operations,
     createNeoProjectForgetOperation(service.repo, async (repos) => {
       for (const pack of service.installedPacks()) pack.forgetRepositories?.(repos);
       await service.refreshPackPreferences();
     }),
+    createNeoRetryOperation(service),
     createNeoIntakeOperation(
       service.db,
       service.repo,
@@ -779,7 +776,8 @@ export function createNeoOperations(
       service.todos
     ),
     createNeoReorganizeOperation(neoReorganizeRuntime(service, identity)),
-    createNeoPublicationOperation(service.publish, (items) => service.presentPublications(items)),
+    createNeoProjectListOperation(service.repo, hostname),
+    service.publicationOperation,
     createNeoPublicationReadOperation(service.publications, (items) =>
       service.presentPublications(items)
     ),
@@ -814,15 +812,17 @@ export function createNeoOperations(
       (change) => service.preferenceChanged(change)
     ),
     ...wireNeoTodoMutations(
-      createNeoTodoOperations(
-        service.todos,
-        service.todoSessions,
-        todoControls,
-        () => service.installedPacks(),
-        createArtifactRefReader(() => service.db.getDatabase()),
-        (todos) => service.todoWorkers(todos),
-        inputReads
-      ),
+      (writeHold) =>
+        createNeoTodoOperations(
+          service.todos,
+          service.todoSessions,
+          todoControls,
+          () => service.installedPacks(),
+          createArtifactRefReader(() => service.db.getDatabase()),
+          (todos) => service.todoWorkers(todos),
+          inputReads,
+          writeHold
+        ),
       {
         gateway: mutationGateway,
         write: mutationGateway.run.bind(mutationGateway),
@@ -848,6 +848,7 @@ export function createNeoOperations(
     ),
     createNeoTodoReadOperation(
       service.todos,
+      service.todoSessions,
       (caller) => admitNeoCaller(service, caller, 'neo.todo.read'),
       (todos) => service.todoWorkers(todos)
     ),
@@ -871,7 +872,11 @@ export function createNeoOperations(
       () => service.installedPacks(),
       (id) => new SessionGoalRepository(service.db.getDatabase()).get(id),
       (todos) => service.todoWorkers(todos),
-      { gateway: mutationGateway, changed: () => service.notifyChanged() }
+      {
+        gateway: mutationGateway,
+        changed: () => service.notifyChanged(),
+        language: () => service.db.getGlobalSettings().language,
+      }
     ),
     ...createNeoQuestionOperations(
       service.todos,
@@ -915,16 +920,7 @@ export function createNeoOperations(
         input.todoId
           ? service.relayWorkerQuestion({ ...input, todoId: input.todoId }, caller.sessionId)
           : service.relaySessionQuestion(input, caller.sessionId, Date.now()),
-      () => service.db.getGlobalSettings().language,
-      async (input) => {
-        const written = await gatewayFor(service.db.getDatabase()).call(
-          neoAskInputWrites,
-          'relayAnswer',
-          { ...input, at: Date.now() }
-        );
-        if ('value' in written) service.notifyChanged();
-        return written;
-      }
+      () => service.db.getGlobalSettings().language
     ),
     defineOperation({
       name: 'neo.open',
@@ -1005,11 +1001,17 @@ export function createNeoOperations(
       execute: (input, caller) => trackSession(input, caller, Date.now()),
     }),
     ...service.installedPacks().flatMap((pack) =>
-      (pack.operations ?? []).map((operation) => ({
-        ...operation,
-        pack: { id: pack.id, enabledIds: service.enabledOperationPackIds },
-        execute: path(operation.name, operation.execute),
-      }))
+      (pack.operations ?? []).map((operation) => {
+        validatePackRunner(operation);
+        return {
+          ...operation,
+          pack: { id: pack.id, enabledIds: service.enabledOperationPackIds },
+          execute:
+            guardRetainedPackPipeline(operation, (caller, name) =>
+              admitNeoCaller(service, caller, name)
+            ) ?? path(operation.name, operation.execute),
+        };
+      })
     ),
     defineOperation({
       name: 'neo.pack.read',
@@ -1073,13 +1075,6 @@ export function createNeoOperations(
           service.todoRunner.retarget(todoId, fromRef)
       ),
     }),
-    defineOperation({
-      name: 'neo.project.save',
-      description: neoToolDescription('neo.project.save'),
-      inputSchema: Save,
-      resultSchema: z.union([Failure, z.object({ ok: z.literal(true), project: Project })]),
-      policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: save,
-    }),
+    createNeoProjectSaveOperation(service),
   ];
 }

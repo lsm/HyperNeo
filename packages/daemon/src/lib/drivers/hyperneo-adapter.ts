@@ -1,10 +1,10 @@
+import type { AgentSession } from '../agent/agent-session.ts';
 import { withWorkerProvenance } from './worker-provenance.ts';
 import { installClaudeNativeWrites } from './claude-native-writes.ts';
 import { releaseWorkerSandbox, workerSandboxOn } from './worker-sandbox.ts';
 import { WorktreeManager } from '../worktree-manager.ts';
 import { gitWorktreeProject } from './worktree-project.ts';
 import { getWorktreeBaseDir } from '../worktree-path-utils.ts';
-import { THINKING_OPTIONS } from '@hyperneo/shared';
 import { sdkMessageBodyAt } from '../../storage/repositories/sdk-message-body-read.ts';
 import { workStartPreparation, type WorkExecutionPreparer } from './start-preparation.ts';
 import { workExecutionLocation } from './execution-location.ts';
@@ -21,7 +21,7 @@ import { ModelUnavailableError } from '../session/session-lifecycle.ts';
 import { matchChatsBy } from './match-chats.ts';
 import { withChatEvidence } from './places.ts';
 import { selectLocalStartFolder } from './start-folder.ts';
-import { workStartConfiguration } from './start-configuration.ts';
+import { resolveHyperneoThinking, workStartConfiguration } from './start-configuration.ts';
 import type {
   FindQuery,
   PlaceGroup,
@@ -50,6 +50,7 @@ import {
   workInput,
 } from './work-messages.ts';
 import { reject } from './work-operations.ts';
+import { readWorkerLastTurn } from '../../storage/repositories/work-started-sessions-worker.ts';
 
 const OPEN = `status IN ('active', 'paused', 'pending_worktree_choice')`;
 const OWN_SESSIONS = `space_id IS NULL AND room_id IS NULL AND id NOT LIKE 'neo:%' AND type IN ('worker', 'general')`;
@@ -95,7 +96,55 @@ export interface HyperneoSessionRow {
   queryFailureError?: string | null;
 }
 
+export async function compactHyperneoWorker(
+  session: Pick<AgentSession, 'getProcessingState' | 'messageQueue' | 'ensureQueryStarted'>,
+  onCompacted: (listener: () => void) => () => void
+): Promise<Result<{ compacted: boolean }>> {
+  const queue = session.messageQueue;
+  const idle = () =>
+    session.getProcessingState().status === 'idle' &&
+    queue.size() === 0 &&
+    !queue.hasOutstandingInternalCompaction();
+  if (!idle()) return reject('busy', 'The HyperNeo session still has work to process.');
+
+  const completed = Promise.withResolvers<Result<{ compacted: boolean }>>();
+  const startup = new AbortController();
+  const id = crypto.randomUUID();
+  let enqueued = false;
+  const unconfirmed = () =>
+    completed.resolve(reject('not_delivered', 'The HyperNeo session did not confirm compaction.'));
+  const unsubscribe = onCompacted(() => {
+    if (enqueued) completed.resolve({ ok: true, value: { compacted: true } });
+  });
+  const timeout = setTimeout(() => {
+    startup.abort();
+    unconfirmed();
+  }, 60_000);
+  try {
+    const enqueue = async () => {
+      if (!queue.isRunning()) await session.ensureQueryStarted(startup.signal);
+      if (startup.signal.aborted) return;
+      if (!idle()) {
+        completed.resolve(reject('busy', 'The HyperNeo session still has work to process.'));
+        return;
+      }
+      if (!queue.isRunning()) return unconfirmed();
+      enqueued = true;
+      await queue.enqueueWithId(id, '/compact', true, { durable: true, prepend: true });
+    };
+    void enqueue().catch(() => {
+      if (!queue.hasOutstandingInternalCompaction()) unconfirmed();
+    });
+    return await completed.promise;
+  } finally {
+    clearTimeout(timeout);
+    unsubscribe();
+    queue.remove(id);
+  }
+}
+
 export interface HyperneoSessionControl {
+  compact?: WorkAdapter['compact'];
   rename?: WorkAdapter['rename'];
   archive?: WorkAdapter['archive'];
   withdraw?: (
@@ -114,6 +163,10 @@ export interface HyperneoSessionControl {
   ): Promise<string>;
   resolveModel(model: string): Promise<{ id: string; provider: string } | null>;
   resolveDefaultModel?(): Promise<{ id: string; provider: string } | null>;
+  reconfigure?(
+    sessionId: string,
+    settings: { model?: string; provider?: string; effort?: string }
+  ): Promise<boolean>;
   effort?(sessionId: string): string | null;
   model(sessionId: string): string | null;
   provider?(sessionId: string): string | null;
@@ -154,6 +207,15 @@ export interface HyperneoLastResult {
 }
 
 type Gate<Value> = { value: Value } | { reason: Rejected };
+
+export function hyperneoCacheUntil(
+  turn: { at: number; oneHourCache: boolean } | null,
+  provider: string | null | undefined
+): number | null {
+  if (!turn) return null;
+  const claude = (provider ?? 'anthropic') === 'anthropic';
+  return turn.at + (claude && !turn.oneHourCache ? 5 * 60_000 : 60 * 60_000);
+}
 
 export function hyperneoWorkStatus(status: string, processing: string | null): WorkStatus {
   if (status === 'archived' || status === 'ended' || processing === 'interrupted') return 'stopped';
@@ -621,12 +683,7 @@ async function requireHyperneoStartConfiguration(
   request: StartRequest,
   deps: HyperneoAdapterDeps
 ): Promise<Gate<HyperneoStartRequest>> {
-  const effort =
-    request.effort === undefined ? undefined : workStartConfiguration.normalize(request.effort);
-  const thinking =
-    effort === undefined
-      ? undefined
-      : THINKING_OPTIONS.find((entry) => [entry.value, entry.label.toLowerCase()].includes(effort));
+  const thinking = resolveHyperneoThinking(request.effort);
   if (request.effort !== undefined && !thinking)
     return { reason: reject('unsupported_effort', `Unknown HyperNeo effort ${request.effort}.`) };
   const configured = { ...request, ...(thinking ? { effort: thinking.label.toLowerCase() } : {}) };
@@ -837,6 +894,7 @@ export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
       'stop',
       ...(deps.sessions.withdraw ? ['withdraw' as const] : []),
       ...(deps.sessions.rename ? ['rename' as const] : []),
+      ...(deps.sessions.compact ? ['compact' as const] : []),
       ...(deps.sessions.archive ? ['archive' as const] : []),
     ],
     find: async (query) =>
@@ -851,7 +909,7 @@ export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
     resolveStartConfiguration: async (request) => {
       const result = await requireHyperneoStartConfiguration(request, deps);
       if ('reason' in result) return result.reason;
-      if (request.model === undefined && request.effort !== undefined) {
+      if (request.model === undefined) {
         const model = await deps.sessions.resolveDefaultModel?.();
         return model
           ? { ok: true, value: { ...result.value, model: model.id, provider: model.provider } }
@@ -859,6 +917,9 @@ export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
       }
       return { ok: true, value: result.value };
     },
+    reconfigure: deps.sessions.reconfigure
+      ? (ref, settings) => deps.sessions.reconfigure!(ref.id, settings)
+      : undefined,
     start: (request, context) => runHyperneoStart(request, context, deps),
     turns: async (ref, cursor, limit) => ({
       ok: true,
@@ -871,6 +932,9 @@ export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
       : undefined,
     status: async (ref, since, receipt) => runHyperneoStatus(ref, deps, since, receipt),
     stop: async (ref) => runHyperneoStop(ref, deps),
+    compact: deps.sessions.compact,
+    cacheUntil: async (ref) =>
+      hyperneoCacheUntil(readWorkerLastTurn(deps.db(), ref.id), deps.sessions.provider?.(ref.id)),
     archive: async (ref, admit) => {
       const check = () => {
         const found = requireHyperneoSession(ref, deps);

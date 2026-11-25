@@ -15,7 +15,8 @@ Public WebSocket work.start must deliver that observed Agent line in the first
 task input after import, matched to its native inbox receipt. Then the real todo
 runner for a core.evidence file-check task calls public work.status and work.send:
 stale row values are replaced with Opus 5.5/medium, then Sonnet 5/high, then Sonnet
-5/unknown. The actual native transcript input and stored todo identity must agree.
+5/unknown. The native transcript follow-ups contain a delivery ID and the
+requested instruction. The observed model and effort are stored on the todo.
 Same-ref bind preserves identity; replacement clears it. observed.json retains
 RPC replies, native frames and delivered text; run-status.json confirms cleanup.
 
@@ -24,7 +25,7 @@ Codex/Copilot clients are unverified. Unit adapter tests cover the other first-i
 boundaries and HyperNeo effort without request.effort.
 
 The same helper also enters the real daemon's production MCP operation registry:
-neo.ask.open and neo.todo.add create todos with a bind target, which must
+neo.ask.propose and neo.todo.add create todos with a bind target, which must
 immediately store observed identity. A bind target naming a second synthetic Claude worker must
 read that worker's Sonnet/high identity. This exercises production todoControls wiring,
 not just a runner supplied by a test harness. Failed/malformed status responses
@@ -44,6 +45,9 @@ refreshing a bound todo must retain the pair previously confirmed at start.
 This identity-silent read supplies no newer observation. A successful partial
 observation still replaces the pair together (missing effort becomes unknown),
 and an explicit identityObservation with no fields clears both to unknown.
-The unit follow-up regression checks the delivered Codex Agent line as well.
-Codex status does not yet observe model/effort changes; the brief labels retained
-values as last observed, rather than asserting they are newly confirmed.
+The unit follow-up regression checks that the Codex input carries just the
+delivery ID and the instruction. Codex status does not yet observe model or
+effort changes.
+
+The helper seeds an accepted historical ask for its unrelated work fixture.
+Use new-work-source.md for the real proposal and human-approval path.

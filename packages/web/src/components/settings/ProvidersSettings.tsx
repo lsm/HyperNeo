@@ -1,8 +1,16 @@
+import { OXAP_HARNESSES, isOxapHarness, oxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
+import { invokeOperation, requireAccepted } from '../../lib/operations.ts';
 import { MODEL_LIST_REQUEST_TIMEOUT_MS } from '@hyperneo/shared/provider';
 import { ChevronDownGlyph } from '../icons/common-glyphs.tsx';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useSignalEffect } from '@preact/signals';
-import type { ProviderRecord, CredentialStoreStatus } from '@hyperneo/shared';
+import { GLOBAL_SYSTEM_SNAPSHOT_REQUEST, STATE_CHANNELS } from '@hyperneo/shared';
+import type {
+  ProviderRecord,
+  CredentialStoreStatus,
+  GlobalSystemSnapshot,
+  GlobalSettings,
+} from '@hyperneo/shared';
 import type { ProviderAuthStatus, CuratedModel } from '@hyperneo/shared/provider';
 import {
   updateGlobalSettings,
@@ -194,6 +202,10 @@ export function ProvidersSettings() {
       setSavingAllowlist(false);
     }
   };
+  const [hubBinary, setHubBinary] = useState<GlobalSettings['oxapHub']>();
+  const [harnessDrafts, setHarnessDrafts] = useState<
+    Record<string, { harness: string; executable: string }>
+  >({});
   const [providers, setProviders] = useState<EnrichedProvider[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -507,9 +519,6 @@ export function ProvidersSettings() {
         toast.error(response.error || 'Failed to start OAuth flow');
         return;
       }
-      if (response.authUrl) {
-        window.open(response.authUrl, '_blank');
-      }
       setOauthFlow({
         providerId: provider.providerId,
         providerName: provider.displayName,
@@ -797,6 +806,45 @@ export function ProvidersSettings() {
     setPendingId(null);
   };
 
+  const saveHarness = async (
+    provider: EnrichedProvider,
+    draft: { harness: string; executable: string },
+    hasExecutableField: boolean
+  ) => {
+    setPendingId(provider.id);
+    try {
+      const hub = connectionManager.getHubIfConnected();
+      if (!hub) throw new Error('Not connected');
+      requireAccepted(
+        await invokeOperation(
+          hub,
+          'oxap.settings.save',
+          {
+            providerId: provider.providerId,
+            harness: draft.harness,
+            settings: hasExecutableField ? { executable: draft.executable } : {},
+          },
+          { timeout: 300_000 }
+        )
+      );
+      await loadProviders(false);
+      try {
+        const snapshot = await hub.request<GlobalSystemSnapshot>(
+          STATE_CHANNELS.GLOBAL_SNAPSHOT,
+          GLOBAL_SYSTEM_SNAPSHOT_REQUEST
+        );
+        setHubBinary(snapshot.settings?.settings?.oxapHub);
+      } catch {
+        toast.warning('Client saved. Could not refresh OXAP installation details.');
+      }
+      toast.success('Client saved');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not save client');
+    } finally {
+      setPendingId(null);
+    }
+  };
+
   const healthDotClass = (status: string) => {
     switch (status) {
       case 'healthy':
@@ -917,7 +965,7 @@ export function ProvidersSettings() {
               class="text-accent hover:underline"
               onClick={() => navigateToSettings('harness')}
             >
-              Sessions &amp; Harness
+              Sessions &amp; Clients
             </button>
             .
           </p>
@@ -925,6 +973,32 @@ export function ProvidersSettings() {
           {providers.length > 0 && (
             <SettingsGroup>
               {providers.map((provider) => {
+                const config = (() => {
+                  try {
+                    return JSON.parse(provider.configJson ?? '{}') as {
+                      harness?: string;
+                      harnessSettings?: { executable?: string };
+                    };
+                  } catch {
+                    return {};
+                  }
+                })();
+                const eligible = Object.entries(OXAP_HARNESSES).filter(([, row]) =>
+                  (row.providers as readonly string[]).includes(provider.providerId)
+                );
+                const draft = harnessDrafts[provider.id] ?? {
+                  harness: config.harness ?? 'sdk',
+                  executable: config.harnessSettings?.executable ?? '',
+                };
+                const selectedOxap = isOxapHarness(draft.harness)
+                  ? oxapHarness(draft.harness)
+                  : undefined;
+                const executableHarness =
+                  selectedOxap ??
+                  (config.harnessSettings?.executable ? eligible[0]?.[1] : undefined);
+                const hasExecutableField =
+                  executableHarness?.settings.includes('executable') ?? false;
+                const installedHub = hubBinary ?? globalSettings.value?.oxapHub;
                 const isExpanded = expandedId === provider.id;
                 const isPending = pendingId === provider.id;
                 const isCustom = provider.kind === 'custom_endpoint';
@@ -1062,6 +1136,88 @@ export function ProvidersSettings() {
 
                     {isExpanded && (
                       <div class="px-4 pb-4 border-t border-white/[0.06] space-y-4">
+                        {eligible.length > 0 && (
+                          <div class="pt-3 space-y-2">
+                            <label class="block text-sm">
+                              Client
+                              <select
+                                aria-label="Client"
+                                value={draft.harness}
+                                onChange={(e) =>
+                                  setHarnessDrafts((prev) => ({
+                                    ...prev,
+                                    [provider.id]: { ...draft, harness: e.currentTarget.value },
+                                  }))
+                                }
+                                class="block w-full bg-bg border border-line rounded px-2 py-1.5"
+                              >
+                                <option value="sdk">Claude Code</option>
+                                {eligible.map(([id, row]) => (
+                                  <option value={id}>{row.label}</option>
+                                ))}
+                              </select>
+                            </label>
+                            {hasExecutableField && executableHarness && (
+                              <label class="block text-sm">
+                                Client executable
+                                <input
+                                  aria-label="Client executable"
+                                  placeholder={`Absolute path to ${executableHarness.label} executable`}
+                                  value={draft.executable}
+                                  onInput={(e) =>
+                                    setHarnessDrafts((prev) => ({
+                                      ...prev,
+                                      [provider.id]: {
+                                        ...draft,
+                                        executable: e.currentTarget.value,
+                                      },
+                                    }))
+                                  }
+                                  class="block w-full bg-bg border border-line rounded px-2 py-1.5"
+                                />
+                                <span class="block text-xs text-fg-muted">
+                                  An absolute path is required.
+                                </span>
+                              </label>
+                            )}
+                            {selectedOxap && (
+                              <div class="text-sm">
+                                <p>OXAP installation</p>
+                                {installedHub ? (
+                                  <dl class="mt-1 space-y-1 text-xs text-fg-muted break-all">
+                                    <div>
+                                      <dt class="inline">Path: </dt>
+                                      <dd class="inline">{installedHub.path}</dd>
+                                    </div>
+                                    <div>
+                                      <dt class="inline">Version: </dt>
+                                      <dd class="inline">{installedHub.version}</dd>
+                                    </div>
+                                    <div>
+                                      <dt class="inline">SHA-256: </dt>
+                                      <dd class="inline">{installedHub.sha256}</dd>
+                                    </div>
+                                  </dl>
+                                ) : (
+                                  <p class="text-xs text-fg-muted">OXAP is not installed</p>
+                                )}
+                              </div>
+                            )}
+                            {(selectedOxap || hasExecutableField) && (
+                              <p class="text-xs text-fg-muted">
+                                Saving restarts OXAP and interrupts active chats using OXAP clients.
+                              </p>
+                            )}
+                            <Button
+                              size="sm"
+                              variant="primary"
+                              disabled={isPending}
+                              onClick={() => void saveHarness(provider, draft, hasExecutableField)}
+                            >
+                              Save client
+                            </Button>
+                          </div>
+                        )}
                         <div class="pt-3 space-y-2">
                           <h5 class="text-xs font-semibold uppercase tracking-wider text-fg-muted mb-2">
                             Authentication

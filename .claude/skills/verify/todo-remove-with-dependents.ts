@@ -1,3 +1,5 @@
+import { acceptProposalFixture } from './accepted-ask-fixtures.ts';
+import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -42,8 +44,9 @@ try {
     const cards = (askId: string) =>
       (db.prepare('SELECT id, state, kind, options, todos, cause, text FROM neo_questions WHERE ask_id = ? AND cause IS NOT NULL').all(askId) as { id: string; state: string; kind: string; options: string; todos: string; cause: string; text: string }[]);
     const chain = async (name: string) => {
-      const ask = await invoke(`${name}: open the ask`, 'neo.ask.open', { title: `Synthetic ${name}`, request: `Synthetic request for ${name}` });
+      const ask = await invoke(`${name}: open the ask`, 'neo.ask.propose', { title: `Synthetic ${name}`, request: `Synthetic request for ${name}` });
       assert.equal(ask.ok, true, JSON.stringify(ask));
+      acceptProposalFixture(new NeoAskTodoRepository(db), ask.ask.id);
       const add = async (title: string, after: string[]) => {
         const added = await invoke(`${name}: add ${title}`, 'neo.todo.add', { askId: ask.ask.id, title, check, after });
         assert.equal(added.ok, true, JSON.stringify(added));
@@ -82,42 +85,17 @@ try {
     assert.deepEqual(rows(gone.askId), { A: 'removed []', B: `removed ["${gone.a}"]`, C: `removed ["${gone.a}"]`, D: `removed ["${gone.b}"]` });
     assert.deepEqual(cards(gone.askId), []);
 
-    for (const [name, answer, after] of [
-      ['card continue', 'Continue', (ids: { b: string }) => ({ A: 'removed []', B: 'todo []', C: 'todo []', D: `todo ["${ids.b}"]` })],
-      ['card remove', 'Remove these', (ids: { a: string; b: string }) => ({ A: 'removed []', B: `removed ["${ids.a}"]`, C: `removed ["${ids.a}"]`, D: `removed ["${ids.b}"]` })],
-    ] as const) {
-      const ids = await chain(name);
-      const removed = await invoke(`${name}: remove A with no decision`, 'neo.todo.remove', { todoId: ids.a, reason: 'Synthetic: not needed' });
-      assert.equal(removed.ok, true, JSON.stringify(removed));
-      assert.deepEqual(rows(ids.askId), { A: 'removed []', B: `todo ["${ids.a}"]`, C: `todo ["${ids.a}"]`, D: `todo ["${ids.b}"]` });
-      const [card, ...extra] = cards(ids.askId);
-      evidence.push({ step: `${name}: the card`, card });
-      assert.deepEqual(extra, []);
-      assert.deepEqual(
-        { ...card, id: null, options: JSON.parse(card.options), todos: JSON.parse(card.todos) },
-        { id: null, state: 'open', kind: 'choice', options: ['Continue', 'Remove these'], todos: [ids.b, ids.c, ids.a], cause: 'removed_prerequisite', text: '"A" was removed. Continue "B", "C" without it, or remove these steps too?' }
-      );
-      await human(`${name}: the human answers ${answer}`, card.id, [answer]);
-      assert.deepEqual(rows(ids.askId), after(ids));
-      assert.equal(cards(ids.askId)[0].state, 'answered');
-    }
-
-    const overlap = await invoke('overlap: open the ask', 'neo.ask.open', { title: 'Synthetic overlap', request: 'Synthetic request for overlap' });
-    assert.equal(overlap.ok, true, JSON.stringify(overlap));
-    const put = async (title: string, after: string[]) => (await invoke(`overlap: add ${title}`, 'neo.todo.add', { askId: overlap.ask.id, title, check, after })).todo.id as string;
-    const [oa, ob, oc] = [await put('A', []), await put('B', []), await put('C', [])];
-    await put('X', [oa, oc]);
-    await put('Y', [ob, oc]);
-    for (const [title, id] of [['A', oa], ['B', ob], ['C', oc]])
-      assert.equal((await invoke(`overlap: remove ${title} with no decision`, 'neo.todo.remove', { todoId: id, reason: 'Synthetic: not needed' })).ok, true);
-    const merged = cards(overlap.ask.id);
-    evidence.push({ step: 'overlap: the cards', merged });
-    assert.deepEqual(merged.map((card) => card.state).sort(), ['open', 'retired', 'retired']);
-    const open = merged.find((card) => card.state === 'open')!;
-    assert.equal(open.text, '"A", "B", "C" were removed. Continue "X", "Y" without them, or remove these steps too?');
-    await human('overlap: the human answers Continue', open.id, ['Continue']);
-    const after = rows(overlap.ask.id);
-    assert.deepEqual([after.X, after.Y], ['todo []', 'todo []']);
+    const ids = await chain('no decision');
+    const removed = await invoke('no decision: remove A', 'neo.todo.remove', { todoId: ids.a, reason: 'Synthetic: not needed' });
+    assert.equal(removed.ok, true, JSON.stringify(removed));
+    assert.deepEqual(rows(ids.askId), { A: 'removed []', B: `todo ["${ids.a}"]`, C: `todo ["${ids.a}"]`, D: `todo ["${ids.b}"]` });
+    assert.deepEqual(cards(ids.askId), []);
+    const continued = await invoke('no decision: Neo continues B without A', 'neo.todo.edit', { todoId: ids.b, after: [] });
+    assert.equal(continued.ok, true, JSON.stringify(continued));
+    const dropped = await invoke('no decision: Neo removes C', 'neo.todo.remove', { todoId: ids.c, reason: 'Synthetic: not needed without A' });
+    assert.equal(dropped.ok, true, JSON.stringify(dropped));
+    assert.deepEqual(rows(ids.askId), { A: 'removed []', B: 'todo []', C: `removed ["${ids.a}"]`, D: `todo ["${ids.b}"]` });
+    assert.deepEqual(cards(ids.askId), []);
   } finally { await app.cleanup(); }
-  console.log('PASS: on the real daemon a removed prerequisite ends in continued dependents, removed dependents, or one card whose answer the daemon applies; an add without after is refused.');
+  console.log('PASS: on the real daemon a removed prerequisite ends in continued or removed dependents, or leaves them waiting for Neo with no card; Neo continues or removes them itself; an add without after is refused.');
 } finally { globalThis.fetch = network; writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2)); }

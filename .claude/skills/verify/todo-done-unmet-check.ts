@@ -1,3 +1,4 @@
+import { seedHistoricalAsk } from './accepted-ask-fixtures.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -49,7 +50,8 @@ try {
         db.prepare("INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?, 'Synthetic unmet check proof', '/tmp', '2026-10-28T00:00:00Z', '2026-10-28T00:00:00Z', 'active', '{}', '{}')").run(sender);
         new NeoRepository(db).reserveBinding({ sessionId: sender, kind: 'neo', projectId: null });
         new SettingsRepository(db).updateGlobalSettings({ language: 'en' });
-        const opened = await invoke('neo.ask.open', { title: 'Synthetic unmet check proof', request: 'Mark work done before its check passes', todos: [
+        seedHistoricalAsk(store, sender, { title: 'Synthetic unmet check proof', request: 'Mark work done before its check passes' });
+        const opened = await invoke('neo.ask.propose', { title: 'Synthetic unmet check proof', request: 'Mark work done before its check passes', todos: [
           { after: [], title: 'Merge synthetic PR', check: { pack: 'coding', kind: 'pr_merged', params: { urls: ['https://github.com/synthetic/proof/pull/1'] } } },
           { after: [], title: 'Record result', check: { pack: 'core', kind: 'evidence', params: { path: missing } } },
         ] });
@@ -63,7 +65,8 @@ try {
         blocked(ticked.todo, 'check_unmet:');
         const wrong = await invoke('neo.todo.edit', { todoId: ids.evidence, done: 'met', evidence: 'Result written elsewhere' });
         blocked(wrong.todo, 'check_unmet:');
-        const terminal = await invoke('neo.ask.open', { title: 'Human drops unfinished work', request: 'Settle with an unmet check', todos: [{ after: [], title: 'Unverified terminal step', check: { pack: 'core', kind: 'evidence', params: { path: missing } } }] });
+        seedHistoricalAsk(store, sender, { title: 'Human drops unfinished work', request: 'Settle with an unmet check' });
+        const terminal = await invoke('neo.ask.propose', { title: 'Human drops unfinished work', request: 'Settle with an unmet check', todos: [{ after: [], title: 'Unverified terminal step', check: { pack: 'core', kind: 'evidence', params: { path: missing } } }] });
         ids.settled = terminal.todos[0].id;
         start(ids.settled);
         blocked((await invoke('neo.todo.edit', { todoId: ids.settled, done: 'met', evidence: 'Verification outstanding' })).todo, 'check_unmet:');
@@ -73,7 +76,8 @@ try {
         assert.deepEqual(store.getTodo(ids.settled), before);
         assert.equal(store.getAsk(terminal.ask.id)?.status, 'open');
         await invoke('neo.ask.settle', { askId: terminal.ask.id, status: 'dropped', outcome: 'Human abandoned the work' });
-        const legacy = await invoke('neo.ask.open', { title: 'Legacy unexplained removal', request: 'Abandon unexplained legacy work', todos: [{ after: [], title: 'Previously removed step', check: { pack: 'core', kind: 'evidence', params: { path: missing } } }] });
+        seedHistoricalAsk(store, sender, { title: 'Legacy unexplained removal', request: 'Abandon unexplained legacy work' });
+        const legacy = await invoke('neo.ask.propose', { title: 'Legacy unexplained removal', request: 'Abandon unexplained legacy work', todos: [{ after: [], title: 'Previously removed step', check: { pack: 'core', kind: 'evidence', params: { path: missing } } }] });
         ids.legacy = legacy.todos[0].id;
         store.updateTodo(store.getTodo(ids.legacy)!, { state: 'removed', reason: null }, Date.now());
         const removed = await invoke('neo.todo.remove', { todoId: ids.legacy, reason: 'Cannot amend an already removed row' }, false);

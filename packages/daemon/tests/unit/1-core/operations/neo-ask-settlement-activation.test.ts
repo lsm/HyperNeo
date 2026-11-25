@@ -129,7 +129,7 @@ describe('activated ask settlement', () => {
     );
   const reopen = () =>
     ops
-      .find((op) => op.name === 'neo.ask.open')!
+      .find((op) => op.name === 'neo.ask.propose')!
       .execute(
         { title: 'Work', request: 'Keep work', todos: [] },
         { source: 'mcp', role: 'neo', sessionId: 'neo' }
@@ -213,7 +213,41 @@ describe('activated ask settlement', () => {
         todoId: 'first',
         to: 'stranger',
         from: 'neo',
-        text: 'Neo closed your request "first" as removed: Explicitly ended',
+        text: 'Neo closed your request "first" as removed: Explicitly ended\nNo todo was added for it.',
+      },
+    ]);
+    await settle('dropped');
+    expect(replies()).toHaveLength(1);
+  });
+
+  test('settling a request ask with other work tells its sender each final state once', async () => {
+    const request = store.addTodo(
+      'request',
+      'ask',
+      {
+        title: 'Label and review',
+        doneWhen: 'Neo replied',
+        check: null,
+        instruction: null,
+        named: { requestFrom: 'stranger' },
+      },
+      1
+    );
+    store.updateTodo(request, { state: 'done', reason: 'Split' }, 3);
+    const replies = () =>
+      (
+        db.prepare("SELECT payload FROM job_queue WHERE queue = 'neo.request.reply'").all() as {
+          payload: string;
+        }[]
+      ).map((row) => JSON.parse(row.payload));
+    expect(await settle('dropped')).toMatchObject({ ok: true, ask: { status: 'dropped' } });
+    expect(replies()).toEqual([
+      {
+        todoId: 'request',
+        key: 'neo-request-settled:ask',
+        to: 'stranger',
+        from: 'neo',
+        text: 'Your request "Label and review" is finished:\n"first" (first) removed: The ask was settled dropped.',
       },
     ]);
     await settle('dropped');

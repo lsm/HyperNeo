@@ -2,6 +2,7 @@ import { neoToolDescription } from '@hyperneo/prompts';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import { z } from 'zod';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import {
   isNeoUnattendedCleanup,
@@ -146,12 +147,17 @@ export function createNeoReorganizeOperation(runtime: NeoReorganizeRuntime) {
     return { ok: true, ...(await reorganizeProjects(cleanup)) };
   };
 
+  const run = (superpipe({})('neo.projects.reorganize') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(reorganize, ['input', 'caller'], 'outcome')
+    .endAsync('outcome') as typeof reorganize;
+
   return defineOperation({
     name: 'neo.projects.reorganize',
     description: neoToolDescription('neo.projects.reorganize'),
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'mutate', roles: ['neo'] },
-    execute: (input, caller) => reorganize(input, caller),
+    execute: run,
   });
 }

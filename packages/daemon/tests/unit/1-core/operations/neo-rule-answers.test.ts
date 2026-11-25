@@ -84,7 +84,7 @@ describe('human-approved standing rules', () => {
       {
         sessionId: agent.sessionId,
         requestId: messageId,
-        content: 'A',
+        content: '1',
         replyTo: { kind: 'question', id: questionId },
       },
       human
@@ -159,7 +159,7 @@ describe('human-approved standing rules', () => {
         {
           sessionId: agent.sessionId,
           requestId: messageId,
-          content: 'A',
+          content: '1',
           replyTo: { kind: 'question', id: questionId },
         },
         human
@@ -273,7 +273,7 @@ describe('human-approved standing rules', () => {
               {
                 sessionId: 'neo:10000000-0000-4000-8000-000000000002',
                 requestId: crypto.randomUUID(),
-                content: 'A',
+                content: '1',
                 replyTo: { kind: 'question', id },
               },
               human
@@ -314,7 +314,7 @@ describe('human-approved standing rules', () => {
       multiple: false,
     });
   });
-  test.each([APPLY, 'a'])('chat %s applies the proposal', async (content) => {
+  test.each([APPLY, '1'])('chat %s applies the proposal', async (content) => {
     const id = await propose();
     await invoke(
       'neo.message.send',
@@ -328,7 +328,7 @@ describe('human-approved standing rules', () => {
     );
     expect(saved()).toEqual(['Keep this rule.', ...edit.add]);
   });
-  test.each(['button keep', 'B', 'yes', 'Change the wording'])(
+  test.each(['button keep', '2', 'yes', 'Change the wording'])(
     'human %s leaves rules unchanged',
     async (answer) => {
       const before = saved();
@@ -354,7 +354,7 @@ describe('human-approved standing rules', () => {
     }
   );
   test.each(['button', 'chat', 'applyAnswer', 'rule-save'])(
-    'a yes/no proposal opened before the upgrade still applies on yes by %s',
+    'a yes/no proposal answered yes applies nothing by %s',
     async (surface) => {
       const questionId = 'legacy-rule';
       const text = `Apply these standing-rule changes?\n\n${JSON.stringify(edit)}`;
@@ -377,7 +377,7 @@ describe('human-approved standing rules', () => {
           'INSERT INTO neo_rule_proposals (question_id, request_id, edit_json, question_text) VALUES (?, ?, ?, ?)'
         )
         .run(questionId, 'legacy', JSON.stringify(edit), text);
-      if (surface === 'applyAnswer') db.updateGlobalSettings({ neo: { standingRules: [] } });
+      const before = saved();
       const messageId = crypto.randomUUID();
       if (surface === 'button' || surface === 'applyAnswer')
         await invoke('neo.question.answer', { questionId, answer: 'yes' }, human);
@@ -392,21 +392,17 @@ describe('human-approved standing rules', () => {
           },
           human
         );
-      if (surface === 'applyAnswer') {
-        db.updateGlobalSettings({
-          neo: { standingRules: ['Old synthetic rule.', 'Keep this rule.'] },
-        });
+      if (surface === 'applyAnswer')
         expect(await invoke('neo.rule.applyAnswer', { questionId })).toMatchObject({
-          value: { ok: true },
+          value: { ok: false },
         });
-      }
       if (surface === 'rule-save') {
         db.getSDKMessageRepo().markDeliveryConsumedByUuid(agent.sessionId!, messageId);
         expect(await invoke('neo.rule.save', { ...edit, messageId })).toMatchObject({
-          value: { ok: true, standingRules: ['Keep this rule.', ...edit.add] },
+          value: { ok: false },
         });
       }
-      expect(saved()).toEqual(['Keep this rule.', ...edit.add]);
+      expect(saved()).toEqual(before);
     }
   );
   test('with twenty rules a proposal must replace one, and keeps the other nineteen', async () => {
@@ -487,7 +483,7 @@ describe('human-approved standing rules', () => {
     const input = {
       sessionId: 'neo:10000000-0000-4000-8000-000000000002',
       requestId,
-      content: 'A',
+      content: '1',
       replyTo: { kind: 'question', id: second },
     };
     const send = () =>

@@ -1,3 +1,4 @@
+import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
@@ -22,6 +23,7 @@ import { readDriverSettlement } from '../../../../src/lib/neo/driver-work';
 import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
+  compactHyperneoWorker,
   createHyperneoAdapter,
   type HyperneoSessionControl,
 } from '../../../../src/lib/drivers/hyperneo-adapter';
@@ -31,6 +33,52 @@ import type { MailboxHandoffOutcome } from '../../../../src/lib/mailbox/handoff'
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { fillSdkMessageFixtureColumns } from '../../helpers/sdk-message-fixture-columns';
+
+describe('compactHyperneoWorker', () => {
+  test('wakes a stopped query queue and waits for the compact boundary', async () => {
+    const messageQueue = new MessageQueue();
+    const ensureQueryStarted = vi.fn(async () => messageQueue.start());
+    const enqueued = Promise.withResolvers<unknown>();
+    messageQueue.onMessageEnqueued = (id) =>
+      enqueued.resolve(messageQueue.getPendingOrInFlightContent(id));
+    let complete = () => {};
+    const unsubscribe = vi.fn();
+    try {
+      const pending = compactHyperneoWorker(
+        { messageQueue, ensureQueryStarted, getProcessingState: () => ({ status: 'idle' }) },
+        (listener) => {
+          complete = listener;
+          return unsubscribe;
+        }
+      );
+      expect(await enqueued.promise).toBe('/compact');
+      expect(ensureQueryStarted).toHaveBeenCalledTimes(1);
+      complete();
+      expect(await pending).toEqual({ ok: true, value: { compacted: true } });
+      expect(unsubscribe).toHaveBeenCalledTimes(1);
+    } finally {
+      messageQueue.stop();
+    }
+  });
+
+  test('leaves the queue alone while a worker has a live turn', async () => {
+    const messageQueue = new MessageQueue();
+    const subscribe = vi.fn(() => () => {});
+    const ensureQueryStarted = vi.fn(async () => {});
+    const result = await compactHyperneoWorker(
+      {
+        messageQueue,
+        ensureQueryStarted,
+        getProcessingState: () => ({ status: 'processing', messageId: 'live', phase: 'streaming' }),
+      },
+      subscribe
+    );
+    expect(result).toMatchObject({ ok: false, reason: 'busy' });
+    expect(messageQueue.size()).toBe(0);
+    expect(subscribe).not.toHaveBeenCalled();
+    expect(ensureQueryStarted).not.toHaveBeenCalled();
+  });
+});
 
 function control(
   db: Database,
@@ -196,6 +244,36 @@ describe('hyperneo adapter send and status', () => {
       ...control(db, events, withdraw, provider, resolveDefaultModel),
     });
   }
+
+  test('reports the prompt cache window from the last main-thread turn', async () => {
+    const assistant = db.prepare(
+      `INSERT INTO sdk_messages (session_id, message_type, sdk_message, timestamp, parent_tool_use_id)
+        VALUES (?, 'assistant', ?, ?, ?)`
+    );
+    const usage = (oneHour: number) =>
+      JSON.stringify({
+        type: 'assistant',
+        message: { usage: { cache_creation: { ephemeral_1h_input_tokens: oneHour } } },
+      });
+    assistant.run('idle', usage(0), '2026-10-04T09:30:00.000Z', null);
+    assistant.run('idle', usage(0), '2026-10-04T10:00:00.000Z', null);
+    assistant.run('idle', usage(900), '2026-10-04T11:00:00.000Z', 'tool-1');
+    assistant.run('busy', usage(900), '2026-10-04T10:00:00.000Z', null);
+    assistant.run(
+      'space',
+      JSON.stringify({ type: 'assistant', message: {} }),
+      '2026-10-04T10:00:00.000Z',
+      null
+    );
+    const at = Date.parse('2026-10-04T10:00:00.000Z');
+    const claude = adapter();
+    expect(await claude.cacheUntil!({ adapter: 'hyperneo', id: 'idle' })).toBe(at + 5 * 60_000);
+    expect(await claude.cacheUntil!({ adapter: 'hyperneo', id: 'busy' })).toBe(at + 60 * 60_000);
+    expect(await claude.cacheUntil!({ adapter: 'hyperneo', id: 'space' })).toBe(at + 5 * 60_000);
+    expect(await claude.cacheUntil!({ adapter: 'hyperneo', id: 'gone' })).toBeNull();
+    const glm = adapter(undefined, undefined, () => 'glm');
+    expect(await glm.cacheUntil!({ adapter: 'hyperneo', id: 'idle' })).toBe(at + 60 * 60_000);
+  });
 
   test('status preserves the session provider through operation result validation', async () => {
     const driver = adapter(undefined, undefined, () => 'selected-provider');
@@ -852,6 +930,17 @@ describe('hyperneo adapter start and stop', () => {
     machine: 'imac',
     name: 'x',
     ...(folder ? { folder } : {}),
+  });
+
+  test('advertises compact only when the session controller implements it', () => {
+    expect(adapter().capabilities).not.toContain('compact');
+    const compact: NonNullable<HyperneoSessionControl['compact']> = async () => ({
+      ok: true,
+      value: { compacted: true },
+    });
+    const driver = adapter({ compact });
+    expect(driver.capabilities).toContain('compact');
+    expect(driver.compact).toBe(compact);
   });
 
   test('start opens a session in a git folder on its own worktree and sends the message', async () => {

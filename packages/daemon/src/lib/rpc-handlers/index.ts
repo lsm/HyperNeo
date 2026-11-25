@@ -19,9 +19,14 @@ import { claudeInboxName } from '../drivers/claude-inbox.ts';
 import { createClaudeInboxDriver } from '../drivers/claude-inbox-driver.ts';
 import { ClaudeInboxRouteRepository } from '../../storage/repositories/claude-inbox-route-repository.ts';
 import { createClaudeDesktopModsDriver } from '../drivers/claude-desktop-mods-driver.ts';
+import { createCodexSetupOperation } from '../drivers/codex-setup-operation.ts';
+import { codexSetupQuestion } from '../drivers/codex-setup-question.ts';
+import type { createCodexSetup } from '../drivers/codex-setup.ts';
 import { sharedLiveSessions } from '../drivers/claude-desktop-adapter.ts';
 import { spawnProcess } from '../runtime-spawn/index.ts';
 import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
+import { createRemoteSendForwarder } from '../remote-daemons/forward-send.ts';
+import { remoteDaemons } from '../remote-daemons/registry.ts';
 import { join, resolve } from 'node:path';
 import { collectFamilyOperations, type FamilyOperationContext } from './family-operations/index.ts';
 import type { SpaceRpc, SpaceRpcFactory } from './space-rpc.ts';
@@ -30,11 +35,7 @@ import { neoUserFolder } from '../neo/folder.ts';
 import { createNeoService, neoPacksExtension } from '../neo/packs/runtime.ts';
 import type { OperationRegistry } from '../operations/registry.ts';
 import { createDaemonExtensionsOperation, type DaemonExtensions } from '../extensions/contract.ts';
-import {
-  NEO_DRIVER_REFRESH,
-  refreshNeoDriverWork,
-  scheduleDriverRefresh,
-} from '../neo/driver-refresh.ts';
+import { refreshNeoDriverWork, scheduleDriverRefresh } from '../neo/driver-refresh.ts';
 import { NEO_PACK_SWEEP, schedulePackSweep, sweepNeoPacks } from '../neo/pack-sweep.ts';
 import { NEO_REQUEST_REPLY } from '../neo/request-todo.ts';
 import {
@@ -56,7 +57,8 @@ import {
   WORK_FEED_CODEX,
 } from '../drivers/codex-feed.ts';
 import { ensureNeoProject, fileNeoSessions } from '../neo/folder.ts';
-import { readStartedWork } from '../../storage/work-started-sessions.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { workStartedSessionReads } from '../../storage/repositories/work-started-sessions-worker.ts';
 import { CLAUDE_DESKTOP_SESSIONS, ownClaudeSessions } from './family-operations/drivers.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import { createNeoOperations, neoReorganizeRuntime } from '../neo/operations.ts';
@@ -91,6 +93,7 @@ import { registerMcpHandlers } from './mcp-handlers.ts';
 import { publishGlobalSettings, registerSettingsHandlers } from './settings-handlers.ts';
 import { registerCustomEndpointHandlers } from './custom-endpoint-handlers.ts';
 import { registerVoiceHandlers } from './voice-handlers.ts';
+import { createVoiceTestOperations } from '../voice/test-operations.ts';
 import { setupProviderHandlers } from './provider-handlers.ts';
 import { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
 import { setupRewindHandlers } from './rewind-handlers.ts';
@@ -121,6 +124,8 @@ import {
 import type { ExternalEventExtensionContext } from '../external-events/types.ts';
 
 export interface RPCHandlerDependencies {
+  admitCodexWork?: <T>(send: () => Promise<T>) => Promise<T>;
+  codexSetup?: ReturnType<typeof createCodexSetup>;
   extensions: DaemonExtensions;
   watchSessionRepo?: (owner: string, repo: string) => Promise<string | null>;
   messageHub: MessageHub;
@@ -144,7 +149,10 @@ export interface RPCHandlerDependencies {
   liveQueries: LiveQueryEngine;
   skillsManager: SkillsManager;
   mcpImportService: McpImportService;
+  oxapSettings?: OxapSettingsDeps;
 }
+
+import type { OxapSettingsDeps } from '../oxap/oxap-settings.ts';
 
 const log = new Logger('rpc-handlers');
 
@@ -220,6 +228,7 @@ export interface RPCHandlerSetupResult<SpaceServices> {
   sessionScheduler: SessionScheduler;
   handlePeerMessage: (req: Request) => Promise<Response>;
   frontInference: ReturnType<typeof createNeoFrontHandler>;
+  driverRefresh: () => ReturnType<typeof refreshNeoDriverWork>;
   prepareNeoInput: ReturnType<typeof createNeoService>['speech']['prepareInput'];
   attendPollingConcern: (event: NeoAttentionEvent) => Promise<unknown>;
 }
@@ -289,7 +298,16 @@ export async function setupRPCHandlers<SpaceServices = never>(
     deps.internalEventBus,
     deps.db,
     deps.credentialManager,
-    () => neoService.installedPacks()
+    () => neoService.installedPacks(),
+    async (host) => {
+      await neoService.openDefault();
+      return neoService.attend({
+        kind: 'voice.key.saved',
+        subject: { type: 'voice-host', id: host },
+        since: Date.now(),
+        facts: {},
+      });
+    }
   );
   registerCustomEndpointHandlers(
     deps.messageHub,
@@ -310,6 +328,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
     providerRepo: deps.db.providers,
     credentialManager: providerCredentialManager,
     internalEventBus: deps.internalEventBus,
+    oxapSettings: deps.oxapSettings,
   });
 
   setupRewindHandlers(deps.messageHub, deps.sessionManager, deps.internalEventBus);
@@ -386,6 +405,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
         space?.resolveClones ??
         createResolveClones({
           listChildren: (parentId) => deps.db.listChildSessions(parentId),
+          ownsActiveGoal: (sessionId) => deps.db.ownsActiveGoal(sessionId),
           detach: (sessionId) => deps.db.detachSessionFromParent(sessionId),
           ...createCloneLifecycleEffects(
             deps.sessionManager,
@@ -396,6 +416,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
         }),
       listClones: (parentId) => deps.db.listChildSessions(parentId),
       primaryAgentFor: (sessionId) => space?.primaryAgentFor(sessionId) ?? null,
+      runsGoal: (sessionId) => deps.db.ownsActiveGoal(sessionId),
     }
   );
 
@@ -408,7 +429,9 @@ export async function setupRPCHandlers<SpaceServices = never>(
       const session = deps.sessionManager.getSessionFromDB(sessionId);
       return !!session && !['archived', 'ended'].includes(session.status);
     },
+    hasRemoteDaemon: (daemonId) => remoteDaemons.list().some((d) => d.daemonId === daemonId),
     handoff: (args) => handoffPromptToMailbox({ ...args, jobQueue: deps.jobQueue }),
+    forwardRemote: createRemoteSendForwarder(remoteDaemons),
     onError: (error) => log.warn('Claude inbox reply could not be persisted', error),
   });
   void claudeInbox.listen().catch((error) => log.warn('Claude reply inbox not reopened', error));
@@ -456,15 +479,40 @@ export async function setupRPCHandlers<SpaceServices = never>(
     })
   );
   const neoHome = new NeoHomeRepository(neoFolderPath(), neoService.repo);
+  if (deps.codexSetup) {
+    deps.codexSetup.bindQuestion(
+      codexSetupQuestion(neoService.todos, () => neoService.openDefault())
+    );
+    const unsubscribe = deps.internalEventBus.subscribe(
+      'neo.changed',
+      () => {
+        if (deps.settingsManager.getGlobalSettings().codexAppServerBridge?.decision === 'asked')
+          deps.codexSetup?.check();
+      },
+      { subscriberName: 'codex-setup-question' }
+    );
+    driverCleanup.push(async () => unsubscribe());
+  }
+  const startupTasks: Promise<void>[] = [];
   const boundFamilyContext: FamilyOperationContext = {
     ...familyContext,
+    startupTasks,
+    workCleanupAttention: (event) => neoService.attention(event, Date.now()),
+    neoAttention: (event) => neoService.attention(event, Date.now()),
     workerNameSource: (read) => {
       neoService.workerNames = read;
     },
+    workAdapters: (read) => {
+      neoService.workAdapters = read;
+    },
     goalMandateChange: (ref, revision) => neoHome.changedRevision(ref, revision),
+    defaultNeoSession: () => neoService.defaultSessionId(),
+    neoChanged: () => neoService.notifyChanged(),
+    ensureNeo: () => neoService.openDefault(),
     executionPreparations: () => neoService.packs(),
   };
   const familyOperations = [
+    createCodexSetupOperation(deps.codexSetup),
     createSessionToolActivationOperation({
       write: persistToolPreferences,
       exclusive: exclusiveToolPreferences,
@@ -476,10 +524,12 @@ export async function setupRPCHandlers<SpaceServices = never>(
     ...deps.extensions.operations(),
     createDaemonExtensionsOperation(deps.extensions),
     ...createNeoOperations(neoService, codingProjectIdentity, readCodingTodoWorker),
+    ...createVoiceTestOperations(deps.settingsManager, providerCredentialManager),
     ...createNeoHomeOperations(neoService, neoHome),
     createNeoHomeGithubOperation(neoService, neoHome),
     ...createSessionScheduleOperations(sessionScheduler),
   ];
+  await Promise.all(startupTasks);
   sessionScheduler.recover();
   let progressRefresh: Promise<void> | undefined;
   const progressRequested = new Set<string | undefined>();
@@ -546,9 +596,6 @@ export async function setupRPCHandlers<SpaceServices = never>(
       .catch((error) => log.warn('Neo default session not opened', error));
   }
   void neoService.recover();
-  deps.jobProcessor.register(NEO_DRIVER_REFRESH, () =>
-    refreshNeoDriverWork(deps.jobQueue, neoService)
-  );
   scheduleDriverRefresh(deps.jobQueue);
   deps.jobProcessor.register(NEO_PACK_SWEEP, () => sweepNeoPacks(deps.jobQueue, neoService));
   deps.jobProcessor.register(NEO_REQUEST_REPLY, (job) => neoService.deliverRequestReply(job));
@@ -565,6 +612,8 @@ export async function setupRPCHandlers<SpaceServices = never>(
       },
       reorganize: () => reorganizeTopics({ apply: 'unattended' }),
       log: (line) => neoService.logReorganize(line),
+      topics: () => neoService.todos.pickedTopics(),
+      wake: (key, text) => neoService.wakeNeo(key, text),
     })
   );
   scheduleNeoNightlyReorganize(deps.jobQueue, Date.now() + NEO_REORGANIZE_IDLE_MS, null);
@@ -573,10 +622,10 @@ export async function setupRPCHandlers<SpaceServices = never>(
   );
   const startedWork = () =>
     deps.settingsManager.getGlobalSettings().workFeedScope === 'own'
-      ? readStartedWork(deps.db.getDatabase())
+      ? gatewayFor(deps.db.getDatabase()).call(workStartedSessionReads, 'startedWork')
       : null;
   deps.jobProcessor.register(WORK_FEED_CLAUDE, async () => {
-    const started = startedWork();
+    const started = await startedWork();
     return {
       ...(await runClaudeFeed(
         deps.jobQueue,
@@ -589,7 +638,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
     };
   });
   deps.jobProcessor.register(WORK_FEED_CODEX, async () => {
-    const started = startedWork();
+    const started = await startedWork();
     return {
       ...(await runCodexFeed(
         deps.jobQueue,
@@ -630,6 +679,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
     attendPollingConcern: (event: NeoAttentionEvent) => neoService.attend(event),
     handlePeerMessage: createPeerMessageRoute(neoService),
     frontInference: createNeoFrontHandler(neoService),
+    driverRefresh: () => refreshNeoDriverWork(deps.jobQueue, neoService),
     prepareNeoInput: neoService.speech.prepareInput.bind(neoService.speech),
   };
 }

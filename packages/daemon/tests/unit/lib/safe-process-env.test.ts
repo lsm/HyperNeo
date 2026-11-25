@@ -13,7 +13,6 @@ describe('buildSafeProcessEnv', () => {
       })
     ).toEqual({
       HYPERNEO_WORKTREES: '/synthetic/data/worktrees',
-      HYPERNEO_EVIDENCE: '/synthetic/data/work/evidence/worker',
       HYPERNEO_BUILDS: '/synthetic/data/work/builds/worker',
     });
   });

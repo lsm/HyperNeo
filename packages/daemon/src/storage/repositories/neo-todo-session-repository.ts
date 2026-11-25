@@ -1,6 +1,7 @@
 import type { ReactiveDatabase } from '../reactive-database.ts';
-import type { NeoStepRow } from '../../lib/neo/attention/sweep.ts';
+import type { NeoStepRead } from '../../lib/neo/attention/sweep.ts';
 import { neoTodoWithoutFollowUp } from '../../lib/neo/todo-follow-up.ts';
+import { hasPendingTodoDecision } from '../../lib/neo/proposal.ts';
 import { neoTodoWaitReason } from '../../lib/neo/todo-start-gate.ts';
 import { neoTodoCovered } from '../../lib/neo/todo-state.ts';
 import { NeoTurnReportReceipts } from '../../lib/neo/turn-report-receipts.ts';
@@ -9,7 +10,15 @@ import {
   type FollowThroughIncident,
 } from '../../lib/work-queue/follow-through.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
-import { markWorkUnusable, readStartedWork, recordStartedWork } from '../work-started-sessions.ts';
+import {
+  markWorkUnusable,
+  readStartedWork,
+  readTrustedWorkers,
+  readSameAskWorkers,
+  recordWorkRelease,
+  claimTodoWorker,
+  unclaimTodoWorker,
+} from './work-started-sessions-worker.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
@@ -19,6 +28,7 @@ import type { NeoDriverProgress } from '../../lib/neo/settle-driver-work.ts';
 import type { NeoWorkDriverReceipt } from '@hyperneo/shared/types/neo-snapshot';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
+import { releaseReuseFacts } from './neo-ask-input-worker.ts';
 import { WorkDeliveryInputRepository } from './work-delivery-input-repository.ts';
 import { NeoDriverSessionRows } from './neo-driver-session-rows.ts';
 
@@ -65,9 +75,13 @@ function sessionLinks(row: StoredLinks | null | undefined) {
 export const neoWorkerKey = (ref: WorkRef | null | undefined) =>
   ref ? `${ref.adapter}:${ref.id}${ref.daemon ? `@${ref.daemon}` : ''}` : null;
 
-const LIVE_TODO_STATES = ['todo', 'doing', 'blocked', 'failed'];
+const LIVE_TODO_STATES = ['todo', 'doing', 'blocked'];
 
 export class NeoTodoSessionRepository extends NeoDriverSessionRows {
+  read(
+    method: 'readCard',
+    todoId: string
+  ): Promise<ReturnType<NeoTodoSessionRepository['readCard']>>;
   read(
     method: 'unrecordedStarts'
   ): Promise<ReturnType<NeoTodoSessionRepository['unrecordedStarts']>>;
@@ -94,6 +108,14 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     method: 'finishedWorkers',
     since: number
   ): Promise<ReturnType<NeoTodoSessionRepository['finishedWorkers']>>;
+  read(
+    method: 'reusesAskWorker',
+    todoId: string
+  ): Promise<ReturnType<NeoTodoSessionRepository['reusesAskWorker']>>;
+  read(
+    method: 'reuseFacts',
+    todoId: string
+  ): Promise<ReturnType<NeoTodoSessionRepository['reuseFacts']>>;
   read(
     method: (typeof neoTodoSessionReads.methods)[number],
     key?: string | number | WorkRef | Record<string, string | null>
@@ -169,6 +191,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     const store = new NeoAskTodoRepository(this.db);
     const todo = store.getTodo(todoId);
     if (!todo || store.getAsk(todo.askId)?.status !== 'open') return;
+    if (hasPendingTodoDecision(store.listQuestions(todo.askId), todo.id)) return;
     this.recordStartedAt(todoId, 'queued' in delivered ? null : (delivered.startedAt ?? null));
     this.recordSent(todoId, sent);
     const prior = this.readNudge(todoId);
@@ -283,18 +306,18 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
 
   queueFacts(trackerHolds: Record<string, string | null> = {}, open = this.openAskFacts()) {
     const { asks } = open;
-    const running = open.todos.flatMap((todo) =>
-      todo.state === 'doing'
-        ? [
-            {
-              group: asks.find((ask) => ask.id === todo.askId)?.projectId ?? null,
-              worker: neoWorkerKey(open.ref(todo.id)),
-              title: todo.title,
-              idle: open.idle(todo.id),
-            },
-          ]
-        : []
-    );
+    const running = open.todos.flatMap((todo) => {
+      if (todo.state !== 'doing') return [];
+      const target = open.target(todo.id);
+      return [
+        {
+          group: asks.find((ask) => ask.id === todo.askId)?.projectId ?? null,
+          worker: neoWorkerKey(open.ref(todo.id) ?? (target?.verb === 'send' ? target.ref : null)),
+          title: todo.title,
+          idle: open.idle(todo.id),
+        },
+      ];
+    });
     const waiting = asks.flatMap((ask) => {
       const asked = open.cards(ask);
       const family = open.family(ask);
@@ -347,7 +370,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       family: open.family(ask),
       cards: open.cards(ask),
     }));
-    const step = (todo: NeoTodo, family: NeoTodo[], cards: NeoQuestion[]): NeoStepRow => {
+    const step = (todo: NeoTodo, family: NeoTodo[], cards: NeoQuestion[]): NeoStepRead => {
       const nudge = open.nudge(todo.id);
       const answered = cards.flatMap((card) =>
         card.state === 'answered' && card.todos.includes(todo.id) ? (card.answeredAt ?? []) : []
@@ -515,13 +538,15 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
   doingTodoOn(
     ref: WorkRef,
     startedAfter: number | null = null,
-    states: readonly string[] = ['doing']
+    states: readonly string[] = ['doing'],
+    exceptTodoId: string | null = null
   ): { id: string; title: string } | null {
     return (
       (this.db
         .prepare(
           `SELECT t.id, t.title FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
             WHERE t.state IN (SELECT value FROM json_each(?)) AND (? IS NULL OR t.started_at > ?)
+              AND (? IS NULL OR t.id != ?)
               AND COALESCE(json_extract(s.ref, '$.adapter'), json_extract(s.target, '$.ref.adapter')) = ?
               AND COALESCE(json_extract(s.ref, '$.id'), json_extract(s.target, '$.ref.id')) = ?
               AND COALESCE(json_extract(s.ref, '$.daemon'), json_extract(s.target, '$.ref.daemon')) IS ?
@@ -531,6 +556,8 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
           JSON.stringify(states),
           startedAfter,
           startedAfter,
+          exceptTodoId,
+          exceptTodoId,
           ref.adapter,
           ref.id,
           ref.daemon ?? null
@@ -553,14 +580,28 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     );
   }
 
-  queueOn(todoId: string, ref: WorkRef, message: string): 'message' | 'instruction' | 'none' {
+  queueOn(
+    todoId: string,
+    ref: WorkRef,
+    message: string,
+    options?: { requeueDoing: boolean }
+  ): 'message' | 'instruction' | 'none' {
     const store = new NeoAskTodoRepository(this.db);
     const todo = store.getTodo(todoId);
-    if (todo?.state !== 'todo' || todo.startedAt !== null) return 'none';
+    if (
+      !todo ||
+      !(
+        (todo.state === 'todo' && todo.startedAt === null) ||
+        (options?.requeueDoing && todo.state === 'doing' && !this.readRef(todoId))
+      )
+    )
+      return 'none';
     this.db
       .prepare(`INSERT INTO neo_todo_sessions (todo_id, target) VALUES (?, ?)
         ON CONFLICT(todo_id) DO UPDATE SET target = excluded.target`)
       .run(todoId, JSON.stringify({ verb: 'send', ref }));
+    if (todo.state === 'doing')
+      store.updateTodo(todo, { state: 'todo', startedAt: null }, Date.now());
     if (todo.instruction) return 'instruction';
     store.updateTodo(todo, { instruction: message }, Date.now());
     return 'message';
@@ -696,31 +737,56 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     ).map((row) => row.todoId);
   }
 
+  wasNamedByHuman(ref: WorkRef): boolean {
+    return !!this.db
+      .prepare(
+        `SELECT 1 FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
+        WHERE json_extract(t.named, '$.session') IS NOT NULL
+          AND COALESCE(json_extract(s.ref, '$.adapter'), json_extract(s.target, '$.ref.adapter')) = ?
+          AND COALESCE(json_extract(s.ref, '$.id'), json_extract(s.target, '$.ref.id')) = ?
+          AND COALESCE(json_extract(s.ref, '$.daemon'), json_extract(s.target, '$.ref.daemon')) IS ?
+        LIMIT 1`
+      )
+      .get(ref.adapter, ref.id, ref.daemon ?? null);
+  }
+
   finishedWorkers(since: number): {
     todoId: string;
     target: NeoDriverTarget;
     ref: WorkRef;
+    lastUse: number;
     shared: boolean;
+    humanNamed: boolean;
     releasedBy: string | null;
+    owned: boolean;
+    pending: { code?: string; reason: string; since: number; notified: boolean } | null;
   }[] {
     const match = (column: string, key: string) =>
       `COALESCE(json_extract(o.ref, '$.${key}'), json_extract(o.target, '$.ref.${key}')) ${column} json_extract(s.ref, '$.${key}')`;
-    return (
+    const rows = (
       this.db
         .prepare(
           `SELECT s.todo_id AS todoId, s.target, s.ref,
+              COALESCE(t.finished_at, t.started_at, t.created_at) AS lastUse,
+              (SELECT value_json FROM pack_facts WHERE todo_id = s.todo_id AND pack = 'core' AND key = 'release_pending') AS pending,
               EXISTS (SELECT 1 FROM neo_todo_sessions o JOIN neo_todos ot ON ot.id = o.todo_id
-                WHERE o.todo_id <> s.todo_id AND ot.state IN ('todo', 'doing', 'blocked', 'failed')
+                WHERE json_extract(ot.named, '$.session') IS NOT NULL
+                  AND ${match('=', 'adapter')} AND ${match('=', 'id')} AND ${match('IS', 'daemon')}
+              ) AS humanNamed,
+              EXISTS (SELECT 1 FROM neo_todo_sessions o JOIN neo_todos ot ON ot.id = o.todo_id
+                WHERE o.todo_id <> s.todo_id AND ot.state IN ('todo', 'doing', 'blocked')
                   AND ${match('=', 'adapter')} AND ${match('=', 'id')} AND ${match('IS', 'daemon')}
               ) AS shared,
               (SELECT o.todo_id FROM neo_todo_sessions o JOIN pack_facts f
-                  ON f.todo_id = o.todo_id AND f.pack = 'core' AND f.key = 'released'
+                  ON f.todo_id = o.todo_id AND f.pack = 'core' AND f.key = 'released' AND json_extract(f.value_json, '$.kept') IS NULL
                 WHERE o.todo_id <> s.todo_id
                   AND ${match('=', 'adapter')} AND ${match('=', 'id')} AND ${match('IS', 'daemon')}
                 LIMIT 1) AS releasedBy
              FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
             WHERE t.state IN ('done', 'removed')
-              AND CASE t.state WHEN 'removed' THEN t.updated_at ELSE t.finished_at END > ?
+              AND (CASE t.state WHEN 'removed' THEN t.updated_at ELSE t.finished_at END > ?
+                OR EXISTS (SELECT 1 FROM pack_facts f
+                  WHERE f.todo_id = s.todo_id AND f.pack = 'core' AND f.key = 'release_kept'))
               AND s.ref IS NOT NULL
               AND NOT EXISTS (SELECT 1 FROM pack_facts f
                 WHERE f.todo_id = s.todo_id AND f.pack = 'core' AND f.key = 'released')`
@@ -730,41 +796,63 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
         target: string;
         ref: string;
         shared: number;
+        humanNamed: number;
         releasedBy: string | null;
+        lastUse: number;
+        pending: string | null;
       }[]
-    ).map((row) => ({
+    ).map((row) => ({ ...row, ref: JSON.parse(row.ref) as WorkRef }));
+    const owned = readTrustedWorkers(
+      this.db,
+      rows.map((row) => row.ref)
+    );
+    return rows.map((row) => ({
       todoId: row.todoId,
       target: JSON.parse(row.target) as NeoDriverTarget,
-      ref: JSON.parse(row.ref) as WorkRef,
+      ref: row.ref,
       shared: row.shared === 1,
+      humanNamed: row.humanNamed === 1,
       releasedBy: row.releasedBy,
+      owned: owned.has(JSON.stringify([row.ref.adapter, row.ref.id])),
+      lastUse: row.lastUse,
+      pending: row.pending ? JSON.parse(row.pending) : null,
     }));
   }
 
-  fenceRelease(ref: WorkRef, now: number): boolean {
+  fenceWorkerRelease(
+    ref: WorkRef,
+    now: number,
+    reason = 'finished todo'
+  ): 'fenced' | 'live' | 'not_started_by_us' {
+    if (readStartedWork(this.db, null, undefined, ref).length === 0) return 'not_started_by_us';
+    return this.fenceRelease(ref, now, reason) ? 'fenced' : 'live';
+  }
+
+  fenceRelease(ref: WorkRef, now: number, reason = 'finished todo'): boolean {
     if (this.doingTodoOn(ref, null, LIVE_TODO_STATES)) return false;
     if (this.liveTodo(this.startedFacts(ref)?.claimedBy ?? null)) return false;
-    recordStartedWork(this.db, ref, now, false, true);
+    recordWorkRelease(this.db, ref, now, reason);
     return true;
   }
 
-  claimWorker(ref: WorkRef, todoId: string | null): boolean {
-    const workers = readStartedWork(this.db);
-    const own = workers.find((worker) => worker.adapter === ref.adapter && worker.id === ref.id);
-    if (own?.releasedAt) return false;
-    if (own?.claimedBy !== todoId && this.liveTodo(own?.claimedBy ?? null)) return false;
-    const holders = todoId ? LIVE_TODO_STATES : [...LIVE_TODO_STATES, 'done', 'removed'];
-    if (this.doingTodoOn(ref, null, holders)) return false;
-    if (!todoId) return true;
-    if (!this.liveTodo(todoId)) return false;
-    if (workers.some((worker) => worker.claimedBy === todoId && worker !== own)) return false;
-    recordStartedWork(this.db, ref, Date.now(), false, false, { todoId });
-    return true;
+  claimWorker(
+    ref: WorkRef,
+    todoId: string | null,
+    role = 'do',
+    model?: string,
+    effort?: string,
+    shareWith: readonly string[] = []
+  ): boolean {
+    return claimTodoWorker(this.db, ref, todoId, role, model, effort, {
+      liveTodo: (id) => this.liveTodo(id),
+      isBound: (states) => !!this.doingTodoOn(ref, null, states, todoId),
+      liveStates: LIVE_TODO_STATES,
+      shareWith,
+    });
   }
 
-  unclaimWorker(todoId: string, ref: WorkRef): void {
-    if (this.startedFacts(ref)?.claimedBy === todoId)
-      recordStartedWork(this.db, ref, Date.now(), false, false, { todoId: null });
+  unclaimWorker(todoId: string, ref: WorkRef, role = 'do'): void {
+    unclaimTodoWorker(this.db, todoId, ref, role);
   }
 
   private startedFacts(ref: WorkRef) {
@@ -780,6 +868,34 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
 
   recordReleased(todoId: string, released: unknown): void {
     this.writeCoreFact(todoId, 'released', released);
+  }
+
+  reuseFacts(todoId: string) {
+    return releaseReuseFacts(this.db, todoId);
+  }
+
+  reusesAskWorker(todoId: string): boolean {
+    const todo = new NeoAskTodoRepository(this.db).getTodo(todoId);
+    const target = this.get(todoId);
+    if (!todo || todo.named?.session || target?.verb !== 'send' || this.readRef(todoId))
+      return false;
+    const { ref } = target;
+    return (
+      !ref.daemon &&
+      !this.doingTodoOn(ref, null, ['doing', 'blocked'], todoId) &&
+      readSameAskWorkers(this.db, todo.askId, todoId, ref.adapter).some(({ id }) => id === ref.id)
+    );
+  }
+
+  recordReleaseKept(todoId: string, kept: unknown): void {
+    this.writeCoreFact(todoId, 'release_kept', kept);
+  }
+
+  recordReleasePending(
+    todoId: string,
+    pending: { code: string; reason: string; since: number; notified: boolean }
+  ): void {
+    this.writeCoreFact(todoId, 'release_pending', pending);
   }
 
   awaitingReports(): { todoId: string; ref: WorkRef }[] {
@@ -801,6 +917,7 @@ export const neoTodoSessionReads = defineRepositoryOp(
   'read',
   NeoTodoSessionRepository,
   [
+    'readCard',
     'unrecordedStarts',
     'awaitingReports',
     'nudgeContext',
@@ -810,7 +927,10 @@ export const neoTodoSessionReads = defineRepositoryOp(
     'workerName',
     'syncedActivity',
     'syncedLive',
+    'wasNamedByHuman',
     'finishedWorkers',
+    'reuseFacts',
+    'reusesAskWorker',
   ]
 );
 export const neoTodoSessionWrites = defineRepositoryOp(
@@ -831,8 +951,11 @@ export const neoTodoSessionWrites = defineRepositoryOp(
     'markWorkerUnusable',
     'queueOn',
     'fenceRelease',
+    'fenceWorkerRelease',
     'claimWorker',
     'unclaimWorker',
     'recordReleased',
+    'recordReleaseKept',
+    'recordReleasePending',
   ]
 );

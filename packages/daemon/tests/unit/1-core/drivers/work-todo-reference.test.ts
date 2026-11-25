@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations.ts';
+import { replyMessageBodyLength } from '../../../../src/lib/messaging/session-reply.ts';
 import type { WorkAdapter } from '../../../../src/lib/drivers/types.ts';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -38,6 +39,7 @@ function fixture() {
     adapters: () => [adapter],
     remote: { list: () => [], invoke: async () => ({}) },
     daemonName: 'fixture',
+    acceptedTodo: (id: string) => ['open-todo', 'foreign-todo'].includes(id),
     isOpenTodo: (id: string, owner?: string) =>
       ['open-todo', 'foreign-todo'].includes(id) &&
       (!owner || owner === (id === 'open-todo' ? 'root' : 'another-root')),
@@ -47,6 +49,25 @@ function fixture() {
 }
 
 describe('Neo work todo reference', () => {
+  test.each(['workflow_worker', 'direct_task_worker', 'long_term_agent'] as const)(
+    '%s needs a todo on an accepted ask before starting',
+    async (role) => {
+      const { registry, delivered } = fixture();
+      const caller: OperationCaller = { source: 'mcp', sessionId: 'worker', role };
+      const input = { adapter: 'fixture', place, title: 'Synthetic', message: 'New work' };
+      expect(await invokeOperation(registry, 'work.start', input, caller)).toMatchObject({
+        kind: 'completed',
+        value: { ok: false, reason: 'todo_required' },
+      });
+      expect(
+        await invokeOperation(registry, 'work.start', { ...input, todoId: 'open-todo' }, caller)
+      ).toMatchObject({
+        kind: 'completed',
+        value: { ok: true },
+      });
+      expect(delivered).toEqual(['New work']);
+    }
+  );
   for (const name of ['work.start', 'work.send', 'work.queue'] as const) {
     const input =
       name === 'work.start'
@@ -77,7 +98,7 @@ describe('Neo work todo reference', () => {
     const name = 'work.start';
     const input = { adapter: 'fixture', place, title: 'Synthetic', message: 'New work' };
 
-    test(`${name} records a missing Neo MCP todo reference without blocking delivery`, async () => {
+    test(`${name} refuses a missing Neo MCP todo reference`, async () => {
       const { registry, delivered } = fixture();
       const call = createOperationMcpHandler(registry, () => neo);
       const reply = await call({
@@ -89,22 +110,22 @@ describe('Neo work todo reference', () => {
         },
       });
       expect(JSON.parse(reply.content[0].text)).toMatchObject({
-        ok: true,
-        records: [expect.stringContaining('todo_required:')],
+        ok: false,
+        reason: 'todo_required',
       });
       expect(reply.content[0].text).not.toContain('neo.todo.start');
-      expect(delivered).toHaveLength(1);
+      expect(delivered).toHaveLength(0);
     });
 
-    test(`${name} records an unknown, closed-ask or foreign todo`, async () => {
+    test(`${name} refuses an unknown, closed-ask or foreign todo`, async () => {
       for (const todoId of ['missing-todo', 'closed-ask-todo', 'foreign-todo']) {
         const { registry, delivered } = fixture();
         const reply = await invokeOperation(registry, name, { ...input, todoId }, neo);
         expect(reply).toMatchObject({
           kind: 'completed',
-          value: { ok: true, records: [expect.stringContaining('todo_required:')] },
+          value: { ok: false, reason: 'todo_required' },
         });
-        expect(delivered).toHaveLength(1);
+        expect(delivered).toHaveLength(0);
       }
     });
 
@@ -136,7 +157,9 @@ describe('Neo work todo reference', () => {
         kind: 'completed',
         value: { ok: true },
       });
-      expect(delivered).toEqual(['Follow-up']);
+      expect(delivered.map((text) => text.slice(0, replyMessageBodyLength(text)))).toEqual([
+        'Follow-up',
+      ]);
     }
   );
 

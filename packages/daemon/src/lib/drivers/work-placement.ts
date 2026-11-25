@@ -79,6 +79,13 @@ export async function prepareWorkerFolder(
 }
 
 type Cleanup = NonNullable<WorkArchived['worktree']>;
+export const WORKTREE_UNSAVED = [
+  'The worktree has uncommitted changes; kept.',
+  'The worktree has unpushed commits or cannot be verified; kept.',
+  'The clone has a stash or another worktree; kept.',
+  'The worktree has changes, unpushed commits or cannot be verified; kept. Manage its archive in the session UI.',
+] as const;
+export const WORKTREE_SUBMODULES = 'Submodule worktrees require manual verification; kept.';
 type Facts = { dirty: boolean; unpushed: string; submodules: boolean };
 export async function workerWorktreeHasSubmodules(directory: string): Promise<boolean> {
   return (await simpleGit(directory).raw(['submodule', 'status', '--recursive'])).trim() !== '';
@@ -87,25 +94,18 @@ const cleanupPlan = (superpipe({})('worker-worktree-cleanup') as PipelineAPI)
   .input(['facts'])
   .pipe(
     (facts: Facts) =>
-      facts.submodules
-        ? { reason: { reason: 'Submodule worktrees require manual verification; kept.' } }
-        : { value: true },
+      facts.submodules ? { reason: { reason: WORKTREE_SUBMODULES } } : { value: true },
+    'facts',
+    'result:ready'
+  )
+  .pipe(
+    (facts: Facts) => (facts.dirty ? { reason: { reason: WORKTREE_UNSAVED[0] } } : { value: true }),
     'facts',
     'result:ready'
   )
   .pipe(
     (facts: Facts) =>
-      facts.dirty
-        ? { reason: { reason: 'The worktree has uncommitted changes; kept.' } }
-        : { value: true },
-    'facts',
-    'result:ready'
-  )
-  .pipe(
-    (facts: Facts) =>
-      facts.unpushed === '0'
-        ? { value: true }
-        : { reason: { reason: 'The worktree has unpushed commits or cannot be verified; kept.' } },
+      facts.unpushed === '0' ? { value: true } : { reason: { reason: WORKTREE_UNSAVED[1] } },
     'facts',
     'result:ready'
   )
@@ -114,6 +114,10 @@ const cleanupPlan = (superpipe({})('worker-worktree-cleanup') as PipelineAPI)
 export const WORKTREE_UNVERIFIED = 'Could not verify or remove the worktree; kept';
 export const worktreeUnverified = (error: unknown) =>
   `${WORKTREE_UNVERIFIED}: ${error instanceof Error ? error.message : String(error)}`;
+export const worktreeKeptUnsaved = (reason: string) =>
+  (WORKTREE_UNSAVED as readonly string[]).includes(reason) ||
+  reason === WORKTREE_SUBMODULES ||
+  reason.startsWith(WORKTREE_UNVERIFIED);
 
 export const WORKTREE_IN_USE =
   'A running process is inside the worktree, or the process check failed; kept.';
@@ -163,7 +167,7 @@ async function testRunProcesses(): Promise<string[]> {
   });
 }
 
-async function folderInUse(directory: string): Promise<boolean> {
+export async function folderInUse(directory: string): Promise<boolean> {
   const root = realpathSync(directory);
   const inside = (path: string) => `${path}/`.startsWith(`${root}/`);
   if (process.platform === 'linux')
@@ -287,7 +291,7 @@ export async function cleanupOwnedWorktree(
       return {
         directory,
         removed: false,
-        reason: 'The clone has a stash or another worktree; kept.',
+        reason: WORKTREE_UNSAVED[2],
       };
     const plan = cleanupPlan({ dirty: !status.isClean(), unpushed: unpushed.trim(), submodules });
     if (plan !== true) return { directory, removed: false, reason: plan.reason };

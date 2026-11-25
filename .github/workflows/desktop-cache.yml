@@ -1,0 +1,71 @@
+name: Warm desktop caches
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - '.github/workflows/desktop-cache.yml'
+      - 'packages/desktop/src-tauri/Cargo.lock'
+  schedule:
+    - cron: '0 6 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  warm-cache:
+    name: Warm desktop cache ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-15-intel, target: x86_64-apple-darwin, arch: darwin-x64 }
+          - { runner: macos-latest, target: aarch64-apple-darwin, arch: darwin-arm64 }
+          - { runner: windows-latest, target: x86_64-pc-windows-msvc, arch: windows-x64 }
+          - { runner: ubuntu-latest, target: x86_64-unknown-linux-gnu, arch: linux-x64 }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.4.4
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo find /etc/apt/sources.list.d/ \( -name "*microsoft*" -o -name "*azure*" \) -delete 2>/dev/null || true
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl file libayatana-appindicator3-dev librsvg2-dev libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf rpm wget
+      - name: Select Xcode 26
+        if: matrix.arch == 'darwin-x64'
+        run: echo "DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer" >> "$GITHUB_ENV"
+      - name: Setup Rust target
+        run: rustup target add ${{ matrix.target }}
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-tauri*
+            ~/.cargo/registry
+            ~/.cargo/git
+            packages/desktop/src-tauri/target
+          key: desktop-cargo-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('packages/desktop/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            desktop-cargo-${{ runner.os }}-${{ matrix.target }}-
+      - name: Install Tauri CLI
+        run: |
+          if ! cargo tauri --version >/dev/null 2>&1; then
+            cargo install tauri-cli --version "^2" --locked
+          fi
+      - name: Build desktop without bundling
+        run: |
+          cd packages/desktop
+          bash build-sidecar.sh
+          cargo tauri build --target ${{ matrix.target }} --no-bundle

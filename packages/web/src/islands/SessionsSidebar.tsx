@@ -1,5 +1,6 @@
 import { CloseGlyph } from '../components/icons/common-glyphs.tsx';
-import { useEffect, useState } from 'preact/hooks';
+import { GOAL_CHILD_MESSAGE } from '../hooks/useSessionActions.ts';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type {
   CloneChildrenChoice,
   CloneSummary,
@@ -8,10 +9,14 @@ import type {
   WorktreeCommitStatus,
 } from '@hyperneo/shared';
 import { navigateToSession, navigateToSessions } from '../lib/router.ts';
-import { sessions } from '../lib/state.ts';
+import { globalSettings, projectArchivedVisibility, sidebarSessions } from '../lib/state.ts';
 import { newChatProjectSignal, workspaceHistoryVersionSignal } from '../lib/signals.ts';
 import {
   getWorkspaceHistory,
+  listSystemProjects,
+  findProjectWork,
+  forgetSystemProject,
+  type SystemProject,
   addWorkspaceToHistory,
   removeWorkspaceFromHistory,
   archiveSession,
@@ -30,6 +35,7 @@ import { SessionProjectGroup } from '../components/SessionProjectGroup.tsx';
 import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
 import { CloneChoiceDialog } from '../components/CloneChoiceDialog.tsx';
 import { CollapsibleSection } from '../components/ui/CollapsibleSection.tsx';
+import { ConfirmModal } from '../components/ui/ConfirmModal.tsx';
 
 interface SessionsSidebarProps {
   onSessionSelect?: () => void;
@@ -41,17 +47,28 @@ function lastActive(session: Session): number {
   return Number.isNaN(time) ? 0 : time;
 }
 
+function unarchived(sessionsList: Session[]): Session[] {
+  return sessionsList.filter((session) => session.status !== 'archived');
+}
+
+function chatCount(count: number): string {
+  return `${count} ${count === 1 ? 'chat' : 'chats'}`;
+}
+
 interface ProjectGroup {
   path: string;
   name: string;
   sessions: Session[];
   sortTime: number;
   folders: string[];
+  system: boolean;
 }
 
 function buildView(
   sessionsList: Session[],
-  history: WorkspaceHistoryEntry[]
+  history: WorkspaceHistoryEntry[],
+  systemProjects: SystemProject[],
+  showsArchived: (path?: string) => boolean
 ): { projects: ProjectGroup[]; ungrouped: Session[]; childrenByParent: Map<string, Session[]> } {
   const byRoot = new Map<string, Session[]>();
   const memberships = new Map(
@@ -59,13 +76,47 @@ function buildView(
       entry.project ? entry.project.folders.map((folder) => [folder, entry.project!] as const) : []
     )
   );
+  const systemTime = new Map<string, number>();
+  const systemDefinitions = systemProjects.flatMap((project) => {
+    const free = project.folders.filter((folder) => !memberships.has(folder));
+    if (project.folders.length > 0 && free.length === 0) return [];
+    const definition = {
+      id: `neo:${project.id}`,
+      name: project.name,
+      folders: free.slice(0, 1),
+    };
+    for (const folder of free) memberships.set(folder, definition);
+    systemTime.set(definition.id, project.updatedAt);
+    return [definition];
+  });
+  const repositories = new Map<string, NonNullable<WorkspaceHistoryEntry['project']>>();
+  for (const { path, repositoryProject } of history) {
+    if (!repositoryProject || memberships.has(path)) continue;
+    const definition = repositories.get(repositoryProject.id) ?? {
+      ...repositoryProject,
+      folders: [],
+    };
+    definition.folders.push(path);
+    repositories.set(definition.id, definition);
+  }
+  for (const repository of repositories.values()) {
+    if (repository.folders.length < 2) continue;
+    for (const folder of repository.folders) memberships.set(folder, repository);
+  }
   const projectKey = (path: string) => memberships.get(path)?.id ?? path;
-  const definitions = new Map([...memberships.values()].map((project) => [project.id, project]));
+  const definitions = new Map(
+    [...memberships.values(), ...systemDefinitions].map((project) => [project.id, project])
+  );
   const ungrouped: Session[] = [];
-  const ids = new Set(sessionsList.map((session) => session.id));
+  const visibleSessions = sessionsList.filter((session) => {
+    if (session.status !== 'archived') return true;
+    const folder = projectRootOf(session);
+    return showsArchived(folder ? projectKey(folder) : undefined);
+  });
+  const ids = new Set(visibleSessions.map((session) => session.id));
   const childrenByParent = new Map<string, Session[]>();
 
-  for (const session of sessionsList) {
+  for (const session of visibleSessions) {
     const parentId = session.parentSessionId;
     if (parentId && ids.has(parentId)) {
       const siblings = childrenByParent.get(parentId) ?? [];
@@ -90,6 +141,10 @@ function buildView(
     historyTime.set(key, Math.max(historyTime.get(key) ?? 0, entry.lastUsedAt));
     if (!byRoot.has(key)) byRoot.set(key, []);
   }
+  for (const [key, updatedAt] of systemTime) {
+    historyTime.set(key, Math.max(historyTime.get(key) ?? 0, updatedAt));
+    if (!byRoot.has(key)) byRoot.set(key, []);
+  }
 
   const projects: ProjectGroup[] = [...byRoot.entries()]
     .map(([path, grouped]) => {
@@ -100,6 +155,7 @@ function buildView(
         path,
         name: project?.name ?? projectName(path),
         folders: project?.folders ?? [path],
+        system: systemTime.has(path),
         sessions: sorted,
         sortTime,
       };
@@ -116,6 +172,7 @@ function buildView(
 
 export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarProps) {
   const [history, setHistory] = useState<WorkspaceHistoryEntry[]>([]);
+  const [systemProjects, setSystemProjects] = useState<SystemProject[]>([]);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => getCollapsedProjects());
   const [archiveConfirm, setArchiveConfirm] = useState<{
     sessionId: string;
@@ -127,6 +184,12 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     sessionId: string;
     clones: CloneSummary[];
   } | null>(null);
+  const [removeProjectPath, setRemoveProjectPath] = useState<string | null>(null);
+  const [removeProjectBusy, setRemoveProjectBusy] = useState(false);
+  const [systemWork, setSystemWork] = useState<Record<string, { key: string; reason: string }>>({});
+  const systemWorkRef = useRef<Record<string, { key: string; reason: string }>>({});
+  const failedWorkRef = useRef(new Set<string>());
+  const [workRefresh, setWorkRefresh] = useState(0);
   const [addProjectOpen, setAddProjectOpen] = useState(false);
   const [addProjectPath, setAddProjectPath] = useState('');
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
@@ -135,15 +198,85 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 
   const historyVersion = workspaceHistoryVersionSignal.value;
   useEffect(() => {
-    getWorkspaceHistory()
-      .then(setHistory)
+    let current = true;
+    getWorkspaceHistory({ includeRepositoryProjects: true })
+      .catch(() => (current ? getWorkspaceHistory() : undefined))
+      .then((entries) => {
+        if (current && entries) setHistory(entries);
+      })
       .catch(() => {});
-  }, [historyVersion]);
+    listSystemProjects()
+      .then((projects) => {
+        setSystemProjects(projects);
+        const ids = new Set(projects.map((project) => project.id));
+        for (const id of failedWorkRef.current) if (!ids.has(id)) failedWorkRef.current.delete(id);
+        if (failedWorkRef.current.size > 0) setWorkRefresh((version) => version + 1);
+      })
+      .catch(() => {});
+    return () => {
+      current = false;
+    };
+  }, [historyVersion, sidebarSessions.value]);
 
-  const sessionsList = sessions.value.filter(isUserSession);
-  const { projects, ungrouped, childrenByParent } = buildView(sessionsList, history);
-  const hasContent = sessionsList.length > 0 || projects.length > 0;
+  const workKey = (project: SystemProject) =>
+    JSON.stringify([
+      project.id,
+      [...project.folders].sort(),
+      project.hasSessions,
+      project.unknownWork,
+      project.isProtected,
+    ]);
+  const workSignature = JSON.stringify(systemProjects.map(workKey).sort());
+  useEffect(() => {
+    let current = true;
+    for (const project of systemProjects) {
+      const key = workKey(project);
+      if (project.hasSessions || project.unknownWork || project.isProtected) {
+        failedWorkRef.current.delete(project.id);
+        if (systemWorkRef.current[project.id]) {
+          delete systemWorkRef.current[project.id];
+          setSystemWork((previous) => {
+            const next = { ...previous };
+            delete next[project.id];
+            return next;
+          });
+        }
+        continue;
+      }
+      if (systemWorkRef.current[project.id]?.key === key) continue;
+      failedWorkRef.current.delete(project.id);
+      findProjectWork(project.folders)
+        .then((busy) => {
+          if (!current) return;
+          const entry = { key, reason: busy ? 'Project has active work' : '' };
+          systemWorkRef.current[project.id] = entry;
+          setSystemWork((previous) => ({ ...previous, [project.id]: entry }));
+        })
+        .catch(() => {
+          if (!current) return;
+          const entry = { key, reason: 'Could not check project work' };
+          failedWorkRef.current.add(project.id);
+          setSystemWork((previous) => ({ ...previous, [project.id]: entry }));
+        });
+    }
+    return () => {
+      current = false;
+    };
+  }, [workSignature, workRefresh]);
+
+  const showArchivedByDefault = globalSettings.value?.showArchived ?? false;
+  const showsArchived = (path?: string) =>
+    (path === undefined ? undefined : projectArchivedVisibility.value.get(path)) ??
+    showArchivedByDefault;
+  const { projects, ungrouped, childrenByParent } = buildView(
+    sidebarSessions.value.filter(isUserSession),
+    history,
+    systemProjects,
+    showsArchived
+  );
+  const hasContent = ungrouped.length > 0 || projects.length > 0;
   const childrenOf = (sessionId: string) => childrenByParent.get(sessionId) ?? [];
+  const removeProjectTarget = projects.find((project) => project.path === removeProjectPath);
 
   const handleSessionClick = (sessionId: string) => {
     navigateToSession(sessionId);
@@ -210,9 +343,19 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     addProjectFromPath(addProjectPath);
   };
 
-  const handleRemoveProject = async (folders: string[]) => {
+  const clearArchiveVisibility = (projectPath: string) => {
+    if (!projectArchivedVisibility.value.has(projectPath)) return;
+    const next = new Map(projectArchivedVisibility.value);
+    next.delete(projectPath);
+    projectArchivedVisibility.value = next;
+  };
+
+  const handleRemoveProject = async (project: ProjectGroup) => {
     try {
-      for (const path of folders) await removeWorkspaceFromHistory(path);
+      for (const path of project.folders) {
+        if (!(await removeWorkspaceFromHistory(path))) throw new Error('Failed to remove project');
+      }
+      clearArchiveVisibility(project.path);
     } catch {
       toast.error('Failed to remove project');
     } finally {
@@ -220,11 +363,57 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     }
   };
 
+  const handleConfirmRemoveProject = async () => {
+    if (!removeProjectTarget) return;
+    setRemoveProjectBusy(true);
+    if (removeProjectTarget.system) {
+      try {
+        if (
+          await findProjectWork(
+            systemProjects.find((project) => `neo:${project.id}` === removeProjectTarget.path)
+              ?.folders ?? []
+          )
+        )
+          throw new Error('Project has active work');
+        await forgetSystemProject(removeProjectTarget.path.slice(4));
+        clearArchiveVisibility(removeProjectTarget.path);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to forget project');
+      } finally {
+        setRemoveProjectBusy(false);
+        setRemoveProjectPath(null);
+        workspaceHistoryVersionSignal.value += 1;
+      }
+      return;
+    }
+    let kept = 0;
+    for (const session of unarchived(removeProjectTarget.sessions)) {
+      try {
+        const result = await archiveSession(session.id);
+        if (!result.success) kept += 1;
+      } catch {
+        kept += 1;
+      }
+    }
+    setRemoveProjectBusy(false);
+    setRemoveProjectPath(null);
+    if (kept > 0) {
+      toast.error(
+        `${chatCount(kept)} still ${kept === 1 ? 'needs' : 'need'} to be archived one by one before the project can be removed`
+      );
+      return;
+    }
+    await handleRemoveProject(removeProjectTarget);
+  };
+
   const handleArchive = async (sessionId: string, children?: CloneChildrenChoice) => {
     setArchiveBusy(true);
     try {
       const result = await archiveSession(sessionId, false, children);
-      if (result.reason === 'has_clones' && result.clones) {
+      if (result.reason === 'owns_goals') {
+        setCloneChoice(null);
+        toast.error(GOAL_CHILD_MESSAGE);
+      } else if (result.reason === 'has_clones' && result.clones) {
         setCloneChoice({ sessionId, clones: result.clones });
       } else if (result.requiresConfirmation && result.commitStatus) {
         setCloneChoice(null);
@@ -245,7 +434,10 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     setArchiveBusy(true);
     try {
       const result = await archiveSession(archiveConfirm.sessionId, true, archiveConfirm.children);
-      if (result.success) {
+      if (result.reason === 'owns_goals') {
+        toast.error(GOAL_CHILD_MESSAGE);
+        setArchiveConfirm(null);
+      } else if (result.success) {
         toast.success('Chat archived');
         setArchiveConfirm(null);
       }
@@ -369,20 +561,48 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
                   name={project.name}
                   path={project.path}
                   folders={project.folders}
-                  onNewSession={() => {
-                    newChatProjectSignal.value = project.folders[0];
-                    handleNewChat();
-                  }}
+                  onNewSession={
+                    project.folders.length > 0
+                      ? () => {
+                          newChatProjectSignal.value = project.folders[0];
+                          handleNewChat();
+                        }
+                      : undefined
+                  }
                   sessions={project.sessions}
                   collapsed={collapsed.has(project.path)}
                   onToggle={() => toggleProject(project.path)}
                   onSessionClick={handleSessionClick}
                   onArchive={handleArchive}
                   childrenOf={childrenOf}
-                  onRemove={
-                    project.sessions.length === 0
-                      ? () => handleRemoveProject(project.folders)
+                  showArchived={showsArchived(project.path)}
+                  onToggleArchived={() => {
+                    const next = new Map(projectArchivedVisibility.value);
+                    next.set(project.path, !showsArchived(project.path));
+                    projectArchivedVisibility.value = next;
+                  }}
+                  removeDisabledReason={
+                    project.system
+                      ? (() => {
+                          const item = systemProjects.find(
+                            (entry) => `neo:${entry.id}` === project.path
+                          );
+                          if (!item) return 'Checking project work';
+                          if (item.isProtected) return 'This project cannot be forgotten.';
+                          if (unarchived(project.sessions).length > 0) return 'Project has chats';
+                          if (item.hasSessions) return 'Project has active work';
+                          if (item.unknownWork) return 'Cannot check all work for this project';
+                          const checked = systemWork[item.id];
+                          return checked?.key === workKey(item)
+                            ? checked.reason || undefined
+                            : 'Checking project work';
+                        })()
                       : undefined
+                  }
+                  onRemove={() =>
+                    project.system || unarchived(project.sessions).length > 0
+                      ? setRemoveProjectPath(project.path)
+                      : handleRemoveProject(project)
                   }
                 />
               ))}
@@ -420,6 +640,23 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
           busy={archiveBusy}
           onChoose={(choice) => handleArchive(cloneChoice.sessionId, choice)}
           onCancel={() => setCloneChoice(null)}
+        />
+      )}
+
+      {removeProjectTarget && (
+        <ConfirmModal
+          isOpen
+          onClose={() => setRemoveProjectPath(null)}
+          onConfirm={handleConfirmRemoveProject}
+          title={`Remove ${removeProjectTarget.name}?`}
+          message={
+            removeProjectTarget.system
+              ? 'Your files and chats stay. The folder leaves the sidebar, and this project is permanently forgotten.'
+              : `This archives ${chatCount(unarchived(removeProjectTarget.sessions).length)} in this project, then removes it from the sidebar. Chats with unmerged worktree commits or child chats are kept for you to archive one by one.`
+          }
+          confirmText={removeProjectTarget.system ? 'Forget project' : 'Archive chats and remove'}
+          confirmTestId="project-remove-confirm"
+          isLoading={removeProjectBusy}
         />
       )}
 

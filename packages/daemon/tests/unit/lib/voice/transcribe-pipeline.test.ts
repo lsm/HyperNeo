@@ -366,10 +366,9 @@ describe('voice transcribe pipeline', () => {
   });
 
   it('resolves bearer authorization from the credential manager', async () => {
-    const getCredentials = mock(async () => ({
-      type: 'api_key' as const,
-      apiKey: 'stored-key',
-    }));
+    const getCredentials = mock(async (id: string) =>
+      id === 'voice-transcription' ? { type: 'api_key' as const, apiKey: 'stored-key' } : null
+    );
     let init: RequestInit | undefined;
     globalThis.fetch = mock(async (_url: string | URL | Request, requestInit?: RequestInit) => {
       init = requestInit;
@@ -393,10 +392,9 @@ describe('voice transcribe pipeline', () => {
   });
 
   it('resolves the stored key scoped to the configured endpoint', async () => {
-    const getCredentials = mock(async () => ({
-      type: 'api_key' as const,
-      apiKey: 'stored-key',
-    }));
+    const getCredentials = mock(async (id: string) =>
+      id === 'voice-transcription' ? { type: 'api_key' as const, apiKey: 'stored-key' } : null
+    );
     let init: RequestInit | undefined;
     globalThis.fetch = mock(async (_url: string | URL | Request, requestInit?: RequestInit) => {
       init = requestInit;
@@ -416,6 +414,116 @@ describe('voice transcribe pipeline', () => {
     );
 
     expect((init?.headers as Record<string, string>)?.Authorization).toBe('Bearer stored-key');
+  });
+
+  it('records through Deepgram with a raw WAV body and a Token header', async () => {
+    const seen: { url?: string; headers?: Record<string, string>; body?: unknown } = {};
+    globalThis.fetch = mock(async (url: string | URL | Request, init?: RequestInit) => {
+      seen.url = url.toString();
+      seen.headers = init?.headers as Record<string, string>;
+      seen.body = init?.body;
+      return Response.json({
+        results: { channels: [{ alternatives: [{ transcript: 'deepgram heard' }] }] },
+      });
+    }) as unknown as typeof fetch;
+
+    await expect(
+      transcribe(
+        createDeps(
+          {
+            endpoint: '',
+            model: '',
+            recorded: {
+              provider: 'deepgram',
+              endpoint: 'https://api.deepgram.com/v1/listen',
+              model: 'nova-3',
+            },
+            apiKeyEndpoint: 'https://api.deepgram.com/v1/listen',
+          },
+          createVoiceTranscribeLimiters(),
+          {
+            getCredentials: async () => ({ type: 'api_key' as const, apiKey: 'dg-key' }),
+          } as unknown as Pick<ProviderCredentialManager, 'getCredentials'>
+        )
+      )
+    ).resolves.toEqual({ action: 'transcribed', text: 'deepgram heard' });
+    expect(seen.url).toBe('https://api.deepgram.com/v1/listen?model=nova-3');
+    expect(seen.headers?.Authorization).toBe('Token dg-key');
+    expect(seen.headers?.['Content-Type']).toBe('audio/wav');
+    expect(Buffer.from(seen.body as Uint8Array).toString('base64')).toBe(wavBase64());
+  });
+
+  describe('keys by host', () => {
+    const storedKey = () =>
+      ({
+        getCredentials: mock(async (id: string) =>
+          id === 'voice-transcription' ? { type: 'api_key' as const, apiKey: 'stored-key' } : null
+        ),
+      }) as unknown as Pick<ProviderCredentialManager, 'getCredentials'>;
+    const sent = () => {
+      const seen: { url?: string; authorization?: string } = {};
+      globalThis.fetch = mock(async (url: string | URL | Request, init?: RequestInit) => {
+        seen.url = url.toString();
+        seen.authorization = (init?.headers as Record<string, string>)?.Authorization;
+        return new Response(JSON.stringify({ text: 'hello' }), { status: 200 });
+      }) as unknown as typeof fetch;
+      return seen;
+    };
+
+    it('sends a saved key to another address on the same host', async () => {
+      const seen = sent();
+      await transcribe(
+        createDeps(
+          {
+            endpoint: 'https://api.openai.com/v2/audio/transcriptions',
+            apiKeyEndpoint: 'https://api.openai.com/v1/audio/transcriptions',
+          },
+          createVoiceTranscribeLimiters(),
+          storedKey()
+        )
+      );
+      expect(seen.authorization).toBe('Bearer stored-key');
+    });
+
+    it('keeps a saved key off a batch endpoint on another host', async () => {
+      const seen = sent();
+      await transcribe(
+        createDeps(
+          {
+            endpoint: 'https://api.groq.com/openai/v1/audio/transcriptions',
+            apiKeyEndpoint: 'https://api.openai.com/v1/audio/transcriptions',
+          },
+          createVoiceTranscribeLimiters(),
+          storedKey()
+        )
+      );
+      expect(seen.url).toBe('https://api.groq.com/openai/v1/audio/transcriptions');
+      expect(seen.authorization).toBeUndefined();
+    });
+
+    it('records through the recorded part when settings hold one', async () => {
+      const seen = sent();
+      await expect(
+        transcribe(
+          createDeps(
+            {
+              endpoint: '',
+              model: '',
+              recorded: {
+                provider: 'openai',
+                endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+                model: 'whisper-1',
+              },
+              apiKeyEndpoint: 'https://api.openai.com/v1/audio/transcriptions',
+            },
+            createVoiceTranscribeLimiters(),
+            storedKey()
+          )
+        )
+      ).resolves.toEqual({ action: 'transcribed', text: 'hello' });
+      expect(seen.url).toBe('https://api.openai.com/v1/audio/transcriptions');
+      expect(seen.authorization).toBe('Bearer stored-key');
+    });
   });
 
   it('refreshes endpoint and model from live settings inside the credential lock', async () => {

@@ -36,6 +36,7 @@ export type NeoConversationAskImageRow = {
 };
 type IntakePrompt = SDKUserMessage & {
   inputKind?: unknown;
+  retryOf?: string;
   replyTo?: NeoReplyTo;
   previewContext?: NeoPreviewReference;
   humanContent?: SDKUserMessage['message']['content'];
@@ -121,6 +122,7 @@ export function prepareNeoIntakeAsk(conversationId: string, message: IntakePromp
     askOrigin: { sessionId: message.session_id, messageId: message.uuid },
     content: message.humanContent ?? message.message.content,
     ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+    ...(message.retryOf ? { retryOf: message.retryOf } : {}),
     ...(message.previewContext ? { previewContext: message.previewContext } : {}),
   });
   return 'value' in admitted
@@ -168,6 +170,7 @@ export function persistNeoIntakeTransaction(
         jobQueue,
         hold,
         deferPostSaveSideEffects,
+        promptFollows: true,
       });
     const prompt = ensurePromptInTransaction({
       db,

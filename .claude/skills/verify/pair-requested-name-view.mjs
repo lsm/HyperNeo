@@ -21,7 +21,7 @@ try {
   console.log('Settings: Browser label appears in Waiting for Allow');
   const neo = await owner.newPage();
   await neo.goto(`${base}/neo`);
-  await neo.getByRole('button', { name: /settings and connection|设置和连接/i }).click({ timeout: 30000 });
+  await neo.getByRole('button', { name: /^(settings|设置)$/i }).click({ timeout: 30000 });
   await neo.getByRole('button', { name: 'Allow Browser label' }).waitFor({ timeout: 30000 });
   console.log('Neo drawer: Browser label appears in Pending devices');
 } finally {

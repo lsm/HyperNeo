@@ -1,3 +1,4 @@
+import '../lib/desktop-titlebar.ts';
 import '../styles.css';
 import '../lib/theme.ts';
 import { render } from 'preact';
@@ -7,7 +8,9 @@ import { NeoExamples } from './NeoExamples.tsx';
 import { ArtifactPreview } from '../components/artifacts/ArtifactPreview.tsx';
 import { useViewportSafety } from '../hooks/useViewportSafety.ts';
 import { useNeoLanguageSetting } from './useNeoLanguageSetting.ts';
+import { installDesktopExternalLinks } from '../lib/external-links.ts';
 
+installDesktopExternalLinks();
 function NeoPage() {
   useViewportSafety();
   useNeoLanguageSetting();

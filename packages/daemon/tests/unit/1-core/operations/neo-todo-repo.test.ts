@@ -1,4 +1,5 @@
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
+import { historicalAsk } from '../../helpers/accepted-ask.ts';
 import { existingTodoTarget } from '../../helpers/todo-check-packs.ts';
 import { createTodoCheckPacks, pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { describe, expect, test } from 'bun:test';
@@ -20,7 +21,7 @@ const draft = {
   after: [],
   title: 'Fix it',
   doneWhen: 'Merged',
-  check: pendingTodoCheck,
+  check: { pack: 'core', kind: 'human_confirmed', params: { questionId: 'synthetic' } },
   instruction: null,
   named: null,
 };
@@ -164,7 +165,7 @@ describe('neo.todo.add repo', () => {
     const first = await call({
       askId: 'ask',
       ...draft,
-      check: pendingTodoCheck,
+      check: { pack: 'core', kind: 'human_confirmed', params: { questionId: 'synthetic' } },
       named: { repository: 'lsm/HyperNeo' },
     });
     expect(recordedRepo(db, first.todo.id)).toBe('github.com/lsm/hyperneo');
@@ -185,12 +186,74 @@ describe('neo.todo.add repo', () => {
   });
 });
 
-describe('neo.ask.open repo', () => {
+describe('neo.ask.propose repo', () => {
+  test.each(['send', 'bind'] as const)(
+    'resolves repository remotes before accepting a %s target',
+    async (verb) => {
+      const db = new Database(':memory:');
+      runMigrations(db, () => {});
+      createTables(db);
+      const store = new NeoAskTodoRepository(db);
+      historicalAsk(store, 'neo', 'Repository worker');
+      const packs = createTodoCheckPacks(db);
+      const open = createNeoAskRecordOperations(
+        store,
+        new NeoTodoSessionRepository(db),
+        {
+          resolveTarget: async (ref) => ({
+            value: ref,
+            workerRemotes: ['git@github.com:example/repo.git'],
+          }),
+          recompute: async (todo, patch) => store.updateTodo(todo, patch, Date.now()),
+          advance: async () => {},
+          proceed: async () => ({ ok: false as const, reason: 'no' }),
+          retry: async () => ({ ok: false as const, reason: 'no' }),
+          stop: async () => null,
+        },
+        () => null,
+        () => true,
+        () => [],
+        () => packs,
+        () => null,
+        undefined,
+        { gateway: gatewayFor(db), changed: () => {} }
+      ).find((op) => op.name === 'neo.ask.propose')!;
+      try {
+        const input = open.inputSchema.parse({
+          title: 'Repository worker',
+          request: 'Do the work',
+          todos: [
+            {
+              ...draft,
+              named: { repository: 'example/repo' },
+              check: {
+                pack: 'coding',
+                kind: 'pr_merged',
+                params: { urls: ['https://github.com/example/repo/pull/1'] },
+              },
+              instruction: verb === 'send' ? 'Do the work' : null,
+              target: { verb, ref: { adapter: 'hyperneo', id: 'worker' } },
+            },
+          ],
+        });
+        const result = (await open.execute(input, {
+          source: 'mcp',
+          sessionId: 'neo',
+          role: 'neo',
+        })) as { ok: boolean; reason?: string };
+        expect(result).toMatchObject({ ok: true });
+      } finally {
+        db.close();
+      }
+    }
+  );
+
   test('keeps the ask unassigned while its first todo records the repository', async () => {
     const db = new Database(':memory:');
     runMigrations(db, () => {});
     createTables(db);
     const store = new NeoAskTodoRepository(db);
+    historicalAsk(store, 'neo', 'Fix login');
     const open = createNeoAskRecordOperations(
       store,
       new NeoTodoSessionRepository(db),
@@ -209,7 +272,7 @@ describe('neo.ask.open repo', () => {
       () => null,
       undefined,
       { gateway: gatewayFor(db), changed: () => {} }
-    ).find((op) => op.name === 'neo.ask.open')!;
+    ).find((op) => op.name === 'neo.ask.propose')!;
     const receipt = (await open.execute(
       open.inputSchema.parse({
         title: 'Fix login',
@@ -257,7 +320,7 @@ describe('repository steps on one card', () => {
           role: 'neo',
         });
     };
-    const open = op(
+    const openOperation = op(
       createNeoAskRecordOperations(
         store,
         sessions,
@@ -274,8 +337,12 @@ describe('repository steps on one card', () => {
         undefined,
         { gateway: gatewayFor(db), changed: () => {} }
       ),
-      'neo.ask.open'
+      'neo.ask.propose'
     );
+    const open = <T extends { title: string }>(input: T) => {
+      historicalAsk(store, 'neo', input.title);
+      return openOperation(input);
+    };
     const add = op(
       createNeoTodoOperations(
         store,

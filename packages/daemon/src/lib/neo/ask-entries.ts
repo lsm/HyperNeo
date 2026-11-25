@@ -8,6 +8,7 @@ import type {
   NeoTodoEntry,
 } from '@hyperneo/shared/types/neo-ask';
 import { neoOptionLabels } from '@hyperneo/shared/types/neo-ask';
+import { NeoTopicLabelSchema } from './ask-topic.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
@@ -41,7 +42,6 @@ const NEO_TODO_STATUS_EN = {
   'todo.replaced': 'Replaced by "{title}"',
   'todo.replaced.reason': 'Replaced by "{title}": {reason}',
   'todo.removed': 'Removed',
-  'todo.failed': 'Not done',
   'todo.notStarted': 'Not started',
   'todo.doing': 'In progress',
   'todo.held': 'On hold',
@@ -71,10 +71,9 @@ export function neoTodoStatusLine(
         : coded('todo.replaced', { title });
     return todo.reason ? neoTextStatus(todo.reason) : coded('todo.removed');
   }
-  if (todo.state === 'failed')
-    return todo.reason ? neoTextStatus(todo.reason) : coded('todo.failed');
   const held = neoTodoHeldBy(todo, cards);
-  if (held) return coded(held === 'hold' ? 'todo.held' : 'todo.paused');
+  if (held || (todo.state === 'blocked' && todo.blockedBy === 'held'))
+    return coded((held ? held === 'hold' : todo.startedAt === null) ? 'todo.held' : 'todo.paused');
   if (todo.state === 'blocked' && todo.blockedBy === 'check') return coded('todo.waitingResult');
   if (todo.state === 'blocked') return coded('todo.blocked', { reason: todo.blockedReason ?? '' });
   if (packLine) return packLine;
@@ -95,9 +94,10 @@ export function neoAskEntryState(
 ): NeoAskEntryState {
   if (ask.status === 'dropped') return 'dropped';
   if (ask.status === 'done') return 'done';
+  const unheld = cards.filter((card) => !card.heldAt);
   if (
-    questions.some((question) => question.state === 'open') ||
-    todos.some((todo) => neoTodoPlace(todo, cards) === 'waiting')
+    questions.some((question) => question.state === 'open' && !question.heldAt) ||
+    todos.some((todo) => neoTodoPlace(todo, unheld) === 'waiting')
   )
     return 'waiting';
   if (todos.some((todo) => todo.state === 'doing' || todo.state === 'blocked')) return 'doing';
@@ -152,8 +152,16 @@ export function summarizeNeoAskEntry(entry: NeoAskEntry): NeoAskEntry {
       blockedReason: null,
       nextAction: null,
       named:
-        typeof todo.named?.requestFrom === 'string'
-          ? { requestFrom: todo.named.requestFrom }
+        typeof todo.named?.requestFrom === 'string' ||
+        typeof todo.named?.desktopControl === 'boolean'
+          ? {
+              ...(typeof todo.named?.requestFrom === 'string'
+                ? { requestFrom: todo.named.requestFrom }
+                : {}),
+              ...(typeof todo.named?.desktopControl === 'boolean'
+                ? { desktopControl: todo.named.desktopControl }
+                : {}),
+            }
           : null,
       check: null,
       artifacts: undefined,
@@ -180,11 +188,10 @@ export function summarizeNeoAskEntry(entry: NeoAskEntry): NeoAskEntry {
 
 const NEO_TODO_LIST_ORDER: Record<NeoTodo['state'], number> = {
   blocked: 0,
-  failed: 1,
-  doing: 2,
-  todo: 3,
-  done: 4,
-  removed: 5,
+  doing: 1,
+  todo: 2,
+  done: 3,
+  removed: 4,
 };
 
 function neoTodoListOrder<T extends NeoTodo>(todos: readonly T[]): T[] {
@@ -256,7 +263,7 @@ export function projectNeoAskEntries(
         if (question.kind === 'choice' && question.options)
           return {
             ...question,
-            optionLabels: neoOptionLabels(question.options, question.labels),
+            optionLabels: neoOptionLabels(question.options),
             ...neoRemovedPrerequisiteCodes(question, allTodos),
             ...neoDaemonCardCodes(question, allTodos),
           };
@@ -294,6 +301,9 @@ export const NeoAskEntrySchema = z.object({
     originMessageId: Nullable,
     title: z.string(),
     topic: Nullable,
+    topicKey: z.string().optional(),
+    topicSource: NeoTopicLabelSchema.shape.topicSource,
+    desktopApps: z.array(z.object({ bundleId: z.string(), name: z.string() })).optional(),
     request: z.string(),
     status: z.enum(['open', 'done', 'dropped']),
     outcome: Nullable,
@@ -379,6 +389,11 @@ export function createNeoDoneTodosOperation(
       ['paged', 'todos', 'facts'],
       'outcome'
     )
+    .pipe(
+      async (page: DonePage) => ({ ...page, todos: await project(page.todos) }),
+      'outcome',
+      'outcome'
+    )
     .endAsync('outcome') as (
     input: z.infer<typeof DoneTodos>,
     caller: OperationCaller
@@ -397,10 +412,7 @@ export function createNeoDoneTodosOperation(
       }),
     ]),
     policy: { safetyClass: 'read', roles: ['neo'] },
-    execute: async (input, caller) => {
-      const result = await read(input, caller);
-      return result.ok ? { ...result, todos: await project(result.todos) } : result;
-    },
+    execute: read,
   });
 }
 
@@ -472,12 +484,36 @@ export function createNeoAskReadOperation(
 
 const TodoLine = NeoTodoSchema.pick({ id: true, title: true, state: true });
 
+const TodoStartConfiguration = z.object({
+  requestedModel: z.string().nullable(),
+  requestedEffort: z.string().nullable(),
+  actualModel: z.string().nullable(),
+  actualEffort: z.string().nullable(),
+});
+
 export function createNeoTodoReadOperation(
   store: NeoAskTodoRepository,
+  sessions: NeoTodoSessionRepository,
   admit: (caller: OperationCaller) => { value: OperationCaller } | { reason: Rejection },
   project: <T extends NeoTodo>(todos: readonly T[]) => Promise<T[]>
 ) {
   const inputSchema = z.object({ todoId: z.string().trim().min(1) });
+  async function readDetail(todo: NeoTodo) {
+    const [projected, card] = await Promise.all([
+      project([todo]),
+      sessions.read('readCard', todo.id),
+    ]);
+    const startConfiguration =
+      card?.target?.verb === 'start'
+        ? {
+            requestedModel: card.target.model ?? null,
+            requestedEffort: card.target.effort ?? null,
+            actualModel: card.model,
+            actualEffort: card.effort,
+          }
+        : null;
+    return { ok: true as const, todo: projected[0]!, startConfiguration };
+  }
   const read = (superpipe({})('neo.todo.read') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admit, 'caller', 'result:outcome')
@@ -488,22 +524,22 @@ export function createNeoTodoReadOperation(
       'todo',
       'result:outcome'
     )
-    .pipe(
-      async (todo: NeoTodo) => ({ ok: true as const, todo: (await project([todo]))[0]! }),
-      'outcome',
-      'outcome'
-    )
+    .pipe(readDetail, 'outcome', 'outcome')
     .endAsync('outcome') as (
     input: z.infer<typeof inputSchema>,
     caller: OperationCaller
-  ) => Promise<{ ok: true; todo: NeoTodo } | Rejection>;
+  ) => Promise<Awaited<ReturnType<typeof readDetail>> | Rejection>;
   return defineOperation({
     name: 'neo.todo.read',
     description: neoToolDescription('neo.todo.read'),
     inputSchema,
     resultSchema: z.union([
       z.object({ ok: z.literal(false), reason: z.string() }),
-      z.object({ ok: z.literal(true), todo: NeoTodoSchema }),
+      z.object({
+        ok: z.literal(true),
+        todo: NeoTodoSchema,
+        startConfiguration: TodoStartConfiguration.nullable(),
+      }),
     ]),
     policy: { safetyClass: 'read', roles: ['neo'] },
     execute: read,

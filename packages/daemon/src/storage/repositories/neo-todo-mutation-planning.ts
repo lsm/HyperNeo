@@ -1,7 +1,5 @@
 import {
   neoTodoDependencyRefusal,
-  NEO_TODO_CANCELLED_DEPENDENCY,
-  neoTodoCancelledDependencies,
   planNeoTodoDependencies,
 } from '../../lib/neo/todo-dependencies.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -16,6 +14,7 @@ import {
   planNeoTodoDone,
   planNeoTodoRemove,
   requireNeoOpenTodo,
+  requireNeoHoldCardClear,
   requireNeoTodoArtifacts,
   requireNeoTodoCardsAnswered,
   type NeoTodoPolicy,
@@ -120,6 +119,14 @@ class NeoTodoMutationPlanner {
         'result:outcome'
       )
       .pipe(
+        (todo: NeoTodo, input: Input) =>
+          input.kind === 'edit' && input.hold != null
+            ? requireNeoHoldCardClear(todo, input, todos.todoCards(todo))
+            : { value: todo },
+        ['outcome', 'input'],
+        'result:outcome'
+      )
+      .pipe(
         (todo: NeoTodo, input: Input, now: number) =>
           input.kind === 'edit'
             ? planNeoTodoEdit(todo, input, now)
@@ -173,8 +180,6 @@ class NeoTodoMutationPlanner {
           const after = plan.patch.dependsOn;
           if (!after) return { value: plan };
           const family = todos.listFamilyTodos(plan.todo.askId);
-          if (neoTodoCancelledDependencies(family, plan.todo.id).length)
-            return { reason: { ok: false as const, reason: NEO_TODO_CANCELLED_DEPENDENCY } };
           const dependsOn = planNeoTodoDependencies(family, plan.todo.id, after);
           return typeof dependsOn === 'string'
             ? { reason: { ok: false as const, reason: neoTodoDependencyRefusal(dependsOn) } }
@@ -189,11 +194,8 @@ class NeoTodoMutationPlanner {
         'result:outcome'
       )
       .pipe(
-        (plan: Plan, input: Input) =>
-          input.kind === 'done'
-            ? { value: plan }
-            : requireNeoTodoCardsAnswered(plan, todos.listQuestions(plan.todo.askId)),
-        ['outcome', 'input'],
+        (plan: Plan) => requireNeoTodoCardsAnswered(plan, todos.listQuestions(plan.todo.askId)),
+        'outcome',
         'result:outcome'
       )
       .pipe((plan: Plan) => ({ ok: true as const, ...plan }), 'outcome', 'outcome')

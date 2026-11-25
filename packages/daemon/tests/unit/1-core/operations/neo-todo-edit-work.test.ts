@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { historicalAsk } from '../../helpers/accepted-ask.ts';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { createNeoAskRecordOperations } from '../../../../src/lib/neo/ask-record-operations.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
@@ -26,6 +27,7 @@ function setup() {
   createTables(db);
   createCodingPackTables(db);
   const store = new NeoAskTodoRepository(db);
+  historicalAsk(store, 'synthetic-neo', 'Plan');
   const sessions = new NeoTodoSessionRepository(db);
   const packs = createTodoCheckPacks(db);
   const runner = createNeoTodoRunner({
@@ -43,13 +45,17 @@ function setup() {
   const gateway = gatewayFor(db);
   const operations = [
     ...wireNeoTodoMutations(
-      createNeoTodoOperations(
-        store,
-        sessions,
-        controls,
-        () => packs,
-        () => null
-      ),
+      (writeHold) =>
+        createNeoTodoOperations(
+          store,
+          sessions,
+          controls,
+          () => packs,
+          () => null,
+          undefined,
+          undefined,
+          writeHold
+        ),
       {
         gateway,
         write: gateway.run.bind(gateway),
@@ -100,7 +106,7 @@ const work = {
 
 async function approvedPlan() {
   const world = setup();
-  const opened = await world.invoke('neo.ask.open', {
+  const opened = await world.invoke('neo.ask.propose', {
     title: 'Plan',
     request: 'Plan',
     todos: [world.step('A'), world.step('B')],
@@ -196,7 +202,12 @@ describe('todos given work later', () => {
         target: { verb: 'start', adapter: 'hyperneo' },
       };
       expect(
-        await invoke('neo.todo.add', { askId: ask.id, ...step('New'), ...placeless })
+        await invoke('neo.todo.add', {
+          askId: ask.id,
+          ...step('New'),
+          check: { pack: 'core', kind: 'human_confirmed', params: { questionId: 'synthetic' } },
+          ...placeless,
+        })
       ).toMatchObject({ ok: false, reason: expect.stringMatching(/^place_required:/) });
       expect(store.listTodos(ask.id).map((todo) => todo.id)).toEqual(['repository-anchor']);
       const waiting = store.addTodo(

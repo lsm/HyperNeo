@@ -72,6 +72,13 @@ OpenRouter models use `provider/model` IDs such as `anthropic/claude-sonnet-4.6`
 
 Ollama local and Ollama Cloud models use the native `/api/chat` and `/api/tags` APIs through HyperNeo's provider bridge. See [Ollama setup](docs/providers/ollama-setup.md) for local and cloud configuration. HyperNeo's bridging also supports GLM, Kimi, MiniMax, DeepSeek, and OpenCode endpoints.
 
+## Sharing ask cards
+
+Set `HYPERNEO_PUBLIC_URL` (alias `PUBLIC_URL`) before starting the daemon to share
+ask-card links across devices. Use an HTTP or HTTPS URL that serves the daemon’s
+authenticated web routes, including `/ask/<id>.md`. The recipient pairs their
+browser with that address before opening the card.
+
 ## Features
 
 - **Multi-session conversations** — run multiple independent agent sessions side by side

@@ -118,7 +118,7 @@ try {
   const denied = await create();
   assert.equal((await phone(denied.code)).status, 403);
   await page.goto(`${base}/neo`);
-  await page.getByRole('button', { name: 'Settings and connection', exact: true }).click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const drawerInput = page.getByRole('textbox', { name: 'Code shown on Synthetic phone' });
   await drawerInput.waitFor();
   await page.emulateMedia({ colorScheme: 'dark' });

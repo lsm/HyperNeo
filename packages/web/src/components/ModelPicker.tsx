@@ -1,3 +1,6 @@
+import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
+import type { SessionConfig } from '@hyperneo/shared';
+import { listProviders } from '../lib/api-helpers.ts';
 import { THINKING_OPTIONS } from '@hyperneo/shared';
 import type { ModelInfo, ThinkingLevel } from '@hyperneo/shared';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
@@ -17,15 +20,27 @@ interface ModelPickerProps {
   activeModelInfo: ModelInfo | null;
   activeModelLabel: string;
   availableModels: ModelInfo[];
+  harness?: SessionConfig['harness'];
+  provider?: string;
   loading: boolean;
   thinkingLevel: ThinkingLevel;
+  showThinking?: boolean;
   onSelectModel: (model: ModelInfo) => void;
   onSelectThinking: (level: ThinkingLevel) => void;
   onReload?: () => void;
   menuId?: string;
   disabled?: boolean;
   busy?: boolean;
-  align?: 'left' | 'right';
+  align?: 'left' | 'right' | 'trigger';
+  newChatHarness?: {
+    label: string;
+    options: {
+      label: string;
+      selected: boolean;
+      unavailableReason?: string;
+      onSelect: () => void;
+    }[];
+  };
 }
 
 function solidPillStyle(provider: string | undefined) {
@@ -41,8 +56,11 @@ export function ModelPicker({
   activeModelInfo,
   activeModelLabel,
   availableModels,
+  harness,
+  provider,
   loading,
   thinkingLevel,
+  showThinking = true,
   onSelectModel,
   onSelectThinking,
   onReload,
@@ -50,6 +68,7 @@ export function ModelPicker({
   disabled = false,
   busy = false,
   align = 'left',
+  newChatHarness,
 }: ModelPickerProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -58,6 +77,8 @@ export function ModelPicker({
   const [providerAuthStatuses, setProviderAuthStatuses] = useState<Map<string, ProviderAuthStatus>>(
     new Map()
   );
+  const [oxapProviders, setOxapProviders] = useState<Set<string> | null>(null);
+  const [providerError, setProviderError] = useState(false);
   const isConnected = connectionState.value === 'connected';
 
   useClickOutside(ref, () => setOpen(false), open);
@@ -77,23 +98,54 @@ export function ModelPicker({
       .catch(() => {});
   }, []);
 
+  const loadOxapProviders = useCallback(() => {
+    void listProviders()
+      .then(({ providers }) => {
+        setProviderError(false);
+        setOxapProviders(
+          new Set(
+            providers
+              .filter((entry) => {
+                try {
+                  return isOxapHarness(
+                    (JSON.parse(entry.configJson ?? '{}') as { harness?: unknown }).harness
+                  );
+                } catch {
+                  return false;
+                }
+              })
+              .map((entry) => entry.providerId)
+          )
+        );
+      })
+      .catch(() => setProviderError(true));
+  }, []);
+
   useEffect(() => {
     if (!isConnected) return;
     loadAuthStatuses();
-  }, [isConnected, loadAuthStatuses]);
+    if (harness !== undefined) loadOxapProviders();
+  }, [isConnected, loadAuthStatuses, loadOxapProviders, harness]);
 
   useEffect(() => {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) return;
     return hub.onEvent('providers.changed', () => {
       loadAuthStatuses();
+      if (harness !== undefined) loadOxapProviders();
     });
-  }, [loadAuthStatuses, connectionState.value]);
+  }, [loadAuthStatuses, loadOxapProviders, harness, connectionState.value]);
 
   const activeProvider = activeModelInfo?.provider;
   const models = filterModelsForPicker(
-    availableModels,
-    providerAuthStatuses,
+    availableModels.filter((model) =>
+      isOxapHarness(harness)
+        ? model.provider === provider
+        : harness === undefined ||
+          model.provider === (provider ?? activeProvider) ||
+          (oxapProviders !== null && !oxapProviders.has(model.provider))
+    ),
+    isOxapHarness(harness) ? new Map() : providerAuthStatuses,
     activeProvider,
     activeModelInfo?.id
   );
@@ -104,19 +156,29 @@ export function ModelPicker({
     ? shortenModelName(activeModelInfo.name, activeProvider)
     : activeModelLabel;
   const waiting = loading && availableModels.length === 0;
+  const title = [label, newChatHarness?.label, showThinking && `Thinking: ${thinking}`]
+    .filter(Boolean)
+    .join(' · ');
+  const close = () => {
+    setOpen(false);
+    trigger.current?.focus();
+  };
 
   return (
-    <div class="relative min-w-0" ref={ref}>
+    <div class={`relative min-w-0 ${newChatHarness ? '' : 'max-w-[260px]'}`} ref={ref}>
       <button
         ref={trigger}
         type="button"
         onClick={() => setOpen(!open)}
         disabled={waiting || disabled}
-        title={`${label} · Thinking: ${thinking}`}
-        aria-label="Choose model and thinking"
+        title={title}
+        aria-label={
+          newChatHarness ? 'Choose model, client and thinking' : 'Choose model and thinking'
+        }
+        aria-description={newChatHarness && `Client: ${newChatHarness.label}`}
         aria-expanded={open}
         aria-controls={menuId}
-        class="flex h-8 max-w-[260px] items-center gap-1.5 rounded-full border px-2.5 text-xs text-fg-soft transition-colors hover:brightness-110 shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
+        class={`flex h-8 max-w-full items-center gap-1.5 rounded-full border px-2.5 text-xs text-fg-soft transition-colors hover:brightness-110 shadow-sm disabled:cursor-not-allowed disabled:opacity-50 ${newChatHarness ? 'sm:pointer-coarse:h-11' : ''}`}
         style={activeModelInfo ? solidPillStyle(activeProvider) : undefined}
       >
         {waiting || busy ? (
@@ -127,23 +189,46 @@ export function ModelPicker({
           </span>
         ) : null}
         <span class="min-w-0 truncate">{label}</span>
-        <span aria-hidden="true" class="text-fg-faint">
-          ·
-        </span>
-        <span class="shrink-0" role="img" aria-label={`Thinking: ${thinking}`}>
-          <ThinkingLevelIcon level={level} />
-        </span>
-        <NeoIcon
-          name="chevron"
-          class={`!h-3.5 !w-3.5 shrink-0 text-fg-faint transition-transform ${open ? 'rotate-180' : ''}`}
-        />
+        {newChatHarness && (
+          <>
+            <span aria-hidden="true" class="text-fg-faint">
+              ·
+            </span>
+            <span class="shrink-0 text-fg-muted">{newChatHarness.label}</span>
+          </>
+        )}
+        {showThinking && (
+          <>
+            <span aria-hidden="true" class="text-fg-faint">
+              ·
+            </span>
+            <span class="shrink-0" role="img" aria-label={`Thinking: ${thinking}`}>
+              <ThinkingLevelIcon level={level} />
+            </span>
+          </>
+        )}
+        {!newChatHarness && (
+          <NeoIcon
+            name="chevron"
+            class={`!h-3.5 !w-3.5 shrink-0 text-fg-faint transition-transform ${open ? 'rotate-180' : ''}`}
+          />
+        )}
       </button>
+      {open && providerError && harness === 'sdk' && (
+        <div role="alert" class="text-xs text-warning-soft">
+          Could not load providers. Other providers may be unavailable.{' '}
+          <button type="button" class="underline" onClick={loadOxapProviders}>
+            Retry providers
+          </button>
+        </div>
+      )}
       {open && (
         <NeoModelMenu
           id={menuId}
           models={models}
           current={activeModelInfo ?? undefined}
           level={level}
+          showThinking={showThinking}
           busy={busy}
           align={align}
           loading={loading}
@@ -151,11 +236,38 @@ export function ModelPicker({
           onModel={onSelectModel}
           onThinking={onSelectThinking}
           onReload={onReload}
-          onClose={() => {
-            setOpen(false);
-            trigger.current?.focus();
-          }}
-        />
+          onClose={close}
+          summary={newChatHarness && { model: label, client: newChatHarness.label }}
+        >
+          {!!newChatHarness?.options.length && (
+            <fieldset
+              class="min-h-0 overflow-y-auto border-t border-line px-3 py-2"
+              aria-label="Client"
+            >
+              {newChatHarness.options.map(({ label, selected, unavailableReason, onSelect }) => (
+                <button
+                  key={label}
+                  type="button"
+                  aria-pressed={selected}
+                  disabled={!!unavailableReason}
+                  onClick={() => {
+                    onSelect();
+                    close();
+                  }}
+                  class={`flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-sm pointer-coarse:min-h-11 focus-visible:outline-accent disabled:opacity-50 ${selected ? 'bg-accent/10 text-accent' : 'text-fg-soft hover:bg-fill-soft'}`}
+                >
+                  <span>
+                    {label}
+                    {unavailableReason && (
+                      <span class="block text-fg-muted">{unavailableReason}</span>
+                    )}
+                  </span>
+                  {selected && <NeoIcon name="check" class="!h-4 !w-4" />}
+                </button>
+              ))}
+            </fieldset>
+          )}
+        </NeoModelMenu>
       )}
     </div>
   );

@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test';
 import { NEO_WORK_GOAL_MERGE } from '@hyperneo/prompts';
 import type { MessageHub } from '@hyperneo/shared';
-import { BUILD_METADATA } from '../../../../src/lib/build-metadata.ts';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
 import { planNeoHoldCard } from '../../../../src/lib/neo/daemon-cards.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
@@ -80,26 +79,6 @@ test('core checks stay installed with only life-admin enabled and read actual ou
     done: false,
     evidence: null,
   });
-  expect(
-    await core!.todos!.check({
-      ...todo,
-      check: {
-        pack: 'core',
-        kind: 'deployed',
-        params: { repo: 'lsm/HyperNeo', sha: BUILD_METADATA.commit },
-      },
-    })
-  ).toMatchObject({ done: true });
-  expect(
-    await core!.todos!.check({
-      ...todo,
-      check: {
-        pack: 'core',
-        kind: 'deployed',
-        params: { repo: 'other/repository', sha: BUILD_METADATA.commit },
-      },
-    })
-  ).toEqual({ done: false, evidence: null });
   expect(service.todos.getTodo(todo.id)?.state).toBe('todo');
 });
 
@@ -109,12 +88,13 @@ test('installed builtins keep identity and settings select without rebuilding th
     'coding',
     'life-admin',
     'delegation',
+    'computer-use',
     'model-routing',
     'core',
   ]);
-  expect(service.packs()).toEqual([installed[0], installed[2]]);
+  expect(service.packs()).toEqual([installed[0], installed[2], installed[3]]);
   db.updateGlobalSettings({ neo: { packs: ['life-admin'] } });
-  expect(service.packs()).toEqual([installed[1], installed[2]]);
+  expect(service.packs()).toEqual([installed[1], installed[2], installed[3]]);
   expect(service.installedPacks()[0]).toBe(installed[0]);
   expect(service.installedPacks()[1]).toBe(installed[1]);
   expect(
@@ -152,7 +132,7 @@ test('installed builtins keep identity and settings select without rebuilding th
 });
 
 test.each(
-  (['todo', 'doing', 'blocked', 'failed'] as const).flatMap((state) =>
+  (['todo', 'doing', 'blocked'] as const).flatMap((state) =>
     [
       { kind: 'yesno' as const, answer: 'no', via: 'button' as const },
       { kind: 'yesno' as const, answer: 'no', via: 'chat' as const },

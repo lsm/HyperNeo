@@ -15,7 +15,7 @@ describe('Neo scheduled goal-cycle guidance', () => {
       'goal.facts',
       'neo.home.read',
       'goal.journal.list',
-      'neo.ask.open',
+      'neo.ask.propose',
       'goal.journal.append',
       'goal.session.update',
     ])
@@ -55,6 +55,15 @@ describe('Neo scheduled goal-cycle guidance', () => {
     expect(text).toContain('old and new');
     expect(text).toContain('declines in chat');
   });
+  test('names the goal definition sections at creation and in the work cycle', () => {
+    for (const section of ['Resources', 'Do alone', 'Needs the human', 'Daily limit']) {
+      expect(NEO_ROOT_PROMPT).toContain(section);
+      expect(NEO_GOAL_CYCLE).toContain(section);
+    }
+    expect(NEO_ROOT_PROMPT).toContain("the human's words");
+    expect(NEO_GOAL_CYCLE).toContain('wait for the human to answer yes');
+    expect(NEO_GOAL_CYCLE).toContain('resources or limits');
+  });
   test('teaches standing-outcome setup with explicit frequent cadence', () => {
     for (const text of [
       'neo.home.init',
@@ -69,10 +78,26 @@ describe('Neo scheduled goal-cycle guidance', () => {
       expect(NEO_ROOT_PROMPT).toContain(text);
   });
   test('keeps the short root and gives only scheduled goal wakes a one-line closing label', () => {
-    expect(NEO_ROOT_PROMPT.trim().split(/\s+/).length).toBeLessThan(340);
+    expect(NEO_ROOT_PROMPT.trim().split(/\s+/).length).toBeLessThan(350);
     expect(NEO_ROOT_PROMPT).not.toContain('goal.journal');
     expect(neoPrompt([])).toContain('one plain-text summary line');
     expect(neoPrompt([])).toContain('On other turns');
     expect(neoPrompt([])).toContain('End every other turn with exactly "No response requested."');
   });
+  test.each([false, true])(
+    'delivers guidance for answered goal reviews with packs: %s',
+    (packsEnabled) => {
+      const prompt = packsEnabled ? neoPrompt(neoSettingsPackBriefs()) : neoPrompt([]);
+      for (const guidance of [
+        'no-effect review question is answered',
+        'neo.snapshot',
+        'goal.session.get',
+        'goal.session.update',
+        'nextSteps',
+        'status to active',
+        'status to completed',
+      ])
+        expect(prompt).toContain(guidance);
+    }
+  );
 });

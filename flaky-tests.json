@@ -39,6 +39,14 @@
       "namePattern": "timestamp between assistant messages",
       "reason": "Known intermittent steer-vs-result ordering failure: the immediate steer can be persisted after the steered turn's result, so the last result in the snapshot predates it.",
       "addedAt": "2026-09-15"
+    },
+    {
+      "id": "daemon-online-settings-startup-timeout",
+      "suite": "daemon-online",
+      "path": "packages/daemon/tests/online/rpc/rpc-settings-handlers.test.ts",
+      "namePattern": "returns persisted settings reflecting defaults",
+      "reason": "Daemon startup intermittently exceeds the settings test setup deadline.",
+      "addedAt": "2026-11-18"
     }
   ]
 }

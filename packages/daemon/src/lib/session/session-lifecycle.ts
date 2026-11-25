@@ -12,11 +12,12 @@ import type {
   Provider,
   Session,
   SessionMetadata,
+  UnarchiveSessionResponse,
   WorktreeMetadata,
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { Database } from '../../storage/database.ts';
-import { sessionSdkPath } from '../session/sdk-path.ts';
+import { sessionSdkIds, sessionSdkPath } from '../session/sdk-path.ts';
 import type { SessionInputDraftSnapshot } from '../../storage/repositories/session-input-draft-write.ts';
 import { runOneShotModel } from '../agent/one-shot-model.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -24,10 +25,24 @@ import { Logger } from '../logger.ts';
 import { teardownSessionDeliveries } from '../mailbox/cancellation.ts';
 import { getProviderService } from '../provider-service.ts';
 import { resolveNewSessionModel, type NewSessionModelSettings } from './new-session-model.ts';
-import { archiveSDKSessionFiles, deleteSDKSessionFiles } from '../sdk-session-file-manager.ts';
+import {
+  archiveSDKSessions,
+  deleteSDKSessions,
+  withUnarchivedSDKSessions,
+} from '../sdk-session-file-manager.ts';
 import type { WorktreeManager } from '../worktree-manager.ts';
 import type { WorkArchived } from '../drivers/types.ts';
 import { admitCreateSessionConfig } from './create-session-config.ts';
+import {
+  codexSessionRefusal,
+  effectiveOxapConfig,
+  engineForProvider,
+  OxapSessionAdmissionError,
+  selectSessionEngine,
+  thinkingRefusal,
+} from '../agent/session-engine.ts';
+import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
+import { newSessionOxapRefusal, type OxapSettingsDeps } from '../oxap/oxap-settings.ts';
 import type { AgentSessionFactory, SessionCache } from './session-cache.ts';
 import {
   commitSessionInputDraft,
@@ -58,6 +73,7 @@ export interface SessionLifecycleConfig {
   maxTokens: number;
   temperature: number;
   disableWorktrees?: boolean;
+  readOxapProviderKey?: OxapSettingsDeps['key'];
   titleGenerationQueryForTesting?: SdkQueryFunction;
   titleGenerationProviderServiceForTesting?: TitleGenerationProviderService;
 }
@@ -68,6 +84,7 @@ export interface CreateSessionParams {
   workspacePath?: string | null;
   initialTools?: string[];
   config?: Partial<Session['config']>;
+  harness?: Session['config']['harness'];
   worktreeBaseBranch?: string;
   worktreeMode?: 'worktree' | 'direct';
   detectGit?: false;
@@ -86,6 +103,7 @@ export interface CreateSessionParams {
 }
 
 export class SessionLifecycle {
+  private readonly resourceOperations = new Map<string, Promise<unknown>>();
   private logger: Logger;
 
   constructor(
@@ -153,6 +171,34 @@ export class SessionLifecycle {
       params.config?.provider,
       globalSettings
     );
+    const provider = (params.config?.provider ?? resolvedProvider) as Provider;
+    const sandbox = params.config?.sandbox
+      ? { ...globalSettings.sandbox, ...params.config.sandbox }
+      : globalSettings.sandbox;
+    const providerRecord = () => this.db.providers.getProviderByProviderId(provider);
+    const harness = selectSessionEngine(
+      params.harness ?? engineForProvider(provider, providerRecord)
+    );
+    if (isOxapHarness(harness)) {
+      const refusal =
+        codexSessionRefusal(
+          effectiveOxapConfig(
+            { ...carriedConfig, sandbox, coordinatorMode: params.config?.coordinatorMode },
+            globalSettings
+          ),
+          false,
+          false
+        ) ??
+        thinkingRefusal(harness, params.config?.thinkingLevel) ??
+        (await newSessionOxapRefusal(
+          harness,
+          provider,
+          providerRecord(),
+          globalSettings.oxapHub,
+          this.config.readOxapProviderKey
+        ));
+      if (refusal) throw new OxapSessionAdmissionError(refusal);
+    }
 
     const providedTitle = params.title?.trim();
     const shouldSkipAutoTitle = Boolean(providedTitle);
@@ -217,10 +263,9 @@ export class SessionLifecycle {
         autoScroll: params.config?.autoScroll ?? globalSettings.autoScroll,
         thinkingLevel: params.config?.thinkingLevel ?? globalSettings.thinkingLevel,
         coordinatorMode: params.config?.coordinatorMode ?? globalSettings.coordinatorMode,
-        provider: (params.config?.provider ?? resolvedProvider) as Provider,
-        sandbox: params.config?.sandbox
-          ? { ...globalSettings.sandbox, ...params.config.sandbox }
-          : globalSettings.sandbox,
+        provider,
+        sandbox,
+        ...(isOxapHarness(harness) ? { harness } : {}),
         settingSources: params.config?.settingSources ?? globalSettings.settingSources,
         ...(params.toolProfile ? { toolProfile: params.toolProfile } : {}),
       },
@@ -587,7 +632,85 @@ export class SessionLifecycle {
     return cleanup;
   }
 
-  async cleanupArchivedWorktree(sessionId: string): Promise<WorktreeCleanup | undefined> {
+  private async withSessionResources<T>(sessionId: string, effect: () => Promise<T>): Promise<T> {
+    const previous = this.resourceOperations.get(sessionId);
+    const pending = (previous?.catch(() => {}) ?? Promise.resolve()).then(effect);
+    this.resourceOperations.set(sessionId, pending);
+    try {
+      return await pending;
+    } finally {
+      if (this.resourceOperations.get(sessionId) === pending)
+        this.resourceOperations.delete(sessionId);
+    }
+  }
+
+  unarchive(sessionId: string): Promise<UnarchiveSessionResponse> {
+    return this.withSessionResources(sessionId, async () => {
+      const session = this.db.getSession(sessionId);
+      if (!session) return { success: false, reason: 'Session not found' };
+      if (session.status === 'active') return { success: true };
+      if (session.status !== 'archived')
+        return { success: false, reason: 'Only archived sessions can be reopened' };
+      return this.restoreArchivedSession(session);
+    });
+  }
+
+  private async restoreArchivedSession(session: Session): Promise<UnarchiveSessionResponse> {
+    const archived = session.metadata.archivedWorktree;
+    let worktree = session.worktree ?? (archived && { ...archived, isWorktree: true });
+    const sdkWorkspacePath = sessionSdkPath({ workspacePath: session.workspacePath, worktree });
+    let worktreeBaseBranch: string | undefined;
+    if (worktree && !(await this.worktreeManager.verifyWorktree(worktree))) {
+      const { branch, mainRepoPath } = worktree;
+      const base = await this.worktreeManager.resolveUnarchiveBase(mainRepoPath, branch);
+      worktreeBaseBranch = base.branch;
+      worktree =
+        (await this.worktreeManager.createWorktree({
+          sessionId: session.id,
+          repoPath: mainRepoPath,
+          branchName: `session/restored-${generateUUID()}`,
+          baseBranch: base.ref,
+        })) ?? undefined;
+      if (!worktree) throw new Error('Could not recreate the archived worktree');
+    }
+
+    const updates = {
+      status: 'active' as const,
+      archivedAt: null,
+      ...(worktree ? { worktree, gitBranch: worktree.branch } : {}),
+    };
+    let written = false;
+    try {
+      const commit = async () => (await this.db.updateSession(session.id, updates)) === 'written';
+      written = sdkWorkspacePath
+        ? await withUnarchivedSDKSessions(sdkWorkspacePath, sessionSdkIds(session), commit)
+        : await commit();
+    } finally {
+      if (!written && worktreeBaseBranch && worktree)
+        await this.worktreeManager.removeWorktree(worktree);
+    }
+    if (!written) return { success: false, reason: 'This session cannot be reopened' };
+
+    this.sessionCache.remove(session.id);
+    await this.internalEventBus
+      .publish('session.updated', {
+        sessionId: session.id,
+        source: 'update',
+        session: { ...updates, archivedAt: undefined },
+      })
+      .catch((error: unknown) => this.logger.warn('Could not publish session restore', error));
+    return { success: true, ...(worktreeBaseBranch ? { worktreeBaseBranch } : {}) };
+  }
+
+  cleanupArchivedWorktree(sessionId: string): Promise<WorktreeCleanup | undefined> {
+    return this.withSessionResources(sessionId, () =>
+      this.cleanupArchivedWorktreeResources(sessionId)
+    );
+  }
+
+  private async cleanupArchivedWorktreeResources(
+    sessionId: string
+  ): Promise<WorktreeCleanup | undefined> {
     const session = this.db.getSession(sessionId);
     if (session?.status !== 'archived' || !session.worktree) return undefined;
     const cleanup = await this.cleanupSessionWorktree(session.worktree);
@@ -595,7 +718,16 @@ export class SessionLifecycle {
     return cleanup;
   }
 
-  async archiveResources(
+  archiveResources(
+    sessionId: string,
+    trigger: ArchiveResourcesTrigger
+  ): Promise<WorktreeCleanup | undefined> {
+    return this.withSessionResources(sessionId, () =>
+      this.archiveSessionResources(sessionId, trigger)
+    );
+  }
+
+  private async archiveSessionResources(
     sessionId: string,
     trigger: ArchiveResourcesTrigger
   ): Promise<WorktreeCleanup | undefined> {
@@ -649,36 +781,14 @@ export class SessionLifecycle {
       this.logger.error(`[SessionLifecycle] archiveResources: delivery cancel failed:`, error);
     }
 
-    let archiveMetadata:
-      | {
-          sdkArchivePath: string;
-          sdkArchivedAt: string;
-          sdkArchivedFileCount: number;
-          sdkArchivedSize: number;
-        }
-      | undefined;
     try {
       const sdkWorkspacePath = sessionSdkPath(session);
-      if (sdkWorkspacePath) {
-        const result = archiveSDKSessionFiles(
-          sdkWorkspacePath,
-          session.sdkSessionId ?? null,
-          sessionId
-        );
-        if (result.archivePath) {
-          archiveMetadata = {
-            sdkArchivePath: result.archivePath,
-            sdkArchivedAt: new Date().toISOString(),
-            sdkArchivedFileCount: result.archivedFiles.length,
-            sdkArchivedSize: result.totalSize,
-          };
-        }
-        completedPhases.push('sdk-files-archive');
-      } else {
-        completedPhases.push('sdk-files-archive-skipped');
-      }
+      const archived = sdkWorkspacePath
+        ? await archiveSDKSessions(sdkWorkspacePath, sessionSdkIds(session))
+        : 0;
+      completedPhases.push(archived ? 'sdk-session-archive' : 'sdk-session-archive-skipped');
     } catch (error) {
-      this.logger.error(`[SessionLifecycle] archiveResources: SDK file archive failed:`, error);
+      this.logger.error(`[SessionLifecycle] archiveResources: SDK session archive failed:`, error);
     }
 
     let cleanup: WorktreeCleanup | undefined;
@@ -713,10 +823,7 @@ export class SessionLifecycle {
             },
           }
         : {};
-      const metadataUpdate = {
-        ...archiveMetadata,
-        ...archivedWorktreeMetadata,
-      };
+      const metadataUpdate = archivedWorktreeMetadata;
 
       await this.update(sessionId, {
         status: 'archived',
@@ -743,7 +850,16 @@ export class SessionLifecycle {
     return cleanup;
   }
 
-  async deleteResources(sessionId: string, trigger: DeleteResourcesTrigger): Promise<void> {
+  deleteResources(sessionId: string, trigger: DeleteResourcesTrigger): Promise<void> {
+    return this.withSessionResources(sessionId, () =>
+      this.deleteSessionResources(sessionId, trigger)
+    );
+  }
+
+  private async deleteSessionResources(
+    sessionId: string,
+    trigger: DeleteResourcesTrigger
+  ): Promise<void> {
     const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
     const session = this.db.getSession(sessionId);
 
@@ -798,20 +914,15 @@ export class SessionLifecycle {
       if (session) {
         try {
           const sdkWorkspacePath = sessionSdkPath(session);
-          if (!sdkWorkspacePath) {
-            completedPhases.push('sdk-files-delete-skipped');
-          } else {
-            const deleteResult = deleteSDKSessionFiles(
-              sdkWorkspacePath,
-              session.sdkSessionId ?? null,
-              sessionId
-            );
-            completedPhases.push(
-              deleteResult.success ? 'sdk-files-delete' : 'sdk-files-delete-partial'
-            );
-          }
+          const deleted = sdkWorkspacePath
+            ? await deleteSDKSessions(sdkWorkspacePath, sessionSdkIds(session))
+            : 0;
+          completedPhases.push(deleted ? 'sdk-session-delete' : 'sdk-session-delete-skipped');
         } catch (error) {
-          this.logger.error(`[SessionLifecycle] deleteResources: SDK file deletion failed:`, error);
+          this.logger.error(
+            `[SessionLifecycle] deleteResources: SDK session delete failed:`,
+            error
+          );
         }
       }
 

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { revealAsk } from './queue-ask.mjs';
 
 const [port, run] = process.argv.slice(2);
 assert(port && run);
@@ -27,6 +28,10 @@ assert.equal(paired.status(), 200);
 const storageState = await pairing.storageState();
 await pairing.close();
 mkdirSync(out, { recursive: true });
+const passive = JSON.parse(
+  execFileSync('bun', ['.claude/skills/verify/rpc.ts', 'neo.todo.hold', JSON.stringify({ todoId: 'controls-passive', reason: 'Wait for the prerequisite.' })], { encoding: 'utf8' })
+);
+assert.equal(passive.reply.ok, true);
 const seen = {};
 const settle = (page) =>
   page.evaluate(() =>
@@ -50,7 +55,7 @@ async function open(context, width) {
   const page = await context.newPage();
   await page.goto(`${base}/neo`);
   if (width < 800) await page.getByRole('button', { name: /^Your work/ }).click();
-  const card = page.locator('[data-ask="controls"]:visible');
+  const card = await revealAsk(page, 'controls');
   await card.waitFor().catch(async (error) => {
     await page.screenshot({ path: `${out}/open-failed-${width}.png` });
     throw error;
@@ -68,6 +73,9 @@ try {
   try {
     const { page, card } = await open(desktop, 1280);
     assert.equal(await row(card, 'controls-hold').locator('[data-todo-priority="high"]').innerText(), 'High');
+    assert.match(await row(card, 'controls-passive').innerText(), /On hold/);
+    assert.doesNotMatch(await card.innerText(), /Waiting on you/);
+    assert.equal(await card.locator('[data-ask-question]').count(), 0);
     assert.equal(await card.locator('[data-todo-priority]').count(), 2);
     await card.screenshot({ path: `${out}/list-1280.png` });
     await card.getByRole('button', { name: 'Step actions: Run the data migration' }).click();
@@ -89,15 +97,15 @@ try {
     await pick(page, card, 'Draft the blog post', 'Cancel this step');
     await card.locator('[data-ask-todo="controls-cancel"][data-todo-state="todo"]').waitFor({ state: 'detached' });
     await pick(page, card, 'Run the data migration', 'Pause');
-    const paused = card.getByText('"Run the data migration" is paused: The human paused it. Resume it, or remove it?');
+    const paused = card.getByText('You paused this. Resume it, or remove it?');
     await paused.waitFor();
     await pick(page, card, 'Write the release notes', 'Hold');
-    const held = card.getByText('"Write the release notes" is on hold: The human put it on hold. Start it, or remove it?');
+    const held = card.getByText('You put this on hold. Start it, or remove it?');
     await held.waitFor();
     await settle(page);
     await card.screenshot({ path: `${out}/cards-1280.png` });
 
-    const holdBox = card.locator('[data-ask-question]').filter({ hasText: 'is on hold' });
+    const holdBox = card.locator('[data-ask-question]').filter({ hasText: 'You put this on hold.' });
     await holdBox.getByRole('button', { name: 'Start', exact: true }).click();
     await held.waitFor({ state: 'detached' });
     seen.alerts = await card.locator('[data-todo-control-error]').allInnerTexts();
@@ -162,6 +170,7 @@ try {
 }
 const menu = seen.runningMenu.map((label) => label.replace('✓', '').trim());
 assert.deepEqual(menu, [
+  'Let it use this computer',
   'Mark done',
   'Pause',
   'Priority: Urgent',

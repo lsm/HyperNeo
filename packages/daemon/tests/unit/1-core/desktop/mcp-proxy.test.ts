@@ -39,10 +39,10 @@ test('tool list under the token budget', async () => {
   const tools = await fixture().proxy.list();
   const serialized = JSON.stringify(tools);
   expect(tools).toHaveLength(12);
-  expect(Buffer.byteLength(serialized)).toBe(6055);
+  expect(Buffer.byteLength(serialized)).toBe(6831);
   expect(Buffer.byteLength(serialized)).toBeLessThan(8000);
   expect(createHash('sha256').update(serialized).digest('hex')).toBe(
-    '3f6e8413b7b464c5c697743684b8adf508544982348033179a89a14dcbc0c0ad'
+    '3a9b08c627403baf6b9b04269677bf899fb25e9ee8e23f97e056316a5ebde6fb'
   );
 });
 
@@ -161,6 +161,21 @@ test('typed target refusals reach the caller and the audit under one call id', a
   expect(JSON.stringify(results)).not.toContain('com.example.copy');
   expect(dispatch).not.toHaveBeenCalled();
 });
+
+test.each(['app_action_not_authorized', 'app_action_declined'] as const)(
+  '%s explains the app-wide grant',
+  async (reason) => {
+    const proxy = createDesktopProxy({
+      binding: async () => binding,
+      dispatch: vi.fn(),
+      audit: () => {},
+      authorize: async () => ({ reason }),
+    });
+    const result = await proxy.call('click', { pid: 42 });
+    expect(result.structuredContent?.explanation).not.toContain('action class');
+    expect(result.structuredContent?.explanation).toContain('app');
+  }
+);
 
 test('a verified target is audited with its app and instance', async () => {
   const audit = vi.fn();

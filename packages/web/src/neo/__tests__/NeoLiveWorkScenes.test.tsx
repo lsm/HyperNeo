@@ -111,8 +111,10 @@ describe('Work search input and retry', () => {
     vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
     const protocol = testAskEntry('protocol', 'to do protocol');
     protocol.ask.topic = 'OAP';
+    protocol.ask.topicKey = 'pick:oap';
     const inbox = testAskEntry('inbox', 'to do inbox');
     inbox.ask.topic = '邮件';
+    inbox.ask.topicKey = 'pick:邮件';
     const { model, container } = mount();
     act(() => {
       model.value = {
@@ -133,10 +135,34 @@ describe('Work search input and retry', () => {
       [...container.querySelectorAll('[data-ask]')].map((node) => node.getAttribute('data-ask'))
     ).toEqual(['protocol']);
   });
+  it('searches in the tab row and restores the tabs on close', async () => {
+    locale.value = 'en';
+    const protocol = testAskEntry('protocol', 'to do protocol');
+    const { model, container } = mount();
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: { ...model.value.snapshot, todoAsks: [protocol] },
+      };
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Search work', exact: true }));
+    fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'to do' } });
+    await waitFor(() =>
+      expect(container.querySelector('[data-scene-group="search"]')).toBeTruthy()
+    );
+    expect(screen.queryByRole('button', { name: 'Goals' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Close work search' }));
+    expect(screen.queryByRole('searchbox')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Goals' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Inbox' }));
+    expect(container.querySelector('[data-scene-group="search"]')).toBeNull();
+    expect(container.querySelector('[data-ask="protocol"]')).toBeTruthy();
+  });
   it('shows the topic of a result with no loaded card as disabled', async () => {
     locale.value = 'en';
     const remote = testAskEntry('remote', 'remote protocol', { state: 'done' });
     remote.ask.topic = 'OAP';
+    remote.ask.topicKey = 'pick:oap';
     const request = vi.fn(async (_method: string, params: { name: string }) => {
       if (params.name === 'neo.ask.search')
         return { ok: true, results: [{ askId: remote.ask.id }], nextCursor: null };
@@ -314,6 +340,73 @@ function mount(publicMode = true, empty = false) {
   return { ...view, model };
 }
 
+describe('Topic chips by topic key', () => {
+  const topical = () =>
+    (
+      [
+        ['shop-p', 'Shop', 'p'],
+        ['shop-q', 'Shop', 'q'],
+        ['lower', 'kids', 'pick:kids'],
+        ['upper', 'Kids', 'pick:kids'],
+      ] as const
+    ).map(([id, topic, topicKey]) => {
+      const entry = testAskEntry(id, `Work ${id}`);
+      entry.ask.topic = topic;
+      entry.ask.topicKey = topicKey;
+      return entry;
+    });
+  const show = () => {
+    const view = mount();
+    act(() => {
+      view.model.value = {
+        ...view.model.value,
+        snapshot: { ...view.model.value.snapshot, todoAsks: topical() },
+      };
+    });
+    return view;
+  };
+  const listed = (container: Element) =>
+    [...container.querySelectorAll('[data-ask]')].map((node) => node.getAttribute('data-ask'));
+
+  it('keeps same-titled projects apart, folds picks, and agrees across reload and the card button', () => {
+    locale.value = 'en';
+    const { container } = show();
+    expect(
+      within(container.querySelector('[data-topic-chips]') as HTMLElement)
+        .getAllByRole('button')
+        .map((chip) => chip.textContent)
+    ).toEqual(['All 4', 'kids 2', 'Shop 1', 'Shop 1']);
+    const [first, second] = screen.getAllByRole('button', { name: 'Shop 1' });
+    fireEvent.click(first);
+    expect(listed(container)).toEqual(['shop-p']);
+    fireEvent.click(second);
+    expect(listed(container)).toEqual(['shop-q']);
+    fireEvent.click(screen.getByRole('button', { name: 'kids 2' }));
+    expect(listed(container).sort()).toEqual(['lower', 'upper']);
+    expect(localStorage.setItem).toHaveBeenLastCalledWith('neo:topic-filter', 'pick:kids');
+
+    cleanup();
+    vi.spyOn(localStorage, 'getItem').mockImplementation((key) =>
+      key === 'neo:topic-filter' ? 'pick:kids' : null
+    );
+    const reloaded = show().container;
+    expect(screen.getByRole('button', { name: 'kids 2' }).getAttribute('aria-pressed')).toBe(
+      'true'
+    );
+    expect(listed(reloaded).sort()).toEqual(['lower', 'upper']);
+
+    fireEvent.click(screen.getByRole('button', { name: 'All 4' }));
+    const card = reloaded.querySelector('[data-ask="shop-q"]') as HTMLElement;
+    fireEvent.click(within(card).getByRole('button', { name: 'Shop' }));
+    expect(listed(reloaded)).toEqual(['shop-q']);
+    expect(
+      screen
+        .getAllByRole('button', { name: 'Shop 1' })
+        .map((chip) => chip.getAttribute('aria-pressed'))
+    ).toEqual(['false', 'true']);
+  });
+});
+
 describe('Neo public work scenes', () => {
   it('loads older outcomes only on request and allows retry without dropping current work', async () => {
     const old = testAskEntry('older', 'Older completed work', { state: 'done' });
@@ -364,9 +457,17 @@ describe('Neo public work scenes', () => {
     const { container } = mount(true, true);
     expect(container.querySelector('.neo-shell')?.classList.contains('neo-has-scenes')).toBe(true);
     const work = screen.getByRole('region', { name: 'Work scenes' });
-    expect(within(work).getByRole('status').textContent).toBe('No work yet.');
+    expect(within(work).getByRole('status').textContent).toContain('Your inbox is empty');
     expect(work.querySelectorAll('[data-scene-group]')).toHaveLength(0);
     if (!desktop) {
+      expect(within(work).queryByRole('heading', { name: 'Your work' })).toBeNull();
+      const tabRow = work.querySelector('[data-work-tabs]')?.parentElement;
+      expect(
+        within(tabRow as HTMLElement).getByRole('button', { name: 'Close work list' })
+      ).toBeTruthy();
+      expect(
+        within(tabRow as HTMLElement).getByRole('button', { name: 'Search work' })
+      ).toBeTruthy();
       fireEvent.click(screen.getByRole('button', { name: 'Close work list' }));
       expect(screen.queryByRole('region', { name: 'Work scenes' })).toBeNull();
       fireEvent.click(screen.getByRole('button', { name: 'Your work' }));
@@ -551,9 +652,125 @@ describe('Neo public work scenes', () => {
     expect(order).toEqual(['a100', 'b80', 'a10', 'a-held', 'a-step', 'run-step']);
   });
 
+  const waits = (id: string, askId: string, held = false) => ({
+    state: held ? ('held' as const) : ('waiting' as const),
+    askId,
+    questionId: id,
+    text: `Card ${id}`,
+    todos: [],
+  });
+
+  it('lists each ask once per state as its full card, in its newest-card order', () => {
+    const { container, model } = mount(true, true);
+    const a = testAskEntry('ask-a', 'Ask A', {
+      state: 'waiting',
+      todos: [testTodo('a-step', { askId: 'ask-a', state: 'blocked' })],
+      questions: [
+        card('a100', 'ask-a', 100),
+        card('a10', 'ask-a', 10),
+        card('a-held', 'ask-a', 120, 121),
+      ],
+    });
+    const b = testAskEntry('ask-b', 'Ask B', {
+      state: 'waiting',
+      questions: [card('b80', 'ask-b', 80)],
+    });
+    const running = testAskEntry('running', 'Running', {
+      state: 'doing',
+      todos: [testTodo('run-step', { askId: 'running', state: 'doing' })],
+    });
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [b, running, a],
+          humanQueue: {
+            items: [
+              waits('a100', 'ask-a'),
+              waits('b80', 'ask-b'),
+              waits('a10', 'ask-a'),
+              waits('a-held', 'ask-a', true),
+              { state: 'progress', askId: 'ask-a', todoId: 'a-step', title: 'A step', owner: null },
+              {
+                state: 'progress',
+                askId: 'running',
+                todoId: 'run-step',
+                title: 'Run step',
+                owner: null,
+              },
+            ],
+            counts: {
+              'ask-a': { waiting: 2, held: 1, progress: 1 },
+              'ask-b': { waiting: 1, held: 0, progress: 0 },
+              running: { waiting: 0, held: 0, progress: 1 },
+            },
+          },
+        } as never,
+      };
+    });
+    const queue = container.querySelector('[data-human-queue]') as HTMLElement;
+    const seen: string[] = [];
+    for (const name of [/^Waiting on you/, /^Held/, /^In progress/]) {
+      fireEvent.click(within(queue).getByRole('button', { name }));
+      seen.push(
+        ...[...container.querySelectorAll('[id^="neo-ref-question-"], [data-ask-todo]')].map(
+          (node) => node.getAttribute('data-ask-todo') ?? node.id.replace('neo-ref-question-', '')
+        )
+      );
+    }
+    expect(seen).toEqual([
+      ...['a100', 'a10', 'a-held', 'a-step', 'b80'],
+      ...['a100', 'a10', 'a-held', 'a-step'],
+      ...['a100', 'a10', 'a-held', 'a-step', 'run-step'],
+    ]);
+  });
+
+  it('shows the full document of a queued card once its ask is read', async () => {
+    const { model } = mount(true, true);
+    const preview = `${'x'.repeat(2000)}\n\n[Document preview truncated]`;
+    const full = testAskEntry('ask-doc', 'Ask with a long report', {
+      state: 'waiting',
+      questions: [{ ...card('doc', 'ask-doc', 50), document: `${'x'.repeat(2000)}TAIL-OF-REPORT` }],
+    });
+    vi.spyOn(connectionManager, 'getHub').mockResolvedValue({
+      request: vi.fn(async () => ({ ok: true, entry: full })),
+    } as never);
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [
+            {
+              ...full,
+              questions: [{ ...full.questions[0], document: preview }],
+              summary: {
+                todoCount: 0,
+                questionCount: 1,
+                openQuestionCount: 1,
+                questionRefs: [{ id: 'doc', replacedBy: null }],
+              },
+            },
+          ],
+          humanQueue: {
+            items: [waits('doc', 'ask-doc')],
+            counts: { 'ask-doc': { waiting: 1, held: 0, progress: 0 } },
+          },
+        } as never,
+      };
+    });
+    const queue = document.querySelector('[data-human-queue]') as HTMLElement;
+    await waitFor(() => {
+      fireEvent.click(within(queue).getByRole('button', { name: 'View full report' }));
+      expect(screen.getByRole('dialog').textContent).toContain('TAIL-OF-REPORT');
+    });
+    expect(document.querySelectorAll('[id="neo-ref-question-doc"]')).toHaveLength(1);
+  });
+
   it('keeps the empty legacy scene list collapsed without a public Work placeholder', () => {
     const { container } = mount(false, true);
-    expect(screen.queryByText('No work yet.')).toBeNull();
+    expect(screen.queryByText('Your inbox is empty')).toBeNull();
     expect(container.querySelector('.neo-has-scenes')).toBeNull();
     expect(container.querySelector('.neo-scene-list')?.childElementCount).toBe(0);
   });
@@ -567,11 +784,11 @@ describe('Neo public work scenes', () => {
     expect(container.querySelector('.neo-shell')?.classList.contains('neo-has-scenes')).toBe(true);
     expect(
       within(screen.getByRole('region', { name: 'Work scenes' })).getByRole('status').textContent
-    ).toBe('No work yet.');
+    ).toContain('Your inbox is empty');
     act(() => {
       model.value = { ...model.value, snapshot: { ...model.value.snapshot, todoAsks: entries } };
     });
-    expect(screen.queryByText('No work yet.')).toBeNull();
+    expect(screen.queryByText('Your inbox is empty')).toBeNull();
     expect(screen.getByRole('region', { name: 'Needs your attention' })).toBeTruthy();
   });
 
@@ -585,9 +802,9 @@ describe('Neo public work scenes', () => {
     set({ needsYou: 4, neoUnhandled: 2 });
     expect(screen.getByRole('button', { name: /^Your work, 4 need/, hidden: true })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Needs your attention · 4' })).toBeTruthy();
-    expect(screen.getByText('Neo has 2 still to handle')).toBeTruthy();
+    expect(screen.getByText('Waiting on Neo to check or unblock: 2')).toBeTruthy();
     set({ needsYou: 4, neoUnhandled: 0 });
-    expect(screen.queryByText(/still to handle/)).toBeNull();
+    expect(screen.queryByText(/Waiting on Neo/)).toBeNull();
   });
 
   it('keeps a blocked ask with no card out of the human list', () => {
@@ -611,7 +828,7 @@ describe('Neo public work scenes', () => {
     });
     expect(screen.queryByRole('region', { name: 'Needs your attention' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Your work', hidden: true })).toBeTruthy();
-    expect(screen.getByText('Neo has 1 still to handle')).toBeTruthy();
+    expect(screen.getByText('Waiting on Neo to check or unblock: 1')).toBeTruthy();
   });
 
   it('shows no pending check banner and only work scene groups in legacy mode', () => {
@@ -697,7 +914,7 @@ describe('card reply notice navigation', () => {
     fireEvent.click(screen.getByRole('button', { name: /I replied · View card/ }));
     const dialog = await screen.findByRole('dialog', { name: 'Sign-off card' });
     expect(await within(dialog).findByText('Choose a sign-off')).toBeTruthy();
-    expect(screen.getByRole('searchbox')).toHaveProperty('value', '');
+    expect(screen.queryByRole('searchbox')).toBeNull();
   });
 
   it.each([true, false])('opens the exact paged done todo with owner loaded=%s', async (loaded) => {
@@ -774,6 +991,560 @@ describe('card reply notice navigation', () => {
     } finally {
       hub.mockRestore();
     }
+  });
+
+  it.each([
+    ['an uncovered todo in progress', 'garage', 'In progress 1'],
+    ['a finished todo of an open ask', 'oil', null],
+  ])('opens a quoted reference to %s from the queue', async (_name, todoId, chip) => {
+    const { model } = mount();
+    const oil = testTodo('oil', { title: 'Fictional oil', state: 'done' });
+    vi.spyOn(connectionManager, 'getHub').mockResolvedValue({
+      request: vi.fn(async (_method: string, params: { name: string }) =>
+        params.name === 'neo.ask.doneTodos'
+          ? { ok: true, todos: [oil], doneCount: 1, nextOffset: null }
+          : params.name === 'neo.ask.read'
+            ? { ok: true, entry: testAskEntry('tax', 'Fictional tax', { state: 'waiting' }) }
+            : { ok: true, results: [], schedules: [] }
+      ),
+    } as never);
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [
+            testAskEntry('car', 'Fictional car service', {
+              state: 'doing',
+              todos: [testTodo('garage', { title: 'Fictional garage', state: 'doing' }), oil],
+              doneCount: 1,
+            }),
+          ],
+          humanQueue: {
+            items: [
+              {
+                state: 'waiting',
+                askId: 'tax',
+                questionId: 'qt',
+                text: 'Fictional tax?',
+                todos: [],
+              },
+              {
+                state: 'progress',
+                askId: 'car',
+                todoId: 'garage',
+                title: 'Fictional garage',
+                owner: 'worker',
+              },
+            ],
+            counts: {
+              tax: { waiting: 1, held: 0, progress: 0 },
+              car: { waiting: 0, held: 0, progress: 1 },
+            },
+          },
+        } as never,
+        viewPublicConversation: {
+          ...model.value.viewPublicConversation!,
+          entries: [
+            {
+              kind: 'ask',
+              key: 'todo-quote',
+              ask: {
+                conversationId: root.slice(4),
+                requestId: '20000000-0000-4000-8000-000000000007',
+                askOrigin: { sessionId: root, messageId: 'quoted-todo' },
+                content: 'About this step',
+                replyTo: { kind: 'todo', id: todoId, excerpt: 'Quoted step target' },
+                sequence: 1,
+                createdAt: '2026-10-24T12:00:00Z',
+              },
+            },
+          ],
+        },
+      };
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Quoted step target/ }));
+    await waitFor(() => expect(document.activeElement?.id).toBe(`neo-ref-todo-${todoId}`));
+    if (chip)
+      expect(screen.getByRole('button', { name: chip }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(
+      within(screen.getByRole('group', { name: 'State' })).getByRole('button', {
+        name: 'In progress 1',
+      })
+    );
+    for (const id of ['neo-ref-ask-car', 'neo-ref-todo-garage', `neo-ref-todo-${todoId}`])
+      expect(document.querySelectorAll(`[id="${id}"]`)).toHaveLength(1);
+  });
+
+  it('counts only the reference card it lists under Needs your attention', async () => {
+    const { model } = mount();
+    const oil = testTodo('oil', { title: 'Fictional oil', state: 'done' });
+    vi.spyOn(connectionManager, 'getHub').mockResolvedValue({
+      request: vi.fn(async (_method: string, params: { name: string }) =>
+        params.name === 'neo.ask.doneTodos'
+          ? { ok: true, todos: [oil], doneCount: 1, nextOffset: null }
+          : { ok: true, results: [], schedules: [] }
+      ),
+    } as never);
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          needsYou: 5,
+          todoAsks: [
+            testAskEntry('car', 'Fictional car service', {
+              state: 'waiting',
+              todos: [oil],
+              doneCount: 1,
+            }),
+          ],
+          humanQueue: {
+            items: [{ state: 'waiting', askId: 'car', questionId: 'qc', text: 'Car?', todos: [] }],
+            counts: { car: { waiting: 1, held: 0, progress: 0 } },
+          },
+        } as never,
+        viewPublicConversation: {
+          ...model.value.viewPublicConversation!,
+          entries: [
+            {
+              kind: 'ask',
+              key: 'oil-quote',
+              ask: {
+                conversationId: root.slice(4),
+                requestId: '20000000-0000-4000-8000-000000000008',
+                askOrigin: { sessionId: root, messageId: 'quoted-oil' },
+                content: 'About the oil',
+                replyTo: { kind: 'todo', id: 'oil', excerpt: 'Quoted oil target' },
+                sequence: 1,
+                createdAt: '2026-10-24T12:00:00Z',
+              },
+            },
+          ],
+        },
+      };
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Quoted oil target/ }));
+    await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-todo-oil'));
+    const group = screen.getByRole('region', { name: 'Needs your attention' });
+    expect(group.querySelector('h2')?.textContent).toBe('Needs your attention · 1');
+  });
+
+  it.each(['topic', 'tab'] as const)('drops a %s that hides an opened reference', async (hider) => {
+    const { model } = mount();
+    const trip = testAskEntry('trip', 'Fictional trip', { state: 'doing' });
+    trip.ask.topic = 'Travel';
+    trip.ask.topicKey = 'Travel';
+    const tax = testAskEntry('tax', 'Fictional tax', {
+      state: 'doing',
+      todos: [testTodo('tax-step', { title: 'tax step', state: 'doing' })],
+    });
+    tax.ask.topic = 'Money';
+    tax.ask.topicKey = 'Money';
+    const progress = (askId: string) => ({
+      state: 'progress' as const,
+      askId,
+      todoId: `${askId}-step`,
+      title: `${askId} step`,
+      owner: 'worker' as const,
+    });
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [trip, tax],
+          humanQueue:
+            hider === 'topic'
+              ? undefined
+              : {
+                  items: [progress('trip'), progress('tax')],
+                  counts: {
+                    trip: { waiting: 0, held: 0, progress: 1 },
+                    tax: { waiting: 0, held: 0, progress: 1 },
+                  },
+                },
+        } as never,
+        viewPublicConversation: {
+          ...model.value.viewPublicConversation!,
+          entries: [
+            {
+              kind: 'ask',
+              key: 'tax-quote',
+              ask: {
+                conversationId: root.slice(4),
+                requestId: '20000000-0000-4000-8000-000000000009',
+                askOrigin: { sessionId: root, messageId: 'quoted-tax' },
+                content: 'About the tax step',
+                replyTo: { kind: 'todo', id: 'tax-step', excerpt: 'Quoted tax target' },
+                sequence: 1,
+                createdAt: '2026-10-24T12:00:00Z',
+              },
+            },
+          ],
+        },
+      };
+    });
+    const hide = hider === 'topic' ? 'Travel 1' : 'Goals';
+    fireEvent.click(screen.getByRole('button', { name: hide }));
+    fireEvent.click(screen.getByRole('button', { name: /Quoted tax target/ }));
+    await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-todo-tax-step'));
+    expect(screen.getByRole('button', { name: hide }).getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it.each([
+    [null, false],
+    ['Money', false],
+    ['Money', true],
+    ['Travel', true],
+  ])(
+    'opens a child todo quote on its own full todo, saved topic %s, searching %s',
+    async (topic, searching) => {
+      vi.spyOn(localStorage, 'getItem').mockImplementation((key) =>
+        key === 'neo:topic-filter' ? topic : null
+      );
+      const { model } = mount();
+      const card = {
+        id: 'qp',
+        askId: 'trip',
+        text: 'Parent card?',
+        kind: 'yesno',
+        options: null,
+        multiple: false,
+        noLabel: 'No',
+        yesLabel: 'Agree',
+        todos: ['hotel'],
+        state: 'open',
+        answer: null,
+        answeredBy: null,
+        answeredAt: null,
+        retiredReason: null,
+        replacedBy: null,
+        createdAt: 1,
+      };
+      act(() => {
+        model.value = {
+          ...model.value,
+          snapshot: {
+            ...model.value.snapshot,
+            todoAsks: [
+              {
+                ...testAskEntry('trip', 'Fictional trip', {
+                  state: 'waiting',
+                  questions: [card as never],
+                }),
+                ask: {
+                  ...testAskEntry('trip', 'Fictional trip').ask,
+                  topic: 'Travel',
+                  topicKey: 'Travel',
+                },
+              },
+              {
+                ...testAskEntry('hotel-ask', 'Fictional hotel booking', {
+                  state: 'doing',
+                  todos: [testTodo('hotel', { title: 'Fictional hotel', state: 'doing' })],
+                }),
+                ask: {
+                  ...testAskEntry('hotel-ask', 'Fictional hotel booking').ask,
+                  topic: 'Money',
+                  topicKey: 'Money',
+                },
+              },
+            ],
+            humanQueue: {
+              items: [
+                {
+                  state: 'waiting',
+                  askId: 'trip',
+                  questionId: 'qp',
+                  text: 'Parent card?',
+                  todos: [{ id: 'hotel', title: 'Fictional hotel' }],
+                },
+              ],
+              counts: { trip: { waiting: 1, held: 0, progress: 0 } },
+            },
+          } as never,
+          viewPublicConversation: {
+            ...model.value.viewPublicConversation!,
+            entries: [
+              {
+                kind: 'ask',
+                key: 'hotel-quote',
+                ask: {
+                  conversationId: root.slice(4),
+                  requestId: '20000000-0000-4000-8000-000000000010',
+                  askOrigin: { sessionId: root, messageId: 'quoted-hotel' },
+                  content: 'About the hotel',
+                  replyTo: { kind: 'todo', id: 'hotel', excerpt: 'Quoted hotel target' },
+                  sequence: 1,
+                  createdAt: '2026-10-24T12:00:00Z',
+                },
+              },
+            ],
+          },
+        };
+      });
+      const child = document.querySelector('article[data-ask="hotel-ask"]') as HTMLElement;
+      expect(
+        within(child).getByRole('button', { name: 'Step actions: Fictional hotel' })
+      ).toBeTruthy();
+      if (searching) {
+        fireEvent.click(screen.getByRole('button', { name: 'Search work', exact: true }));
+        fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'Fictional' } });
+      }
+      fireEvent.click(screen.getByRole('button', { name: /Quoted hotel target/ }));
+      await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-todo-hotel'));
+      expect(document.activeElement?.closest('[data-ask="hotel-ask"]')).toBeTruthy();
+      expect(document.querySelectorAll('[id="neo-ref-todo-hotel"]')).toHaveLength(1);
+    }
+  );
+
+  it('holds and takes back cards found by work search', async () => {
+    const { model } = mount();
+    const holdQuestion = vi.fn();
+    const card = (id: string, text: string, heldAt: number | null) => ({
+      id,
+      askId: 'trip',
+      text,
+      kind: 'yesno',
+      options: null,
+      multiple: false,
+      noLabel: 'No',
+      yesLabel: 'Agree',
+      todos: [],
+      state: 'open',
+      answer: null,
+      answeredBy: null,
+      answeredAt: null,
+      retiredReason: null,
+      replacedBy: null,
+      createdAt: 1,
+      ...(heldAt ? { heldAt } : {}),
+    });
+    act(() => {
+      model.value = {
+        ...model.value,
+        holdQuestion,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [
+            testAskEntry('trip', 'Fictional searchable trip', {
+              state: 'waiting',
+              questions: [
+                card('qh', 'Held question?', 5),
+                card('qw', 'Waiting question?', null),
+              ] as never,
+            }),
+          ],
+          humanQueue: {
+            items: [
+              { state: 'held', askId: 'trip', questionId: 'qh', text: 'Held question?', todos: [] },
+              {
+                state: 'waiting',
+                askId: 'trip',
+                questionId: 'qw',
+                text: 'Waiting question?',
+                todos: [],
+              },
+            ],
+            counts: { trip: { waiting: 1, held: 1, progress: 0 } },
+          },
+        },
+      } as never;
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Search work', exact: true }));
+    fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'searchable' } });
+    const held = (await screen.findByText('Held question?')).closest('[data-ask-question]');
+    expect(within(held as HTMLElement).getByText('On hold')).toBeTruthy();
+    fireEvent.click(within(held as HTMLElement).getByRole('button', { name: 'Take back' }));
+    expect(holdQuestion).toHaveBeenCalledWith('qh', false);
+    const waiting = (await screen.findByText('Waiting question?')).closest('[data-ask-question]');
+    fireEvent.click(within(waiting as HTMLElement).getByRole('button', { name: 'Hold' }));
+    expect(holdQuestion).toHaveBeenCalledWith('qw', true);
+  });
+
+  it('reports a failed queue refresh after a stale card and retries on request', async () => {
+    const { model } = mount();
+    const refresh = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Snapshot offline'))
+      .mockResolvedValue(undefined);
+    const setError = vi.fn();
+    const card = (state: string) => ({
+      id: 'q1',
+      askId: 'trip',
+      text: 'Stale card?',
+      kind: 'yesno',
+      options: null,
+      multiple: false,
+      noLabel: 'No',
+      yesLabel: 'Agree',
+      todos: [],
+      state,
+      answer: null,
+      answeredBy: null,
+      answeredAt: null,
+      retiredReason: null,
+      replacedBy: null,
+      createdAt: 1,
+    });
+    vi.spyOn(connectionManager, 'getHub').mockResolvedValue({
+      request: vi.fn(async (_method: string, params: { name: string }) =>
+        params.name === 'neo.ask.read'
+          ? {
+              ok: true,
+              entry: testAskEntry('trip', 'Fictional trip', {
+                state: 'waiting',
+                questions: [card('answered') as never],
+              }),
+            }
+          : { ok: true, results: [], schedules: [] }
+      ),
+    } as never);
+    act(() => {
+      model.value = {
+        ...model.value,
+        refresh,
+        setError,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [
+            {
+              ...testAskEntry('trip', 'Fictional trip', {
+                state: 'waiting',
+                questions: [card('open') as never],
+              }),
+              summary: { todoCount: 0, questionCount: 1, openQuestionCount: 1 },
+            },
+          ],
+          humanQueue: {
+            items: [
+              { state: 'waiting', askId: 'trip', questionId: 'q1', text: 'Stale card?', todos: [] },
+            ],
+            counts: { trip: { waiting: 1, held: 0, progress: 0 } },
+          },
+        },
+      } as never;
+    });
+    await waitFor(() => expect(setError).toHaveBeenCalledWith('Snapshot offline'));
+    const alert = await screen.findByText('Couldn’t refresh the queue.');
+    fireEvent.click(
+      within(alert.closest('[role="alert"]') as HTMLElement).getByRole('button', { name: 'Retry' })
+    );
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByText('Couldn’t refresh the queue.')).toBeNull());
+  });
+
+  it('reaches the ask actions and todo controls from a queue group', () => {
+    const { model } = mount();
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [
+            testAskEntry('trip', 'Fictional trip', {
+              state: 'doing',
+              todos: [testTodo('hotel', { title: 'Fictional hotel', state: 'doing' })],
+            }),
+          ],
+          humanQueue: {
+            items: [
+              {
+                state: 'progress',
+                askId: 'trip',
+                todoId: 'hotel',
+                title: 'Fictional hotel',
+                owner: 'worker',
+              },
+            ],
+            counts: { trip: { waiting: 0, held: 0, progress: 1 } },
+          },
+        } as never,
+      };
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'In progress 1' }));
+    const queue = screen.getByRole('region', { name: 'Fictional trip' });
+    expect(within(queue).getByRole('button', { name: 'Ask actions' })).toBeTruthy();
+    expect(
+      within(queue).getByRole('button', { name: 'Step actions: Fictional hotel' })
+    ).toBeTruthy();
+  });
+
+  it('keeps listing an open ask the queue holds nothing for', () => {
+    const { model } = mount();
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [
+            testAskEntry('tax', 'Fictional tax', { state: 'doing' }),
+            testAskEntry('empty', 'Fictional empty ask', { state: 'todo' }),
+          ],
+          humanQueue: {
+            items: [
+              {
+                state: 'progress',
+                askId: 'tax',
+                todoId: 'tax-step',
+                title: 'tax step',
+                owner: 'worker',
+              },
+            ],
+            counts: { tax: { waiting: 0, held: 0, progress: 1 } },
+          },
+        } as never,
+      };
+    });
+    expect(document.querySelector('[data-ask="empty"]')).toBeTruthy();
+    expect(document.querySelector('article[data-ask="tax"]')).toBeNull();
+  });
+
+  it('ignores a saved topic and makes topic badges read-only when queue filters are shown', () => {
+    vi.spyOn(localStorage, 'getItem').mockImplementation((key) =>
+      key === 'neo:topic-filter' ? 'Travel' : null
+    );
+    const { model, container } = mount();
+    const trip = testAskEntry('trip', 'Fictional trip', { state: 'doing' });
+    trip.ask.topic = 'Travel';
+    trip.ask.topicKey = 'Travel';
+    const tax = testAskEntry('tax', 'Fictional tax', { state: 'doing' });
+    tax.ask.topic = 'Money';
+    tax.ask.topicKey = 'Money';
+    const progress = (askId: string) => ({
+      state: 'progress' as const,
+      askId,
+      todoId: `${askId}-step`,
+      title: `${askId} step`,
+      owner: 'worker' as const,
+    });
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [trip, tax],
+          humanQueue: {
+            items: [progress('trip'), progress('tax')],
+            counts: {
+              trip: { waiting: 0, held: 0, progress: 1 },
+              tax: { waiting: 0, held: 0, progress: 1 },
+            },
+          },
+        } as never,
+      };
+    });
+    expect(container.querySelector('[data-topic-chips]')).toBeNull();
+    const states = within(screen.getByRole('group', { name: 'State' }));
+    const asks = within(screen.getByRole('group', { name: 'Ask' }));
+    fireEvent.click(states.getByRole('button', { name: 'In progress 2' }));
+    const badge = screen.getByRole('button', { name: 'Travel', exact: true }) as HTMLButtonElement;
+    expect(badge.disabled).toBe(true);
+    expect(screen.getByRole('region', { name: 'Fictional tax' })).toBeTruthy();
+    fireEvent.click(asks.getByRole('button', { name: 'Fictional trip 1' }));
+    expect(screen.getByRole('region', { name: 'Fictional trip' })).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Fictional tax' })).toBeNull();
   });
 
   it.each(['answered', 'retired'] as const)(

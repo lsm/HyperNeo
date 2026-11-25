@@ -537,6 +537,36 @@ describe('ProvidersSettings', () => {
     await waitFor(() => expect(screen.queryByTestId('oauth-modal')).toBeNull());
   });
 
+  it('leaves opening the OAuth consent page to the user click in the modal', async () => {
+    const openMock = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const provider = createMockProvider('1', 'anthropic-copilot', {
+      displayName: 'Copilot',
+      authType: 'oauth',
+      available: false,
+    });
+    mockListProviders.mockResolvedValueOnce({ providers: [provider] });
+    mockListProviderAuthStatus.mockResolvedValue({
+      providers: [
+        {
+          id: 'anthropic-copilot',
+          displayName: 'Copilot',
+          isAuthenticated: false,
+          method: 'oauth',
+        },
+      ],
+    });
+    mockLoginProvider.mockResolvedValue({ success: true, authUrl: 'https://example.com/oauth' });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Copilot'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    fireEvent.click(screen.getByText('Login'));
+    await waitFor(() => expect(screen.getByTestId('oauth-modal')).toBeTruthy());
+
+    expect(openMock).not.toHaveBeenCalled();
+    openMock.mockRestore();
+  });
+
   it('shows keychain unavailable banner without DB fallback copy', async () => {
     globalStore.systemState.value = {
       credentialStore: {
@@ -596,6 +626,87 @@ describe('ProvidersSettings', () => {
     });
   });
 
+  it('saves the selected harness through the OXAP operation', async () => {
+    const provider = createMockProvider('1', 'anthropic-codex', { displayName: 'Codex' });
+    mockListProviders.mockResolvedValue({ providers: [provider] });
+    mockRequest.mockImplementation(async (method: string) =>
+      method === 'operation.invoke'
+        ? { accepted: true }
+        : {
+            settings: {
+              settings: {
+                oxapHub: {
+                  path: '/synthetic/oxap',
+                  version: 'synthetic-version',
+                  sha256: 'a'.repeat(64),
+                },
+              },
+            },
+          }
+    );
+    render(<ProvidersSettings />);
+    fireEvent.click(await screen.findByText('Codex'));
+    fireEvent.change(screen.getByLabelText('Client', { exact: true }), {
+      target: { value: 'oxap-codex' },
+    });
+    expect(screen.getByText('OXAP is not installed')).toBeTruthy();
+    expect(screen.getByPlaceholderText('Absolute path to OXAP Codex executable')).toBeTruthy();
+    expect(screen.getByText('An absolute path is required.')).toBeTruthy();
+    fireEvent.input(screen.getByLabelText('Client executable'), {
+      target: { value: '/synthetic/codex' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save client' }));
+    await waitFor(() =>
+      expect(mockRequest).toHaveBeenCalledWith(
+        'operation.invoke',
+        {
+          name: 'oxap.settings.save',
+          input: {
+            providerId: 'anthropic-codex',
+            harness: 'oxap-codex',
+            settings: { executable: '/synthetic/codex' },
+          },
+        },
+        { timeout: 300_000 }
+      )
+    );
+    await waitFor(() => expect(screen.getByText('/synthetic/oxap')).toBeTruthy());
+    expect(screen.getByText('synthetic-version')).toBeTruthy();
+    expect(screen.getByText('a'.repeat(64))).toBeTruthy();
+  });
+
+  it('edits a saved executable while Claude Code is the default and no key is set', async () => {
+    const provider = createMockProvider('1', 'deepseek', {
+      displayName: 'DeepSeek',
+      configJson: JSON.stringify({ harnessSettings: { executable: '/synthetic/dsh' } }),
+    });
+    mockListProviders.mockResolvedValue({ providers: [provider] });
+    mockRequest.mockResolvedValue({ accepted: true });
+    render(<ProvidersSettings />);
+    fireEvent.click(await screen.findByText('DeepSeek'));
+    expect((screen.getByLabelText('Client', { exact: true }) as HTMLSelectElement).value).toBe(
+      'sdk'
+    );
+    const executable = screen.getByLabelText('Client executable') as HTMLInputElement;
+    expect(executable.value).toBe('/synthetic/dsh');
+    fireEvent.input(executable, { target: { value: '/synthetic/dsh-updated' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save client' }));
+    await waitFor(() =>
+      expect(mockRequest).toHaveBeenCalledWith(
+        'operation.invoke',
+        {
+          name: 'oxap.settings.save',
+          input: {
+            providerId: 'deepseek',
+            harness: 'sdk',
+            settings: { executable: '/synthetic/dsh-updated' },
+          },
+        },
+        { timeout: 300_000 }
+      )
+    );
+  });
+
   it('expands provider row on click', async () => {
     const providers = [
       createMockProvider('1', 'anthropic', { displayName: 'Anthropic', authType: 'api_key' }),
@@ -636,9 +747,9 @@ describe('ProvidersSettings', () => {
     });
   });
 
-  it('links the provider default explanation to Sessions & Harness', async () => {
+  it('links the provider default explanation to Sessions & Clients', async () => {
     render(<ProvidersSettings />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Sessions & Harness' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Sessions & Clients' }));
     expect(mockNavigateToSettings).toHaveBeenCalledWith('harness');
   });
 

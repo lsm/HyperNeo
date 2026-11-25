@@ -10,8 +10,11 @@ TMPDIR=/tmp/claude-501 VERIFY_BROWSER="/Applications/Google Chrome.app/Contents/
 
 The script starts an isolated daemon through the CLI front door (`env -i`,
 NODE_ENV=test, its own HOME, data dir and database, no provider key) and drives
-headless Chromium with `about-links-view.mjs` to `/settings?tab=about`. Nothing is
-clicked, so no external site is opened.
+paired headless Chromium with `about-links-view.mjs` to `/settings?tab=about`.
+The Web click opens a synthetic popup served by Playwright. Desktop-mode clicks
+are observed through a fixture for the native bridge. Confirm both destinations
+are handed to the system opener and the desktop page stays on Settings. No
+external site is contacted.
 
 End state, in `$RUN/evidence/`:
 - `about-links.json`: the page stays at `/settings?tab=about`; `GitHub` points at

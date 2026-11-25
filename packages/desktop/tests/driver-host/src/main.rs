@@ -13,6 +13,65 @@ impl log::Log for FixtureLogger {
 }
 static LOGGER: FixtureLogger = FixtureLogger;
 
+#[cfg(test)]
+mod deadline_tests {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    use std::time::Duration;
+    use tokio::time::{advance, Instant};
+
+    #[tokio::test(start_paused = true)]
+    async fn owner_timeout_never_dispatches_after_late_approval() {
+        let (send, receive) = tokio::sync::oneshot::channel::<()>();
+        let (answer, receiver) = tokio::sync::oneshot::channel::<()>();
+        let granted = Arc::new(AtomicBool::new(false));
+        let dispatched = Arc::new(AtomicBool::new(false));
+        let stored = granted.clone();
+        tokio::spawn(async move {
+            let _ = receive.await;
+            stored.store(true, Ordering::SeqCst);
+            let _ = answer.send(());
+        });
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let sent = dispatched.clone();
+        let request = tokio::spawn(async move {
+            let result = super::desktop_drivers::owner_answer(deadline, async move {
+                let _ = receiver.await;
+                "allowed"
+            })
+            .await;
+            if result == "allowed" {
+                sent.store(true, Ordering::SeqCst);
+            }
+            result
+        });
+        advance(Duration::from_secs(20)).await;
+        assert_eq!(request.await.unwrap(), "waiting_for_owner");
+        send.send(()).unwrap();
+        tokio::task::yield_now().await;
+        assert!(granted.load(Ordering::SeqCst));
+        assert!(!dispatched.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn owner_approval_before_deadline_allows_the_current_call() {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let (send, receive) = tokio::sync::oneshot::channel::<()>();
+        let request = tokio::spawn(async move {
+            super::desktop_drivers::owner_answer(deadline, async move {
+                let _ = receive.await;
+                "allowed"
+            })
+            .await
+        });
+        advance(Duration::from_secs(19)).await;
+        send.send(()).unwrap();
+        assert_eq!(request.await.unwrap(), "allowed");
+    }
+}
+
 fn main() {
     std::thread::spawn(|| {
         let served =
@@ -52,8 +111,25 @@ async fn serve() {
                 .unwrap()
         });
     let sidecar = std::sync::Arc::new(std::sync::Mutex::new(child));
-    let control =
-        desktop_drivers::Control::setup(base, binary, args[3].clone(), sidecar.clone()).await;
+    let fixture_dir = std::path::PathBuf::from(&args[1]);
+    let desktop_ready = std::sync::Arc::new(move || {
+        use std::io::Write;
+        let mut events = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(fixture_dir.join("permission-checks"))
+            .unwrap();
+        writeln!(events, "check").unwrap();
+        !fixture_dir.join("permissions-missing").exists()
+    });
+    let control = desktop_drivers::Control::setup(
+        base,
+        binary,
+        args[3].clone(),
+        sidecar.clone(),
+        desktop_ready,
+    )
+    .await;
     let mut shutdown_signal =
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()).unwrap();
     println!("ready");

@@ -165,7 +165,7 @@ if (process.argv.includes('agents')) {
   const helper = sessions.find((s) => s.title === name && s.pid)!;
   const text = prompt.split('<message>\n')[1].split('\n\n(Relayed from HyperNeo')[0];
   log({ kind: 'relay', helper: helper.id, mode: flag('--permission-mode'), text });
-  if (helper.title === 'rc-toggle' || helper.title === 'desktop-wake') {
+  if (helper.title === 'neo-helper' || helper.title === 'desktop-wake') {
     append(helper, {
       type: 'user',
       uuid: crypto.randomUUID(),
@@ -174,7 +174,7 @@ if (process.argv.includes('agents')) {
       },
     });
   }
-  if (helper.title === 'rc-toggle') {
+  if (helper.title === 'neo-helper') {
     const id = /local_([\da-f-]+)/.exec(text)![1];
     const target = sessions.find((s) => s.id === id)!;
     const record = JSON.parse(readFileSync(recordPath(target), 'utf8'));

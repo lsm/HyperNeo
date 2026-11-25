@@ -103,6 +103,9 @@ describe('blocked todo cards', () => {
       status: 'Blocked: CI keeps failing',
       statusCodes: [{ code: 'todo.blocked', params: { reason: 'CI keeps failing' } }],
     });
+    const held = todo({ state: 'blocked', blockedBy: 'held' });
+    expect(neoAskEntryState(ask(), [held], [])).toBe('doing');
+    expect(neoWorkCounts([held], [], [])).toEqual({ needsYou: 0, neoUnhandled: 0 });
     expect(neoAskEntryState(ask(), [blocked, todo({ state: 'done' })], [])).toBe('doing');
     expect(neoAskEntryState(ask(), [blocked], [question('open')])).toBe('waiting');
   });
@@ -200,15 +203,6 @@ describe('neoTodoStatusLine', () => {
     );
   });
 
-  test('a failed todo keeps its reason, or says not done', () => {
-    expect(
-      neoTodoStatusLine(todo({ state: 'failed', reason: '会话停了：测试没过' }), [], packLine)
-    ).toEqual(text('会话停了：测试没过'));
-    expect(neoTodoStatusLine(todo({ state: 'failed' }), [], null)).toEqual(
-      coded('Not done', 'todo.failed')
-    );
-  });
-
   test('a replaced todo names its replacement, with the reason when there is one', () => {
     expect(
       neoTodoStatusLine(
@@ -248,6 +242,15 @@ describe('neoAskEntryState', () => {
     expect(neoAskEntryState(ask(), [todo({}), todo({ state: 'done' })], [])).toBe('todo');
     expect(neoAskEntryState(ask(), [], [])).toBe('todo');
     expect(neoAskEntryState(ask('dropped'), doing, [question('open')])).toBe('dropped');
+  });
+
+  test('an ask whose open cards are all held is not waiting', () => {
+    const held = { state: 'open', heldAt: 5, todos: ['t'] } as NeoQuestion;
+    const blocked = todo({ state: 'blocked', blockedBy: 'question' });
+    expect(neoAskEntryState(ask(), [blocked], [held])).toBe('doing');
+    expect(neoAskEntryState(ask(), [todo({})], [held])).toBe('todo');
+    const restored = { state: 'open', heldAt: null, todos: ['t'] } as NeoQuestion;
+    expect(neoAskEntryState(ask(), [blocked], [restored])).toBe('waiting');
   });
 });
 
@@ -354,7 +357,7 @@ describe('projectNeoAskEntries', () => {
     expect(entry.questions).toMatchObject([
       {
         id: 'r1',
-        optionLabels: ['A', 'B'],
+        optionLabels: ['1', '2'],
         textCodes: [
           { code: 'question.removedOneOne', params: { removed: '"Build"', steps: '"Deploy"' } },
         ],
@@ -407,18 +410,17 @@ describe('projectNeoAskEntries todo order and done todos', () => {
     return { store, sessions, opened };
   }
 
-  test('lists blocked, failed, doing, not started, done, then removed, and counts done todos', () => {
+  test('lists blocked, doing, not started, done, then removed, and counts done todos', () => {
     const { store, sessions, opened } = seed([
       'done',
       'todo',
       'removed',
       'doing',
-      'failed',
       'blocked',
       'done',
     ]);
     const [entry] = projectNeoAskEntries([opened], facts(store, sessions, [opened]), []);
-    expect(entry.todos.map((todo) => todo.id)).toEqual(['t5', 't4', 't3', 't1', 't0', 't6', 't2']);
+    expect(entry.todos.map((todo) => todo.id)).toEqual(['t4', 't3', 't1', 't0', 't5', 't2']);
     expect(entry.doneCount).toBe(2);
     expect(entry.state).toBe('doing');
   });
@@ -455,13 +457,22 @@ describe('projectNeoAskEntries todo order and done todos', () => {
     expect(neoSnapshotAskEntries(settled).pinned).toEqual([]);
   });
 
-  test('the snapshot summary keeps the request marker on a request todo only', () => {
+  test('the snapshot summary keeps only the request marker and the computer switch', () => {
     const { store, sessions, opened } = seed(['todo']);
     const draft = { doneWhen: 'Answered', check: null, instruction: null };
     store.addTodo('req', 'ask', { ...draft, title: 'Q', named: { requestFrom: 'worker-1' } }, 1);
     store.addTodo('repo', 'ask', { ...draft, title: 'R', named: { repository: 'o/r' } }, 1);
     store.addTodo('flag', 'ask', { ...draft, title: 'F', named: { requestFrom: true } }, 1);
     store.addTodo('obj', 'ask', { ...draft, title: 'O', named: { requestFrom: { id: 'x' } } }, 1);
+    store.addTodo('pc', 'ask', { ...draft, title: 'P', named: null }, 1);
+    store.addTodo('off', 'ask', { ...draft, title: 'N', named: null }, 1);
+    store.addTodo('both', 'ask', { ...draft, title: 'B', named: { requestFrom: 'worker-2' } }, 1);
+    for (const [id, named] of [
+      ['pc', { desktopControl: true }],
+      ['off', { desktopControl: false }],
+      ['both', { requestFrom: 'worker-2', desktopControl: true }],
+    ] as const)
+      store.updateTodo(store.getTodo(id)!, { named }, 2);
     const [entry] = projectNeoAskEntries([opened], facts(store, sessions, [opened]), []);
     const named = Object.fromEntries(
       summarizeNeoAskEntry(entry).todos.map((todo) => [todo.id, todo.named])
@@ -472,11 +483,14 @@ describe('projectNeoAskEntries todo order and done todos', () => {
       repo: null,
       flag: null,
       obj: null,
+      pc: { desktopControl: true },
+      off: { desktopControl: false },
+      both: { requestFrom: 'worker-2', desktopControl: true },
     });
   });
 
   test('neo.ask.read returns an exact card and refuses missing or denied reads', async () => {
-    const { store } = seed(['failed', 'done']);
+    const { store } = seed(['doing', 'done']);
     let allowed = true;
     const op = createNeoAskReadOperation(
       store,
@@ -489,7 +503,7 @@ describe('projectNeoAskEntries todo order and done todos', () => {
     expect(result).toMatchObject({ ok: true, entry: { ask: { id: 'ask' }, doneCount: 1 } });
     if (!result.ok) throw new Error(result.reason);
     expect(result.entry.todos.map((todo) => [todo.id, todo.state])).toEqual([
-      ['t0', 'failed'],
+      ['t0', 'doing'],
       ['t1', 'done'],
     ]);
     expect(await read('missing')).toEqual({ ok: false, reason: 'not_found: no such ask.' });
@@ -498,7 +512,17 @@ describe('projectNeoAskEntries todo order and done todos', () => {
   });
 
   test('neo.ask.read gives an agent one line per todo and neo.todo.read gives one todo in full', async () => {
-    const { store } = seed(['doing', 'todo']);
+    const { store, sessions } = seed(['doing', 'todo']);
+    sessions.create('t0', {
+      verb: 'start',
+      adapter: 'hyperneo',
+      model: 'requested',
+      effort: 'high',
+    });
+    sessions.recordRef('t0', { adapter: 'hyperneo', id: 'recorded-worker' }, 2, undefined, {
+      model: 'observed',
+      effort: 'medium',
+    });
     store.updateTodo(
       store.getTodo('t0')!,
       { instruction: 'Build the parser', report: 'Opened the pull request' },
@@ -519,10 +543,16 @@ describe('projectNeoAskEntries todo order and done todos', () => {
       source: 'rpc',
     })) as Read;
     expect(human.ok && human.entry.todos[0]).toMatchObject({ instruction: 'Build the parser' });
-    const todoRead = createNeoTodoReadOperation(store, admit, project);
+    const todoRead = createNeoTodoReadOperation(store, sessions, admit, project);
     expect(await todoRead.execute(todoRead.inputSchema.parse({ todoId: 't0' }), mcp)).toMatchObject(
       {
         ok: true,
+        startConfiguration: {
+          requestedModel: 'requested',
+          requestedEffort: 'high',
+          actualModel: 'observed',
+          actualEffort: 'medium',
+        },
         todo: {
           id: 't0',
           state: 'doing',
@@ -540,11 +570,18 @@ describe('projectNeoAskEntries todo order and done todos', () => {
 
   test('neo.ask.doneTodos pages the done todos in list order', async () => {
     const { store, sessions } = seed(['done', 'done', 'doing', 'done', 'done']);
+    let projections = 0;
+    let projectionError: Error | undefined;
     const op = createNeoDoneTodosOperation(
       store,
       sessions,
       () => [],
-      (caller) => ({ value: caller })
+      (caller) => ({ value: caller }),
+      async (todos) => {
+        projections++;
+        if (projectionError) throw projectionError;
+        return todos.map((entry) => ({ ...entry, title: `Projected ${entry.title}` }));
+      }
     );
     type Page =
       | { ok: true; todos: NeoTodoEntry[]; doneCount: number; nextOffset: number | null }
@@ -557,6 +594,7 @@ describe('projectNeoAskEntries todo order and done todos', () => {
       })) as Page;
     const first = await read({ askId: 'ask', limit: 3 });
     expect(first).toMatchObject({ ok: true, doneCount: 4, nextOffset: 3 });
+    expect(first.ok && first.todos.every((todo) => todo.title.startsWith('Projected '))).toBe(true);
     expect(first.ok && first.todos.map((todo) => [todo.id, todo.status])).toEqual([
       ['t0', 'Done'],
       ['t1', 'Done'],
@@ -569,6 +607,9 @@ describe('projectNeoAskEntries todo order and done todos', () => {
       ok: false,
       reason: 'not_found: no such ask.',
     });
+    expect(projections).toBe(2);
+    projectionError = new Error('projection failed');
+    await expect(read({ askId: 'ask' })).rejects.toBe(projectionError);
   });
 });
 

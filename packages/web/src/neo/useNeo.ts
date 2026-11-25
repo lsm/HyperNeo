@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { generateUUID } from '@hyperneo/shared';
 import type {
   NeoResult,
   NeoSnapshot,
@@ -8,6 +9,7 @@ import type {
 import type { NeoQuestionAnswer, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { invokeOperation } from '../lib/operations.ts';
+import type { OperationName } from '@hyperneo/shared/types/operation-names';
 import { type NeoTodoControl, neoTodoControlCall } from './todo-controls.ts';
 import { SessionStore } from '../lib/session-store.ts';
 import { createNeoIntakeClient, type NeoPendingAsk } from './neo-intake.ts';
@@ -167,8 +169,10 @@ export function useNeo() {
       );
       if (!result.accepted) throw new Error(result.reason);
       await refresh();
+      return true;
     } catch (cause) {
       if (alive.current) setError(cause instanceof Error ? cause.message : String(cause));
+      return false;
     }
   }
 
@@ -189,20 +193,39 @@ export function useNeo() {
   }
 
   async function answerQuestion(questionId: string, answer: NeoQuestionAnswer) {
+    await questionCall(
+      questionId,
+      'neo.question.answer',
+      { questionId, answer },
+      'That answer could not be sent.'
+    );
+  }
+
+  async function holdQuestion(questionId: string, held: boolean) {
+    await questionCall(
+      questionId,
+      'neo.question.hold',
+      { questionId, held, requestId: generateUUID() },
+      'That card could not be held.'
+    );
+  }
+
+  async function questionCall(
+    questionId: string,
+    operation: OperationName,
+    input: object,
+    failure: string
+  ) {
     if (busyWork) return;
     setBusyWork(questionId);
     setError('');
     try {
       const hub = await connectionManager.getHub();
-      const result = await invokeOperation<NeoResult<{ ok: true }>>(hub, 'neo.question.answer', {
-        questionId,
-        answer,
-      });
+      const result = await invokeOperation<NeoResult<{ ok: true }>>(hub, operation, input);
       if (!result.ok) throw new Error(result.reason);
       await refresh();
     } catch (cause) {
-      if (alive.current)
-        setError(cause instanceof Error ? cause.message : 'That answer could not be sent.');
+      if (alive.current) setError(cause instanceof Error ? cause.message : failure);
     } finally {
       if (alive.current) setBusyWork(null);
     }
@@ -239,6 +262,7 @@ export function useNeo() {
     setDesktopControl,
     muteSession,
     answerQuestion,
+    holdQuestion,
     send: intake.send,
     pendingAsks: pendingAsks.filter((ask) => ask.sessionId === sessionId),
     retrySend: intake.retry,

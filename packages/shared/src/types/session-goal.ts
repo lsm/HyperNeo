@@ -16,6 +16,7 @@ export interface SessionGoal {
   nextSteps: string[];
   mandateRef: string | null;
   mandateRev: string | null;
+  dailyRunLimit: number;
   createdAt: number;
   updatedAt: number;
   completedAt: number | null;
@@ -36,6 +37,7 @@ export type SessionGoalDraft = Pick<SessionGoal, 'title'> &
       | 'nextSteps'
       | 'mandateRef'
       | 'mandateRev'
+      | 'dailyRunLimit'
     >
   >;
 

@@ -1,0 +1,15 @@
+# Codex worker compaction
+
+Use Bun 1.4.4 and a Codex CLI that supports the app-server. The probe starts a real app-server over stdio, completes one turn through a synthetic loopback model, then starts a fresh app-server and uses the daemon's compaction helper to resume the persisted thread and confirm compaction. The app-server has an empty home and receives no provider credentials.
+
+```bash
+codex_bin=$(command -v codex)
+run=$(mktemp -d)
+trap 'rm -rf "$run"' EXIT
+mkdir "$run/home" "$run/data"
+env -i PATH="$PATH" NODE_ENV=test HOME="$run/home" CODEX_HOME="$run/codex" \
+  HYPERNEO_DATA_DIR="$run/data" DB_PATH="$run/data/daemon.db" \
+  bun .claude/skills/verify/codex-worker-compaction.ts "$run" "$codex_bin"
+```
+
+A pass prints the start, compaction, and completion notifications for the same turn and the number of compaction model requests. The probe exits nonzero unless the turn reports a completed status.

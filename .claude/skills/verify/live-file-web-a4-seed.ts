@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { deflateSync } from 'node:zlib';
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { NeoPublicationRepository } from '../../../packages/daemon/src/storage/repositories/neo-publication-repository.ts';
 
@@ -44,7 +44,10 @@ if (phase === 'counts') {
   const output = await new Response(child.stdout).text();
   assert.equal(await child.exited, 0, output);
   const {files} = JSON.parse(readFileSync(join(root, 'live-web-fixture.json'), 'utf8'));
-  const text = 'Live source-bound files: ' + files.map((file: string) => `\`${file}\``).join(', ') + '.';
+  const sources = (files as string[]).map((file) =>
+    file.endsWith('/current.html') ? `[Current HTML](${pathToFileURL(file).href})` : `\`${file}\``
+  );
+  const text = 'Live source-bound files: ' + sources.join(', ') + '.';
   const db = new Database(join(root, 'data/daemon.db'));
   const publicationId = crypto.randomUUID();
   try { assert(new NeoPublicationRepository(db).append({conversationId: rootSession.slice(4), publicationId, producerInput: {sessionId: rootSession, messageId: 'synthetic-live-turn'}, shortText: text, fullText: text, links: []}).accepted); }

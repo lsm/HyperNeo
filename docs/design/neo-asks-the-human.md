@@ -72,12 +72,7 @@ that reaches `relayWorkerQuestion` and then `createNeoWorkerQuestionWriter`
 Neo's decision already, and the answer still reaches the worker by the card's source
 session.
 
-**Neo's hold stays a card, written by Neo.** `neo.todo.hold` is Neo asking the human to
-decide whether a step goes ahead, so it keeps its card and its stop of a running worker.
-What changes is the text: Neo passes the question in its own words instead of a reason
-pasted into the daemon template ("X is on hold: … Start it, or remove it?"). The options
-stay Start (Resume) and Remove, since the daemon applies them. Nothing new is stored: the
-open card is the hold, as today, and it survives a restart because it is a card.
+**Neo can hold without asking again.** A passive `neo.todo.hold` records that the step waits and stops a running worker without opening a card. When the human needs to decide, Neo can request a Start/Resume and Remove card; the human controls keep those choices.
 
 **Two owner rows are added to `nextStepOwner`,** both from facts the daemon has:
 

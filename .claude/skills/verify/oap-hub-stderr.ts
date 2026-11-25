@@ -2,11 +2,12 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { answerCodexProbeLocally, OXAP_CODEX_MODEL, seedSyntheticCodexAdmission } from './oxap-codex-provider.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
-import type { OapQueryRuntime } from '../../../packages/daemon/src/lib/agent/query-runner.ts';
-import { OapHubClient } from '../../../packages/daemon/src/lib/oap/oap-hub-client.ts';
+import type { OxapQueryRuntime } from '../../../packages/daemon/src/lib/agent/query-runner.ts';
+import { OxapHubClient } from '../../../packages/daemon/src/lib/oxap/oxap-hub-client.ts';
 import { subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logger.ts';
-import { createOapQueryHub } from '../../../packages/daemon/src/lib/oap/oap-query-hub.ts';
+import { createOxapQueryHub } from '../../../packages/daemon/src/lib/oxap/oxap-query-hub.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 
@@ -23,7 +24,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',text=>
   if(r.op==='submit')return process.stderr.write('discarded-prefix'+'x'.repeat(100000)+'synthetic panic tail',()=>process.exit(7));
   reply(r.id,null);
 });`;
-const client = new OapHubClient({
+const client = new OxapHubClient({
   command: process.execPath,
   args: ['-e', script],
   cwd: run,
@@ -38,6 +39,7 @@ const unsubscribeLogs = subscribeToStructuredLogs((event) => {
 });
 try {
   await client.connect();
+  answerCodexProbeLocally();
   app = await createDaemonApp({
     config: { ...getConfig({ host: '127.0.0.1', port: 0, dbPath: join(run, 'data/daemon.db'), workspaceRoot: join(run, 'workspace') }), disableWorktrees: true, disableGoalProcessing: true },
     verbose: false,
@@ -54,10 +56,11 @@ try {
   rpc.registerTransport(transport);
   await transport.initialize();
   await rpc.request('providers.create', { params: { providerId: 'anthropic', displayName: 'Synthetic provider', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-devproxy-test-key' } });
-  const { sessionId } = await rpc.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic busy recovery', config: { model: 'haiku', provider: 'anthropic', harness: 'codex' } });
+  await seedSyntheticCodexAdmission(rpc, app.settingsManager);
+  const { sessionId } = await rpc.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic busy recovery', config: { model: OXAP_CODEX_MODEL, provider: 'anthropic-codex' } });
   const agent = app.sessionManager.getSession(sessionId);
   assert(agent);
-  (agent as unknown as { runtimeOptions: { oap: OapQueryRuntime } }).runtimeOptions.oap = { openDirectorySupported: true, hub: createOapQueryHub(client) };
+  (agent as unknown as { runtimeOptions: { oxap: OxapQueryRuntime } }).runtimeOptions.oxap = { openDirectorySupported: true, hub: createOxapQueryHub(client) };
   await rpc.request('message.send', { sessionId, content: 'Synthetic crash request' });
   const deadline = Date.now() + 10_000;
   while (!errors.some((message) => message.includes('synthetic panic tail')) || agent.queryPromise || agent.messageQueue.isRunning()) {

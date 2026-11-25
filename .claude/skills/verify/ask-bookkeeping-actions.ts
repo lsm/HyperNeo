@@ -1,3 +1,4 @@
+import { seedHistoricalAsk } from './accepted-ask-fixtures.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -55,7 +56,7 @@ for (const phase of ['initial', 'reopen']) {
       ...createNeoTodoOperations(store, sessions, controls, () => packs, () => null),
       createNeoAskReadOperation(store, () => [], admit, project),
       createNeoDoneTodosOperation(store, sessions, () => [], admit, project),
-      createNeoTodoReadOperation(store, admit, project),
+      createNeoTodoReadOperation(store, sessions, admit, project),
     ]);
     const handler = createOperationMcpHandler(registry, () => ({ sessionId: 'neo', role: 'neo' }), (refusal) => gatewayFor(db).run(recordOperationRefusal, { refusal, sessionId: 'neo', at: Date.now() }));
     const call = async (name: string, input: unknown, expected = true) => {
@@ -64,11 +65,11 @@ for (const phase of ['initial', 'reopen']) {
     };
     const described = await call('operations.describe', { name: 'neo.question.ask' });
     assert.equal(described.found, true);
-    assert(described.description.includes('If a supplied todoId is unknown, belongs to another ask, or is done or removed'));
-    assert(described.description.includes('supply explicit retireWhen to open the question on the ask without linking that todo'));
-    assert(described.description.includes('A successful unlinked card includes a todo_closed record'));
+    assert.match(described.description, /supply retireWhen.*supply it explicitly for a missing check or invalid, foreign, done or removed todo/);
+    assert.match(described.description, /With an explicit check, .* produces an unlinked card and todo_closed/);
     if (phase === 'initial') {
-      const mixed = await call('neo.ask.open', {
+      seedHistoricalAsk(store, 'neo', { title: 'One cross-repo request', request: 'Keep both repositories together' });
+      const mixed = await call('neo.ask.propose', {
         title: 'One cross-repo request', request: 'Keep both repositories together',
         todos: ['first', 'second'].map((repo) => ({ after: [],
           title: `Work in ${repo}`, check: { pack: 'coding', kind: 'pr_merged', params: { urls: [`https://github.com/synthetic/${repo}/pull/1`] } },
@@ -89,7 +90,10 @@ for (const phase of ['initial', 'reopen']) {
         instruction: 'Work',
         target: { verb: 'start', adapter: 'hyperneo' },
       };
-      const refused = await call('neo.todo.add', { after: [], askId: repoAsk.id, ...draft }, false);
+      const refused = await call('neo.todo.add', {
+        askId: repoAsk.id, ...draft,
+        check: { pack: 'coding', kind: 'pr_merged', params: { urls: ['https://github.com/synthetic/root/pull/1'] } },
+      }, false);
       assert(refused.reason.startsWith('place_required:'));
       assert.deepEqual(store.listTodos(repoAsk.id), [context]);
       const placed = await call('neo.todo.add', { after: [],
@@ -115,7 +119,7 @@ for (const phase of ['initial', 'reopen']) {
       evidence.push({ beforeSettlement: store.getTodo(unfinished.id), workerQuestion });
       const closed = store.addTodo('closed', ask.id, { title: 'Closed work', doneWhen: 'Checked', instruction: null, check: null, named: null }, 1);
       const failed = store.addTodo('failed', ask.id, { title: 'Failed work', doneWhen: 'Build observed', instruction: null, check: null, named: null }, 1);
-      store.updateTodo(failed, { state: 'failed', reason: 'check_failed: build exited 7' }, 2);
+      store.updateTodo(failed, { state: 'blocked', blockedBy: 'failure', blockedReason: 'check_failed: build exited 7' }, 2);
       store.updateTodo(closed, { state: 'removed', reason: 'Not observed' }, 2);
       const question = await call('neo.question.ask', { askId: ask.id, todoId: closed.id, text: 'What next?', kind: 'reply', replaces: workerQuestion.question.id, retireWhen: { pack: 'core', kind: 'evidence', params: { path: join(run, 'not-created') } } });
       assert(question.records[0].startsWith('todo_closed:')); assert.equal(question.question.todoId ?? null, null);
@@ -131,7 +135,7 @@ for (const phase of ['initial', 'reopen']) {
       store.openAsk({ id: 'child', parentId: ask.id, projectId: null, sessionId: ask.sessionId, originMessageId: null, title: 'Child card', request: 'Filed work', createdAt: 1 });
       db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ?').run('github.com/synthetic/child', 'child');
       store.addTodo('legacy-child-todo', 'child', { title: 'Existing child work', doneWhen: 'Observed', check: null, instruction: null, named: null }, 1, 'github.com/synthetic/child');
-      const retry = await call('neo.ask.open', { title: ask.title, request: 'Follow-up', todos: [{ after: [], title: 'New follow-up', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'not-created') } } }] });
+      const retry = await call('neo.ask.propose', { title: ask.title, request: 'Follow-up', todos: [{ after: [], title: 'New follow-up', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'not-created') } } }] });
       assert.equal(retry.ask.id, ask.id); assert.equal(retry.todos.length, 4);
       assert(retry.records[0].includes('Open a new ask for it with a different title'));
 

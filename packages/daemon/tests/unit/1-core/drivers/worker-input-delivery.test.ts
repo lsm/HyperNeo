@@ -18,7 +18,9 @@ import { createTables, runMigrations } from '../../../../src/storage/schema/inde
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 const databases: Database[] = [];
-afterEach(() => databases.splice(0).forEach((db) => db.close()));
+afterEach(() => {
+  for (const db of databases.splice(0)) db.close();
+});
 const caller = { source: 'internal' as const, role: 'neo' as const, sessionId: 'synthetic-neo' };
 
 function fixture(adapterId = 'codex-desktop', overrides: Partial<WorkAdapter> = {}) {
@@ -70,6 +72,8 @@ function fixture(adapterId = 'codex-desktop', overrides: Partial<WorkAdapter> = 
     remote: { list: () => [], invoke: async () => ({}) },
     daemonName: 'synthetic',
     isOpenTodo: () => true,
+    acceptedTodo: () => true,
+    noticeReply: () => true,
   };
   const delivery = createWorkerInputDelivery(db, deps, async (id, detail) => {
     if (reportUnavailable) throw new Error('Synthetic report receiver is unavailable');
@@ -329,7 +333,7 @@ describe('durable worker follow-ups', () => {
     }
   );
 
-  test.each(['todo', 'failed', 'blocked'] as const)(
+  test.each(['todo', 'blocked'] as const)(
     'a pre-start %s follow-up waiting for a busy worker sends no blocked report',
     async (state) => {
       const h = fixture();
@@ -655,6 +659,37 @@ describe('durable worker follow-ups', () => {
       retryCount: 0,
       error: 'Synthetic receiver is offline',
     });
+  });
+
+  test('an unsupported status fails the head input so later inputs are not blocked', async () => {
+    let supported = false;
+    const h = fixture('codex-desktop', {
+      status: async () =>
+        supported
+          ? {
+              ok: true,
+              value: {
+                ref: { adapter: 'codex-desktop', id: 'synthetic-worker' },
+                title: 'Synthetic worker',
+                place: { machine: 'synthetic', name: 'Synthetic workspace' },
+                status: 'done',
+                lastActivityAt: 1,
+              },
+            }
+          : { ok: false, reason: 'unsupported', detail: 'Synthetic status path is unsupported' },
+    });
+    await h.send('First input');
+    await h.tick();
+    expect(h.reports).toEqual(['Synthetic status path is unsupported']);
+    expect(h.sent).toEqual([]);
+    expect(
+      h.db.prepare('SELECT outcome FROM work_delivery_inputs').get() as { outcome: string }
+    ).toMatchObject({ outcome: expect.stringContaining('Synthetic status path is unsupported') });
+    supported = true;
+    await h.send('Second input');
+    await h.tick();
+    expect(h.sent).toHaveLength(1);
+    expect(h.sent[0]).toStartWith('Second input');
   });
 
   test.each(['unreachable', 'unknown'] as const)(

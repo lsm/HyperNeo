@@ -1,3 +1,4 @@
+import { seedHistoricalAsk } from './accepted-ask-fixtures.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -45,7 +46,8 @@ try {
         for (const id of [sender, ref.id]) db.prepare("INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?, 'Synthetic worker', '/tmp', '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z', 'active', '{}', '{}')").run(id);
         new NeoRepository(db).reserveBinding({ sessionId: sender, kind: 'neo', projectId: null });
         const check = { pack: 'core', kind: 'evidence', params: { path: '/synthetic/pending' } };
-        const opened = await invoke('neo.ask.open', { title: 'Synthetic in-progress work', request: 'Track already running work without sending it again', todos: [{ after: [], title: 'Running task', check, target: { verb: 'bind', ref } }] });
+        seedHistoricalAsk(store, sender, { title: 'Synthetic in-progress work', request: 'Track already running work without sending it again' });
+        const opened = await invoke('neo.ask.propose', { title: 'Synthetic in-progress work', request: 'Track already running work without sending it again', todos: [{ after: [], title: 'Running task', check, target: { verb: 'bind', ref } }] });
         const todo = opened.todos[0];
         assert.equal(todo.state, 'doing'); assert.equal(todo.worker.id, ref.id); assert.equal(todo.worker.adapter, ref.adapter);
         const refused = await handler({ name: 'neo.todo.add', input: { after: [], askId: todo.askId, title: 'Bind target with an instruction', check, instruction: 'Synthetic task', target: { verb: 'bind', ref } } });
@@ -64,5 +66,5 @@ try {
       evidence.push({ phase, todos: ids.map(id => store.getTodo(id)), refs: ids.map(id => sessions.readRef(id)), sends, inputs });
     } finally { await app.cleanup(); }
   }
-  console.log(`PASS: actual daemon MCP bind targets on neo.ask.open and neo.todo.add are doing with the worker set; zero dispatches; restart preserved all bindings. Evidence: ${run}/evidence/todo-bind.json`);
+  console.log(`PASS: actual daemon MCP bind targets on neo.ask.propose and neo.todo.add are doing with the worker set; zero dispatches; restart preserved all bindings. Evidence: ${run}/evidence/todo-bind.json`);
 } finally { globalThis.fetch = network; writeFileSync(join(run, 'evidence/todo-bind.json'), JSON.stringify(evidence, null, 2)); }

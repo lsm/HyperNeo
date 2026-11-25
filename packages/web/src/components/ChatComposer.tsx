@@ -3,6 +3,7 @@ import type {
   MessageDeliveryMode,
   MessageImage,
   ModelInfo,
+  SessionConfig,
   SessionFeatures,
   SessionType,
   ThinkingLevel,
@@ -20,6 +21,10 @@ export interface ChatComposerProps {
   readonly: boolean;
   sessionStatus?: string;
   sessionType?: SessionType;
+  harness?: SessionConfig['harness'];
+  imagesSupported?: boolean;
+  modelLocked?: boolean;
+  provider?: string;
   thinkingLevel?: ThinkingLevel;
   isProcessing: boolean;
   currentAction?: string;
@@ -68,6 +73,10 @@ export function ChatComposer({
   readonly,
   sessionStatus,
   sessionType,
+  harness,
+  imagesSupported,
+  modelLocked,
+  provider,
   thinkingLevel,
   isProcessing,
   currentAction,
@@ -133,8 +142,11 @@ export function ChatComposer({
           currentModelInfo={currentModelInfo}
           availableModels={availableModels}
           modelSwitching={modelSwitching}
+          modelLocked={modelLocked}
           modelLoading={modelLoading}
           onModelSwitch={onModelSwitch}
+          harness={harness}
+          provider={provider}
           thinkingLevel={thinkingLevel}
           onThinkingLevelChange={onThinkingLevelChange}
           coordinatorSwitching={coordinatorSwitching}
@@ -171,6 +183,8 @@ export function ChatComposer({
               sessionId={sessionId}
               pendingAttachmentKey={pendingAttachmentKey}
               sessionType={sessionType}
+              harness={harness}
+              imagesSupported={imagesSupported}
               onSend={onSend}
               disabled={
                 isWaitingForInput ||

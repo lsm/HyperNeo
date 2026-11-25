@@ -115,8 +115,49 @@ describe('pack-owned Neo operation registration', () => {
         },
       ];
       db.updateGlobalSettings({ neo: { packs: ['synthetic-pack'] } });
+      const pack = service.filePacks[0];
+      const invalid = { ...pack.operations![0] };
+      Reflect.set(invalid, 'pipelineRunner', async () => ({ ok: true }));
+      service.filePacks = [{ ...pack, operations: [invalid] }];
+      expect(() => createNeoOperations(service)).toThrow(
+        'Invalid pack pipeline runner for verify.pack.echo'
+      );
+      service.filePacks = [pack];
       const registry = createOperationRegistry(createNeoOperations(service));
+      const codingResult = service
+        .installedPacks()
+        .find((pack) => pack.id === 'coding')
+        ?.operations?.find((operation) => operation.name === 'neo.coding.result');
+      expect(codingResult && Reflect.has(codingResult, 'pipelineRunner')).toBe(true);
+      const registeredResult = registry.get('neo.coding.result');
+      expect(registeredResult && Reflect.has(registeredResult, 'pipelineRunner')).toBe(false);
+      expect(
+        await registeredResult!.execute(
+          {},
+          { source: 'mcp', sessionId: 'unbound-worker', role: 'neo' }
+        )
+      ).toEqual({ ok: false, reason: 'This operation belongs to Neo.' });
+      const retry = registry.get('neo.coding.merge.retry');
+      if (!retry) throw new Error('Expected coding merge retry operation');
+      expect(Reflect.has(retry.execute, 'pipeline')).toBe(false);
+      expect(
+        await retry.execute({}, { source: 'mcp', sessionId: 'unbound-worker', role: 'neo' })
+      ).toEqual({ ok: false, reason: 'This operation belongs to Neo.' });
+      expect(await retry.execute({}, { source: 'rpc', principal: 'local' })).toEqual({
+        accepted: false,
+        reason: 'Only Neo can accept a stopped daemon merge report.',
+      });
       expect(registry.get('verify.pack.echo')).toBeDefined();
+      const direct = registry.get('verify.pack.echo');
+      if (!direct) throw new Error('Expected synthetic pack operation');
+      expect(Reflect.has(direct.execute, 'pipeline')).toBe(true);
+      expect(
+        await direct.execute(
+          { text: 'Synthetic bytes' },
+          { source: 'mcp', sessionId: 'unbound-worker', role: 'neo' }
+        )
+      ).toEqual({ ok: false, reason: 'This operation belongs to Neo.' });
+      expect(calls).toBe(0);
       expect(
         await invokeOperation(
           registry,

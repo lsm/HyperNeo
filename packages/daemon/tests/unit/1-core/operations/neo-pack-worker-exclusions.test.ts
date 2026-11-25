@@ -2,12 +2,15 @@ import { describe, expect, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { packWorkerStartFixture } from '../../helpers/pack-worker-start.ts';
+import { historicalAsk } from '../../helpers/accepted-ask.ts';
 
 function setup(options?: Parameters<typeof packWorkerStartFixture>[1]) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
-  return { db, ...packWorkerStartFixture(db, options) };
+  const world = packWorkerStartFixture(db, options);
+  historicalAsk(world.store, 'fixture-neo', 'Synthetic matter');
+  return { db, ...world };
 }
 
 describe('core todo starts respect pack worker exclusions', () => {
@@ -56,7 +59,7 @@ describe('core todo starts respect pack worker exclusions', () => {
     }
   });
 
-  test('missing required binding ends on a retries card before any send, receipt or binding', async () => {
+  test('missing required binding ends failed with no card before any send, receipt or binding', async () => {
     const world = setup();
     try {
       await world.open();
@@ -70,9 +73,7 @@ describe('core todo starts respect pack worker exclusions', () => {
         blockedBy: 'failure',
         blockedReason: expect.stringContaining('missing_worker_binding'),
       });
-      expect(world.store.listQuestions(ask.id).map((q) => [q.cause, q.state, q.todos])).toEqual([
-        ['retries_exhausted', 'open', [result.todo.id]],
-      ]);
+      expect(world.store.listQuestions(ask.id)).toEqual([]);
       expect(world.calls).toEqual([]);
       expect(world.sessions.readRef(result.todo.id)).toBeNull();
       expect(world.sessions.inputs.list(result.todo.id)).toEqual([]);
@@ -144,9 +145,7 @@ describe('core todo starts respect pack worker exclusions', () => {
       world.bind(author.todo.id, 'author');
       const retried = await world.invoke('neo.todo.continue', { todoId: failed.todo.id });
       expect(retried.todo.state).toBe('doing');
-      expect(world.store.listQuestions(ask.id).map((q) => [q.cause, q.state])).toEqual([
-        ['retries_exhausted', 'retired'],
-      ]);
+      expect(world.store.listQuestions(ask.id)).toEqual([]);
       expect(world.checked).toEqual(Array(4).fill(failed.todo.id));
       expect(world.calls[0].input.excludeRefs).toEqual([{ adapter: 'fixture', id: 'author' }]);
       expect(world.sessions.readRef(failed.todo.id)?.id).toBe('prior');

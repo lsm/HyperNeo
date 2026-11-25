@@ -1,7 +1,9 @@
-import { queueNeoRequestReply } from '../../lib/neo/request-todo.ts';
+import { proposalQuestionId } from '../../lib/neo/proposal.ts';
+import { queueNeoRequestReply, queueNeoRequestSettledReply } from '../../lib/neo/request-todo.ts';
 import type {
   NeoAnswerProvenance,
   NeoAsk,
+  NeoDesktopApp,
   NeoQuestion,
   NeoQuestionAnswer,
   NeoTodo,
@@ -35,10 +37,12 @@ import { neoInputText, type NeoUnansweredInput } from '../../lib/neo/plan-contex
 import type { Database } from '../sqlite-compat.ts';
 import { JobQueueRepository } from './job-queue-repository.ts';
 import {
+  mergeAskDesktopApps,
   type NeoAskInputClaim,
   neoAskInputReads,
   neoAskInputWrites,
 } from './neo-ask-input-worker.ts';
+import { readNeoAskTopics, readNeoTopicCounts, rewriteNeoTopicPick } from './neo-ask-topic-read.ts';
 import { NeoPublicationRepository } from './neo-publication-repository.ts';
 import { NeoQuestionAnswerRepository } from './neo-question-answer-repository.ts';
 import { applyNeoRuleAnswer } from './neo-rule-answer.ts';
@@ -47,7 +51,10 @@ import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
 import { applyPackPreferenceAnswer } from './pack-preference-answer.ts';
 
 export type NeoTodoDraft = Pick<NeoTodo, 'title' | 'doneWhen' | 'check' | 'instruction' | 'named'> &
-  Partial<Pick<NeoTodo, 'priority' | 'dependsOn' | 'approvedAt'>> & { producesFollowUp?: boolean };
+  Partial<Pick<NeoTodo, 'priority' | 'dependsOn' | 'approvedAt'>> & {
+    producesFollowUp?: boolean;
+    desktopScope?: NeoDesktopApp[];
+  };
 
 export type NeoTodoInsert = (
   id: string,
@@ -119,16 +126,20 @@ const TODO_COLUMNS: Record<keyof NeoTodoPatch, string> = {
 
 const ASK_SELECT = `SELECT id, goal_id AS goalId, project_id AS projectId, parent_id AS parentId, session_id AS sessionId,
   origin_message_id AS originMessageId, title, topic, request, status, outcome, focused_session_json AS focusedSessionJson,
-  created_at AS createdAt, updated_at AS updatedAt, settled_at AS settledAt FROM neo_asks`;
+  desktop_apps AS desktopAppsJson, created_at AS createdAt, updated_at AS updatedAt, settled_at AS settledAt FROM neo_asks`;
 
 const ASK_ATTENTION = `(status = 'open'
   OR EXISTS (SELECT 1 FROM neo_todos t WHERE t.ask_id = neo_asks.id
     AND t.state NOT IN ('done', 'removed'))
   OR EXISTS (SELECT 1 FROM neo_questions q WHERE q.ask_id = neo_asks.id AND q.state = 'open'))`;
 
-type AskRow = Omit<NeoAsk, 'focusedSession'> & { focusedSessionJson: string | null };
-const toAsk = ({ focusedSessionJson, ...row }: AskRow): NeoAsk => ({
+type AskRow = Omit<NeoAsk, 'focusedSession' | 'desktopApps'> & {
+  focusedSessionJson: string | null;
+  desktopAppsJson: string | null;
+};
+const toAsk = ({ focusedSessionJson, desktopAppsJson, ...row }: AskRow): NeoAsk => ({
   ...row,
+  ...(desktopAppsJson ? { desktopApps: JSON.parse(desktopAppsJson) as NeoDesktopApp[] } : {}),
   ...(focusedSessionJson
     ? { focusedSession: JSON.parse(focusedSessionJson) as NeoAsk['focusedSession'] }
     : {}),
@@ -141,7 +152,7 @@ const TODO_SELECT = `SELECT id, ask_id AS askId, position, title, done_when AS d
   added_after_start AS addedAfterStart, report, evidence, artifacts_json AS artifactsJson, priority, depends_on AS dependsOnJson, created_at AS createdAt,
   updated_at AS updatedAt, started_at AS startedAt, finished_at AS finishedAt,
   approved_at AS approvedAt, approval_question_id AS approvalQuestionId,
-  produces_follow_up AS producesFollowUp FROM neo_todos`;
+  produces_follow_up AS producesFollowUp, desktop_apps AS desktopAppsJson FROM neo_todos`;
 
 export type NeoQuestionDraft = Pick<
   NeoQuestion,
@@ -149,7 +160,8 @@ export type NeoQuestionDraft = Pick<
   | 'retireWhen'
   | 'kind'
   | 'options'
-  | 'labels'
+  | 'optionDetails'
+  | 'recommended'
   | 'multiple'
   | 'noLabel'
   | 'yesLabel'
@@ -162,7 +174,11 @@ export type NeoQuestionDraft = Pick<
 > &
   Pick<NeoQuestion, 'cause'> & { todos?: readonly string[] };
 
-const QUESTION_SELECT = `SELECT id, ask_id AS askId, todo_id AS todoId, text, kind, options, labels, multiple, no_label AS noLabel,
+export const NEO_ADVISORY_QUESTION = (question: string) =>
+  `EXISTS (SELECT 1 FROM neo_pack_preference_proposals p WHERE p.question_id = ${question}.id
+    AND json_extract(p.values_json, '$.hold') = 0)`;
+
+const QUESTION_SELECT = `SELECT id, ask_id AS askId, todo_id AS todoId, text, kind, options, option_details_json AS optionDetailsJson, recommended, multiple, no_label AS noLabel,
   yes_label AS yesLabel, todos, state, answer, answered_by AS answeredBy,
   answer_provenance_json AS answerProvenanceJson, answered_at AS answeredAt, retired_reason AS retiredReason, replaced_by AS replacedBy,
   retire_when_json AS retireWhenJson, confirm_json AS confirmJson, reply_to_json AS replyToJson, artifacts_json AS artifactsJson, source_session_json AS sourceSessionJson, document, cause, actions_applied_at AS actionsAppliedAt, held_at AS heldAt, hold_requests AS holdRequests, created_at AS createdAt FROM neo_questions`;
@@ -171,6 +187,8 @@ type QuestionRow = Omit<
   NeoQuestion,
   | 'kind'
   | 'options'
+  | 'optionDetails'
+  | 'recommended'
   | 'multiple'
   | 'todos'
   | 'answer'
@@ -189,7 +207,8 @@ type QuestionRow = Omit<
   confirmJson: string | null;
   replyToJson: string | null;
   options: string | null;
-  labels: string | null;
+  optionDetailsJson: string | null;
+  recommended: string | null;
   multiple: number;
   todos: string;
   answer: string | null;
@@ -209,8 +228,14 @@ const toQuestion = ({
   actionsAppliedAt,
   heldAt,
   holdRequests: _holdRequests,
+  optionDetailsJson,
+  recommended,
   ...row
 }: QuestionRow): NeoQuestion => ({
+  ...(optionDetailsJson
+    ? { optionDetails: JSON.parse(optionDetailsJson) as Record<string, string> }
+    : {}),
+  ...(recommended ? { recommended } : {}),
   ...(cause ? { cause } : {}),
   ...(actionsAppliedAt ? { actionsAppliedAt } : {}),
   ...(heldAt && row.state === 'open' ? { heldAt } : {}),
@@ -229,15 +254,21 @@ const toQuestion = ({
   ...(row.kind === 'start'
     ? { kind: 'choice' as const, options: JSON.parse(row.todos) as string[], multiple: true }
     : { kind: row.kind, options: parsed<string[]>(row.options), multiple: row.multiple === 1 }),
-  labels: parsed<string[]>(row.labels),
   todos: JSON.parse(row.todos) as string[],
   answer: parsed<NeoQuestionAnswer>(row.answer),
 });
 
 type TodoRow = Omit<
   NeoTodo,
-  'check' | 'named' | 'addedAfterStart' | 'artifacts' | 'dependsOn' | 'producesFollowUp'
+  | 'check'
+  | 'named'
+  | 'addedAfterStart'
+  | 'artifacts'
+  | 'dependsOn'
+  | 'producesFollowUp'
+  | 'desktopApps'
 > & {
+  desktopAppsJson: string | null;
   checkJson: string | null;
   producesFollowUp: number;
   dependsOnJson: string | null;
@@ -253,9 +284,11 @@ const toTodo = ({
   named,
   addedAfterStart,
   producesFollowUp,
+  desktopAppsJson,
   ...row
 }: TodoRow): NeoTodo => ({
   ...row,
+  ...(desktopAppsJson ? { desktopApps: JSON.parse(desktopAppsJson) as NeoDesktopApp[] } : {}),
   ...(producesFollowUp === 1 ? { producesFollowUp: true as const } : {}),
   dependsOn: parsed<string[]>(dependsOnJson),
   ...(artifactsJson ? { artifacts: JSON.parse(artifactsJson) as NeoTodo['artifacts'] } : {}),
@@ -322,9 +355,15 @@ export class NeoAskTodoRepository {
     projectId: string | null | undefined,
     limit: number,
     work = false,
-    before?: { updatedAt: number; id: string }
+    before?: { updatedAt: number; id: string },
+    queueIds: readonly string[] = []
   ) {
-    const asks = this.listAsks(projectId, limit, work, before);
+    const listed = this.listAsks(projectId, limit, work, before);
+    const listedIds = new Set(listed.map((ask) => ask.id));
+    const queueAsks = new Set(queueIds);
+    const extra = queueIds.filter((id) => !listedIds.has(id));
+    const resolved = this.withTopics([...listed, ...(extra.length ? this.getAsks(extra) : [])]);
+    const asks = resolved.slice(0, listed.length);
     const ids = asks.map((ask) => ask.id);
     const todos = this.listTodosForAsks(ids);
     const questions = this.listQuestionsForAsks(ids);
@@ -340,6 +379,11 @@ export class NeoAskTodoRepository {
     const unlisted = this.countAsks(projectId) - asks.length;
     return {
       asks,
+      queueTopics: Object.fromEntries(
+        resolved
+          .filter(({ id }) => queueAsks.has(id))
+          .map(({ id, topic, topicKey, topicSource }) => [id, { topic, topicKey, topicSource }])
+      ),
       unlisted,
       openWork: this.openWorkFacts(),
       historyCursor:
@@ -362,6 +406,7 @@ export class NeoAskTodoRepository {
       asks,
       todos: [...new Map(todos.map((todo) => [todo.id, todo])).values()],
       questions: this.listQuestionsForAsks(asks.map((ask) => ask.id)),
+      topics: readNeoTopicCounts(this.db, Date.now() - 30 * 24 * 60 * 60 * 1000),
       ...(withUnanswered ? { unanswered: this.listUnansweredInputs() } : {}),
     };
   }
@@ -393,7 +438,7 @@ export class NeoAskTodoRepository {
       .prepare(
         `SELECT t.id, t.ask_id AS askId, t.state, t.blocked_by AS blockedBy, t.started_at AS startedAt
          FROM neo_todos t JOIN neo_asks a ON a.id = t.ask_id
-         WHERE t.state IN ('todo', 'doing', 'blocked', 'failed') AND a.status = 'open'`
+         WHERE t.state IN ('todo', 'doing', 'blocked') AND a.status = 'open'`
       )
       .all() as Pick<NeoTodo, 'id' | 'askId' | 'state' | 'blockedBy' | 'startedAt'>[];
     const questions = (
@@ -420,8 +465,9 @@ export class NeoAskTodoRepository {
 
   doneTodoFacts(askId: string) {
     const todos = this.listTodos(askId);
+    const ask = this.getAsk(askId);
     return {
-      ask: this.getAsk(askId),
+      ask: ask && this.withTopics([ask])[0]!,
       todos,
       links: new NeoTodoSessionRepository(this.db).readLinksForTodos(todos.map((todo) => todo.id)),
     };
@@ -499,8 +545,8 @@ export class NeoAskTodoRepository {
   ): NeoAsk {
     this.db
       .prepare(
-        `INSERT INTO neo_asks (id, goal_id, project_id, parent_id, session_id, origin_message_id, title, topic, request, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO neo_asks (id, goal_id, project_id, parent_id, session_id, origin_message_id, title, topic, request, created_at, updated_at, desktop_apps)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         ask.id,
@@ -513,7 +559,8 @@ export class NeoAskTodoRepository {
         ask.topic ?? null,
         ask.request,
         ask.createdAt,
-        ask.createdAt
+        ask.createdAt,
+        ask.desktopApps ? JSON.stringify(mergeAskDesktopApps([], ask.desktopApps)) : null
       );
     this.changed();
     return this.getAsk(ask.id)!;
@@ -577,12 +624,39 @@ export class NeoAskTodoRepository {
     ).map(toAsk);
   }
 
+  async addAskDesktopApps(
+    id: string,
+    apps: readonly NeoDesktopApp[],
+    now: number
+  ): Promise<NeoAsk | null> {
+    const saved = await gatewayFor(this.db).call(
+      neoAskInputWrites,
+      'addAskDesktopApps',
+      id,
+      apps,
+      now
+    );
+    if (!saved) return null;
+    this.changed();
+    return this.getAsk(id);
+  }
+
   setAskTopic(id: string, topic: string, now: number): NeoAsk {
     this.db
       .prepare("UPDATE neo_asks SET topic = ?, updated_at = ? WHERE id = ? AND status = 'open'")
       .run(topic, now, id);
     this.changed();
     return this.getAsk(id)!;
+  }
+
+  mergeTopic(from: string, to: string): number {
+    const merged = rewriteNeoTopicPick(this.db, from, to);
+    this.changed();
+    return merged;
+  }
+
+  pickedTopics() {
+    return readNeoTopicCounts(this.db, 0);
   }
 
   recordAskOutcome(id: string, outcome: string, now: number): NeoAsk {
@@ -612,8 +686,13 @@ export class NeoAskTodoRepository {
           outcome,
           ask.sessionId
         );
+    queueNeoRequestSettledReply(this.db, ask.id, ask.sessionId);
     this.retireQuestions(ask.id, now);
     return this.getAsk(ask.id)!;
+  }
+
+  private withTopics(asks: readonly NeoAsk[]) {
+    return readNeoAskTopics(this.db, asks, this.getAsks(asks.flatMap((ask) => ask.parentId ?? [])));
   }
 
   getAsk(id: string): NeoAsk | null {
@@ -677,9 +756,11 @@ export class NeoAskTodoRepository {
       COALESCE((SELECT MAX(updated_at) FROM neo_todos WHERE ask_id = neo_asks.id), updated_at) AS since
       FROM neo_asks WHERE status = 'open'
       AND EXISTS (SELECT 1 FROM sessions WHERE sessions.id = neo_asks.session_id AND sessions.status = 'active')
+      AND NOT EXISTS (SELECT 1 FROM neo_goals WHERE neo_goals.id = neo_asks.goal_id AND neo_goals.status IN ('active', 'paused'))
       AND NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state IN ('todo', 'doing'))
-      AND NOT EXISTS (SELECT 1 FROM neo_questions WHERE ask_id = neo_asks.id AND state = 'open')
-      AND (?2 OR NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state IN ('blocked', 'failed')))
+      AND NOT EXISTS (SELECT 1 FROM neo_questions WHERE ask_id = neo_asks.id AND state = 'open'
+        AND NOT ${NEO_ADVISORY_QUESTION('neo_questions')})
+      AND (?2 OR NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state = 'blocked'))
       AND (updated_at <= ?1 OR (?3 AND ${ASK_ALL_DONE}))`)
       .all(before, includeBlocked ? 1 : 0, wakeFinishedNow ? 1 : 0) as ReturnType<
       NeoAskTodoRepository['listStalledAsks']
@@ -748,10 +829,10 @@ export class NeoAskTodoRepository {
     this.db
       .prepare(
         `INSERT INTO neo_todos (id, ask_id, position, title, done_when, check_json, instruction, named,
-           added_after_start, priority, depends_on, approved_at, produces_follow_up, created_at, updated_at)
+           added_after_start, priority, depends_on, approved_at, produces_follow_up, desktop_apps, created_at, updated_at)
          VALUES (?, ?, (SELECT COALESCE(MAX(position) + 1, 0) FROM neo_todos WHERE ask_id = ?), ?, ?, ?, ?, ?,
            EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = ? AND started_at IS NOT NULL), ?,
-           ?, ?, ?, ?, ?)`
+           ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -767,6 +848,7 @@ export class NeoAskTodoRepository {
         JSON.stringify(draft.dependsOn ?? []),
         draft.approvedAt ?? null,
         draft.producesFollowUp ? 1 : 0,
+        draft.desktopScope?.length ? JSON.stringify(draft.desktopScope) : null,
         now,
         now
       );
@@ -927,7 +1009,7 @@ export class NeoAskTodoRepository {
     return (
       this.db
         .prepare(
-          `${TODO_SELECT} WHERE state IN ('todo', 'doing', 'blocked', 'failed')
+          `${TODO_SELECT} WHERE state IN ('todo', 'doing', 'blocked')
              AND ask_id IN (SELECT id FROM neo_asks WHERE status = 'open')
              AND (?1 IS NULL OR (((state = 'blocked' AND blocked_by IN ('stalled', 'environment') AND updated_at <= ?1)
                OR (state = 'todo' AND created_at <= ?2 AND check_json IS NOT NULL AND COALESCE(TRIM(instruction), '') = ''))
@@ -940,7 +1022,7 @@ export class NeoAskTodoRepository {
   getCheckable(id: string): NeoTodo | null {
     const row = this.db
       .prepare(
-        `${TODO_SELECT} WHERE id = ? AND state IN ('todo', 'doing', 'blocked', 'failed')
+        `${TODO_SELECT} WHERE id = ? AND state IN ('todo', 'doing', 'blocked')
            AND ask_id IN (SELECT id FROM neo_asks WHERE status = 'open')`
       )
       .get(id) as TodoRow | null;
@@ -1032,10 +1114,15 @@ export class NeoAskTodoRepository {
     this.changeQuestion(id, { actions_applied_at: now }, 'answered');
   }
 
-  listQuestions(askId: string): NeoQuestion[] {
+  listBlockingQuestions(askId: string): NeoQuestion[] {
+    return this.listQuestions(askId, true);
+  }
+
+  listQuestions(askId: string, blockingOnly = false): NeoQuestion[] {
+    const advisory = blockingOnly ? `AND NOT ${NEO_ADVISORY_QUESTION('neo_questions')}` : '';
     return (
       this.db
-        .prepare(`${QUESTION_SELECT} WHERE ask_id = ? ORDER BY created_at, rowid`)
+        .prepare(`${QUESTION_SELECT} WHERE ask_id = ? ${advisory} ORDER BY created_at, rowid`)
         .all(askId) as QuestionRow[]
     ).map(toQuestion);
   }
@@ -1052,8 +1139,8 @@ export class NeoAskTodoRepository {
   askQuestion(id: string, askId: string, draft: NeoQuestionDraft, now: number): NeoQuestion {
     this.db
       .prepare(
-        `INSERT INTO neo_questions (id, ask_id, text, kind, options, labels, multiple, no_label, yes_label,
-           todos, confirm_json, document, reply_to_json, todo_id, artifacts_json, source_session_json, retire_when_json, cause, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO neo_questions (id, ask_id, text, kind, options, option_details_json, recommended, multiple, no_label, yes_label,
+           todos, confirm_json, document, reply_to_json, todo_id, artifacts_json, source_session_json, retire_when_json, cause, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -1061,7 +1148,8 @@ export class NeoAskTodoRepository {
         draft.text,
         draft.kind,
         draft.options ? JSON.stringify(draft.options) : null,
-        draft.labels ? JSON.stringify(draft.labels) : null,
+        draft.optionDetails ? JSON.stringify(draft.optionDetails) : null,
+        draft.recommended ?? null,
         draft.multiple ? 1 : 0,
         draft.noLabel,
         draft.yesLabel,
@@ -1086,7 +1174,7 @@ export class NeoAskTodoRepository {
         draft.cause ?? null,
         now
       );
-    this.touchAsk(askId, now);
+    this.touchAsk(askId, now, true, draft.cause === 'relay-session-proposal');
     return this.getQuestion(id)!;
   }
 
@@ -1113,6 +1201,11 @@ export class NeoAskTodoRepository {
         'open'
       );
       if (answered) {
+        if (question.id === proposalQuestionId(question.askId) && answer === 'no') {
+          const ask = this.getAsk(question.askId);
+          if (ask?.status === 'open')
+            this.settleAsk(ask, 'dropped', 'The human declined the proposal.', now);
+        }
         this.pruneQuestions(question.askId, now);
         for (const { todo, patch } of effects) this.writeTodo(todo, patch, now, false, false);
         const preferences = applyPackPreferenceAnswer(this.db, question.id);
@@ -1273,8 +1366,12 @@ export class NeoAskTodoRepository {
       .run(...Object.values(patch), id, ...(state ? [state] : [])).changes;
   }
 
-  private touchAsk(askId: string, now: number, notify = true): void {
-    this.db.prepare('UPDATE neo_asks SET updated_at = ? WHERE id = ?').run(now, askId);
+  private touchAsk(askId: string, now: number, notify = true, relayCreated = false): void {
+    this.db
+      .prepare(`UPDATE neo_asks SET updated_at = ?, origin_message_id = CASE
+      WHEN ? AND origin_message_id LIKE '%:relay-pending' THEN substr(origin_message_id, 1, length(origin_message_id) - 14)
+      ELSE origin_message_id END WHERE id = ?`)
+      .run(now, relayCreated ? 1 : 0, askId);
     if (notify) this.changed();
   }
 }

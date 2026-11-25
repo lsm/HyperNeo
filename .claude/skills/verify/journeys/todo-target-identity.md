@@ -15,7 +15,7 @@ Instructed todos wait behind an unfinished check-only step so none starts by its
 A bind target with no instruction and no prerequisite must resolve a prefix to the
 full ID and record the todo as doing; an unknown bind target must be refused without
 adding a todo.
-A multi-todo neo.ask.open with one resolvable prefix followed by an unknown
+A multi-todo neo.ask.propose with one resolvable prefix followed by an unknown
 prefix must refuse the whole batch before opening an ask or adding any todo or
 delivery input. Unit MCP cases also put the unknown target first, requiring zero
 dispatches; successful batches
@@ -39,3 +39,6 @@ limits; the Codex reader carries that filter through its existing DB worker.
 Those fixtures replace work lookup; they do not prove external Codex discovery.
 A listener startup failure leaves this real-daemon journey unverified. Retain
 its log and exit status; the wrapper saves evidence and deletes synthetic data.
+
+The helper seeds an accepted historical ask for its unrelated work fixture.
+Use new-work-source.md for the real proposal and human-approval path.

@@ -1,24 +1,6 @@
-import { runMigration495 } from '../../../../src/storage/schema/m495-neo-answer-provenance.ts';
-import { runMigration428 } from '../../../../src/storage/schema/m428-pack-preference-proposals.ts';
-import { runMigration429 } from '../../../../src/storage/schema/m429-neo-rule-proposals.ts';
-import { runMigration502 } from '../../../../src/storage/schema/m502-neo-question-todos.ts';
-import { runMigration507 } from '../../../../src/storage/schema/m507-neo-question-option-labels.ts';
-import { runMigration508 } from '../../../../src/storage/schema/m508-neo-removed-prerequisites.ts';
-import { runMigration510 } from '../../../../src/storage/schema/m510-neo-card-actions-applied.ts';
-import { runMigration512 } from '../../../../src/storage/schema/m512-neo-todo-produces-follow-up.ts';
-import { runMigration515 } from '../../../../src/storage/schema/m515-neo-question-held.ts';
-import { prepareCodingTodoStorage } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
-import { NeoConversationAskRepository } from '../../../../src/storage/repositories/neo-conversation-ask-repository.ts';
-import { createNeoConversationAskReadOperation } from '../../../../src/lib/neo/conversation-ask-read-operation.ts';
-import { runMigration466 } from '../../../../src/storage/schema/m466-neo-question-retire-when.ts';
-import { runMigration453 } from '../../../../src/storage/schema/m453-neo-ask-focused-session.ts';
-import { runMigration452 } from '../../../../src/storage/schema/m452-neo-question-source.ts';
-import { runMigration450 } from '../../../../src/storage/schema/m450-neo-question-artifacts.ts';
-import { runMigration446 } from '../../../../src/storage/schema/m446-neo-question-todo.ts';
-import { runMigration442 } from '../../../../src/storage/schema/m442-neo-question-reply-to.ts';
-import { runMigration433 } from '../../../../src/storage/schema/m433-neo-question-document.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
+import { createNeoConversationAskReadOperation } from '../../../../src/lib/neo/conversation-ask-read-operation.ts';
 import {
   createNeoIntakeOperation,
   neoQuoteFact,
@@ -26,6 +8,7 @@ import {
   neoReplySnapshot,
   readNeoReply,
 } from '../../../../src/lib/neo/intake.ts';
+import { prepareCodingTodoStorage } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -33,21 +16,41 @@ import {
 } from '../../../../src/lib/operations/registry.ts';
 import type { Database } from '../../../../src/storage/database.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
+import { NeoConversationAskRepository } from '../../../../src/storage/repositories/neo-conversation-ask-repository.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
-import { runMigration344 } from '../../../../src/storage/schema/m344-neo-ask-forwards.ts';
-import { createNeoPublicationTable } from '../../../../src/storage/schema/m288-neo-publications.ts';
 import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
+import { createNeoPublicationTable } from '../../../../src/storage/schema/m288-neo-publications.ts';
 import { runMigration289 } from '../../../../src/storage/schema/m289-neo-conversation-asks.ts';
+import { runMigration344 } from '../../../../src/storage/schema/m344-neo-ask-forwards.ts';
 import { runMigration387 } from '../../../../src/storage/schema/m387-neo-ask-todo-tables.ts';
 import { runMigration398 } from '../../../../src/storage/schema/m398-neo-todo-blocked.ts';
+import { runMigration420 } from '../../../../src/storage/schema/m420-neo-ask-goal.ts';
+import { runMigration427 } from '../../../../src/storage/schema/m427-neo-question-confirm.ts';
+import { runMigration428 } from '../../../../src/storage/schema/m428-pack-preference-proposals.ts';
+import { runMigration429 } from '../../../../src/storage/schema/m429-neo-rule-proposals.ts';
+import { runMigration433 } from '../../../../src/storage/schema/m433-neo-question-document.ts';
 import { runMigration434 } from '../../../../src/storage/schema/m434-neo-todo-artifacts.ts';
+import { runMigration442 } from '../../../../src/storage/schema/m442-neo-question-reply-to.ts';
+import { runMigration446 } from '../../../../src/storage/schema/m446-neo-question-todo.ts';
+import { runMigration450 } from '../../../../src/storage/schema/m450-neo-question-artifacts.ts';
+import { runMigration452 } from '../../../../src/storage/schema/m452-neo-question-source.ts';
+import { runMigration453 } from '../../../../src/storage/schema/m453-neo-ask-focused-session.ts';
 import { runMigration463 } from '../../../../src/storage/schema/m463-neo-todo-priority.ts';
 import { runMigration464 } from '../../../../src/storage/schema/m464-neo-todo-dependencies.ts';
+import { runMigration466 } from '../../../../src/storage/schema/m466-neo-question-retire-when.ts';
 import { runMigration476 } from '../../../../src/storage/schema/m476-neo-todo-approved-at.ts';
 import { runMigration484 } from '../../../../src/storage/schema/m484-todo-approval-question.ts';
 import { runMigration486 } from '../../../../src/storage/schema/m486-neo-ask-topic.ts';
-import { runMigration420 } from '../../../../src/storage/schema/m420-neo-ask-goal.ts';
-import { runMigration427 } from '../../../../src/storage/schema/m427-neo-question-confirm.ts';
+import { runMigration495 } from '../../../../src/storage/schema/m495-neo-answer-provenance.ts';
+import { runMigration502 } from '../../../../src/storage/schema/m502-neo-question-todos.ts';
+import { runMigration507 } from '../../../../src/storage/schema/m507-neo-question-option-labels.ts';
+import { runMigration508 } from '../../../../src/storage/schema/m508-neo-removed-prerequisites.ts';
+import { runMigration510 } from '../../../../src/storage/schema/m510-neo-card-actions-applied.ts';
+import { runMigration512 } from '../../../../src/storage/schema/m512-neo-todo-produces-follow-up.ts';
+import { runMigration515 } from '../../../../src/storage/schema/m515-neo-question-held.ts';
+import { runMigration527 } from '../../../../src/storage/schema/m527-neo-question-option-details.ts';
+import { runMigration532 } from '../../../../src/storage/schema/m532-neo-question-desktop-app.ts';
+import { runMigration535 } from '../../../../src/storage/schema/m535-neo-ask-desktop-apps.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
 
@@ -91,6 +94,9 @@ describe('neo.message.send replyTo', () => {
     runMigration510(mailbox.db);
     runMigration512(mailbox.db);
     runMigration515(mailbox.db);
+    runMigration527(mailbox.db);
+    runMigration532(mailbox.db);
+    runMigration535(mailbox.db);
     createNeoPublicationTable(mailbox.db);
     runMigration344(mailbox.db);
     prepareCodingTodoStorage(mailbox.db);
@@ -337,7 +343,7 @@ describe('neo.message.send replyTo', () => {
     expect(store.getQuestion('q1')?.state).toBe('open');
   });
 
-  test('a letter reply to a removed-prerequisite card applies its decision', async () => {
+  test('a number reply to a removed-prerequisite card applies its decision', async () => {
     const draft = { doneWhen: 'Observed', check: null, instruction: null, named: null };
     const gone = store.addTodo('gone', 'ask', { ...draft, title: 'Gone', dependsOn: [] }, 1);
     store.addTodo('next', 'ask', { ...draft, title: 'Next', dependsOn: ['gone'] }, 1);
@@ -357,12 +363,12 @@ describe('neo.message.send replyTo', () => {
       },
       1
     );
-    await send(crypto.randomUUID(), 'B', { kind: 'question', id: 'removed' });
+    await send(crypto.randomUUID(), '2', { kind: 'question', id: 'removed' });
     expect(store.getQuestion('removed')).toMatchObject({ answer: ['Remove these'] });
     expect(store.getTodo('next')?.state).toBe('removed');
   });
 
-  test('a letter reply to a choice question answers with that option, like a tap', async () => {
+  test('a number reply to a choice question answers with that option, like a tap', async () => {
     const choice = (id: string, multiple: boolean) =>
       store.askQuestion(
         id,
@@ -378,11 +384,11 @@ describe('neo.message.send replyTo', () => {
         1
       );
     const replies: [string, string[]][] = [
-      ['A', ['保留旧的列表布局，只调整间距']],
-      ['选A', ['保留旧的列表布局，只调整间距']],
-      ['B吧', ['Cards']],
-      ['option C', ['Use the compact table everywhere']],
-      ['c.', ['Use the compact table everywhere']],
+      ['1', ['保留旧的列表布局，只调整间距']],
+      ['选一', ['保留旧的列表布局，只调整间距']],
+      ['第二个吧', ['Cards']],
+      ['option 3', ['Use the compact table everywhere']],
+      ['the third one.', ['Use the compact table everywhere']],
     ];
     for (const [index, [words, answer]] of replies.entries()) {
       choice(`c${index}`, false);
@@ -391,22 +397,69 @@ describe('neo.message.send replyTo', () => {
       expect(store.getQuestion(`c${index}`)).toMatchObject({ answer, answeredBy: 'chat' });
       expect(prompt(id).reference).toBe('Which layout?');
     }
+    store.askQuestion(
+      'numeric-option',
+      'ask',
+      {
+        text: 'How many days?',
+        kind: 'choice',
+        options: ['7', '30', '90'],
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+      },
+      1
+    );
+    await send(crypto.randomUUID(), '30', { kind: 'question', id: 'numeric-option' });
+    expect(store.getQuestion('numeric-option')?.answer).toEqual(['30']);
+    store.askQuestion(
+      'numeric-ambiguous',
+      'ask',
+      {
+        text: 'How many days?',
+        kind: 'choice',
+        options: ['30', '1', '90'],
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+      },
+      1
+    );
+    await send(crypto.randomUUID(), '1', { kind: 'question', id: 'numeric-ambiguous' });
+    expect(store.getQuestion('numeric-ambiguous')?.answer).toEqual(['30']);
     choice('many', true);
-    await send(crypto.randomUUID(), 'A、C', { kind: 'question', id: 'many' });
+    await send(crypto.randomUUID(), '1、3', { kind: 'question', id: 'many' });
     expect(store.getQuestion('many')?.answer).toEqual([
       '保留旧的列表布局，只调整间距',
       'Use the compact table everywhere',
     ]);
     choice('both', true);
-    await send(crypto.randomUUID(), 'a and b', { kind: 'question', id: 'both' });
+    await send(crypto.randomUUID(), 'first and second', { kind: 'question', id: 'both' });
     expect(store.getQuestion('both')?.answer).toEqual(['保留旧的列表布局，只调整间距', 'Cards']);
     choice('glued', true);
-    await send(crypto.randomUUID(), 'banda', { kind: 'question', id: 'glued' });
-    expect(store.getQuestion('glued')?.answer).toBe('banda');
-    for (const [index, words] of ['A、C', 'bad', 'D', 'a bit of both'].entries()) {
+    await send(crypto.randomUUID(), '第二天出发', { kind: 'question', id: 'glued' });
+    expect(store.getQuestion('glued')?.answer).toBe('第二天出发');
+    for (const [index, words] of ['A', 'no one', 'the one', 'a bit of both'].entries()) {
       choice(`raw${index}`, false);
       await send(crypto.randomUUID(), words, { kind: 'question', id: `raw${index}` });
       expect(store.getQuestion(`raw${index}`)?.answer).toBe(words);
+    }
+    for (const [index, words] of [
+      '4',
+      '第五个',
+      '1、3',
+      '7',
+      '0',
+      '七',
+      'seventh',
+      '第十个',
+      '100',
+    ].entries()) {
+      choice(`bad${index}`, false);
+      const id = crypto.randomUUID();
+      await send(id, words, { kind: 'question', id: `bad${index}` });
+      expect(store.getQuestion(`bad${index}`)).toMatchObject({ state: 'open', answer: null });
+      expect(prompt(id).words).toBe(words);
     }
   });
 

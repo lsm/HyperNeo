@@ -8,6 +8,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
+import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 
 const [mode,directory]=process.argv.slice(2),run=resolve(directory);assert(['before','verify'].includes(mode));
 assert.equal(process.env.NODE_ENV,'test');assert.equal(process.env.HOME,join(run,'home'));assert.equal(process.env.HYPERNEO_DATA_DIR,join(run,'data'));assert(!existsSync(join(run,'data')));
@@ -27,7 +28,7 @@ async function open(){
  const db=raw(),prepare=db.prepare.bind(db),send=app.db.gateway.run.bind(app.db.gateway);
  db.prepare=((sql:string)=>{if(measuring&&/neo_concerns|neo_session_bindings/.test(sql))mainSql.push(sql);return prepare(sql);}) as typeof db.prepare;
  app.db.gateway.run=(async(op,args)=>{const method=(args as {method:string}).method;if(park&&op.name==='neo.project.move'&&method==='save'){park=false;parked();await new Promise<void>(done=>{release=done;});}const start=performance.now(),value=await send(op,args);if(measuring&&method==='save')commands.push({name:op.name,method,mode:op.mode,durationMs:performance.now()-start,argsBytes:Buffer.byteLength(JSON.stringify(args)),replyBytes:Buffer.byteLength(JSON.stringify(value)??'null')});return value;}) as typeof app.db.gateway.run;
- ws=new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);await new Promise<void>((done,fail)=>{ws!.onopen=()=>done();ws!.onerror=()=>fail(new Error('RPC connect failed'));});
+ ws=new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`,{headers:{authorization:`Bearer ${await readLocalCredential()}`}} as never);await new Promise<void>((done,fail)=>{ws!.onopen=()=>done();ws!.onerror=()=>fail(new Error('RPC connect failed'));});
  ws.onmessage=event=>{const r=JSON.parse(String(event.data)),id=r.requestId??r.id,w=waiting.get(id);if(!w)return;clearTimeout(w.timer);waiting.delete(id);r.error?w.fail(new Error(JSON.stringify(r.error))):w.done(r.data);};
 }
 function rpc(method:string,data:unknown={}){return new Promise<any>((done,fail)=>{const id=crypto.randomUUID(),timer=setTimeout(()=>{waiting.delete(id);fail(new Error('RPC timeout'));},10000);waiting.set(id,{done,fail,timer});ws!.send(JSON.stringify({id,type:'REQ',sessionId:'global',method,data,timestamp:new Date().toISOString(),version:'1.0.0'}));});}

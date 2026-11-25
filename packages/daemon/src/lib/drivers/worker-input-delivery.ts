@@ -75,6 +75,7 @@ export function createWorkerInputDelivery(
     action: 'wait' | 'fail' | 'send' | 'uncertain' | 'confirm';
     detail: string;
     report?: true;
+    busyHyperneoId?: string;
   } => {
     if (facts.failure !== null) return { action: 'fail', detail: facts.failure };
     if (facts.payload.dispatched)
@@ -100,12 +101,17 @@ export function createWorkerInputDelivery(
       : null;
     if (live && isWaitingOnPrompt(live))
       return { action: 'fail', detail: 'needs_you: its session is waiting on the human.' };
-    if (facts.status && !facts.status.ok && ['not_found', 'not_open'].includes(facts.status.reason))
+    if (
+      facts.status &&
+      !facts.status.ok &&
+      ['not_found', 'not_open', 'unsupported'].includes(facts.status.reason)
+    )
       return { action: 'fail', detail: facts.status.detail };
     if (!live || isBusyWork(live.status))
       return {
         action: 'wait',
         ...(!live ? { report: true as const } : {}),
+        ...(live && facts.ref.adapter === 'hyperneo' ? { busyHyperneoId: facts.ref.id } : {}),
         detail: live
           ? 'Waiting for the current worker turn to end.'
           : facts.status && !facts.status.ok
@@ -150,7 +156,15 @@ export function createWorkerInputDelivery(
           reported = false;
         }
       }
-      await gateway.call(workerInputWrites, 'wait', job, plan.detail, reported);
+      await gateway.call(
+        workerInputWrites,
+        'wait',
+        job,
+        plan.detail,
+        reported,
+        undefined,
+        plan.busyHyperneoId
+      );
       return { waiting: plan.detail };
     }
     if (plan.action === 'fail' || plan.action === 'uncertain')

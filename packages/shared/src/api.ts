@@ -35,6 +35,7 @@ export interface CreateSessionRequest {
   workspacePath?: string | null;
   initialTools?: string[];
   config?: Partial<SessionConfig>;
+  harness?: SessionConfig['harness'];
   worktreeBaseBranch?: string;
   worktreeMode?: 'worktree' | 'direct';
   title?: string;
@@ -63,6 +64,7 @@ export interface WorkspaceHistoryEntry {
   lastUsedAt: number;
   useCount: number;
   project?: { id: string; name: string; folders: string[] };
+  repositoryProject?: { id: string; name: string };
 }
 
 export interface WorkspaceHistoryResponse {
@@ -190,14 +192,18 @@ export interface ArchiveSessionResponse {
   requiresConfirmation?: boolean;
   commitStatus?: WorktreeCommitStatus;
   commitsRemoved?: number;
-  reason?: 'has_clones' | 'agent_primary_session';
+  reason?: 'has_clones' | 'owns_goals' | 'agent_primary_session';
   clones?: CloneSummary[];
   agentName?: string;
 }
 
+export type UnarchiveSessionResponse =
+  | { success: true; worktreeBaseBranch?: string }
+  | { success: false; reason: string };
+
 export interface DeleteSessionResponse {
   success: boolean;
-  reason?: 'has_clones' | 'agent_primary_session';
+  reason?: 'has_clones' | 'owns_goals' | 'agent_primary_session';
   clones?: CloneSummary[];
   agentName?: string;
 }

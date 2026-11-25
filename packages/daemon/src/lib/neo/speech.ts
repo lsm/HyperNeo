@@ -1,6 +1,6 @@
 import { createEventMessage, type MessageHub } from '@hyperneo/shared';
 import { NEO_QUICK_ACK, NEO_QUICK_ACK_LISTENING, neoToolDescription } from '@hyperneo/prompts';
-import superpipe, { type PipelineAPI } from 'superpipe';
+import superpipe, { type PipelineAPI, type SuperPipeFactory } from 'superpipe';
 import { z } from 'zod';
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import { recordOperationRefusal } from '../../storage/repositories/operation-refusal-repository.ts';
@@ -8,7 +8,7 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import { Logger } from '../logger.ts';
 import type { DeliveryLoadResult } from '../agent/message-delivery.ts';
 import { voiceDiagnostic } from '../voice/diagnostics.ts';
-import { NeoSpeechAudio } from './speech-audio.ts';
+import { NeoSpeechAudio, type SpeechPart } from './speech-audio.ts';
 import { neoDerivedId } from './derived-id.ts';
 import type { ClientEventData } from '../operations/client-event-schemas.ts';
 import { isSDKResultSuccess, type SDKMessage } from '@hyperneo/shared/sdk';
@@ -59,7 +59,7 @@ type SpeechReceipt = {
   guidance?: string;
 };
 type Entry = { id: string; sessionId: string; clientId: string; text: string; state: SpeechState };
-type Listener = { clientId: string; pending: Set<string>; audio: boolean; voice: string };
+type Listener = { clientId: string; pending: Set<string>; audio: boolean; voice?: string };
 
 function spokenReply(text: string): string {
   const plain = text
@@ -151,7 +151,9 @@ export class NeoSpeech {
     private readonly modeNote?: (sessionId: string) => string | undefined,
     private readonly canSay: (sessionId: string) => boolean = isNeo,
     private readonly speechSession: (sessionId: string) => string = (id) => id,
-    private readonly handOffMode?: (sessionId: string) => boolean
+    private readonly handOffMode?: (sessionId: string) => boolean,
+    speechPart?: () => Promise<SpeechPart | undefined>,
+    savedVoiceKeys: () => Promise<string[]> = async () => []
   ) {
     this.audio = new NeoSpeechAudio(
       (client, data) => this.send(client, data),
@@ -163,7 +165,8 @@ export class NeoSpeech {
           { source: 'rpc', principal: 'local', clientId: target.clientId }
         ),
       audioBase,
-      audioRequest
+      audioRequest,
+      speechPart
     );
     this.unsubscribe =
       hub.onClientDisconnect?.((id) => {
@@ -176,8 +179,11 @@ export class NeoSpeech {
           new Logger('NeoSpeech').warn('Playback disconnect record failed')
         );
       }) ?? (() => {});
-    const route = (action: 'listen' | 'say' | 'ack' | 'preview') =>
-      (superpipe({})(`neo.speech.${action}`) as PipelineAPI)
+    const route = (
+      action: 'listen' | 'say' | 'ack' | 'preview',
+      pipeline: ReturnType<SuperPipeFactory>
+    ) =>
+      (pipeline as PipelineAPI)
         .input(['input', 'caller'])
         .pipe(
           (input: Input, caller: OperationCaller) => {
@@ -224,12 +230,22 @@ export class NeoSpeech {
         .endAsync('receipt') as (input: Input, caller: OperationCaller) => Promise<SpeechReceipt>;
     this.operations = [
       defineOperation({
+        name: 'voice.testSpeech',
+        description: neoToolDescription('voice.testSpeech'),
+        inputSchema: z.object({}),
+        resultSchema: z.object({ ok: z.boolean(), reason: z.string().optional() }),
+        policy: { safetyClass: 'mutate', roles: ['neo'] },
+        execute: (superpipe({})('voice.testSpeech') as PipelineAPI)
+          .pipe(() => this.audio.test(savedVoiceKeys), undefined, 'result')
+          .endAsync('result') as () => ReturnType<NeoSpeechAudio['test']>,
+      }),
+      defineOperation({
         name: 'neo.speech.listen',
         description: neoToolDescription('neo.speech.listen'),
         inputSchema: Listen,
         resultSchema: Result,
         policy: { safetyClass: 'human_only', caller: 'local_user' },
-        execute: route('listen'),
+        execute: route('listen', superpipe({})('neo.speech.listen')),
       }),
       defineOperation({
         name: 'neo.speech.say',
@@ -237,7 +253,7 @@ export class NeoSpeech {
         inputSchema: NeoSpeechSay,
         resultSchema: Result,
         policy: { safetyClass: 'mutate', roles: ['neo'] },
-        execute: route('say'),
+        execute: route('say', superpipe({})('neo.speech.say')),
       }),
       defineOperation({
         name: 'neo.speech.preview',
@@ -245,7 +261,7 @@ export class NeoSpeech {
         inputSchema: Preview,
         resultSchema: Result,
         policy: { safetyClass: 'human_only', caller: 'local_user' },
-        execute: route('preview'),
+        execute: route('preview', superpipe({})('neo.speech.preview')),
       }),
       defineOperation({
         name: 'neo.speech.catalog',
@@ -267,7 +283,7 @@ export class NeoSpeech {
         inputSchema: Ack,
         resultSchema: Result,
         policy: { safetyClass: 'human_only', caller: 'local_user' },
-        execute: route('ack'),
+        execute: route('ack', superpipe({})('neo.speech.ack')),
       }),
     ];
   }
@@ -470,7 +486,7 @@ export class NeoSpeech {
           clientId,
           pending: new Set(),
           audio: input.audio ?? false,
-          voice: input.voice ?? 'vivian',
+          voice: input.voice,
         });
       return { ok: true };
     }
@@ -492,7 +508,7 @@ export class NeoSpeech {
       if (target?.clientId !== clientId) return { ok: false, reason: 'voice_replies_off' };
       input = {
         requestId: input.requestId,
-        text: ['ryan', 'aiden'].includes(target.voice)
+        text: ['ryan', 'aiden'].includes(target.voice ?? '')
           ? 'Hello. This is Neo speaking.'
           : '你好，这是 Neo 的语音试听。',
       };

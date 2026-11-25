@@ -104,6 +104,8 @@ try {
         );
       }
     );
+  const manyLines =
+    '**Release ready**\n\n- CI green\n- Reviewed\n- Deployed\n- Docs updated\n- Notes sent\n- **Merge now?**';
   const long = `${'The build is green and the review is finished. '.repeat(10)}Merge it.`;
   const letter = Array.from(
     { length: 400 },
@@ -112,21 +114,12 @@ try {
   evidence.plainLetter = await publish('plain-letter', letter);
   assert.equal(letter.length > 16000, true);
   evidence.longAlone = await publish('long-alone', long);
-  evidence.sixLines = await publish('six-lines', 'Status\n- a\n- b\n- c\n- d\n- e');
-  evidence.blankRuns = await publish(
-    'blank-runs',
-    'Merged.\n\n\nCI green.\nReviewed.\nDone.'
-  );
-  evidence.trailingBlank = await publish(
-    'trailing-blank',
-    'Title\n- a\n- b\n- c\n- d\n\n'
-  );
   evidence.longWithDetails = await publish('long-summary', long, `${long} ${long}`);
   evidence.longShortDetails = await publish('long-short-details', long, 'One more note.');
   evidence.deliverableWithDetails = await publish('deliverable-notes', letter, 'Sign as Marc.', {
     deliverable: true,
   });
-  for (const key of ['longAlone', 'sixLines', 'blankRuns', 'trailingBlank', 'plainLetter'])
+  for (const key of ['longAlone', 'plainLetter'])
     assert.match(
       (evidence[key] as { reason: string }).reason,
       /^reply_needs_details: .*move supporting material to details\./
@@ -145,30 +138,32 @@ try {
   evidence.emojiOver = await publish('emoji-over', `${emoji}😀`);
   assert.match(
     (evidence.emojiOver as { reason: string }).reason,
-    /^reply_needs_details: .*server ceiling of 400 characters and 5 lines.*Write at most 60 words:/
+    /^reply_needs_details: .*server ceiling of 400 characters\..*Write at most 60 words:/
   );
   evidence.charsOver = await publish('chars-over', 'x'.repeat(401));
   assert.match(
     (evidence.charsOver as { reason: string }).reason,
-    /^reply_needs_details: .*server ceiling of 400 characters and 5 lines.*Write at most 60 words:/
+    /^reply_needs_details: .*server ceiling of 400 characters\..*Write at most 60 words:/
   );
   const before = await read();
   evidence.before = before;
   assert.equal(before.items.length, 0);
   evidence.split = await publish('split', 'Merged and CI is green.', long);
   evidence.short = await publish('short', '**Merged**\n- CI green\n- 已部署');
+  evidence.manyLines = await publish('many-lines', manyLines);
   evidence.deliverable = await publish('deliverable', letter, undefined, { deliverable: true });
   evidence.emojiAtLimit = await publish('emoji-at-limit', emoji);
-  for (const key of ['split', 'short', 'deliverable', 'emojiAtLimit'])
+  for (const key of ['split', 'short', 'manyLines', 'deliverable', 'emojiAtLimit'])
     assert.equal((evidence[key] as { accepted: boolean }).accepted, true);
   const after = await read();
   evidence.after = after;
-  assert.equal(after.items.length, 4);
+  assert.equal(after.items.length, 5);
   assert.deepEqual(
     after.items.map((item) => [item.shortText, item.fullText]),
     [
       ['Merged and CI is green.', long],
       [undefined, '**Merged**\n- CI green\n- 已部署'],
+      [undefined, manyLines],
       [undefined, letter],
       [undefined, emoji],
     ]

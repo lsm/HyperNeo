@@ -114,6 +114,163 @@ const saved = async () => {
 };
 
 describe('immutable human settings proposals', () => {
+  test('the retired coding session strategy cannot open a new settings card', async () => {
+    const choice = (value: string) => ({
+      pack: 'coding',
+      scope: { kind: 'repo', key: 'synthetic/repo' },
+      key: 'sessionStrategy',
+      value,
+    });
+    const reply = await invoke('pack.preferences.ask', {
+      askId: 'ask',
+      requestId: 'retired-strategy',
+      alternatives: [[choice('long_lived')], [choice('per_task')]],
+    });
+    expect(reply).not.toMatchObject({ kind: 'completed', value: { ok: true } });
+  });
+
+  test('delegation choices do not repeat labels and explain the unsaved default', async () => {
+    db.updateGlobalSettings({ language: 'en' });
+    const choice = (value: string) => ({
+      pack: 'delegation',
+      scope: { kind: 'global', key: '' },
+      key: 'signIn',
+      value,
+    });
+    const ask = (requestId: string) =>
+      invoke('pack.preferences.ask', {
+        askId: 'ask',
+        requestId,
+        alternatives: [[choice('self')], [choice('saved')]],
+        hold: false,
+      });
+    const reply = await ask('delegation-unsaved');
+    const question = service.todos.getQuestion(
+      (reply as { value: { questionId: string } }).value.questionId
+    )!;
+    expect(question.text).toContain('- I sign in\n');
+    expect(question.text).not.toContain('I sign in: I sign in');
+    expect(question.text).toContain('Work continues using the default until you answer.');
+    await invoke(
+      'neo.question.answer',
+      { questionId: question.id, answer: question.options![0] },
+      human
+    );
+    const saved = await ask('delegation-saved');
+    const next = service.todos.getQuestion(
+      (saved as { value: { questionId: string } }).value.questionId
+    )!;
+    expect(next.text).not.toContain('Work continues using the default until you answer.');
+    expect(next.options?.at(-1)).toBe('Keep current settings');
+  });
+
+  test('a settings choice explains each option without a table', async () => {
+    db.updateGlobalSettings({ language: 'en' });
+    const declaration = {
+      scope: 'global' as const,
+      type: { kind: 'enum' as const, values: ['one', 'two'] },
+      default: 'one',
+      ask: 'Choose a setting',
+      label: { en: 'Setting', 'zh-Hans': '设置' },
+      question: { en: 'Which setting?', 'zh-Hans': '选择哪个设置？' },
+      valueLabels: {
+        one: { en: 'One', 'zh-Hans': '一' },
+        two: { en: 'Two', 'zh-Hans': '二' },
+      },
+      valueDescriptions: {
+        one: { en: 'First behavior', 'zh-Hans': '第一个行为' },
+        two: { en: 'Second behavior', 'zh-Hans': '第二个行为' },
+      },
+    };
+    service.filePacks = [
+      {
+        id: 'synthetic',
+        describe: 'Synthetic',
+        instructions: () => null,
+        preferences: { mode: declaration },
+      },
+    ];
+    const choice = (value: string) => ({
+      pack: 'synthetic',
+      scope: { kind: 'global', key: '' },
+      key: 'mode',
+      value,
+    });
+    const reply = await invoke('pack.preferences.ask', {
+      askId: 'ask',
+      requestId: 'described-choice',
+      alternatives: [[choice('one')], [choice('two')]],
+    });
+    const question = service.todos.getQuestion(
+      (reply as { value: { questionId: string } }).value.questionId
+    )!;
+    expect(question.text).toContain('Which setting?');
+    expect(question.text).toContain('First behavior');
+    expect(question.text).toContain('Second behavior');
+    expect(question.text).not.toContain('| --- |');
+    expect(question.options).toEqual(['One', 'Two', 'Use the default for now']);
+
+    db.updateGlobalSettings({ language: 'system' });
+    db.getDatabase()
+      .prepare(`INSERT INTO neo_conversation_asks
+      (conversation_id, request_id, payload_json, created_at) VALUES (?, ?, ?, ?)`)
+      .run(
+        'synthetic',
+        'last-human',
+        JSON.stringify({ content: '请使用中文' }),
+        new Date().toISOString()
+      );
+    const chinese = await invoke('pack.preferences.ask', {
+      askId: 'ask',
+      requestId: 'chinese-choice',
+      alternatives: [[choice('one')], [choice('two')]],
+      hold: false,
+    });
+    const translated = service.todos.getQuestion(
+      (chinese as { value: { questionId: string } }).value.questionId
+    )!;
+    expect(translated.text).toContain('选择哪个设置？');
+    expect(translated.text).toContain('第一个行为');
+    expect(translated.text).toContain('回答之前，工作将继续使用默认设置。');
+    expect(translated.options).toEqual(['一', '二', '暂时使用默认设置']);
+  });
+
+  test('a settings question holds the ask work unless it is asked with hold false', async () => {
+    const work = service.todos.addTodo(
+      'held-work',
+      'ask',
+      { title: 'Work', doneWhen: 'Done', check: null, instruction: 'Do it', named: null },
+      1
+    );
+    const held = service.todos.getQuestion(await propose())!;
+    expect(held.todos).toEqual([work.id]);
+    const reply = await invoke('pack.preferences.ask', {
+      askId: 'ask',
+      requestId: 'free-request',
+      values: [values[0]],
+      hold: false,
+    });
+    const free = service.todos.getQuestion(
+      (reply as { value: { questionId: string } }).value.questionId
+    )!;
+    expect(free.todos).toEqual([]);
+    expect(
+      await invoke('pack.preferences.ask', {
+        askId: 'ask',
+        requestId: 'free-request',
+        values: [values[0]],
+      })
+    ).toMatchObject({ value: { ok: false, reason: 'proposal_is_immutable' } });
+    expect(
+      await invoke('pack.preferences.ask', {
+        askId: 'ask',
+        requestId: 'synthetic-request',
+        values,
+        hold: false,
+      })
+    ).toMatchObject({ value: { ok: false, reason: 'proposal_is_immutable' } });
+  });
+
   test('renders global and project settings without losing false, zero or literal paths', async () => {
     db.updateGlobalSettings({ language: 'en' });
     service.filePacks = [
@@ -346,11 +503,11 @@ describe('immutable human settings proposals', () => {
       expect(await saved()).toMatchObject({ value: { preferences: [] } });
     }
   );
-  test.each(['A', 'the apply option'])(
+  test.each(['1', 'the apply option'])(
     'a human chat %s applies the same immutable proposal',
     async (words) => {
       const questionId = await propose();
-      await chat(questionId, words === 'A' ? words : option(questionId, 0));
+      await chat(questionId, words === '1' ? words : option(questionId, 0));
       expect(await invoke('neo.question.get', { questionId })).toMatchObject({
         value: { answeredByHuman: true },
       });
@@ -388,7 +545,7 @@ describe('immutable human settings proposals', () => {
     expect(await saved()).toMatchObject({ value: { preferences: [] } });
   });
   test.each(['button', 'chat', 'applyAnswer'])(
-    'a yes/no proposal opened before the upgrade still applies on yes by %s',
+    'a yes/no proposal answered yes saves nothing by %s',
     async (surface) => {
       const questionId = 'legacy-settings';
       openHumanCard(
@@ -412,18 +569,11 @@ describe('immutable human settings proposals', () => {
         .run(questionId, 'legacy', JSON.stringify(values), 'Apply these settings?');
       if (surface === 'chat') await chat(questionId, 'yes');
       else await invoke('neo.question.answer', { questionId, answer: 'yes' }, human);
-      if (surface === 'applyAnswer') {
-        db.getDatabase().prepare('DELETE FROM neo_pack_preferences').run();
-        db.getDatabase()
-          .prepare('UPDATE neo_pack_preference_proposals SET applied_at=NULL WHERE question_id=?')
-          .run(questionId);
+      if (surface === 'applyAnswer')
         expect(await invoke('pack.preferences.applyAnswer', { questionId })).toMatchObject({
-          value: { ok: true },
+          value: { ok: false },
         });
-      }
-      expect(await saved()).toMatchObject({
-        value: { preferences: values.map((value) => ({ ...value, setBy: 'human' })) },
-      });
+      expect(await saved()).toMatchObject({ value: { preferences: [] } });
     }
   );
   test('invalid values leave neither question nor proposal; retry preserves question identity', async () => {
@@ -514,27 +664,38 @@ describe('immutable human settings proposals', () => {
     const strategy = (value: string) => ({
       pack: 'coding',
       scope: { kind: 'repo', key: 'synthetic/one' },
-      key: 'sessionStrategy',
+      key: 'mergePolicy',
       value,
     });
     const ask = (requestId: string) =>
       invoke('pack.preferences.ask', {
         askId: 'ask',
         requestId,
-        alternatives: [[strategy('long_lived')], [strategy('per_task')], [strategy('per_pr')]],
+        alternatives: [[strategy('review_bot')], [strategy('ci_only')], [strategy('human')]],
       });
     const reply = await ask('strategy');
     expect(reply).toMatchObject({ value: { ok: true } });
     const questionId = (reply as { value: { questionId: string } }).value.questionId;
     expect(await ask('strategy')).toEqual(reply);
+    expect(service.todos.getQuestion(questionId)!.text).toContain(
+      'How are pull requests reviewed?'
+    );
+    expect(service.todos.getQuestion(questionId)!.text).toContain('synthetic/one');
+    db.updateGlobalSettings({ language: 'zh-Hans' });
+    const translated = (await ask('strategy-chinese')) as { value: { questionId: string } };
+    expect(service.todos.getQuestion(translated.value.questionId)!.text).toContain(
+      '如何审查拉取请求？'
+    );
+    expect(service.todos.getQuestion(translated.value.questionId)!.text).toContain('synthetic/one');
+    db.updateGlobalSettings({ language: 'en' });
     expect(service.todos.getQuestion(questionId)).toMatchObject({
       kind: 'choice',
       multiple: false,
       options: [
-        'Long-lived work-type sessions',
-        'One session per task',
-        'One session per PR',
-        'Keep current settings',
+        'CI and review bot approval',
+        'CI passes',
+        'Human approval',
+        'Use the default for now',
       ],
     });
     expect(await invoke('pack.preferences.applyAnswer', { questionId })).toMatchObject({
@@ -543,7 +704,7 @@ describe('immutable human settings proposals', () => {
     expect(await saved()).toMatchObject({ value: { preferences: [] } });
     await invoke('neo.question.answer', { questionId, answer: option(questionId, 1) }, human);
     expect(await saved()).toMatchObject({
-      value: { preferences: [{ ...strategy('per_task'), setBy: 'human' }] },
+      value: { preferences: [{ ...strategy('ci_only'), setBy: 'human' }] },
     });
 
     const kept = (await ask('strategy-kept')) as { value: { questionId: string } };
@@ -553,11 +714,11 @@ describe('immutable human settings proposals', () => {
       human
     );
     expect(await saved()).toMatchObject({
-      value: { preferences: [{ ...strategy('per_task'), setBy: 'human' }] },
+      value: { preferences: [{ ...strategy('ci_only'), setBy: 'human' }] },
     });
   });
 
-  test('a choice keeps every option, including keep, within chat letter replies', async () => {
+  test('a choice keeps every option, including keep, within chat number replies', async () => {
     const choice = (count: number) =>
       invoke('pack.preferences.ask', {
         askId: 'ask',
@@ -571,10 +732,12 @@ describe('immutable human settings proposals', () => {
     const reply = (await choice(5)) as { value: { questionId: string } };
     const questionId = reply.value.questionId;
     expect(service.todos.getQuestion(questionId)!.options).toHaveLength(6);
-    await chat(questionId, 'F');
+    expect(service.todos.getQuestion(questionId)!.text).toContain('Choose one of these settings?');
+    expect(service.todos.getQuestion(questionId)!.text).not.toContain('| --- |');
+    await chat(questionId, '6');
     expect(service.todos.getQuestion(questionId)).toMatchObject({
       state: 'answered',
-      answer: ['Keep current settings'],
+      answer: ['Use the default for now'],
     });
     expect(await saved()).toMatchObject({ value: { preferences: [] } });
   });

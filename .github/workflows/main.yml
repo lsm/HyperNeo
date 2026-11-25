@@ -24,7 +24,6 @@
 # | PR to dev (web-only, per changes)     | check + web (unit + online skipped)             |
 # | PR to dev (docs-only, per changes)    | none (only the path filter and the gate run)    |
 # | Push to dev                           | check + unit + online + web (no path filter)    |
-# | Push of a v* tag                      | check + unit + online + web (no path filter)    |
 # | workflow_dispatch                     | mocked CI + build                               |
 #
 # NOTE: Real-API daemon shards are manual-only in real-api-tests.yml.
@@ -43,16 +42,13 @@ name: CI
 on:
   push:
     branches: [dev]
-    tags: ['v*']
   pull_request:
     branches: [dev]
   workflow_dispatch:
 
 # One group per ref. A PR's new head cancels the run for its old head, which
-# frees the account's shared runners. Dev pushes, tags and manual runs are
-# never cancelled mid-run: a newer push waits for the running one. Tag runs
-# land in their own group (ci-refs/tags/<tag>-<event>), so a release's CI
-# evidence run is never touched by dev pushes or a manual run on the tag.
+# frees the account's shared runners. Dev pushes and manual runs are never
+# cancelled mid-run: a newer push waits for the running one.
 concurrency:
   group: ci-${{ github.ref }}${{ github.ref_type == 'tag' && format('-{0}', github.event_name) || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -69,9 +65,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
+      - name: Check Locked Use covers with synthetic displays
+        run: bash packages/desktop/locked-use/check-cover.sh
       - uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
       - name: Compare native process identity with the macOS SDK and ps
         working-directory: packages/desktop
         run: bun test tests/runtime-process-identity.test.ts
@@ -83,16 +81,39 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             packages/desktop/tests/driver-host/target
-          key: desktop-driver-${{ runner.os }}-${{ hashFiles('packages/desktop/tests/driver-host/Cargo.lock', 'packages/desktop/src-tauri/Cargo.lock') }}
+          key: desktop-startup-${{ runner.os }}-${{ hashFiles('packages/desktop/tests/driver-host/Cargo.lock', 'packages/desktop/src-tauri/Cargo.lock') }}
           restore-keys: desktop-driver-${{ runner.os }}-
       - name: Test synthetic Mach-O bundles
         run: python3 packages/desktop/tests/macos-rpaths.py
+      - name: Require the hardened runtime on every slice
+        run: bash packages/desktop/tests/hardened-slices.sh
+      - name: Check the bundle verifier, file-backed and as Desktop embeds it
+        run: bash packages/desktop/tests/cua-driver.sh
+      - name: Check delayed Locked Use release
+        run: bash packages/desktop/locked-use/check-release.sh
       - name: Build production-admission host fixture
         run: cargo build --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml
       - name: Start a release-host driver and tolerate endpoint failures
-        run: python3 packages/desktop/tests/worker-drivers.py packages/desktop/tests/driver-host/target/debug/desktop-driver-fixture WorkerDrivers.test_release_host_starts_a_driver_only_it_can_reach WorkerDrivers.test_bind_failure_allows_desktop_setup_to_continue WorkerDrivers.test_missing_startup_paths_allow_desktop_setup_to_continue
+        run: |
+          python3 packages/desktop/tests/worker-drivers.py \
+            packages/desktop/tests/driver-host/target/debug/desktop-driver-fixture \
+            WorkerDrivers.test_release_host_starts_a_driver_only_it_can_reach \
+            WorkerDrivers.test_bind_failure_allows_desktop_setup_to_continue \
+            WorkerDrivers.test_missing_startup_paths_allow_desktop_setup_to_continue \
+            WorkerDrivers.test_restart_retires_leftover_driver_before_serving_requests \
+            WorkerDrivers.test_restart_leaves_reused_driver_pid_alone \
+            WorkerDrivers.test_restart_serves_requests_with_an_exited_driver_awaiting_reap
       - name: Test daemon child lifetime
-        run: cargo test --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml reaped_sidecar_is_not_authorized
+        run: "cargo test --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml -- peer_tests:: leases::"
+      - name: Test desktop startup settings
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/packages/desktop/tests/driver-host/target
+        run: |
+          mkdir -p packages/desktop/src-tauri/binaries
+          touch "packages/desktop/src-tauri/binaries/hyperneo-$(rustc --print host-tuple)"
+          cargo test --locked --manifest-path packages/desktop/src-tauri/Cargo.toml --lib startup_config_tests::attach_uses_configured_data_directory -- --exact
+          cargo test --locked --manifest-path packages/desktop/src-tauri/Cargo.toml --lib locked_use::
+          cargo test --locked --manifest-path packages/desktop/src-tauri/Cargo.toml --lib locked_use_install::tests::tray_does_not_show_a_second_icon_without_the_locked_use_menu -- --exact
       - name: Build isolated embedded-host fixture
         run: cargo rustc --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml --bin desktop-driver-fixture -- --cfg test
       - name: Check macOS Tauri wiring with an inert sidecar
@@ -119,19 +140,13 @@ jobs:
     if: always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.code == 'true')
 
     steps:
-      # Shallow checkout: nothing in this job walks history except the
-      # space-task handler gate, which diffs HEAD against a fetched base tip
-      # (tree diff — no merge-base walk), so depth 1 suffices.
+      # Tag ratchets compare with the tagged commit's first parent.
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 1
+          fetch-depth: ${{ github.ref_type == 'tag' && 2 || 1 }}
 
-      # Give the handler gate its comparison tip. On pull_request the checkout
-      # only fetches refs/pull/N/merge; on workflow_dispatch it only fetches the
-      # dispatched branch; on a tag push it only fetches the tag. Push-to-dev
-      # needs no extra fetch (origin/dev == HEAD, so the gate diff is empty
-      # and it no-ops); a tag at the dev tip no-ops the same way, and a tag
-      # behind the tip diffs against the post-tag delta.
+      # Give the handler gate its comparison tip for pull requests and
+      # manually dispatched runs. Push-to-dev already has origin/dev.
       - name: Fetch base branch for the space-task handler gate
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
         run: git fetch --no-tags --depth=1 origin +refs/heads/dev:refs/remotes/origin/dev
@@ -139,7 +154,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
 
       - name: Fetch previous dev tip for the DB baseline ratchet
         if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
@@ -149,6 +164,12 @@ jobs:
 
       - name: Test main-thread DB ratchet CLI
         run: bun run test:db-main-thread
+
+      - name: Test getDatabase ratchet CLI
+        run: bun run test:get-database
+
+      - name: Test CI ratchet base
+        run: bun run test:ci-ratchet-base
 
       - name: Test test-type ratchet CLI
         run: bun run test:test-types
@@ -160,6 +181,9 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      - name: Test pipeline ratchet CLI
+        run: bun run test:pipeline-ratchet
 
       - name: Validate daemon shard configuration
         run: |
@@ -208,10 +232,10 @@ jobs:
       - name: Test CI gate script
         run: bun run test:ci-gate
 
-      # Folded in from the former test-cli job: ~2s of tests that used to occupy
-      # a whole runner. Gated to the same events test-cli ran on (push to dev
-      # or a release tag, workflow_dispatch) — skipped on PRs, exactly as
-      # before; tag pushes run it so the release evidence run covers it.
+      - name: Test release CI evidence gate
+        run: bash scripts/test-release-ci-gate.sh
+
+      # CLI tests run on dev pushes and manual CI dispatches, not PRs.
       - name: Run CLI tests
         if: github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref_type == 'tag') || github.event_name == 'workflow_dispatch'
         working-directory: packages/cli
@@ -228,8 +252,8 @@ jobs:
       # (index-only), so the shallow checkout is fine.
       - name: Run make check
         env:
-          DB_RATCHET_BASE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' && github.event.before || 'origin/dev' }}
-        run: make check
+          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+        run: DB_RATCHET_BASE="$(bash scripts/ci-ratchet-base.sh)" make check
 
       - name: Verify exact version pins
         run: |
@@ -384,7 +408,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -486,7 +510,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -563,7 +587,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -610,7 +634,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test-daemon-shared-unit, test-daemon-online, test-web]
     if: ${{ !cancelled() && (contains(fromJSON('["success", "failure"]'), needs.test-daemon-shared-unit.result) || contains(fromJSON('["success", "failure"]'), needs.test-daemon-online.result) || contains(fromJSON('["success", "failure"]'), needs.test-web.result)) }}
-    timeout-minutes: 3
+    timeout-minutes: 6
 
     steps:
       - uses: actions/checkout@v6
@@ -618,10 +642,11 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
 
       - name: Download daemon unit junit
         continue-on-error: true
+        timeout-minutes: 1
         uses: actions/download-artifact@v8
         with:
           path: balance/unit
@@ -629,6 +654,7 @@ jobs:
 
       - name: Download daemon online junit
         continue-on-error: true
+        timeout-minutes: 1
         uses: actions/download-artifact@v8
         with:
           path: balance/online
@@ -636,6 +662,7 @@ jobs:
 
       - name: Download web junit
         continue-on-error: true
+        timeout-minutes: 1
         uses: actions/download-artifact@v8
         with:
           path: balance/web
@@ -670,7 +697,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -727,7 +754,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
       - name: Install dependencies
         run: bun install --frozen-lockfile
       - name: Run worker resolution and compiled fixture contracts

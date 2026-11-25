@@ -4,8 +4,11 @@ import { CopilotClient, RuntimeConnection, type SessionEvent } from '@github/cop
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { isAbsolute } from 'node:path';
 import { buildSafeProcessEnv } from '../safe-process-env.ts';
+import { workStartConfiguration } from './start-configuration.ts';
+import { isReplyCommand } from './reply-command-permission.ts';
 import type { WorkDelivery } from './types.ts';
 export class CopilotModelUnavailableError extends Error {}
+export class CopilotEffortUnavailableError extends Error {}
 export const COPILOT_CLI_VERSION = '1.0.105';
 type WorkInputReceipt = NonNullable<WorkDelivery['receipt']>;
 
@@ -13,6 +16,7 @@ type InputState = {
   at?: number;
   text?: string;
   human?: boolean;
+  steering?: true;
   endedAt?: number;
   state: 'pending' | 'observed';
   interactionId?: string;
@@ -32,11 +36,21 @@ export interface CopilotWorkerConfig {
   cwd: string;
   stateDirectory: string;
   model: string;
+  effort?: string;
   env: NodeJS.ProcessEnv;
   timeoutMs?: number;
   resume?: boolean;
   onInput?: (id: string, input: InputState) => void;
 }
+
+const sendsReply = (request: unknown) =>
+  typeof request === 'object' &&
+  request !== null &&
+  'kind' in request &&
+  request.kind === 'shell' &&
+  'fullCommandText' in request &&
+  typeof request.fullCommandText === 'string' &&
+  isReplyCommand(request.fullCommandText);
 
 function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
   const next = structuredClone(state);
@@ -54,6 +68,7 @@ function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
           ...(input ?? { replyReport: '', replyAvailability: 'incomplete' }),
           state: 'observed',
           interactionId,
+          ...(event.data.delivery === 'steering' ? { steering: true } : {}),
           at,
           text: workInput(at, event.data.content)?.text ?? '',
           human: input?.human ?? true,
@@ -74,8 +89,11 @@ function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
       const matches = Object.values(next.inputs).filter(
         (input) => !input.outcome && input.interactionId === data.interactionId
       );
-      if (matches.length === 1 && typeof data.content === 'string')
-        matches[0].replyReport += data.content;
+      if (
+        typeof data.content === 'string' &&
+        matches.filter((input) => !input.steering).length <= 1
+      )
+        for (const input of matches) input.replyReport += data.content;
       break;
     }
     case 'session.idle':
@@ -97,7 +115,7 @@ function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
       }
       break;
     case 'permission.requested':
-      next.status = 'needs_you';
+      if (!sendsReply(event.data.permissionRequest)) next.status = 'needs_you';
       break;
     case 'session.error':
       next.status = 'failed';
@@ -215,14 +233,25 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
       throw new Error('Unsupported Copilot worker runtime version');
     if (!(await bounded(client.getAuthStatus(), timeoutMs)).isAuthenticated)
       throw new Error('Copilot login required: run copilot login in your terminal.');
-    if (!(await bounded(client.listModels(), timeoutMs)).some((model) => model.id === config.model))
-      throw new CopilotModelUnavailableError('Unsupported Copilot model ID.');
+    const model = (await bounded(client.listModels(), timeoutMs)).find(
+      (model) => model.id === config.model
+    );
+    if (!model) throw new CopilotModelUnavailableError('Unsupported Copilot model ID.');
+    const effort = model.capabilities.supports.reasoningEffort
+      ? model.supportedReasoningEfforts?.find((effort) => effort === config.effort)
+      : undefined;
+    if (config.effort !== undefined && effort === undefined)
+      throw new CopilotEffortUnavailableError(
+        `Copilot model ${config.model} does not support reasoning effort ${JSON.stringify(config.effort)}.`
+      );
     const policy = {
       systemMessage: { content: workerWorkLocationsBrief(config.cwd) },
       workingDirectory: config.cwd,
       model: config.model,
-      availableTools: [],
-      onPermissionRequest: () => ({ kind: 'reject' as const }),
+      reasoningEffort: effort,
+      availableTools: ['bash'],
+      onPermissionRequest: (request: unknown) =>
+        sendsReply(request) ? { kind: 'approve-once' as const } : { kind: 'reject' as const },
     };
     session = await bounded(
       config.resume
@@ -230,6 +259,14 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
         : client.createSession({ ...policy, sessionId: config.sessionId }),
       timeoutMs
     );
+    if (effort !== undefined) {
+      const observed = await bounded(session.rpc.model.getCurrent(), timeoutMs);
+      const confirmed = workStartConfiguration.confirm(
+        { model: config.model, effort },
+        { model: observed.modelId, effort: observed.reasoningEffort }
+      );
+      if (!confirmed.ok) throw new Error(`${confirmed.detail} No prompt was sent.`);
+    }
     const receive = (event: SessionEvent) => {
       if (closed || state.status === 'unreachable' || !event.id || seen.has(event.id)) return;
       if (event.type === 'user.message' && !Object.hasOwn(state.inputs, event.data.messageId ?? ''))
@@ -286,7 +323,10 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
   };
   return {
     terminal: terminal.promise,
-    async submit(prompt: string): Promise<WorkInputReceipt> {
+    async submit(
+      prompt: string,
+      mode: 'enqueue' | 'immediate' = 'enqueue'
+    ): Promise<WorkInputReceipt> {
       requireOpen();
       if (state.status === 'needs_you') throw new Error('Copilot worker is awaiting permission');
       if (submitting + Object.values(state.inputs).filter((input) => !input.outcome).length >= 64)
@@ -294,7 +334,7 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
       if (['done', 'failed', 'stopped'].includes(state.status)) state.status = 'queued';
       submitting++;
       try {
-        const inputId = await bounded(session.send({ prompt, mode: 'enqueue' }), timeoutMs);
+        const inputId = await bounded(session.send({ prompt, mode }), timeoutMs);
         requireOpen();
         if (!inputId) throw new Error('Copilot did not return an input id');
         submitted.add(inputId);
@@ -346,6 +386,11 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
     async rename(name: string) {
       requireOpen();
       await bounded(session.rpc.name.set({ name }), timeoutMs);
+    },
+    async compact() {
+      requireOpen();
+      const result = await bounded(session.rpc.history.compact(), Math.max(timeoutMs, 60_000));
+      return result.success === true;
     },
     async withdraw(inputId: string) {
       requireOpen();

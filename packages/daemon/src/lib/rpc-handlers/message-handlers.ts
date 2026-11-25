@@ -86,22 +86,14 @@ export function setupMessageHandlers(
       throw new Error('Session not found');
     }
 
-    let sdkSessionId: string | null = null;
-    const agentSession = sessionManager.getSession(targetSessionId);
-    if (agentSession) {
-      sdkSessionId = agentSession.getSDKSessionId();
-    }
+    const sdkSessionId =
+      sessionManager.getSession(targetSessionId)?.getSDKSessionId() ?? session.sdkSessionId ?? null;
 
     const sdkWorkspacePath = sessionSdkPath(session);
     if (!sdkWorkspacePath) {
       throw new Error('Session has no workspace path for SDK session file update');
     }
-    const success = removeToolResultFromSessionFile(
-      sdkWorkspacePath,
-      sdkSessionId,
-      messageUuid,
-      targetSessionId
-    );
+    const success = removeToolResultFromSessionFile(sdkWorkspacePath, sdkSessionId, messageUuid);
 
     if (!success) {
       throw new Error('Failed to remove output from SDK session file');

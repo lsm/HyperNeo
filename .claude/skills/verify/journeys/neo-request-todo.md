@@ -35,9 +35,11 @@ works no open todo. Observe `neo-request-todo.json` and the mailbox queue:
   queues no mailbox wake;
 - closing a request whose sender session does not exist succeeds; its reply
   job is rejected and wakes Neo with "did not reach session";
-- a question from the worker of an open todo records no request todo.
+- a question from the worker of an open todo records no request todo, and its
+  delivered `<session-message>` carries no `ask` attribute;
+- a new request is delivered with its ask id; neo.todo.add refuses work on
+  that request ask and leaves its reply todo intact.
 
-Pass prints `PASS request_todos=1 wakes_at_30m=<n> wakes_at_1h=<n+1> replies=1
-answers=1 human_answers=0 reply_failed=woke_neo closed_repeat=rejected snapshot_marker=request_only human_queue=no_request`. A remote requester is
+Pass includes `work_on_request_ask=refused`. A remote requester is
 covered by unit tests with a stubbed attached-daemon forwarder. This does not show a model turn
 or the sender session processing the reply.

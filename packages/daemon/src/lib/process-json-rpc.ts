@@ -60,6 +60,12 @@ interface PendingRequest {
   timer: ReturnType<typeof setTimeout>;
 }
 
+export class JsonRpcRequestTimeoutError extends Error {
+  constructor(method: string, timeoutMs: number) {
+    super(`Request timed out after ${timeoutMs}ms: ${method}`);
+  }
+}
+
 export class ProcessJsonRpcTransport {
   private process: ChildProcess | null = null;
   private processTree: ProcessTree | null = null;
@@ -240,7 +246,10 @@ export class ProcessJsonRpcTransport {
   sendRequest(
     method: string,
     params?: unknown,
-    options?: { onSubmitted?: () => void | Promise<void> }
+    options?: {
+      onSubmitted?: () => void | Promise<void>;
+      onResponseFrame?: (response: JsonRpcResponse) => void;
+    }
   ): Promise<JsonRpcResponse> {
     if (this.closed) {
       return Promise.reject(new Error('Transport is closed'));
@@ -262,7 +271,7 @@ export class ProcessJsonRpcTransport {
       const timeoutMs = this.options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
       const timer = setTimeout(() => {
         this.pendingRequests.delete(id);
-        reject(new Error(`Request timed out after ${timeoutMs}ms: ${method}`));
+        reject(new JsonRpcRequestTimeoutError(method, timeoutMs));
       }, timeoutMs);
 
       let submitted: Promise<Error | undefined> = Promise.resolve(undefined);
@@ -272,6 +281,14 @@ export class ProcessJsonRpcTransport {
           reject(new Error(`Submission check timed out after ${timeoutMs}ms: ${method}`));
         }, timeoutMs);
         this.pendingRequests.set(id, { resolve: () => {}, reject, timer: hold });
+        try {
+          options?.onResponseFrame?.(response);
+        } catch (error) {
+          clearTimeout(hold);
+          this.pendingRequests.delete(id);
+          reject(error);
+          return;
+        }
         void submitted.then((failure) => {
           clearTimeout(hold);
           if (this.pendingRequests.get(id)?.timer === hold) this.pendingRequests.delete(id);

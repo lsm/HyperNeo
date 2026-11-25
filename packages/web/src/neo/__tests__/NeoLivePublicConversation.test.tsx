@@ -228,6 +228,29 @@ const askArticle = (id: string) =>
     item.getAttribute('data-public-entry')?.includes(`"ask","${id}"`)
   )! as HTMLElement;
 describe('NeoLive durable conversation activation', () => {
+  it('starts Claude login from the held Neo shell', async () => {
+    source.value = {
+      ...source.value,
+      working: [
+        {
+          sessionId: root,
+          projectId: null,
+          title: 'Neo',
+          status: 'rate_limit_cooldown',
+          role: 'neo',
+          modelHold: { provider: 'anthropic', reason: 'login', since: 1 },
+        },
+      ],
+    };
+    const previousUrl = window.location.href;
+    render(<NeoLive />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }));
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith('auth.login', { providerId: 'anthropic' })
+    );
+    expect(window.location.href).toBe(previousUrl);
+  });
+
   it('opens legacy settings from the Neo connection error', () => {
     error.value = 'Synthetic connection failure';
     render(<NeoLive />);
@@ -478,7 +501,10 @@ describe('NeoLive durable conversation activation', () => {
     store.loadErrorKind.value = 'not-found';
     render(<NeoLive />);
     expect(await within(publicView()).findByText('a-reply', { selector: 'strong' })).toBeTruthy();
-    expect(screen.getByText('Native session controls could not be loaded.')).toBeTruthy();
+    const failure = screen.getByText('Native session controls could not be loaded.');
+    expect(
+      publicView().compareDocumentPosition(failure) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
     expect(screen.queryByText('Opening your conversation…')).toBeNull();
     expect(screen.getByLabelText('Draft')).toBeTruthy();
     await act(async () => {
@@ -486,6 +512,18 @@ describe('NeoLive durable conversation activation', () => {
     });
     expect(screen.queryByLabelText('Public conversation')).toBeNull();
     expect(screen.queryByLabelText('Draft')).toBeNull();
+  });
+
+  it('shows a failed Neo action after the conversation with its recovery controls', async () => {
+    error.value = 'Could not send the message.';
+    render(<NeoLive />);
+    const failure = await screen.findByText('Could not send the message.');
+    expect(
+      publicView().compareDocumentPosition(failure) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    const row = within(failure.closest('[role="alert"]')!);
+    expect(row.getByRole('button', { name: 'Reconnect' })).toBeTruthy();
+    expect(row.getByRole('link', { name: /settings/i })).toBeTruthy();
   });
 
   it('shows the composer and sends when the raw transcript never loads', async () => {

@@ -487,26 +487,49 @@ describe('SDKUserMessage', () => {
       expect(container.textContent).toContain('not delivered');
     });
 
-    it('should show "queued" badge when deliveryStatus is queued', () => {
-      const message = {
-        ...createTextMessage('Hello world'),
-        deliveryStatus: 'queued' as const,
-      };
+    it.each(['queued', 'processing'] as const)(
+      'shows a spinner instead of the copy and info buttons while %s',
+      (deliveryStatus) => {
+        const message = { ...createTextMessage('Hello world'), deliveryStatus };
+        const sessionInfo = { type: 'system', subtype: 'init', model: 'm' } as never;
 
-      const { container } = render(<SDKUserMessage message={message} />);
+        const { container } = render(
+          <SDKUserMessage message={message} sessionInfo={sessionInfo} />
+        );
 
-      expect(container.textContent).toContain('queued');
+        expect(container.querySelector('[data-testid="user-delivery-spinner"]')).toBeTruthy();
+        expect(container.querySelector('button[title="Copy message"]')).toBeNull();
+        expect(container.querySelector('button[title="Session info"]')).toBeNull();
+        expect(container.querySelector('[data-testid="user-delivery-state"]')).toBeNull();
+      }
+    );
+
+    it('swaps the spinner for the copy and info buttons once delivered', () => {
+      const sessionInfo = { type: 'system', subtype: 'init', model: 'm' } as never;
+      const pending = { ...createTextMessage('Hello world'), deliveryStatus: 'queued' as const };
+      const { container, rerender } = render(
+        <SDKUserMessage message={pending} sessionInfo={sessionInfo} />
+      );
+      expect(container.querySelector('[data-testid="user-delivery-spinner"]')).toBeTruthy();
+
+      rerender(
+        <SDKUserMessage
+          message={{ ...pending, deliveryStatus: 'delivered' as const }}
+          sessionInfo={sessionInfo}
+        />
+      );
+
+      expect(container.querySelector('[data-testid="user-delivery-spinner"]')).toBeNull();
+      expect(container.querySelector('button[title="Copy message"]')).toBeTruthy();
+      expect(container.querySelector('button[title="Session info"]')).toBeTruthy();
     });
 
-    it('should show "sending" badge when deliveryStatus is processing', () => {
-      const message = {
-        ...createTextMessage('Hello world'),
-        deliveryStatus: 'processing' as const,
-      };
+    it('hides the copy button while a message is retrying', () => {
+      const message = { ...createTextMessage('Hello world'), deliveryStatus: 'retrying' as const };
 
       const { container } = render(<SDKUserMessage message={message} />);
 
-      expect(container.textContent).toContain('sending');
+      expect(container.querySelector('button[title="Copy message"]')).toBeNull();
     });
 
     it('should show "retrying" badge with stalled-delivery copy when deliveryStatus is retrying', async () => {
@@ -565,6 +588,20 @@ describe('SDKUserMessage', () => {
       await waitFor(() => {
         expect(retryMessageDelivery).toHaveBeenCalledWith('sess-1', 'db-1');
       });
+    });
+
+    it('hides message retry while the download requires attention', () => {
+      const message = {
+        ...createTextMessage('Hello world'),
+        id: 'db-1',
+        deliveryStatus: 'failed' as const,
+      };
+      const { container, rerender } = render(
+        <SDKUserMessage message={message} sessionId="sess-1" disableDeliveryRetry />
+      );
+      expect(container.querySelector('[data-testid="user-delivery-retry-button"]')).toBeNull();
+      rerender(<SDKUserMessage message={message} sessionId="sess-1" />);
+      expect(container.querySelector('[data-testid="user-delivery-retry-button"]')).toBeTruthy();
     });
 
     it('shows a retry countdown + retry N/Max for a retrying message', () => {

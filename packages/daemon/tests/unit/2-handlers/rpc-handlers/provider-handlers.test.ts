@@ -345,6 +345,45 @@ describe('Provider RPC handlers', () => {
     });
   });
 
+  describe('voice credential namespace', () => {
+    it('rejects creating a provider with a voice host credential id', async () => {
+      await expect(
+        setup().get('providers.create')!(
+          {
+            params: {
+              providerId: 'voice-transcription:api.example.com',
+              displayName: 'Voice',
+              kind: 'built_in',
+              authType: 'api_key',
+            },
+            credentials: { apiKey: 'other-key' },
+          },
+          {}
+        )
+      ).rejects.toThrow("providerId 'voice-transcription:api.example.com' is reserved");
+    });
+
+    it('allows updates and deletion of existing voice host credential ids', async () => {
+      const record = repo.createProvider({
+        providerId: 'voice-transcription:api.example.com',
+        displayName: 'Voice',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      const handlers = setup();
+      const updated = (await handlers.get('providers.update')!(
+        { id: record.id, params: { displayName: 'Updated' }, credentials: { apiKey: 'other-key' } },
+        {}
+      )) as { success: boolean; provider: ProviderRecord };
+      expect(updated.success).toBe(true);
+      expect(updated.provider.displayName).toBe('Updated');
+      const deleted = (await handlers.get('providers.delete')!({ id: record.id }, {})) as {
+        success: boolean;
+      };
+      expect(deleted.success).toBe(true);
+    });
+  });
+
   describe('providers.create', () => {
     it('creates a provider and stores credentials', async () => {
       const handlers = setup();

@@ -22,7 +22,6 @@ import type {
   NeoCardReplyContext,
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { requireLocalUser } from '../operations/caller.ts';
-import { fromDoor } from '../pairing/pairing-operations.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { isVisibleHomeProposal, requireHomePath } from './home/save.ts';
 import { TodoCheck, requireNeoOpenAsk } from './todo-operations.ts';
@@ -35,6 +34,7 @@ import type { LanguageSetting } from '@hyperneo/shared/types/settings';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import type { StagedWorkerQuestion } from '../work-queue/follow-through.ts';
 import { planNeoRemovedPrerequisiteAnswer } from './todo-removal.ts';
+import { isHumanWorkDecision } from './proposal.ts';
 
 const ReportLine = z
   .string()
@@ -128,7 +128,8 @@ export function createNeoWorkerQuestionWriter(
   sessions: NeoTodoSessionRepository,
   language: () => LanguageSetting | undefined,
   readSource: (ref: WorkRef) => Promise<NeoQuestionSource | null>,
-  stored: (question: NeoQuestion) => void = () => {}
+  stored: (question: NeoQuestion) => void = () => {},
+  cause?: string
 ) {
   const write = (superpipe({})('neo.question.storeWorkerReport') as PipelineAPI)
     .input(['ref', 'raw'])
@@ -226,6 +227,7 @@ export function createNeoWorkerQuestionWriter(
                 todoId: todo.id,
                 sourceSession: source,
                 document: input.report,
+                cause,
               },
               Date.now()
             );
@@ -295,7 +297,7 @@ const Asked = {
   document: Text.optional().describe('Full detail shown apart from the short card text.'),
   todoId: Text.optional().describe('The todo this card belongs to.'),
   askId: Text.optional().describe(
-    'For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask.'
+    'For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask. For a request from another session, pass the ask on its `<session-message>` tag.'
   ),
   input: Text.optional().describe(
     'The id on the `<human-message>` tag of the human message this question serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else its recorded follow-up binding, else a new one.'
@@ -311,16 +313,13 @@ const AskKinds = z.discriminatedUnion('kind', [
     ...Asked,
     kind: z.literal('choice'),
     options: z.array(Text).min(1).max(6),
-    labels: z
-      .array(z.string().regex(/^[A-F]$/))
-      .max(6)
-      .refine((labels) => new Set(labels).size === labels.length, {
-        message: 'labels must be distinct uppercase letters A–F.',
-      })
+    details: z
+      .record(Text, Text)
       .optional()
-      .describe(
-        'One distinct uppercase letter A–F per option, when the text names approaches by letter. Defaults to A, B, C… in order.'
-      ),
+      .describe("One short line shown under an option, keyed by that option's exact text."),
+    recommended: Text.optional().describe(
+      'The exact text of the option you recommend; the card tags it without selecting it.'
+    ),
     multiple: z.boolean().default(false),
   }),
   z.object({ ...Asked, kind: z.literal('reply') }),
@@ -352,17 +351,7 @@ type Relay = { todoId?: string; session?: string; title: string; options: string
 const Answer = z.object({
   questionId: Text,
   answer: z.union([z.string(), z.array(z.string())]),
-  where: z.string().optional().describe('Session door only: where the human said the answer.'),
-  when: z.string().optional().describe('Session door only: when the human said the answer.'),
 });
-
-export type NeoRelayedAnswer = {
-  questionId: string;
-  sender: string;
-  where: string;
-  when: string;
-  words: string;
-};
 
 const Get = z.object({
   questionId: z
@@ -402,7 +391,8 @@ export const NeoQuestionSchema = z.object({
   text: z.string(),
   kind: z.enum(['yesno', 'choice', 'reply']),
   options: z.array(z.string()).nullable(),
-  labels: z.array(z.string()).nullable().optional(),
+  optionDetails: z.record(z.string(), z.string()).optional(),
+  recommended: z.string().optional(),
   multiple: z.boolean(),
   noLabel: z.string().nullable(),
   yesLabel: z.string().nullable(),
@@ -566,8 +556,15 @@ export function planNeoQuestion(
     if (!isVisibleHomeProposal(input.text, confirm))
       return fail('confirmation_body: show the exact home path and SHA-256 in the question text.');
   }
-  if (input.kind === 'choice' && input.labels && input.labels.length !== input.options.length)
-    return fail('labels_count: supply exactly one label per option.');
+  if (input.kind === 'choice') {
+    const unknown = [...Object.keys(input.details ?? {}), input.recommended ?? []]
+      .flat()
+      .filter((option) => !input.options.includes(option));
+    if (unknown.length)
+      return fail(
+        `option_unknown: details and recommended must name an option exactly; not options: ${unknown.join(', ')}.`
+      );
+  }
   const draft: NeoQuestionDraft = {
     ...(input.retireWhen ? { retireWhen: input.retireWhen } : {}),
     text: input.text,
@@ -578,7 +575,10 @@ export function planNeoQuestion(
     ...(input.replyTo ? { replyTo: input.replyTo } : {}),
     kind: input.kind,
     options: input.kind === 'choice' ? input.options : null,
-    labels: input.kind === 'choice' ? (input.labels ?? null) : null,
+    ...(input.kind === 'choice' && input.details && Object.keys(input.details).length
+      ? { optionDetails: input.details }
+      : {}),
+    ...(input.kind === 'choice' && input.recommended ? { recommended: input.recommended } : {}),
     multiple: input.kind === 'choice' && input.multiple,
     noLabel: null,
     yesLabel: null,
@@ -596,6 +596,8 @@ export function requireNeoQuestionReplaceable(
   if (!replaced) return fail(`not_found: no question ${replaces}.`);
   if (replaced.askId !== ask.id)
     return fail(`other_ask: question ${replaces} belongs to another ask; replace only this ask's.`);
+  if (replaced.state === 'open' && isHumanWorkDecision(replaced))
+    return fail('human_decision_required: the human must answer this work decision.');
   return { value: replaced.state === 'open' ? replaced : null };
 }
 
@@ -635,10 +637,13 @@ export function requireNeoQuestionAnswered(written: {
 
 export function neoQuestionAnsweredNote(question: NeoQuestion): string {
   const answer = question.answer ?? '';
+  const label = answer === 'yes' ? question.yesLabel : question.noLabel;
   const said =
     question.kind === 'yesno'
-      ? `${answer} (${answer === 'yes' ? question.yesLabel : question.noLabel})`
-      : neoLabelledOptions(question.options ?? [], [answer].flat(), question.labels) || 'none';
+      ? label
+        ? `${answer} (${label})`
+        : `${answer}`
+      : neoLabelledOptions(question.options ?? [], [answer].flat()) || 'none';
   return isAgentResolvedQuestion(question)
     ? `Neo resolved "${question.text}": ${said}. ${question.retiredReason}`
     : `The human answered "${question.text}": ${said}.`;
@@ -663,33 +668,28 @@ export function createNeoQuestionOperations(
     ok: false,
     reason: 'no_worker_question: this todo has no worker question to relay.',
   }),
-  language: () => LanguageSetting | undefined = () => undefined,
-  relayAnswer: (
-    input: NeoRelayedAnswer
-  ) => Promise<{ value: string } | { reason: Rejection }> = async () => ({
-    reason: { ok: false, reason: 'relay_unavailable: this daemon does not take relayed answers.' },
-  })
+  language: () => LanguageSetting | undefined = () => undefined
 ) {
-  const relayed = async (
-    input: z.infer<typeof Answer>,
-    sender: string
-  ): Promise<QuestionReceipt | Rejection> => {
-    const written = await relayAnswer({
-      questionId: input.questionId,
-      sender,
-      where: input.where ?? '',
-      when: input.when ?? '',
-      words: [input.answer].flat().join(' '),
-    });
-    if ('reason' in written) return written.reason;
-    await deliverAnswers(written.value);
-    const question = store.getQuestion(written.value);
-    return question
-      ? { ok: true, question }
-      : { ok: false, reason: 'not_found: no such question.' };
-  };
-  const ask = (superpipe({})('neo.question.ask') as PipelineAPI)
+  type AskInput = z.infer<typeof Ask> | z.infer<typeof RelayAsk>;
+  const isRelay = (input: AskInput): input is z.infer<typeof RelayAsk> => input.kind === 'relay';
+  const ask = (superpipe({ isRelay })('neo.question.ask') as PipelineAPI)
     .input(['input', 'caller'])
+    .pipe(
+      (input: AskInput, caller: OperationCaller) =>
+        isRelay(input)
+          ? relay(
+              {
+                ...(input.todoId ? { todoId: input.todoId } : { session: input.session }),
+                title: input.text,
+                options: input.options,
+              },
+              caller
+            )
+          : null,
+      ['input', 'caller'],
+      'outcome'
+    )
+    .pipe('!isRelay', 'input')
     .pipe(
       (input: z.infer<typeof Ask>, caller: OperationCaller) =>
         resolveNeoInputAsk(store, inputs, caller, input, input.text),
@@ -848,7 +848,7 @@ export function createNeoQuestionOperations(
       'outcome'
     )
     .endAsync('outcome') as (
-    input: z.infer<typeof Ask>,
+    input: AskInput,
     caller: OperationCaller
   ) => Promise<QuestionReceipt | Rejection>;
 
@@ -866,6 +866,8 @@ export function createNeoQuestionOperations(
     .pipe(
       (question: NeoQuestion): Gate<NeoQuestion> | { reason: QuestionReceipt } => {
         if (question.state !== 'open') return { reason: { ok: true, question } };
+        if (isHumanWorkDecision(question))
+          return fail('human_decision_required: the human must answer this work decision.');
         if (question.heldAt) return fail(QUESTION_HELD);
         const open = requireNeoOpenAsk(store.getAsk(question.askId));
         return 'reason' in open ? open : { value: question };
@@ -876,7 +878,12 @@ export function createNeoQuestionOperations(
     .pipe(
       (question: NeoQuestion): Gate<NeoQuestion> => {
         const todo = question.todoId ? store.getTodo(question.todoId) : null;
-        return todo?.state === 'blocked' && todo.blockedBy === 'needs-human'
+        const onlyThisCard =
+          !!todo &&
+          ['todo', 'doing', 'blocked'].includes(todo.state) &&
+          !todo.instruction?.trim() &&
+          !todo.check;
+        return (todo?.state === 'blocked' && todo.blockedBy === 'needs-human') || onlyThisCard
           ? fail(
               'todo_waiting: this card is what its todo waits on. Settle the todo first: neo.todo.remove when it is no longer needed, neo.todo.continue to send its worker on, or neo.question.ask with replaces to ask differently. Finished work needs nothing: its passing check closes both.'
             )
@@ -902,17 +909,11 @@ export function createNeoQuestionOperations(
 
   const answer = (superpipe({})('neo.question.answer') as PipelineAPI)
     .input(['input', 'caller'])
+    .pipe((caller: OperationCaller) => requireLocalUser(caller), 'caller', 'result:outcome')
     .pipe(
-      async (input: z.infer<typeof Answer>, caller: OperationCaller) =>
-        fromDoor(caller) && caller.sessionId
-          ? { reason: await relayed(input, caller.sessionId) }
-          : requireLocalUser(caller),
-      ['input', 'caller'],
-      'result:outcome'
-    )
-    .pipe(
-      (input: z.infer<typeof Answer>) =>
-        planNeoQuestionAnswer(store.getQuestion(input.questionId), input.answer),
+      (input: z.infer<typeof Answer>) => {
+        return planNeoQuestionAnswer(store.getQuestion(input.questionId), input.answer);
+      },
       'input',
       'result:outcome'
     )
@@ -967,6 +968,23 @@ export function createNeoQuestionOperations(
     caller: OperationCaller
   ) => Promise<QuestionReceipt | Rejection>;
 
+  const readSnapshot = (input: z.infer<typeof Get>) =>
+    store.questionAnswers.snapshot(input.questionId, () => store.getQuestion(input.questionId));
+  const get = (superpipe({})('neo.question.get') as PipelineAPI)
+    .input('input')
+    .pipe(readSnapshot, 'input', 'snapshot')
+    .pipe(
+      ({ question, answerDelivery }: ReturnType<typeof readSnapshot>) => ({
+        ...readNeoQuestion(question),
+        ...(question ? { answerDelivery } : {}),
+      }),
+      'snapshot',
+      'result'
+    )
+    .endAsync('result') as (
+    input: z.infer<typeof Get>
+  ) => Promise<z.infer<typeof QuestionReadResult>>;
+
   const hold = (superpipe({})('neo.question.hold') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(requireLocalUser, 'caller', 'result:outcome')
@@ -998,17 +1016,7 @@ export function createNeoQuestionOperations(
       inputSchema: z.union([RelayAsk, Ask]),
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) =>
-        input.kind === 'relay'
-          ? ((await relay(
-              {
-                ...(input.todoId ? { todoId: input.todoId } : { session: input.session }),
-                title: input.text,
-                options: input.options,
-              },
-              caller
-            )) as QuestionReceipt | Rejection)
-          : ask(input, caller),
+      execute: (input, caller) => ask(input, caller),
     }),
     defineOperation({
       name: 'neo.question.retire',
@@ -1024,12 +1032,7 @@ export function createNeoQuestionOperations(
       inputSchema: Get,
       resultSchema: QuestionReadResult,
       policy: { safetyClass: 'read' },
-      execute: async (input) => {
-        const { question, answerDelivery } = store.questionAnswers.snapshot(input.questionId, () =>
-          store.getQuestion(input.questionId)
-        );
-        return { ...readNeoQuestion(question), ...(question ? { answerDelivery } : {}) };
-      },
+      execute: get,
     }),
     defineOperation({
       name: 'neo.question.answer',

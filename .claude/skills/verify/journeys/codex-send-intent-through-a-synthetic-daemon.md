@@ -44,6 +44,8 @@ not start another writer or prove OS containment; use the worker-sandbox journey
 for that separate boundary.
 The queue fixture then explicitly rejects an input with the typed active-writer
 precondition response. work.send must return notSent true so callers can retry.
+The refusal must say that Codex may have reverted after an update and suggest
+quitting and reopening it or rerunning `hyperneo codex-setup`.
 A later queue request loses its acknowledgment after dispatch: that response
 must remain uncertain, without notSent or a second queue submission. Explicit
 steering retains the same distinction between pre-send failure and a lost reply.
@@ -73,6 +75,21 @@ the failed step, return typed `not_delivered` with `notSent: true`, and never en
 Retain observed.json, proof.log and
 run-status.json for red and green runs. The wrapper removes disposable daemon
 data after saving evidence.
+
+Last, the helper leaves the IPC socket file in place but stops its listener,
+which is what a running ChatGPT-hosted Codex looks like: it shares the managed
+app-server and has no Desktop IPC router. With the Desktop probe still reporting
+running, an automatic send must queue once on the app-server, make no Desktop
+call, and log route reason `desktop_ipc_absent`. Before that fix the same step
+returned `not_delivered` with `connect ECONNREFUSED ... No background writer
+was started`. New-thread creation falls back to the same shared app-server for
+its opening turn (`thread/resume`, then `turn/start`) when the IPC socket is
+missing or refuses. Unit tests cover that; this journey does not start threads.
+
+A bound todo then sends two identical continuations through the real todo runner
+and public work.send. The app-server queue must receive the exact instruction
+after one delivery ID, with distinct IDs on the two requests. The failing
+reproduction observed the full startup brief on each request.
 
 This proves daemon routing and transcript reporting with a synthetic receiver.
 It does not prove native Desktop queue consumption or rendering. After merge,

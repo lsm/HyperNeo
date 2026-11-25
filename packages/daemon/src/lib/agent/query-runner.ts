@@ -1,3 +1,4 @@
+import { PackageDownloadError } from './npm-package-download.ts';
 import { type ChildProcess, spawn as nodeSpawn } from 'node:child_process';
 import { hasExplicitAutoCompactChoice } from '../session/create-session-config.ts';
 import type {
@@ -25,6 +26,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../storage/database.ts';
 import { PROVIDER_KEY_ENV_VARS } from '../credential-discovery.ts';
+import { DesktopTurn } from '../desktop/host-dispatch.ts';
 import { ErrorCategory, type ErrorManager } from '../error-manager.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -46,8 +48,10 @@ import type { ProcessingStateManager } from './processing-state-manager.ts';
 import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-token.ts';
 import { ObservedToolInventory } from './observed-tool-inventory.ts';
 import type { QueryLike } from './query-like.ts';
-import { createOapQuery, type OapQueryHub } from '../oap/oap-query.ts';
-import { codexSessionRefusal, selectSessionEngine } from './session-engine.ts';
+import { createOxapQuery, type OxapQueryHub } from '../oxap/oxap-query.ts';
+import { OxapReopenDeliveryError, oxapReopenDeliveryFailure } from '../oxap/oxap-reopen.ts';
+import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
+import { codexSessionRefusal, selectSessionEngine, type SessionEngine } from './session-engine.ts';
 import type { QueryOptionsBuilder } from './query-options-builder.ts';
 import {
   decideQueryRetry,
@@ -358,9 +362,9 @@ interface RetryTeardownOptions {
   snapshotRequeueLabel?: string;
 }
 
-export interface OapQueryRuntime {
+export interface OxapQueryRuntime {
   openDirectorySupported: boolean;
-  hub: OapQueryHub | Promise<OapQueryHub>;
+  hub: OxapQueryHub | Promise<OxapQueryHub>;
   clear?(): Promise<void>;
 }
 
@@ -377,7 +381,7 @@ export interface QueryRunnerContext {
   readonly askUserQuestionHandler: AskUserQuestionHandler;
   readonly messageHandler: SDKMessageHandler;
   readonly toolGuards?: DeclarativeToolGuard[];
-  readonly oap?: OapQueryRuntime;
+  readonly oxap?: OxapQueryRuntime;
 
   queryObject: QueryLike | null;
   queryPromise: Promise<void> | null;
@@ -806,8 +810,8 @@ export class QueryRunner {
     let deadReason: 'process_exit' | 'stream_closed' | 'backstop' | null = null;
     let removeFlagSettingsFile: (() => void) | undefined;
     let episodeId: string | undefined;
-    let engine: 'sdk' | 'codex' = 'sdk';
-    let oapQuery: ReturnType<typeof createOapQuery> | undefined;
+    let engine: SessionEngine = 'sdk';
+    let oxapQuery: ReturnType<typeof createOxapQuery> | undefined;
     const interruptEpoch = messageQueue.getUserInterruptEpoch?.();
     const owns = () =>
       this.ctx.getQueryGeneration() === queryGeneration && !this.ctx.isCleaningUp();
@@ -816,12 +820,18 @@ export class QueryRunner {
 
     try {
       engine = selectSessionEngine(session.config.harness);
-      if (engine === 'codex') {
-        if (!this.ctx.oap?.openDirectorySupported) {
+      if (isOxapHarness(engine)) {
+        if (!this.ctx.oxap?.openDirectorySupported) {
           throw new Error('Codex is unavailable: OAP open-directory support is not available.');
         }
         const refusal = codexSessionRefusal(
-          session.config,
+          {
+            systemPrompt: session.config.systemPrompt,
+            agent: session.config.agent,
+            agents: session.config.agents,
+            toolGuards: session.config.toolGuards,
+            workerOperations: session.config.workerOperations,
+          },
           !!session.context?.spaceId,
           !!neoCoordinatorBinding(this.ctx.db, session.id),
           !!this.ctx.toolGuards?.length
@@ -829,7 +839,7 @@ export class QueryRunner {
         if (refusal) throw new Error(refusal);
         runAbortController = new AbortController();
         this.ctx.queryAbortController = runAbortController;
-        const oapHub = await this.ctx.oap.hub;
+        const oxapHub = await this.ctx.oxap.hub;
         if (!live()) return;
         const prompt = this.createMessageGeneratorWrapper(
           queryGeneration,
@@ -839,10 +849,10 @@ export class QueryRunner {
           humanInputs,
           false
         );
-        oapQuery = createOapQuery({
+        oxapQuery = createOxapQuery({
           sessionId: session.id,
           prompt,
-          hub: oapHub,
+          hub: oxapHub,
           isLive: live,
           maySettleInterrupted,
           onSubmitted: async (message) => {
@@ -870,6 +880,7 @@ export class QueryRunner {
             if (!message.uuid || !live()) return;
             await messageQueue.onMessageYielded?.(message.uuid, Date.now());
             if (live()) messageQueue.acknowledgeYielded(message.uuid, queryGeneration);
+            if (live() && session.metadata.queryFailureEpisode?.failed) await this.failures.reset();
           },
           onRefused: async (message) => {
             if (!message.uuid || !live()) return;
@@ -887,9 +898,9 @@ export class QueryRunner {
             }
           },
         });
-        this.ctx.queryObject = oapQuery;
+        this.ctx.queryObject = oxapQuery;
         for await (const message of this.createAbortableQuery(
-          oapQuery,
+          oxapQuery,
           runAbortController.signal
         )) {
           const sdkMessage = message as SDKMessage;
@@ -909,7 +920,7 @@ export class QueryRunner {
             !live() &&
             !(
               (sdkMessage.type === 'assistant' || sdkMessage.type === 'result' || toolResult) &&
-              oapQuery.wasInterrupted() &&
+              oxapQuery.wasInterrupted() &&
               maySettleInterrupted()
             )
           )
@@ -925,7 +936,7 @@ export class QueryRunner {
             !live() &&
             !(
               (sdkMessage.type === 'assistant' || toolResult) &&
-              oapQuery.wasInterrupted() &&
+              oxapQuery.wasInterrupted() &&
               maySettleInterrupted()
             )
           )
@@ -1054,12 +1065,14 @@ export class QueryRunner {
         provider = providerRegistry.get(resolvedProviderId) ?? provider;
       }
 
+      let desktopTurn = new DesktopTurn();
       const deadline = Date.now() + Math.min(inactivityBackstopMs, 60_000);
       const pendingOptions = runLagPhase('sdk:options_build', () =>
         optionsBuilder.build({
           askUserQuestionHook: attemptHook,
           canUseTool: this.createAttemptBoundCanUseTool(attemptToken, questionOrigin),
           operationInputOrigin: () => humanInputs.origin(),
+          desktopTurn: () => (live() ? desktopTurn : null),
           session: providerSession,
         })
       );
@@ -1610,6 +1623,7 @@ export class QueryRunner {
             if (message.type === 'result') {
               questionInputs.endTurn();
               humanInputs.endTurn();
+              desktopTurn = new DesktopTurn();
             }
             await this.handleSDKMessage(message, queryGeneration);
           } catch (error) {
@@ -1650,24 +1664,47 @@ export class QueryRunner {
       const errorMessage = String(error);
       isAbortError = error instanceof Error && error.name === 'AbortError';
       const cancelled = isAbortError || stateManager.getState().status === 'interrupted';
-      if (engine === 'codex') {
+      if (isOxapHarness(engine)) {
         if (!live()) return;
-        const failure = error instanceof Error ? error : new Error(errorMessage);
+        const failure = oxapReopenDeliveryFailure(
+          error instanceof Error ? error : new Error(errorMessage)
+        );
         messageQueue.clear(cancelled ? undefined : failure);
         if (!cancelled && live()) {
+          if (failure instanceof OxapReopenDeliveryError) {
+            await this.failures.terminal(failure.message);
+            if (!live()) return;
+            await this.displayErrorAsAssistantMessage(failure.message, { markAsError: true });
+          }
           await errorManager.handleError(
             session.id,
             failure,
             ErrorCategory.SESSION,
             failure.message,
             stateManager.getState(),
-            { harness: 'codex' },
+            { harness: engine },
             live
           );
         }
         return;
       }
       this.ctx.attemptTokens.invalidate(attemptToken);
+      if (error instanceof PackageDownloadError && !cancelled && owns()) {
+        messageQueue.clear(error);
+        const owner = stateManager.idleOwnerForQuery(queryGeneration);
+        stateManager.beginTerminalIdle(owner);
+        await errorManager.handleError(
+          session.id,
+          error,
+          ErrorCategory.SESSION,
+          error.message,
+          stateManager.getState(),
+          { kind: 'package_download_failure' },
+          owns
+        );
+        await stateManager.setIdle({ owner });
+        return;
+      }
       const isQueryInterrupted =
         cancelled || this.ctx.queryAbortController?.signal.aborted === true;
       const isStartupTimeout = errorMessage.includes('SDK startup timeout');
@@ -2126,13 +2163,13 @@ export class QueryRunner {
       releaseStartupPermit('attempt_finished');
 
       const generationChanged = this.ctx.getQueryGeneration() !== queryGeneration;
-      const isStaleQuery = generationChanged || (engine === 'codex' && !attemptOwned);
+      const isStaleQuery = generationChanged || (isOxapHarness(engine) && !attemptOwned);
 
       if (generationChanged) {
         stateManager.cancelTerminalIdleArm(stateManager.idleOwnerForQuery(queryGeneration));
       }
 
-      if (isStaleQuery && engine === 'codex') oapQuery?.close();
+      if (isStaleQuery && isOxapHarness(engine)) oxapQuery?.close();
 
       if (!isStaleQuery) {
         const timer = this.ctx.startupTimeoutTimer;
@@ -2516,6 +2553,11 @@ export class QueryRunner {
       const live = () => !this.ctx.isCleaningUp() && (liveAttempt?.() ?? true);
       await this.failures.admit(live);
       const coordinator = !!neoCoordinatorBinding(this.ctx.db, session.id);
+      const prompt =
+        coordinator && message.uuid
+          ? this.ctx.db.getSDKMessageRepo?.().getDeliveryContent(session.id, message.uuid)
+          : null;
+      const ridesAlong = notifyOnYield && prompt?.shouldQuery === false;
       if (notifyOnYield && !coordinator)
         await messageQueue.onMessageYielded?.(message.uuid ?? '', Date.now());
       const queuedMessage = message as typeof message & { internal?: boolean };
@@ -2555,11 +2597,12 @@ export class QueryRunner {
         if (this._turnConsumedUserMessages.length > 32) {
           this._turnConsumedUserMessages.shift();
         }
-        await stateManager.setProcessing(
-          message.uuid ?? 'unknown',
-          'initializing',
-          this._turnConsumedUserMessages.map((entry) => entry.uuid)
-        );
+        if (!ridesAlong)
+          await stateManager.setProcessing(
+            message.uuid ?? 'unknown',
+            'initializing',
+            this._turnConsumedUserMessages.map((entry) => entry.uuid)
+          );
         if (!this.ctx.firstMessageReceived) {
           const generationMessages = this._consumedUserMessages.get(queryGeneration) ?? [];
           generationMessages.push({
@@ -2579,11 +2622,8 @@ export class QueryRunner {
       );
 
       startGuard?.();
-      questionInputs?.recordInput(queuedMessage);
-      if (humanInputs && message.uuid && neoCoordinatorBinding(this.ctx.db, session.id)) {
-        const prompt = this.ctx.db.getSDKMessageRepo().getDeliveryContent(session.id, message.uuid);
-        if (prompt?.inputKind === 'human') humanInputs.recordInput(queuedMessage);
-      }
+      if (!ridesAlong) questionInputs?.recordInput(queuedMessage);
+      if (humanInputs && prompt?.inputKind === 'human') humanInputs.recordInput(queuedMessage);
       if (this.turnEndedGeneration === queryGeneration)
         this.fedAfterTurnEnd.push({
           uuid: message.uuid ?? '',
@@ -2591,8 +2631,8 @@ export class QueryRunner {
           internal: isInternal,
         });
       yield this.retryPromptIdentity.outgoing(
-        message,
-        !!neoCoordinatorBinding(this.ctx.db, session.id)
+        ridesAlong ? { ...message, shouldQuery: false } : message,
+        coordinator
       );
       this.streamSilence = noteStreamFed(this.streamSilence, Date.now());
       onSent();

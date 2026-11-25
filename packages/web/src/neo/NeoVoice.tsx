@@ -31,7 +31,7 @@ import { Button } from '../components/ui/Button.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 import { useNeoVoiceSettings } from './useNeoVoiceSettings.ts';
 
-export type VoicePhase = 'idle' | 'recording' | 'working' | 'sending' | 'drafting';
+export type VoicePhase = 'idle' | 'starting' | 'recording' | 'working' | 'sending' | 'drafting';
 type VoiceSendSnapshot = Pick<VoiceRecordEntry, 'sendDraft' | 'sendContext' | 'previewContext'>;
 
 export function NeoVoice({
@@ -105,15 +105,17 @@ export function NeoVoice({
   }
   const active =
     recorder.isRecording || recorder.isStarting || recorder.durationLimitHit || !!transcribing;
-  const phase: VoicePhase = recorder.isRecording
-    ? 'recording'
-    : transcribing
-      ? transcribeIntent === 'send'
-        ? 'sending'
-        : 'drafting'
-      : active
-        ? 'working'
-        : 'idle';
+  const phase: VoicePhase = recorder.isStarting
+    ? 'starting'
+    : recorder.isRecording
+      ? 'recording'
+      : transcribing
+        ? transcribeIntent === 'send'
+          ? 'sending'
+          : 'drafting'
+        : active
+          ? 'working'
+          : 'idle';
   const records = pendingVoiceAudioRecords.value.filter((entry) => entry.sessionId === sessionId);
   const finishFromComposer = useRef<(intent: 'draft' | 'send') => void>(() => {});
   useEffect(() => {
@@ -367,7 +369,7 @@ export function NeoVoice({
           />
         </div>
       )}
-      {active ? (
+      {active && !recorder.isStarting ? (
         <div class="flex min-w-0 flex-1 items-center gap-2">
           <div class="min-w-0 flex-1">
             <VoiceWaveform
@@ -375,7 +377,6 @@ export function NeoVoice({
               canCancel={!delivering}
               getLevel={recorder.getLevel}
               isRecording={recorder.isRecording}
-              isStarting={recorder.isStarting}
               isTranscribing={!!transcribing}
               startedAt={recorder.recordingStartedAt}
               onCancel={() => void cancel()}
@@ -399,7 +400,7 @@ export function NeoVoice({
             class={`neo-composer-turn-control group grid h-11 w-11 shrink-0 place-items-center focus-visible:outline-none ${
               transcribing && transcribeIntent === 'send' ? 'opacity-50' : ''
             }`}
-            disabled={!!transcribing || recorder.isStarting}
+            disabled={!!transcribing}
             aria-busy={!!transcribing && transcribeIntent === 'draft'}
             onClick={() => void transcribe('draft')}
             aria-label="Stop recording and keep the text as a draft"
@@ -415,19 +416,28 @@ export function NeoVoice({
           </button>
         </div>
       ) : (
-        enabled && (
+        (enabled || recorder.isStarting) && (
           <Button
             size="sm"
             class="h-11 w-11 min-w-11 shrink-0 px-0 !rounded-full"
             variant="ghost"
-            disabled={!connected || !isVoiceRecordingSupported()}
+            disabled={!recorder.isStarting && (!connected || !isVoiceRecordingSupported())}
             title={
-              isVoiceRecordingSupported() ? 'Dictate a draft' : 'Voice needs HTTPS or localhost'
+              recorder.isStarting
+                ? 'Cancel microphone startup'
+                : isVoiceRecordingSupported()
+                  ? 'Dictate a draft'
+                  : 'Voice needs HTTPS or localhost'
             }
-            onClick={() => void start()}
-            aria-label="Start voice input"
+            onClick={() => void (recorder.isStarting ? cancel() : start())}
+            aria-label={recorder.isStarting ? 'Cancel microphone startup' : 'Start voice input'}
+            aria-busy={recorder.isStarting}
           >
-            <NeoIcon name="mic" class="!h-6 !w-6" />
+            {recorder.isStarting ? (
+              <Spinner className="motion-reduce:animate-none" />
+            ) : (
+              <NeoIcon name="mic" class="!h-6 !w-6" />
+            )}
           </Button>
         )
       )}

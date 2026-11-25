@@ -43,4 +43,19 @@ describe('migration 477: work turns', () => {
     expect(turns.cursor(worker)).toBe(turn('replayed', 5, 200).cursor);
     db.close();
   });
+
+  test('reading resumes after the last consumed turn when sequences tie', async () => {
+    const db = new Database(':memory:');
+    try {
+      runMigration477(db);
+      runMigration480(db);
+      const turns = new WorkTurnRepository(db);
+      const worker = { adapter: 'copilot-cli', id: 'local' };
+      const last = { ...turn('last', 9), cursor: JSON.stringify({ seq: 9, consumed: 1 }) };
+      await turns.record(worker, [turn('first', 9), last]);
+      expect(turns.cursor(worker)).toBe(last.cursor);
+    } finally {
+      db.close();
+    }
+  });
 });

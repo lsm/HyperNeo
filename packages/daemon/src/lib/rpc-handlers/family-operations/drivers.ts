@@ -1,3 +1,6 @@
+import { renderRemoteAddress } from '../../mailbox/address.ts';
+import { proposalQuestionId, requireAcceptedAsk } from '../../neo/proposal.ts';
+import { NeoSessionMessageRepository } from '../../../storage/repositories/neo-session-message-repository.ts';
 import { NeoTodoSessionRepository } from '../../../storage/repositories/neo-todo-session-repository.ts';
 import {
   createWorkerInputDelivery,
@@ -5,19 +8,46 @@ import {
 } from '../../drivers/worker-input-delivery.ts';
 import { neoUserFolder } from '../../neo/folder.ts';
 import { createWorkerNameSource } from '../../drivers/worker-names.ts';
+import { createCursorDiscovery } from '../../drivers/cursor-discovery.ts';
 import { PACKAGE_DOWNLOAD_WAIT_MS } from '../../agent/npm-package-download.ts';
 import { findExecutable } from '../../drivers/find-executable.ts';
+import { createAntigravityAdapter } from '../../drivers/antigravity-adapter.ts';
+import {
+  antigravityDesktopStatePath,
+  createAntigravityDesktopDiscovery,
+} from '../../drivers/antigravity-desktop-discovery.ts';
+import {
+  createCursorDesktopDiscovery,
+  cursorDesktopStatePath,
+} from '../../drivers/cursor-desktop-discovery.ts';
 import { gitWorktreeProject } from '../../drivers/worktree-project.ts';
 import { resolveNewSessionModel } from '../../session/new-session-model.ts';
-import { workerWorktreeHasSubmodules } from '../../drivers/work-placement.ts';
+import {
+  cleanupOwnedWorktree,
+  workerWorktreeHasSubmodules,
+  WORKTREE_SUBMODULES,
+  WORKTREE_UNSAVED,
+  worktreeUnverified,
+} from '../../drivers/work-placement.ts';
+import { getWorktreeBaseDir } from '../../worktree-path-utils.ts';
 import { releaseWorkerSandbox } from '../../drivers/worker-sandbox.ts';
 import { sessionSdkPath } from '../../session/sdk-path.ts';
 import { sdkPendingRemoval } from '../../../storage/repositories/sdk-message-transactions.ts';
 import { copilotOwnsSession } from '../../drivers/copilot-find.ts';
 import { createDriverHealthRuntime } from '../../drivers/driver-health-runtime.ts';
+import { createWorkCleanupRuntime } from '../../work-cleanup/runtime.ts';
 import { startCuChecker } from '../../drivers/codex-cu-reaper.ts';
 import { createCopilotAdapter } from '../../drivers/copilot-adapter.ts';
-import { dirname, resolve } from 'node:path';
+import {
+  copilotDesktopStatePath,
+  createCopilotDesktopAdapter,
+} from '../../drivers/copilot-desktop-adapter.ts';
+import { copilotDesktopControlAvailable } from '../../drivers/copilot-desktop-channel.ts';
+import {
+  codexAppServerSocketPath,
+  codexWorkerHome,
+  copilotWorkerDirectory,
+} from '../../drivers/worker-directories.ts';
 import { ensureCodexDesktopProject } from '../../drivers/codex-desktop-project.ts';
 import { neoWorkerPermissionMode } from '@hyperneo/shared/types/settings';
 import { sleep } from '../../utils/sleep.ts';
@@ -30,6 +60,10 @@ import {
 import { mirrorNeoWorkspaceProjectsAsync } from '../../neo/packs/coding/project-mirror-async.ts';
 import { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../storage/repositories/neo-ask-todo-repository.ts';
+import { sessionReuseQuestion } from '../../neo/session-reuse.ts';
+import { neoAskInputReads } from '../../../storage/repositories/neo-ask-input-worker.ts';
+import { gatewayFor } from '../../../storage/db-gateway/db-gateway.ts';
+import { Logger } from '../../logger.ts';
 import { WorkDeliveryInputRepository } from '../../../storage/repositories/work-delivery-input-repository.ts';
 import { readDriverOutcome } from '../../neo/driver-work.ts';
 import { existsSync, mkdirSync, statSync } from 'node:fs';
@@ -39,12 +73,10 @@ import { join } from 'node:path';
 import { simpleGit } from 'simple-git';
 import type { WorkChatKind, WorkChatMatch } from '../../../storage/work-chat-search.ts';
 import {
-  markWorkUnusable,
-  readReusableWorkers,
-  forgetWorkGone,
-  recordWorkerStarted,
+  workStartedSessionReads,
+  workStartedSessionWrites,
   type StartedWork,
-} from '../../../storage/work-started-sessions.ts';
+} from '../../../storage/repositories/work-started-sessions-worker.ts';
 import { resolveCopilotRuntime } from '../../providers/anthropic-copilot/copilot-cli-resolver.ts';
 import {
   COPILOT_CLIENT,
@@ -62,7 +94,10 @@ import {
 import { readHyperneoSdkSessions } from '../../drivers/claude-feed.ts';
 import { createClaudeCodeAdapter } from '../../drivers/claude-code-adapter.ts';
 import { startWorkSessionSync } from '../../drivers/work-session-sync.ts';
-import { withClaudeRemoteControl } from '../../drivers/claude-remote-control.ts';
+import {
+  runClaudeHelperArchive,
+  withClaudeRemoteControl,
+} from '../../drivers/claude-remote-control.ts';
 import {
   connectCodexAppServer,
   startCodexBootstrapServer,
@@ -76,6 +111,7 @@ import { createFindWorkOperation } from '../../drivers/find-operation.ts';
 import { createReadWorkOperation } from '../../drivers/read-operation.ts';
 import {
   createHyperneoAdapter,
+  compactHyperneoWorker,
   type HyperneoSessionControl,
 } from '../../drivers/hyperneo-adapter.ts';
 import type { PlaceGroup, WorkAdapter, WorkRef } from '../../drivers/types.ts';
@@ -86,7 +122,10 @@ import {
 } from '../../drivers/work-operations.ts';
 import { sessionSender } from '../../messaging/message-send.ts';
 import { renderAddress } from '../../mailbox/address.ts';
+import { createWorkerOwnershipBackfillOperations } from '../../neo/worker-ownership-backfill.ts';
+import { createWorkReconfigureOperation } from '../../drivers/work-reconfigure.ts';
 import { createNeoSessionArchiveOperation } from '../../neo/session-archive-operation.ts';
+import { createNeoSessionUnarchiveOperation } from '../../neo/session-unarchive-operation.ts';
 import { reject } from '../../drivers/work-operations.ts';
 import { handoffPromptToMailbox } from '../../mailbox/handoff.ts';
 import { invokeOperation } from '../../operations/invoke.ts';
@@ -100,18 +139,15 @@ import { WorktreeManager } from '../../worktree-manager.ts';
 import { readWorkTurnPage, type WorkTurnPage } from '../../../storage/work-turn-page.ts';
 import type { SessionManager } from '../../session/session-manager.ts';
 import { ModelUnavailableError } from '../../session/session-lifecycle.ts';
-import {
-  THINKING_OPTIONS,
-  type ModelInfo,
-  type Provider,
-  type SessionConfig,
-} from '@hyperneo/shared';
+import { type ModelInfo, type Provider, type SessionConfig } from '@hyperneo/shared';
 import type { FamilyOperationContext } from './context.ts';
 import { embedQueryOrNull } from '../../../storage/vector-similarity.ts';
-import { usableModels } from '../../usable-models.ts';
+import { matchModelIdOrName, usableModels } from '../../usable-models.ts';
 import { planWorkPlacement, type GitCheckout } from '../../drivers/work-placement.ts';
+import { resolveHyperneoThinking } from '../../drivers/start-configuration.ts';
 
 const WORK_CHAT_LIMIT = 200;
+const log = new Logger('work-operations');
 const SEARCH_REUSE_MS = 2_000;
 
 export function newestAvailableModel(models: readonly ModelInfo[]): ModelInfo | null {
@@ -126,12 +162,10 @@ async function readAvailableModels(): Promise<readonly ModelInfo[]> {
   return getAvailableModels('global');
 }
 
-async function resolveDriverModel(models: readonly ModelInfo[], requested: string) {
+export async function resolveDriverModel(models: readonly ModelInfo[], requested: string) {
   const { findInModels } = await import('../../model-service.ts');
   const available = usableModels(models);
-  const exact = available.find((entry) => entry.id === requested);
-  if (exact) return exact;
-  const names = available.filter((entry) => entry.name?.toLowerCase() === requested.toLowerCase());
+  const names = matchModelIdOrName(available, requested);
   if (names.length > 1)
     throw new ModelUnavailableError(
       `Model name '${requested}' is ambiguous: ${names.map((entry) => `${entry.id} (${entry.provider})`).join(', ')}. Choose an exact model ID.`
@@ -154,9 +188,7 @@ export async function createDriverSession(
     ? null
     : (await sessionManager.getWorktreeManager().detectGitSupport(workspacePath)).gitRoot;
   const placement = planWorkPlacement(await checkoutAt(gitRoot));
-  const thinkingLevel = THINKING_OPTIONS.find(
-    (entry) => entry.label.toLowerCase() === effort
-  )?.value;
+  const thinkingLevel = resolveHyperneoThinking(effort)?.value;
   const create = (config?: Partial<SessionConfig>) =>
     sessionManager.createSession({
       workspacePath,
@@ -198,6 +230,17 @@ async function readGitCheckout(folder: string): Promise<GitCheckout | null> {
 export function hyperneoSessionControl(context: FamilyOperationContext): HyperneoSessionControl {
   const { sessionManager, internalEventBus, db } = context.deps;
   return {
+    compact: async (ref) => {
+      const session = await sessionManager.getSessionForControl(ref.id);
+      if (!session || session.getSessionData().status === 'archived')
+        return { ok: true, value: { compacted: false } };
+      return compactHyperneoWorker(session, (complete) =>
+        internalEventBus.subscribe('session.compacted', complete, {
+          sessionId: ref.id,
+          subscriberName: 'work.compact',
+        })
+      );
+    },
     rename: async (ref, title) => {
       const session = sessionManager.getSessionFromDB(ref.id);
       if (!session) return reject('not_found', 'The session is gone.');
@@ -230,31 +273,36 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
       if (context.deps.db.listChildSessions(ref.id).length)
         return reject('unsupported', 'Archive sessions with clones in the session UI.');
       if (session.worktree) {
-        const manager = sessionManager.getWorktreeManager();
-        const commits = await manager.getCommitsAhead(session.worktree);
-        const directory = session.worktree.worktreePath ?? session.workspacePath!;
-        if (await workerWorktreeHasSubmodules(directory))
-          return reject('unsupported', 'Submodule worktrees require manual verification; kept.');
-        const git = await simpleGit(directory).status(['--ignore-submodules=none']);
-        if (commits.hasCommitsAhead || !git.isClean())
-          return reject(
-            'unsupported',
-            'The worktree has changes, unpushed commits or cannot be verified; kept. Manage its archive in the session UI.'
-          );
+        const worktree = session.worktree;
+        const directory = worktree.worktreePath ?? session.workspacePath!;
+        const kept = await (async () => {
+          const commits = await sessionManager.getWorktreeManager().getCommitsAhead(worktree);
+          if (await workerWorktreeHasSubmodules(directory)) return WORKTREE_SUBMODULES;
+          const git = await simpleGit(directory).status(['--ignore-submodules=none']);
+          return commits.hasCommitsAhead || !git.isClean() ? WORKTREE_UNSAVED[3] : null;
+        })().catch(worktreeUnverified);
+        if (kept) return reject('unsupported', kept);
       }
       const refused = admit();
       if (refused) return refused;
       const processing = sessionManager.getCachedSession(ref.id)?.getProcessingState().status;
       if (processing && !['idle', 'interrupted'].includes(processing))
         return reject('busy', 'The HyperNeo session still has a live turn.');
+      const project = session.worktree ? undefined : session.metadata?.executionProjectPath;
+      const cleanupPrepared = async () =>
+        project && session.workspacePath
+          ? cleanupOwnedWorktree(session.workspacePath, [getWorktreeBaseDir(project)])
+          : undefined;
       if (session.status === 'archived') {
         await releaseWorkerSandbox(sessionSdkPath(session));
         const worktree = session.worktree
           ? await sessionManager.cleanupArchivedWorktree(ref.id)
-          : undefined;
+          : await cleanupPrepared();
         return { ok: true, value: { archived: false, ...(worktree ? { worktree } : {}) } };
       }
-      const worktree = await sessionManager.archiveSessionResources(ref.id, 'work_archive');
+      const worktree =
+        (await sessionManager.archiveSessionResources(ref.id, 'work_archive')) ??
+        (await cleanupPrepared());
       return { ok: true, value: { archived: true, ...(worktree ? { worktree } : {}) } };
     },
     create: (workspacePath, title, model, provider, effort, inPlace, prepared) =>
@@ -283,9 +331,23 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
           ? newestAvailableModel(await readAvailableModels())
           : null;
     },
+    reconfigure: async (sessionId, settings) => {
+      const outcome = await invokeOperation(
+        context.deps.sessionManager.getOperationRegistry(),
+        'session.runtimeSettings.update',
+        {
+          sessionId,
+          ...(settings.model ? { model: settings.model } : {}),
+          ...(settings.provider ? { provider: settings.provider } : {}),
+          ...(settings.effort ? { thinkingLevel: settings.effort } : {}),
+        },
+        { source: 'internal' }
+      );
+      return outcome.kind === 'completed' && (outcome.value as { ok?: boolean }).ok === true;
+    },
     effort: (sessionId) =>
-      THINKING_OPTIONS.find(
-        (entry) => entry.value === sessionManager.getSessionFromDB(sessionId)?.config?.thinkingLevel
+      resolveHyperneoThinking(
+        sessionManager.getSessionFromDB(sessionId)?.config?.thinkingLevel
       )?.label.toLowerCase() ?? null,
     model: (sessionId) => sessionManager.getSessionFromDB(sessionId)?.config?.model ?? null,
     provider: (sessionId) => sessionManager.getSessionFromDB(sessionId)?.config?.provider ?? null,
@@ -347,6 +409,7 @@ function claudeCodeAdapters(
     createClaudeCodeAdapter({
       sendInbox: inbox?.send,
       desktopSend: desktop?.send,
+      desktopStatus: desktop?.status,
       desktopRecords: async () =>
         existsSync(CLAUDE_DESKTOP_SESSIONS)
           ? readClaudeDesktopRecords(CLAUDE_DESKTOP_SESSIONS, cache)
@@ -401,15 +464,20 @@ function claudeDesktopAdapters(
     searchChats: (text) => searchChats(text, ['claude']),
     permissionMode,
   };
-  return [withClaudeRemoteControl(createClaudeDesktopAdapter(deps), deps)];
+  const adapter = createClaudeDesktopAdapter({
+    ...deps,
+    archiveInApp: (target) => runClaudeHelperArchive(target, deps),
+  });
+  return [withClaudeRemoteControl(adapter, deps)];
 }
 
 function copilotAdapters(
   ownSessions: () => ReadonlySet<string>,
-  context: FamilyOperationContext
+  context: FamilyOperationContext,
+  desktop: WorkAdapter
 ): WorkAdapter[] {
   if (!findExecutable(COPILOT_CLIENT.bin)) return [];
-  const directory = join(dirname(resolve(context.deps.config.dbPath)), 'copilot-workers');
+  const directory = copilotWorkerDirectory(context.deps.config.dbPath);
   const resolveCliPath = async (waitMs?: number) =>
     (await resolveCopilotRuntime(process.env, waitMs)).path;
   const discovery = createCopilotDiscovery({
@@ -438,6 +506,7 @@ function copilotAdapters(
     homeDir: homedir(),
     folderExists: existsSync,
     makeFolder: (folder) => mkdirSync(folder),
+    desktop,
   });
   context.driverCleanup?.push(() => adapter.close());
   return [adapter];
@@ -451,9 +520,10 @@ function codexDesktopAdapters(
     fullTitles?: boolean
   ) => Promise<CodexSnapshot>,
   searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>,
-  prepareExecution: WorkExecutionPreparer
+  prepareExecution: WorkExecutionPreparer,
+  admitWork: FamilyOperationContext['deps']['admitCodexWork']
 ): WorkAdapter[] {
-  const codexHome = join(homedir(), '.codex');
+  const codexHome = codexWorkerHome();
   const statePath = codexStatePath(homedir());
   if (!existsSync(statePath)) return [];
   return [
@@ -462,12 +532,12 @@ function codexDesktopAdapters(
       readSnapshot,
       desktopSocketPath: join(codexHome, 'ipc', 'ipc.sock'),
       prepareExecution,
+      admitWork,
       worktreesDir: join(codexHome, 'worktrees'),
       machine: hostname(),
       now: Date.now,
       spawn: spawnProcess,
-      appServer: () =>
-        connectCodexAppServer(join(codexHome, 'app-server-control', 'app-server-control.sock')),
+      appServer: () => connectCodexAppServer(codexAppServerSocketPath(codexHome)),
       bootstrapServer: () => startCodexBootstrapServer(),
       prepareDesktopProject: (folder) => ensureCodexDesktopProject(folder, codexHome, spawnProcess),
       startDesktopTurn: (threadId, request) =>
@@ -501,6 +571,9 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     });
   const db = () => context.deps.db.getDatabase();
   const machine = hostname();
+  const cursorPath =
+    findExecutable('cursor-agent') ??
+    findExecutable('cursor-agent', join(homedir(), '.local', 'bin'));
   const recentVectors = new Map<string, { at: number; semantic: ReturnType<typeof embedQuery> }>();
   const recentSearches = new Map<
     string,
@@ -564,8 +637,59 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       (statePath, includeClosed, idPrefix, fullTitles) =>
         context.deps.db.readCodexSnapshotAsync(statePath, includeClosed, idPrefix, fullTitles),
       searchChats,
-      prepareExecution
+      prepareExecution,
+      context.deps.admitCodexWork
     );
+  const copilotDesktopPath = copilotDesktopStatePath(homedir());
+  const copilotDesktop = createCopilotDesktopAdapter(
+    (query, id) =>
+      existsSync(copilotDesktopPath)
+        ? context.deps.db.readCopilotDesktopAsync({ statePath: copilotDesktopPath, query, id })
+        : Promise.resolve([]),
+    machine,
+    homedir(),
+    () => copilotDesktopControlAvailable(homedir())
+  );
+  const copilotCli = copilotAdapters(
+    () => new Set(context.deps.db.listAcpSessionIds().map((session) => session.acpSessionId)),
+    context,
+    copilotDesktop
+  );
+  const copilot = () =>
+    copilotCli.length ? copilotCli : existsSync(copilotDesktopPath) ? [copilotDesktop] : [];
+  const antigravityPath =
+    findExecutable('agy') ?? findExecutable('agy', join(homedir(), '.local/bin'));
+  const antigravityDesktopState = antigravityDesktopStatePath(homedir());
+  const antigravityDesktop = createAntigravityDesktopDiscovery(
+    async (query) =>
+      (
+        await context.deps.db.readAntigravityDesktopAsync({
+          statePath: antigravityDesktopState,
+          query,
+        })
+      ).sessions,
+    machine
+  );
+  const antigravity = antigravityPath
+    ? createAntigravityAdapter(
+        antigravityPath,
+        machine,
+        (adapter) => gatewayFor(db()).call(workStartedSessionReads, 'startedFolders', adapter),
+        async () => {
+          if (!existsSync(antigravityDesktopState)) return [];
+          const catalog = await context.deps.db
+            .readAntigravityDesktopAsync({ statePath: antigravityDesktopState })
+            .catch(() => null);
+          return catalog?.ids ?? [];
+        }
+      )
+    : null;
+  if (antigravity) context.driverCleanup?.push(antigravity.close);
+  const cursorState = cursorDesktopStatePath(homedir());
+  const cursorDesktop = createCursorDesktopDiscovery(
+    (query) => context.deps.db.readCursorDesktopAsync({ statePath: cursorState, query }),
+    machine
+  );
   const adapters = [
     createHyperneoAdapter({
       readTurnEnds: (sessionId, since) =>
@@ -598,16 +722,14 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       homeDir: homedir(),
     }),
     ...codex(),
+    ...(antigravity ? [antigravity] : []),
+    ...(cursorPath ? [createCursorDiscovery(cursorPath, homedir(), machine)] : []),
     ...desktop,
     ...claudeCodeAdapters(
       searchChats,
       () => readHyperneoSdkSessions(db()),
       context.claudeInbox,
       desktop[0]
-    ),
-    ...copilotAdapters(
-      () => new Set(context.deps.db.listAcpSessionIds().map((session) => session.acpSessionId)),
-      context
     ),
   ];
   let selectedCodex = adapters.some((adapter) => adapter.id === 'codex-desktop')
@@ -626,14 +748,19 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       adapters[0],
       ...(context.extensionAdapters?.({ searchChats: ownChats }) ?? []),
       ...adapters.slice(1),
+      ...copilot(),
+      ...(existsSync(antigravityDesktopState) ? [antigravityDesktop] : []),
+      ...(existsSync(cursorState) ? [cursorDesktop] : []),
     ];
   };
   const folder = neoUserFolder(context.deps.config.workspaceRoot);
   context.workerNameSource?.(
     createWorkerNameSource(currentAdapters, { machine, folder, name: folder })
   );
+  context.workAdapters?.(currentAdapters);
   const health = createDriverHealthRuntime(context, currentAdapters);
   startWorkSessionSync(context.deps.db.gateway, context.deps.jobProcessor, currentAdapters);
+  const pendingReuseQuestions = new Map<string, Promise<void>>();
   const deps = {
     adapters: currentAdapters,
     health: health.read,
@@ -645,6 +772,39 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       workspaceRoot: context.deps.config.workspaceRoot,
       policy: createCodingStartPlacePolicy(db()),
     }),
+    acceptedTodo: (todoId: string) => {
+      const store = new NeoAskTodoRepository(db());
+      const todo = store.getTodo(todoId);
+      const ask = todo ? store.getAsk(todo.askId) : null;
+      if (
+        !todo ||
+        !ask ||
+        ask.status !== 'open' ||
+        !['todo', 'doing', 'blocked'].includes(todo.state)
+      )
+        return false;
+      const questions = store.listQuestions(ask.id);
+      return (
+        'value' in
+        requireAcceptedAsk(
+          ask,
+          questions.find((question) => question.id === proposalQuestionId(ask.id)) ?? null,
+          questions,
+          store.listTodos(ask.id)
+        )
+      );
+    },
+    noticeReply: (ref: WorkRef, sessionId: string) => {
+      const localSender = ref.adapter === 'hyperneo' ? ref.id : `${ref.adapter}:${ref.id}`;
+      const sender = ref.daemon
+        ? renderRemoteAddress({
+            kind: 'remote-session',
+            daemonId: ref.daemon,
+            sessionId: localSender,
+          })
+        : localSender;
+      return new NeoSessionMessageRepository(db()).sentTo(sender, sessionId);
+    },
     isOpenTodo: (todoId: string, sessionId: string) => {
       const store = new NeoAskTodoRepository(db());
       const todo = store.getTodo(todoId);
@@ -659,7 +819,9 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     todoWorker: {
       on: (todoId, ref) => new NeoTodoSessionRepository(db()).sendsNow(todoId, ref),
       wait: (todoId, ref, message) =>
-        new NeoTodoSessionRepository(db()).write('queueOn', todoId, ref, message),
+        new NeoTodoSessionRepository(db()).write('queueOn', todoId, ref, message, {
+          requeueDoing: true,
+        }),
     } satisfies WorkVerbDeps['todoWorker'],
     workInputs: {
       accept: (todoId, from, target, message) =>
@@ -677,17 +839,116 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
           Date.now()
         ),
     } satisfies WorkVerbDeps['workInputs'],
-    recordStarted: (ref: StartedWork, directory?: string) => {
-      recordWorkerStarted(db(), ref);
-      if (directory) forgetWorkGone(db(), directory);
+    recordStarted: (
+      ref: StartedWork,
+      directory?: string,
+      facts?: Parameters<NonNullable<WorkVerbDeps['recordStarted']>>[2]
+    ) => gatewayFor(db()).call(workStartedSessionWrites, 'recordStarted', ref, directory, facts),
+    freeWorkers: async (adapter: string, todoId?: string, sessionId?: string) =>
+      new Map(
+        await gatewayFor(db()).call(
+          workStartedSessionReads,
+          'reusableWorkers',
+          adapter,
+          todoId,
+          sessionId
+        )
+      ),
+    reusePolicy: async (adapter: string, todoId: string | undefined, caller: OperationCaller) => {
+      const facts =
+        todoId && caller.sessionId
+          ? await gatewayFor(db()).call(
+              neoAskInputReads,
+              'sessionReuseFacts',
+              adapter,
+              todoId,
+              caller.sessionId
+            )
+          : null;
+      if (!facts) return { mode: 'per_todo' as const, sameAsk: [] };
+      if (!facts.saved) {
+        const noteFailure = async (detail: unknown) => {
+          log.warn('Session reuse question could not be opened', { todoId, detail });
+          if (todoId)
+            await context
+              .neoAttention?.({
+                kind: 'todo.unworked',
+                subject: { type: 'todo', id: todoId },
+                since: Date.now(),
+                facts: {
+                  reason: 'settings_question',
+                  text: 'A settings question for this todo could not be opened; the work continues without it.',
+                },
+              })
+              .catch((error) => log.warn('Settings question note pending', { todoId }, error));
+        };
+        const { prefix, ...question } = sessionReuseQuestion(facts);
+        const ask = (pendingReuseQuestions.get(prefix) ?? Promise.resolve()).then(async () => {
+          const existing = await gatewayFor(db()).call(
+            neoAskInputReads,
+            'sessionReuseQuestionState',
+            prefix
+          );
+          if (!existing || existing === 'retired') {
+            const outcome = await invokeOperation(
+              context.deps.sessionManager.getOperationRegistry(),
+              'pack.preferences.ask',
+              question,
+              caller
+            );
+            if (outcome.kind !== 'completed' || !(outcome.value as { ok?: boolean })?.ok)
+              await noteFailure(outcome);
+          }
+        });
+        pendingReuseQuestions.set(prefix, ask);
+        try {
+          await ask;
+        } catch (error) {
+          await noteFailure(error);
+        } finally {
+          if (pendingReuseQuestions.get(prefix) === ask) pendingReuseQuestions.delete(prefix);
+        }
+      }
+      return { mode: facts.mode, sameAsk: facts.sameAsk };
     },
-    freeWorkers: (adapter: string, todoId?: string, sessionId?: string) =>
-      readReusableWorkers(db(), adapter, todoId, sessionId),
-    markUnusable: (ref: StartedWork) => markWorkUnusable(db(), ref),
-    claimWorker: (ref: WorkRef, todoId?: string) =>
-      new NeoTodoSessionRepository(db()).write('claimWorker', ref, todoId ?? null),
-    unclaimWorker: (todoId: string, ref: WorkRef) =>
-      new NeoTodoSessionRepository(db()).write('unclaimWorker', todoId, ref),
+    warn: (message: string, error: unknown) => log.warn(message, error),
+    markUnusable: (ref: StartedWork, reason: string) =>
+      gatewayFor(db()).call(workStartedSessionWrites, 'markUnusable', ref, reason),
+    roleContext: async (todoId: string, adapter: string, preparationPack?: string) => {
+      const [todo, roles, preparations] = await Promise.all([
+        new NeoAskTodoRepository(db()).read('getTodo', todoId),
+        gatewayFor(db()).call(workStartedSessionReads, 'todoRoles', todoId),
+        gatewayFor(db()).call(workStartedSessionReads, 'workerPreparations', adapter),
+      ]);
+      const pack = context.neoPacks().find((item) => item.id === todo?.check?.pack);
+      return {
+        roles,
+        preparations,
+        shares: pack?.roles ?? {},
+        perRoundFields:
+          context.neoPacks().find((item) => item.id === preparationPack)
+            ?.preparationPerRoundFields ?? [],
+      };
+    },
+    claimWorker: (
+      ref: WorkRef,
+      todoId?: string,
+      role?: string,
+      model?: string,
+      effort?: string,
+      shareWith?: readonly string[]
+    ) =>
+      new NeoTodoSessionRepository(db()).write(
+        'claimWorker',
+        ref,
+        todoId ?? null,
+        role,
+        model,
+        effort,
+        shareWith
+      ),
+    unclaimWorker: (todoId: string, ref: WorkRef, role?: string) =>
+      new NeoTodoSessionRepository(db()).write('unclaimWorker', todoId, ref, role),
     reportUncertain: async (report: WorkSendUncertainty) => {
       const to = sessionSender(report.from) ?? new NeoRepository(db()).defaultBinding()?.sessionId;
       if (!to) throw new Error('No originating session or default Neo for the uncertainty report.');
@@ -757,26 +1018,35 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       throw new Error('Worker input report was not accepted.');
   });
   registerWorkerInputDelivery(context.deps.jobProcessor, workerInputs);
-  const readTurns = (
+  const readTurns = async (
     sessionId: string,
     around: string | undefined,
     before: number,
     after: number,
     cursor?: WorkTurnPage['nextCursor']
   ) => {
-    for (const adapter of adapters) {
-      const page = adapter.readTurns?.(sessionId, around, before, after, cursor);
+    for (const adapter of [...adapters, ...copilot()]) {
+      const page = await adapter.readTurns?.(sessionId, around, before, after, cursor);
       if (page) return page;
     }
     return cursor?.copilot
       ? null
       : readWorkTurnPage(db(), sessionId, around, before, after, cursor);
   };
+  const readBinding = (sessionId: string) => new NeoRepository(db()).getBindingBySession(sessionId);
   return [
     createFindWorkOperation(deps),
+    createWorkCleanupRuntime(context),
     health.operation,
     ...createWorkVerbOperations({ ...deps, queueInput: workerInputs.accept }),
+    createWorkReconfigureOperation({
+      db: context.deps.db,
+      sessions: context.deps.sessionManager,
+      readBinding,
+    }),
     createNeoSessionArchiveOperation({ ...deps, db: context.deps.db }),
+    createNeoSessionUnarchiveOperation(readBinding, context.deps.sessionManager),
+    ...createWorkerOwnershipBackfillOperations(context.deps.db),
     createReadWorkOperation({
       readTurns,
       readInput: async (sessionId, input) =>
@@ -785,7 +1055,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
               adapter: input.adapter,
               marker: input.marker,
             })
-          : (adapters
+          : ([...adapters, ...copilot()]
               .find((adapter) => adapter.id === input.adapter)
               ?.readInput?.(sessionId, input.marker) ?? null),
       remote: remoteDaemons,

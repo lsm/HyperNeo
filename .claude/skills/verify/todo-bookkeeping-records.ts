@@ -1,9 +1,11 @@
+import { seedHistoricalAsk } from './accepted-ask-fixtures.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
+import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { recordOperationRefusal } from '../../../packages/daemon/src/storage/repositories/operation-refusal-repository.ts';
 import { gatewayFor } from '../../../packages/daemon/src/storage/db-gateway/db-gateway.ts';
@@ -45,14 +47,15 @@ try {
       if (phase === 'initial') {
         db.prepare("INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?, 'Synthetic bookkeeping proof', '/tmp', '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z', 'active', '{}', '{}')").run(sender);
         new NeoRepository(db).reserveBinding({ sessionId: sender, kind: 'neo', projectId: null });
-        const opened = await invoke('neo.ask.open', { title: 'Record bookkeeping', request: 'Keep todo mutations moving and retain warnings', todos: [{ after: [], title: 'PR not identified yet', doneWhen: 'Merged', check: { ...check, params: {} } }] });
+        seedHistoricalAsk(new NeoAskTodoRepository(db), sender, { title: 'Record bookkeeping', request: 'Keep todo mutations moving and retain warnings' });
+        const opened = await invoke('neo.ask.propose', { title: 'Record bookkeeping', request: 'Keep todo mutations moving and retain warnings', todos: [{ after: [], title: 'PR not identified yet', doneWhen: 'Merged', check: { ...check, params: {} } }] });
         assert(opened.records[0].startsWith('pr_merged_needs_urls:'));
         const first = await invoke('neo.todo.add', { after: [], askId: opened.ask.id, title: 'Original', doneWhen: 'Merged', check });
         const duplicate = await invoke('neo.todo.add', { after: [], askId: first.todo.askId, title: 'Follow-up', doneWhen: 'Merged', check });
         assert(duplicate.records[0].startsWith('pr_already_tracked:'));
         const edited = await invoke('neo.todo.edit', { todoId: opened.todos[0].id, addUrls: [url], title: 'PR now identified' });
         assert(edited.records[0].startsWith('pr_already_tracked:'));
-        const plain = await invoke('neo.todo.add', { after: [], askId: first.todo.askId, title: 'Plain', check: { pack: 'core', kind: 'evidence', params: { artifact: 'synthetic-missing' } } });
+        const plain = await invoke('neo.todo.add', { after: [], askId: first.todo.askId, title: 'Plain', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } } });
         const unsupported = await invoke('neo.todo.edit', { todoId: plain.todo.id, addUrls: [url], title: 'URL recorded' });
         assert(unsupported.records[0].startsWith('check_urls_unsupported:'));
         assert(unsupported.records[0].includes(url));

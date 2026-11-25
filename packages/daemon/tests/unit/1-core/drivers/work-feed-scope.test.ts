@@ -18,8 +18,12 @@ import { runMigration455 } from '../../../../src/storage/schema/m455-work-starte
 import { runMigration465 } from '../../../../src/storage/schema/m465-work-unusable';
 import { runMigration517 } from '../../../../src/storage/schema/m517-work-released';
 import { runMigration519 } from '../../../../src/storage/schema/m519-work-started-role';
+import { runMigration529 } from '../../../../src/storage/schema/m529-work-start-record';
 import { Database } from '../../../../src/storage/sqlite-compat';
-import { readStartedWork, recordStartedWork } from '../../../../src/storage/work-started-sessions';
+import {
+  readStartedWork,
+  recordWorkerStarted,
+} from '../../../../src/storage/repositories/work-started-sessions-worker';
 
 const at = '2026-10-24T05:00:00.000Z';
 const place = { machine: 'imac', folder: '/Users/me/focus/heron', name: 'heron' };
@@ -46,6 +50,7 @@ beforeEach(() => {
   runMigration465(db);
   runMigration517(db);
   runMigration519(db);
+  runMigration529(db);
 });
 
 afterEach(() => {
@@ -74,7 +79,7 @@ async function startThroughWorkStart(adapter: string, id: string) {
       adapters: () => [starter],
       remote: { list: () => [], invoke: async () => ({}) },
       daemonName: 'imac',
-      recordStarted: (ref) => recordStartedWork(db, ref),
+      recordStarted: (ref) => recordWorkerStarted(db, ref),
     })
   );
   const outcome = await invokeOperation(

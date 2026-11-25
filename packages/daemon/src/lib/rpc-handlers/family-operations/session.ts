@@ -6,6 +6,7 @@ import { createReturnSessionCloneOperation } from '../../session/clone-return-op
 import { createSessionOperations } from '../../session/operations.ts';
 import { createSetSessionParentOperation } from '../../session/parent-operation.ts';
 import { createSessionRuntimeSettingsOperations } from '../../session/runtime-settings-operations.ts';
+import { engineForProvider } from '../../agent/session-engine.ts';
 import type { Session } from '@hyperneo/shared';
 import type { FamilyOperationContext } from './context.ts';
 
@@ -49,6 +50,7 @@ export function registerSessionOperations(context: FamilyOperationContext): Oper
     getSession,
     listChildren: (sessionId) => context.deps.db.listChildSessions(sessionId),
     sessionSpaceId: (session) => sessionSpaceId(session) ?? session.context?.spaceId,
+    ownsActiveGoal: (sessionId) => context.deps.db.ownsActiveGoal(sessionId),
     setParent: async (sessionId, parentId) => {
       const current = context.deps.db.getSession(sessionId);
       if (current)
@@ -68,6 +70,10 @@ export function registerSessionOperations(context: FamilyOperationContext): Oper
       sessionSpaceId: (session) => sessionSpaceId(session) ?? session.context?.spaceId,
       capture: (id) => context.deps.db.captureSessionRuntimeSettings(id),
       commit: (snapshot, patch) => context.deps.db.casSessionRuntimeSettings(snapshot, patch),
+      engineOf: (provider) =>
+        engineForProvider(provider, () =>
+          context.deps.db.providers.getProviderByProviderId(provider)
+        ),
       isPreparing: (id) =>
         context.deps.sessionManager.isRuntimeSettingsPreparing(id) ||
         !!space?.isRuntimeSettingsPreparing(id),

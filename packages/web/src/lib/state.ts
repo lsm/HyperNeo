@@ -209,7 +209,11 @@ class ApplicationState {
 export const appState = new ApplicationState();
 
 /** @public - Preact signal accessed via .value in components */
-export const sessions: ReadonlySignal<Session[]> = globalStore.sessions;
+export const sessions: ReadonlySignal<Session[]> = globalStore.visibleSessions;
+
+export const sidebarSessions: ReadonlySignal<Session[]> = globalStore.sessions;
+
+export const projectArchivedVisibility = globalStore.projectArchivedVisibility;
 
 /** @public - Preact signal accessed via .value in components */
 export const hasArchivedSessions: ReadonlySignal<boolean> = globalStore.hasArchivedSessions;

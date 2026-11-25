@@ -15,7 +15,7 @@ const TRANSACTION_CONTROL_SQL_PATTERN = /^\s*(begin|commit|rollback|savepoint|re
 
 let Database: typeof NodeDatabase;
 if (isBun) {
-  const { Database: BunDatabaseImpl } = await import('bun:sqlite');
+  const { Database: BunDatabaseImpl, constants } = await import('bun:sqlite');
   type BunStatement = ReturnType<InstanceType<typeof BunDatabaseImpl>['prepare']>;
   class CachedDatabase extends BunDatabaseImpl {
     private readonly statementCache = new StatementCache<BunStatement>(STATEMENT_CACHE_CAPACITY);
@@ -23,16 +23,22 @@ if (isBun) {
 
     constructor(
       path: string,
-      options?: ConstructorParameters<typeof BunDatabaseImpl>[1] & {
+      options?: Extract<ConstructorParameters<typeof BunDatabaseImpl>[1], object> & {
+        readonlyUri?: boolean;
         queryObservability?: SQLiteQueryObservabilityOptions;
       }
     ) {
-      const rest: Record<string, unknown> = {};
-      if (options) Object.assign(rest, options);
-      delete rest.queryObservability;
-      super(path, (Object.keys(rest).length > 0 ? rest : undefined) as never);
-      if (options?.queryObservability) {
-        this.queryObserver = new SQLiteQueryObserver(options.queryObservability);
+      const { readonlyUri, queryObservability, ...rest } = options ?? {};
+      super(
+        path,
+        readonlyUri
+          ? constants.SQLITE_OPEN_READONLY | constants.SQLITE_OPEN_URI
+          : Object.keys(rest).length
+            ? rest
+            : undefined
+      );
+      if (queryObservability) {
+        this.queryObserver = new SQLiteQueryObserver(queryObservability);
       }
     }
 

@@ -1,3 +1,4 @@
+import { seedHistoricalAsk } from './accepted-ask-fixtures.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -35,7 +36,8 @@ try {
   };
   db.prepare("INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?, 'Synthetic todo size proof', '/tmp', '2026-11-13T00:00:00Z', '2026-11-13T00:00:00Z', 'active', '{}', '{}')").run(sender);
   new NeoRepository(db).reserveBinding({ sessionId: sender, kind: 'neo', projectId: null });
-  const opened = await agent('neo.ask.open', {
+  seedHistoricalAsk(store, sender, { title: 'Synthetic eleven-step ask', request: 'Measure todo result sizes' });
+  const opened = await agent('neo.ask.propose', {
     title: 'Synthetic eleven-step ask',
     request: 'Measure todo result sizes',
     todos: Array.from({ length: 11 }, (_, n) => ({ after: [], title: `Step ${n}`, check: { pack: 'core', kind: 'evidence', params: { path: join(run, `missing-${n}`) } } })),
@@ -44,9 +46,12 @@ try {
   ids.forEach((id, n) => store.updateTodo(store.getTodo(id)!, { instruction: instruction(n), report: report(n) }, Date.now()));
   const fullList = bytes(store.listTodos(opened.ask.id));
   const held = await agent('neo.todo.hold', { todoId: ids[0], reason: 'Synthetic wait' });
+  assert.equal(held.todo.state, 'blocked');
+  assert.equal(held.todo.blockedBy, 'held');
+  assert.deepEqual(store.todoCards(store.getTodo(ids[0])!), []);
   const edited = await agent('neo.todo.edit', { todoId: ids[1], title: 'Step 1 renamed' });
   const others = (result: unknown, own: number) => ids.filter((_, n) => n !== own && JSON.stringify(result).includes(`Instruction ${n}:`));
-  assert.equal(held.todo.id, ids[0]); assert.equal(held.todo.state, 'blocked'); assert(!('todos' in held));
+  assert.equal(held.todo.id, ids[0]); assert(!('todos' in held));
   assert.deepEqual(others(held, 0), []);
   assert.equal(edited.todo.title, 'Step 1 renamed'); assert(!('todos' in edited));
   assert.deepEqual(others(edited, 1), []);
@@ -59,8 +64,19 @@ try {
   assert.deepEqual(others(detail, 3), []);
   const human = await invokeOperation(registry, 'neo.ask.read', { askId: opened.ask.id }, { source: 'rpc', principal: LOCAL_RPC_PRINCIPAL });
   assert.equal(human.kind, 'completed');
-  const card = (human as { value: { entry: { todos: { instruction: string | null }[] } } }).value;
+  const card = (human as { value: { entry: { state: string; questions: { state: string }[]; todos: { id: string; instruction: string | null; statusCodes?: { code: string }[] }[] } } }).value;
+  assert.equal(card.entry.state, 'doing');
+  assert(card.entry.todos.find((todo) => todo.id === ids[0])?.statusCodes?.some((status) => status.code === 'todo.held'));
+  assert.equal(card.entry.questions.filter((question) => question.state === 'open').length, 0);
   assert.equal(card.entry.todos.filter((todo) => todo.instruction?.startsWith('Instruction ')).length, 11);
+  store.askQuestion('pending', opened.ask.id, { kind: 'reply', text: 'What next?', todoId: ids[2], options: null, multiple: false, yesLabel: null, noLabel: null }, Date.now());
+  const refusal = await handler({ name: 'neo.todo.hold', input: { todoId: ids[2], reason: 'Wait.' } });
+  const refused = JSON.parse(refusal.content[0].text);
+  assert.equal(refused.ok, false);
+  assert.match(refused.reason, /already_waiting/);
+  const released = await agent('neo.todo.hold', { todoId: ids[0], reason: null });
+  assert.equal(released.todo.state, 'todo');
+  assert.equal(released.todo.blockedBy, null);
   const sizes = { fullTodoList: fullList, hold: bytes(held), edit: bytes(edited), agentAskRead: bytes(entry), todoRead: bytes(detail), humanAskRead: bytes(card) };
   writeFileSync(join(run, 'evidence/sizes.json'), `${JSON.stringify(sizes, null, 2)}\n`);
   writeFileSync(join(run, 'evidence/agent-ask-read.json'), `${JSON.stringify(entry, null, 2)}\n`);

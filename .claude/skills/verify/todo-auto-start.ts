@@ -1,3 +1,4 @@
+import { seedHistoricalAsk } from './accepted-ask-fixtures.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
@@ -224,7 +225,8 @@ try {
       store.askQuestion(id, askId, { text: 'Which release?', kind: 'reply', options: null, multiple: false, noLabel: null, yesLabel: null }, Date.now());
       return id;
     };
-    const opened = await call('neo.ask.open', { title: 'Chain', request: 'Run the plan in order.', todos: [
+    seedHistoricalAsk(store, root, { title: 'Chain', request: 'Run the plan in order.' });
+    const opened = await call('neo.ask.propose', { title: 'Chain', request: 'Run the plan in order.', todos: [
       { ...step('chain-1'), after: [] },
       { ...step('chain-2', 'restart'), after: [0] },
       { ...step('chain-3', 'blocked'), after: [1] },
@@ -237,7 +239,7 @@ try {
     assert.deepEqual(open(first), []);
     assert.deepEqual([state(first, one.id), state(first, two.id), state(first, three.id)], ['doing', 'todo', 'todo']);
     assert.equal(starts(), 1);
-    await call('neo.todo.hold', { todoId: held.id, reason: 'Human paused this step.' });
+    await call('neo.todo.hold', { todoId: held.id, reason: 'Human paused this step.', decision: true });
     const unapproved = seedUnapproved(one.askId);
     app!.db.getDatabase().prepare('UPDATE neo_todos SET approved_at = NULL WHERE id = ?').run(unapproved.id);
     const unrelated = reply(one.askId);

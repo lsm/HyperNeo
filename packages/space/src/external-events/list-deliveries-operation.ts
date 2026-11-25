@@ -137,7 +137,7 @@ const LIST_DELIVERIES_DESCRIPTION =
   'List recent external-event deliveries for a workflow run with delivery state and event essence. Defaults to the calling worker own run, or to the deliveries made to a calling long-horizon agent or direct task worker; pass workflowRunId to inspect another run in the same Space. MCP callers are scoped to their own Space; RPC callers pass workflowRunId; omitted spaceId defaults to their trusted caller Space. scope reports the Space that answered. Rejects caller_denied without an admitted Space scope and run_unresolved when no workflow run can be determined.';
 
 export function createListDeliveriesOperation(events: ListDeliveriesDependencies) {
-  const list = (superpipe({ events })('list-external-event-deliveries') as PipelineAPI)
+  const list = (superpipe({ events })('event.external.delivery.list') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitDeliveryReader, ['input', 'caller'], 'result:outcome')
     .pipe(resolveDeliveryScope, ['outcome', 'input', 'events', 'caller'], 'result:outcome')

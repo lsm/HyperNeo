@@ -1,7 +1,14 @@
 import { neoToolDescription } from '@hyperneo/prompts';
+import { Logger } from '../logger.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
+import type { Database as RawDatabase } from '../../storage/sqlite-compat.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import {
+  workStartedSessionReads,
+  workStartedSessionWrites,
+} from '../../storage/repositories/work-started-sessions-worker.ts';
 import { isNeoConversationSession } from './publication-read-operation.ts';
 import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import {
@@ -28,32 +35,58 @@ type Deps = WorkVerbDeps & { db: Database };
 type ArchiveRoute = { daemon: string } | { local: NonNullable<WorkAdapter['archive']> };
 
 export const NEO_TODO_RELEASE_PRINCIPAL = 'neo.todo.release';
+const log = new Logger('neo-session-archive');
 
-export function admitSessionArchive(ref: WorkRef, caller: OperationCaller, db: Database) {
+function admitArchiveCaller(ref: WorkRef, caller: OperationCaller, db: RawDatabase) {
   const release = caller.source === 'internal' && caller.principal === NEO_TODO_RELEASE_PRINCIPAL;
   const binding = caller.sessionId
-    ? new NeoRepository(db.getDatabase()).getBindingBySession(caller.sessionId)
+    ? new NeoRepository(db).getBindingBySession(caller.sessionId)
     : null;
   if (!release && !isLocalUser(caller) && !isNeoConversationSession(caller, binding))
     return reject('human_only', 'This action needs the user or a bound Neo session.');
-  const todo = new NeoTodoSessionRepository(db.getDatabase()).doingTodoOn(
+  const todo = new NeoTodoSessionRepository(db).doingTodoOn(
     ref,
     null,
-    release ? ['todo', 'doing', 'blocked', 'failed'] : ['doing']
+    release ? ['todo', 'doing', 'blocked'] : ['doing']
   );
-  return todo
-    ? reject(
-        'live_todo',
-        `Todo "${todo.title}" is still working in this session; finish or drop it first.`
-      )
-    : null;
+  if (todo)
+    return reject(
+      'live_todo',
+      `Todo "${todo.title}" is still working in this session; finish or drop it first.`
+    );
+  return null;
 }
+
+export function admitSessionArchive(
+  ref: WorkRef,
+  caller: OperationCaller,
+  db: Database,
+  startedByUs: boolean
+) {
+  const refused = admitArchiveCaller(ref, caller, db.getDatabase());
+  if (refused) return refused;
+  if (!isLocalUser(caller) && !startedByUs)
+    return reject('not_started_by_us', 'This session was not started by the daemon.');
+  return null;
+}
+
+const readStartedByUs = (
+  route: ArchiveRoute,
+  ref: WorkRef,
+  caller: OperationCaller,
+  raw: RawDatabase
+) =>
+  'local' in route && !isLocalUser(caller)
+    ? gatewayFor(raw).call(workStartedSessionReads, 'startedByUs', ref)
+    : true;
 
 async function archiveSession(
   route: ArchiveRoute,
   ref: WorkRef,
   caller: OperationCaller,
-  deps: Deps
+  deps: Deps,
+  started: boolean,
+  raw: RawDatabase
 ): Promise<Archived> {
   if ('daemon' in route)
     return forwardWork(
@@ -66,7 +99,20 @@ async function archiveSession(
       deps.remote
     );
   try {
-    return await route.local(ref, () => admitSessionArchive(ref, caller, deps.db));
+    const result = await route.local(ref, () => admitSessionArchive(ref, caller, deps.db, started));
+    if (result.ok) {
+      try {
+        await gatewayFor(raw).call(
+          workStartedSessionWrites,
+          'recordArchived',
+          ref,
+          caller.principal === NEO_TODO_RELEASE_PRINCIPAL ? 'todo release' : 'archive requested'
+        );
+      } catch (error) {
+        log.warn('Archive provenance write failed', ref, error);
+      }
+    }
+    return result;
   } catch (error) {
     return reject('unreachable', error instanceof Error ? error.message : String(error));
   }
@@ -74,12 +120,13 @@ async function archiveSession(
 
 const runArchive = (superpipe({})('neo.session.archive') as PipelineAPI)
   .input(['ref', 'caller', 'deps'])
+  .pipe((deps: Deps) => deps.db.getDatabase(), ['deps'], 'raw')
   .pipe(
-    (ref: WorkRef, caller: OperationCaller, deps: Deps) => {
-      const refused = admitSessionArchive(ref, caller, deps.db);
+    (ref: WorkRef, caller: OperationCaller, raw: RawDatabase) => {
+      const refused = admitArchiveCaller(ref, caller, raw);
       return refused ? { reason: refused } : { value: ref };
     },
-    ['ref', 'caller', 'deps'],
+    ['ref', 'caller', 'raw'],
     'result:outcome'
   )
   .pipe(
@@ -87,7 +134,16 @@ const runArchive = (superpipe({})('neo.session.archive') as PipelineAPI)
     ['outcome', 'deps'],
     'result:outcome'
   )
-  .pipe(archiveSession, ['outcome', 'ref', 'caller', 'deps'], 'outcome')
+  .pipe(readStartedByUs, ['outcome', 'ref', 'caller', 'raw'], 'started')
+  .pipe(
+    (route: ArchiveRoute, ref: WorkRef, caller: OperationCaller, deps: Deps, started: boolean) => {
+      const refused = 'local' in route ? admitSessionArchive(ref, caller, deps.db, started) : null;
+      return refused ? { reason: refused } : { value: route };
+    },
+    ['outcome', 'ref', 'caller', 'deps', 'started'],
+    'result:outcome'
+  )
+  .pipe(archiveSession, ['outcome', 'ref', 'caller', 'deps', 'started', 'raw'], 'outcome')
   .endAsync('outcome') as (ref: WorkRef, caller: OperationCaller, deps: Deps) => Promise<Archived>;
 
 export function createNeoSessionArchiveOperation(deps: Deps) {

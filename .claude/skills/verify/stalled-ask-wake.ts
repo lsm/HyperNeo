@@ -7,6 +7,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createCleanupHandler } from '../../../packages/daemon/src/lib/job-handlers/cleanup.handler.ts';
 import { createNeoService } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
+import { SessionGoalRepository } from '../../../packages/daemon/src/storage/repositories/session-goal-repository.ts';
 import { refreshNeoDriverWork } from '../../../packages/daemon/src/lib/neo/driver-refresh.ts';
 
 const run = resolve(process.argv[2]);
@@ -40,14 +41,14 @@ const root = 'neo:00000000-0000-4000-8000-000000008419';
 const idle = 'This ask has nothing in progress. Add the next todo, or settle it.';
 const finished = 'All todos are finished: write the outcome with neo.ask.settle, or add the next todo.';
 const told = (queue: 'mailbox' | 'neo_notes') => (app!.db.getDatabase().prepare("SELECT payload FROM job_queue WHERE queue=? ORDER BY created_at, rowid").all(queue) as { payload: string }[]).map((row) => JSON.parse(row.payload) as { to: { sessionId: string }; messageUuid: string; message: { message: { content: string } } }).filter((input) => input.message.message.content.startsWith('Ask: '));
-const check = (name: string, digests: number, wakes = 0) => {
+const check = (name: string, digests: number, wakes = 0, idleAsks = ['stalled'], finishedAsks = ['finished']) => {
   const rows = { digests: told('neo_notes'), wakes: told('mailbox') };
   (evidence.checks as unknown[]).push({ name, clock, rows });
   assert.equal(rows.digests.length, digests, name);
   assert.equal(rows.wakes.length, wakes, name);
   for (const input of [...rows.digests, ...rows.wakes]) assert.equal(input.to.sessionId, root);
-  for (const input of rows.digests) assert.equal(input.message.message.content, `Ask: stalled (stalled)\n${idle}`);
-  for (const input of rows.wakes) assert.equal(input.message.message.content, `Ask: finished (finished)\n${finished}`);
+  for (const input of rows.digests) assert(idleAsks.some((id) => input.message.message.content === `Ask: ${id} (${id})\n${idle}`), name);
+  for (const input of rows.wakes) assert(finishedAsks.some((id) => input.message.message.content === `Ask: ${id} (${id})\n${finished}`), name);
 };
 try {
   await open();
@@ -58,7 +59,7 @@ try {
     if (id === 'settled') service!.todos.settleAsk(ask, 'done', 'Settled', at);
     if (id === 'question') service!.todos.askQuestion('q', id, { text: 'Choose', kind: 'yesno', options: null, multiple: false, noLabel: 'No', yesLabel: 'Yes', confirm: null, document: null, replyTo: [], todoId: null, artifacts: [] }, at);
     if (id === 'blocked') service!.todos.updateTodo(service!.todos.addTodo('blocked-step', id, { title: 'Step', doneWhen: 'Done', check: null, instruction: null, named: null }, at), { state: 'blocked', blockedBy: 'needs-human', blockedReason: 'Needs a decision' }, at);
-    if (id === 'failed') service!.todos.updateTodo(service!.todos.addTodo('failed-step', id, { title: 'Step', doneWhen: 'Done', check: null, instruction: null, named: null }, at), { state: 'failed', reason: 'Synthetic failure' }, at);
+    if (id === 'failed') service!.todos.updateTodo(service!.todos.addTodo('failed-step', id, { title: 'Step', doneWhen: 'Done', check: null, instruction: null, named: null }, at), { state: 'blocked', blockedBy: 'failure', blockedReason: 'Synthetic failure' }, at);
   }
   clock = at + 2 * hour - 1;
   await refresh(); check('before threshold', 0);
@@ -86,6 +87,16 @@ try {
   clock += 60_000;
   service!.todos.recordAskOutcome('finished', 'Shipped', clock);
   await refresh(); check('writing the outcome does not wake again', 0, 1);
+  const goals = new SessionGoalRepository(app!.db.getDatabase());
+  const goal = goals.create(root, { title: 'Synthetic goal' }, clock);
+  for (const id of ['goal-finished', 'goal-empty']) service!.todos.openAsk({ id, goalId: goal.id, sessionId: root, projectId: null, originMessageId: null, title: id, request: 'Synthetic work', createdAt: clock });
+  service!.todos.updateTodo(service!.todos.addTodo('goal-step', 'goal-finished', { title: 'Step', doneWhen: 'Done', check: null, instruction: null, named: null }, clock), { state: 'done' }, clock);
+  clock += 2 * hour;
+  await refresh(); check('asks of an active goal are not told', 0, 1);
+  goals.update(goals.get(goal.id)!, { status: 'paused' }, clock);
+  await refresh(); check('asks of a paused goal are not told', 0, 1);
+  goals.update(goals.get(goal.id)!, { status: 'completed' }, clock);
+  await refresh(); check('asks of a completed goal are told', 1, 2, ['goal-empty'], ['finished', 'goal-finished']);
   evidence.askColumns = (app!.db.getDatabase().prepare('PRAGMA table_info(neo_asks)').all() as { name: string }[]).map((column) => column.name);
   assert(!(evidence.askColumns as string[]).includes('stalled_wake_at'));
   evidence.passed = true;

@@ -18,7 +18,7 @@ import {
 } from '../../../../src/lib/drivers/worker-sandbox';
 import { withSdkTeardownGateway } from '../../../helpers/mock-sdk-teardown-gateway';
 import { writeThroughRepo } from '../../../helpers/sdk-message-writes';
-import { workerWorkLocations } from '../../../../src/lib/work-locations';
+import { workerWorkKey, workerWorkLocations } from '../../../../src/lib/work-locations';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 
 mock.module('@hyperneo/shared/sdk/type-guards', () => ({
@@ -205,7 +205,10 @@ afterEach(() => {
 
 function sessionWithRemovableWorktree(id: string) {
   const worktreePath = mkdtempSync(join(tmpdir(), 'worker-session-tree-'));
-  const places = workerWorkLocations(worktreePath);
+  const places = {
+    ...workerWorkLocations(worktreePath),
+    evidence: join(workerDataDir, 'work', 'evidence', workerWorkKey(worktreePath)),
+  };
   for (const place of [places.builds, places.scratch, places.ghConfig, places.evidence]) {
     mkdirSync(place, { recursive: true });
     writeFileSync(join(place, 'synthetic'), 'synthetic');
@@ -222,7 +225,9 @@ function sessionWithRemovableWorktree(id: string) {
   };
 }
 
-function expectWorkFoldersReleased(places: ReturnType<typeof workerWorkLocations>) {
+function expectWorkFoldersReleased(
+  places: ReturnType<typeof workerWorkLocations> & { evidence: string }
+) {
   expect(existsSync(places.builds)).toBe(false);
   expect(existsSync(places.scratch)).toBe(false);
   expect(existsSync(places.ghConfig)).toBe(false);
@@ -1132,6 +1137,132 @@ describe('SessionLifecycle', () => {
     });
   });
 
+  describe('create uses the requested harness or provider default', () => {
+    const codexModel: ModelInfo = {
+      ...mockKimiModels[0],
+      id: 'gpt-5.5',
+      name: 'GPT-5.5',
+      alias: 'gpt-5.5',
+      provider: 'anthropic-codex',
+      providerAliases: ['gpt-5.5'],
+    };
+    const settings = (overrides: Record<string, unknown> = {}) =>
+      mock(() => ({
+        ...DEFAULT_GLOBAL_SETTINGS,
+        settingSources: ['user', 'project', 'local'],
+        oxapHub: { path: process.execPath, version: 'synthetic', sha256: '0'.repeat(64) },
+        ...overrides,
+      }));
+
+    let codexDefault: string | undefined;
+
+    beforeEach(() => {
+      codexDefault = 'oxap-codex';
+      setModelsCache(new Map([['global', [...mockKimiModels, codexModel]]]));
+      mockDb.getGlobalSettings = settings() as never;
+      (mockDb as unknown as { providers: unknown }).providers = {
+        getProviderByProviderId: (providerId: string) =>
+          providerId === 'anthropic-codex'
+            ? {
+                configJson: JSON.stringify({
+                  harness: codexDefault,
+                  harnessSettings: { executable: process.execPath },
+                }),
+              }
+            : null,
+      };
+    });
+
+    it('stores the provider harness on an OXAP chat and none on a Claude Code chat', async () => {
+      await lifecycle.create({ config: { provider: 'anthropic-codex', model: 'gpt-5.5' } });
+      await lifecycle.create({ config: { provider: 'anthropic', model: 'sonnet' } });
+      expect(createdSessions[0].config.harness).toBe('oxap-codex');
+      expect(createdSessions[1].config).not.toHaveProperty('harness');
+    });
+
+    it('honors an explicit SDK harness without requiring an OXAP hub', async () => {
+      mockDb.getGlobalSettings = settings({ oxapHub: undefined }) as never;
+      await lifecycle.create({
+        harness: 'sdk',
+        config: { provider: 'anthropic-codex', model: 'gpt-5.5' },
+      });
+      expect(createdSessions[0].config).not.toHaveProperty('harness');
+    });
+
+    it('uses saved OXAP settings for an override on an SDK default', async () => {
+      codexDefault = undefined;
+      await lifecycle.create({
+        harness: 'oxap-codex',
+        config: { provider: 'anthropic-codex', model: 'gpt-5.5' },
+      });
+      expect(createdSessions[0].config.harness).toBe('oxap-codex');
+    });
+
+    it('refuses an uninstalled OXAP provider default before saving the session', async () => {
+      mockDb.getGlobalSettings = settings({ oxapHub: undefined }) as never;
+      await expect(
+        lifecycle.create({ config: { provider: 'anthropic-codex', model: 'gpt-5.5' } })
+      ).rejects.toThrow('OXAP hub is not installed');
+      expect(createdSessions).toHaveLength(0);
+    });
+
+    it('refuses a client-sent harness and creates nothing', async () => {
+      await expect(
+        lifecycle.create({ config: { provider: 'anthropic', harness: 'oxap-codex' } })
+      ).rejects.toThrow(/harness/);
+      expect(createdSessions).toHaveLength(0);
+    });
+
+    it('refuses a global plan permission mode for an OXAP chat with no session mode', async () => {
+      mockDb.getGlobalSettings = settings({ permissionMode: 'plan' }) as never;
+      await expect(
+        lifecycle.create({ config: { provider: 'anthropic-codex', model: 'gpt-5.5' } })
+      ).rejects.toThrow(/on-request approval in the workspace; this restriction is not supported/);
+      await lifecycle.create({ config: { provider: 'anthropic', model: 'sonnet' } });
+      expect(createdSessions.map((session) => session.config.provider)).toEqual(['anthropic']);
+    });
+
+    it('refuses an explicit thinking level for an OXAP chat but not the global default', async () => {
+      await expect(
+        lifecycle.create({
+          config: { provider: 'anthropic-codex', model: 'gpt-5.5', thinkingLevel: 'think16k' },
+        })
+      ).rejects.toThrow(/OXAP Codex does not take a thinking level/);
+      expect(createdSessions).toHaveLength(0);
+      mockDb.getGlobalSettings = settings({ thinkingLevel: 'think16k' }) as never;
+      await lifecycle.create({ config: { provider: 'anthropic-codex', model: 'gpt-5.5' } });
+      expect(createdSessions.map((session) => session.config.harness)).toEqual(['oxap-codex']);
+    });
+
+    it('refuses coordinator mode for an OXAP chat, explicit or from the global default', async () => {
+      await expect(
+        lifecycle.create({
+          config: { provider: 'anthropic-codex', model: 'gpt-5.5', coordinatorMode: true },
+        })
+      ).rejects.toThrow(/this restriction is not supported/);
+      mockDb.getGlobalSettings = settings({ coordinatorMode: true }) as never;
+      await expect(
+        lifecycle.create({ config: { provider: 'anthropic-codex', model: 'gpt-5.5' } })
+      ).rejects.toThrow(/this restriction is not supported/);
+      expect(createdSessions).toHaveLength(0);
+    });
+
+    it('refuses an OXAP chat whose merged sandbox enables enforcement', async () => {
+      await expect(
+        lifecycle.create({
+          config: { provider: 'anthropic-codex', model: 'gpt-5.5', sandbox: { enabled: true } },
+        })
+      ).rejects.toThrow(/restriction is not supported/);
+      mockDb.getGlobalSettings = settings({
+        sandbox: { ...DEFAULT_GLOBAL_SETTINGS.sandbox, filesystem: { denyRead: ['/secret'] } },
+      }) as never;
+      await expect(
+        lifecycle.create({ config: { provider: 'anthropic-codex', model: 'gpt-5.5' } })
+      ).rejects.toThrow(/restriction is not supported/);
+      expect(createdSessions).toHaveLength(0);
+    });
+  });
+
   describe('update', () => {
     it('routes an absolute window edit through the cached session config handler', async () => {
       (mockSessionCache.has as ReturnType<typeof mock>).mockReturnValue(true);
@@ -1538,6 +1669,80 @@ describe('SessionLifecycle', () => {
         messageIds: ['db-deferred-no-job'],
         status: 'failed',
       });
+    });
+  });
+
+  describe('SDK transcripts of an archived or deleted session', () => {
+    const current = 'aaaaaaaa-0000-4000-8000-00000000000a';
+    const retired = 'aaaaaaaa-0000-4000-8000-00000000000b';
+    const bystander = 'bbbbbbbb-0000-4000-8000-00000000000c';
+    let root: string;
+    let workspace: string;
+    let projectDir: string;
+    const saved: Record<string, string | undefined> = {};
+    const file = (id: string) => join(projectDir, `${id}.jsonl`);
+    const line = (sessionId: string, text: string) =>
+      `${JSON.stringify({
+        type: 'user',
+        uuid: crypto.randomUUID(),
+        sessionId,
+        timestamp: new Date().toISOString(),
+        message: { role: 'user', content: [{ type: 'text', text }] },
+      })}\n`;
+
+    beforeEach(() => {
+      root = realpathSync(mkdtempSync(join(tmpdir(), 'lifecycle-sdk-')));
+      for (const key of ['CLAUDE_CONFIG_DIR', 'TEST_SDK_SESSION_DIR']) {
+        saved[key] = process.env[key];
+        process.env[key] = root;
+      }
+      workspace = join(root, 'workspace');
+      mkdirSync(workspace);
+      projectDir = join(root, 'projects', workspace.replace(/[/.]/g, '-'));
+      mkdirSync(projectDir, { recursive: true });
+      writeFileSync(file(current), line(current, 'current transcript'));
+      writeFileSync(file(retired), line(retired, 'retired transcript'));
+      writeFileSync(
+        file(bystander),
+        line(bystander, `worker archive-id (${current}, ${retired}) opened a PR`) +
+          line('archive-id', 'quoted record')
+      );
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+        id: 'archive-id',
+        workspacePath: workspace,
+        sdkSessionId: current,
+        metadata: { pastSdkSessionIds: [retired] },
+      });
+    });
+
+    afterEach(() => {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      rmSync(root, { recursive: true, force: true });
+    });
+
+    it('archive marks the current and retired transcripts archived and moves nothing', async () => {
+      const before = [current, retired, bystander].map((id) => readFileSync(file(id)));
+
+      await lifecycle.archiveResources('archive-id', 'ui_session_archive');
+
+      expect([current, retired, bystander].map((id) => readFileSync(file(id)))).toEqual(before);
+      const marked = [current, retired, bystander].map((id) =>
+        existsSync(join(projectDir, id, 'archived.json'))
+      );
+      expect(marked).toEqual([true, true, false]);
+    });
+
+    it('delete removes the current and retired transcripts and leaves the bystander', async () => {
+      const before = readFileSync(file(bystander));
+
+      await lifecycle.deleteResources('archive-id', 'ui_session_delete');
+
+      expect(existsSync(file(current))).toBe(false);
+      expect(existsSync(file(retired))).toBe(false);
+      expect(readFileSync(file(bystander))).toEqual(before);
     });
   });
 

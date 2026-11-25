@@ -9,8 +9,16 @@ import type {
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import type { Database } from '../sqlite-compat.ts';
 import type { SessionSchedule } from './session-schedule-repository.ts';
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { sessionGoalReviewReads } from './session-goal-review-read-worker.ts';
 
-type WakeSchedule = Pick<SessionSchedule, 'cadence' | 'nudgeEvery'>;
+type WakeSchedule = Pick<SessionSchedule, 'cadence' | 'nudgeEvery'> & {
+  reviewCadence?: SessionSchedule['cadence'];
+  noEffectReviewLimit?: number;
+  noEffectReviewCount?: number;
+  escalationReviewId?: string;
+  escalationQuestionId?: string;
+};
 
 const COLUMNS: Record<keyof SessionGoalPatch, string> = {
   title: 'title',
@@ -26,12 +34,14 @@ const COLUMNS: Record<keyof SessionGoalPatch, string> = {
   nextSteps: 'next_steps',
   mandateRef: 'mandate_ref',
   mandateRev: 'mandate_rev',
+  dailyRunLimit: 'daily_run_limit',
 };
 const JSON_FIELDS = new Set<keyof SessionGoalPatch>(['metrics', 'nextSteps']);
 
 const SELECT = `SELECT id, owner_session_id AS ownerSessionId, title, description, status, type,
   priority, metrics, done_test AS doneTest, summary, works_note AS worksNote, progress, next_steps AS nextSteps,
-  mandate_ref AS mandateRef, mandate_rev AS mandateRev, created_at AS createdAt,
+  mandate_ref AS mandateRef, mandate_rev AS mandateRev, daily_run_limit AS dailyRunLimit,
+  created_at AS createdAt,
   updated_at AS updatedAt, completed_at AS completedAt, revision FROM neo_goals`;
 
 type Row = Omit<SessionGoal, 'metrics' | 'nextSteps'> & { metrics: string; nextSteps: string };
@@ -69,6 +79,10 @@ export class SessionGoalRepository {
     ).map(toGoal);
   }
 
+  async listScheduled(): Promise<SessionGoal[]> {
+    return gatewayFor(this.db).call(sessionGoalReviewReads, 'scheduled');
+  }
+
   create(
     ownerSessionId: string,
     draft: SessionGoalDraft,
@@ -81,8 +95,8 @@ export class SessionGoalRepository {
         .prepare(
           `INSERT INTO neo_goals (id, owner_session_id, title, description, type, priority,
              metrics, done_test, summary, progress, next_steps, mandate_ref, mandate_rev,
-             created_at, updated_at, revision)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
+             daily_run_limit, created_at, updated_at, revision)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
         )
         .run(
           id,
@@ -98,6 +112,7 @@ export class SessionGoalRepository {
           JSON.stringify(draft.nextSteps ?? []),
           draft.mandateRef ?? null,
           draft.mandateRev ?? null,
+          draft.dailyRunLimit ?? 24,
           now,
           now
         );
@@ -221,15 +236,39 @@ export class SessionGoalRepository {
     return row ? { ...row, evidence: JSON.parse(row.evidence) } : null;
   }
 
-  listJournal(goalId: string, before: string | null, limit: number): GoalJournalEntry[] {
+  async metricSnapshot(goalId: string, runId?: string) {
+    return gatewayFor(this.db).call(sessionGoalReviewReads, 'metric', goalId, runId);
+  }
+
+  listJournal(
+    goalId: string,
+    before: string | null,
+    limit: number,
+    reviewsAfter?: string | null
+  ): GoalJournalEntry[] {
     return (
       this.db
         .prepare(
-          `${JOURNAL_SELECT} WHERE goal_id = ? AND (? IS NULL OR (created_at, rowid) <
+          reviewsAfter !== undefined
+            ? `${JOURNAL_SELECT} WHERE goal_id = ?
+           AND run_id LIKE 'goal-review:%' AND rowid > COALESCE(
+             (SELECT rowid FROM goal_journal WHERE goal_id = ? AND id = ?), 0)
+           ORDER BY rowid DESC LIMIT ?`
+            : `${JOURNAL_SELECT} WHERE goal_id = ? AND (? IS NULL OR (created_at, rowid) <
              (SELECT created_at, rowid FROM goal_journal WHERE id = ?))
            ORDER BY created_at DESC, rowid DESC LIMIT ?`
         )
-        .all(goalId, before, before, limit) as JournalRow[]
+        .all(
+          goalId,
+          ...(reviewsAfter !== undefined ? [goalId, reviewsAfter] : [before, before]),
+          limit
+        ) as JournalRow[]
     ).map((row) => ({ ...row, evidence: JSON.parse(row.evidence) }));
+  }
+
+  async journalSinceReview(
+    goalId: string
+  ): Promise<{ entries: GoalJournalEntry[]; earlier: number; cursor: string }> {
+    return gatewayFor(this.db).call(sessionGoalReviewReads, 'journal', goalId);
   }
 }

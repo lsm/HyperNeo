@@ -1,6 +1,6 @@
 # Tracker mirror service sweep
 
-Run with Bun 1.4.2 from the repository root.
+Run with Bun 1.4.4 from the repository root.
 
 ```sh
 TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory .claude/skills/verify/tracker-foundation.ts

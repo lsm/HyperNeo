@@ -1,11 +1,10 @@
 [
   {
     "name": "list_windows",
-    "description": "List windows belonging to the authorized target app.",
+    "description": "List one app's windows by its pid. With no pid, list the windows of every app this todo may use, with titles and pids, without an app grant.",
     "inputSchema": {
       "type": "object",
       "properties": {
-        "app": { "type": "string" },
         "pid": { "type": "integer" },
         "session": { "type": "string" }
       },
@@ -14,7 +13,7 @@
   },
   {
     "name": "get_window_state",
-    "description": "Read the authorized target window as accessibility content or an image after the required grants are verified. Use fresh element handles for subsequent actions.",
+    "description": "Read the authorized target window as accessibility content or an image after the required grants are verified. Call this before any click, drag or other pointer action; their x and y are pixels in this screenshot (Retina pixels, not points). Use fresh element handles for subsequent actions.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -45,7 +44,7 @@
   },
   {
     "name": "click",
-    "description": "Click or focus an element or point inside the authorized target window. Secure and credential surfaces are refused.",
+    "description": "Click or focus an element or point inside the authorized target window. Call get_window_state first; x and y are pixels in its screenshot (Retina pixels, not points). Secure and credential surfaces are refused.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -64,7 +63,7 @@
   },
   {
     "name": "double_click",
-    "description": "Double-click inside the authorized target window after target and sensitive-surface checks.",
+    "description": "Double-click inside the authorized target window after target and sensitive-surface checks. Call get_window_state first; x and y are pixels in its screenshot (Retina pixels, not points).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -81,7 +80,7 @@
   },
   {
     "name": "right_click",
-    "description": "Open a context menu inside the authorized target window after target and sensitive-surface checks.",
+    "description": "Open a context menu inside the authorized target window after target and sensitive-surface checks. Call get_window_state first; x and y are pixels in its screenshot (Retina pixels, not points).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -98,7 +97,7 @@
   },
   {
     "name": "drag",
-    "description": "Drag between points inside the authorized target window after target and sensitive-surface checks.",
+    "description": "Drag between points inside the authorized target window after target and sensitive-surface checks. Call get_window_state first; x and y are pixels in its screenshot (Retina pixels, not points).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -135,7 +134,7 @@
   },
   {
     "name": "press_key",
-    "description": "Send a key to the authorized target window after checking the focused field and requested effect. Credential entry, clipboard shortcuts and process-launch shortcuts are refused.",
+    "description": "Send a key to the authorized target window after checking the focused field and requested effect. On macOS, * is not a key name. For * and other shifted symbols, send the base key with shift in modifiers (for example, key 8 with shift for * on a US keyboard). Unknown key names return driver_error. Credential entry, clipboard shortcuts and process-launch shortcuts are refused.",
     "inputSchema": {
       "type": "object",
       "properties": {

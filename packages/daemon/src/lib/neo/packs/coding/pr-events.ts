@@ -12,7 +12,17 @@ import {
   type CodingPrTransition,
   planCodingLedgerTurnOwner,
 } from './pr-ledger.ts';
-import { CODING_MANUAL_MERGE_NEXT_STEP, codingPrUrl, type CodingSweepDeps } from './pr-sweep.ts';
+import {
+  CODING_MANUAL_MERGE_NEXT_STEP,
+  codingDeliveryKey,
+  codingFailingReviewKey,
+  codingFailingReviewReceiptKey,
+  codingFailingText,
+  CodingPrSweepRepository,
+  codingReviewKey,
+  codingPrUrl,
+  type CodingSweepDeps,
+} from './pr-sweep.ts';
 import {
   codingPrMayBeInRunningTurn,
   planCodingUnclaimedPrs,
@@ -25,15 +35,27 @@ const log = new Logger('NeoPrSweep');
 const head = (row: CodingPrTransition) => row.head.slice(0, 7);
 const pr = (row: CodingPrTransition) => `${row.repo}#${row.number} "${row.title}"`;
 
-export function planCodingPrEvent(row: CodingPrTransition): { key: string; text: string } | null {
+export function planCodingPrEvent(
+  row: CodingPrTransition
+): { key: string; text: string; findings?: string[] } | null {
+  const findings = ['changes_requested', 'failing'].includes(row.state) ? (row.findings ?? []) : [];
   const owner = (text: string) => ({
-    key: `neo-pr-event:${row.repo}#${row.number}:${row.head}:${row.state}`,
+    key:
+      row.state === 'failing' && findings.length
+        ? codingFailingReviewKey({ ...row, findings })
+        : codingDeliveryKey(
+            `neo-pr-event:${row.repo}#${row.number}:${row.head}:${row.state}${codingReviewKey(findings)}`
+          ),
     text: `${pr(row)} ${text}`,
+    ...(findings.length ? { findings } : {}),
   });
   if (row.state === 'merged') return owner(`was merged on head ${head(row)}.`);
   if (row.state === 'closed') return owner(`was closed without merging on head ${head(row)}.`);
   if (row.state === 'failing')
-    return owner(`has failing CI on head ${head(row)}. Fix it and push.`);
+    return {
+      ...owner(`has failing CI on head ${head(row)}. Fix it and push.`),
+      text: codingFailingText(row),
+    };
   if (row.state === 'changes_requested')
     return owner(`has requested changes on head ${head(row)}. Address the review and push.`);
   if (row.state === 'dirty')
@@ -55,6 +77,14 @@ export class CodingPrEventRepository {
   constructor(private readonly db: Database) {}
 
   private delivery: Promise<void> = Promise.resolve();
+
+  reviewSent(key: string): Promise<boolean> {
+    return new CodingPrSweepRepository(this.db).reviewSentLater(key);
+  }
+
+  markReview(key: string): Promise<void> {
+    return new CodingPrSweepRepository(this.db).markReviewLater(key);
+  }
 
   exclusive(deliver: () => Promise<void>): Promise<void> {
     const run = this.delivery.then(deliver, deliver);
@@ -167,11 +197,15 @@ export async function deliverCodingPrEvents(
         continue;
       }
       if (!owner) continue;
+      const review = row.state === 'failing' && !!event?.findings?.length;
+      const receipt = event && review ? codingFailingReviewReceiptKey(event.key, owner) : null;
       const told = event
-        ? await deps
-            .tell(owner, event.key, event.text, codingPrUrl(deps.host, row))
-            .catch(() => false)
+        ? (receipt !== null && (await repo.reviewSent(receipt))) ||
+          (await deps
+            .tell(owner, event.key, event.text, codingPrUrl(deps.host, row), event.findings)
+            .catch(() => false))
         : true;
+      if (told && receipt !== null) await repo.markReview(receipt);
       if (told) await repo.acceptEvent(row, owner);
       if (!event) continue;
       log.warn(

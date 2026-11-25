@@ -95,6 +95,7 @@ import {
   resolveConfig,
 } from './output-limiter-hook.ts';
 import type { QuestionInputOriginSource } from './question-input-origin.ts';
+import type { DesktopTurn } from '../desktop/host-dispatch.ts';
 import { awaitSDKCliPathForQuery, isRunningUnderBun } from './sdk-cli-resolver.js';
 import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
 
@@ -281,7 +282,10 @@ export function buildProviderSettings(
 
 export interface QueryOptionsBuilderContext {
   getGithubToken?(): Promise<string | null>;
-  getOperationMcpServer?(inputOrigin?: QuestionInputOriginSource): SdkMcpServerConfig;
+  getOperationMcpServer?(
+    inputOrigin?: QuestionInputOriginSource,
+    desktopTurn?: () => DesktopTurn | null
+  ): SdkMcpServerConfig;
   getSpaceBriefing?(): string | undefined;
   readonly session: Session;
   readonly settingsManager: SettingsManager;
@@ -433,6 +437,7 @@ export class QueryOptionsBuilder {
     askUserQuestionHook?: HookCallback;
     canUseTool?: CanUseTool;
     operationInputOrigin?: QuestionInputOriginSource;
+    desktopTurn?: () => DesktopTurn | null;
     session?: import('@hyperneo/shared').Session;
   }): Promise<Options> {
     const session = overrides?.session ?? this.ctx.session;
@@ -585,7 +590,7 @@ export class QueryOptionsBuilder {
     this.operationServer =
       config.operationTools === false
         ? undefined
-        : this.ctx.getOperationMcpServer?.(overrides?.operationInputOrigin);
+        : this.ctx.getOperationMcpServer?.(overrides?.operationInputOrigin, overrides?.desktopTurn);
     const mergedMcpServers = this.computeEffectiveMcpServers(toolInputs, config);
 
     const queryOptions: Options = {

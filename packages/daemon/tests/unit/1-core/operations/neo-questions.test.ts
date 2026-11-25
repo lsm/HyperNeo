@@ -18,6 +18,7 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync, chmodSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { publishHandoff, publicHandoffReference } from '../../../../src/lib/handoffs/outbox.ts';
+import { proposalQuestionId } from '../../../../src/lib/neo/proposal.ts';
 
 const owner: OperationCaller = { source: 'mcp', sessionId: 'neo-a', role: 'neo' };
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
@@ -98,6 +99,44 @@ function setup(
 }
 
 describe('neo.question operations', () => {
+  test('a relay returns its outcome without entering the manual question route', async () => {
+    const h = setup();
+    try {
+      const op = h.ops['neo.question.ask'];
+      const input = op.inputSchema.parse({
+        kind: 'relay',
+        todoId: h.fix.id,
+        text: 'Proceed with the worker plan?',
+        options: ['Proceed', 'Revise'],
+      });
+      expect(await op.execute(input, owner)).toEqual({
+        ok: false,
+        reason: 'no_worker_question: this todo has no worker question to relay.',
+      });
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('refuses a desktop control card; the Mac asks per app instead', async () => {
+    const h = setup();
+    try {
+      const receipt = await h
+        .call('neo.question.ask', {
+          askId: 'ask',
+          todoId: h.fix.id,
+          kind: 'desktop_control',
+          app: 'Calendar',
+          text: 'Allow desktop control for Calendar?',
+        })
+        .catch((error: unknown) => ({ ok: false, reason: String(error) }));
+      expect(receipt).toMatchObject({ ok: false });
+      expect(h.store.listQuestions('ask')).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('retains an owner-verified HTML handoff and refuses altered references without replacing the card', async () => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), 'question-handoff-')));
     const previous = process.env.HYPERNEO_DATA_DIR;
@@ -578,54 +617,51 @@ describe('neo.question operations', () => {
     const reply = await asked({ kind: 'reply', text: 'What should it say?' });
     await call('neo.question.answer', { questionId: reply.id, answer: 'Say hi' }, human);
     expect(told).toEqual([
-      'The human answered "Use HyperNeo dev-1 instead?": A (Use HyperNeo dev-1).',
-      'The human answered "Which?": B (B).',
+      'The human answered "Use HyperNeo dev-1 instead?": 1 (Use HyperNeo dev-1).',
+      'The human answered "Which?": 2 (B).',
       'The human answered "Which ones?": none.',
       'The human answered "What should it say?": Say hi.',
     ]);
   });
 
-  test('choice labels map letters to options and persist; invalid labels are refused', async () => {
+  test('choice options are numbered 1, 2, 3 in order', async () => {
     const { call, asked, store, told } = setup();
     const card = await asked({
       kind: 'choice',
-      text: 'A keeps the list, B switches to cards. Which approach?',
-      options: ['Switch to cards', 'Keep the list'],
-      labels: ['B', 'A'],
+      text: 'Which layout?',
+      options: ['Keep the list', 'Switch to cards'],
     });
-    expect(store.getQuestion(card.id)?.labels).toEqual(['B', 'A']);
+    expect(store.getQuestion(card.id)).not.toHaveProperty('labels');
     await call('neo.question.answer', { questionId: card.id, answer: 'Switch to cards' }, human);
-    expect(told).toEqual([
-      'The human answered "A keeps the list, B switches to cards. Which approach?": B (Switch to cards).',
-    ]);
-    await expect(
-      call('neo.question.ask', {
-        askId: 'ask',
-        kind: 'choice',
-        text: 'Duplicate?',
-        options: ['One', 'Two'],
-        labels: ['A', 'A'],
-      })
-    ).rejects.toThrow('labels must be distinct uppercase letters A–F.');
-    await expect(
-      call('neo.question.ask', {
-        askId: 'ask',
-        kind: 'choice',
-        text: 'Beyond F?',
-        options: ['One', 'Two'],
-        labels: ['X', 'Y'],
-      })
-    ).rejects.toThrow();
-    expect(
-      await call('neo.question.ask', {
-        askId: 'ask',
-        kind: 'choice',
-        text: 'Wrong count?',
-        options: ['One', 'Two', 'Three'],
-        labels: ['A', 'B'],
-      })
-    ).toMatchObject({ ok: false, reason: 'labels_count: supply exactly one label per option.' });
-    expect(store.listQuestions('ask').filter((q) => q.state === 'open')).toHaveLength(0);
+    expect(told).toEqual(['The human answered "Which layout?": 2 (Switch to cards).']);
+  });
+
+  test('choice options carry their own detail and a recommended tag', async () => {
+    const { call, asked, store } = setup();
+    const card = await asked({
+      kind: 'choice',
+      text: 'Which hotel?',
+      options: ['Park Hyatt', 'Hotel Gracery'],
+      details: { 'Hotel Gracery': '12 minutes from the station, 1,600 a night' },
+      recommended: 'Hotel Gracery',
+    });
+    expect(store.getQuestion(card.id)).toMatchObject({
+      optionDetails: { 'Hotel Gracery': '12 minutes from the station, 1,600 a night' },
+      recommended: 'Hotel Gracery',
+      answer: null,
+    });
+    for (const extra of [{ details: { Gracery: 'cheap' } }, { recommended: 'Option B' }])
+      expect(
+        await call('neo.question.ask', {
+          askId: 'ask',
+          kind: 'choice',
+          text: 'Which hotel?',
+          options: ['Park Hyatt', 'Hotel Gracery'],
+          replaces: card.id,
+          ...extra,
+        })
+      ).toMatchObject({ ok: false, reason: expect.stringContaining('option_unknown') });
+    expect(store.getQuestion(card.id)?.state).toBe('open');
   });
 
   test('only the human answers', async () => {
@@ -738,11 +774,82 @@ describe('neoQuestionAnsweredNote', () => {
         replacedBy: null,
         createdAt: 1,
       })
-    ).toBe('The human answered "Which layout?": A (List), C (Table).');
+    ).toBe('The human answered "Which layout?": 1 (List), 3 (Table).');
+  });
+
+  test('says a yes/no answer with its label, and plainly when the card had none', () => {
+    const card = {
+      id: 'q',
+      askId: 'a',
+      text: 'Send it?',
+      kind: 'yesno' as const,
+      options: null,
+      multiple: false,
+      noLabel: null,
+      yesLabel: null,
+      todos: [],
+      state: 'answered' as const,
+      answer: 'yes',
+      answeredBy: 'button' as const,
+      answeredAt: 1,
+      retiredReason: null,
+      replacedBy: null,
+      createdAt: 1,
+    };
+    expect(neoQuestionAnsweredNote(card)).toBe('The human answered "Send it?": yes.');
+    expect(neoQuestionAnsweredNote({ ...card, answer: 'no' })).toBe(
+      'The human answered "Send it?": no.'
+    );
+    expect(neoQuestionAnsweredNote({ ...card, yesLabel: '发出去' })).toBe(
+      'The human answered "Send it?": yes (发出去).'
+    );
   });
 });
 
 describe('neo.question.retire and replaces', () => {
+  test.each(['proposal', 'relay'] as const)(
+    'the human can still answer a %s work decision after Neo tries to retire or replace it',
+    async (kind) => {
+      const { db, store, call } = setup();
+      try {
+        const card = store.askQuestion(
+          kind === 'proposal' ? proposalQuestionId('ask') : 'relay-card',
+          'ask',
+          {
+            text: 'Proceed?',
+            kind: 'yesno',
+            options: null,
+            multiple: false,
+            noLabel: 'No',
+            yesLabel: 'Yes',
+            ...(kind === 'relay' ? { cause: 'relay-session-proposal' } : {}),
+          },
+          1
+        );
+        const refused = { ok: false, reason: expect.stringContaining('human_decision_required:') };
+        expect(
+          await call('neo.question.ask', {
+            askId: 'ask',
+            kind: 'reply',
+            text: 'Replace?',
+            replaces: card.id,
+          })
+        ).toMatchObject(refused);
+        expect(
+          await call('neo.question.retire', { questionId: card.id, reason: 'No longer needed' })
+        ).toMatchObject(refused);
+        expect(store.getQuestion(card.id)?.state).toBe('open');
+        expect(
+          await call('neo.question.answer', { questionId: card.id, answer: 'yes' }, human)
+        ).toMatchObject({
+          ok: true,
+          question: { state: 'answered', answer: 'yes', answeredBy: 'button' },
+        });
+      } finally {
+        db.close();
+      }
+    }
+  );
   test('a card on a todo waiting for the human closes only with its todo', async () => {
     const { store, call, asked, fix: todo } = setup();
     const card = await asked({ kind: 'reply', text: 'Approve the merge?', todoId: todo.id });
@@ -759,6 +866,25 @@ describe('neo.question.retire and replaces', () => {
     store.updateTodo(store.getTodo(todo.id)!, { state: 'removed' }, Date.now());
     expect(
       await call('neo.question.retire', { questionId: card.id, reason: 'merged' })
+    ).toMatchObject({ ok: true, question: { state: 'retired' } });
+  });
+
+  test('a card on a todo with no work and no check closes only with its todo', async () => {
+    const { store, call, asked } = setup();
+    const reply = store.addTodo(
+      't3',
+      'ask',
+      { doneWhen: 'Replied', check: null, instruction: null, named: null, title: 'Reply' },
+      1
+    );
+    const card = await asked({ kind: 'reply', text: 'Split it?', todoId: reply.id });
+    expect(await call('neo.question.retire', { questionId: card.id, reason: 'moot' })).toEqual({
+      ok: false,
+      reason: expect.stringContaining('todo_waiting'),
+    });
+    store.updateTodo(store.getTodo(reply.id)!, { state: 'removed' }, Date.now());
+    expect(
+      await call('neo.question.retire', { questionId: card.id, reason: 'moot' })
     ).toMatchObject({ ok: true, question: { state: 'retired' } });
   });
 
@@ -937,16 +1063,18 @@ describe('question reference gates warn or omit instead of refusing', () => {
 });
 
 describe('todo-owned question cards', () => {
-  test('retains explicit todo ownership and retires only settled todo cards', async () => {
+  test('retains a linked card when done and retires it when removed', async () => {
     const h = setup();
     try {
       const bound = await h.asked({ kind: 'reply', text: 'Which rows?', todoId: h.fix.id });
       const other = h.seeded('Which style?', h.rows.id);
       const general = h.seeded('Anything else?');
       expect(bound).toMatchObject({ todoId: h.fix.id });
-      h.store.updateTodo(h.fix, { state: 'failed' }, 3);
+      h.store.updateTodo(h.fix, { state: 'blocked', blockedBy: 'failure' }, 3);
       expect(h.store.getQuestion(bound.id)?.state).toBe('open');
       h.store.updateTodo(h.fix, { state: 'done' }, 4);
+      expect(h.store.getQuestion(bound.id)?.state).toBe('open');
+      h.store.updateTodo(h.store.getTodo(h.fix.id)!, { state: 'removed' }, 5);
       expect(h.store.getQuestion(bound.id)?.state).toBe('retired');
       expect(h.store.getQuestion(other.id)?.state).toBe('open');
       expect(h.store.getQuestion(general.id)?.state).toBe('open');
@@ -954,7 +1082,7 @@ describe('todo-owned question cards', () => {
       h.db.close();
     }
   });
-  test('recompute retires cards for missing or already settled todos without a new state write', async () => {
+  test('recompute retires missing-todo cards and preserves done-todo cards without a new state write', async () => {
     const h = setup();
     try {
       const gone = await h.asked({ kind: 'reply', text: 'Gone?', todoId: h.fix.id });
@@ -969,7 +1097,7 @@ describe('todo-owned question cards', () => {
         async () => {}
       );
       expect(h.store.getQuestion(gone.id)?.state).toBe('retired');
-      expect(h.store.getQuestion(done.id)?.state).toBe('retired');
+      expect(h.store.getQuestion(done.id)?.state).toBe('open');
     } finally {
       h.db.close();
     }

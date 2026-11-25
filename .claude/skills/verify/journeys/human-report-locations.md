@@ -4,9 +4,8 @@ Use the isolated metadata wrapper and resource guard in SKILL.md with
 `human-report-locations.ts`. The helper owns a random-port daemon, fresh HOME and
 hidden data directory, and a refusing GitHub stub. No model or real key is used.
 
-It creates a coding todo with assigned completion evidence. A second todo that
-tries to use the human report path as its completion proof must be refused by
-neoEvidenceRefusal. The report itself is saved in the synthetic user's
+It seeds a legacy coding todo with its hidden completion evidence. A new coding
+todo using evidence is refused, and a non-coding todo can use a visible report path. The report itself is saved in the synthetic user's
 HyperNeo/Travel directory and recorded through the actual Neo todo-edit door.
 
 The real completion runner starts with a missing proof, observes it after it is
@@ -15,7 +14,7 @@ that hidden path in evidence and status. After the fix, status is Done and the
 internal evidence sentence is absent, while the raw proof, check and report
 remain intact. The actual file reader refuses the hidden proof and opens the
 human report. The delivered runtime-location brief names the report folder and
-keeps completion/runtime output private.
+omits a separate completion-evidence instruction.
 
 Build web for the current head and add `--browser /absolute/fresh/control-dir` to
 the helper for the visual journey. Use its browser.json loopback proof-entry URL.

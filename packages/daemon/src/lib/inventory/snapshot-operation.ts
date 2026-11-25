@@ -92,7 +92,7 @@ export function presentDaemonSnapshot(
 
 export function createDaemonSnapshotOperation(deps: InventoryDependencies) {
   const snapshot = (
-    superpipe({ ...deps, now: deps.now ?? Date.now })('daemon-snapshot') as PipelineAPI
+    superpipe({ ...deps, now: deps.now ?? Date.now })('daemon.snapshot') as PipelineAPI
   )
     .input(['input', 'caller'])
     .pipe(admitSnapshotCaller, ['input', 'caller'], 'result:snapshot')

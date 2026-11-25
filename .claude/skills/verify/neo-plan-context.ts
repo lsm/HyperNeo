@@ -206,6 +206,13 @@ try {
     'Open asks are never dropped from the real MCP compact snapshot'
   );
   assert.equal(reads, 0, 'Snapshot read ran target SQL on main');
+  for (const [id, topic] of [
+    ['picked-lower', 'kids'],
+    ['picked-upper', 'Kids'],
+  ])
+    prepare(
+      "INSERT INTO neo_asks(id,session_id,title,request,topic,status,created_at,updated_at) VALUES(?,?,?,?,?,'done',?,?)"
+    ).run(id, root, `Settled ${id}`, 'Synthetic settled pick', topic, Date.now(), Date.now());
   const facts = await store.read('planContext', true);
   const perTurnFacts = await store.read('planContext');
   assert(perTurnFacts.unanswered === undefined, 'A per-prompt read runs the unanswered scan');
@@ -267,6 +274,10 @@ try {
   assert(
     !compactContext.includes(cardAnsweredInput),
     'The session hook repeats a message a card already answered'
+  );
+  assert(
+    /\nTopics used in the last 30 days \(asks open or settled\): kids 2\n/i.test(compactContext),
+    'The session hook omits the folded 30-day topic list'
   );
   const longEntry = compactContext.slice(compactContext.indexOf(longInput));
   assert(longEntry.includes('(truncated'), 'A long unanswered message enters compaction uncapped');

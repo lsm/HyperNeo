@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
+import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 
 const [mode, directory] = process.argv.slice(2);
 const run = resolve(directory);
@@ -17,7 +18,7 @@ assert(!existsSync(join(run, 'data/daemon.db')));
 mkdirSync(join(run, 'evidence'), { recursive: true });
 mkdirSync(join(run, 'workspace'), { recursive: true });
 const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
-const socket = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+const socket = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`, { headers: { authorization: `Bearer ${await readLocalCredential()}` } } as never);
 const connected = new Promise<void>((done, fail) => { socket.onopen = () => done(); socket.onerror = () => fail(new Error('RPC connect failed')); });
 const report: Record<string, unknown> = { mode, port: app.server.port };
 let measuring = false;

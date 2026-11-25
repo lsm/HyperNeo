@@ -7,27 +7,30 @@ import type { NeoAttentionEvent } from './decide.ts';
 import { type NeoStepFacts, nextStepOwner } from './owner.ts';
 
 export type NeoStepRow = { todo: NeoTodo; facts: Omit<NeoStepFacts, 'todo'> };
+export type NeoStepRead = { todo: NeoTodo; facts: Omit<NeoStepFacts, 'todo' | 'now'> };
 type Facts = ReturnType<NeoTodoSessionRepository['neoStepFacts']>;
-type Limits = { running: number; perGroup: number };
+type Limits = { running: number; perGroup: number; hold?: string | null };
 
 const owner = ({ todo, facts }: NeoStepRow) => nextStepOwner({ ...facts, todo });
 
 export async function neoPackWaiting(
   packs: readonly NeoPack[],
-  todos: readonly NeoTodo[]
+  todos: readonly NeoTodo[],
+  hook: 'waiting' | 'parked' = 'waiting'
 ): Promise<Set<string>> {
   const waiting = new Set<string>();
   for (const pack of packs) {
     const asked = todos.filter(
       (todo) => !waiting.has(todo.id) && (!todo.check || pack.id === todo.check.pack)
     );
-    if (!asked.length || !pack.todos?.waiting) continue;
-    for (const id of await pack.todos.waiting(asked)) waiting.add(id);
+    const read = pack.todos?.[hook] ?? pack.todos?.waiting;
+    if (!asked.length || !read) continue;
+    for (const id of await read.call(pack.todos, asked)) waiting.add(id);
   }
   return waiting;
 }
 
-export function planNeoQueueHolds(facts: Facts, limits: Limits): NeoStepRow[] {
+export function planNeoQueueHolds(facts: Facts, limits: Limits): NeoStepRead[] {
   const { queued } = planWorkQueue(facts.candidates, facts.running, limits);
   return facts.steps.map((row) =>
     queued.includes(row.todo.id) ? { ...row, facts: { ...row.facts, start: 'held' } } : row
@@ -36,12 +39,19 @@ export function planNeoQueueHolds(facts: Facts, limits: Limits): NeoStepRow[] {
 
 export async function readNeoSteps(
   facts: Facts,
-  deps: { packs(): readonly NeoPack[]; limits(): Limits }
+  deps: { packs(): readonly NeoPack[]; limits(): Limits },
+  now: number
 ): Promise<NeoStepRow[]> {
-  const steps = planNeoQueueHolds(facts, deps.limits());
+  const steps = planNeoQueueHolds(facts, deps.limits()).map((row) => ({
+    ...row,
+    facts: { ...row.facts, now },
+  }));
   const waiting = await neoPackWaiting(
     deps.packs(),
-    steps.flatMap((row) => (owner(row).owner === 'neo' ? [row.todo] : []))
+    steps.flatMap((row) => {
+      const next = owner(row);
+      return next.owner === 'neo' && next.reason !== 'check_overdue' ? [row.todo] : [];
+    })
   );
   return steps.map((row) =>
     waiting.has(row.todo.id) ? { ...row, facts: { ...row.facts, packWaiting: true } } : row
@@ -58,7 +68,7 @@ export function planNeoSweepEvents(
   return [
     ...steps.flatMap((row) => {
       const next = owner(row);
-      return next.owner === 'neo' && row.todo.approvedAt !== null
+      return next.owner === 'neo' && (row.todo.approvedAt !== null || row.todo.startedAt !== null)
         ? [
             {
               kind: 'todo.neo_step',
@@ -106,7 +116,7 @@ export function createNeoAttentionSweep(deps: {
   return (superpipe({})('neo.attention.sweep') as PipelineAPI)
     .input(['now'])
     .pipe(() => deps.sessions.read('neoStepFacts'), 'now', 'facts')
-    .pipe((facts: Facts) => readNeoSteps(facts, deps), 'facts', 'steps')
+    .pipe((facts: Facts, now: number) => readNeoSteps(facts, deps, now), ['facts', 'now'], 'steps')
     .pipe(
       (now: number, steps: NeoStepRow[]) =>
         deps.scan(

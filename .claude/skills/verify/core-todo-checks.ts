@@ -26,6 +26,7 @@ writeFileSync(
 printf '%s\\n' "$*" >> '${ghLog}'
 case "$*" in
   'api repos/lsm/hyperneo/compare/'*) cat '${compare}' ;;
+  'api repos/o/r/issues/comments/5') printf '{"issue_url":"https://api.github.com/repos/o/r/issues/7"}' ;;
   *) exit 1 ;;
 esac
 `,
@@ -110,12 +111,12 @@ try {
     ws!.onopen = () => done();
     ws!.onerror = () => fail(new Error('WebSocket open failed'));
   });
-  const add = async (kind: string, params: Record<string, unknown>) => {
+  const add = async (kind: string, params: Record<string, unknown>, pack = 'core') => {
     const result = await rpc('neo.todo.add', { after: [],
       askId: 'ask',
       title: `Verify ${kind}`,
       doneWhen: 'This sentence must be replaced',
-      check: { pack: 'core', kind, params },
+      check: { pack, kind, params },
     });
     assert(result.ok && result.todo, JSON.stringify(result));
     assert.notEqual(result.todo.doneWhen, 'This sentence must be replaced');
@@ -140,32 +141,28 @@ try {
   db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ?').run('lsm/hyperneo', 'repo-ask');
   assert.equal((db.prepare('SELECT repo FROM neo_asks WHERE id = ?').get('repo-ask') as { repo: string }).repo, 'lsm/hyperneo');
   const repoCheck = (params: Record<string, unknown>) => ({ pack: 'core', kind: 'evidence', params });
-  const assigned = await rpc('neo.todo.add', { after: [], askId: 'repo-ask', title: 'Assigned evidence', named: { repository: 'lsm/hyperneo' }, check: repoCheck({}) });
-  assert(assigned.ok && assigned.todo, JSON.stringify(assigned));
-  const assignedPath = join(run, 'data/work/evidence', assigned.todo.id, 'result.md');
-  assert.deepEqual(assigned.todo.check?.params, { path: assignedPath });
-  assert(assigned.todo.doneWhen.includes(assignedPath), 'the worker brief carries doneWhen');
-  await close(assigned.todo, 'blocked');
-  mkdirSync(dirname(assignedPath), { recursive: true });
-  writeFileSync(assignedPath, 'Worker result');
-  await close(assigned.todo, 'done');
-  const assignedRead = await rpc('file.reference.read', { sourceMessageOrCard: { kind: 'todo', id: assigned.todo.id }, reference: assignedPath });
-  assert.equal(assignedRead.accepted, true, JSON.stringify(assignedRead));
   const userPath = join(run, 'user-folder/proof.md');
   const beforeRefusal = store.listTodos('repo-ask').length;
-  const refusedAdd = await rpc('neo.todo.add', { after: [], askId: 'repo-ask', title: 'User folder evidence', named: { repository: 'lsm/hyperneo' }, check: repoCheck({ path: userPath }) });
+  const refusedAdd = await rpc('neo.todo.add', { after: [], askId: 'repo-ask', title: 'Coding evidence', named: { repository: 'lsm/hyperneo' }, check: repoCheck({ path: userPath }) });
   assert.equal(refusedAdd.ok, false, JSON.stringify(refusedAdd));
-  assert.match(refusedAdd.reason!, /Omit params\.path/);
+  assert.match(refusedAdd.reason!, /coding_evidence_refused/);
   assert.equal(store.listTodos('repo-ask').length, beforeRefusal);
-  const editable = await rpc('neo.todo.add', { after: [], askId: 'repo-ask', title: 'Edited evidence', named: { repository: 'lsm/hyperneo' }, check: repoCheck({ path: join(run, 'other.md') }) });
-  assert(editable.ok && editable.todo, JSON.stringify(editable));
-  const refusedEdit = await rpc('neo.todo.edit', { todoId: editable.todo.id, check: repoCheck({ path: userPath }) });
-  assert.equal(refusedEdit.ok, false, JSON.stringify(refusedEdit));
-  const keptPath = store.addTodo('existing-user-path', 'repo-ask', { title: 'Existing path', doneWhen: 'x', instruction: null, named: null, check: repoCheck({ path: userPath }) }, Date.now());
-  const unchanged = await rpc('neo.todo.edit', { todoId: keptPath.id, check: keptPath.check });
+  const hidden = join(run, 'data/work/evidence/legacy/result.md');
+  const legacy = store.addTodo('legacy', 'repo-ask', { title: 'Legacy evidence', doneWhen: `File ${hidden} exists.`, instruction: null, named: null, check: repoCheck({ path: hidden }) }, Date.now(), 'lsm/hyperneo');
+  const unchanged = await rpc('neo.todo.edit', { todoId: legacy.id, check: legacy.check });
   assert.equal(unchanged.ok, true, JSON.stringify(unchanged));
-  const reassigned = await rpc('neo.todo.edit', { todoId: editable.todo.id, check: repoCheck({}) });
-  assert.deepEqual(reassigned.todo?.check?.params, { path: join(run, 'data/work/evidence', editable.todo.id, 'result.md') });
+  const refusedEdit = await rpc('neo.todo.edit', { todoId: legacy.id, check: repoCheck({ path: userPath }) });
+  assert.equal(refusedEdit.ok, false, JSON.stringify(refusedEdit));
+  const missing = await rpc('neo.todo.edit', { todoId: legacy.id, check: repoCheck({}) });
+  assert.equal(missing.ok, false, JSON.stringify(missing));
+  await close(legacy, 'blocked');
+  mkdirSync(dirname(hidden), { recursive: true });
+  writeFileSync(hidden, 'Legacy result');
+  await close(legacy, 'done');
+  const hiddenNew = await rpc('neo.todo.add', { after: [], askId: 'ask', title: 'Hidden evidence', check: repoCheck({ path: join(run, 'data/work/result.md') }) });
+  assert.equal(hiddenNew.ok, false, JSON.stringify(hiddenNew));
+  const absent = await rpc('neo.todo.add', { after: [], askId: 'ask', title: 'Missing path', check: repoCheck({}) });
+  assert.equal(absent.ok, false, JSON.stringify(absent));
   app.db.updateGlobalSettings({ neo: { packs: ['life-admin'] } });
   const countBeforeLegacyAdmission=store.listTodos('ask').length;
   const refusedArtifact=await rpc('neo.todo.add',{ after: [],askId:'ask',title:'New artifact evidence',check:{pack:'core',kind:'evidence',params:{artifact:'synthetic-artifact'}}});
@@ -215,13 +212,17 @@ try {
   }
   const build = await rpc('system.build', {});
   assert.match(build.commit!, /^[0-9a-f]{40}$/);
-  await close(await add('deployed', { repo: 'lsm/HyperNeo', sha: build.commit }), 'done');
-  await close(await add('deployed', { repo: 'lsm/HyperNeo', sha: 'a'.repeat(40) }), 'done');
+  app.db.updateGlobalSettings({ neo: { packs: ['life-admin', 'coding'] } });
+  await close(await add('evidence', { url: 'https://github.com/o/r/pull/7#issuecomment-5' }), 'done');
+  await close(await add('evidence', { url: 'https://github.com/o/r/pull/8#issuecomment-5' }), 'blocked');
+  await close(await add('deployed', { repo: 'lsm/HyperNeo', sha: build.commit }, 'coding'), 'done');
+  await close(await add('deployed', { repo: 'lsm/HyperNeo', sha: 'a'.repeat(40) }, 'coding'), 'done');
   writeFileSync(compare, JSON.stringify({ status: 'diverged' }));
   await close(
-    await add('deployed', { repo: 'lsm/HyperNeo', sha: 'b'.repeat(40) }),
+    await add('deployed', { repo: 'lsm/HyperNeo', sha: 'b'.repeat(40) }, 'coding'),
     'blocked'
   );
+  app.db.updateGlobalSettings({ neo: { packs: ['life-admin'] } });
   const readCurrent=()=>rpc('file.reference.read',{sourceMessageOrCard:{kind:'todo',id:fileTodo.id},reference:path});
   const first=await readCurrent();
   assert.equal(first.accepted,true,JSON.stringify(first));
@@ -239,7 +240,7 @@ try {
     enabledPacks: ['life-admin'],
   });
   console.log(
-    'PASS: real RPC derives completion text and checks recorded human answers, file, artifact and daemon build ancestry with life-admin enabled; repository admission uses the coding policy.'
+    'PASS: real RPC derives completion text and checks recorded human answers, file, artifact, GitHub comment links and coding daemon build ancestry with life-admin enabled; repository admission uses the coding policy.'
   );
 } finally {
   ws?.close();

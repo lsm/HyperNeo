@@ -1,9 +1,11 @@
+import type { OxapHarnessId } from '@hyperneo/shared/types/oxap-harnesses';
 import type {
   CreateSessionRequest,
   CreateSessionResponse,
   ListSessionsResponse,
   UpdateSessionRequest,
   ArchiveSessionResponse,
+  UnarchiveSessionResponse,
   CloneChildrenChoice,
   DeleteSessionResponse,
   GetAuthStatusResponse,
@@ -18,8 +20,6 @@ import type {
   WorkspaceAddResponse,
   WorkspaceRemoveResponse,
   GitBranchesResponse,
-  GitSessionStatusResponse,
-  GitFileDiffResponse,
   ProviderRecord,
   CreateProviderParams,
   UpdateProviderParams,
@@ -72,6 +72,16 @@ export async function resetSessionQuery(
 export async function cancelRateLimitRetry(sessionId: string): Promise<{ success: boolean }> {
   const hub = getHubOrThrow();
   return await hub.request<{ success: boolean }>('session.cancelRateLimitRetry', { sessionId });
+}
+
+export async function retryClaudeDownload(): Promise<
+  { accepted: true } | { accepted: false; reason: string }
+> {
+  return await getHubOrThrow().request(
+    'operation.invoke',
+    { name: 'daemon.retryClaudeDownload', input: {} },
+    { timeout: 180_000 }
+  );
 }
 
 export async function retryNowAfterRateLimit(sessionId: string): Promise<{ success: boolean }> {
@@ -136,6 +146,12 @@ export async function archiveSession(
   });
 }
 
+export async function unarchiveSession(sessionId: string): Promise<UnarchiveSessionResponse> {
+  return await getHubOrThrow().request<UnarchiveSessionResponse>('session.unarchive', {
+    sessionId,
+  });
+}
+
 export async function getAuthStatus(): Promise<GetAuthStatusResponse> {
   const hub = getHubOrThrow();
   return await hub.request<GetAuthStatusResponse>('auth.status');
@@ -172,13 +188,15 @@ export async function refreshProvider(providerId: string): Promise<ProviderRefre
   return await hub.request<ProviderRefreshResponse>('auth.refresh', { providerId });
 }
 
-export async function listProviders(): Promise<{
-  providers: Array<ProviderRecord & { available: boolean }>;
+export type ListedProvider = ProviderRecord & {
+  available: boolean;
+  readyHarnesses?: OxapHarnessId[];
+};
+
+export async function listProviders(options?: { forNewSession: true }): Promise<{
+  providers: ListedProvider[];
 }> {
-  const hub = getHubOrThrow();
-  return await hub.request<{ providers: Array<ProviderRecord & { available: boolean }> }>(
-    'providers.list'
-  );
+  return await getHubOrThrow().request<{ providers: ListedProvider[] }>('providers.list', options);
 }
 
 export async function createProvider(
@@ -349,10 +367,63 @@ export async function setAppMcpServerEnabled(
   });
 }
 
-export async function getWorkspaceHistory(): Promise<WorkspaceHistoryEntry[]> {
+export async function getWorkspaceHistory(
+  options: { includeRepositoryProjects?: boolean } = {}
+): Promise<WorkspaceHistoryEntry[]> {
   const hub = getHubOrThrow();
-  const { entries } = await hub.request<WorkspaceHistoryResponse>('workspace.history', {});
+  const { entries } = await hub.request<WorkspaceHistoryResponse>('workspace.history', options);
   return entries;
+}
+
+export interface SystemProject {
+  id: string;
+  name: string;
+  folders: string[];
+  updatedAt: number;
+  hasSessions: boolean;
+  unknownWork: boolean;
+  isProtected: boolean;
+}
+
+export async function listSystemProjects(): Promise<SystemProject[]> {
+  const { projects } = await getHubOrThrow().request<{ projects: SystemProject[] }>(
+    'operation.invoke',
+    { name: 'neo.projects.list', input: {} }
+  );
+  return projects;
+}
+
+export async function findProjectWork(folders: string[]): Promise<boolean> {
+  const hub = getHubOrThrow();
+  for (const folder of folders) {
+    const result = await hub.request<{
+      places: { work: unknown[] }[];
+      unreachable: unknown[];
+      more?: boolean;
+    }>('operation.invoke', {
+      name: 'work.find',
+      input: { folder, localOnly: true, limit: 50 },
+    });
+    if (result.places.some((place) => place.work.length > 0)) return true;
+    if (result.more || result.unreachable.length) throw new Error('Could not check all work');
+  }
+  return false;
+}
+
+export async function forgetSystemProject(projectId: string): Promise<void> {
+  const result = await getHubOrThrow().request<{ ok: boolean; reason?: string }>(
+    'operation.invoke',
+    { name: 'neo.project.forget', input: { projectId, removeHistory: true } }
+  );
+  if (!result.ok) {
+    const messages: Record<string, string> = {
+      project_in_use: 'Project has chats, workers, or other linked work.',
+      project_missing: 'This project no longer exists.',
+      project_protected: 'This project cannot be forgotten.',
+      root_or_human_only: 'Only the local user can forget this project.',
+    };
+    throw new Error(messages[result.reason ?? ''] ?? 'Failed to forget project');
+  }
 }
 
 export async function addFolderToProject(projectPath: string, path: string): Promise<void> {
@@ -378,30 +449,6 @@ export async function removeWorkspaceFromHistory(path: string): Promise<boolean>
 export async function getGitBranches(path: string): Promise<GitBranchesResponse> {
   const hub = getHubOrThrow();
   return await hub.request<GitBranchesResponse>('git.branches', { path });
-}
-
-export async function getGitSessionStatus(
-  sessionId: string,
-  includeGitHub = true
-): Promise<GitSessionStatusResponse> {
-  const hub = getHubOrThrow();
-  return await hub.request<GitSessionStatusResponse>(
-    'git.sessionStatus',
-    { sessionId, includeGitHub },
-    { timeout: 25_000 }
-  );
-}
-
-export async function getGitFileDiff(
-  sessionId: string,
-  path: string
-): Promise<GitFileDiffResponse> {
-  const hub = getHubOrThrow();
-  return await hub.request<GitFileDiffResponse>(
-    'git.fileDiff',
-    { sessionId, path },
-    { timeout: 20_000 }
-  );
 }
 
 export async function setSessionWorkspace(

@@ -1,5 +1,7 @@
 # Pack settings, conventions and human holds
 
+> Closed in part, 2026-11-16: slices 4–14 (per-PR human holds, the readiness check, the worker merge check and their prompts) are not planned. The daemon's merge admission and the `human-merge` label already hold a PR for the human. The session-strategy slices stay as built.
+
 Status: design for approval (question 087e13b7, revised with the human). No code until the human approves it.
 
 ## Problem
@@ -103,6 +105,8 @@ A **hold** overrides only merge readiness, under every policy: a held PR that wo
 
 ## Session strategy
 
+Being replaced by `session-reuse.md` (proposal, 2026-11-17).
+
 Approved by the human in question `9bec1d4c-bf30-44d6-84c1-d179fcd0c572`
 (`yes`, "加进设计，默认长周期"). This is a repo-scoped coding setting,
 independent of merge policy; selecting a session never grants permission to merge.
@@ -117,6 +121,7 @@ independent of merge policy; selecting a session never grants permission to merg
 choice question generated from its declaration, offering `long_lived` first.
 Repeated dispatches reuse the same open question. While unanswered, dispatch
 uses `long_lived`; it neither writes a preference nor claims the human answered.
+The question is asked with `hold: false`, so it holds no todo while it waits.
 A human answer persists through the settings-question answer path. Later human
 changes use the same human-only settings rules. A strategy change affects future
 assignments, never moves a task already running or splits its active PR ownership.

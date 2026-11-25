@@ -59,6 +59,7 @@ import mdNeoSpeech from './neo/system/speech.md' with { type: 'text' };
 import mdneoSystemPackPreferences from './neo/system/pack-preferences.md' with { type: 'text' };
 import mdneoSystemStandingRules from './neo/system/standing-rules.md' with { type: 'text' };
 import mdneoSystemRootTurnEnd from './neo/system/root-turn-end.md' with { type: 'text' };
+import mdneoSystemResidentTool from './neo/system/resident-tool.md' with { type: 'text' };
 import mdneoPacksCodingSkill from './neo/packs/coding/SKILL.md' with { type: 'text' };
 import mdneoPacksCodingWorkerWorktreeBrief from './neo/packs/coding/worker-worktree-brief.md' with {
   type: 'text',
@@ -81,6 +82,10 @@ import mdneoPacksLifeAdminInstructions from './neo/packs/life-admin/instructions
 import mdneoPacksDelegationInstructions from './neo/packs/delegation/instructions.md' with {
   type: 'text',
 };
+import mdneoPacksComputerUseInstructions from './neo/packs/computer-use/instructions.md' with {
+  type: 'text',
+};
+import mdneoPacksComputerUseWorker from './neo/packs/computer-use/worker.md' with { type: 'text' };
 import mdneoWorkGoalRemaining from './neo/work/goal-remaining.md' with { type: 'text' };
 import mdneoWorkBlocker from './neo/work/blocker.md' with { type: 'text' };
 import mdneoWorkPreferenceChanged from './neo/work/preference-changed.md' with { type: 'text' };
@@ -161,6 +166,7 @@ import mdagentTaskNotificationContinue from './agent/task-notification-continue.
 };
 import mdagentsInactivityNag from './agents/inactivity-nag.md' with { type: 'text' };
 import mdgoalsOutcomeReady from './goals/outcome-ready.md' with { type: 'text' };
+import mdgoalsSessionCycle from './goals/session-cycle.md' with { type: 'text' };
 import mddriversClaudeDesktopRelay from './drivers/claude-desktop-relay.md' with { type: 'text' };
 import mddriversCodexWorker from './drivers/codex-worker.md' with { type: 'text' };
 import mddriversClaudeDesktopPrepare from './drivers/claude-desktop-prepare.md' with {
@@ -175,11 +181,29 @@ import mddriversClaudeDesktopWakeRequest from './drivers/claude-desktop-wake-req
 import mddriversClaudeRcToggleRequest from './drivers/claude-rc-toggle-request.md' with {
   type: 'text',
 };
+import mddriversClaudeDesktopHelperBrief from './drivers/claude-desktop-helper-brief.md' with {
+  type: 'text',
+};
+import mddriversClaudeDesktopHelperArchiveRequest from './drivers/claude-desktop-helper-archive-request.md' with {
+  type: 'text',
+};
 import mdmailboxDeliveryFailed from './mailbox/delivery-failed.md' with { type: 'text' };
 import mdmessagingReplyProtocol from './messaging/reply-protocol.md' with { type: 'text' };
 import mdmessagingReplyToTarget from './messaging/reply-to-target.md' with { type: 'text' };
 import mdmessagingReplyToTask from './messaging/reply-to-task.md' with { type: 'text' };
 import mdspaceOperationsDoorListing from './space/operations-door-listing.md' with { type: 'text' };
+import mdToolWorkReconfigure from './neo/tools/work.reconfigure.md' with { type: 'text' };
+import mdToolWorkRename from './neo/tools/work.rename.md' with { type: 'text' };
+import mdToolWorkAdapters from './neo/tools/work.adapters.md' with { type: 'text' };
+import mdToolWorkStart from './neo/tools/work.start.md' with { type: 'text' };
+import mdToolWorkSend from './neo/tools/work.send.md' with { type: 'text' };
+import mdToolWorkQueue from './neo/tools/work.queue.md' with { type: 'text' };
+import mdToolWorkWithdraw from './neo/tools/work.withdraw.md' with { type: 'text' };
+import mdToolWorkStatus from './neo/tools/work.status.md' with { type: 'text' };
+import mdToolWorkTurns from './neo/tools/work.turns.md' with { type: 'text' };
+import mdToolWorkStop from './neo/tools/work.stop.md' with { type: 'text' };
+import mdToolWorkFind from './neo/tools/work.find.md' with { type: 'text' };
+import mdToolWorkRead from './neo/tools/work.read.md' with { type: 'text' };
 import mdToolOpen from './neo/tools/neo.open.md' with { type: 'text' };
 import mdToolRestart from './neo/tools/neo.restart.md' with { type: 'text' };
 import mdToolRuleSave from './neo/tools/neo.rule.save.md' with { type: 'text' };
@@ -192,10 +216,11 @@ import mdToolSnapshot from './neo/tools/neo.snapshot.md' with { type: 'text' };
 import mdToolProjectSave from './neo/tools/neo.project.save.md' with { type: 'text' };
 import mdToolAskDoneTodos from './neo/tools/neo.ask.doneTodos.md' with { type: 'text' };
 import mdToolAskRead from './neo/tools/neo.ask.read.md' with { type: 'text' };
-import mdToolAskOpen from './neo/tools/neo.ask.open.md' with { type: 'text' };
+import mdToolAskPropose from './neo/tools/neo.ask.propose.md' with { type: 'text' };
 import mdToolAskOutcome from './neo/tools/neo.ask.outcome.md' with { type: 'text' };
 import mdToolAskTopic from './neo/tools/neo.ask.topic.md' with { type: 'text' };
 import mdToolAskSettle from './neo/tools/neo.ask.settle.md' with { type: 'text' };
+import mdToolTopicMerge from './neo/tools/neo.topic.merge.md' with { type: 'text' };
 import mdToolConversationAsksRead from './neo/tools/neo.conversation.asks.read.md' with {
   type: 'text',
 };
@@ -254,13 +279,15 @@ import mdToolProjectsReorganize from './neo/tools/neo.projects.reorganize.md' wi
 import mdToolPublicationPublish from './neo/tools/neo.publication.publish.md' with { type: 'text' };
 import mdToolPublicationRead from './neo/tools/neo.publication.read.md' with { type: 'text' };
 import mdToolSessionArchive from './neo/tools/neo.session.archive.md' with { type: 'text' };
+import mdToolSessionUnarchive from './neo/tools/neo.session.unarchive.md' with { type: 'text' };
 import mdToolSpeechAck from './neo/tools/neo.speech.ack.md' with { type: 'text' };
 import mdToolSpeechCatalog from './neo/tools/neo.speech.catalog.md' with { type: 'text' };
 import mdToolSpeechListen from './neo/tools/neo.speech.listen.md' with { type: 'text' };
 import mdToolSpeechPreview from './neo/tools/neo.speech.preview.md' with { type: 'text' };
 import mdToolSpeechSay from './neo/tools/neo.speech.say.md' with { type: 'text' };
-import mdToolRelaySendersSet from './neo/tools/neo.relaySenders.set.md' with { type: 'text' };
-import mdToolRelaySendersRecent from './neo/tools/neo.relaySenders.recent.md' with { type: 'text' };
+import mdToolVoiceTestSpeech from './neo/tools/voice.testSpeech.md' with { type: 'text' };
+import mdToolVoiceTestConnection from './neo/tools/voice.testConnection.md' with { type: 'text' };
+import mdToolVoiceTestLive from './neo/tools/voice.testLive.md' with { type: 'text' };
 import { buildPromptRegistry, fillPrompt } from './loader.ts';
 import mdruntimePostApprovalCompletion from './runtime/post-approval-completion.md' with {
   type: 'text',
@@ -376,6 +403,7 @@ const registry: Record<string, string> = {
   'neo/system/quick-ack-listening.md': mdneoSystemQuickAckListening,
   'neo/system/root.md': mdneoSystemRoot,
   'neo/system/root-turn-end.md': mdneoSystemRootTurnEnd,
+  'neo/system/resident-tool.md': mdneoSystemResidentTool,
   'neo/system/speech.md': mdNeoSpeech,
   'neo/front.md': mdNeoFront,
   'neo/system/pack-preferences.md': mdneoSystemPackPreferences,
@@ -389,6 +417,8 @@ const registry: Record<string, string> = {
   'neo/packs/coding/goal-pr-subscribe.md': mdneoPacksCodingGoalPrSubscribe,
   'neo/packs/life-admin/instructions.md': mdneoPacksLifeAdminInstructions,
   'neo/packs/delegation/instructions.md': mdneoPacksDelegationInstructions,
+  'neo/packs/computer-use/instructions.md': mdneoPacksComputerUseInstructions,
+  'neo/packs/computer-use/worker.md': mdneoPacksComputerUseWorker,
   'neo/work/goal-remaining.md': mdneoWorkGoalRemaining,
   'neo/work/files.md': mdneoWorkFiles,
   'neo/work/goal.md': mdneoWorkGoal,
@@ -437,12 +467,15 @@ const registry: Record<string, string> = {
   'agent/task-notification-continue.md': mdagentTaskNotificationContinue,
   'agents/inactivity-nag.md': mdagentsInactivityNag,
   'goals/outcome-ready.md': mdgoalsOutcomeReady,
+  'goals/session-cycle.md': mdgoalsSessionCycle,
   'drivers/claude-desktop-relay.md': mddriversClaudeDesktopRelay,
   'drivers/codex-worker.md': mddriversCodexWorker,
   'drivers/claude-desktop-prepare.md': mddriversClaudeDesktopPrepare,
   'drivers/claude-desktop-wake-brief.md': mddriversClaudeDesktopWakeBrief,
   'drivers/claude-desktop-wake-request.md': mddriversClaudeDesktopWakeRequest,
   'drivers/claude-rc-toggle-request.md': mddriversClaudeRcToggleRequest,
+  'drivers/claude-desktop-helper-brief.md': mddriversClaudeDesktopHelperBrief,
+  'drivers/claude-desktop-helper-archive-request.md': mddriversClaudeDesktopHelperArchiveRequest,
   'mailbox/delivery-failed.md': mdmailboxDeliveryFailed,
   'messaging/reply-protocol.md': mdmessagingReplyProtocol,
   'messaging/reply-to-target.md': mdmessagingReplyToTarget,
@@ -507,8 +540,11 @@ export const {
   NEO_PACK_CODING_WORKTREE_BRIEF,
   NEO_PACK_LIFE_ADMIN_INSTRUCTIONS,
   NEO_PACK_DELEGATION_INSTRUCTIONS,
+  NEO_PACK_COMPUTER_USE_INSTRUCTIONS,
+  NEO_PACK_COMPUTER_USE_WORKER,
   NEO_SESSION_TRACK,
   NEO_GOAL_CYCLE,
+  GOAL_SESSION_CYCLE,
   NEO_QUICK_ACK,
   NEO_QUICK_ACK_LISTENING,
   NEO_FOCUSED_DISCUSSION,
@@ -520,6 +556,7 @@ export const {
   WORKER_PROVENANCE_OPEN_PRS,
   NEO_ROOT_PROMPT,
   NEO_ROOT_TURN_END: NEO_ROOT_TURN_END_TEMPLATE,
+  NEO_RESIDENT_TOOL,
   NEO_FRONT: NEO_FRONT_TEMPLATE,
   NEO_STANDING_RULES,
   NEO_PACK_PREFERENCES,
@@ -582,6 +619,8 @@ export const {
   CLAUDE_DESKTOP_WAKE_BRIEF,
   CLAUDE_DESKTOP_WAKE_REQUEST,
   CLAUDE_RC_TOGGLE_REQUEST,
+  CLAUDE_DESKTOP_HELPER_BRIEF,
+  CLAUDE_DESKTOP_HELPER_ARCHIVE_REQUEST,
   MAILBOX_DELIVERY_FAILED,
   MESSAGING_REPLY_PROTOCOL,
   MESSAGING_REPLY_TO_TARGET,
@@ -643,6 +682,18 @@ export const NEO_PACK_SKILLS: Readonly<
 
 export const NEO_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze(
   buildPromptRegistry({
+    'neo/tools/work.reconfigure.md': mdToolWorkReconfigure,
+    'neo/tools/work.rename.md': mdToolWorkRename,
+    'neo/tools/work.adapters.md': mdToolWorkAdapters,
+    'neo/tools/work.start.md': mdToolWorkStart,
+    'neo/tools/work.send.md': mdToolWorkSend,
+    'neo/tools/work.queue.md': mdToolWorkQueue,
+    'neo/tools/work.withdraw.md': mdToolWorkWithdraw,
+    'neo/tools/work.status.md': mdToolWorkStatus,
+    'neo/tools/work.turns.md': mdToolWorkTurns,
+    'neo/tools/work.stop.md': mdToolWorkStop,
+    'neo/tools/work.find.md': mdToolWorkFind,
+    'neo/tools/work.read.md': mdToolWorkRead,
     'neo/tools/neo.open.md': mdToolOpen,
     'neo/tools/neo.restart.md': mdToolRestart,
     'neo/tools/neo.rule.save.md': mdToolRuleSave,
@@ -655,10 +706,11 @@ export const NEO_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = Object.fr
     'neo/tools/neo.project.save.md': mdToolProjectSave,
     'neo/tools/neo.ask.doneTodos.md': mdToolAskDoneTodos,
     'neo/tools/neo.ask.read.md': mdToolAskRead,
-    'neo/tools/neo.ask.open.md': mdToolAskOpen,
+    'neo/tools/neo.ask.propose.md': mdToolAskPropose,
     'neo/tools/neo.ask.outcome.md': mdToolAskOutcome,
     'neo/tools/neo.ask.topic.md': mdToolAskTopic,
     'neo/tools/neo.ask.settle.md': mdToolAskSettle,
+    'neo/tools/neo.topic.merge.md': mdToolTopicMerge,
     'neo/tools/neo.conversation.asks.read.md': mdToolConversationAsksRead,
     'neo/tools/neo.conversation.image.read.md': mdToolConversationImageRead,
     'neo/tools/neo.question.answer.md': mdToolQuestionAnswer,
@@ -709,13 +761,15 @@ export const NEO_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = Object.fr
     'neo/tools/neo.publication.publish.md': mdToolPublicationPublish,
     'neo/tools/neo.publication.read.md': mdToolPublicationRead,
     'neo/tools/neo.session.archive.md': mdToolSessionArchive,
+    'neo/tools/neo.session.unarchive.md': mdToolSessionUnarchive,
     'neo/tools/neo.speech.ack.md': mdToolSpeechAck,
     'neo/tools/neo.speech.catalog.md': mdToolSpeechCatalog,
     'neo/tools/neo.speech.listen.md': mdToolSpeechListen,
     'neo/tools/neo.speech.preview.md': mdToolSpeechPreview,
     'neo/tools/neo.speech.say.md': mdToolSpeechSay,
-    'neo/tools/neo.relaySenders.set.md': mdToolRelaySendersSet,
-    'neo/tools/neo.relaySenders.recent.md': mdToolRelaySendersRecent,
+    'neo/tools/voice.testSpeech.md': mdToolVoiceTestSpeech,
+    'neo/tools/voice.testConnection.md': mdToolVoiceTestConnection,
+    'neo/tools/voice.testLive.md': mdToolVoiceTestLive,
   })
 );
 

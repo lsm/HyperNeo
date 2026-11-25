@@ -1,0 +1,398 @@
+import { releaseSessionKeyBridges } from '../../../packages/daemon/src/lib/providers/provider-key-bridge.ts';
+import assert from 'node:assert/strict';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import { join, resolve } from 'node:path';
+import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
+import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { QueryOptionsBuilder } from '../../../packages/daemon/src/lib/agent/query-options-builder.ts';
+import { KimiProvider } from '../../../packages/daemon/src/lib/providers/kimi-provider.ts';
+import { getProviderRegistry } from '../../../packages/daemon/src/lib/providers/registry.ts';
+import { setModelsCache } from '../../../packages/daemon/src/lib/model-service.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
+import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
+import { NeoPublicationRepository } from '../../../packages/daemon/src/storage/repositories/neo-publication-repository.ts';
+import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
+import { frontSessionId } from '../../../packages/daemon/src/lib/neo/front-mode.ts';
+import { NeoService } from '../../../packages/daemon/src/lib/neo/service.ts';
+
+const run = resolve(process.argv.at(-1)!);
+const saturated = process.argv.includes('--saturated');
+let releaseRefresh: (() => void) | undefined;
+let refreshStarted = 0;
+const refreshJobIds: string[] = [];
+let lagTimer: ReturnType<typeof setInterval> | undefined;
+let maxLagMs = 0;
+let lagSamples = 0;
+const originalRefresh = NeoService.prototype.refreshDriverWork;
+if (saturated) {
+  const held = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+  NeoService.prototype.refreshDriverWork = async () => {
+    refreshStarted++;
+    await held;
+  };
+}
+assert.equal(process.env.NODE_ENV, 'test');
+assert.equal(process.env.HOME, join(run, 'home'));
+for (const name of ['workspace', 'bin', 'evidence', 'sdk'])
+  mkdirSync(join(run, name), { recursive: true });
+writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
+process.env.CLAUDE_CONFIG_DIR = join(run, 'sdk');
+process.env.TEST_SDK_SESSION_DIR = join(run, 'sdk');
+const humanId = crypto.randomUUID();
+const handoffId = crypto.randomUUID();
+const requests: string[] = [];
+const stages = new Map<string, number>();
+let exaRequests = 0;
+const model = KimiProvider.MODELS.find((entry) => entry.contextWindow >= 1_000_000)!;
+const fixture = createServer(async (request, response) => {
+  if (request.url === '/exa-probe') {
+    exaRequests++;
+    response.writeHead(404).end();
+    return;
+  }
+  let raw = '';
+  for await (const chunk of request) raw += chunk;
+  if (request.url?.includes('count_tokens')) {
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify({ input_tokens: 100 }));
+    return;
+  }
+  if (request.method !== 'POST') {
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify({ data: [{ id: model.id }] }));
+    return;
+  }
+  const body = JSON.parse(raw);
+  const last = body.messages?.at(-1);
+  const content = JSON.stringify(last?.content ?? '');
+  const front = body.tools?.some(
+    (tool: { name: string }) => tool.name === 'mcp__front__reply'
+  );
+  if (!front && app?.db.getGlobalSettings().neo?.front?.enabled === true) {
+    const names = body.tools?.map((tool: { name: string }) => tool.name) ?? [];
+    assert(names.some((name: string) => name.endsWith('__neo_publish')));
+    assert(names.some((name: string) => name.endsWith('__neo_speech')));
+    evidence.neoToolsPresent = true;
+  }
+  const history = JSON.stringify(body.messages);
+  if (!front && history.includes(handoffId) && !evidence.retryAccepted) {
+    requests.push('neo-provider-400');
+    response.writeHead(400, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'synthetic refusal' } }));
+    return;
+  }
+  if (!front && history.includes('<already-said') && history.includes('I will handle that.'))
+    evidence.neoSawAcknowledgment = true;
+  const active = [handoffId, humanId].find(id => history.includes(id)) ?? humanId;
+  const stage = stages.get(active) ?? 0;
+  let block: Record<string, unknown> = { type: 'text', text: front ? 'Hello from Neo.' : 'Internal assistant text.' };
+  if (front && stage === 0 && active === humanId) {
+    block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__reply',
+      input: { requestId: `final-${active}`, replyTo: [active], text: 'Hello from Neo.', work_on: false } };
+    stages.set(active, 4);
+  } else if (front && stage === 0 && active === handoffId) {
+    block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__reply',
+      input: { requestId: `work-${active}`, replyTo: [active], text: 'I will handle that.', work_on: true } };
+    stages.set(active, 2);
+  }
+  const publish = block.type === 'tool_use';
+  requests.push(front ? String(block.name ?? 'front-terminal') : 'neo-turn');
+  const message = {
+    id: `msg_${crypto.randomUUID()}`,
+    type: 'message',
+    role: 'assistant',
+    model: body.model,
+    content: [block],
+    stop_reason: publish ? 'tool_use' : 'end_turn',
+    stop_sequence: null,
+    usage: { input_tokens: 10, output_tokens: 10 },
+  };
+  if (!body.stream) {
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify(message));
+    return;
+  }
+  response.setHeader('content-type', 'text/event-stream');
+  const emit = (event: string, data: unknown) =>
+    response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  emit('message_start', {
+    type: 'message_start',
+    message: { ...message, content: [], stop_reason: null },
+  });
+  emit('content_block_start', {
+    type: 'content_block_start',
+    index: 0,
+    content_block: publish ? { ...block, input: {} } : { type: 'text', text: '' },
+  });
+  emit('content_block_delta', {
+    type: 'content_block_delta',
+    index: 0,
+    delta: publish
+      ? { type: 'input_json_delta', partial_json: JSON.stringify(block.input) }
+      : { type: 'text_delta', text: block.text },
+  });
+  emit('content_block_stop', { type: 'content_block_stop', index: 0 });
+  emit('message_delta', {
+    type: 'message_delta',
+    delta: { stop_reason: message.stop_reason, stop_sequence: null },
+    usage: { output_tokens: 10 },
+  });
+  emit('message_stop', { type: 'message_stop' });
+  response.end();
+});
+await new Promise<void>((done) => fixture.listen(0, '127.0.0.1', done));
+const port = (fixture.address() as { port: number }).port;
+assert(![8399, 8499].includes(port));
+const originalBuild = QueryOptionsBuilder.prototype.build;
+const childSessions = new Set<string>();
+QueryOptionsBuilder.prototype.build = async function (...args) {
+  const options = await originalBuild.apply(this, args);
+  childSessions.add(options.env?.HYPERNEO_SESSION_ID!);
+  assert.equal(options.mcpServers?.exa, undefined);
+  return {
+    ...options,
+    ...(process.env.VERIFY_CLAUDE
+      ? { pathToClaudeCodeExecutable: process.env.VERIFY_CLAUDE, executable: undefined }
+      : {}),
+  };
+};
+let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
+let transport: WebSocketClientTransport | undefined;
+let hub: MessageHub | undefined;
+const evidence: Record<string, unknown> = {};
+async function waitFor(check: () => boolean, timeoutMs = 90_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!check() && Date.now() < deadline) await new Promise((done) => setTimeout(done, 100));
+  assert(check(), 'condition did not complete');
+}
+try {
+  app = await createDaemonApp({
+    config: {
+      ...getConfig({
+        port: 0,
+        host: '127.0.0.1',
+        dbPath: join(run, 'data/daemon.db'),
+        workspaceRoot: join(run, 'workspace'),
+      }),
+      disableWorktrees: true,
+    },
+    verbose: false,
+  });
+  hub = new MessageHub({ defaultSessionId: 'global', timeout: 30_000 });
+  transport = new WebSocketClientTransport({
+    createSocket: createLocalSocket,
+    url: `ws://127.0.0.1:${app.server.port}/ws`,
+    autoReconnect: false,
+  });
+  hub.registerTransport(transport);
+  await transport.initialize();
+  const registry = await hub.request<{ servers: { id: string; enabled: boolean }[] }>(
+    'mcp.registry.list',
+    {}
+  );
+  for (const server of registry.servers)
+    if (server.enabled)
+      await hub.request('mcp.registry.setEnabled', { id: server.id, enabled: false });
+  getProviderRegistry().unregister('kimi');
+  getProviderRegistry().register(
+    new KimiProvider(
+      { KIMI_BASE_URL: `http://127.0.0.1:${port}`, KIMI_API_KEY: 'synthetic-loopback-only' },
+      undefined,
+      async () => new Response(JSON.stringify({ data: [{ id: model.id }] }))
+    )
+  );
+  setModelsCache(new Map([['global', [model]]]));
+  const conversationId = crypto.randomUUID();
+  const root = `neo:${conversationId}`;
+  const front = frontSessionId(conversationId);
+  await app.db.createSession({
+    id: root,
+    title: 'Synthetic Neo',
+    workspacePath: join(run, 'workspace'),
+    createdAt: new Date().toISOString(),
+    lastActiveAt: new Date().toISOString(),
+    status: 'active',
+    config: { provider: 'kimi', model: model.id, queryMode: 'immediate', thinkingLevel: 'off' },
+    metadata: {
+      messageCount: 0,
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalCost: 0,
+      toolCallCount: 0,
+    },
+  });
+  const repo = new NeoRepository(app.db.getDatabase());
+  repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
+  assert.equal(repo.conversationId(), conversationId);
+  const publications = new NeoPublicationRepository(app.db.getDatabase());
+  const replies = () =>
+    publications
+      .list(conversationId)
+      ?.filter((row) =>
+        row.replyTo?.includes(humanId) ||
+        row.replyTo?.includes(handoffId) ||
+        row.fullText === 'Single-mode reply.'
+      ) ??
+    [];
+  const invoke = <T>(name: string, input: unknown) =>
+    hub!.request<T>('operation.invoke', { name, input });
+  assert.equal(
+    (
+      await invoke<{ ok: boolean }>('neo.front.model.set', {
+        provider: 'kimi',
+        model: model.id,
+        thinkingLevel: 'off',
+      })
+    ).ok,
+    true
+  );
+  assert.equal((await invoke<{ ok: boolean }>('neo.front.set', { enabled: true })).ok, true);
+  assert.equal(app.db.getSession(front)?.config.queryMode, 'immediate');
+  const convo = await app.sessionManager.getSessionForControl(front);
+  assert(convo);
+  convo.mergeRuntimeMcpServers({
+    exa: { type: 'http', url: `http://127.0.0.1:${port}/exa-probe` },
+  });
+  assert(convo.getSessionData().config.mcpServers?.exa);
+  if (saturated) {
+    for (let i = 0; i < 5; i++)
+      refreshJobIds.push(app.db.getJobQueueRepo().enqueue({ queue: 'neo.work.driver.refresh', payload: {} }).id);
+    await waitFor(() => refreshStarted >= 1, 15_000);
+    await new Promise((done) => setTimeout(done, 2_000));
+    evidence.refreshJobsHeld = refreshStarted;
+    let lastTick = performance.now();
+    lagTimer = setInterval(() => {
+      const now = performance.now();
+      maxLagMs = Math.max(maxLagMs, now - lastTick - 100);
+      lagSamples++;
+      lastTick = now;
+    }, 100);
+  }
+  const sentAt = Date.now();
+  assert.equal(
+    (
+      await invoke<{ ok: boolean }>('neo.message.send', {
+        sessionId: root,
+        requestId: humanId,
+        content: 'Hello from the human',
+      })
+    ).ok,
+    true
+  );
+  let deliveredWhileHeld = true;
+  try {
+    await waitFor(
+      () => saturated
+        ? !!app!.db.getSDKMessageRepo().getMessageByStatusAndUuid(front, 'consumed', humanId)
+        : replies().length === 1,
+      saturated ? 10_000 : 90_000
+    );
+  } catch (error) {
+    if (!saturated) throw error;
+    deliveredWhileHeld = false;
+    releaseRefresh?.();
+    await waitFor(() => !!app!.db.getSDKMessageRepo().getMessageByStatusAndUuid(front, 'consumed', humanId));
+  }
+  if (!saturated) assert.equal(replies()[0].workOn, false);
+  evidence.firstDeliveryMs = Date.now() - sentAt;
+  evidence.deliveredWhileHeld = deliveredWhileHeld;
+  if (lagTimer) clearInterval(lagTimer);
+  if (saturated) {
+    evidence.maxLagMs = maxLagMs;
+    evidence.lagSamples = lagSamples;
+    assert(lagSamples > 0 && maxLagMs < 1_000, 'event loop stalled for at least one second');
+  }
+  NeoService.prototype.refreshDriverWork = originalRefresh;
+  releaseRefresh?.();
+  assert(deliveredWhileHeld, 'human input waited for refresh jobs to release');
+  if (saturated) {
+    await waitFor(() => refreshJobIds.filter((id) => app!.jobQueue.getJob(id)?.status === 'completed').length >= 2, 30_000);
+    evidence.realRefreshCompleted = true;
+  }
+  if (!saturated) {
+    await waitFor(
+      () => app!.sessionManager.getCachedSession(front)?.getProcessingState().status === 'idle'
+    );
+    const nativeId = app.db.getSession(front)?.sdkSessionId;
+    assert(nativeId);
+    const back = createOperationMcpHandler(app.sessionManager.getOperationRegistry(), () => ({
+      source: 'mcp',
+      role: 'neo',
+      sessionId: root,
+    }));
+    assert.equal(
+      (await invoke<{ ok: boolean }>('neo.message.send', {
+        sessionId: root,
+        requestId: handoffId,
+        content: [{ type: 'text', text: 'Delegate this action to Neo.' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } }],
+        thumbnails: [{ index: 1, mediaType: 'image/jpeg', data: 'dGh1bWI=', width: 64, height: 48 }],
+      })).ok,
+      true
+    );
+    await waitFor(() => replies().some((row) => row.replyTo?.includes(handoffId)));
+    assert.equal(replies().find((row) => row.replyTo?.includes(handoffId))?.workOn, true);
+    await waitFor(() => ['consumed', 'failed'].includes(app!.db.getSDKMessageRepo().getUserSendStatus(root, handoffId) ?? ''));
+    await waitFor(() => app!.sessionManager.getCachedSession(root)?.getProcessingState().status === 'idle');
+    const read = async () => invoke<{ items: Array<{ requestId: string; messageStatus?: string; delivery?: { state: string; reason?: string; supersededBy?: string }; retryOf?: string }> }>('neo.conversation.asks.read', { conversationId });
+    const ask = (await read()).items.find((item) => item.requestId === handoffId);
+    await waitFor(() => app!.db.getJobQueueRepo().listJobs({ queue: 'neo.front' }).some((job) => job.payload.messageId === handoffId && job.status === 'completed'));
+    evidence.requests = requests;
+    evidence.ask = ask;
+    evidence.handoffOutcome = app.db.getJobQueueRepo().listJobs({ queue: 'neo.front' }).find((job) => job.payload.messageId === handoffId)?.result;
+    console.log('OBSERVED', JSON.stringify(evidence));
+    assert.equal(ask?.messageStatus, 'failed');
+    assert.equal(ask?.delivery?.reason?.includes('synthetic refusal'), true);
+    const before = requests.filter((item) => item === 'neo-provider-400').length;
+    const originalSeq = (app.db.getDatabase().prepare("SELECT consumed_seq AS seq FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'user'").get(root, handoffId) as { seq: number }).seq;
+    assert(originalSeq > 0);
+    evidence.retryAccepted = true;
+    const attempts = await Promise.all([0, 1].map(() => invoke<{ accepted: boolean; requestId?: string }>('neo.message.retry', { conversationId, requestId: handoffId })));
+    const accepted = attempts.filter((attempt) => attempt.accepted);
+    assert.equal(accepted.length, 1);
+    const retry = accepted[0];
+    assert(retry.requestId && retry.requestId !== handoffId);
+    const second = await invoke<{ accepted: boolean }>('neo.message.retry', { conversationId, requestId: handoffId });
+    assert.equal(second.accepted, false);
+    await waitFor(() => app!.db.getSDKMessageRepo().getUserSendStatus(root, retry.requestId!) === 'consumed');
+    await waitFor(() => app!.sessionManager.getCachedSession(root)?.getProcessingState().status === 'idle');
+    assert.equal(requests.filter((item) => item === 'neo-provider-400').length, before);
+    assert.equal(app.db.getSDKMessageRepo().getUserSendStatus(root, handoffId), 'failed');
+    evidence.retryConsumed = true;
+    const after = await read();
+    const photoPage = await invoke<{ items: Array<{ requestId: string; content: Array<{ type: string; thumbnail?: { mediaType: string; data: string } | null }> }> }>('neo.conversation.asks.read', { conversationId, imageRefs: true });
+    const photo = photoPage.items.find((item) => item.requestId === retry.requestId)?.content[1];
+    assert.equal(photo?.type, 'image_ref');
+    assert.deepEqual(photo?.thumbnail, { mediaType: 'image/jpeg', data: 'dGh1bWI=' });
+    evidence.retryThumbnailPreserved = true;
+    assert.equal(after.items.find((item) => item.requestId === handoffId)?.delivery?.supersededBy, retry.requestId);
+    const resent = after.items.find((item) => item.requestId === retry.requestId);
+    assert.equal(resent?.retryOf, handoffId);
+    assert.deepEqual((resent as { content?: unknown })?.content, (ask as { content?: unknown })?.content);
+    assert.equal((app.db.getDatabase().prepare("SELECT consumed_seq AS seq FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'user'").get(root, handoffId) as { seq: number }).seq, originalSeq);
+    evidence.originalSequencePreserved = true;
+    evidence.passed = true;
+  } else {
+    evidence.passed = true;
+  }
+} finally {
+  if (lagTimer) clearInterval(lagTimer);
+  releaseRefresh?.();
+  await transport?.close();
+  hub?.cleanup();
+  await app?.cleanup();
+  for (const id of childSessions) releaseSessionKeyBridges(id);
+  QueryOptionsBuilder.prototype.build = originalBuild;
+  NeoService.prototype.refreshDriverWork = originalRefresh;
+  fixture.closeAllConnections();
+  await new Promise<void>((done) => fixture.close(() => done()));
+  evidence.resourcesClosed = true;
+  writeFileSync(join(run, 'evidence/neo-front-refusal.json'), JSON.stringify(evidence, null, 2));
+}
+console.log(
+  saturated
+    ? 'PASS human input reached the front while refresh work remained held'
+    : 'PASS refused input surfaced and one fresh retry consumed'
+);

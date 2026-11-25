@@ -1,3 +1,4 @@
+import { openExternalLink } from '../../lib/external-links.ts';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { readLiveFile } from '../../lib/live-file-client.ts';
@@ -190,7 +191,7 @@ export function LiveFilePreview({
             type="button"
             class="rounded-md bg-surface-raised px-3 py-1 hover:bg-fill-strong"
             onClick={() => {
-              window.open(pendingUrl, '_blank', 'noopener,noreferrer');
+              openExternalLink(pendingUrl);
               setPendingUrl(null);
             }}
           >

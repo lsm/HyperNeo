@@ -1,3 +1,5 @@
+import type { OxapInitDetails } from '@hyperneo/shared/types/oxap-harnesses';
+import type { ChatErrorRowAction } from '../ChatErrorRow.tsx';
 import { ChevronRightGlyph } from '../icons/common-glyphs.tsx';
 import type { JSX } from 'preact';
 import { memo } from 'preact/compat';
@@ -79,6 +81,8 @@ interface Props {
   replacementStatus?: MessageReplacementStatus;
   isLiveTail?: boolean;
   stopped?: StoppedEpisode;
+  errorActions?: ChatErrorRowAction[];
+  disableDeliveryRetry?: boolean;
 }
 
 function ReplacementStatusFrame({
@@ -123,6 +127,7 @@ function isSubagentMessage(
 
 function isRenderableSystemMessage(message: SDKMessage): boolean {
   if (!isSDKSystemMessage(message)) return false;
+  if (isSDKSystemInit(message) && 'oxap' in message) return true;
   const subtype = (message as { subtype?: unknown }).subtype as string;
   return !isHiddenSystemSubtype(subtype);
 }
@@ -132,6 +137,7 @@ function isActivityOnly(message: SDKMessage): boolean {
     return message.subtype === 'success' && !(message as { is_error?: boolean }).is_error;
   }
   if (isSDKCompactBoundary(message)) return false;
+  if ((message as { subtype?: unknown }).subtype === 'session_writes_lost') return false;
   return (
     isSDKSystemMessage(message) ||
     isSDKToolProgressMessage(message) ||
@@ -150,6 +156,7 @@ function isToolResultUserMessage(message: SDKMessage): boolean {
 
 function SystemInitPill({ message }: { message: SystemInitMessage }) {
   const [expanded, setExpanded] = useState(false);
+  const oxap = (message as { oxap?: OxapInitDetails }).oxap;
 
   return (
     <div class="py-1 px-2">
@@ -164,7 +171,11 @@ function SystemInitPill({ message }: { message: SystemInitMessage }) {
           viewBox="0 0 24 24"
           pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
         />
-        <span class="font-medium">{message.model ?? 'unknown model'}</span>
+        <span class="font-medium">
+          {[oxap && 'Session Started', message.model || 'unknown model']
+            .filter(Boolean)
+            .join(' · ')}
+        </span>
         {message.mcp_servers && message.mcp_servers.length > 0 && (
           <span>
             · {message.mcp_servers.length} MCP server
@@ -176,6 +187,16 @@ function SystemInitPill({ message }: { message: SystemInitMessage }) {
 
       {expanded && (
         <div class="mt-1.5 ml-5 space-y-1.5 text-[10px] text-fg-faint">
+          {oxap && (
+            <div>
+              {[oxap.client, `OXAP ${oxap.version}`, message.permissionMode]
+                .filter(Boolean)
+                .join(' · ')}
+            </div>
+          )}
+          {oxap?.contextWindow !== undefined && (
+            <div>Context window: {oxap.contextWindow.toLocaleString()} tokens</div>
+          )}
           {message.cwd && (
             <div>
               <span class="font-semibold text-fg-muted">cwd: </span>
@@ -189,9 +210,11 @@ function SystemInitPill({ message }: { message: SystemInitMessage }) {
               {message.mcp_servers.map((server: { name: string; status: string }) => (
                 <span key={server.name} class="font-mono">
                   {server.name}
-                  <span class={server.status === 'connected' ? 'text-success' : ''}>
-                    ({server.status})
-                  </span>{' '}
+                  {server.status && (
+                    <span class={server.status === 'connected' ? 'text-success' : ''}>
+                      ({server.status})
+                    </span>
+                  )}{' '}
                 </span>
               ))}
             </div>
@@ -242,6 +265,8 @@ function SDKMessageRendererImpl({
   replacementStatus,
   isLiveTail = false,
   stopped,
+  errorActions,
+  disableDeliveryRetry,
 }: Props) {
   const minimal = useChatDisplayMode() === 'minimal';
   if (isHyperNeoActionMessage(message)) {
@@ -261,7 +286,7 @@ function SDKMessageRendererImpl({
   }
 
   if (isSDKSystemInit(sdkMessage)) {
-    if (taskContext) {
+    if (taskContext || 'oxap' in sdkMessage) {
       return <SystemInitPill message={sdkMessage as SystemInitMessage} />;
     }
     return null;
@@ -306,6 +331,7 @@ function SDKMessageRendererImpl({
         isReplay={true}
         sessionId={sessionId}
         showToolResultMessages={showToolResultUserMessages}
+        disableDeliveryRetry={disableDeliveryRetry}
       />
     );
   } else if (isSDKUserMessage(sdkMessage)) {
@@ -317,6 +343,7 @@ function SDKMessageRendererImpl({
         onRewind={onRewind}
         rewindingMessageUuid={rewindingMessageUuid}
         showToolResultMessages={showToolResultUserMessages}
+        disableDeliveryRetry={disableDeliveryRetry}
       />
     );
   } else if (isSDKAssistantMessage(sdkMessage)) {
@@ -336,6 +363,7 @@ function SDKMessageRendererImpl({
         isRunning={isRunning}
         runningToolUseIds={runningToolUseIds}
         stopped={stopped}
+        errorActions={errorActions}
       />
     );
   } else if (isSDKResultMessage(sdkMessage)) {
@@ -422,7 +450,9 @@ function areMessageRendererPropsEqual(prev: Props, next: Props): boolean {
     prev.runningToolUseIds === next.runningToolUseIds &&
     prev.replacementStatus === next.replacementStatus &&
     prev.isLiveTail === next.isLiveTail &&
-    prev.stopped === next.stopped
+    prev.stopped === next.stopped &&
+    prev.errorActions === next.errorActions &&
+    prev.disableDeliveryRetry === next.disableDeliveryRetry
   );
 }
 

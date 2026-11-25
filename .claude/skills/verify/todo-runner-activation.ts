@@ -118,7 +118,7 @@ try {
   assert.equal(effects.filter(effect=>effect.name==='work.send').length,beforeRace+1);
   result.singleDispatchWinner=true;
   ask('public'); seed('rpc','public');
-  store.updateTodo(store.getTodo('rpc')!,{state:'failed',reason:'Retry the synthetic worker'},2);
+  store.updateTodo(store.getTodo('rpc')!,{state:'blocked',blockedBy:'failure',blockedReason:'Retry the synthetic worker'},2);
   const original=app.sessionManager.getOperationRegistry();
   let publicDispatches=0;
   const scripted=createOperationRegistry(original.entries.map(entry=>['work.send','work.status'].includes(entry.name)?{

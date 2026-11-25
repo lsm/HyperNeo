@@ -129,14 +129,14 @@ function fixture(bot = true, cross = false) {
       acceptanceContract: base.acceptanceContract,
       evidence: [`artifact:${kind}`],
     });
-  const registry = createOperationRegistry([
-    createCodingMergeOperation({
-      db,
-      todos,
-      review: runCodingReview,
-      prepareMerge: prepareCodingMerge,
-    }),
-  ]);
+  const operation = createCodingMergeOperation({
+    db,
+    todos,
+    review: runCodingReview,
+    prepareMerge: prepareCodingMerge,
+  });
+  expect(operation.pipelineRunner.pipeline.name).toBe(operation.name);
+  const registry = createOperationRegistry([operation]);
   const invoke = (input: unknown = { todoId: 'todo', url }, role: 'neo' | 'worker' = 'neo') =>
     invokeOperation(registry, 'neo.coding.merge.prepare', input, { source: 'mcp', role });
   const prepare = async () => {

@@ -87,12 +87,34 @@ export interface VoiceSettings {
   apiKey?: string;
   hasApiKey?: boolean;
   apiKeyEndpoint?: string;
+  hostKey?: { host: string; apiKey?: string };
   allowInsecureTls?: boolean;
   allowPrivateNetwork?: boolean;
   mode?: VoiceMode;
   tlsCaPem?: string;
   streamEndpoint?: string;
   streamProtocol?: VoiceStreamProtocol;
+  recorded?: VoiceRecordedPart;
+  live?: VoiceLivePart;
+  speech?: VoiceSpeechPart;
+}
+
+export interface VoiceRecordedPart {
+  provider: 'openai' | 'deepgram';
+  endpoint: string;
+  model: string;
+}
+
+export interface VoiceLivePart {
+  provider: VoiceStreamProtocol;
+  endpoint: string;
+}
+
+export interface VoiceSpeechPart {
+  provider: 'openai' | 'deepgram';
+  endpoint: string;
+  model?: string;
+  voice?: string;
 }
 
 export type VoiceMode = 'batch' | 'streaming' | 'auto';
@@ -122,7 +144,6 @@ export type NeoRuleSource = { sessionId: string; messageId: string } | { questio
 
 export interface NeoSettings {
   front?: { enabled?: boolean; model?: NeoModelPreference };
-  relaySenders?: { sender: string; name: string }[];
   standingRules?: string[];
   standingRuleSources?: Record<string, NeoRuleSource>;
   preferences?: NeoModelPreference;
@@ -228,6 +249,15 @@ export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
 
   workFeedScope?: 'all' | 'own';
   codexCuAutoReap?: boolean;
+  codexAppServerBridge?: {
+    enabled: boolean;
+    port?: number;
+    originalUrl?: string | null;
+    remoteControl?: 'enabled' | 'skipped';
+    decision?: 'asked' | 'approved' | 'declined';
+    questionId?: string;
+  };
+  oxapHub?: { path: string; version: string; sha256: string };
 }
 
 export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {

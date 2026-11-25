@@ -77,7 +77,7 @@ try {
   db.exec('ROLLBACK'); held=false;
   await pending; admission=false; watchTables=false;
   assert.deepEqual(warnings,[]); assert.deepEqual(effects,['changed']);
-  assert((await visible()).entry.todos.some(todo=>todo.id==='recover' && todo.state==='failed' && todo.report===report));
+  assert((await visible()).entry.todos.some(todo=>todo.id==='recover' && todo.state==='blocked' && todo.report===report));
   assert.equal(sessions.readStartInterrupted('recover'),true); assert(tables.includes('neo_todo_sessions'));
   assert.deepEqual(notes,[]); result.commitBeforeReply=true; result.failureLeftToSweep=true;
   result.fullReport={bytes:Buffer.byteLength(report),sha256:createHash('sha256').update(report).digest('hex')};

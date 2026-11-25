@@ -31,6 +31,7 @@ export interface SystemState {
   storageLocation: string;
   workspaceRoot?: string;
   homeDirectory?: string;
+  shareOrigin?: string | null;
 
   auth: AuthStatus;
 

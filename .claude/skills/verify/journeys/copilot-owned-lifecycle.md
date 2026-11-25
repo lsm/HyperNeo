@@ -85,3 +85,11 @@ idle until 2.25 seconds after ACK; the production default must accept it within
 the same 10-second bound used by worker RPCs. A shorter configured timeout still
 bounds ACK-only refusal. All three cases also run in the default journey. The unsupported-send check now
 uses explicit steer, which remains unadvertised and never falls back to queue.
+
+Run `copilot-lifecycle.ts <port> "$RUN" compact` to prove Neo compacts an
+idle owned Copilot worker before reusing it. The helper seeds a finished todo
+bound to the session created by public `work.start` and the next todo of the same
+ask, then triggers the real driver refresh job. The fixture must observe the
+original send, one `session.history.compact`, then the next todo's send. Focused
+adapter tests cover busy refusal and explicit SDK failure. This uses a
+synthetic protocol peer.

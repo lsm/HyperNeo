@@ -11,6 +11,12 @@ import {
   planCodingLedgerRead,
   reconcileCodingPrLedger,
 } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
+import {
+  CodingPrEventRepository,
+  planCodingPrEvent,
+} from '../../../../src/lib/neo/packs/coding/pr-events.ts';
+import { CodingPrSweepRepository } from '../../../../src/lib/neo/packs/coding/pr-sweep.ts';
+import { WORK_MESSAGE_MAX } from '../../../../src/lib/drivers/work-operations.ts';
 import { decideCodingDaemonMerge } from '../../../../src/lib/neo/packs/coding/daemon-merge-gates.ts';
 import { createCodingPack } from '../../../../src/lib/neo/packs/coding/pack.ts';
 import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
@@ -107,6 +113,25 @@ describe('codingPrState', () => {
 });
 
 describe('planCodingLedgerRead', () => {
+  test.each([
+    [{ isDraft: true }, 'SUCCESS', 'draft'],
+    [{ mergeable: 'CONFLICTING' }, 'SUCCESS', 'dirty'],
+    [{}, 'FAILURE', 'failing'],
+    [{}, 'ERROR', 'failing'],
+    [{}, 'SUCCESS', 'changes_requested'],
+  ] as const)('preserves higher-priority states with unresolved threads', (more, ci, expected) => {
+    const result = planCodingLedgerRead(
+      response([node(1, more, ci)]),
+      0,
+      () => ({ mergePolicy: 'ci_only' }),
+      () => [],
+      () => ({
+        headOid: 'h1',
+        unresolvedThreadUrls: ['https://github.com/x/x/pull/1#discussion_r1'],
+      })
+    );
+    expect(result?.rows[0].state).toBe(expected);
+  });
   test.each(['review_bot', 'ci_only'] as const)(
     'scopes %s human signoff to changed paths',
     (mergePolicy) => {
@@ -142,7 +167,6 @@ describe('planCodingLedgerRead', () => {
       ).toBe('waiting_human');
     }
   );
-
   test.each(['review_bot', 'ci_only'] as const)(
     'checks actual labels for %s signoff',
     (mergePolicy) => {
@@ -215,6 +239,128 @@ describe('planCodingLedgerRead', () => {
 });
 
 describe('PR ledger reconcile', () => {
+  test('keeps fresh cross-model review state when thread refresh fails', async () => {
+    const { db, ledger } = setup();
+    for (const [key, value] of Object.entries({
+      mergePolicy: 'review_bot',
+      reviewBot: 'bot',
+      crossModelReview: true,
+    }))
+      db.prepare(
+        "INSERT INTO neo_pack_preferences VALUES ('coding', 'repo', 'x/x', ?, ?, 'human', 1)"
+      ).run(key, JSON.stringify(value));
+    const pr = node(1, {
+      body: 'Agent: claude-opus-5-5 (effort: medium) via Claude',
+      reviews: { nodes: [{ state: 'APPROVED', commit: { oid: 'h1' }, author: { login: 'bot' } }] },
+    });
+    const read = named(async () => response([pr]));
+    await reconcileCodingPrLedger(ledger, ['x/x'], read, 100);
+    db.prepare(
+      "UPDATE pack_coding_pr_ledger SET state = 'changes_requested' WHERE repo = 'x/x'"
+    ).run();
+    await reconcileCodingPrLedger(ledger, ['x/x'], read, 200, async () => ({ ok: false }));
+    expect(ledger.list()[0].state).toBe('waiting_cross_review');
+    db.close();
+  });
+
+  test.each([
+    [{ isDraft: true }, 'SUCCESS', 'draft'],
+    [{ mergeable: 'CONFLICTING' }, 'SUCCESS', 'dirty'],
+    [{}, 'FAILURE', 'failing'],
+  ] as const)('uses fresh PR state when a thread refresh fails', async (more, ci, expected) => {
+    const { db, ledger } = setup();
+    await reconcileCodingPrLedger(
+      ledger,
+      ['x/x'],
+      named(async () => response([node(1)])),
+      100
+    );
+    db.prepare(
+      "UPDATE pack_coding_pr_ledger SET state = 'changes_requested' WHERE repo = 'x/x'"
+    ).run();
+    await reconcileCodingPrLedger(
+      ledger,
+      ['x/x'],
+      named(async () => response([node(1, more, ci)])),
+      200,
+      async () => ({ ok: false })
+    );
+    expect(ledger.list()[0].state).toBe(expected);
+    db.close();
+  });
+  test.each(['CLOSED', 'MERGED'] as const)(
+    'shows a reopened PR after thread refresh fails following %s',
+    async (state) => {
+      const { db, ledger } = setup();
+      const closed = named(async () =>
+        response([], [node(1, { state, closedAt: new Date(1).toISOString() })])
+      );
+      await reconcileCodingPrLedger(ledger, ['x/x'], closed, 100);
+      const open = named(async () => response([node(1)]));
+      await reconcileCodingPrLedger(ledger, ['x/x'], open, 200, async () => ({ ok: false }));
+      expect(ledger.list().map((row) => [row.state, row.closedAt, row.readAt])).toEqual([
+        ['waiting_human', null, 200],
+      ]);
+      db.close();
+    }
+  );
+  test('preserves the previous PR state when its thread refresh fails', async () => {
+    const { db, ledger } = setup();
+    const read = named(async () => response([node(1)]));
+    await reconcileCodingPrLedger(ledger, ['x/x'], read, 100);
+    db.prepare(
+      "UPDATE pack_coding_pr_ledger SET state = 'changes_requested' WHERE repo = 'x/x' AND number = 1"
+    ).run();
+    await reconcileCodingPrLedger(ledger, ['x/x'], read, 200, async () => ({ ok: false }));
+    expect(ledger.list().map((row) => [row.state, row.readAt])).toEqual([
+      ['changes_requested', 200],
+    ]);
+    db.close();
+  });
+  test('keeps a successful repo poll when a thread refresh fails', async () => {
+    const { db, ledger } = setup();
+    const read = named(async () => response([node(1), node(2)]));
+    await reconcileCodingPrLedger(ledger, ['x/x'], read, 100, async (url) => {
+      if (url.endsWith('/1')) return { ok: false };
+      const value = { headOid: 'h2', unresolvedThreadUrls: [`${url}#discussion_r2`] };
+      ledger.pollFacts.record(
+        {
+          credentialId: 'github-connector',
+          url,
+          accept: 'application/vnd.hyperneo.pr-review-threads+json',
+          apiVersion: 'v1',
+        },
+        { value, etag: null, next: null },
+        Date.now(),
+        0
+      );
+      return { ok: true, data: value };
+    });
+    expect(ledger.list().map((row) => [row.number, row.readAt, row.state])).toEqual([
+      [1, 100, 'waiting_human'],
+      [2, 100, 'changes_requested'],
+    ]);
+    expect(ledger.health.read('x/x')?.misses).toBe(0);
+    db.close();
+  });
+
+  test('does not refresh threads when the repo poll reports low GraphQL quota', async () => {
+    const { db, ledger } = setup();
+    let calls = 0;
+    await reconcileCodingPrLedger(
+      ledger,
+      ['x/x'],
+      named(async () => response([node(1)], [], { remaining: 499, next: false })),
+      100,
+      async () => {
+        calls++;
+        return { ok: false };
+      }
+    );
+    expect(calls).toBe(0);
+    expect(ledger.list()).toHaveLength(1);
+    db.close();
+  });
   test('lists every open PR across repos and moves state_since only on a state or head change', async () => {
     const { db, ledger } = setup();
     let second = [node(7)];
@@ -432,6 +578,49 @@ describe('CodingPrLedgerRepository owners and snapshot', () => {
     );
   };
 
+  test('sends an approved green PR with unresolved threads back to its author', async () => {
+    const { db, ledger } = setup();
+    for (const [key, value] of Object.entries({ mergePolicy: 'review_bot', reviewBot: 'bot' }))
+      db.prepare(
+        `INSERT INTO neo_pack_preferences VALUES ('coding', 'repo', 'x/x', ?, ?, 'human', 1)`
+      ).run(key, JSON.stringify(value));
+    const prUrl = 'https://github.com/x/x/pull/1';
+    const threadUrl = `${prUrl}#discussion_r1`;
+    const author = { adapter: 'claude-desktop', id: 'author-1' };
+    claim(db, 'live', 'doing', 10, prUrl, author);
+    expect(
+      ledger.pollFacts.record(
+        {
+          credentialId: 'github-connector',
+          url: prUrl,
+          accept: 'application/vnd.hyperneo.pr-review-threads+json',
+          apiVersion: 'v1',
+        },
+        { value: { headOid: 'h1', unresolvedThreadUrls: [threadUrl] }, etag: null, next: null },
+        100,
+        0
+      )
+    ).toBe(true);
+    await reconcile(
+      ledger,
+      ['x/x'],
+      async () =>
+        response([
+          node(1, {
+            reviews: {
+              nodes: [{ state: 'APPROVED', commit: { oid: 'h1' }, author: { login: 'bot' } }],
+            },
+          }),
+        ]),
+      200
+    );
+    expect(ledger.snapshot(['x/x'], 200).map((row) => [row.state, row.ownerId])).toEqual([
+      ['changes_requested', 'author-1'],
+    ]);
+    expect(new CodingPrSweepRepository(db).rows()[0].findings).toContain(threadUrl);
+    db.close();
+  });
+
   test('takes the owner from the open todo that claims the PR, and leaves an unclaimed PR unassigned', async () => {
     const { db, ledger } = setup();
     const url = 'https://github.com/lsm/hyperneo/pull/1';
@@ -465,6 +654,223 @@ describe('CodingPrLedgerRepository owners and snapshot', () => {
       ['live', 'other/repo#7', 'merged'],
       [null, 'lsm/hyperneo#1', tracked?.state],
     ]);
+    db.close();
+  });
+
+  test('a later QA fail leaves the review event, its timer and its reminders alone', async () => {
+    const { db, ledger } = setup();
+    for (const [key, value] of Object.entries({
+      mergePolicy: 'review_bot',
+      reviewBot: 'bot',
+      crossModelReview: true,
+    }))
+      db.prepare(
+        `INSERT INTO neo_pack_preferences VALUES ('coding', 'repo', 'lsm/hyperneo', ?, ?, 'human', 1)`
+      ).run(key, JSON.stringify(value));
+    const url = 'https://github.com/lsm/hyperneo/pull/1';
+    const author = { adapter: 'claude-desktop', id: 'author-1' };
+    claim(db, 'live', 'doing', 10, url, author);
+    const pr = node(1, {
+      body: 'Fix it.\n\nAgent: claude-opus-5-5 (effort: medium) via Claude',
+      reviews: { nodes: [{ state: 'APPROVED', commit: { oid: 'h1' }, author: { login: 'bot' } }] },
+    });
+    const read = async () => response([pr]);
+    await reconcile(ledger, ['lsm/hyperneo'], read, 100);
+    const fact = {
+      url,
+      head: 'h1',
+      actor: { kind: 'agent' as const, id: 'reviewer', model: 'gpt-6.1-sol', harness: 'Codex' },
+      verdict: 'fail' as const,
+      acceptanceContract: 'contract',
+    };
+    ledger.recordStage(
+      { ...fact, stage: 'review', evidence: ['P1 the retry loop never stops.'] },
+      150
+    );
+    const [moved] = await reconcile(ledger, ['lsm/hyperneo'], read, 200);
+    ledger.acceptTerminalEvent(moved!, JSON.stringify(author), 250);
+    db.prepare('UPDATE pack_coding_pr_ledger SET nudges = 2').run();
+    const timer = () =>
+      new CodingPrSweepRepository(db)
+        .rows()
+        .map((row) => [row.nudges, row.stateSince, row.findings]);
+    const before = timer();
+    expect(
+      ledger.recordStage({ ...fact, stage: 'qa', evidence: ['QA: the page is blank.'] }, 300)
+    ).toBe(true);
+    await reconcile(ledger, ['lsm/hyperneo'], read, 400);
+    expect(new CodingPrEventRepository(db).pendingEvents()).toEqual([]);
+    expect(timer()).toEqual(before);
+    expect(before).toEqual([[2, 200, ['P1 the retry loop never stops.']]]);
+    db.close();
+  });
+
+  test('a cross-model fail on the head asks its author for changes, with the findings', async () => {
+    const { db, ledger } = setup();
+    for (const [key, value] of Object.entries({
+      mergePolicy: 'review_bot',
+      reviewBot: 'bot',
+      crossModelReview: true,
+    }))
+      db.prepare(
+        `INSERT INTO neo_pack_preferences VALUES ('coding', 'repo', 'lsm/hyperneo', ?, ?, 'human', 1)`
+      ).run(key, JSON.stringify(value));
+    const url = 'https://github.com/lsm/hyperneo/pull/1';
+    const author = { adapter: 'claude-desktop', id: 'author-1' };
+    claim(db, 'live', 'doing', 10, url, author);
+    const pr = node(1, {
+      body: 'Fix it.\n\nAgent: claude-opus-5-5 (effort: medium) via Claude',
+      reviews: { nodes: [{ state: 'APPROVED', commit: { oid: 'h1' }, author: { login: 'bot' } }] },
+    });
+    const read = async () => response([pr]);
+    await reconcile(ledger, ['lsm/hyperneo'], read, 100);
+    expect(ledger.list()[0].state).toBe('waiting_cross_review');
+    ledger.stageFacts.record({
+      url,
+      head: 'h1',
+      stage: 'review',
+      actor: { kind: 'agent', id: 'reviewer', model: 'gpt-6.1-sol', harness: 'Codex' },
+      verdict: 'fail',
+      acceptanceContract: 'contract',
+      evidence: ['P1 the retry loop never stops.'],
+    });
+    const [moved] = await reconcile(ledger, ['lsm/hyperneo'], read, 200);
+    expect(ledger.list()[0].state).toBe('changes_requested');
+    expect(
+      ledger.snapshot(null, 200).map((row) => [row.pr, row.state, row.ownerAdapter, row.ownerId])
+    ).toEqual([['lsm/hyperneo#1', 'changes_requested', 'claude-desktop', 'author-1']]);
+    expect(planCodingPrEvent(moved!)).toEqual({
+      key: 'neo-pr-event:lsm/hyperneo#1:h1:changes_requested:review',
+      text: 'lsm/hyperneo#1 "PR 1" has requested changes on head h1. Address the review and push.',
+      findings: ['P1 the retry loop never stops.'],
+    });
+    db.close();
+  });
+
+  test.each(['delivered', 'pending'])(
+    'a cross-model fail on a head GitHub already asked to change reaches its author once its earlier event is %s',
+    async (earlier) => {
+      const { db, ledger } = setup();
+      for (const [key, value] of Object.entries({
+        mergePolicy: 'review_bot',
+        reviewBot: 'bot',
+        crossModelReview: true,
+      }))
+        db.prepare(
+          `INSERT INTO neo_pack_preferences VALUES ('coding', 'repo', 'lsm/hyperneo', ?, ?, 'human', 1)`
+        ).run(key, JSON.stringify(value));
+      const url = 'https://github.com/lsm/hyperneo/pull/1';
+      const author = { adapter: 'claude-desktop', id: 'author-1' };
+      claim(db, 'live', 'doing', 10, url, author);
+      let review = 'APPROVED';
+      const read = async () =>
+        response([
+          node(1, {
+            body: 'Fix it.\n\nAgent: claude-opus-5-5 (effort: medium) via Claude',
+            reviews: {
+              nodes: [{ state: review, commit: { oid: 'h1' }, author: { login: 'bot' } }],
+            },
+          }),
+        ]);
+      await reconcile(ledger, ['lsm/hyperneo'], read, 50);
+      review = 'CHANGES_REQUESTED';
+      await reconcile(ledger, ['lsm/hyperneo'], read, 100);
+      const events = new CodingPrEventRepository(db);
+      const [github] = events.pendingEvents();
+      expect(planCodingPrEvent(github!)?.key).toBe(
+        'neo-pr-event:lsm/hyperneo#1:h1:changes_requested'
+      );
+      if (earlier === 'delivered') ledger.acceptTerminalEvent(github!, JSON.stringify(author), 150);
+      db.prepare('UPDATE pack_coding_pr_ledger SET nudges = 3').run();
+      expect(
+        ledger.recordStage(
+          {
+            url,
+            head: 'h1',
+            stage: 'review',
+            actor: { kind: 'agent', id: 'reviewer', model: 'gpt-6.1-sol', harness: 'Codex' },
+            verdict: 'fail',
+            acceptanceContract: 'contract',
+            evidence: ['P1 the retry loop never stops.'],
+          },
+          300
+        )
+      ).toBe(true);
+      await reconcile(ledger, ['lsm/hyperneo'], read, 400);
+      expect(events.pendingEvents().map((row) => planCodingPrEvent(row))).toEqual([
+        {
+          key: 'neo-pr-event:lsm/hyperneo#1:h1:changes_requested:review',
+          text: 'lsm/hyperneo#1 "PR 1" has requested changes on head h1. Address the review and push.',
+          findings: ['P1 the retry loop never stops.'],
+        },
+      ]);
+      expect(
+        new CodingPrSweepRepository(db)
+          .rows()
+          .map((row) => [row.nudges, row.stateSince, row.findings])
+      ).toEqual([[0, 300, ['P1 the retry loop never stops.']]]);
+      db.close();
+    }
+  );
+
+  test('long review findings are cut to fit one worker message with its merge context', async () => {
+    const { db, ledger } = setup();
+    for (const [key, value] of Object.entries({
+      mergePolicy: 'review_bot',
+      reviewBot: 'bot',
+      crossModelReview: true,
+    }))
+      db.prepare(
+        `INSERT INTO neo_pack_preferences VALUES ('coding', 'repo', 'lsm/hyperneo', ?, ?, 'human', 1)`
+      ).run(key, JSON.stringify(value));
+    const url = 'https://github.com/lsm/hyperneo/pull/1';
+    claim(db, 'live', 'doing', 10, url, { adapter: 'claude-desktop', id: 'author-1' });
+    const pr = node(1, {
+      body: 'Fix it.\n\nAgent: claude-opus-5-5 (effort: medium) via Claude',
+      reviews: { nodes: [{ state: 'APPROVED', commit: { oid: 'h1' }, author: { login: 'bot' } }] },
+    });
+    const told: string[] = [];
+    const pack = createCodingPack({
+      database: () => db,
+      readPrs: async () => [],
+      todoPrs: new CodingTodoPrRepository(db),
+      prLedger: ledger,
+      prEvents: new CodingPrEventRepository(db),
+      prSweep: new CodingPrSweepRepository(db),
+      projectRepos: () => ['lsm/hyperneo'],
+      readLedgerRepo: named(async () => response([pr])),
+      prSweepDeps: {
+        tell: async (_ref, _key, text) => {
+          told.push(text);
+          return true;
+        },
+        wake: async () => true,
+      },
+      attend: async () => true,
+    });
+    await pack.sweep!(100);
+    const mentions = Array.from({ length: 400 }, (_, i) => `see other${i}/repo${i}#1`).join(' ');
+    ledger.recordStage(
+      {
+        url,
+        head: 'h1',
+        stage: 'review',
+        actor: { kind: 'agent', id: 'reviewer', model: 'gpt-6.1-sol', harness: 'Codex' },
+        verdict: 'fail',
+        acceptanceContract: 'contract',
+        evidence: [`P1 ${mentions}`, 'x'.repeat(30_000)],
+      },
+      150
+    );
+    await pack.sweep!(200);
+    expect(told).toHaveLength(1);
+    expect(told[0]!.length).toBeLessThanOrEqual(WORK_MESSAGE_MAX);
+    expect(told[0]).toContain(
+      'Address the review and push. Review findings: P1 see other0/repo0#1'
+    );
+    expect(told[0]).toContain('(truncated; ask Neo for the full cross-model review of this head)');
+    expect(told[0]).not.toContain('other0/repo0 merge policy');
+    expect(told[0]!.endsWith('crossModelReview: true; allowNoChecksMerge: false')).toBe(true);
     db.close();
   });
 
@@ -803,6 +1209,7 @@ test('ledger facts retain terminal state despite missing approval and red CI', (
             state: 'MERGED',
             closedAt: new Date(now - 1).toISOString(),
             createdAt: new Date(now - 100).toISOString(),
+            updatedAt: '2026-11-16T12:00:00Z',
             author: { login: 'writer', __typename: 'User' },
           },
           'FAILURE'
@@ -823,6 +1230,7 @@ test('ledger facts retain terminal state despite missing approval and red CI', (
       replyAt: null,
       closedAt: now - 1,
       createdAt: now - 100,
+      updatedAt: '2026-11-16T12:00:00Z',
       authorIsBot: false,
     },
   ]);
@@ -894,6 +1302,40 @@ describe('planCodingLedgerRead cross-model review', () => {
     expect(state(true, [])).toBe('waiting_cross_review');
     expect(state(true, [review('claude-opus-5-5')])).toBe('waiting_cross_review');
     expect(state(true, [review('gpt-6.1-sol', 'h0')])).toBe('waiting_cross_review');
+  });
+
+  test('keeps waiting for cross-model review when a thread is unresolved', () => {
+    const planned = planCodingLedgerRead(
+      response([pr]),
+      0,
+      () => policy,
+      () => [],
+      () => ({
+        headOid: 'h1',
+        unresolvedThreadUrls: ['https://github.com/x/x/pull/1#discussion_r1'],
+      })
+    );
+    expect(planned?.rows[0].state).toBe('waiting_cross_review');
+  });
+
+  test('a failed review by a different model on the head asks for changes even with failing CI or conflicts', () => {
+    const fail = { ...review('gpt-6.1-sol'), verdict: 'fail' as const };
+    const read = (more: Record<string, unknown>, ci = 'SUCCESS') =>
+      planCodingLedgerRead(
+        response([
+          {
+            ...pr,
+            ...more,
+            commits: { nodes: [{ commit: { statusCheckRollup: { state: ci } } }] },
+          },
+        ]),
+        0,
+        () => policy,
+        () => [fail]
+      )?.rows[0].state;
+    expect(read({}, 'FAILURE')).toBe('changes_requested');
+    expect(read({ mergeable: 'CONFLICTING' })).toBe('changes_requested');
+    expect(read({ isDraft: true })).toBe('draft');
   });
 
   test('a passing review by a different model on the head makes it green', () => {

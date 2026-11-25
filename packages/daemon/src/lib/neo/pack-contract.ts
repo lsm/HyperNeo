@@ -7,7 +7,10 @@ import type { WorkRef } from '../drivers/types.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import type { NeoStatusLine } from './status-codes.ts';
 import type { OperationDefinition } from '../operations/registry.ts';
+import type { DescribedRunner } from 'superpipe';
 import type { NeoAttentionEvent, NeoAttentionKind } from './attention/decide.ts';
+import type { z } from 'zod';
+import type { PackPreferenceInput } from './preference-operations.ts';
 import type { NeoStepFacts } from './attention/owner.ts';
 
 export interface NeoPackBrief {
@@ -44,7 +47,7 @@ export type NeoTodoPolicyScope = {
   workerRemotes?: readonly string[];
   edit?: true;
   ask: Pick<NeoAsk, 'id'> | null;
-  todo?: Pick<NeoTodo, 'id'> | null;
+  todo?: Pick<NeoTodo, 'id' | 'check'> | null;
   start?: true;
 };
 
@@ -55,6 +58,7 @@ export interface NeoTodoPack {
   statusLine(todo: NeoTodo): NeoStatusLine | null;
   repository?(draft: NeoTodoRepositoryDraft, scope?: NeoTodoPolicyScope): string | null;
   waiting?(todos: readonly NeoTodo[]): Promise<ReadonlySet<string>>;
+  parked?(todos: readonly NeoTodo[]): Promise<ReadonlySet<string>>;
   doneWhen?(check: NeoTodoCheck): string | null;
   addUrls?(todo: NeoTodo, urls: readonly string[]): NeoTodoCheck | null;
   refuse?(
@@ -79,11 +83,13 @@ export function neoTodoRepository(
 export type NeoPackPreferenceLabel = { en: string; 'zh-Hans': string };
 
 type WorkerStartExclusions = { value: readonly WorkRef[] } | { reason: string };
-export type NeoWorkerTargetDecision = { value: NeoTodoTarget } | { reason: string };
+export type NeoWorkerTargetDecision = { value: NeoTodoTarget; note?: string } | { reason: string };
 
 export interface NeoPackPreferenceDeclaration {
   label: NeoPackPreferenceLabel;
+  question?: NeoPackPreferenceLabel;
   valueLabels: Record<string, NeoPackPreferenceLabel>;
+  valueDescriptions?: Record<string, NeoPackPreferenceLabel>;
   scope: 'global' | 'repo' | 'project';
   type:
     | { kind: 'enum'; values: readonly string[] }
@@ -122,9 +128,13 @@ export interface NeoTrackerAdapter {
   close(ref: string, outcome: 'completed' | 'not_planned'): Promise<true | { reason: string }>;
 }
 
+export type NeoPackOperation = OperationDefinition & {
+  readonly pipelineRunner?: DescribedRunner;
+};
+
 export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
   forgetRepositories?(repos: readonly string[]): void;
-  operations?: readonly OperationDefinition[];
+  operations?: readonly NeoPackOperation[];
   preferences?: Record<string, NeoPackPreferenceDeclaration>;
   workKinds?: readonly NeoWorkKind[];
   rankLines?(
@@ -135,6 +145,7 @@ export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
   todos?: NeoTodoPack;
   matter?(ask: Pick<NeoAsk, 'title' | 'request' | 'projectId'>): string | null;
   tracker?: NeoTrackerAdapter;
+  linkExists?(url: string): Promise<boolean | null>;
   sweep?(now: number): Promise<void>;
   attention?: {
     kinds: readonly NeoAttentionKind[];
@@ -155,10 +166,18 @@ export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
   workerTarget?(
     todo: NeoTodo,
     target: NeoTodoTarget,
-    status: (ref: WorkRef) => Promise<OperationOutcome>
+    status: (ref: WorkRef) => Promise<OperationOutcome>,
+    askSetting: (input: {
+      requestId: string;
+      hold?: false;
+      alternatives: z.infer<typeof PackPreferenceInput>[][];
+    }) => Promise<OperationOutcome>
   ): Promise<NeoWorkerTargetDecision>;
   workerTargetRefused?(todo: NeoTodo): void | Promise<void>;
-  workerStartBrief?(instruction: string, parameters?: Record<string, unknown>): string;
+  workerStartBrief?(
+    instruction: string,
+    parameters?: Record<string, unknown>
+  ): string | Promise<string>;
   workerBrief?(
     instruction: string,
     identity: {
@@ -168,6 +187,8 @@ export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
     }
   ): string;
   workGoal?(instruction: string, goal: NeoWorkGoal | null): string;
+  preparationPerRoundFields?: readonly string[];
+  roles?: Record<string, { shareWith?: readonly string[] }>;
   prepareExecution?: NeoExecutionPreparation;
   instructions(): string | null;
 }

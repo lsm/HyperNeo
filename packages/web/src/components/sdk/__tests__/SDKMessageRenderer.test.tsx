@@ -811,4 +811,16 @@ describe('SDKMessageRenderer in minimal display mode', () => {
       'Compact'
     );
   });
+
+  it('keeps the session-not-saved warning', () => {
+    const message = {
+      type: 'system',
+      subtype: 'session_writes_lost',
+      error_code: 'ENOSPC',
+      lost: ['transcript'],
+      uuid: crypto.randomUUID(),
+      session_id: 'test-session',
+    } as unknown as SDKMessage;
+    expect(inMinimal(message).container.textContent).toContain('Session not saved');
+  });
 });

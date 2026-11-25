@@ -107,7 +107,7 @@ describe('validateSDKSessionFile', () => {
     appendFileSync(file, use('late') + result('late'));
     const scan = validateSDKSessionFile(workspace, 's1');
     await new Promise((resolve) => setTimeout(resolve, 0));
-    truncateSessionFileAtMessage(workspace, 's1', 'kai', 'a-k30');
+    truncateSessionFileAtMessage(workspace, 's1', 'a-k30');
     await scan;
     appendFileSync(file, result('k40'));
     expect((await validateSDKSessionFile(workspace, 's1')).orphanedToolResults).toEqual([

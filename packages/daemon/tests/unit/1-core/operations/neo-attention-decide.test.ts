@@ -181,6 +181,17 @@ describe('renderNeoAttention', () => {
     );
   });
 
+  test('an overdue check asks Neo to chase it, mark it done or remove it', () => {
+    expect(
+      renderNeoAttention(
+        event('todo.neo_step', { title: 'Ship it', reason: 'check_overdue' }),
+        NEO_ATTENTION_KINDS
+      )
+    ).toBe(
+      'Todo "Ship it" (todo-1) needs your next step: its check has not passed for 24 hours. Ask whoever it waits on, mark it done, or remove it.'
+    );
+  });
+
   test('a failed step carries the failure', () => {
     expect(
       renderNeoAttention(

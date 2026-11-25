@@ -1,4 +1,6 @@
+import { neoToolDescription } from '@hyperneo/prompts';
 import type { WorkerInput } from '../../storage/repositories/worker-input-worker.ts';
+import { compactBeforeReuse } from './worker-compaction.ts';
 import { withWorkerProvenance } from './worker-provenance.ts';
 import type { DriverHealth } from '@hyperneo/shared/types/settings';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
@@ -11,6 +13,7 @@ import {
   replyMessageBodyLength,
   REPLY_ORIGIN_MAX,
   withReplyLine,
+  withReplySender,
 } from '../messaging/session-reply.ts';
 import {
   defineOperation,
@@ -22,8 +25,17 @@ import type { RemoteDaemons } from './find-operation.ts';
 import { stampWork } from './places.ts';
 import { workStartConfiguration } from './start-configuration.ts';
 import { workStartPreparation } from './start-preparation.ts';
-import { chooseReusableWorker, type WorkerReuseFacts } from './worker-reuse.ts';
 import {
+  reuseWorkerDecision,
+  matchingPreparation,
+  type WorkerReuseCandidate,
+  type WorkerReuseFacts,
+} from './worker-reuse.ts';
+import {
+  COPILOT_ADAPTER_ID,
+  COPILOT_DESKTOP_UNAVAILABLE,
+  CopilotClientSchema,
+  CopilotStartClientSchema,
   PlaceSchema,
   WorkDetailSchema,
   WorkDeliverySchema,
@@ -53,7 +65,7 @@ type RoutedVerb =
   | 'stop'
   | 'archive';
 type Route<Verb extends RoutedVerb> =
-  | { daemon: string }
+  | { daemon: string; verifiedCopilotStart?: true }
   | {
       local: NonNullable<WorkAdapter[Verb]>;
       supportsStartEffort?: boolean;
@@ -86,11 +98,45 @@ export interface WorkVerbDeps {
     adapter: string,
     todoId?: string,
     sessionId?: string
-  ) => ReadonlySet<string> | ReadonlyMap<string, WorkerReuseFacts>;
-  markUnusable?: (ref: WorkRef) => void;
-  claimWorker?: (ref: WorkRef, todoId?: string) => Promise<boolean>;
-  unclaimWorker?: (todoId: string, ref: WorkRef) => Promise<void>;
+  ) =>
+    | ReadonlySet<string>
+    | ReadonlyMap<string, WorkerReuseFacts>
+    | Promise<ReadonlySet<string> | ReadonlyMap<string, WorkerReuseFacts>>;
+  reusePolicy?: (
+    adapter: string,
+    todoId: string | undefined,
+    caller: OperationCaller
+  ) => Promise<{ mode: 'long_lived' | 'per_ask' | 'per_todo'; sameAsk: string[] }>;
+  roleContext?: (
+    todoId: string,
+    adapter: string,
+    preparationPack?: string
+  ) => Promise<{
+    roles: {
+      role: string;
+      adapter: string;
+      id: string;
+      model: string | null;
+      effort: string | null;
+    }[];
+    preparations: { id: string; preparation: string | null }[];
+    shares: Record<string, { shareWith?: readonly string[] }>;
+    perRoundFields: readonly string[];
+  }>;
+  markUnusable?: (ref: WorkRef, reason: string) => void | Promise<void>;
+  warn?: (message: string, error: unknown) => void;
+  claimWorker?: (
+    ref: WorkRef,
+    todoId?: string,
+    role?: string,
+    model?: string,
+    effort?: string,
+    shareWith?: readonly string[]
+  ) => Promise<boolean>;
+  unclaimWorker?: (todoId: string, ref: WorkRef, role?: string) => Promise<void>;
   isOpenTodo?: (todoId: string, sessionId: string) => boolean;
+  acceptedTodo?: (todoId: string) => boolean;
+  noticeReply?: (ref: WorkRef, sessionId: string) => boolean;
   todoWorker?: {
     on(todoId: string, ref: WorkRef): boolean;
     wait(todoId: string, ref: WorkRef, message: string): Promise<keyof typeof WORKER_BUSY_DETAIL>;
@@ -106,7 +152,22 @@ export interface WorkVerbDeps {
     recordFailure(id: string, error: unknown): Promise<void>;
   };
   queueInput?: (input: WorkerInput, from: string, caller: OperationCaller) => Promise<string>;
-  recordStarted?: (ref: WorkRef, directory?: string) => void;
+  recordStarted?: (
+    ref: WorkRef,
+    directory?: string,
+    facts?: {
+      startedBy: string;
+      todoId?: string;
+      machine: string;
+      folder?: string;
+      harness: string;
+      provider?: string;
+      model?: string;
+      effort?: string;
+      preparation?: unknown;
+      role?: string;
+    }
+  ) => void | Promise<void>;
   reportUncertain?: (report: WorkSendUncertainty) => Promise<void>;
   startPlace?: (input: StartDraft, caller: OperationCaller) => Gate<StartInput>;
 }
@@ -139,10 +200,13 @@ export const StartWorkInputSchema = z.object({
     .trim()
     .min(1)
     .optional()
-    .describe(
-      'Todo reference for bookkeeping; missing or stale references are recorded without blocking, but such a start does not reuse a worker a todo has used.'
-    ),
+    .describe('Agents must provide an open todo on an accepted human request.'),
+  role: z
+    .enum(['do', 'review', 'verify', 'check'])
+    .optional()
+    .describe('Role on the todo: do, review, verify or check. Defaults to do.'),
   adapter: z.string().min(1),
+  copilotClient: CopilotStartClientSchema.optional(),
   place: PlaceSchema.optional(),
   title: z.string().trim().min(1).max(200),
   sessionTitle: z
@@ -169,11 +233,11 @@ export const SendWorkInputSchema = z.object({
     .trim()
     .min(1)
     .optional()
-    .describe('The open todo this send belongs to. A Neo send needs this or notice.'),
+    .describe('The open todo on an accepted human request this send belongs to.'),
   notice: z
     .literal(true)
     .optional()
-    .describe('This send is a notice, not a piece of work. Neo sends need this or todoId.'),
+    .describe('A Neo reply to a session that sent it a message; omit todoId.'),
   ref: WorkRefSchema,
   message: MessageSchema,
   mode: z.enum(['auto', 'steer', 'queue']).optional(),
@@ -268,7 +332,10 @@ export const WorkAdaptersResultSchema = workResultSchema(
   z.array(
     z.object({
       id: z.string(),
+      displayName: z.string().optional(),
+      copilotClients: z.array(CopilotClientSchema).optional(),
       capabilities: z.array(RoutedCapabilitySchema),
+      steerBehavior: z.literal('best_effort').optional(),
       health: WorkDriverHealthSchema.optional(),
       unsupportedCapabilities: z.partialRecord(RoutedCapabilitySchema, z.string()).optional(),
     })
@@ -338,6 +405,46 @@ function requireSendPurpose<Value>(
         },
       }
     : { value: route };
+}
+
+function workSourceFacts(
+  input: StartDraft | QueuedInput,
+  caller: OperationCaller,
+  deps: WorkVerbDeps
+) {
+  const agent = caller.source === 'mcp' && caller.device?.kind !== 'daemon';
+  if (!agent || !('message' in input)) return { required: false, todo: false, notice: false };
+  return {
+    required: true,
+    todo:
+      !!input.todoId &&
+      !!deps.acceptedTodo?.(input.todoId) &&
+      (caller.role !== 'neo' ||
+        (!!caller.sessionId && !!deps.isOpenTodo?.(input.todoId, caller.sessionId))),
+    notice: !!(
+      'ref' in input &&
+      input.notice &&
+      !input.todoId &&
+      caller.role === 'neo' &&
+      caller.sessionId &&
+      deps.noticeReply?.(input.ref, caller.sessionId)
+    ),
+  };
+}
+
+function requireWorkSource<Value>(
+  facts: ReturnType<typeof workSourceFacts>,
+  value: Value
+): Gate<Value> {
+  return !facts.required || facts.todo || facts.notice
+    ? { value }
+    : {
+        reason: reject(
+          'todo_required',
+          'Work needs a todo on an accepted human request; notices may only reply to a session that messaged Neo.',
+          true
+        ),
+      };
 }
 
 export const isBusyWork = (status: string | undefined) =>
@@ -427,11 +534,7 @@ export function workReplyInput<
   T extends StartInput | SendInput | z.infer<typeof WithdrawWorkInputSchema>,
 >(input: T, from: string, caller: OperationCaller, deps: WorkVerbDeps): T {
   const adapter = 'adapter' in input ? input.adapter : input.ref.adapter;
-  if (
-    !('message' in input) ||
-    caller.role !== 'neo' ||
-    !['claude-code', 'claude-desktop', 'codex-desktop'].includes(adapter)
-  )
+  if (!('message' in input) || caller.role !== 'neo' || ['hyperneo', 'space'].includes(adapter))
     return input;
   const remote = 'place' in input ? input.place.daemon : input.ref.daemon;
   return {
@@ -439,7 +542,8 @@ export function workReplyInput<
     message: withReplyLine(
       input.message,
       remote ? qualifyRemoteOrigin(from, deps.daemonName) : from,
-      'cli'
+      'cli',
+      'ref' in input ? `${adapter}:${input.ref.id}` : undefined
     ),
   };
 }
@@ -468,10 +572,10 @@ export function pickRoute<Verb extends RoutedVerb>(
     return {
       reason: reject(
         verb === 'rename' ? 'not_supported' : 'unsupported',
-        verb === 'rename'
-          ? `The ${adapter.id} adapter has no supported rename API.`
-          : (adapter.unsupportedCapabilities?.[verb] ??
-              `The ${adapter.id} adapter cannot ${verb} work.`)
+        adapter.unsupportedCapabilities?.[verb] ??
+          (verb === 'rename'
+            ? `The ${adapter.id} adapter has no supported rename API.`
+            : `The ${adapter.id} adapter cannot ${verb} work.`)
       ),
     };
   }
@@ -485,7 +589,7 @@ export function pickRoute<Verb extends RoutedVerb>(
 }
 
 function admitRemoteStartModel(route: Route<'start'>, input: StartInput): Gate<Route<'start'>> {
-  return input.model !== undefined && 'daemon' in route
+  return input.model !== undefined && 'daemon' in route && !route.verifiedCopilotStart
     ? {
         reason: reject(
           'unsupported_model',
@@ -496,7 +600,8 @@ function admitRemoteStartModel(route: Route<'start'>, input: StartInput): Gate<R
 }
 
 export function admitStartEffort(route: Route<'start'>, input: StartInput): Gate<Route<'start'>> {
-  return input.effort === undefined || ('local' in route && route.supportsStartEffort === true)
+  return input.effort === undefined ||
+    ('local' in route ? route.supportsStartEffort === true : route.verifiedCopilotStart)
     ? { value: route }
     : {
         reason: reject(
@@ -554,11 +659,49 @@ export function annotateUnreachable(rejected: Rejected, hint: string): Rejected 
 }
 
 export function routeStart(input: StartInput, deps: WorkVerbDeps): Gate<Route<'start'>> {
-  return pickRoute(
+  if (input.copilotClient !== undefined && input.adapter !== COPILOT_ADAPTER_ID)
+    return {
+      reason: reject('unsupported', 'Client selection is only available for Copilot.', true),
+    };
+  const route = pickRoute(
     'start',
     { adapter: input.adapter, daemon: input.place.daemon },
     deps.adapters()
   );
+  if ('reason' in route && input.copilotClient === 'desktop')
+    return { reason: reject('unreachable', COPILOT_DESKTOP_UNAVAILABLE, true) };
+  return route;
+}
+
+async function admitRemoteCopilotStart(
+  route: Route<'start'>,
+  input: StartInput,
+  deps: WorkVerbDeps
+): Promise<Gate<Route<'start'>>> {
+  if (!('daemon' in route) || !input.copilotClient || input.copilotClient === 'auto')
+    return { value: route };
+  const catalog = await listWorkAdapters(route.daemon, deps);
+  if (!catalog.ok) return { reason: { ...catalog, notSent: true } };
+  const choices = catalog.value.find(({ id }) => id === COPILOT_ADAPTER_ID)?.copilotClients;
+  if (!choices)
+    return {
+      reason: reject(
+        'unsupported',
+        'The selected HyperNeo server cannot verify Copilot client selection.',
+        true
+      ),
+    };
+  if (!choices.includes(input.copilotClient))
+    return {
+      reason: reject(
+        'unreachable',
+        input.copilotClient === 'desktop'
+          ? COPILOT_DESKTOP_UNAVAILABLE
+          : 'Copilot CLI is unavailable on the selected machine.',
+        true
+      ),
+    };
+  return { value: { ...route, verifiedCopilotStart: true } };
 }
 
 export async function startWork(
@@ -582,7 +725,19 @@ export async function startWork(
           }
         : input;
     const result = await route.local(request, { from, caller });
-    if (result.ok) deps.recordStarted?.(result.value.ref, result.value.execution?.directory);
+    if (result.ok)
+      await deps.recordStarted?.(result.value.ref, result.value.execution?.directory, {
+        startedBy: from,
+        todoId: input.todoId,
+        machine: result.value.execution?.machine ?? result.value.place.machine,
+        folder: result.value.execution?.directory ?? result.value.place.folder,
+        harness: result.value.ref.adapter,
+        provider: result.value.provider,
+        model: result.value.model,
+        effort: result.value.effort,
+        preparation: input.preparation,
+        ...(ownedTodoId(input, caller, deps) ? { role: input.role ?? 'do' } : {}),
+      });
     return result;
   }
   const { daemon: _daemon, ...place } = input.place;
@@ -612,6 +767,21 @@ export async function startWork(
   );
 }
 
+function matchesRequested(
+  requested: z.infer<typeof workStartConfiguration.schema> & { provider?: string },
+  identity: { provider?: string; model?: string; effort?: string } | null
+): boolean {
+  return (
+    !!identity &&
+    (requested.provider === undefined || requested.provider === identity.provider) &&
+    workStartConfiguration.confirm(requested, {
+      ...(identity.model ? { model: identity.model } : {}),
+      ...(identity.effort ? { effort: identity.effort } : {}),
+    }).ok
+  );
+}
+
+/** @public */
 export async function reuseIdleWorker(
   route: Route<'start'>,
   input: StartInput,
@@ -620,48 +790,167 @@ export async function reuseIdleWorker(
   deps: WorkVerbDeps
 ): Promise<StartResult | null> {
   const folder = input.place.folder;
-  const adapter = deps.adapters().find((candidate) => candidate.id === input.adapter);
+  const requestedAdapter = deps.adapters().find((candidate) => candidate.id === input.adapter);
   if (
     !('local' in route) ||
     caller.role !== 'neo' ||
     !folder ||
-    !adapter?.send ||
-    ((input.model || input.effort) && !adapter.resolveStartConfiguration) ||
-    input.preparation ||
-    input.createFolder
+    !requestedAdapter?.send ||
+    ((input.model || input.effort) && !requestedAdapter.resolveStartConfiguration) ||
+    input.createFolder ||
+    (input.copilotClient !== undefined && input.copilotClient !== 'auto')
   )
     return null;
-  const free = deps.freeWorkers?.(adapter.id, input.todoId, caller.sessionId);
-  if (!free?.size) return null;
+  const todoId = ownedTodoId(input, caller, deps);
+  const role = input.role ?? 'do';
+  let adapter = requestedAdapter;
+  let context = todoId
+    ? await deps.roleContext?.(todoId, adapter.id, input.preparation?.pack)
+    : undefined;
+  if (input.preparation && !context) return null;
+  const assigned = context?.roles.find((row) => row.role === role);
+  if (todoId && assigned && assigned.adapter !== adapter.id) {
+    const priorAdapter = deps.adapters().find((candidate) => candidate.id === assigned.adapter);
+    const priorContext = await deps.roleContext?.(
+      todoId,
+      assigned.adapter,
+      input.preparation?.pack
+    );
+    const preparation = priorContext?.preparations.find((entry) => entry.id === assigned.id);
+    if (
+      priorAdapter?.send &&
+      priorContext &&
+      preparation &&
+      matchingPreparation(preparation.preparation, input.preparation, priorContext.perRoundFields)
+    ) {
+      const status = await priorAdapter.status?.({ adapter: assigned.adapter, id: assigned.id });
+      if (status && !status.ok && status.reason !== 'not_found' && status.reason !== 'not_open')
+        return status;
+      if (status?.ok) {
+        adapter = priorAdapter;
+        context = priorContext;
+      }
+    }
+  }
+  const matches = (id: string) => {
+    const entry = context?.preparations.find((item) => item.id === id);
+    return context
+      ? !!entry && matchingPreparation(entry.preparation, input.preparation, context.perRoundFields)
+      : true;
+  };
+  const previous = context?.roles.find((row) => row.role === role && row.adapter === adapter.id);
+  const prior = previous && matches(previous.id) ? previous : undefined;
+  const canShare = (id: string) =>
+    context?.roles.some(
+      (row) =>
+        row.adapter === adapter.id &&
+        row.id === id &&
+        context.shares[role]?.shareWith?.includes(row.role)
+    ) ?? false;
+  const policy = await deps.reusePolicy?.(adapter.id, input.todoId, caller);
+  if (policy?.mode === 'per_todo' && !prior && !context?.roles.some((row) => canShare(row.id)))
+    return null;
+  const free = await deps.freeWorkers?.(adapter.id, input.todoId, caller.sessionId);
+  if (
+    !free?.size &&
+    !prior &&
+    !context?.roles.some((row) => canShare(row.id)) &&
+    !(policy?.mode === 'per_ask' && policy.sameAsk.length)
+  )
+    return null;
+  const sameAsk = (id: string) => !!policy?.sameAsk.includes(id);
   const configured =
     input.model || input.effort ? await adapter.resolveStartConfiguration!(input) : null;
   if ((input.model || input.effort) && !configured) return null;
   if (configured && !configured.ok) return configured;
   const requested = configured?.ok ? configured.value : null;
   const groups = await adapter.find({ folder, includeClosed: false, limit: 50 });
-  const candidates = groups
-    .flatMap((group) => group.work)
-    .map((work) => ({
-      work,
-      free: free.has(work.ref.id),
-      sameAskAt: 'get' in free ? (free.get(work.ref.id)?.sameAskAt ?? null) : null,
-      settledAt: 'get' in free ? (free.get(work.ref.id)?.settledAt ?? null) : null,
-    }));
+  const discovered = groups.flatMap((group) => group.work);
+  if (prior && !discovered.some((work) => work.ref.id === prior.id) && adapter.status) {
+    const priorStatus = await adapter
+      .status({ adapter: adapter.id, id: prior.id })
+      .catch(() => null);
+    if (priorStatus?.ok) discovered.push(priorStatus.value);
+  }
+  const candidates = discovered.map((work) => ({
+    work,
+    free:
+      matches(work.ref.id) &&
+      (prior
+        ? work.ref.id === prior.id
+        : (!!free?.has(work.ref.id) || canShare(work.ref.id)) &&
+          (canShare(work.ref.id) || !policy || sameAsk(work.ref.id)) &&
+          !context?.roles.some(
+            (row) =>
+              row.adapter === work.ref.adapter &&
+              row.id === work.ref.id &&
+              row.role !== role &&
+              !context.shares[role]?.shareWith?.includes(row.role)
+          )),
+    sameAskAt: free && 'get' in free ? (free.get(work.ref.id)?.sameAskAt ?? null) : null,
+    settledAt: free && 'get' in free ? (free.get(work.ref.id)?.settledAt ?? null) : null,
+  }));
+  const sameAskCandidates = candidates.filter(
+    ({ work }) =>
+      matches(work.ref.id) &&
+      !context?.roles.some(
+        (row) =>
+          row.adapter === work.ref.adapter &&
+          row.id === work.ref.id &&
+          row.role !== role &&
+          !context.shares[role]?.shareWith?.includes(row.role)
+      )
+  );
+  const existing = prior && candidates.find(({ work }) => work.ref.id === prior.id);
+  let busyRole: WorkerReuseCandidate | null = null;
+  if (existing && todoId) {
+    const key = `${existing.work.ref.adapter}\u0000${existing.work.ref.id}`;
+    const live = await adapter.status?.(existing.work.ref).catch(() => null);
+    if (
+      reuseHolds.has(key) ||
+      (live?.ok ? isBusyWork(live.value.status) : isBusyWork(existing.work.status))
+    ) {
+      busyRole = existing;
+    }
+  }
   const request = {
     adapter: adapter.id,
     folder,
     refreshStatus: !!adapter.status,
+    roleWorker: prior?.id ?? context?.roles.find((row) => canShare(row.id))?.id,
     excludeRefs: input.excludeRefs,
   };
-  for (
-    let chosen = chooseReusableWorker(candidates, request);
-    chosen;
-    chosen = chooseReusableWorker(candidates, request)
-  ) {
+  let busy: WorkerReuseCandidate | undefined;
+  for (;;) {
+    const decision = reuseWorkerDecision(
+      candidates,
+      sameAskCandidates,
+      request,
+      policy?.mode === 'per_ask' && input.todoId && deps.todoWorker ? policy.sameAsk : [],
+      busyRole
+    );
+    if (decision.action === 'start') break;
+    if (decision.action === 'wait') {
+      if (decision.role && todoId) {
+        const queued =
+          (await deps.todoWorker?.wait(todoId, decision.candidate.work.ref, input.message)) ??
+          'none';
+        return reject('worker_busy', WORKER_BUSY_DETAIL[queued], true);
+      }
+      busy = decision.candidate;
+      break;
+    }
+    const chosen = decision.candidate;
     candidates.splice(candidates.indexOf(chosen), 1);
     const work = chosen.work;
     const key = `${work.ref.adapter}\u0000${work.ref.id}`;
-    if (reuseHolds.has(key)) continue;
+    if (reuseHolds.has(key)) {
+      if (prior?.id === work.ref.id && todoId) {
+        const queued = (await deps.todoWorker?.wait(todoId, work.ref, input.message)) ?? 'none';
+        return reject('worker_busy', WORKER_BUSY_DETAIL[queued], true);
+      }
+      continue;
+    }
     reuseHolds.add(key);
     let status;
     try {
@@ -670,45 +959,78 @@ export async function reuseIdleWorker(
       reuseHolds.delete(key);
       throw error;
     }
-    const identity = status?.ok ? status.value : null;
+    let identity = status?.ok ? status.value : null;
     if (adapter.status && identity?.status !== 'done') {
       reuseHolds.delete(key);
+      if (prior?.id === work.ref.id && identity && todoId) {
+        const queued = (await deps.todoWorker?.wait(todoId, work.ref, input.message)) ?? 'none';
+        return reject('worker_busy', WORKER_BUSY_DETAIL[queued], true);
+      }
       continue;
     }
-    if (
-      requested &&
-      (!identity ||
-        (requested.provider !== undefined && requested.provider !== identity.provider) ||
-        !workStartConfiguration.confirm(requested, {
-          ...(identity.model ? { model: identity.model } : {}),
-          ...(identity.effort ? { effort: identity.effort } : {}),
-        }).ok)
-    ) {
-      reuseHolds.delete(key);
-      continue;
+    if (requested && !matchesRequested(requested, identity)) {
+      const switched =
+        identity && adapter.reconfigure
+          ? await adapter.reconfigure(work.ref, requested).catch(() => false)
+          : false;
+      const after = switched ? await adapter.status?.(work.ref).catch(() => null) : null;
+      identity = after?.ok ? after.value : null;
+      if (identity?.status !== 'done' || !matchesRequested(requested, identity)) {
+        reuseHolds.delete(key);
+        continue;
+      }
     }
+    const addressed = withReplySender(input.message, from, `${adapter.id}:${work.ref.id}`);
     const message = input.provenance
-      ? withWorkerProvenance(input.message, {
+      ? withWorkerProvenance(addressed, {
           model: identity?.model ?? null,
           effort: identity?.effort ?? null,
           harness: adapter.id,
         })
-      : input.message;
-    const todoId = ownedTodoId(input, caller, deps);
+      : addressed;
     const claimed = deps.claimWorker
-      ? await deps.claimWorker(work.ref, todoId).catch((error: unknown) => {
-          reuseHolds.delete(key);
-          throw error;
-        })
+      ? await deps
+          .claimWorker(
+            work.ref,
+            todoId,
+            role,
+            identity?.model,
+            identity?.effort,
+            context?.shares[role]?.shareWith
+          )
+          .catch((error: unknown) => {
+            reuseHolds.delete(key);
+            throw error;
+          })
       : true;
     if (!claimed) {
       reuseHolds.delete(key);
+      if (prior?.id === work.ref.id && todoId) {
+        const queued = (await deps.todoWorker?.wait(todoId, work.ref, input.message)) ?? 'none';
+        return reject('worker_busy', WORKER_BUSY_DETAIL[queued], true);
+      }
       continue;
     }
-    const sent = await adapter.send(work.ref, message, { from, caller }).catch((error: unknown) => {
+    await compactBeforeReuse(
+      {
+        ref: work.ref,
+        sameAsk: sameAsk(work.ref.id) && prior?.id !== work.ref.id && !canShare(work.ref.id),
+        compact: adapter.compact,
+      },
+      caller,
+      deps.warn ?? (() => {})
+    );
+    if (todoId && caller.sessionId && deps.isOpenTodo?.(todoId, caller.sessionId) === false) {
       reuseHolds.delete(key);
-      throw error;
-    });
+      await deps.unclaimWorker?.(todoId, work.ref, input.role);
+      return reject('todo_required', 'This todo closed before its worker was messaged.', true);
+    }
+    const sent = await adapter.send!(work.ref, message, { from, caller }).catch(
+      (error: unknown) => {
+        reuseHolds.delete(key);
+        throw error;
+      }
+    );
     if (sent.ok) {
       setTimeout(() => reuseHolds.delete(key), REUSE_HOLD_MS).unref?.();
       return {
@@ -724,11 +1046,28 @@ export async function reuseIdleWorker(
       };
     }
     reuseHolds.delete(key);
-    if (sent.notSent && todoId) await deps.unclaimWorker?.(todoId, work.ref);
-    deps.markUnusable?.(work.ref);
+    if (sent.notSent && todoId) await deps.unclaimWorker?.(todoId, work.ref, input.role);
+    await deps.markUnusable?.(work.ref, sent.reason);
     if (sent.notSent || sent.reason === 'not_open' || sent.reason === 'not_found') continue;
     const reported = await reportUncertainWorkSend(sent, { ref: work.ref, message }, from, deps);
     return reported.ok ? sent : reported;
+  }
+  if (busy && input.todoId && deps.todoWorker) {
+    const status = await adapter.status?.(busy.work.ref).catch(() => null);
+    if (
+      status?.ok &&
+      (isBusyWork(status.value.status) || (!busy.free && status.value.status === 'done')) &&
+      (!requested ||
+        ((requested.provider === undefined || requested.provider === status.value.provider) &&
+          workStartConfiguration.confirm(requested, {
+            ...(status.value.model ? { model: status.value.model } : {}),
+            ...(status.value.effort ? { effort: status.value.effort } : {}),
+          }).ok))
+    ) {
+      const queued = await deps.todoWorker.wait(input.todoId, busy.work.ref, input.message);
+      if (queued === 'none') return null;
+      return reject('worker_busy', WORKER_BUSY_DETAIL[queued], true);
+    }
   }
   return null;
 }
@@ -886,13 +1225,16 @@ function resolveStartPlace(
   );
 }
 
-const runStartWork = (superpipe({})('start-work') as PipelineAPI)
+const runStartWork = (superpipe({})('work.start') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
   .pipe(neoTodoRecords, ['input', 'caller', 'deps'], 'records')
+  .pipe(workSourceFacts, ['input', 'caller', 'deps'], 'sourceFacts')
+  .pipe(requireWorkSource, ['sourceFacts', 'input'], 'result:outcome')
   .pipe(resolveStartPlace, ['input', 'caller', 'deps'], 'result:outcome')
   .pipe((resolved: StartInput) => resolved, 'outcome', 'input')
   .pipe(routeStart, ['input', 'deps'], 'result:outcome')
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
+  .pipe(admitRemoteCopilotStart, ['outcome', 'input', 'deps'], 'result:outcome')
   .pipe(admitRemoteStartModel, ['outcome', 'input'], 'result:outcome')
   .pipe(admitStartEffort, ['outcome', 'input'], 'result:outcome')
   .pipe(
@@ -963,11 +1305,13 @@ async function queueOrdinaryInput<Value>(
   return { reason: { ok: true, value: { delivered: false, inputId } } };
 }
 
-const runSendWork = (superpipe({})('send-work') as PipelineAPI)
+const runSendWork = (superpipe({})('work.send') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
   .pipe(routeSend, ['input', 'deps'], 'result:outcome')
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
   .pipe(requireSendPurpose, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
+  .pipe(workSourceFacts, ['input', 'caller', 'deps'], 'sourceFacts')
+  .pipe(requireWorkSource, ['sourceFacts', 'outcome'], 'result:outcome')
   .pipe(queueOrdinaryInput, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
   .pipe(requireFreeWorker, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
   .pipe(selectSendOrigin, ['input', 'caller'], 'from')
@@ -993,7 +1337,7 @@ const runSendWork = (superpipe({})('send-work') as PipelineAPI)
   deps: WorkVerbDeps
 ) => Promise<SendResult>;
 
-const runWorkStatus = (superpipe({})('work-status') as PipelineAPI)
+const runWorkStatus = (superpipe({})('work.status') as PipelineAPI)
   .input(['input', 'deps'])
   .pipe(routeStatus, ['input', 'deps'], 'result:outcome')
   .pipe(readWorkStatus, ['outcome', 'input', 'deps'], 'outcome')
@@ -1003,7 +1347,7 @@ const runWorkStatus = (superpipe({})('work-status') as PipelineAPI)
 type TurnsInput = z.infer<typeof WorkTurnsInputSchema>;
 type TurnsResult = z.infer<typeof WorkTurnsResultSchema>;
 
-const runWorkTurns = (superpipe({})('work-turns') as PipelineAPI)
+const runWorkTurns = (superpipe({})('work.turns') as PipelineAPI)
   .input(['input', 'deps'])
   .pipe(
     (input: TurnsInput, deps: WorkVerbDeps) => pickRoute('turns', input.ref, deps.adapters()),
@@ -1076,11 +1420,13 @@ async function changeQueuedInput(
         'The input may already have been queued or withdrawn; inspect its owning daemon before retrying.'
       );
 }
-const runQueuedInput = (superpipe({})('change-queued-work-input') as PipelineAPI)
+const runQueueWork = (superpipe({})('work.queue') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
   .pipe(routeQueuedInput, ['input', 'deps'], 'result:outcome')
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
   .pipe(requireSendPurpose, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
+  .pipe(workSourceFacts, ['input', 'caller', 'deps'], 'sourceFacts')
+  .pipe(requireWorkSource, ['sourceFacts', 'outcome'], 'result:outcome')
   .pipe(
     (
       input: QueuedInput,
@@ -1120,7 +1466,53 @@ const runQueuedInput = (superpipe({})('change-queued-work-input') as PipelineAPI
   deps: WorkVerbDeps
 ) => Promise<QueuedResult>;
 
-const runRenameWork = (superpipe({})('rename-work') as PipelineAPI)
+const runWithdrawWork = (superpipe({})('work.withdraw') as PipelineAPI)
+  .input(['input', 'caller', 'deps'])
+  .pipe(routeQueuedInput, ['input', 'deps'], 'result:outcome')
+  .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
+  .pipe(requireSendPurpose, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
+  .pipe(workSourceFacts, ['input', 'caller', 'deps'], 'sourceFacts')
+  .pipe(requireWorkSource, ['sourceFacts', 'outcome'], 'result:outcome')
+  .pipe(
+    (
+      input: QueuedInput,
+      caller: OperationCaller,
+      route: Route<'queue' | 'withdraw'>,
+      deps: WorkVerbDeps
+    ) =>
+      queueOrdinaryInput(
+        'message' in input ? { ...input, mode: 'queue' } : input,
+        caller,
+        route,
+        deps
+      ),
+    ['input', 'caller', 'outcome', 'deps'],
+    'result:outcome'
+  )
+  .pipe(requireFreeWorker, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
+  .pipe(selectSendOrigin, ['input', 'caller'], 'from')
+  .pipe(acceptWorkInput, ['input', 'from', 'caller', 'deps'], 'inputId')
+  .pipe(workReplyInput, ['input', 'from', 'caller', 'deps'], 'deliveryInput')
+  .pipe(
+    (
+      route: Route<'queue' | 'withdraw'>,
+      input: QueuedInput,
+      from: string,
+      caller: OperationCaller,
+      deps: WorkVerbDeps,
+      inputId: string | undefined
+    ) => recordThrownWork(() => changeQueuedInput(route, input, from, caller, deps), inputId, deps),
+    ['outcome', 'deliveryInput', 'from', 'caller', 'deps', 'inputId'],
+    'outcome'
+  )
+  .pipe(recordWorkOutcome, ['inputId', 'input', 'outcome', 'deps'], 'outcome')
+  .endAsync('outcome') as (
+  input: QueuedInput,
+  caller: OperationCaller,
+  deps: WorkVerbDeps
+) => Promise<QueuedResult>;
+
+const runRenameWork = (superpipe({})('work.rename') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
   .pipe(
     (input: RenameInput, deps: WorkVerbDeps) => pickRoute('rename', input.ref, deps.adapters()),
@@ -1153,7 +1545,7 @@ const runRenameWork = (superpipe({})('rename-work') as PipelineAPI)
   deps: WorkVerbDeps
 ) => Promise<z.infer<typeof RenameWorkResultSchema>>;
 
-const runStopWork = (superpipe({})('stop-work') as PipelineAPI)
+const runStopWork = (superpipe({})('work.stop') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
   .pipe(routeStop, ['input', 'deps'], 'result:outcome')
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
@@ -1177,30 +1569,41 @@ async function listWorkAdapters(
     ok: true,
     value: [...ids].map((id) => {
       const adapter = adapters.find((entry) => entry.id === id);
+      const capabilities =
+        adapter?.capabilities.flatMap((capability) => {
+          const routed = RoutedCapabilitySchema.safeParse(capability);
+          return routed.success && (routed.data === 'find' || adapter[routed.data])
+            ? [routed.data]
+            : [];
+        }) ?? [];
       return {
         id,
+        capabilities,
+        ...(id === COPILOT_ADAPTER_ID
+          ? { displayName: 'Copilot', copilotClients: [...(adapter?.copilotClients ?? [])] }
+          : {}),
+        ...(adapter?.steerBehavior && capabilities.includes('steer')
+          ? { steerBehavior: adapter.steerBehavior }
+          : {}),
         ...(health?.[id] ? { health: health[id] } : {}),
         ...(adapter?.unsupportedCapabilities
           ? { unsupportedCapabilities: adapter.unsupportedCapabilities }
           : {}),
-        capabilities:
-          adapter?.capabilities.flatMap((capability) => {
-            const routed = RoutedCapabilitySchema.safeParse(capability);
-            return routed.success && (routed.data === 'find' || adapter[routed.data])
-              ? [routed.data]
-              : [];
-          }) ?? [],
       };
     }),
   };
 }
 
+const runWorkAdapters = (superpipe({})('work.adapters') as PipelineAPI)
+  .input(['daemon', 'deps'])
+  .pipe(listWorkAdapters, ['daemon', 'deps'], 'outcome')
+  .endAsync('outcome') as typeof listWorkAdapters;
+
 export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinition[] {
   return [
     defineOperation({
       name: 'work.rename',
-      description:
-        'Rename existing work using a supported harness API. Workers are long-lived sessions. Name work for the matter it owns, never a task title. title is single-line plain text, trimmed, 1–200 characters. Codex uses thread/name/set so connected Desktop clients receive the name update without a restart; HyperNeo uses its session lifecycle API; Copilot uses session.name.set on HyperNeo-owned sessions (1–100 characters); Space uses task.update or agent.update. No other app private files or databases are written. Unsupported adapters return not_supported; API failures return not_delivered or unreachable with a reason. Only Neo or the user can rename work on another daemon.',
+      description: neoToolDescription('work.rename'),
       inputSchema: RenameWorkInputSchema,
       resultSchema: RenameWorkResultSchema,
       policy: { safetyClass: 'mutate' },
@@ -1208,17 +1611,15 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     }),
     defineOperation({
       name: 'work.adapters',
-      description:
-        'List work adapters on this daemon, or the attached daemon named by daemon, with their available capabilities: find, start, rename, send, steer, queue, withdraw, status, turns, stop, archive. Local client health includes status, reason, installed and verified versions, and check time; unavailable unregistered clients appear with no capabilities. Avoid assigning degraded or unavailable clients. An unverified version remains usable when health is ok. steer means work.send accepts mode steer on that adapter; it is listed only when declared and implemented. Optional unsupportedCapabilities maps unavailable capabilities to their limitation; explicit unsupported requests return that explanation. Archive uses neo.session.archive and requires a human request in a live turn. Use only capabilities listed for the chosen adapter.',
+      description: neoToolDescription('work.adapters'),
       inputSchema: z.object({ daemon: z.string().min(1).optional() }),
       resultSchema: WorkAdaptersResultSchema,
       policy: { safetyClass: 'read' },
-      execute: ({ daemon }) => listWorkAdapters(daemon, deps),
+      execute: ({ daemon }) => runWorkAdapters(daemon, deps),
     }),
     defineOperation({
       name: 'work.start',
-      description:
-        'Start new work in a place returned by work.find: a session, thread or task titled title, opened with message. Workers are long-lived sessions: title is named for the matter, never a task title. Put the task in message. excludeRefs prevents the named workers receiving a reused start, including PR authors and earlier stage actors. For Neo, offer a todo first to the most recently used free worker of its ask with the same adapter and folder. Otherwise prefer a free worker whose latest ask settled longest ago, with unknown settlement history last, then start a new worker if none qualifies. Reuse returns reused true and that worker ref. Explicit preparation or createFolder always start new work. Explicit model or effort can reuse only after the adapter resolves and confirms matching identity. Missing or stale todoId is recorded without blocking otherwise permitted work; the receipt includes records. adapter picks the harness: an adapter whose capabilities include start (see work.adapters); a place group lists adapters that only found work there. A place with a daemon starts the work on that daemon. Remote routes reject explicit model with unsupported_model until configuration support can be verified; use a local adapter to request a model. Only Neo or the user can change work on another daemon; other agents get unsupported. For non-coding work, omit place and pass todoId to use the one visible user folder across projects: ~/HyperNeo by default, or exactly the instance workspace path. A different place needs an exact path the user named in chat, even inside the workspace; never invent folders under home. Other new human-named folders keep the existing home-only, non-hidden and existing-parent creation rules. Coding keeps the repository place returned by work.find. model picks the model of a new HyperNeo session or Codex thread; settings.model.get lists HyperNeo id, name and provider. HyperNeo resolves a unique case-insensitive display name, with exact IDs taking precedence; ambiguous names reject with matching IDs. A shared exact ID keeps catalog precedence; use a unique display name to choose a particular provider offer. Codex resolves catalog aliases and refuses unsupported models. Claude desktop refuses explicit model overrides with unsupported_model; omit model to use its app configuration. Optional effort is supported by local HyperNeo (off/low/medium/high/extra high/max/ultra or thinking-level IDs) and Codex: it resolves against the selected model catalog and confirms the applied effort before sending the first turn. Unsupported local adapters and unverified remote routes return unsupported_effort before starting work. For Neo, an idle free worker in the same project may be reused; explicit model/effort requests reuse only when the adapter-resolved configuration matches its recorded status identity. Mismatched or unavailable identity starts fresh. Human starts always create new work. For Codex and Copilot, place names the project; execution reports the worker’s actual folder. Repositories without a first commit start in the project folder. Without model, a new HyperNeo session starts on the default model, or on the newest available one when the default cannot run. Returns the started or reused work with its ref, link and, for HyperNeo or Codex, the model it runs on plus confirmed effort when available, or ok false with a reason such as invalid_place, claude_cli_login_expired, unsupported or unreachable.',
+      description: neoToolDescription('work.start'),
       inputSchema: StartWorkInputSchema,
       resultSchema: StartWorkResultSchema,
       policy: { safetyClass: 'mutate' },
@@ -1226,8 +1627,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     }),
     defineOperation({
       name: 'work.send',
-      description:
-        'Send a message to existing work by the ref from work.find, work.start or work.status. Ordinary local Neo messages are stored durably with an inputId and delivered after the worker leaves running or queued status. A question ending the turn permits delivery. Explicit steer stays immediate. A Neo send must name an open todo of this session or set notice: true, otherwise it is refused unsent with todo_required. For Codex, choose mode steer for instant feedback or a change of direction; it returns not_delivered with a reason if steering is unavailable, never queues. Choose mode queue for the next task after the current turn. Copilot strict steer is unsupported: immediate input can fall back to a later turn. Copilot auto and queue enqueue input; delivered false plus receipt/queuedSubmissionId means accepted and waiting for consumption. Use receipt-bound work.status for its reply. After daemon dispatch, auto uses the adapter’s normal send behavior; on Codex it delivers through the Desktop owner client when Desktop is running and queues input for the next idle turn otherwise. Explicit steer and queue require those capabilities on the target adapter; otherwise they return unsupported without sending. HyperNeo sessions and Space agents support auto, not explicit steer; use auto for those targets. Other adapters retain their own steer and queue delivery semantics. Explicit Codex steer uses Desktop ownership when Desktop is running and the app-server otherwise. Automatic Codex sends deliver through the Codex Desktop owner client (owner discovery, then follower steer or turn start) whenever Desktop is running, and never resume the app-server writer then; explicit queue instead runs Desktop owner discovery and returns busy only when Desktop owns the thread, because steering into or starting the owner’s turn would not be queueing. When Desktop is not running both check loaded threads and resume saved unloaded threads before settings or native queue submission; already loaded threads are not resumed and no turn/start is issued. Queue acceptance returns queuedSubmissionId; delivered stays false unless a fresh matching input with a receipt is observed in the transcript. An uncertain steer is not retried or also queued. delivered false normally means accepted and queued behind the current turn; with unconfirmed true, only the transport write succeeded and peer acceptance is unknown. Claude UUIDs registered with Desktop reuse its existing confirmed send path, including stopped sessions. Plain CLI inputs match a verified receiver permission class; unknown modes refuse without sending. A held receipt waits for receive-side approval, not idle, and expiry is not delivery; do not auto-resend. Claude Desktop desktopUI is ui-unconfirmed when no supported live render/read acknowledgment exists; delivered, confirmedAt, links and Remote Control never confirm Desktop rendering or reading. Optional receipt contains opaque executionId and inputId for that submission, scoped to the requested work ref and its daemon; it is not proof of completion or result attribution. ok false reports a failed or uncertain send. notSent true proves no input was accepted, through no dispatch or an explicit precondition refusal; otherwise reconcile work.status before retrying. Reasons include not_found, not_open (archived or ended work), not_delivered, claude_cli_login_expired (tell the user to run `claude auth login`; retrying will not help), unsupported or unreachable. Only Neo or the user can change work on another daemon; other agents get unsupported.',
+      description: neoToolDescription('work.send'),
       inputSchema: SendWorkInputSchema,
       resultSchema: SendWorkResultSchema,
       policy: { safetyClass: 'mutate' },
@@ -1235,27 +1635,24 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     }),
     defineOperation({
       name: 'work.queue',
-      description:
-        'Queue next-turn peer input by ref. Ordinary local Neo messages are stored durably with an inputId and delivered after the worker leaves running or queued status. A question ending the turn permits delivery. Explicit steer stays immediate. A Neo send must name an open todo of this session or set notice: true, otherwise it is refused unsent with todo_required. Returns an opaque queuedSubmissionId when supported; delivered false/unconfirmed does not prove execution. Only Neo or the user can change work on another daemon. Unsupported adapters return a factual rejection with no fallback.',
+      description: neoToolDescription('work.queue'),
       inputSchema: SendWorkInputSchema,
       resultSchema: SendWorkResultSchema,
       policy: { safetyClass: 'mutate' },
-      execute: (input, caller) => runQueuedInput(input, caller, deps) as Promise<SendResult>,
+      execute: (input, caller) => runQueueWork(input, caller, deps) as Promise<SendResult>,
     }),
     defineOperation({
       name: 'work.withdraw',
-      description:
-        'Withdraw your queued input using its owning ref and queuedSubmissionId. withdrawn true confirms cancellation only while it remains withdrawable; false/not_queued means too late or no longer pending. Native Desktop queue IDs and another sender’s inputs are unsupported. Only Neo or the user can change work on another daemon.',
+      description: neoToolDescription('work.withdraw'),
       inputSchema: WithdrawWorkInputSchema,
       resultSchema: WithdrawWorkResultSchema,
       policy: { safetyClass: 'mutate' },
       execute: (input, caller) =>
-        runQueuedInput(input, caller, deps) as Promise<z.infer<typeof WithdrawWorkResultSchema>>,
+        runWithdrawWork(input, caller, deps) as Promise<z.infer<typeof WithdrawWorkResultSchema>>,
     }),
     defineOperation({
       name: 'work.status',
-      description:
-        'Read the current status of work by ref: queued, running, needs_you, done, failed or stopped, with its last reply and link. With since (epoch ms on that machine), HyperNeo sessions, Space agents, Codex and Claude Code Desktop work also return exchange: the user and agent messages after that time, oldest first; exchangeCut true means earlier ones were not read. Desktop execution, when present, identifies the actual working directory and its machine; place.folder may instead be a grouped project. Optional receipt queries inputEvidence for that exact execution/input on the owning ref and daemon: unavailable means ownership/history cannot be verified; pending means a completed reply has not yet been verified; observed means the driver verified that input and returns its bounded ordered exchange (up to 40 entries, exchangeCut marks truncation). Local HyperNeo receipts additionally include replyAvailability and a complete replyReport/replyAt for the verified consumed turn, read from authoritative SDK pages; mid-turn inputs stay in that turn, while a later terminal turn is excluded. Incomplete or unavailable history is explicit and never proves no written reply. Claude transcriptState distinguishes accepted input from a completed transcript turn; a later input alone is not completion. Claude Desktop desktopUI remains ui-unconfirmed independently, including after restart. Match the echoed receipt before using evidence. Missing inputEvidence means unsupported or unknown. This evidence is separate from lastReply and does not prove task completion or aggregate-result origin. Use this to follow up on work instead of searching again.',
+      description: neoToolDescription('work.status'),
       inputSchema: WorkStatusInputSchema,
       resultSchema: WorkStatusResultSchema,
       policy: { safetyClass: 'read' },
@@ -1263,8 +1660,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     }),
     defineOperation({
       name: 'work.turns',
-      description:
-        'Read finished turns of work by ref, oldest first and a few at a time: when each ran, how it ended, the inputs in it and the URLs in its final message and tool output. complete false means its output could not be fully read. Pass the last turn cursor to continue. Only some adapters report turns; others return unsupported.',
+      description: neoToolDescription('work.turns'),
       inputSchema: WorkTurnsInputSchema,
       resultSchema: WorkTurnsResultSchema,
       policy: { safetyClass: 'read' },
@@ -1272,8 +1668,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     }),
     defineOperation({
       name: 'work.stop',
-      description:
-        'Stop the current turn of work by ref. stopped false means nothing was running. Some adapters cannot stop work (unsupported); tell the user instead of retrying. Only Neo or the user can change work on another daemon; other agents get unsupported.',
+      description: neoToolDescription('work.stop'),
       inputSchema: WorkRefInputSchema,
       resultSchema: StopWorkResultSchema,
       policy: { safetyClass: 'mutate' },

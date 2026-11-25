@@ -1,3 +1,4 @@
+import { createConnection } from 'node:net';
 import { Logger } from '../logger.ts';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
 import { type CodexDesktopIpc, withCodexDesktopIpc } from './codex-desktop-ipc.ts';
@@ -38,20 +39,83 @@ async function codexDesktopRunning(spawn: SpawnFn, platform = process.platform):
   }
 }
 
-function discoverCodexDesktopOwner({ call }: CodexDesktopIpc, threadId: string) {
+function requestCodexDesktopOwner({ call }: CodexDesktopIpc, threadId: string) {
   return call(
     'thread-owner-discovery',
     { hostId: 'local', conversationId: threadId },
     1,
     undefined,
     1_000
-  ).catch((error: unknown) => {
+  );
+}
+
+function discoverCodexDesktopOwner(client: CodexDesktopIpc, threadId: string) {
+  return requestCodexDesktopOwner(client, threadId).catch((error: unknown) => {
     if (
       error instanceof Error &&
       error.message === 'Codex Desktop thread-owner-discovery timed out.'
     )
       return undefined;
     throw error;
+  });
+}
+
+export async function requestCodexDesktopCompaction(
+  socketPath: string | undefined,
+  threadId: string,
+  idle: () => Promise<boolean>
+): Promise<'await_rollout' | 'busy' | 'no_owner'> {
+  if (!socketPath) return 'no_owner';
+  try {
+    return await withCodexDesktopIpc(
+      socketPath,
+      async (client) => {
+        const owner = await requestCodexDesktopOwner(client, threadId);
+        if (owner.resultType === 'error' && owner.error === 'no-client-found') return 'no_owner';
+        if (owner.resultType !== 'success' || !owner.handledByClientId)
+          throw new Error(owner.error ?? 'Desktop did not confirm thread ownership.');
+        if (!(await idle())) return 'busy';
+        const detail = await client
+          .call(
+            'thread-follower-compact-thread',
+            { conversationId: threadId },
+            1,
+            owner.handledByClientId
+          )
+          .then(
+            (response) =>
+              response.resultType === 'success'
+                ? undefined
+                : (response.error ?? 'Desktop returned no acknowledgment.'),
+            (error: unknown) => String(error)
+          );
+        if (detail) log.warn('Codex Desktop compaction request unconfirmed', { threadId, detail });
+        return 'await_rollout';
+      },
+      Date.now() + TIMEOUT_MS
+    );
+  } catch (error) {
+    if (codexDesktopIpcAbsent(error)) return 'no_owner';
+    throw error;
+  }
+}
+
+export function codexDesktopIpcAbsent(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return code === 'ENOENT' || code === 'ECONNREFUSED';
+}
+
+export function codexDesktopIpcListening(socketPath: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection(socketPath);
+    const done = (listening: boolean) => {
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(listening);
+    };
+    const timer = setTimeout(() => done(true), 1000);
+    socket.once('connect', () => done(true));
+    socket.once('error', (error) => done(!codexDesktopIpcAbsent(error)));
   });
 }
 
@@ -339,6 +403,15 @@ async function sendDesktopTurn(
     };
     return await withCodexDesktopIpc(socketPath, admit, deadline);
   } catch (error) {
+    if (!dispatched && codexDesktopIpcAbsent(error)) {
+      log.warn('work.send route', {
+        threadId,
+        messageId,
+        path: 'app-server',
+        reason: 'desktop_ipc_absent',
+      });
+      return { value: 'app-server' };
+    }
     log.warn('work.send desktop transport failed', {
       threadId,
       messageId,

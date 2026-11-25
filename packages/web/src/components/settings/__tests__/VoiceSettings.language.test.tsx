@@ -1,9 +1,9 @@
+import type { GlobalSettings, MessageHub } from '@hyperneo/shared';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { GlobalSettings, MessageHub } from '@hyperneo/shared';
 import { updateGlobalSettings } from '../../../lib/api-helpers.ts';
-import { VoiceSettings } from '../VoiceSettings.tsx';
 import { openVoiceStream } from '../../../lib/voice/voice-stream.ts';
+import { VoiceSettings } from '../VoiceSettings.tsx';
 
 const { globalSettings } = vi.hoisted(() => ({
   globalSettings: { value: undefined as GlobalSettings | undefined },
@@ -148,7 +148,6 @@ describe('VoiceSettings mode', () => {
   it.each([
     { streamEndpoint: 'https://example.test/live', streamProtocol: 'deepgram' },
     { streamEndpoint: 'not a URL', streamProtocol: 'deepgram' },
-    { streamEndpoint: 'wss://example.test/live', streamProtocol: 'openai-realtime' },
   ] as const)('does not offer streaming for unsupported routes: $streamEndpoint', (route) => {
     globalSettings.value = {
       voice: { enabled: true, endpoint: 'https://example.test/batch', model: 'fixture', ...route },
@@ -162,14 +161,14 @@ describe('VoiceSettings mode', () => {
     expect(updateGlobalSettings).not.toHaveBeenCalled();
   });
 
-  it('saves streaming when a supported live endpoint exists', async () => {
+  it.each(['deepgram', 'openai-realtime'] as const)('saves streaming with %s', async (protocol) => {
     globalSettings.value = {
       voice: {
         enabled: true,
         endpoint: 'https://example.test/batch',
         model: 'fixture',
         streamEndpoint: 'wss://example.test/live',
-        streamProtocol: 'deepgram',
+        streamProtocol: protocol,
       },
     } as GlobalSettings;
     vi.mocked(updateGlobalSettings).mockResolvedValue({

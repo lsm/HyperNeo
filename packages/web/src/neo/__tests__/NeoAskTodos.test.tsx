@@ -1,12 +1,12 @@
-import guidanceQuestions from './fixtures/question-guidance.json';
 import type { NeoAskEntry, NeoQuestionEntry, NeoTodoEntry } from '@hyperneo/shared/types/neo-ask';
 import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { NeoAskTodos, neoQuestionAnswerLabel } from '../NeoAskTodos.tsx';
-import { neoRelativeTime } from '../neo-time.ts';
-import { neoAskEntriesInOrder, neoAskEntryGroup, neoDonePageMerge } from '../neo-asks.ts';
 import { locale } from '../../lib/i18n/index.ts';
 import * as clipboard from '../../lib/utils.ts';
+import { NeoAskTodos, neoQuestionAnswerLabel } from '../NeoAskTodos.tsx';
+import { neoAskEntriesInOrder, neoAskEntryGroup, neoDonePageMerge } from '../neo-asks.ts';
+import { neoRelativeTime } from '../neo-time.ts';
+import guidanceQuestions from './fixtures/question-guidance.json';
 
 beforeEach(() => {
   locale.value = 'zh-Hans';
@@ -20,6 +20,7 @@ afterEach(() => {
 
 const todo = (id: string, patch: Partial<NeoTodoEntry> = {}): NeoTodoEntry => ({
   id,
+  desktopApps: [{ bundleId: 'com.google.Chrome', name: 'Chrome' }],
   askId: 'ask',
   position: 0,
   priority: 'normal',
@@ -112,12 +113,11 @@ describe('NeoAskTodos', () => {
     value.ask.createdAt = at;
     value.ask.updatedAt = Date.now();
     const app = render(<NeoAskTodos entry={value} onAnswer={vi.fn()} />);
-    expect(
-      app.container
-        .querySelector('[data-ask-status]')
-        ?.parentElement?.querySelector('time')
-        ?.getAttribute('datetime')
-    ).toBe(new Date(at).toISOString());
+    const status = app.container.querySelector('[data-ask-status]')!;
+    expect(status.querySelector('time')).toBeNull();
+    expect(status.getAttribute('title')).toBe(
+      `创建于 · ${neoRelativeTime(at, Date.now(), 'zh-Hans')!.full}`
+    );
     expect(app.container.querySelector('[data-ask-question] time')?.getAttribute('datetime')).toBe(
       new Date(at).toISOString()
     );
@@ -189,6 +189,24 @@ describe('NeoAskTodos', () => {
     expect(load).toHaveBeenCalledWith('ask');
     fireEvent.click(app.getByRole('button', { name: 'Ship' }));
     expect(answer).toHaveBeenCalledWith('choice', ['Ship']);
+  });
+  it('shows Confirm and Cancel on a yes/no card without labels', async () => {
+    locale.value = 'zh-Hans';
+    const summary = entry({
+      summary: { todoCount: 0, questionCount: 1, openQuestionCount: 1 },
+      todos: [],
+    });
+    const answer = vi.fn();
+    const load = vi.fn().mockResolvedValue({
+      ...summary,
+      summary: undefined,
+      questions: [question('propose', { kind: 'yesno' })],
+      todos: [],
+    });
+    const app = render(<NeoAskTodos entry={summary} onAnswer={answer} onLoadDetails={load} />);
+    await waitFor(() => expect(app.getByRole('button', { name: '确定' })).toBeTruthy());
+    fireEvent.click(app.getByRole('button', { name: '取消' }));
+    expect(answer).toHaveBeenCalledWith('propose', 'no');
   });
   it('loads every open question above todos while the summary stays collapsed', async () => {
     locale.value = 'en';
@@ -366,17 +384,18 @@ describe('NeoAskTodos', () => {
     expect(settle).not.toHaveBeenCalled();
   });
 
-  it('shows the topic at left and filters by it when tapped', () => {
+  it('shows the topic at left and filters by its key when tapped', () => {
     const data = entry({ state: 'waiting' });
     data.ask.topic = '家长控制';
+    data.ask.topicKey = 'p';
     const onTopic = vi.fn();
     const app = render(<NeoAskTodos entry={data} onAnswer={vi.fn()} onTopic={onTopic} />);
     const topic = app.getByRole('button', { name: '家长控制' });
-    expect((topic.querySelector('[data-topic-swatch]') as HTMLElement).style.backgroundColor).toBe(
-      'var(--neo-teal)'
-    );
+    expect(topic.hasAttribute('data-topic-swatch')).toBe(true);
+    expect(topic.style.borderColor).toBe('var(--neo-teal)');
+    expect(topic.style.color).toBe('var(--neo-teal)');
     fireEvent.click(topic);
-    expect(onTopic).toHaveBeenCalledWith('家长控制');
+    expect(onTopic).toHaveBeenCalledWith('p');
   });
 
   it('shows no topic when the ask has none', () => {
@@ -390,13 +409,13 @@ describe('NeoAskTodos', () => {
     ['todo', '没开始', 'text-fg-faint', false],
     ['done', '做完', 'text-success', false],
     ['dropped', '放弃了', 'text-fg-faint', false],
-  ] as const)('shows the %s state as a dot and a word, not a pill', (state, word, tone, bold) => {
+  ] as const)('shows the %s state as a colored word with no dot', (state, word, tone, bold) => {
     const app = render(<NeoAskTodos entry={entry({ state })} onAnswer={vi.fn()} />);
     const label = app.getByText(word);
-    const status = label.closest('[data-ask-status]') as HTMLElement;
-    expect(status.className).toContain(tone);
-    expect(status.className).not.toContain('rounded-full');
-    expect(status.querySelector('[data-status-dot]')).toBeTruthy();
+    expect(label.closest('[data-ask-status]')).toBeTruthy();
+    expect(label.className).toContain(tone);
+    expect(label.className).not.toContain('rounded-full');
+    expect(app.container.querySelector('[data-ask-status] .rounded-full')).toBeNull();
     expect(label.className.includes('font-semibold')).toBe(bold);
   });
 
@@ -699,15 +718,28 @@ describe('NeoAskTodos', () => {
       ),
     });
 
-  it('lets the human turn desktop control on for one unfinished todo', () => {
+  it('shows no computer switch on a todo without its own approved apps', () => {
+    locale.value = 'en';
+    const app = render(
+      <NeoAskTodos
+        entry={entry({ todos: [todo('b', { state: 'doing', desktopApps: undefined })] })}
+        onAnswer={vi.fn()}
+        onDesktopControl={vi.fn()}
+      />
+    );
+    expect(app.container.querySelector('[data-todo-desktop]')).toBeNull();
+    expect(app.queryByRole('button', { name: 'Step actions: Todo b' })).toBeNull();
+  });
+
+  it('lights the computer unless the human turned it off and switches it from the menu', () => {
     locale.value = 'en';
     const onDesktopControl = vi.fn();
     const app = render(
       <NeoAskTodos
         entry={entry({
           todos: [
-            todo('a', { state: 'doing' }),
-            todo('b', { state: 'doing', named: { desktopControl: true } }),
+            todo('a', { state: 'doing', named: { desktopControl: false } }),
+            todo('b', { state: 'doing' }),
             todo('c', { state: 'done' }),
             todo('d', {
               state: 'doing',
@@ -725,27 +757,36 @@ describe('NeoAskTodos', () => {
         onDesktopControl={onDesktopControl}
       />
     );
-    for (const id of ['a', 'b', 'd'])
-      fireEvent.click(app.getByRole('button', { name: `Show details: Todo ${id}` }));
-    const boxes = app.getAllByRole('checkbox', { name: /Let the agent use this computer/ });
-    expect(boxes.map((box) => (box as HTMLInputElement).checked)).toEqual([false, true]);
-    fireEvent.click(boxes[0]);
-    expect(onDesktopControl).toHaveBeenCalledWith('a', true);
-    fireEvent.click(boxes[1]);
+    const lit = [...app.container.querySelectorAll('[data-todo-desktop]')];
+    expect(
+      lit.map((icon) => icon.closest('[data-ask-todo]')?.getAttribute('data-ask-todo'))
+    ).toEqual(['b']);
+    expect(lit[0].getAttribute('title')).toBe('Can use Chrome on this computer. Click to stop.');
+    expect(app.queryByRole('checkbox')).toBeNull();
+    fireEvent.click(lit[0]);
+    expect(onDesktopControl).not.toHaveBeenCalled();
+    fireEvent.click(app.getByRole('button', { name: 'Cancel' }));
+    expect(onDesktopControl).not.toHaveBeenCalled();
+    fireEvent.click(lit[0]);
+    fireEvent.click(app.getByRole('button', { name: 'Stop allowing' }));
     expect(onDesktopControl).toHaveBeenLastCalledWith('b', false);
+    fireEvent.click(app.getByRole('button', { name: 'Step actions: Todo a' }));
+    fireEvent.click(app.getByText('Let it use this computer'));
+    expect(onDesktopControl).toHaveBeenLastCalledWith('a', true);
+    fireEvent.click(app.getByRole('button', { name: 'Step actions: Todo b' }));
+    expect(app.getByText('Stop letting it use this computer')).toBeTruthy();
+    expect(app.queryByRole('button', { name: 'Step actions: Todo d' })).toBeNull();
   });
 
-  it('expands a todo using its toggle and turns its left hint', () => {
+  it('expands a todo by tapping its row, with no arrow', () => {
     locale.value = 'en';
     const data = detailed();
     const app = render(<NeoAskTodos entry={data} onAnswer={vi.fn()} />);
     const header = app.getByRole('button', { name: 'Show details: Todo a' });
-    const hint = header.querySelector('[data-todo-hint]')!;
-    expect(hint.getAttribute('class')).not.toContain('rotate-90');
+    expect(header.querySelector('svg')).toBeNull();
     fireEvent.click(header);
     expect(app.getByText(data.todos[0].report!.trim())).toBeTruthy();
     expect(header.getAttribute('aria-expanded')).toBe('true');
-    expect(hint.getAttribute('class')).toContain('rotate-90');
     fireEvent.click(header);
     expect(app.queryByText(data.todos[0].report!.trim())).toBeNull();
   });
@@ -920,7 +961,7 @@ describe('NeoAskTodos', () => {
     }
   );
 
-  it('shows the creation time and a separate answered time for each answered question', () => {
+  it('labels each answered question once, with its answer and answered time', () => {
     const earlier = new Date(2026, 0, 2, 9, 5).getTime();
     const today = Date.now();
     const app = render(
@@ -939,19 +980,15 @@ describe('NeoAskTodos', () => {
       app.baseElement.querySelector(`#neo-ref-question-${id}`)?.textContent ?? '';
     expect(line('old')).toContain(neoRelativeTime(earlier, Date.now(), 'zh-Hans')!.label);
     expect(line('old')).toMatch(/1月|Jan/);
-    expect(line('new')).toContain(neoRelativeTime(today, Date.now(), 'zh-Hans')!.label);
-    expect(line('new')).toContain('已回答');
-    const header = app.baseElement.querySelector('#neo-ref-question-new > .neo-question-time')!;
-    expect(header.textContent).toContain('已回答');
-    expect(header.querySelector('time')?.getAttribute('datetime')).toBe(new Date(1).toISOString());
-    expect(
-      app.baseElement
-        .querySelector('#neo-ref-question-new > .neo-time-line:last-child time')
-        ?.getAttribute('datetime')
-    ).toBe(new Date(today).toISOString());
-    expect(
-      app.baseElement.querySelector('#neo-ref-question-new time')?.getAttribute('datetime')
-    ).toBe(new Date(1).toISOString());
+    expect(app.baseElement.querySelectorAll('#neo-ref-question-new .neo-time-line')).toHaveLength(
+      0
+    );
+    expect(app.baseElement.querySelector('#neo-ref-question-new > .neo-question-time')).toBeNull();
+    const answer = app.baseElement.querySelector('#neo-ref-question-new [data-question-answer]')!;
+    expect(answer.textContent).toContain('→');
+    expect(answer.querySelector('[data-answered-time] time')?.getAttribute('datetime')).toBe(
+      new Date(today).toISOString()
+    );
   });
 
   it('puts no on the left and yes on the right, and offers a chat reply', () => {
@@ -993,12 +1030,12 @@ describe('NeoAskTodos', () => {
             question('one', {
               kind: 'choice',
               options: ['Keep', 'Cards'],
-              optionLabels: ['A', 'B'],
+              optionLabels: ['1', '2'],
             }),
             question('many', {
               kind: 'choice',
               options: ['iPhone', 'iPad'],
-              optionLabels: ['A', 'B'],
+              optionLabels: ['1', '2'],
               multiple: true,
             }),
           ],
@@ -1013,22 +1050,77 @@ describe('NeoAskTodos', () => {
     expect(onAnswer).toHaveBeenLastCalledWith('many', ['iPad']);
   });
 
-  it('draws no letter before an option that already carries one', () => {
-    const options = ['A 先只改服务器', 'B 服务器和客户端一起改'];
+  it('shows an option detail under it and tags the recommended option', () => {
+    const onAnswer = vi.fn();
     const app = render(
       <NeoAskTodos
         entry={entry({
-          questions: [question('one', { kind: 'choice', options, optionLabels: ['A', 'B'] })],
+          questions: [
+            question('hotel', {
+              kind: 'choice',
+              options: ['Park Hyatt', 'Hotel Gracery'],
+              optionDetails: { 'Hotel Gracery': '离车站 12 分钟，每晚 ¥1,600' },
+              recommended: 'Hotel Gracery',
+            }),
+          ],
         })}
-        onAnswer={() => {}}
+        onAnswer={onAnswer}
       />
     );
     expect(
       [...app.container.querySelectorAll('[data-choice-option]')].map(
         (button) => button.textContent
       )
-    ).toEqual(options);
-    expect(app.getByRole('button', { name: 'A 先只改服务器' })).toBeTruthy();
+    ).toEqual(['1Park Hyatt', '2Hotel Gracery推荐离车站 12 分钟，每晚 ¥1,600']);
+    expect(onAnswer).not.toHaveBeenCalled();
+    fireEvent.click(app.getByRole('button', { name: /Hotel Gracery/ }));
+    expect(onAnswer).toHaveBeenCalledWith('hotel', ['Hotel Gracery']);
+  });
+
+  it('numbers each option with the daemon label on single and multiple choice', () => {
+    const options = ['先只改服务器', '服务器和客户端一起改'];
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          questions: [
+            question('one', { kind: 'choice', options, optionLabels: ['1', '2'] }),
+            question('many', {
+              kind: 'choice',
+              options,
+              optionLabels: ['1', '2'],
+              multiple: true,
+            }),
+          ],
+        })}
+        onAnswer={() => {}}
+      />
+    );
+    for (const id of ['one', 'many']) {
+      const card = app.container.querySelector(`[data-ask-question="${id}"]`)!;
+      expect(
+        [...card.querySelectorAll('[data-choice-number]')].map((number) => number.textContent)
+      ).toEqual(['1', '2']);
+    }
+    expect(app.getByRole('button', { name: '先只改服务器' })).toBeTruthy();
+  });
+
+  it('keeps hostile option details as plain text', () => {
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          questions: [
+            question('one', {
+              kind: 'choice',
+              options: ['Keep'],
+              optionDetails: { Keep: '<img src=x onerror=alert(1)>' },
+            }),
+          ],
+        })}
+        onAnswer={() => {}}
+      />
+    );
+    expect(app.container.querySelector('img')).toBeNull();
+    expect(app.container.textContent).toContain('<img src=x onerror=alert(1)>');
   });
 
   it('shows each choice exactly as written and wraps long options inside the card', () => {
@@ -1041,11 +1133,11 @@ describe('NeoAskTodos', () => {
       <NeoAskTodos
         entry={entry({
           questions: [
-            question('one', { kind: 'choice', options: long, optionLabels: ['A', 'B', 'C'] }),
+            question('one', { kind: 'choice', options: long, optionLabels: ['1', '2', '3'] }),
             question('many', {
               kind: 'choice',
               options: long,
-              optionLabels: ['A', 'B', 'C'],
+              optionLabels: ['1', '2', '3'],
               multiple: true,
             }),
           ],
@@ -1055,7 +1147,9 @@ describe('NeoAskTodos', () => {
     );
     const one = app.container.querySelector('[data-ask-question="one"]')!;
     const buttons = [...one.querySelectorAll('[data-choice-option]')];
-    expect(buttons.map((button) => button.textContent)).toEqual(long);
+    expect(buttons.map((button) => button.textContent)).toEqual(
+      long.map((option, index) => `${index + 1}${option}`)
+    );
     for (const button of buttons) {
       expect(button.className).not.toMatch(/shrink-0|truncate|whitespace-nowrap|line-clamp/);
       expect(button.className).toContain('min-w-0');
@@ -1065,7 +1159,7 @@ describe('NeoAskTodos', () => {
     const many = app.container.querySelector('[data-ask-question="many"]')!;
     expect(
       [...many.querySelectorAll('[data-choice-option]')].map((label) => label.textContent)
-    ).toEqual(long);
+    ).toEqual(long.map((option, index) => `${index + 1}${option}`));
   });
 
   it('draws each todo state with its line and opens a session', () => {
@@ -1077,9 +1171,13 @@ describe('NeoAskTodos', () => {
           todos: [
             todo('a', { state: 'done', status: '#102 已合并', link: '/session/w' }),
             todo('b', { state: 'doing', status: '#103 开着，等 CI' }),
-            todo('c', { state: 'failed', status: '会话停了：测试没过' }),
             todo('d', { state: 'removed', status: '换成「Todo e」' }),
             todo('e', { addedAfterStart: true }),
+            todo('f', {
+              state: 'doing',
+              status: '在做',
+              statusCodes: [{ code: 'todo.doing', params: {} }],
+            }),
           ],
         })}
         onAnswer={() => {}}
@@ -1089,7 +1187,9 @@ describe('NeoAskTodos', () => {
     expect(app.getByText('在做')).toBeTruthy();
     expect(app.queryByText('#102 已合并')).toBeNull();
     expect(app.container.querySelector('[aria-label="待办"]')?.textContent).not.toContain('Todo d');
-    expect(app.getByText('新')).toBeTruthy();
+    expect(app.queryByText('新')).toBeNull();
+    expect(app.container.querySelector('[data-ask-todo="f"] [data-todo-status]')).toBeNull();
+    expect(app.container.querySelector('[data-ask-todo="b"] [data-todo-status]')).toBeTruthy();
     toggleAll(app);
     expect(app.getByText('#102 已合并')).toBeTruthy();
     fireEvent.click(app.getByRole('button', { name: '打开 Todo a' }));
@@ -1285,7 +1385,7 @@ describe('NeoAskTodos', () => {
     expect(app.queryByText('已回答')).toBeNull();
     toggleAll(app);
     await waitFor(() => expect(app.getByText('先做哪一件？')).toBeTruthy());
-    expect(app.getByText('— Todo a')).toBeTruthy();
+    expect(app.getByText('→ Todo a')).toBeTruthy();
   });
 });
 
@@ -1305,7 +1405,7 @@ describe('neoQuestionAnswerLabel', () => {
         question('q', {
           kind: 'choice',
           options: ['Keep', 'Cards', 'Table'],
-          optionLabels: ['A', 'B', 'C'],
+          optionLabels: ['1', '2', '3'],
           answer: ['Keep', 'Table'],
           answeredBy: 'chat',
         }),
@@ -1318,6 +1418,12 @@ describe('neoQuestionAnswerLabel', () => {
         [todo('a')]
       )
     ).toBe('Todo a');
+    expect(
+      neoQuestionAnswerLabel(
+        question('q', { kind: 'yesno', answer: 'yes', answeredBy: 'button' }),
+        []
+      )
+    ).toBe('确定');
   });
 });
 
@@ -1861,7 +1967,9 @@ it('shows adapter-based worker identity and the next record name after rename', 
   };
   Object.assign(data.todos[0], { worker });
   const app = render(<NeoAskTodos entry={data} onAnswer={vi.fn()} />);
-  expect(app.getByText('Codex · Claude something')).toBeTruthy();
+  const line = app.container.querySelector('[data-worker-label]')!;
+  expect(line.getAttribute('title')).toBe('Codex · Claude something');
+  expect(line.textContent).toMatch(/^Codex · (本机|This computer)$/);
   app.rerender(
     <NeoAskTodos
       entry={{
@@ -1876,8 +1984,9 @@ it('shows adapter-based worker identity and the next record name after rename', 
       onAnswer={vi.fn()}
     />
   );
-  expect(app.getByText('Codex · renamed')).toBeTruthy();
-  expect(app.queryByText('Codex · Claude something')).toBeNull();
+  expect(app.container.querySelector('[data-worker-label]')?.getAttribute('title')).toBe(
+    'Codex · renamed'
+  );
 });
 
 it.each([

@@ -1,16 +1,18 @@
-import { createPushedWorkerRepo } from '../../../helpers/native-worker-worktree';
-import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setImmediate } from 'node:timers/promises';
 import { vi } from 'vitest';
 import { WebSocketServer } from 'ws';
 import {
   type CodexAppServer,
+  CodexRequestError,
   connectCodexAppServer,
 } from '../../../../src/lib/drivers/codex-app-server';
+import { createCodexCutover } from '../../../../src/lib/drivers/codex-cutover';
 import {
   admitCodexSteerTurn,
   codexExchange,
@@ -40,6 +42,7 @@ import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { createPushedWorkerRepo } from '../../../helpers/native-worker-worktree';
 
 const NOW = Date.parse('2026-10-04T12:00:00.000Z');
 
@@ -465,9 +468,12 @@ describe('codex-desktop adapter status and send', () => {
       const db = new Database(statePath);
       db.prepare('UPDATE threads SET cwd=? WHERE id=?').run(folder, 'idle');
       db.close();
-      const driver = adapter(0, '', undefined, worktrees, '', {
-        bootstrapServer: async () => ({ call: async () => null, close: () => {} }),
-      });
+      const driver = adapter(
+        0,
+        '',
+        async () => ({ call: async () => null, close: () => {} }),
+        worktrees
+      );
       const result = await driver.archive!(ref('idle'), () => null);
       expect(result).toMatchObject({
         ok: true,
@@ -492,18 +498,16 @@ describe('codex-desktop adapter status and send', () => {
       db.close();
       const calls: string[] = [];
       let closed = false;
-      const driver = adapter(0, '', undefined, '/codex/worktrees', '', {
-        bootstrapServer: async () => ({
-          call: async (method, params) => {
-            calls.push(method);
-            expect(params.threadId).toBe('idle');
-            return {};
-          },
-          close: () => {
-            closed = true;
-          },
-        }),
-      });
+      const driver = adapter(0, '', async () => ({
+        call: async (method, params) => {
+          calls.push(method);
+          expect(params.threadId).toBe('idle');
+          return {};
+        },
+        close: () => {
+          closed = true;
+        },
+      }));
       const result = await driver.archive!({ adapter: driver.id, id: 'idle' }, () => null);
       expect(result.ok).toBe(true);
       expect(existsSync(env.TMPDIR)).toBe(false);
@@ -515,17 +519,15 @@ describe('codex-desktop adapter status and send', () => {
     }
   );
 
-  test('does not archive a Codex thread when runtime removal fails', async () => {
+  test('raises a runtime removal failure after archiving so the release retries it', async () => {
     const calls: string[] = [];
-    const driver = adapter(0, '', undefined, '/codex/worktrees', '', {
-      bootstrapServer: async () => ({
-        call: async (method) => {
-          calls.push(method);
-          return {};
-        },
-        close: () => {},
-      }),
-    });
+    const driver = adapter(0, '', async () => ({
+      call: async (method) => {
+        calls.push(method);
+        return {};
+      },
+      close: () => {},
+    }));
     const failure = vi
       .spyOn(sandbox, 'releaseWorkerSandbox')
       .mockRejectedValue(new Error('synthetic EBUSY'));
@@ -533,7 +535,7 @@ describe('codex-desktop adapter status and send', () => {
       await expect(driver.archive!({ adapter: driver.id, id: 'idle' }, () => null)).rejects.toThrow(
         'synthetic EBUSY'
       );
-      expect(calls).toEqual([]);
+      expect(calls).toEqual(['thread/archive']);
     } finally {
       failure.mockRestore();
     }
@@ -608,6 +610,7 @@ describe('codex-desktop adapter status and send', () => {
       realServer?: boolean;
       desktopRunning?: () => Promise<boolean>;
       desktopSocketPath?: string;
+      admitWork?: ReturnType<typeof createCodexCutover>['admit'];
     } = {}
   ) {
     const spawn: SpawnFn = (args) => {
@@ -628,6 +631,7 @@ describe('codex-desktop adapter status and send', () => {
         throw new Error('not used');
       },
       statePath,
+      admitWork: overrides.admitWork,
       ...(overrides.desktopSocketPath ? { desktopSocketPath: overrides.desktopSocketPath } : {}),
       desktopRunning: overrides.desktopRunning ?? (async () => false),
       worktreesDir,
@@ -653,6 +657,45 @@ describe('codex-desktop adapter status and send', () => {
   }
 
   const ref = (id: string) => ({ adapter: 'codex-desktop', id });
+
+  test('holds a desktop send until an idle cutover completes', async () => {
+    const gate = createCodexCutover(async () => true);
+    const started = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    const cutover = gate.atIdle(async () => {
+      started.resolve();
+      await finish.promise;
+    });
+    const calls: string[] = [];
+    const driver = adapter(
+      0,
+      '',
+      async () => ({
+        call: async (method) => {
+          calls.push(method);
+          return { queuedSubmission: { id: 'queue-after-cutover' } };
+        },
+        close: () => {},
+      }),
+      undefined,
+      '',
+      { admitWork: gate.admit }
+    );
+    await started.promise;
+    const result = driver.send!(ref('idle'), 'next task', user);
+    try {
+      await setImmediate();
+      expect(calls).toEqual([]);
+    } finally {
+      finish.resolve();
+      await cutover;
+      await expect(result).resolves.toMatchObject({
+        ok: true,
+        value: { queuedSubmissionId: 'queue-after-cutover' },
+      });
+    }
+    expect(calls).toEqual(['thread/queue/add']);
+  });
 
   test('work.start reuses an idle Codex worker using its real recorded status identity', async () => {
     writeFileSync(
@@ -1029,6 +1072,8 @@ describe('codex-desktop adapter status and send', () => {
         adapters: () => [driver],
         daemonName: 'test',
         isOpenTodo: (todoId) => todoId === 'open-todo',
+        acceptedTodo: () => true,
+        noticeReply: () => true,
         remote: { list: () => [], invoke: async () => ({}) },
       })
     );
@@ -1220,6 +1265,67 @@ describe('codex-desktop adapter status and send', () => {
     });
     expect(close).toHaveBeenCalledTimes(1);
     expect(desktop).not.toHaveBeenCalled();
+  });
+
+  test.each(['thread/compacted', 'item/completed'])(
+    'compact waits for the idle thread confirmation via %s',
+    async (method) => {
+      let notify: (message: { method: string; params: unknown }) => void = () => {};
+      const unsubscribe = vi.fn();
+      const itemRecorded = Promise.withResolvers<void>();
+      const call = vi.fn(async (request: string) => {
+        if (request === 'thread/resume') return {};
+        notify({ method, params: { threadId: 'busy', item: { type: 'contextCompaction' } } });
+        notify({
+          method: 'item/completed',
+          params: { threadId: 'idle', item: { type: 'agentMessage' } },
+        });
+        notify({ method: 'turn/started', params: { threadId: 'idle', turn: { id: 'compact' } } });
+        notify({ method, params: { threadId: 'idle', item: { type: 'contextCompaction' } } });
+        itemRecorded.resolve();
+        return {};
+      });
+      const connect = vi.fn(
+        async (): Promise<CodexAppServer> => ({
+          call,
+          close: () => {},
+          onNotification: (listener) => {
+            notify = (message) => listener({ jsonrpc: '2.0', ...message });
+            return unsubscribe;
+          },
+        })
+      );
+      const driver = adapter(0, '', connect);
+      expect(driver.capabilities).toContain('compact');
+      expect(await driver.compact!(ref('busy'), user)).toMatchObject({ ok: false, reason: 'busy' });
+      expect(connect).not.toHaveBeenCalled();
+      const compacting = driver.compact!(ref('idle'), user);
+      await itemRecorded.promise;
+      notify({
+        method: 'turn/completed',
+        params: { threadId: 'idle', turn: { id: 'other', status: 'completed' } },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unsubscribe).not.toHaveBeenCalled();
+      notify({
+        method: 'turn/completed',
+        params: { threadId: 'idle', turn: { id: 'compact', status: 'completed' } },
+      });
+      expect(await compacting).toEqual({
+        ok: true,
+        value: { compacted: true },
+      });
+      expect(call).toHaveBeenCalledTimes(2);
+      expect(call).toHaveBeenNthCalledWith(1, 'thread/resume', { threadId: 'idle' });
+      expect(call).toHaveBeenNthCalledWith(2, 'thread/compact/start', { threadId: 'idle' });
+      expect(unsubscribe).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  test('reports a 30-minute prompt cache window from the last thread update', async () => {
+    const driver = adapter();
+    expect(await driver.cacheUntil!(ref('idle'))).toBe(NOW - 600_000 + 30 * 60_000);
+    expect(await driver.cacheUntil!(ref('missing'))).toBeNull();
   });
 
   test('rename updates a busy thread through Codex without starting or interrupting a turn', async () => {
@@ -2020,6 +2126,140 @@ describe('codex-desktop adapter status and send', () => {
     }
   );
 
+  const appHeld = (method: string) => {
+    const message =
+      method === 'thread/resume' || method === 'thread/archive'
+        ? 'thread idle already has an active writer'
+        : 'thread not found: idle';
+    const rejection = { code: -32600, message };
+    return new CodexRequestError(`${method}: ${JSON.stringify(rejection)}`, rejection);
+  };
+  const appHeldRefusal = {
+    ok: false,
+    reason: 'not_delivered',
+    detail: expect.stringContaining('The Codex app has this thread open'),
+    notSent: true,
+  } as const;
+
+  test.each(['send', 'queue'] as const)(
+    '%s to an idle thread the Codex app holds refuses plainly and queues nothing',
+    async (verb) => {
+      const calls: string[] = [];
+      const driver = adapter(
+        0,
+        '',
+        async () => ({
+          call: async (method) => {
+            calls.push(method);
+            if (method === 'thread/loaded/list') return { data: [], nextCursor: null };
+            throw appHeld(method);
+          },
+          close: () => {},
+        }),
+        undefined,
+        '',
+        { realServer: true }
+      );
+      expect(await driver[verb]!(ref('idle'), 'continue after compaction', user)).toEqual(
+        appHeldRefusal
+      );
+      expect(calls).toEqual(['thread/loaded/list', 'thread/resume']);
+      expect(spawned).toEqual([]);
+    }
+  );
+
+  test.each(['send', 'queue'] as const)(
+    'a prepared worker %s to an idle thread the Codex app holds refuses plainly and queues nothing',
+    async (verb) => {
+      const root = join(dir, 'prepared');
+      mkdirSync(join(root, '.git'), { recursive: true });
+      await prepareWorkerSandbox(root);
+      const db = new Database(statePath);
+      db.prepare('UPDATE threads SET cwd=? WHERE id=?').run(root, 'idle');
+      db.close();
+      const calls: string[] = [];
+      const driver = adapter(
+        0,
+        '',
+        async () => ({
+          call: async (method) => {
+            calls.push(method);
+            if (method === 'permissionProfile/list')
+              return { data: [{ id: 'hyperneo-worker', allowed: true }] };
+            if (method === 'thread/loaded/list') return { data: [], nextCursor: null };
+            throw appHeld(method);
+          },
+          close: () => {},
+        }),
+        undefined,
+        '',
+        { realServer: true }
+      );
+      try {
+        expect(await driver[verb]!(ref('idle'), 'run local tests', user)).toEqual(appHeldRefusal);
+        expect(calls).toEqual(['permissionProfile/list', 'thread/loaded/list', 'thread/resume']);
+        expect(spawned).toEqual([]);
+      } finally {
+        await releaseWorkerSandbox(root);
+      }
+    }
+  );
+
+  test('steering a turn the Codex app runs refuses plainly as not sent', async () => {
+    const driver = adapter(0, '', async () => ({
+      call: async (method) => {
+        if (method === 'thread/turns/list')
+          return { data: [{ id: 'active', status: 'inProgress' }] };
+        throw appHeld(method);
+      },
+      close: () => {},
+    }));
+    expect(await driver.steer!(ref('idle'), 'answer the worker', user)).toEqual(appHeldRefusal);
+  });
+
+  test('archiving an idle thread the Codex app holds waits as busy and keeps its scratch', async () => {
+    const root = join(dir, 'prepared');
+    mkdirSync(join(root, '.git'), { recursive: true });
+    const env = await prepareWorkerSandbox(root);
+    const db = new Database(statePath);
+    db.prepare('UPDATE threads SET cwd=? WHERE id=?').run(root, 'idle');
+    db.close();
+    const calls: string[] = [];
+    const driver = adapter(0, '', async () => ({
+      call: async (method) => {
+        calls.push(method);
+        throw appHeld(method);
+      },
+      close: () => {},
+    }));
+    expect(await driver.archive!(ref('idle'), () => null)).toEqual({
+      ok: false,
+      reason: 'busy',
+      detail: expect.stringContaining('The Codex app has this thread open'),
+    });
+    expect(calls).toEqual(['thread/archive']);
+    expect(existsSync(env.TMPDIR)).toBe(true);
+    await releaseWorkerSandbox(root);
+  });
+
+  test('compacting an idle thread the Codex app holds waits as busy', async () => {
+    const call = vi.fn(async (method: string) => {
+      throw appHeld(method);
+    });
+    const driver = adapter(0, '', async () => ({
+      call,
+      close: () => {},
+      onNotification: () => () => {},
+    }));
+    expect(await driver.compact!(ref('idle'), user)).toEqual({
+      ok: false,
+      reason: 'busy',
+      detail: expect.stringContaining('The Codex app has this thread open'),
+    });
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(call).toHaveBeenCalledWith('thread/resume', { threadId: 'idle' });
+  });
+
   test.each([0, 1])(
     'active-writer CLI queue returns its receipt or refusal: %s',
     async (exitCode) => {
@@ -2115,6 +2355,9 @@ describe('codex-desktop adapter status and send', () => {
         expect(await driver.send!(ref('idle'), 'answer', user)).toMatchObject({
           ok: false,
           reason: 'not_delivered',
+          detail: expect.stringMatching(
+            /^The Codex app has this thread open.*The app may have reverted after an update, so quit and reopen it or rerun `hyperneo codex-setup`\.$/
+          ),
           notSent: true,
         });
         expect(accepted).toBe(0);

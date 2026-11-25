@@ -89,7 +89,7 @@ export function requireLocalTarget(
       };
 }
 
-const runMessageStatus = (superpipe({})('read-message-status') as PipelineAPI)
+const runMessageStatus = (superpipe({})('message.status') as PipelineAPI)
   .input(['input', 'readers'])
   .pipe(requireLocalTarget, 'input', 'result:result')
   .pipe(readMessageEvidence, ['result', 'readers'], 'evidence')

@@ -1,3 +1,4 @@
+import { neoToolDescription } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { WorkReadCursor, type WorkTurnPage } from '../../storage/work-turn-page.ts';
@@ -73,7 +74,7 @@ export interface ReadWorkDeps {
     before: number,
     after: number,
     cursor?: z.infer<typeof WorkReadCursor>
-  ): WorkTurn[] | WorkTurnPage | null;
+  ): WorkTurn[] | WorkTurnPage | null | Promise<WorkTurn[] | WorkTurnPage | null>;
   remote: RemoteDaemons;
   daemonName: string;
 }
@@ -117,7 +118,7 @@ export async function readLocalTurns(input: ReadInput, deps: ReadWorkDeps): Prom
         }
       : reject('not_found', 'No retained user input has that exact marker on this worker.');
   }
-  const turns = deps.readTurns(
+  const turns = await deps.readTurns(
     input.sessionId,
     input.around,
     input.before,
@@ -137,7 +138,7 @@ export async function readLocalTurns(input: ReadInput, deps: ReadWorkDeps): Prom
   return { ok: true, value: { sessionId: input.sessionId, turns } };
 }
 
-const runReadWork = (superpipe({})('read-work') as PipelineAPI)
+const runReadWork = (superpipe({})('work.read') as PipelineAPI)
   .input(['input', 'deps'])
   .pipe(routeRead, ['input', 'deps'], 'result:outcome')
   .pipe(readLocalTurns, ['outcome', 'deps'], 'outcome')
@@ -146,8 +147,7 @@ const runReadWork = (superpipe({})('read-work') as PipelineAPI)
 export function createReadWorkOperation(deps: ReadWorkDeps) {
   return defineOperation({
     name: 'work.read',
-    description:
-      'Read the user and agent turns of a session: sessionId, around (the messageId of a turn, such as one returned by an earlier work.read) and daemon (the place daemon, if any). Optional input {adapter,marker} instead locates a retained user input whose first line equals the marker, scoped to that adapter and session on the named owning daemon. This exact lookup supports indexed codex-desktop and claude-code inputs, claude-desktop through its owning CLI session, and retained owned copilot-cli input. It ignores clocks and recent-input windows and echoes matchedInput on success. not_found means no retained match, never proof of non-delivery. Do not combine input with around or cursor. Returns before turns earlier than the message, the message itself, and after turns later, oldest first; local HyperNeo and owned Copilot reads preserve visible transcript text with availability and nextCursor. Pass nextCursor as cursor to continue long text or older history; textOffset identifies chunks. Empty or unlocated replies report reply_unavailable. Copilot pages are bounded to 256 KiB of source and 21 entries of up to 4,000 characters; textComplete:false marks a clipped entry, whose full final report is available through receipt-bound work.status. A replaced or shortened Copilot transcript invalidates its cursor with reply_unavailable. Other external drivers keep their existing indexed excerpts. Without around, returns the latest turns.',
+    description: neoToolDescription('work.read'),
     inputSchema: ReadWorkInputSchema,
     resultSchema: ReadWorkResultSchema,
     policy: { safetyClass: 'read' },

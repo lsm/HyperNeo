@@ -47,6 +47,15 @@ export function classifySessionOwnership(
   return 'ordinary';
 }
 
+type RuntimeSettingsFailure = { ok: false; reason: RuntimeSettingsReadReason };
+type RuntimeSettingsResult = { ok: true; settings: RuntimeSettings } | RuntimeSettingsFailure;
+
+const refuseRuntimeSettings = (
+  reason: RuntimeSettingsReadReason
+): { reason: RuntimeSettingsFailure } => ({
+  reason: { ok: false, reason },
+});
+
 interface RuntimeSettingsTarget {
   readonly session: Session;
   readonly live: AgentSession | null;
@@ -59,34 +68,34 @@ function isTrustedLocalCaller(caller: OperationCaller): boolean {
 function gateCallerScope(
   caller: OperationCaller,
   deps: RuntimeSettingsReadDependencies
-): { value: null } | { reason: RuntimeSettingsReadReason } {
+): { value: null } | { reason: RuntimeSettingsFailure } {
   if (isTrustedLocalCaller(caller)) return { value: null };
   const admitted = admitSpaceCaller(caller, undefined, {
     readOnly: true,
     getSession: deps.getSession,
     sessionSpaceId: deps.sessionSpaceId,
   });
-  return 'reason' in admitted ? { reason: 'space_scope_required' } : { value: null };
+  return 'reason' in admitted ? refuseRuntimeSettings('space_scope_required') : { value: null };
 }
 
 function resolveTarget(
   sessionId: string,
   deps: RuntimeSettingsReadDependencies
-): { value: RuntimeSettingsTarget } | { reason: RuntimeSettingsReadReason } {
+): { value: RuntimeSettingsTarget } | { reason: RuntimeSettingsFailure } {
   const live = deps.getLiveSession(sessionId);
   const session = live ? live.getSessionData() : deps.getSession(sessionId);
-  return session ? { value: { session, live } } : { reason: 'session_not_found' };
+  return session ? { value: { session, live } } : refuseRuntimeSettings('session_not_found');
 }
 
 function gateTargetSpace(
   target: RuntimeSettingsTarget,
   caller: OperationCaller,
   deps: RuntimeSettingsReadDependencies
-): { value: RuntimeSettingsTarget } | { reason: RuntimeSettingsReadReason } {
+): { value: RuntimeSettingsTarget } | { reason: RuntimeSettingsFailure } {
   if (isTrustedLocalCaller(caller)) return { value: target };
   return deps.sessionSpaceId(target.session) === caller.spaceId
     ? { value: target }
-    : { reason: 'session_not_found' };
+    : refuseRuntimeSettings('session_not_found');
 }
 
 function projectRuntimeSettings(
@@ -108,28 +117,24 @@ function projectRuntimeSettings(
   };
 }
 
-const readSessionRuntimeSettings = (superpipe({})('read-session-runtime-settings') as PipelineAPI)
+export const readRuntimeSettings = (superpipe({})('session.runtimeSettings.read') as PipelineAPI)
   .input(['sessionId', 'caller', 'deps'])
   .pipe(gateCallerScope, ['caller', 'deps'], 'result:read')
   .pipe(resolveTarget, ['sessionId', 'deps'], 'result:read')
   .pipe(gateTargetSpace, ['read', 'caller', 'deps'], 'result:read')
-  .pipe(projectRuntimeSettings, ['read', 'sessionId', 'deps'], 'read')
+  .pipe(
+    (target: RuntimeSettingsTarget, sessionId: string, deps: RuntimeSettingsReadDependencies) => ({
+      ok: true as const,
+      settings: projectRuntimeSettings(target, sessionId, deps),
+    }),
+    ['read', 'sessionId', 'deps'],
+    'read'
+  )
   .end('read') as (
   sessionId: string,
   caller: OperationCaller,
   deps: RuntimeSettingsReadDependencies
-) => RuntimeSettings | RuntimeSettingsReadReason;
-
-export function readRuntimeSettings(
-  sessionId: string,
-  caller: OperationCaller,
-  deps: RuntimeSettingsReadDependencies
-): { ok: true; settings: RuntimeSettings } | { ok: false; reason: RuntimeSettingsReadReason } {
-  const outcome = readSessionRuntimeSettings(sessionId, caller, deps);
-  return typeof outcome === 'string'
-    ? { ok: false, reason: outcome }
-    : { ok: true, settings: outcome };
-}
+) => RuntimeSettingsResult;
 
 const RuntimeSettingsReadInputSchema = z.object({ sessionId: z.string().min(1) });
 

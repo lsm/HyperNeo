@@ -52,9 +52,17 @@ import {
   closedNeoRequest,
   NEO_REQUEST_REPLY,
   type NeoRequestReply,
+  neoRequestAskId,
   recordNeoRequestTodo,
 } from './request-todo.ts';
 import type { Job } from '../../storage/repositories/job-queue-repository.ts';
+import {
+  workCleanupReads,
+  workCleanupWrites,
+} from '../../storage/repositories/work-cleanup-worker.ts';
+import { statfs } from 'node:fs/promises';
+import { getDataDir } from '../data-dir.ts';
+import { guardDisk, requestWorkCleanupSweep } from '../work-cleanup/disk-guard.ts';
 import { receivedNeoHumanInput } from './human-input.ts';
 import { parseProcessingState } from '../session/space-session-reads.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
@@ -63,7 +71,7 @@ import { readNeoSessionSource } from './session-open-source.ts';
 import { presentNeoPublications } from './publication-presentation.ts';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import { fillPrompt, NEO_PREFERENCE_CHANGED, NEO_SESSION_TRACK } from '@hyperneo/prompts';
-import { listPackPreferences, type PackPreferenceChange } from './preference-operations.ts';
+import { listDeclaredPackPreferences, type PackPreferenceChange } from './preference-operations.ts';
 import type {
   GlobalSettings,
   MessageHub,
@@ -95,7 +103,7 @@ import {
 } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { createArtifactRefReader } from '../artifacts/read-operations.ts';
 import { sessionWorkerRef } from './worker-identity.ts';
-import type { WorkRef } from '../drivers/types.ts';
+import type { WorkAdapter, WorkRef } from '../drivers/types.ts';
 import { WorkTurnRepository } from '../../storage/repositories/work-turn-repository.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -128,7 +136,7 @@ import { neoTodoFollowUpRefusal } from './todo-follow-up.ts';
 import { neoTodoCovered } from './todo-state.ts';
 import { neoPromptTools, planNeoSessionConfig } from './session-config.ts';
 import { changeSessionToolChoice } from '../tools/change-session-tool-choice.ts';
-import { createNeoPublisher } from './publication-operation.ts';
+import { createNeoPublicationOperation } from './publication-operation.ts';
 import {
   neoSessionQuestionNote,
   keepNeoSessionNotices,
@@ -139,6 +147,8 @@ import { NeoSessionWatcher } from './session-watcher.ts';
 import { findNeoSessionNotice } from './session-track.ts';
 import { createNeoTodoRunner, type NeoTodoRunner } from './todo-runner.ts';
 import { neoWorkingKey, readNeoWorking } from './working.ts';
+import { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
+import { resolveSpeechPart, savedVoiceKeys } from '../voice/voice-parts.ts';
 
 const MODEL_CHANGE_SOURCES = new Set([
   'model-switch',
@@ -152,11 +162,12 @@ export class NeoService {
   readonly speech: NeoSpeech;
   readonly publications: NeoPublicationRepository;
   readonly asks: NeoConversationAskRepository;
-  readonly publish: ReturnType<typeof createNeoPublisher>;
+  readonly publish: ReturnType<typeof createNeoPublicationOperation>['publish'];
+  readonly publicationOperation: ReturnType<typeof createNeoPublicationOperation>['operation'];
   readonly todos: NeoAskTodoRepository;
   readonly todoSessions: NeoTodoSessionRepository;
   readonly todoRunner: NeoTodoRunner;
-  private readonly attention: ReturnType<typeof createNeoAttention>;
+  readonly attention: ReturnType<typeof createNeoAttention>;
   private readonly sweepAttention: (now: number) => Promise<void>;
   readonly runDbOp: RunDbOp;
   get sessionNotices(): NeoSessionNotice[] {
@@ -178,10 +189,12 @@ export class NeoService {
   }
 
   workerNames?: NeoWorkerNameSource;
+  workAdapters?: () => readonly WorkAdapter[];
 
   readonly sessionWatcher: NeoSessionWatcher;
   private watching: Promise<unknown> | null = null;
   private disposed = false;
+  private diskHold: string | null = null;
   private catchingUpTurns = false;
   private readonly turnsSeen = new Map<string, number>();
   filePacks: readonly NeoPack[] = [];
@@ -239,6 +252,7 @@ export class NeoService {
       notifyChanged: () => this.notifyChanged(),
     });
     this.repo = new NeoRepository(db.getDatabase(), this.notifyChanged);
+    const voiceCredentialManager = () => ProviderCredentialManager.create(db.getDatabase());
     this.speech = new NeoSpeech(
       hub,
       this.runDbOp,
@@ -316,7 +330,9 @@ export class NeoService {
         const conversation = this.repo.readConversationId();
         return conversation && id === frontSessionId(conversation) ? `neo:${conversation}` : id;
       },
-      () => this.db.getGlobalSettings().neo?.front?.enabled === true
+      () => this.db.getGlobalSettings().neo?.front?.enabled === true,
+      () => resolveSpeechPart(this.db.getGlobalSettings().voice, voiceCredentialManager()),
+      () => savedVoiceKeys(this.db.getGlobalSettings().voice, voiceCredentialManager())
     );
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());
@@ -347,6 +363,7 @@ export class NeoService {
           { source: 'internal', role: 'neo', sessionId: origin }
         ),
       workerNames: () => this.workerNames ?? fallbackWorkerNames,
+      workerCompact: (id) => this.workAdapters?.().find((adapter) => adapter.id === id),
       invoke: (caller, name, input) =>
         invokeOperation(this.sessions.getOperationRegistry(), name, input, caller),
       packs: () => this.installedPacks(),
@@ -355,13 +372,18 @@ export class NeoService {
         this.deliverForward(ask.sessionId, key, note, ask.sessionId, kind),
       attend: (event) => this.attention(event, Date.now()),
       changed: this.notifyChanged,
-      limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
-      readSource: (ref) => this.readQuestionSource(ref),
+      limits: () => ({
+        ...neoTodoLimits(this.db.getGlobalSettings?.().neo),
+        hold: this.diskHold,
+      }),
     });
     this.sweepAttention = createNeoAttentionSweep({
       sessions: this.todoSessions,
       packs: () => this.installedPacks(),
-      limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
+      limits: () => ({
+        ...neoTodoLimits(this.db.getGlobalSettings?.().neo),
+        hold: this.diskHold,
+      }),
       scan: async (now, waiting) => [
         ...driverHealthEvents(this.db.getGlobalSettings?.().driverHealth ?? {}),
         ...(
@@ -418,7 +440,7 @@ export class NeoService {
         this.log.warn('Neo working list not sent', error);
       }
     };
-    this.publish = createNeoPublisher({
+    const publicationRuntime: Parameters<typeof createNeoPublicationOperation>[0] = {
       receivedHumanInput: (sessionId, id) => {
         const conversation = this.repo.readConversationId();
         return conversation && sessionId === frontSessionId(conversation)
@@ -462,7 +484,12 @@ export class NeoService {
       speech: (sessionId, version, text) => this.speech.publish(sessionId, version, text),
       notify: notifyPublication,
       artifact: createArtifactRefReader(() => this.db.getDatabase()),
-    });
+    };
+    const publication = createNeoPublicationOperation(publicationRuntime, (items) =>
+      this.presentPublications(items)
+    );
+    this.publish = publication.publish;
+    this.publicationOperation = publication.operation;
     const offSpeech = events.subscribe(
       'sdk.message',
       ({ sessionId, message }) =>
@@ -472,6 +499,22 @@ export class NeoService {
               .catch((error) => this.log.warn('Session speech delivery failed', error))
           : undefined,
       { subscriberName: 'session-spoken-replies' }
+    );
+    const offRefusal = events.subscribe(
+      'sdk.message',
+      ({ sessionId, message }) => {
+        const result = message as SDKMessage;
+        if (
+          result.type === 'result' &&
+          result.subtype === 'success' &&
+          result.is_error &&
+          result.api_error_status === 400 &&
+          sessionId &&
+          this.repo.getBindingBySession(sessionId)?.kind === 'neo'
+        )
+          this.notifyChanged();
+      },
+      { subscriberName: 'neo-refused-input' }
     );
     const offUpdated = events.subscribe(
       'session.updated',
@@ -526,6 +569,7 @@ export class NeoService {
     const offHumanReset = onHumanDevicesReset(this.notifyPublicationsChanged);
     this.unsubscribe = () => {
       offSpeech();
+      offRefusal();
       offHumanReset();
       offQueryFailure();
       offUpdated();
@@ -716,19 +760,26 @@ export class NeoService {
     );
   }
 
-  storeWorkerQuestion(ref: WorkRef, report: unknown, stored?: (question: NeoQuestion) => void) {
+  storeWorkerQuestion(
+    ref: WorkRef,
+    report: unknown,
+    stored?: (question: NeoQuestion) => void,
+    cause?: string
+  ) {
     return createNeoWorkerQuestionWriter(
       this.todos,
       this.todoSessions,
       () => this.db.getGlobalSettings().language,
       (source) => this.readQuestionSource(source),
-      stored
+      stored,
+      cause
     )(ref, report);
   }
 
   async relayWorkerQuestion(
     input: { todoId: string; title: string; options: string[] },
-    sessionId: string | undefined
+    sessionId: string | undefined,
+    cause?: string
   ) {
     const todo = this.todos.getTodo(input.todoId);
     const staged = this.todoSessions.readNudge(input.todoId)?.workerQuestion;
@@ -742,7 +793,12 @@ export class NeoService {
     const card = requireHumanCard({ text: input.title, kind: 'choice' }, setting);
     if ('reason' in card) return card.reason;
     const language = expectedReportLanguage(setting);
-    const result = await this.storeWorkerQuestion(ref, { ...staged, ...input, language });
+    const result = await this.storeWorkerQuestion(
+      ref,
+      { ...staged, ...input, language },
+      undefined,
+      cause
+    );
     const current = this.todoSessions.readNudge(input.todoId);
     if (result.ok && current && JSON.stringify(current.workerQuestion) === JSON.stringify(staged))
       this.todoSessions.recordNudge(input.todoId, { ...current, workerQuestion: undefined });
@@ -783,6 +839,7 @@ export class NeoService {
           askId: crypto.randomUUID(),
           todoId: crypto.randomUUID(),
           notice,
+          relayedQuestion: true,
           now,
         });
         return tracked.ok ? { value: tracked } : { reason: tracked };
@@ -808,7 +865,8 @@ export class NeoService {
           this.notifyChanged();
           relayed = await this.relayWorkerQuestion(
             { todoId: tracked.todo.id, title: input.title, options: input.options },
-            tracked.root
+            tracked.root,
+            'relay-session-proposal'
           );
           return relayed;
         } finally {
@@ -869,7 +927,7 @@ export class NeoService {
         const files = input.handoff?.files ?? [];
         const jobs = this.db.getJobQueueRepo();
         let receipt: z.infer<typeof SendMessageResultSchema> | null = null;
-        const wake = (incident: string, note: string) => {
+        const wake = (incident: string, note: string, ask?: string) => {
           if (files.length) note += `\n${JSON.stringify({ handoffFiles: files })}`;
           type Prior = { mailboxId: string; messageId: string };
           let key = `worker-question:${incident}`;
@@ -905,7 +963,7 @@ export class NeoService {
                         media.length
                           ? [{ type: 'text', text: note || 'Worker report' }, ...media]
                           : note,
-                        { sessionId: sender, name: null }
+                        { sessionId: sender, name: null, ask }
                       ) as MailboxMessageContent,
                     },
                   },
@@ -943,7 +1001,8 @@ export class NeoService {
               incident,
               input.handoff && typeof content !== 'string'
                 ? (content.find((b) => b.type === 'text')?.text ?? text)
-                : text
+                : text,
+              request ? neoRequestAskId(incident) : undefined
             );
             const sent = receipt as z.infer<typeof SendMessageResultSchema> | null;
             if (request && sent?.kind === 'accepted')
@@ -1150,7 +1209,7 @@ export class NeoService {
   }
 
   packPreferences() {
-    return listPackPreferences(this.db.getDatabase());
+    return listDeclaredPackPreferences(this.db.getDatabase(), this.installedPacks());
   }
 
   async refreshPackPreferences(): Promise<void> {
@@ -1263,7 +1322,7 @@ export class NeoService {
       'message.send',
       {
         sessionId: reply.to,
-        idempotencyKey: `neo-request-reply:${reply.todoId}`,
+        idempotencyKey: reply.key ?? `neo-request-reply:${reply.todoId}`,
         message: { type: 'user', message: { content: reply.text }, parent_tool_use_id: null },
       },
       { source: 'internal', sessionId: reply.from ?? undefined, role: 'neo' }
@@ -1280,13 +1339,7 @@ export class NeoService {
     if (/^(rate_limited|duplicate):/.test(result.reason ?? '') && deferred < 10) {
       this.db.getJobQueueRepo().enqueue({
         queue: NEO_REQUEST_REPLY,
-        payload: {
-          todoId: reply.todoId,
-          to: reply.to,
-          from: reply.from,
-          text: reply.text,
-          deferred: deferred + 1,
-        } satisfies NeoRequestReply,
+        payload: { ...reply, deferred: deferred + 1 } satisfies NeoRequestReply,
         runAt: Date.now() + 10 * 60_000,
         maxRetries: job.maxRetries,
       });
@@ -1308,6 +1361,25 @@ export class NeoService {
   }
 
   async sweepPacks(): Promise<void> {
+    await guardDisk(
+      {
+        free: async () => {
+          const volume = await statfs(getDataDir());
+          return volume.bavail * volume.bsize;
+        },
+        gone: () => this.db.gateway.call(workCleanupReads, 'gone'),
+        mark: (key, at) => this.db.gateway.call(workCleanupWrites, 'markGone', key, at),
+        forget: (keys) => this.db.gateway.call(workCleanupWrites, 'forgetGone', keys),
+        attend: (event) => this.attention(event, Date.now()),
+        backstop: async () => requestWorkCleanupSweep(this.db.getJobQueueRepo()),
+      },
+      Date.now()
+    ).then(
+      ({ hold }) => {
+        this.diskHold = hold;
+      },
+      (error) => this.log.warn('Disk guard pending', error)
+    );
     await this.todoRunner
       .recoverMoves()
       .catch((error) => this.log.warn('Todo move recovery pending', error));
@@ -1436,10 +1508,17 @@ export class NeoService {
 
   async humanQueue() {
     const facts = await this.todoSessions.read('neoStepFacts');
-    const steps = await readNeoSteps(facts, {
-      packs: () => this.installedPacks(),
-      limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
-    }).catch((error) => {
+    const steps = await readNeoSteps(
+      facts,
+      {
+        packs: () => this.installedPacks(),
+        limits: () => ({
+          ...neoTodoLimits(this.db.getGlobalSettings?.().neo),
+          hold: this.diskHold,
+        }),
+      },
+      Date.now()
+    ).catch((error) => {
       this.log.warn('Human queue pack waits failed', error);
       return null;
     });
@@ -1448,6 +1527,7 @@ export class NeoService {
           questions: facts.cards,
           todos: steps.map((row) => row.todo),
           owners: neoStepOwners(steps),
+          now: Date.now(),
         })
       : null;
   }

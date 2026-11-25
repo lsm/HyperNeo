@@ -4,6 +4,7 @@ export const CORE_OPERATION_NAMES = [
   'artifact.file.list',
   'artifact.file.read',
   'artifact.reference.resolve',
+  'desktop.access.request',
   'desktop.call',
   'desktop.control.set',
   'desktop.status',
@@ -13,5 +14,6 @@ export const CORE_OPERATION_NAMES = [
   'operations.describe',
   'operations.list',
   'system.build',
+  'system.codex.setup',
   'system.restart.reserve',
 ] as const;

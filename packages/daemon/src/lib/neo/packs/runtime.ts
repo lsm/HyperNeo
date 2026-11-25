@@ -14,6 +14,9 @@ import { createCodingMergeReader } from './coding/merge-reader.ts';
 import { createCodingAncestryReader } from './coding/ancestry-reader.ts';
 import { type NeoDeployReader, readGithubDeploys } from './coding/deploy-checks.ts';
 import { createCodingPack } from './coding/pack.ts';
+import type { CodingLines } from './coding/stage-lines.ts';
+import { chooseLine } from '../pack-selection.ts';
+import { getAvailableModels } from '../../model-service.ts';
 import { CodingAssignmentsRepository } from './coding/assignments.ts';
 import { createCodingMergeOperation } from './coding/merge-operation.ts';
 import { createCodingSmokeOperation } from './coding/smoke-operation.ts';
@@ -32,9 +35,11 @@ import { createCodingConnectorPrReader } from './coding/connector-pr-reader.ts';
 import { createCodingPrStateReader } from './coding/pr-state-reader.ts';
 import { createLifeAdminPack } from './life-admin/pack.ts';
 import { createDelegationPack } from './delegation/pack.ts';
+import { createComputerUsePack } from './computer-use/pack.ts';
 import { createModelRoutingPack } from './model-routing/pack.ts';
 import { getProviderRegistry } from '../../providers/registry.ts';
-import { createCoreTodoPack } from '../core-todo-checks.ts';
+import { createCoreTodoPack, neoLinkExists } from '../core-todo-checks.ts';
+import type { NeoPack } from '../pack-contract.ts';
 import type { DaemonExtension } from '../../extensions/contract.ts';
 
 export function createNeoCodingReaders(db: () => Database) {
@@ -88,15 +93,33 @@ type NeoServiceArgs =
 
 export function createNeoService(...args: NeoServiceArgs) {
   const [db] = args;
-  const readers = createNeoCodingReaders(() => db.getDatabase());
+  const database = () => db.getDatabase();
+  const readers = createNeoCodingReaders(database);
   const todoPrs = new CodingTodoPrRepository(db.getDatabase());
   const service = new NeoService(
     (core) => {
       const configured = Object.assign(core, readers, { todoPrs });
+      const lines: CodingLines = {
+        active: () => configured.packs().some((pack) => pack.rankLines),
+        rank: (kind, candidates, scope) => chooseLine(configured.packs(), kind, candidates, scope),
+        resolve: async (target) =>
+          (await configured
+            .workAdapters?.()
+            .find((adapter) => adapter.id === target.adapter)
+            ?.resolveStartConfiguration?.({
+              place: { machine: '', name: '' },
+              title: '',
+              message: '',
+              ...(target.model ? { model: target.model } : {}),
+              ...(target.effort ? { effort: target.effort } : {}),
+            })) ?? null,
+        models: () => getAvailableModels('global'),
+      };
       const { coding, lifeAdmin, delegation } = createNeoBuiltinPacks(db.getDatabase(), {
         readPrs: (urls) => configured.readPrs(urls),
         readRefStates: (refs) => configured.readRefStates(refs),
         todoPrs,
+        lines,
         postReviewComments: createCodingReviewComments(codingGithubApi),
         prSweepDeps: {
           human: (key, text) =>
@@ -132,6 +155,7 @@ export function createNeoService(...args: NeoServiceArgs) {
           review: coding.review,
           invoke: (name, input, caller) =>
             invokeOperation(core.sessions.getOperationRegistry(), name, input, caller),
+          lines,
         }),
         createCodingSmokeOperation(
           todoPrs.deliveryFacts,
@@ -143,26 +167,24 @@ export function createNeoService(...args: NeoServiceArgs) {
           new CodingPrLedgerRepository(db.getDatabase())
         ),
       ];
+      const packs: NeoPack[] = [
+        coding,
+        lifeAdmin,
+        delegation,
+        createComputerUsePack(),
+        createModelRoutingPack({
+          database: () => db.getDatabase(),
+          provider: (id) => getProviderRegistry().get(id),
+        }),
+      ];
+      packs.push(
+        createCoreTodoPack(
+          db.getDatabase(),
+          neoLinkExists(() => packs)
+        )
+      );
       return {
-        packs: [
-          coding,
-          lifeAdmin,
-          delegation,
-          createModelRoutingPack({
-            database: () => db.getDatabase(),
-            provider: (id) => getProviderRegistry().get(id),
-          }),
-          createCoreTodoPack(db.getDatabase(), async (repo, sha, build) => {
-            const fact = await new CodingPrLedgerRepository(db.getDatabase()).ancestryFacts.refresh(
-              {
-                repo,
-                baseOid: sha,
-                headOid: build,
-              }
-            );
-            return fact.ancestry.status === 'known' && fact.ancestry.contains;
-          }),
-        ],
+        packs,
         defaults: NEO_DEFAULT_PACKS,
         operations: createNeoProjectTreeOperations(core.repo, (refs) =>
           configured.readRefStates(refs)

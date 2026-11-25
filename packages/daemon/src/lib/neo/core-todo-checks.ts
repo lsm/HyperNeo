@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { ArtifactFileReadRepository } from '../../storage/repositories/artifact-file-read-repository.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
-import { BUILD_METADATA } from '../build-metadata.ts';
+import { SESSION_REUSE_PREFERENCE } from './session-reuse.ts';
 import type { NeoPack, NeoTodoCheckResult, NeoTodoJudgement } from './pack-contract.ts';
 
 const Text = z.string().trim().min(1);
@@ -17,27 +17,20 @@ const Check = z.discriminatedUnion('kind', [
     params: z.union([
       z.strictObject({ artifact: Text }),
       z.strictObject({ path: Text.refine(isAbsolute, 'Use an absolute file path') }),
+      z.strictObject({ url: Text.url().regex(/^https:\/\//) }),
     ]),
-  }),
-  z.object({
-    kind: z.literal('deployed'),
-    params: z.strictObject({
-      repo: Text.regex(/^lsm\/hyperneo$/i),
-      sha: z.string().regex(/^[0-9a-f]{40}$/),
-    }),
   }),
 ]);
 type CoreCheck = z.infer<typeof Check>;
-type Contains = (repo: string, sha: string, build: string) => Promise<boolean>;
+export type NeoLinkExists = (url: string) => Promise<boolean | null>;
 const unmet: NeoTodoCheckResult = { done: false, evidence: null };
 
 function sentence(check: CoreCheck): string {
   if (check.kind === 'human_confirmed') return `The human answers card ${check.params.questionId}.`;
-  if (check.kind === 'evidence')
-    return 'artifact' in check.params
-      ? `Registered artifact ${check.params.artifact} exists.`
-      : `File ${check.params.path} exists.`;
-  return `The running daemon build contains ${check.params.repo}@${check.params.sha}.`;
+  if ('artifact' in check.params) return `Registered artifact ${check.params.artifact} exists.`;
+  return 'url' in check.params
+    ? `Link ${check.params.url} exists.`
+    : `File ${check.params.path} exists.`;
 }
 
 function doneWhen(rule: NeoTodoCheck) {
@@ -47,7 +40,7 @@ function doneWhen(rule: NeoTodoCheck) {
 
 type CheckDraft = Pick<NeoTodo, 'check'> & { id?: string };
 const invalid =
-  'invalid_core_check: use human_confirmed {questionId}, evidence {path: absolute file path} (on a todo, {} for a daemon-assigned path), or deployed {repo: lsm/HyperNeo, sha: full commit}.';
+  'invalid_core_check: use human_confirmed {questionId}, evidence {path: absolute file path} or evidence {url: https link} (on edit omit the check to keep the current one).';
 const admit = (superpipe({})('neo.todo.core-admission') as PipelineAPI)
   .input(['draft', 'peers'])
   .pipe(
@@ -84,27 +77,28 @@ const admit = (superpipe({})('neo.todo.core-admission') as PipelineAPI)
 const isEvidence = (check: NeoTodoCheck | null | undefined): check is NeoTodoCheck =>
   check?.pack === 'core' && check.kind === 'evidence';
 
-export const withAssignedEvidence = <T extends NeoTodoCheck | null | undefined>(
-  check: T,
-  file: string
-): T | NeoTodoCheck =>
-  isEvidence(check) && !Object.keys(check.params).length
-    ? { ...check, params: { path: file } }
-    : check;
-
-export function neoEvidenceRefusal(
+/** @public */
+export function neoEvidencePathRefusal(
   check: NeoTodoCheck | null | undefined,
-  repo: string | null | undefined,
-  userFolder: string,
-  previous?: NeoTodoCheck | null
+  previous: NeoTodoCheck | null | undefined,
+  dataDir: string
 ): string | null {
   const path = isEvidence(check) ? check.params.path : null;
-  if (!repo || typeof path !== 'string' || JSON.stringify(check) === JSON.stringify(previous))
-    return null;
-  const inside = relative(userFolder.toLowerCase(), path.toLowerCase());
+  if (typeof path !== 'string' || JSON.stringify(check) === JSON.stringify(previous)) return null;
+  const inside = relative(dataDir.toLowerCase(), path.toLowerCase());
   return inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)
     ? null
-    : `evidence_in_user_folder: ${path} is in the human's folder, which holds only results they should see. Omit params.path; the daemon assigns one and gives it to the worker.`;
+    : `evidence_in_data_dir: ${path} is inside the daemon data directory. Use a persistent location visible to the human.`;
+}
+
+export function neoLinkExists(packs: () => readonly NeoPack[]): NeoLinkExists {
+  return async (url) => {
+    for (const pack of packs()) {
+      const known = await pack.linkExists?.(url);
+      if (typeof known === 'boolean') return known;
+    }
+    return null;
+  };
 }
 
 export const coreTodoPolicy = {
@@ -112,10 +106,10 @@ export const coreTodoPolicy = {
   refuse: (draft: CheckDraft, peers: readonly NeoTodo[] = []) => admit(draft, peers).refusal,
 };
 
-export function createCoreTodoPack(db: Database, contains: Contains): NeoPack {
+export function createCoreTodoPack(db: Database, linkExists: NeoLinkExists): NeoPack {
   const store = new NeoAskTodoRepository(db);
   const artifacts = new ArtifactFileReadRepository(db);
-  async function observe(todo: NeoTodo, check: CoreCheck): Promise<boolean> {
+  async function observe(todo: NeoTodo, check: CoreCheck): Promise<boolean | null> {
     if (check.kind === 'human_confirmed') {
       const question = store.getQuestion(check.params.questionId);
       return (
@@ -128,26 +122,19 @@ export function createCoreTodoPack(db: Database, contains: Contains): NeoPack {
         question.answeredBy !== null
       );
     }
-    if (check.kind === 'evidence') {
-      if ('artifact' in check.params) {
-        const artifact = artifacts.get(check.params.artifact);
-        return (
-          !!artifact &&
-          (artifact.context_kind === 'ask'
-            ? artifact.context_id === todo.askId
-            : artifact.context_id === todo.id)
-        );
-      }
-      return stat(check.params.path).then(
-        (file) => file.isFile(),
-        () => false
+    if ('url' in check.params) return linkExists(check.params.url);
+    if ('artifact' in check.params) {
+      const artifact = artifacts.get(check.params.artifact);
+      return (
+        !!artifact &&
+        (artifact.context_kind === 'ask'
+          ? artifact.context_id === todo.askId
+          : artifact.context_id === todo.id)
       );
     }
-    const build = BUILD_METADATA.commit;
-    return (
-      /^[0-9a-f]{40}$/.test(build) &&
-      (build === check.params.sha ||
-        (await contains(check.params.repo.toLowerCase(), check.params.sha, build)))
+    return stat(check.params.path).then(
+      (file) => file.isFile(),
+      () => false
     );
   }
   const check = (superpipe({})('neo.todo.core-check') as PipelineAPI)
@@ -163,6 +150,12 @@ export function createCoreTodoPack(db: Database, contains: Contains): NeoPack {
     .pipe(
       async (todo: NeoTodo, rule: CoreCheck): Promise<NeoTodoCheckResult> => {
         const done = await observe(todo, rule);
+        if (done === null)
+          return {
+            done: false,
+            evidence: null,
+            failed: `link_unsupported: no installed pack can check ${'url' in rule.params ? rule.params.url : 'this link'}.`,
+          };
         return { done, evidence: done ? sentence(rule) : null };
       },
       ['todo', 'observed'],
@@ -172,10 +165,14 @@ export function createCoreTodoPack(db: Database, contains: Contains): NeoPack {
   return {
     id: 'core',
     describe: 'Shared completion checks',
+    preferences: {
+      sessionReuse: SESSION_REUSE_PREFERENCE,
+    },
     instructions: () => null,
     readFacts: check,
     judge: (_todo, facts): NeoTodoJudgement => {
       const result = facts as NeoTodoCheckResult;
+      if (result.failed) return { state: 'failed', reason: result.failed };
       return result.done ? { state: 'done', evidence: result.evidence } : { state: 'no_opinion' };
     },
     todos: {

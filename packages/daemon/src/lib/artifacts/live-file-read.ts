@@ -177,7 +177,7 @@ export function createLiveFileRead(
               : 'forbidden'
         );
   }
-  const execute = (superpipe({})('file-reference-read') as PipelineAPI)
+  const read = (superpipe({})('file.reference.read') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
       (caller: OperationCaller) =>
@@ -236,6 +236,6 @@ export function createLiveFileRead(
       }),
     ]),
     policy: { safetyClass: 'read', caller: 'local_user' },
-    execute,
+    execute: read,
   });
 }

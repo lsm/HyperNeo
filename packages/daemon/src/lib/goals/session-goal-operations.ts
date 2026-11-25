@@ -10,6 +10,7 @@ import {
   defineOperation,
   isAgentSessionCaller,
   type OperationCaller,
+  type OperationPolicy,
 } from '../operations/registry.ts';
 import {
   GOAL_READ_POLICY,
@@ -22,8 +23,34 @@ import {
 import { SessionScheduleCadenceSchema } from '../scheduler/operations.ts';
 import { requireValidCadence } from '../scheduler/session-schedules.ts';
 import type { SessionGoalSchedules } from './session-goal-schedules.ts';
+import {
+  MetricSchema,
+  PointSchema,
+  metricEvidence,
+  metricFields,
+  metricKey,
+  readMetric,
+  readPoint,
+  reachedTarget,
+  reservedMetricEvidence,
+} from './session-goal-metric.ts';
 
 type Rejection = { accepted: false; reason: string };
+
+const PARENT_REFUSALS = {
+  child: 'parent_is_child: a goal session must start under a top-level session.',
+  inactive:
+    'parent_unavailable: a goal session must start under an active session that may be cloned.',
+} as const;
+
+const OWNER_READ_POLICY = {
+  ...GOAL_READ_POLICY,
+  roles: [...GOAL_READ_POLICY.roles, 'universal_read'],
+} as const satisfies OperationPolicy;
+const OWNER_WRITE_POLICY = {
+  ...GOAL_WRITE_POLICY,
+  roles: [...GOAL_WRITE_POLICY.roles, 'universal_read'],
+} as const satisfies OperationPolicy;
 type Gate<T> = { value: T } | { reason: Rejection };
 
 const refuse = (reason: string): { reason: Rejection } => ({ reason: { accepted: false, reason } });
@@ -34,7 +61,7 @@ const Owner = {
     .min(1)
     .optional()
     .describe(
-      'Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.'
+      'Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.'
     ),
 };
 
@@ -58,6 +85,13 @@ const Fields = {
     .optional()
     .describe('Mandate section that defines the goal, e.g. "mandate.md#adoption"'),
   mandateRev: z.string().nullable().optional().describe('Home repo commit the goal matches'),
+  dailyRunLimit: z
+    .number()
+    .int()
+    .min(1)
+    .max(1440)
+    .optional()
+    .describe('Work wakes allowed in any 24 hours; further due times are skipped. Default 24.'),
 };
 
 const Create = z
@@ -65,13 +99,25 @@ const Create = z
     ...Owner,
     ...Fields,
     title: z.string().min(1),
+    metric: MetricSchema.optional(),
     cadence: SessionScheduleCadenceSchema.default({ kind: 'every', everyMs: 3_600_000 }),
+    reviewCadence: SessionScheduleCadenceSchema.default({
+      kind: 'every',
+      everyMs: 86_400_000,
+    }),
+    noEffectReviewLimit: z.number().int().min(1).max(100).default(3),
     nudgeEvery: z
       .number()
       .int()
       .positive()
       .default(4)
-      .describe('Legacy compatibility only; never forces a turn when facts are unchanged.'),
+      .describe('Legacy compatibility only; ignored.'),
+    ownSession: z
+      .boolean()
+      .default(false)
+      .describe(
+        'Start a dedicated session that owns the goal and runs its wakes; it reports reviews to the creating session.'
+      ),
   })
   .strict();
 const Get = z.object({ ...Owner, goalId: z.string().min(1) }).strict();
@@ -83,6 +129,8 @@ const Update = z
     goalId: z.string().min(1),
     title: z.string().min(1).optional(),
     status: GoalStatusSchema.optional(),
+    reviewCadence: SessionScheduleCadenceSchema.optional(),
+    noEffectReviewLimit: z.number().int().min(1).max(100).optional(),
     worksNote: z
       .string()
       .optional()
@@ -106,11 +154,12 @@ const Append = z
       .min(1)
       .optional()
       .describe(
-        'Scheduler run that woke this cycle; a second entry for the same run replaces the first'
+        'Scheduler run that woke this cycle; a second entry replaces the first except for measured reviews, which cannot be replaced'
       ),
     done: z.string().min(1).describe('What this cycle did'),
     effect: z.string().min(1).describe('What changed because of it'),
     evidence: z.array(Evidence).default([]),
+    metricPoint: PointSchema.optional(),
     worked: z.string().min(1).describe('What to repeat next cycle'),
     failed: z.string().min(1).optional().describe('What to stop doing'),
   })
@@ -138,6 +187,7 @@ const EntrySchema = z.object({
   worked: z.string(),
   failed: z.string().nullable(),
   createdAt: z.number(),
+  metricPoint: PointSchema.extend({ time: z.number() }).nullable().optional(),
 });
 
 const GoalSchema = z.object({
@@ -149,6 +199,7 @@ const GoalSchema = z.object({
   type: GoalTypeSchema,
   priority: GoalPrioritySchema,
   metrics: GoalMetricsSchema,
+  metric: MetricSchema.nullable(),
   doneTest: z.string().nullable(),
   summary: z.string(),
   worksNote: z.string().nullable(),
@@ -156,6 +207,8 @@ const GoalSchema = z.object({
   nextSteps: z.array(z.string()),
   mandateRef: z.string().nullable(),
   mandateRev: z.string().nullable(),
+  dailyRunLimit: z.number(),
+  noEffectReviewLimit: z.number(),
   createdAt: z.number(),
   updatedAt: z.number(),
   completedAt: z.number().nullable(),
@@ -169,15 +222,20 @@ const GoalResult = z.discriminatedUnion('accepted', [
 
 export function resolveGoalOwner(
   caller: OperationCaller,
-  input: { ownerSessionId?: string }
+  input: { ownerSessionId?: string },
+  canOwn: (sessionId: string) => boolean
 ): Gate<string> {
   if (caller.source !== 'mcp')
     return input.ownerSessionId
       ? { value: input.ownerSessionId }
       : refuse('owner_unresolved: ownerSessionId is required for this caller.');
-  if (!isAgentSessionCaller(caller) || !caller.sessionId)
+  if (!caller.sessionId)
     return refuse('owner_denied: an agent session caller needs its session id to own goals.');
-  return { value: input.ownerSessionId ?? caller.sessionId };
+  if (isAgentSessionCaller(caller)) return { value: input.ownerSessionId ?? caller.sessionId };
+  return canOwn(caller.sessionId) &&
+    (!input.ownerSessionId || input.ownerSessionId === caller.sessionId)
+    ? { value: caller.sessionId }
+    : refuse('owner_denied: this session may only use goals it owns.');
 }
 
 export function requireGoalChange(goal: SessionGoal, patch: SessionGoalPatch): Gate<SessionGoal> {
@@ -200,26 +258,49 @@ export function requireExistingGoal(goal: SessionGoal | null): Gate<SessionGoal>
   return goal ? { value: goal } : refuse('goal_not_found');
 }
 
+export function requireGoalAccess(goal: SessionGoal, caller: OperationCaller): Gate<SessionGoal> {
+  return caller.source !== 'mcp' ||
+    isAgentSessionCaller(caller) ||
+    goal.ownerSessionId === caller.sessionId
+    ? { value: goal }
+    : refuse('owner_denied: this session may only use goals it owns.');
+}
+
 export function requireGoalDoneTest<T>(
   value: T,
-  goal: { metrics?: Record<string, unknown>; doneTest?: string | null }
+  goal: { metrics?: Record<string, unknown>; metric?: unknown; doneTest?: string | null }
 ): Gate<T> {
-  return goal.doneTest || Object.keys(goal.metrics ?? {}).length
+  return goal.doneTest || goal.metric || Object.keys(goal.metrics ?? {}).length
     ? { value }
     : refuse('done_test_required: give the goal metrics or a written doneTest.');
 }
 
-function patchOf(input: z.infer<typeof Update>): SessionGoalPatch {
-  const { goalId: _goalId, ownerSessionId: _owner, ...patch } = input;
-  return Object.fromEntries(
+function patchOf(input: z.infer<typeof Update>, goal: SessionGoal): SessionGoalPatch {
+  const {
+    goalId: _goalId,
+    ownerSessionId: _owner,
+    reviewCadence: _reviewCadence,
+    noEffectReviewLimit: _noEffectReviewLimit,
+    ...patch
+  } = input;
+  const result = Object.fromEntries(
     Object.entries(patch).filter(([, value]) => value !== undefined)
   ) as SessionGoalPatch;
+  const metric = readMetric(goal);
+  if (metric && result.metrics) result.metrics = { ...result.metrics, ...metricFields(metric) };
+  return result;
 }
 
 export interface SessionGoalDependencies {
   readonly goals: SessionGoalRepository;
   readonly schedules: SessionGoalSchedules;
   readonly sessionExists: (sessionId: string) => boolean;
+  readonly parentProblem: (sessionId: string) => Promise<'child' | 'inactive' | null>;
+  readonly canReturn: (sessionId: string) => boolean;
+  readonly startSession: (parentSessionId: string, title: string) => Promise<string>;
+  readonly releaseSession: (sessionId: string) => Promise<void>;
+  readonly neoChanged?: () => void;
+  readonly ensureNeo?: () => Promise<string>;
   readonly audit: (caller: OperationCaller, toolName: string, summary: object) => void;
 }
 
@@ -227,12 +308,25 @@ export function createSessionGoalOperations({
   goals,
   schedules,
   sessionExists,
+  parentProblem,
+  canReturn,
+  startSession,
+  releaseSession,
+  neoChanged = () => {},
+  ensureNeo,
   audit,
 }: SessionGoalDependencies) {
+  const canOwn = (sessionId: string) =>
+    canReturn(sessionId) && goals.list(sessionId, true).length > 0;
   const owner = (pipeline: PipelineAPI) =>
     pipeline
       .input(['input', 'caller'])
-      .pipe(resolveGoalOwner, ['caller', 'input'], 'result:outcome')
+      .pipe(
+        (caller: OperationCaller, input: { ownerSessionId?: string }) =>
+          resolveGoalOwner(caller, input, canOwn),
+        ['caller', 'input'],
+        'result:outcome'
+      )
       .pipe(
         (owned: string) => requireKnownOwner(owned, sessionExists(owned)),
         'outcome',
@@ -241,25 +335,94 @@ export function createSessionGoalOperations({
   const owned = (pipeline: PipelineAPI) =>
     owner(pipeline)
       .pipe((input: { goalId: string }) => goals.get(input.goalId), 'input', 'goal')
-      .pipe(requireExistingGoal, 'goal', 'result:outcome');
-  const done = (result: SessionGoal) => ({ accepted: true as const, goal: result });
+      .pipe(requireExistingGoal, 'goal', 'result:outcome')
+      .pipe(requireGoalAccess, ['outcome', 'caller'], 'result:outcome');
+  const withReviewLimit = (goal: SessionGoal) => {
+    const { [metricKey]: _metric, ...metrics } = goal.metrics;
+    return {
+      ...goal,
+      metrics,
+      metric: readMetric(goal),
+      noEffectReviewLimit: goals.wakeSchedule(goal.id)?.noEffectReviewLimit ?? 3,
+    };
+  };
+  const done = (result: SessionGoal) => ({
+    accepted: true as const,
+    goal: withReviewLimit(result),
+  });
 
   const create = owner(superpipe({})('goal.session.create') as PipelineAPI)
     .pipe(requireGoalDoneTest, ['outcome', 'input'], 'result:outcome')
     .pipe(
+      (owner: string, input: z.infer<typeof Create>) =>
+        input.metric && !input.ownSession && !schedules.canReview(owner)
+          ? refuse(
+              'metric_review_unavailable: use a goal session or a Neo owner for a structured metric.'
+            )
+          : { value: owner },
+      ['outcome', 'input'],
+      'result:outcome'
+    )
+    .pipe(
+      (owner: string, input: z.infer<typeof Create>) =>
+        input.metrics && metricKey in input.metrics
+          ? refuse('reserved_metric_key')
+          : { value: owner },
+      ['outcome', 'input'],
+      'result:outcome'
+    )
+    .pipe(
       (owned: string, input: z.infer<typeof Create>) => {
         const cadence = requireValidCadence(input.cadence);
-        return 'reason' in cadence ? refuse(cadence.reason) : { value: owned };
+        const review = requireValidCadence(input.reviewCadence);
+        return 'reason' in cadence
+          ? refuse(cadence.reason)
+          : 'reason' in review
+            ? refuse(review.reason)
+            : { value: owned };
       },
       ['outcome', 'input'],
       'result:outcome'
     )
     .pipe(
-      (owned: string, input: z.infer<typeof Create>, caller: OperationCaller) => {
-        const { ownerSessionId: _owner, cadence, nudgeEvery, ...draft } = input;
-        const goal = goals.create(owned, draft, Date.now(), (created) =>
-          schedules.sync(created, cadence, nudgeEvery)
-        );
+      async (parent: string, input: z.infer<typeof Create>) => {
+        const problem = input.ownSession ? await parentProblem(parent) : null;
+        return problem ? refuse(PARENT_REFUSALS[problem]) : { value: parent };
+      },
+      ['outcome', 'input'],
+      'result:outcome'
+    )
+    .pipe(
+      async (parent: string, input: z.infer<typeof Create>, caller: OperationCaller) => {
+        const {
+          ownerSessionId: _owner,
+          cadence,
+          reviewCadence,
+          noEffectReviewLimit,
+          nudgeEvery,
+          ownSession,
+          metric,
+          ...draft
+        } = input;
+        const owned = ownSession ? await startSession(parent, `Goal: ${input.title}`) : parent;
+        let goal: SessionGoal;
+        try {
+          goal = goals.create(
+            owned,
+            { ...draft, metrics: { ...draft.metrics, ...(metric ? metricFields(metric) : {}) } },
+            Date.now(),
+            (created) => {
+              schedules.sync(created, cadence, nudgeEvery, reviewCadence);
+              goals.saveWakeSchedule(created.id, {
+                ...goals.wakeSchedule(created.id)!,
+                noEffectReviewLimit,
+              });
+            }
+          );
+        } catch (error) {
+          if (ownSession) await releaseSession(owned);
+          throw error;
+        }
         audit(caller, 'goal.session.create', { goalId: goal.id, ownerSessionId: owned });
         return done(goal);
       },
@@ -276,7 +439,7 @@ export function createSessionGoalOperations({
     .pipe(
       (owned: string, input: z.infer<typeof List>) => ({
         accepted: true as const,
-        goals: goals.list(owned, input.includeClosed),
+        goals: goals.list(owned, input.includeClosed).map(withReviewLimit),
       }),
       ['outcome', 'input'],
       'outcome'
@@ -285,23 +448,65 @@ export function createSessionGoalOperations({
 
   const update = owned(superpipe({})('goal.session.update') as PipelineAPI)
     .pipe(
-      (goal: SessionGoal, input: z.infer<typeof Update>) => requireGoalChange(goal, patchOf(input)),
+      (goal: SessionGoal, input: z.infer<typeof Update>) =>
+        input.reviewCadence || input.noEffectReviewLimit !== undefined
+          ? { value: goal }
+          : requireGoalChange(goal, patchOf(input, goal)),
       ['outcome', 'input'],
       'result:outcome'
     )
     .pipe(
       (goal: SessionGoal, input: z.infer<typeof Update>) =>
-        requireGoalDoneTest(goal, { ...goal, ...patchOf(input) }),
+        requireGoalDoneTest(goal, { ...goal, ...patchOf(input, goal) }),
+      ['outcome', 'input'],
+      'result:outcome'
+    )
+    .pipe(
+      (goal: SessionGoal, input: z.infer<typeof Update>) =>
+        input.metrics && metricKey in input.metrics
+          ? refuse('reserved_metric_key')
+          : { value: goal },
+      ['outcome', 'input'],
+      'result:outcome'
+    )
+    .pipe(
+      (goal: SessionGoal, input: z.infer<typeof Update>) => {
+        const cadence = input.reviewCadence && requireValidCadence(input.reviewCadence);
+        return cadence && 'reason' in cadence ? refuse(cadence.reason) : { value: goal };
+      },
+      ['outcome', 'input'],
+      'result:outcome'
+    )
+    .pipe(
+      (goal: SessionGoal, input: z.infer<typeof Update>) => {
+        if (input.status !== 'active' || schedules.requireAnsweredReview(goal))
+          return { value: goal };
+        if (schedules.reopenReviewQuestion(goal)) neoChanged();
+        return refuse('review_question_open: wait for the human answer before resuming.');
+      },
       ['outcome', 'input'],
       'result:outcome'
     )
     .pipe(
       (goal: SessionGoal, input: z.infer<typeof Update>, caller: OperationCaller) => {
-        const patch = patchOf(input);
-        audit(caller, 'goal.session.update', { goalId: goal.id, fields: Object.keys(patch) });
+        const patch = patchOf(input, goal);
+        audit(caller, 'goal.session.update', {
+          goalId: goal.id,
+          fields: [
+            ...Object.keys(patch),
+            ...(input.reviewCadence ? ['reviewCadence'] : []),
+            ...(input.noEffectReviewLimit !== undefined ? ['noEffectReviewLimit'] : []),
+          ],
+        });
         return done(
           goals.update(goal, patch, Date.now(), (updated) => {
-            if (patch.status) schedules.sync(updated);
+            if (patch.status || input.reviewCadence)
+              schedules.sync(updated, undefined, undefined, input.reviewCadence);
+            if (input.noEffectReviewLimit !== undefined)
+              goals.saveWakeSchedule(goal.id, {
+                ...goals.wakeSchedule(goal.id)!,
+                noEffectReviewLimit: input.noEffectReviewLimit,
+              });
           })
         );
       },
@@ -312,18 +517,73 @@ export function createSessionGoalOperations({
 
   const append = owned(superpipe({})('goal.journal.append') as PipelineAPI)
     .pipe(
-      (goal: SessionGoal, input: z.infer<typeof Append>, caller: OperationCaller) => {
-        const { goalId: _goalId, ownerSessionId: _owner, ...draft } = input;
+      (goal: SessionGoal, input: z.infer<typeof Append>) => {
+        const existing = input.runId ? goals.journalEntry(goal.id, { runId: input.runId }) : null;
+        return input.evidence.some((item) => reservedMetricEvidence(item.ref))
+          ? refuse('reserved_metric_evidence: use metricPoint on a review.')
+          : readMetric(goal) && input.runId?.startsWith('goal-review:') && !input.metricPoint
+            ? refuse('metric_point_required: reviews of a metric goal must include metricPoint.')
+            : input.metricPoint && !readMetric(goal)
+              ? refuse('metric_review_required: metric points require a delivered review.')
+              : existing && readPoint(existing)
+                ? refuse('metric_review_recorded: a measured review cannot be replaced.')
+                : { value: goal };
+      },
+      ['outcome', 'input'],
+      'result:outcome'
+    )
+    .pipe(
+      (goal: SessionGoal, input: z.infer<typeof Append>) =>
+        input.runId?.startsWith('goal-review:') && !['yes', 'no'].includes(input.effect)
+          ? refuse('review_effect_required: use yes or no for a review effect.')
+          : { value: goal },
+      ['outcome', 'input'],
+      'result:outcome'
+    )
+    .pipe(
+      async (goal: SessionGoal, input: z.infer<typeof Append>, caller: OperationCaller) => {
+        const { goalId: _goalId, ownerSessionId: _owner, metricPoint, ...draft } = input;
+        if (input.runId?.startsWith('goal-review:') && !goal.ownerSessionId.startsWith('neo:'))
+          await ensureNeo?.();
+        const snapshot = metricPoint ? await goals.metricSnapshot(goal.id, input.runId) : null;
+        if (snapshot && !snapshot.delivered)
+          return refuse('metric_review_required: metric points require a delivered review.').reason;
         audit(caller, 'goal.journal.append', { goalId: goal.id, runId: input.runId ?? null });
-        return {
-          accepted: true as const,
-          entry: goals.appendJournal(
+        const result = schedules.inTransaction(() => {
+          const existing = input.runId ? goals.journalEntry(goal.id, { runId: input.runId }) : null;
+          if (existing && readPoint(existing))
+            return {
+              accepted: false as const,
+              reason: 'metric_review_recorded: a measured review cannot be replaced.',
+            };
+          if (
+            snapshot &&
+            (goals.listJournal(goal.id, null, 1, null)[0]?.id ?? null) !== snapshot.head
+          )
+            return {
+              accepted: false as const,
+              reason: 'metric_review_stale: review changed; retry.',
+            };
+          const metric = metricPoint ? readMetric(goal)! : null;
+          const met = !!metric && !!metricPoint && reachedTarget(metric, metricPoint.value);
+          const entry = goals.appendJournal(
             goal.id,
             caller.sessionId ?? null,
-            draft as GoalJournalDraft,
+            {
+              ...draft,
+              evidence: [...draft.evidence, ...(metricPoint ? [metricEvidence(metricPoint)] : [])],
+            } as GoalJournalDraft,
             Date.now()
-          ),
-        };
+          );
+          if (input.runId?.startsWith('goal-review:')) schedules.reviewResult(goals.get(goal.id)!);
+          return {
+            accepted: true as const,
+            entry: { ...entry, metricPoint: readPoint(entry) },
+            metricReached: metricPoint ? met : undefined,
+          };
+        });
+        if (input.runId?.startsWith('goal-review:')) neoChanged();
+        return result;
       },
       ['outcome', 'input', 'caller'],
       'outcome'
@@ -343,7 +603,9 @@ export function createSessionGoalOperations({
     .pipe(
       (goal: SessionGoal, input: z.infer<typeof Journal>) => ({
         accepted: true as const,
-        entries: goals.listJournal(goal.id, input.before ?? null, input.limit),
+        entries: goals
+          .listJournal(goal.id, input.before ?? null, input.limit)
+          .map((entry) => ({ ...entry, metricPoint: readPoint(entry) })),
       }),
       ['outcome', 'input'],
       'outcome'
@@ -369,8 +631,8 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.session.create',
       description:
-        'Create a goal owned by a session (root Neo), with one fact-driven wake schedule. Give metrics or a written doneTest. cadence defaults to hourly. Unchanged facts stay quiet and back off; nudgeEvery is accepted for legacy compatibility only and never forces a turn. Returns { accepted, goal } or { accepted: false, reason }.',
-      policy: GOAL_WRITE_POLICY,
+        'Create a goal with a work schedule and, for Neo-owned goals and goal sessions, a review schedule. Give a structured metric with name, target, direction and baseline, legacy metrics, or a written doneTest. A structured metric requires a Neo owner or a goal session (created with ownSession) and a measured point at every review. Ordinary top-level session owners have no review schedule; reviewCadence has no effect for them. cadence defaults to hourly and reviewCadence to daily. Work wakes are limited by dailyRunLimit (default 24); reviews are independent of that limit. noEffectReviewLimit defaults to 3; consecutive reviews with no effect pause the goal and ask the human. ownSession starts a dedicated goal session that reports reviews using the method named in the wake. Closing the goal stops its schedules. nudgeEvery is accepted for legacy compatibility only.',
+      policy: OWNER_WRITE_POLICY,
       inputSchema: Create,
       resultSchema: GoalResult,
       execute: async (input, caller) => (create as Run)(input, caller) as never,
@@ -378,7 +640,7 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.session.get',
       description: 'Read one goal owned by a session.',
-      policy: GOAL_READ_POLICY,
+      policy: OWNER_READ_POLICY,
       inputSchema: Get,
       resultSchema: GoalResult,
       execute: async (input, caller) => (get as Run)(input, caller) as never,
@@ -386,7 +648,7 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.session.list',
       description: 'List a session’s goals, active and paused unless includeClosed.',
-      policy: GOAL_READ_POLICY,
+      policy: OWNER_READ_POLICY,
       inputSchema: List,
       resultSchema: z.discriminatedUnion('accepted', [
         z.object({ accepted: z.literal(true), goals: z.array(GoalSchema) }),
@@ -397,8 +659,8 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.session.update',
       description:
-        'Update a session-owned goal: fields, progress, next steps, mandate link, or status. Paused pauses its schedule, active resumes it, completed or archived removes it. worksNote summarizes the journal, advances its cursor and records journal_compacted without deleting entries. Each change is recorded as a goal event.',
-      policy: GOAL_WRITE_POLICY,
+        'Update a session-owned goal, including reviewCadence and noEffectReviewLimit. Structured metrics are set at creation and cannot be changed here. A goal paused for a no-effect review question can resume after the human answers; put their direction in nextSteps. If its question was retired, attempting to resume opens a new question. Ordinary top-level session owners have no review schedule; reviewCadence has no effect for them. Paused pauses its schedules, active resumes them, and completed or archived removes them. worksNote updates the what-works note without deleting journal entries.',
+      policy: OWNER_WRITE_POLICY,
       inputSchema: Update,
       resultSchema: GoalResult,
       execute: async (input, caller) => (update as Run)(input, caller) as never,
@@ -406,8 +668,8 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.facts',
       description:
-        'Read the same goal facts and changed-line summary as its scheduler, without consuming the changes. Closed goals return null facts.',
-      policy: GOAL_READ_POLICY,
+        'Read the same goal facts and changed-line summary as its scheduler, without consuming the changes. Structured metrics show current value, target and change since the preceding review. Closed goals return null facts.',
+      policy: OWNER_READ_POLICY,
       inputSchema: Get,
       resultSchema: z.discriminatedUnion('accepted', [
         z.object({
@@ -423,11 +685,15 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.journal.append',
       description:
-        'Append one entry to a session goal’s journal at the end of a work cycle: what was done, its effect with evidence, what worked and what to stop. Pass the runId from the wake message.',
-      policy: GOAL_WRITE_POLICY,
+        'Append one entry to a session goal’s journal at the end of a work cycle: what was done, its effect with evidence, what worked and what to stop. Pass the runId from the wake message. A structured metric requires metricPoint with numeric value and evidence on every delivered review. Points cannot be written outside reviews or replaced. metricReached reports whether the target was met; the goal remains active and no automatic human report is sent. A no-effect review may pause the goal and ask the human.',
+      policy: OWNER_WRITE_POLICY,
       inputSchema: Append,
       resultSchema: z.discriminatedUnion('accepted', [
-        z.object({ accepted: z.literal(true), entry: EntrySchema }),
+        z.object({
+          accepted: z.literal(true),
+          entry: EntrySchema,
+          metricReached: z.boolean().optional(),
+        }),
         RejectionSchema,
       ]),
       execute: async (input, caller) => (append as Run)(input, caller) as never,
@@ -435,7 +701,7 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.journal.list',
       description: 'Read a session goal’s journal, newest first.',
-      policy: GOAL_READ_POLICY,
+      policy: OWNER_READ_POLICY,
       inputSchema: Journal,
       resultSchema: z.discriminatedUnion('accepted', [
         z.object({ accepted: z.literal(true), entries: z.array(EntrySchema) }),

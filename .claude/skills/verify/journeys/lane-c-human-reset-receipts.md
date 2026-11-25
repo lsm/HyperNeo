@@ -2,7 +2,7 @@
 
 The wrapper checks resources, uses disposable HOME/data and ephemeral ports, refuses
 GitHub/external HTTP, saves evidence and removes daemon data. No provider turn or HTTP
-model is needed. Record runtime versions; Bun 1.4.3 does not establish pinned Bun 1.4.2
+model is needed. Record runtime versions; Bun 1.4.3 does not establish pinned Bun 1.4.4
 coverage.
 
 This construction keeps reset(now) and adds an optional request UUID. A read-only

@@ -14,8 +14,10 @@ export const CODING_ATTENTION_KINDS: readonly NeoAttentionKind[] = [
   { id: 'coding.merge_held', ...told },
   { id: 'coding.merge_failing', ...told, ladder: [4 * 3_600_000] },
   { id: 'coding.merge_confirmed', ...told },
+  { id: 'coding.github_budget', ...told },
   { id: 'coding.pr_unowned', ...told },
   { id: 'coding.pr_sweep', ...told },
+  { id: 'coding.review_after_approval', ...told },
   {
     id: 'coding.idle_with_open_pr',
     decide: () => 'digest',

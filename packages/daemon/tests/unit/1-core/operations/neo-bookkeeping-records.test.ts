@@ -1,4 +1,5 @@
 import { existingTodoTarget } from '../../helpers/todo-check-packs.ts';
+import { historicalAsk } from '../../helpers/accepted-ask.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { createTodoCheckPacks, pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
@@ -111,8 +112,9 @@ describe('todo and ask bookkeeping records through MCP', () => {
   test('opens an ask with an existing worker and leaves its start to the queue', async () => {
     const h = setup();
     try {
+      historicalAsk(h.store, 'neo', 'Existing worker');
       const ref = { adapter: 'hyperneo', id: '10000000-0000-4000-8000-000000000001' };
-      const result = await h.call('neo.ask.open', {
+      const result = await h.call('neo.ask.propose', {
         title: 'Existing worker',
         request: 'Track its result',
         todos: [

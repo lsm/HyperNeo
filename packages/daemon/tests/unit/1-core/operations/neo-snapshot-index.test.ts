@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
+import { NEO_OTHER_TOPIC, NEO_OTHER_TOPIC_KEY } from '@hyperneo/shared/types/neo-ask';
 import { createNeoService, createNeoOperations } from '../../helpers/neo-service.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
@@ -344,11 +345,15 @@ test('the RPC snapshot carries the human queue with each in-progress todo owner'
         text: 'Ship it?',
         todos: [{ id: 'todo-1', title: 'Title '.repeat(100) }],
       },
-      { state: 'progress', askId: 'index-0', todoId: 'todo-0', title: 'todo-0', owner: 'neo' },
+      { state: 'waiting', askId: 'index-0', todoId: 'todo-0', title: 'todo-0', owner: 'neo' },
     ],
     counts: {
-      'index-0': { waiting: 0, held: 0, progress: 1 },
+      'index-0': { waiting: 1, held: 0, progress: 0 },
       'index-1': { waiting: 1, held: 0, progress: 0 },
+    },
+    topics: {
+      'index-0': { topic: NEO_OTHER_TOPIC, topicKey: NEO_OTHER_TOPIC_KEY },
+      'index-1': { topic: NEO_OTHER_TOPIC, topicKey: NEO_OTHER_TOPIC_KEY },
     },
   });
   expect(await snapshot(mcp)).not.toHaveProperty('humanQueue');
@@ -377,8 +382,12 @@ test('a project-scoped snapshot still carries the whole human queue, like needsY
   expect(scoped.todoAsks?.map((entry) => entry.ask.id)).toEqual(['index-0']);
   expect(scoped.needsYou).toBe(1);
   expect(scoped.humanQueue?.counts).toEqual({
-    'index-0': { waiting: 0, held: 0, progress: 1 },
+    'index-0': { waiting: 1, held: 0, progress: 0 },
     'index-1': { waiting: 1, held: 0, progress: 0 },
+  });
+  expect(scoped.humanQueue?.topics).toEqual({
+    'index-0': { topic: 'Scoped', topicKey: 'scoped', topicSource: 'project' },
+    'index-1': { topic: NEO_OTHER_TOPIC, topicKey: NEO_OTHER_TOPIC_KEY },
   });
 });
 
@@ -457,6 +466,6 @@ test('a card written during the snapshot does not leave its todo owned by the hu
   const { humanQueue } = await snapshot(rpc);
   expect(wrote).toBe(true);
   expect(humanQueue?.items).toEqual([
-    expect.objectContaining({ state: 'progress', todoId: 'todo-0', owner: 'neo' }),
+    expect.objectContaining({ state: 'waiting', todoId: 'todo-0', owner: 'neo' }),
   ]);
 });

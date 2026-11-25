@@ -15,5 +15,7 @@ End state, printed by the script:
 
 - two older `closed_unverified` rows read `done` (it had started) and `removed`
   (it never started), and their ask reads through `neo.ask.read`.
+- an older `failed` row in an open ask reads `blocked` by `failure` with its reason, one in
+  a settled ask reads `removed` with its reason, and both asks read through `neo.ask.read`.
 
 The script exits non-zero when a list or a rewritten row is wrong, or `held` starts.

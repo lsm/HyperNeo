@@ -8,6 +8,7 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoPublicationRepository } from '../../../packages/daemon/src/storage/repositories/neo-publication-repository.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
+import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 
 const [mode,directory]=process.argv.slice(2),run=resolve(directory);
 assert(['before','verify'].includes(mode));assert.equal(process.env.NODE_ENV,'test');assert.equal(process.env.HOME,join(run,'home'));assert.equal(process.env.HYPERNEO_DATA_DIR,join(run,'data'));assert(!existsSync(join(run,'data')));
@@ -31,7 +32,7 @@ async function open(){
  }) as typeof app.db.gateway.run;
 }
 async function read(input:Record<string,unknown>={conversationId}){
- measuring++;const ws=new WebSocket(`ws://127.0.0.1:${app!.server.port}/ws`);
+ measuring++;const ws=new WebSocket(`ws://127.0.0.1:${app!.server.port}/ws`,{headers:{authorization:`Bearer ${readLocalCredential()}`}} as never);
  try{await new Promise<void>((done,fail)=>{ws.onopen=()=>done();ws.onerror=()=>fail(new Error('RPC connect failed'));});return await new Promise<any>((done,fail)=>{const requestId=crypto.randomUUID(),timer=setTimeout(()=>fail(new Error('Publication read timed out')),10000);ws.onmessage=event=>{const reply=JSON.parse(String(event.data));if(reply.id!==requestId&&reply.requestId!==requestId)return;clearTimeout(timer);reply.error?fail(new Error(JSON.stringify(reply.error))):done(reply.data);};ws.send(JSON.stringify({id:requestId,type:'REQ',sessionId:'global',method:'operation.invoke',data:{name:'neo.publication.read',input},timestamp:new Date().toISOString(),version:'1.0.0'}));});}
  finally{ws.close();measuring--;}
 }
@@ -40,7 +41,7 @@ try{
  await open();await app!.db.createSession({id:root,title:'Synthetic publication page',workspacePath:join(run,'workspace'),createdAt:new Date().toISOString(),lastActiveAt:new Date().toISOString(),status:'active',config:{queryMode:'manual'},metadata:{messageCount:0,totalTokens:0,inputTokens:0,totalCost:0,toolCallCount:0}});
  sql().exec("DELETE FROM neo_conversation; DELETE FROM neo_session_bindings WHERE kind='neo'");new NeoRepository(sql()).reserveBinding({sessionId:root,kind:'neo',projectId:null});
  const ledger=new NeoPublicationRepository(sql()),stored=[];
- for(let n=1;n<=7;n++){const result=ledger.append({conversationId,publicationId:id(n),verbatim:true,fullText:n===1?text:`Fictional reply ${n} 甲🙂`,links:[]});assert(result.accepted);stored.push(result.publication);}
+ for(let n=1;n<=7;n++){const result=ledger.append({conversationId,publicationId:id(n),verbatim:true,fullText:n===1?text:`Fictional reply ${n} 甲🙂`,links:[]});assert(result.accepted);stored.push(JSON.parse(JSON.stringify(result.publication)));}
  assert(ledger.append({conversationId:foreign,publicationId:id(8),verbatim:true,fullText:'Foreign row must stay private.',links:[]}).accepted);
  const payload=sql().prepare('SELECT payload_json AS value FROM neo_publications WHERE publication_id=?').get(id(1)) as {value:string};sql().prepare('UPDATE neo_publications SET payload_json=? WHERE publication_id=?').run('{}',id(1));
  await assert.rejects(read(),/Invalid stored Neo publication/);evidence.conversationAfterFailedRead=sql().prepare('SELECT id FROM neo_conversation').get()??null;

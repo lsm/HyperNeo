@@ -16,6 +16,8 @@ fi
 export APPLE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:-Developer ID Application: ARCOBY, LLC (P5R65T296V)}"
 bash tests/cua-driver.sh
 bash prepare-cua-driver.sh
+bash locked-use/compile-guardian.sh src-tauri/binaries/hyperneo-locked-use
+bash locked-use/compile-plugin.sh src-tauri/binaries/HyperNeoLockedUse.bundle
 bash sign-cua-driver.sh
 [[ -n "${APPLE_DESKTOP_PROVISIONING_PROFILE:-}" ]] || {
     echo "APPLE_DESKTOP_PROVISIONING_PROFILE is required for signed Desktop builds" >&2

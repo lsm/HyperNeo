@@ -7,6 +7,7 @@ import select
 import shutil
 import signal
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -14,6 +15,9 @@ import time
 import unittest
 
 RUNNER = Path(sys.argv.pop(1)).resolve()
+LEGACY_HOST = '--legacy-host' in sys.argv
+if LEGACY_HOST:
+    sys.argv.remove('--legacy-host')
 SIGNED = 'P5R65T296V.io.hyperneo.app' in subprocess.run(
     ['/usr/bin/codesign', '-d', '--entitlements', '-', '--xml', str(RUNNER)], capture_output=True, text=True).stdout
 FAKE = f'#!{sys.executable}\n' + '''import json, os, socket, sys, time
@@ -29,7 +33,7 @@ if '/slow/' in home:
     while not os.path.exists(os.path.join(home, 'd.release')):
         time.sleep(0.01)
 log = open(os.path.join(os.path.dirname(home), 'log-' + os.path.basename(home)), 'a', buffering=1)
-with channel.makefile('rwb') as stream:
+with channel.makefile('rb') as stream:
     for line in stream:
         request = json.loads(line)
         name = request.get('name')
@@ -38,15 +42,36 @@ with channel.makefile('rwb') as stream:
             entry += ' ' + name + ' ' + json.dumps(request.get('arguments'))
         log.write(entry + '\\n')
         result = {'ready': True, 'pid': os.getpid(), 'metadata': {
-            'driver_version': '0.44.0', 'contract_version': '0.8.0'},
+            'driver_version': '0.55.0', 'contract_version': '0.9.0'},
             'name': request.get('name'), 'arguments': request.get('arguments')}
+        if name is not None and request.get('arguments', {}).get('fixture_error'):
+            result = {'isError': True, 'content': [{'type': 'text', 'text': 'Call get_window_state first'}],
+                      'structuredContent': {'code': 'no_screenshot'}}
+        if name == 'list_windows' and request.get('arguments', {}).get('fixture_windows'):
+            result = {'content': [{'type': 'text', 'text': 'every window'}], 'structuredContent': {'windows': [
+                {'pid': pid, 'app_name': 'App', 'title': f'Secret {pid}', 'window_id': pid}
+                for pid in request['arguments']['fixture_windows']]}}
+        if name is not None and request.get('arguments', {}).get('fixture_locked'):
+            if name == 'get_window_state':
+                result = {'structuredContent': {'degraded_reason': 'screen_locked: window is hidden'}}
+            else:
+                result = {'isError': True, 'structuredContent': {'code': 'screen_locked', 'effect': 'refused'}}
+        if name is not None and request.get('arguments', {}).get('fixture_large'):
+            result = {'content': [{'type': 'image', 'data': 'A' * (3 << 20), 'mimeType': 'image/png'}]}
         if name is not None and request.get('arguments', {}).get('fixture_delay'):
             time.sleep(0.3)
+        timeline = name and request.get('arguments', {}).get('fixture_timeline')
+        if timeline:
+            open(timeline, 'a').write('begin\\n')
+            time.sleep(0.5)
+            open(timeline, 'a').write('end\\n')
         reply_id = request['request_id'] + int(bool(name and request.get('arguments', {}).get('fixture_bad_reply')))
-        stream.write((json.dumps({'protocol_version': 1, 'request_id': reply_id,
-            'generation': generation, 'ok': request['generation'] == generation,
-            'completion': 'completed', 'result': result}) + '\\n').encode())
-        stream.flush()
+        try:
+            channel.sendall((json.dumps({'protocol_version': 1, 'request_id': reply_id,
+                'generation': generation, 'ok': request['generation'] == generation,
+                'completion': 'completed', 'result': result}) + '\\n').encode())
+        except (BrokenPipeError, ConnectionResetError):
+            break
 log.write('eof\\n')
 hold = os.path.join(os.path.dirname(home), 'hold-stop')
 if os.path.exists(hold):
@@ -83,6 +108,11 @@ def alive(pid):
         return True
     except ProcessLookupError:
         return False
+
+
+def process_state(pid):
+    return subprocess.run(['/bin/ps', '-p', str(pid), '-o', 'state='],
+                          capture_output=True, text=True).stdout.strip()
 
 
 def same_user_add(account, value):
@@ -175,7 +205,7 @@ class WorkerDrivers(unittest.TestCase):
 
     def call(self, action, worker='worker-a', **params):
         with socket.socket(socket.AF_UNIX) as client:
-            client.settimeout(20)
+            client.settimeout(30)
             client.connect(str(self.root / 'desktop/control.sock'))
             client.sendall((json.dumps(dict(action=action, worker=worker, **params)) + '\n').encode())
             with client.makefile('rb') as stream:
@@ -199,7 +229,9 @@ while True:
         break
     except OSError:
         time.sleep(0.1)
-client.sendall((json.dumps({'action': 'status', 'worker': 'peer'}) + '\\n').encode())
+# A refused peer gets a reply before the host reads any request.
+if '--expect-refusal' not in sys.argv[3:]:
+    client.sendall((json.dumps({'action': 'status', 'worker': 'peer'}) + '\\n').encode())
 reply = client.makefile('rb').readline()
 open(sys.argv[2], 'w').write(reply.decode())
 '''
@@ -208,7 +240,7 @@ open(sys.argv[2], 'w').write(reply.decode())
         out = out or self.root / f'peer-{len(self.pids)}.json'
         child = subprocess.Popen(
             [sys.executable, '-I', '-c', self.CONNECTOR,
-             str(self.root / 'desktop/control.sock'), str(out)])
+             str(self.root / 'desktop/control.sock'), str(out), '--expect-refusal'])
         self.addCleanup(child.kill)
         return out
 
@@ -232,7 +264,6 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertTrue(self.call('status')['ok'])
 
     def test_sidecar_child_is_accepted_while_registered(self):
-        refused = self.connector()
         out = self.root / 'peer-accepted.json'
         self.process.send_signal(signal.SIGINT)
         self.assertEqual(self.process.wait(timeout=10), 0)
@@ -250,7 +281,7 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertEqual(self.process.stdout.readline().strip(), 'ready')
         self.assertEqual(self.peer_reply(out),
                          {'ok': True, 'result': {'state': 'stopped', 'pid': None}})
-        self.assertEqual(self.peer_reply(refused), {'ok': False, 'error': 'not_daemon'})
+        self.assertEqual(self.peer_reply(self.connector()), {'ok': False, 'error': 'not_daemon'})
         self.assertTrue(self.call('status')['ok'])
 
     def test_publishes_protected_record_before_start_returns(self):
@@ -412,6 +443,9 @@ open(sys.argv[2], 'w').write(reply.decode())
         directory.mkdir(parents=True, mode=0o700)
         directory.parent.chmod(0o700)
         (directory / 'driver.json').mkdir()
+        hold = self.work / 'hold-stop'
+        hold.touch()
+        self.addCleanup(lambda: hold.unlink(missing_ok=True))
         self.assertTrue(self.call('fixture-fail-start-cleanup')['ok'])
         result = self.call('start', workDir=str(self.work))
         self.assertFalse(result['ok'], result)
@@ -426,7 +460,36 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertFalse(retry['ok'], retry)
         self.assertEqual(list(self.work.glob('d-*')), [path.parent])
         self.assertTrue((directory / 'starting').exists())
+        self.assert_stop_waits_for(pid, hold)
         print(f'publication_failed=1 cleanup_failed=1 pid={pid} incomplete_marker=1 retry_refused=1')
+
+    def assert_stop_waits_for(self, pid, hold):
+        self.assertTrue(alive(pid))
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            stopping = pool.submit(self.call, 'stop')
+            time.sleep(0.5)
+            self.assertFalse(stopping.done())
+            self.assertTrue(alive(pid))
+            hold.unlink()
+            self.assertTrue(stopping.result(timeout=15)['ok'])
+        self.assertFalse(alive(pid))
+
+    def test_failed_start_validation_keeps_the_live_driver_until_stop_confirms(self):
+        hold = self.work / 'hold-stop'
+        hold.touch()
+        self.addCleanup(lambda: hold.unlink(missing_ok=True))
+        self.assertTrue(self.call('fixture-latch-on-response')['ok'])
+        self.assertTrue(self.call('fixture-fail-retire')['ok'])
+        result = self.call('start', workDir=str(self.work))
+        self.assertFalse(result['ok'], result)
+        self.assertIn('stop_unconfirmed', result['error'])
+        pid = json.loads((self.lifecycle() / 'driver.json').read_text())['pid']
+        self.pids.append(pid)
+        wait_until(lambda: bool(list(self.work.glob('d-*/d.stopping'))))
+        self.assertEqual(self.call('fixture-slots')['result']['count'], 1)
+        self.assert_stop_waits_for(pid, hold)
+        self.assertEqual(self.call('fixture-slots')['result']['count'], 0)
+        print('start_validation_failed=1 live_child_kept=1 stop_confirmed=1')
 
     def test_two_workers_get_two_drivers_and_two_channels(self):
         first, second = self.start(), self.start('worker-b')
@@ -462,13 +525,45 @@ open(sys.argv[2], 'w').write(reply.decode())
         wait_until(lambda: not alive(driver['pid']))
         self.assertFalse((self.root / 'desktop/control.sock').exists())
 
+    def test_failed_shutdown_retirement_is_logged(self):
+        driver = self.start()
+        hold = self.work / 'hold-stop'
+        hold.touch()
+        self.addCleanup(lambda: hold.unlink(missing_ok=True))
+        self.assertTrue(self.call('fixture-fail-retire')['ok'])
+        self.process.send_signal(signal.SIGINT)
+        self.assertEqual(self.process.wait(timeout=10), 0)
+        self.assertIn('Driver shutdown failed: stop_unconfirmed: fixture close failure',
+                      self.process.stderr.read())
+        hold.unlink()
+        wait_until(lambda: not alive(driver['pid']))
+        print('shutdown_retire_failed=1 failure_logged=1')
+
+    def test_app_shutdown_waits_for_a_driver_with_input_in_flight(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        self.assertTrue(self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']['dispatched'])
+        driver = json.loads((self.lifecycle() / 'driver.json').read_text())['pid']
+        self.pids.append(driver)
+        timeline = self.root / 'timeline'
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(self.dispatch, 'click', {'pid': pid, 'fixture_timeline': str(timeline),
+                                                           'delivery_mode': 'foreground'},
+                                  workDir=str(self.work))
+            wait_until(timeline.exists)
+            self.process.send_signal(signal.SIGINT)
+            self.assertEqual(self.process.wait(timeout=15), 0)
+            self.assertFalse(alive(driver))
+            pending.exception(timeout=15)
+        print('shutdown_in_flight=waited_for_driver_exit')
+
     def test_refuses_signature_failure_before_start(self):
         self.codesign.write_text('#!/bin/bash\nexit 1\n')
         self.assertFalse(self.call('start', workDir=str(self.work))['ok'])
         self.assertEqual(self.call('status')['result']['state'], 'stopped')
 
     def test_refuses_version_mismatch_before_start(self):
-        self.binary.write_text(FAKE.replace("'driver_version': '0.44.0'", "'driver_version': '0.0.0'"))
+        self.binary.write_text(FAKE.replace("'driver_version': '0.55.0'", "'driver_version': '0.0.0'"))
         result = self.call('start', workDir=str(self.work))
         self.assertFalse(result['ok'], result)
         self.assertIn('version', result['error'])
@@ -524,8 +619,13 @@ open(sys.argv[2], 'w').write(reply.decode())
             self.pids.append(result['result']['pid'])
 
     def test_recovers_control_endpoint_after_app_crash(self):
+        self.crash_and_restart()
+        self.start()
+
+    def crash_and_restart(self, after_crash=lambda: None):
         self.process.kill()
         self.process.wait(timeout=10)
+        after_crash()
         self.process.stdout.close()
         self.process.stderr.close()
         self.process = subprocess.Popen(
@@ -535,7 +635,70 @@ open(sys.argv[2], 'w').write(reply.decode())
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.assertTrue(select.select([self.process.stdout], [], [], 15)[0])
         self.assertEqual(self.process.stdout.readline().strip(), 'ready')
-        self.start()
+
+    def test_restart_retires_leftover_driver_before_serving_requests(self):
+        old = self.start()['pid']
+        hold = self.work / 'hold-stop'
+        hold.touch()
+        self.addCleanup(lambda: hold.unlink(missing_ok=True))
+
+        def survived_crash():
+            wait_until(lambda: bool(list(self.work.glob('d-*/d.stopping'))))
+            self.assertTrue(alive(old))
+
+        self.crash_and_restart(survived_crash)
+        self.assertEqual(self.call('status'), {'ok': True, 'result': {'state': 'stopped', 'pid': None}})
+        state = process_state(old)
+        self.assertTrue(not state or state.startswith('Z'),
+                        f'restarted host reported stopped while old driver was in state {state}')
+        hold.unlink()
+        self.assertNotEqual(self.start()['pid'], old)
+        print('leftover_survived_crash=1 retired_before_serving=1 replacement_started=1')
+
+    def test_restart_leaves_reused_driver_pid_alone(self):
+        driver = self.start()
+        record = self.lifecycle() / 'driver.json'
+        saved = json.loads(record.read_text())
+        unrelated = subprocess.Popen(['/bin/sleep', '60'], env={})
+        self.addCleanup(unrelated.wait)
+        self.addCleanup(unrelated.kill)
+
+        def reuse_pid():
+            wait_until(lambda: not alive(driver['pid']))
+            saved['pid'] = unrelated.pid
+            record.write_text(json.dumps(saved))
+
+        self.crash_and_restart(reuse_pid)
+        self.assertIsNone(unrelated.poll())
+        self.assertTrue(self.call('status')['ok'])
+        print('reused_pid_preserved=1 desktop_available=1')
+
+    def test_restart_serves_requests_with_an_exited_driver_awaiting_reap(self):
+        driver = subprocess.Popen(['/bin/sleep', '60'], env={})
+        self.addCleanup(driver.wait)
+        self.addCleanup(driver.kill)
+        proc_pidinfo = ctypes.CDLL('/usr/lib/libproc.dylib').proc_pidinfo
+        proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+        # PROC_PIDTBSDINFO returns struct proc_bsdinfo, whose last fields are the birth timestamp.
+        info = ctypes.create_string_buffer(136)
+        self.assertEqual(proc_pidinfo(driver.pid, 3, 0, info, len(info)), len(info))
+        seconds, microseconds = struct.unpack_from('=QQ', info, 120)
+        directory = self.lifecycle()
+        directory.parent.mkdir(mode=0o700)
+        directory.mkdir(mode=0o700)
+        record = directory / 'driver.json'
+        record.write_text(json.dumps({'pid': driver.pid, 'startedAt': {
+            'seconds': seconds, 'microseconds': microseconds}}))
+        record.chmod(0o600)
+
+        def exit_without_reaping():
+            os.kill(driver.pid, signal.SIGKILL)
+            wait_until(lambda: process_state(driver.pid).startswith('Z'))
+
+        self.crash_and_restart(exit_without_reaping)
+        self.assertEqual(self.call('status'), {'ok': True, 'result': {'state': 'stopped', 'pid': None}})
+        self.assertTrue(alive(driver.pid))
+        print('exited_driver_awaiting_reap=1 desktop_available=1')
 
     def test_rejects_oversize_frame_and_keeps_serving(self):
         with socket.socket(socket.AF_UNIX) as client:
@@ -628,7 +791,7 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertEqual(self.call('fixture-slots')['result']['count'], 0)
 
     def test_failed_start_releases_worker_slot(self):
-        incompatible = FAKE.replace("'driver_version': '0.44.0'", "'driver_version': '0.43.0'")
+        incompatible = FAKE.replace("'driver_version': '0.55.0'", "'driver_version': '0.43.0'")
         for signature, binary in (('#!/bin/bash\nexit 1\n', FAKE), (CODESIGN, incompatible)):
             with self.subTest(signature=signature == CODESIGN):
                 self.codesign.write_text(signature)
@@ -759,12 +922,12 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.dialogs('deny')
         requirement = self.resolve('click', {'pid': pid})['value']['requirement']
         self.assertEqual(same_user_add('pointer\n' + requirement, 'com.apple.finder'), -34018)
-        denied = 'app_action_not_authorized' if SIGNED else 'guards_unavailable'
+        denied = 'owner_declined' if SIGNED else 'guards_unavailable'
         self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve'),
                          {'reason': denied, 'class': 'pointer', 'bundle_id': 'com.apple.finder'})
         print(f'signed_host={SIGNED} same_user_add=-34018 resolve={denied}')
 
-    def test_fixture_grant_survives_restart_and_covers_only_its_app_signer_and_class(self):
+    def test_fixture_grant_survives_restart_and_covers_only_its_app_signer(self):
         pid = finder()
         self.call('fixture-revoke', tool='click', arguments={'pid': pid})
         granted = self.call('fixture-grant', tool='click', arguments={'pid': pid})
@@ -778,12 +941,11 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.setUp()
         self.addCleanup(self.call, 'fixture-revoke', tool='click', arguments={'pid': pid})
         self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve')['value']['bundle_id'], 'com.apple.finder')
-        self.assertEqual(self.resolve('type_text', {'pid': pid}, action='resolve'),
-                         {'reason': 'app_action_not_authorized', 'class': 'keyboard', 'bundle_id': 'com.apple.finder'})
+        self.assertEqual(self.resolve('type_text', {'pid': pid}, action='resolve')['value']['class'], 'keyboard')
         dock = int(subprocess.check_output(['/usr/bin/pgrep', '-x', 'Dock']).split()[0])
         self.assertEqual(self.resolve('click', {'pid': dock}, action='resolve'),
-                         {'reason': 'app_action_not_authorized', 'class': 'pointer', 'bundle_id': 'com.apple.dock'})
-        print('grant_after_restart=finder/pointer keyboard=denied other_app=denied')
+                         {'reason': 'owner_declined', 'class': 'pointer', 'bundle_id': 'com.apple.dock'})
+        print('grant_after_restart=finder keyboard=allowed other_app=denied')
 
     def dialogs(self, answer=None):
         result = self.call('fixture-dialog', **({'tool': answer} if answer else {}))
@@ -800,18 +962,18 @@ open(sys.argv[2], 'w').write(reply.decode())
         for action in ('approve', 'grant', 'answer'):
             self.assertEqual(self.call(action, tool='click', arguments={'pid': pid}),
                              {'ok': False, 'error': 'Unknown Desktop control action'})
-        denied = 'app_action_not_authorized' if SIGNED else 'guards_unavailable'
+        denied = 'owner_declined' if SIGNED else 'guards_unavailable'
         self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve'),
                          {'reason': denied, 'class': 'pointer', 'bundle_id': 'com.apple.finder'})
         wait_until(lambda: self.dialogs() == base + (1 if SIGNED else 0))
         if SIGNED:
-            wait_until(lambda: self.resolve('click', {'pid': pid}, action='resolve')['reason'] == 'app_action_declined')
+            self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve')['reason'], 'owner_declined')
             self.assertEqual(self.dialogs(), base + 1)
             self.assertEqual(self.resolve('type_text', {'pid': pid}, action='resolve')['reason'], denied)
-            wait_until(lambda: self.dialogs() == base + 2)
+            self.assertEqual(self.dialogs(), base + 1)
             self.dialogs('deny')
             self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve')['reason'], denied)
-            wait_until(lambda: self.dialogs() == base + 3)
+            wait_until(lambda: self.dialogs() == base + 2)
         print(f'signed_host={SIGNED} forged_answers=refused declined_dialog=no_grant retry={"cooldown" if SIGNED else "no_dialog"} other_class={"new_dialog" if SIGNED else "no_dialog"}')
 
     def test_retry_overlapping_a_decline_keeps_the_cooldown(self):
@@ -823,10 +985,10 @@ open(sys.argv[2], 'w').write(reply.decode())
             self.assertEqual(first, 'guards_unavailable')
             self.assertEqual(self.dialogs('deny'), base)
             return
-        self.assertEqual(first, 'app_action_not_authorized')
+        self.assertEqual(first, 'waiting_for_owner')
         wait_until(lambda: self.dialogs() == base + 1)
-        self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve')['reason'], 'app_action_not_authorized')
-        wait_until(lambda: self.resolve('click', {'pid': pid}, action='resolve')['reason'] == 'app_action_declined')
+        self.dialogs('deny')
+        wait_until(lambda: self.resolve('click', {'pid': pid}, action='resolve')['reason'] == 'owner_declined')
         self.assertEqual(self.dialogs(), base + 1)
         print('overlapping_retry=no_second_dialog')
 
@@ -842,7 +1004,7 @@ open(sys.argv[2], 'w').write(reply.decode())
         wait_until(lambda: self.dialogs() == base + 1)
         time.sleep(0.2)
         self.dialogs('deny')
-        self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve')['reason'], 'app_action_not_authorized')
+        self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve')['reason'], 'owner_declined')
         wait_until(lambda: self.dialogs() == base + 2)
         print('failed_dialog=no_grant asks_again')
 
@@ -857,16 +1019,46 @@ open(sys.argv[2], 'w').write(reply.decode())
         print(f'self_app={reason}')
 
     def test_dialog_names_only_existing_checks(self):
-        texts = self.call('fixture-dialog')['result']['texts']
+        texts = self.call('fixture-dialog-texts')['result']['texts']
         self.assertEqual(sorted(texts), ['keyboard', 'launch', 'observe', 'other', 'pointer'])
         self.assertIsNone(texts['other'])
         for text in (texts[name] for name in ('observe', 'launch', 'pointer', 'keyboard')):
-            self.assertIn('App: com.apple.finder', text)
+            self.assertIn('open Finder', text)
+            self.assertNotIn('com.apple.finder', text)
             for promise in ('focus', 'idle', 'revoke'):
                 self.assertNotIn(promise, text.lower())
         print('dialog_text=no_focus_idle_revoke unknown_class=refused')
 
-    def test_owner_yes_grants_exactly_the_shown_pair(self):
+    def test_dialog_puts_allow_on_the_right_as_the_default(self):
+        buttons = self.call('fixture-dialog-buttons')['result']['buttons']
+        self.assertEqual(buttons, [['Allow Calculator', '\r'], ['Allow all apps', ''], ["Don't Allow", '\x1b']])
+        guarded = self.call('fixture-dialog-buttons', tool='com.apple.Terminal')['result']['buttons']
+        self.assertEqual(guarded, [['Allow Terminal', '\r'], ["Don't Allow", '\x1b']])
+        print('dialog_buttons=allow_rightmost_return deny_left_escape')
+
+    def test_shell_capable_apps_and_password_managers_require_individual_approval(self):
+        for bundle in (
+            'com.microsoft.VSCode',
+            'com.microsoft.VSCodeInsiders',
+            'com.visualstudio.code.oss',
+            'com.todesktop.230313mzl4w4u92',
+            'com.jetbrains.intellij',
+            'com.apple.dt.Xcode',
+            'com.apple.shortcuts',
+            'com.apple.ScriptEditor2',
+            'com.apple.Automator',
+            'com.sublimetext.4',
+            'org.vim.MacVim',
+            'me.proton.pass.catalyst',
+            'com.dashlane.dashlanephonefinal',
+            'in.sinew.Enpass-Desktop.App',
+        ):
+            with self.subTest(bundle=bundle):
+                buttons = self.call('fixture-dialog-buttons', tool=bundle)['result']['buttons']
+                self.assertEqual(len(buttons), 2)
+                self.assertEqual(buttons[-1], ["Don't Allow", '\x1b'])
+
+    def test_owner_yes_grants_the_app(self):
         pid = finder()
         self.call('fixture-revoke', tool='click', arguments={'pid': pid})
         self.call('fixture-revoke', tool='type_text', arguments={'pid': pid})
@@ -877,24 +1069,167 @@ open(sys.argv[2], 'w').write(reply.decode())
             self.assertEqual(first['reason'], 'guards_unavailable')
             self.assertEqual(self.dialogs(), before)
             return
-        self.assertEqual(first['reason'], 'app_action_not_authorized')
-        wait_until(lambda: 'value' in self.resolve('click', {'pid': pid}, action='resolve'))
+        self.assertEqual(first['value']['class'], 'pointer')
         self.dialogs('deny')
-        self.assertEqual(self.resolve('type_text', {'pid': pid}, action='resolve')['reason'], 'app_action_not_authorized')
+        self.assertEqual(self.resolve('type_text', {'pid': pid}, action='resolve')['value']['class'], 'keyboard')
         self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve')['value']['class'], 'pointer')
-        print('owner_yes=finder/pointer keyboard=still_denied')
+        print('owner_yes=finder pointer_and_keyboard=allowed')
 
     def test_refuses_worker_path_traversal(self):
         self.assertFalse(self.call('start', '../escape', workDir=str(self.work))['ok'])
 
     def dispatch(self, tool, arguments, worker='worker-a', **params):
-        return self.call('dispatch', worker, tool=tool, arguments=arguments,
-                         callId='call-' + tool, **params)
+        params.setdefault('apps', ['com.apple.finder', 'com.apple.dock'])
+        params.setdefault('todo', 'todo-' + worker)
+        params.setdefault('todos', ['todo-worker-a', 'todo-worker-b'])
+        params.setdefault('callId', 'call-' + tool)
+        return self.call('dispatch', worker, tool=tool, arguments=arguments, **params)
+
+    def turn_guardian(self, wait_for_unlock=False):
+        guardian = self.binary.with_name('hyperneo-locked-use')
+        started, exited = (self.root / name for name in ('covered', 'exited'))
+        start = 'sleep 1' if wait_for_unlock else ''
+        guardian.write_text(f"#!/bin/sh\n"
+                            f"touch '{started}'\necho 'covered 1'\n{start}\n"
+                            f"echo unlocked\nwhile read line; do :; done\n"
+                            f"touch '{exited}'\necho 'ended owner_gone'\n")
+        guardian.chmod(0o700)
+        return started, exited
+
+    def dispatch_call(self, call_id, **arguments):
+        reply = self.dispatch('list_windows', arguments, workDir=str(self.work), callId=call_id)
+        self.assertTrue(reply['ok'], reply)
+        self.assertEqual(reply['result']['call_id'], call_id)
+        return reply['result']
+
+    def assert_turn_stopped(self, reply):
+        self.assertEqual((reply['decision'], reply['reason'], reply['dispatched']),
+                         ('refused', 'turn_stopped', False), reply)
+
+    def cancel_turn(self, *call_ids):
+        reply = self.call('cancelTurn', callIds=list(call_ids))
+        self.assertEqual(reply, {'ok': True, 'result': {'state': 'stopped'}})
+
+    def test_turn_stop_legacy_dispatch_shape(self):
+        _, exited = self.turn_guardian()
+        self.assertEqual(self.dispatch_call('legacy-acquire', fixture_screen_locked=True)['reason'],
+                         'screen_locked')
+        self.assertTrue(self.dispatch_call('legacy-dispatch')['dispatched'])
+        if LEGACY_HOST:
+            reply = self.call('cancelTurn', callIds=[])
+            self.assertFalse(reply['ok'], reply)
+            self.assertTrue(reply['error'].startswith('unknown field `callIds`,'), reply)
+            self.assertFalse(exited.exists(), 'legacy host released its guardian on native stop')
+            self.assertTrue(self.dispatch_call('legacy-next')['dispatched'])
+            print('older Desktop: both dispatches worked; unsupported cancel left guardian owned')
+        else:
+            print('new Desktop: legacy dispatch without cancellation fields works')
+
+    def test_turn_stop_releases_starting_guardian(self):
+        started, exited = self.turn_guardian(wait_for_unlock=True)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(self.dispatch_call, 'starting-guardian', fixture_screen_locked=True)
+            wait_until(started.exists)
+            self.cancel_turn('starting-guardian')
+            self.assertTrue(exited.exists())
+            self.assert_turn_stopped(pending.result(timeout=5))
+            self.assertFalse(list(self.work.glob('d-*')))
+        print('startup: stopped turn refused; guardian exited; no driver started')
+
+    def test_turn_stop_releases_owned_guardian_and_allows_next_turn(self):
+        _, exited = self.turn_guardian()
+        self.assertEqual(self.dispatch_call('acquire', fixture_screen_locked=True)['reason'], 'screen_locked')
+        self.assertTrue(self.dispatch_call('owned')['dispatched'])
+        self.cancel_turn()
+        self.assertTrue(exited.exists())
+        self.assertTrue(self.dispatch_call('later')['dispatched'])
+        print('owned: guardian exited with no calls in flight; next turn dispatched')
+
+    def test_turn_stop_overtakes_dispatch_frame(self):
+        with socket.socket(socket.AF_UNIX) as client:
+            client.settimeout(3)
+            client.connect(str(self.root / 'desktop/control.sock'))
+            frame = (json.dumps(dict(action='dispatch', worker='worker-a', tool='list_windows',
+                                     workDir=str(self.work), callId='late-frame')) + '\n').encode()
+            client.sendall(frame[:10])
+            self.cancel_turn('late-frame')
+            client.sendall(frame[10:])
+            with client.makefile('rb') as stream:
+                self.assert_turn_stopped(json.loads(stream.readline())['result'])
+        self.assertFalse(list(self.work.glob('d-*')))
+        self.assertTrue(self.dispatch_call('later')['dispatched'])
+        print('overtaken frame: stopped call refused; next call dispatched')
+
+    def test_turn_stop_cancels_queued_call_before_worker_slot_frees(self):
+        _, exited = self.turn_guardian()
+        unavailable = self.root / 'permissions-missing'
+        unavailable.touch()
+        self.assertEqual(self.dispatch_call('acquire', fixture_screen_locked=True)['reason'],
+                         'desktop_permissions_required')
+        unavailable.unlink()
+        self.work = self.work / 'slow'
+        self.work.mkdir()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(self.dispatch_call, 'starting-driver')
+            wait_until(lambda: bool(list(self.work.glob('d-*/d.starting'))))
+            release = next(self.work.glob('d-*/d.starting')).with_suffix('.release')
+            queued = pool.submit(self.dispatch_call, 'queued')
+            try:
+                wait_until(lambda: self.call('fixture-slots')['result']['references'] == 3)
+                self.cancel_turn('starting-driver', 'queued')
+                self.assert_turn_stopped(queued.result(timeout=3))
+                self.assertTrue(exited.exists())
+                self.assertFalse(first.done())
+            finally:
+                release.touch()
+            self.assert_turn_stopped(first.result(timeout=5))
+        self.assertTrue(self.dispatch_call('later')['dispatched'])
+        print('queued: refused before the slot freed; starting driver received no call; next turn dispatched')
+
+    def test_unfiltered_window_listing_keeps_only_approved_apps(self):
+        dock = int(subprocess.check_output(['/usr/bin/pgrep', '-x', 'Dock']).split()[0])
+        pid = finder()
+        reply = self.dispatch('list_windows', {'fixture_windows': [pid, dock]}, workDir=str(self.work),
+                              apps=['com.apple.finder'])['result']
+        self.assertTrue(reply['dispatched'], reply)
+        self.assertEqual([w['pid'] for w in reply['structuredContent']['windows']], [pid])
+        self.assertNotIn(f'Secret {dock}', json.dumps(reply['content']))
+        print('window_listing=scoped other_titles=hidden')
+
+    def test_dispatch_refuses_an_app_outside_the_todo_scope(self):
+        pid = finder()
+        before = self.dialogs('mock-allow')
+        reply = self.dispatch('click', {'pid': pid}, workDir=str(self.work),
+                              apps=['com.apple.dock'])['result']
+        self.assertEqual((reply['decision'], reply['reason'], reply['bundle_id'], reply['dispatched']),
+                         ('refused', 'app_not_in_todo_scope', 'com.apple.finder', False))
+        self.assertEqual(self.dialogs(), before)
+        self.assertFalse(list(self.work.glob('d-*')))
+        print('todo_scope=refused no_dialog=1 no_driver=1')
+
+    def test_permissions_are_requested_only_on_desktop_call(self):
+        missing = self.root / 'permissions-missing'
+        events = self.root / 'permission-checks'
+        missing.touch()
+        self.assertTrue(self.call('status')['ok'])
+        self.assertFalse(events.exists())
+        reply = self.dispatch('click', {'pid': os.getpid()}, workDir=str(self.work))['result']
+        self.assertEqual((reply['decision'], reply['reason'], reply['dispatched']),
+                         ('refused', 'desktop_permissions_required', False))
+        listing = self.dispatch('list_windows', {}, workDir=str(self.work))['result']
+        self.assertEqual((listing['decision'], listing['reason'], listing['dispatched']),
+                         ('refused', 'desktop_permissions_required', False))
+        self.assertEqual(events.read_text().splitlines(), ['check', 'check'])
+        self.assertFalse(list(self.work.glob('d-*')))
+        missing.unlink()
+        reply = self.dispatch('kill_app', {}, workDir=str(self.work))['result']
+        self.assertNotEqual(reply['reason'], 'desktop_permissions_required')
+        self.assertEqual(events.read_text().splitlines(), ['check', 'check', 'check'])
 
     def test_dispatch_refuses_without_starting_a_driver(self):
         pid = finder()
         self.call('fixture-revoke', tool='click', arguments={'pid': pid})
-        denied = 'app_action_not_authorized' if SIGNED else 'guards_unavailable'
+        denied = 'owner_declined' if SIGNED else 'guards_unavailable'
         result = self.dispatch('click', {'pid': pid}, workDir=str(self.work))
         self.assertTrue(result['ok'], result)
         reply = result['result']
@@ -937,6 +1272,363 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertTrue(again['result']['dispatched'])
         self.assertTrue(alive(record['pid']))
         print('dispatch=allowed started=1 call=click reused_slot=1')
+
+    def test_second_worker_waits_for_a_held_window_until_the_holder_stops(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        first = self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']
+        self.assertTrue(first['dispatched'], first)
+        self.pids.append(json.loads((self.lifecycle() / 'driver.json').read_text())['pid'])
+        other = self.work / 'other'
+        other.mkdir()
+        reply = self.dispatch('click', {'pid': pid, 'fixture_deadline': True}, worker='worker-b',
+                              workDir=str(other))['result']
+        self.assertEqual((reply['decision'], reply['reason'], reply['dispatched']),
+                         ('refused', 'window_busy', False))
+        self.assertFalse(list(other.glob('d-*')))
+        self.assertTrue(self.call('stop')['ok'])
+        reply = self.dispatch('click', {'pid': pid}, worker='worker-b', workDir=str(other))['result']
+        self.assertTrue(reply['dispatched'], reply)
+        self.pids.append(json.loads((self.lifecycle('worker-b') / 'driver.json').read_text())['pid'])
+        print('held_window=window_busy after_stop=dispatched')
+
+    def overlapping(self, first, second):
+        timeline = self.root / 'timeline'
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            held = pool.submit(first, str(timeline))
+            wait_until(timeline.exists)
+            replies = [held] + [pool.submit(call, str(timeline)) for call in second]
+            replies = [reply.result(timeout=25) for reply in replies]
+        return timeline.read_text().split(), replies
+
+    def test_reading_a_window_keeps_it_for_the_same_todos_input(self):
+        pid = finder()
+        for tool in ('get_window_state', 'click'):
+            self.call('fixture-admit', tool=tool, arguments={'pid': pid})
+        read = self.dispatch('get_window_state', {'pid': pid}, workDir=str(self.work))['result']
+        self.assertTrue(read['dispatched'], read)
+        self.pids.append(json.loads((self.lifecycle() / 'driver.json').read_text())['pid'])
+        other = self.work / 'other'
+        other.mkdir()
+        busy = self.dispatch('get_window_state', {'pid': pid, 'fixture_deadline': True},
+                             worker='worker-b', workDir=str(other))['result']
+        self.assertEqual(busy['reason'], 'window_busy')
+        act = self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']
+        self.assertTrue(act['dispatched'], act)
+        print('read_then_act=same_todo other_todo=window_busy')
+
+    def test_stop_keeps_the_window_until_the_running_input_ends(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        self.assertTrue(self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']['dispatched'])
+        self.pids.append(json.loads((self.lifecycle() / 'driver.json').read_text())['pid'])
+        other = self.work / 'other'
+        other.mkdir()
+        lines, replies = self.overlapping(
+            lambda timeline: self.dispatch('click', {'pid': pid, 'fixture_timeline': timeline},
+                                           workDir=str(self.work)),
+            [lambda timeline: self.call('stop'),
+             lambda timeline: self.dispatch('click', {'pid': pid, 'fixture_timeline': timeline},
+                                            worker='worker-b', workDir=str(other))])
+        self.assertTrue(replies[2]['result']['dispatched'], replies)
+        self.pids.append(json.loads((self.lifecycle('worker-b') / 'driver.json').read_text())['pid'])
+        self.assertEqual(lines, ['begin', 'end', 'begin', 'end'])
+        print('stop_in_flight=no_overlap')
+
+    def test_unconfirmed_shutdown_keeps_the_window_until_stop_confirms(self):
+        pid = finder()
+        dock = int(subprocess.check_output(['/usr/bin/pgrep', '-x', 'Dock']).split()[0])
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        self.call('fixture-admit', tool='click', arguments={'pid': dock})
+        other = self.work / 'other'
+        other.mkdir()
+        self.assertTrue(self.dispatch('click', {'pid': dock}, worker='worker-b',
+                                      workDir=str(other))['result']['dispatched'])
+        self.pids.append(json.loads((self.lifecycle('worker-b') / 'driver.json').read_text())['pid'])
+        hold = self.work / 'hold-stop'
+        hold.touch()
+        self.addCleanup(lambda: hold.unlink(missing_ok=True))
+        front = {'delivery_mode': 'foreground'}
+        failed = self.dispatch('click', {'pid': pid, 'fixture_delay': True, 'fixture_close_fails': True,
+                                         **front}, workDir=str(self.work))['result']
+        self.assertTrue(failed['reason'].startswith('stop_unconfirmed'), failed)
+        old = json.loads((self.lifecycle() / 'driver.json').read_text())['pid']
+        self.pids.append(old)
+        wait_until(lambda: bool(list(self.work.glob('d-*/d.stopping'))))
+        self.assertTrue(alive(old))
+        again = self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']
+        self.assertEqual((again['reason'], again['dispatched']), ('stop_unconfirmed', False))
+        blocked = lambda: (
+            self.dispatch('click', {'pid': pid, 'fixture_deadline': True}, worker='worker-b',
+                          workDir=str(other), todos=['todo-worker-b'])['result']['reason'],
+            self.dispatch('click', {'pid': dock, 'fixture_deadline': True, **front}, worker='worker-b',
+                          workDir=str(other))['result']['reason'])
+        self.assertEqual(blocked(), ('window_busy', 'foreground_busy'))
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            stopping = pool.submit(self.call, 'stop')
+            time.sleep(0.5)
+            self.assertFalse(stopping.done())
+            self.assertTrue(alive(old))
+            during = self.dispatch('click', {'pid': pid, 'fixture_deadline': True}, worker='worker-b',
+                                   workDir=str(other))['result']
+            self.assertEqual(during['reason'], 'window_busy')
+            self.assertFalse(stopping.done())
+            hold.unlink()
+            self.assertTrue(stopping.result(timeout=15)['ok'])
+        self.assertFalse(alive(old))
+        for args in ({'pid': pid}, {'pid': dock, **front}):
+            reply = self.dispatch('click', args, worker='worker-b', workDir=str(other))['result']
+            self.assertTrue(reply['dispatched'], reply)
+        print('unconfirmed_stop=live_child_kept window_and_foreground=blocked_until_exit')
+
+    def test_failed_start_cleanup_in_dispatch_keeps_the_window(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        directory = self.lifecycle()
+        directory.mkdir(parents=True, mode=0o700)
+        directory.parent.chmod(0o700)
+        (directory / 'driver.json').mkdir()
+        hold = self.work / 'hold-stop'
+        hold.touch()
+        self.addCleanup(lambda: hold.unlink(missing_ok=True))
+        self.assertTrue(self.call('fixture-fail-start-cleanup')['ok'])
+        failed = self.dispatch('click', {'pid': pid}, workDir=str(self.work))
+        self.assertFalse(failed['ok'], failed)
+        self.assertIn('stop_unconfirmed', failed['error'])
+        old = int(next(self.work.glob('d-*/d.pid')).read_text())
+        self.pids.append(old)
+        other = self.work / 'other'
+        other.mkdir()
+        busy = self.dispatch('click', {'pid': pid, 'fixture_deadline': True}, worker='worker-b',
+                             workDir=str(other), todos=['todo-worker-b'])['result']
+        self.assertEqual(busy['reason'], 'window_busy')
+        self.assert_stop_waits_for(old, hold)
+        reply = self.dispatch('click', {'pid': pid}, worker='worker-b', workDir=str(other))['result']
+        self.assertTrue(reply['dispatched'], reply)
+        self.pids.append(json.loads((self.lifecycle('worker-b') / 'driver.json').read_text())['pid'])
+        print('dispatch_start_cleanup_failed=1 window_kept=1 released_after_stop=1')
+
+    def test_failed_stop_keeps_the_live_driver_until_a_later_stop_confirms(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        self.assertTrue(self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']['dispatched'])
+        old = json.loads((self.lifecycle() / 'driver.json').read_text())['pid']
+        self.pids.append(old)
+        hold = self.work / 'hold-stop'
+        hold.touch()
+        self.addCleanup(lambda: hold.unlink(missing_ok=True))
+        self.call('fixture-fail-retire')
+        failed = self.call('stop')
+        self.assertFalse(failed['ok'], failed)
+        self.assertIn('stop_unconfirmed', failed['error'])
+        wait_until(lambda: bool(list(self.work.glob('d-*/d.stopping'))))
+        self.assertTrue(alive(old))
+        other = self.work / 'other'
+        other.mkdir()
+        busy = self.dispatch('click', {'pid': pid, 'fixture_deadline': True}, worker='worker-b',
+                             workDir=str(other), todos=['todo-worker-b'])['result']
+        self.assertEqual(busy['reason'], 'window_busy')
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            stopping = pool.submit(self.call, 'stop')
+            time.sleep(0.5)
+            self.assertFalse(stopping.done())
+            self.assertTrue(alive(old))
+            during = self.dispatch('click', {'pid': pid, 'fixture_deadline': True}, worker='worker-b',
+                                   workDir=str(other))['result']
+            self.assertEqual(during['reason'], 'window_busy')
+            self.assertFalse(stopping.done())
+            hold.unlink()
+            self.assertTrue(stopping.result(timeout=15)['ok'])
+        self.assertFalse(alive(old))
+        reply = self.dispatch('click', {'pid': pid}, worker='worker-b', workDir=str(other))['result']
+        self.assertTrue(reply['dispatched'], reply)
+        self.pids.append(json.loads((self.lifecycle('worker-b') / 'driver.json').read_text())['pid'])
+        print('failed_stop=live_child_kept window=blocked_until_exit')
+
+    def test_foreground_calls_on_different_apps_take_turns(self):
+        pid = finder()
+        dock = int(subprocess.check_output(['/usr/bin/pgrep', '-x', 'Dock']).split()[0])
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        self.call('fixture-admit', tool='click', arguments={'pid': dock})
+        other = self.work / 'other'
+        other.mkdir()
+        self.assertTrue(self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']['dispatched'])
+        self.assertTrue(self.dispatch('click', {'pid': dock}, worker='worker-b',
+                                      workDir=str(other))['result']['dispatched'])
+        for worker in ('worker-a', 'worker-b'):
+            self.pids.append(json.loads((self.lifecycle(worker) / 'driver.json').read_text())['pid'])
+        front = {'delivery_mode': 'foreground'}
+        lines, replies = self.overlapping(
+            lambda timeline: self.dispatch('click', {'pid': pid, 'fixture_timeline': timeline, **front},
+                                           workDir=str(self.work)),
+            [lambda timeline: self.dispatch('click', {'pid': dock, 'fixture_timeline': timeline, **front},
+                                            worker='worker-b', workDir=str(other))])
+        self.assertTrue(all(reply['result']['dispatched'] for reply in replies), replies)
+        self.assertEqual(lines, ['begin', 'end', 'begin', 'end'])
+        print('foreground=serialized')
+
+    def test_busy_worker_returns_busy_instead_of_waiting_for_owner(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        slow = self.work / 'slow'
+        slow.mkdir()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(self.dispatch, 'click', {'pid': pid}, workDir=str(slow))
+            wait_until(lambda: bool(list(slow.glob('d-*/d.starting'))))
+            second = pool.submit(self.dispatch, 'click', {'pid': pid, 'fixture_deadline': True}, workDir=str(slow))
+            try:
+                reply = second.result(timeout=25)['result']
+                self.assertEqual(reply['reason'], 'desktop_busy')
+                self.assertFalse(reply['dispatched'])
+            finally:
+                for marker in slow.glob('d-*/d.starting'):
+                    marker.with_suffix('.release').touch()
+                first.result(timeout=15)
+        print('busy_worker=desktop_busy no_second_input=1')
+
+    def test_slow_start_reports_expired_request_without_input(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        slow = self.work / 'slow'
+        slow.mkdir()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(self.dispatch, 'click', {'pid': pid, 'fixture_deadline': True}, workDir=str(slow))
+            wait_until(lambda: bool(list(slow.glob('d-*/d.starting'))))
+            time.sleep(0.4)
+            next(slow.glob('d-*/d.starting')).with_suffix('.release').touch()
+            reply = pending.result(timeout=10)['result']
+        self.assertEqual(reply['reason'], 'desktop_timeout')
+        self.assertFalse(reply['dispatched'])
+        self.assertNotIn('call click', ''.join(p.read_text() for p in slow.glob('log-*')))
+        print('slow_start=desktop_timeout no_input=1')
+
+    def test_saturated_host_refuses_instead_of_stalling(self):
+        slow = self.work / 'slow'
+        slow.mkdir()
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            pending = [pool.submit(self.call, 'start', worker=f'w-{i}', workDir=str(slow))
+                       for i in range(16)]
+            try:
+                wait_until(lambda: len(list(slow.glob('d-*/d.starting'))) == 16)
+                with socket.socket(socket.AF_UNIX) as client:
+                    client.settimeout(2)
+                    client.connect(str(self.root / 'desktop/control.sock'))
+                    client.sendall(b'{"action":"status","worker":"other"}\n')
+                    reply = json.loads(client.makefile('rb').readline())
+                    self.assertEqual(reply, {'ok': False, 'error': 'desktop_busy'})
+                self.cancel_turn()
+            finally:
+                for marker in slow.glob('d-*/d.starting'):
+                    marker.with_suffix('.release').touch()
+                for future in pending:
+                    result = future.result(timeout=15)
+                    self.assertTrue(result['ok'], result)
+                    self.pids.append(result['result']['pid'])
+        print('saturated_host=desktop_busy turn_stop=accepted')
+
+    def test_owner_approval_covers_all_actions_for_the_app(self):
+        pid = finder()
+        before = self.dialogs('mock-allow')
+        for tool in ('click', 'type_text'):
+            reply = self.dispatch(tool, {'pid': pid}, workDir=str(self.work))['result']
+            self.assertTrue(reply['dispatched'], reply)
+            self.assertIsNone(reply['reason'])
+        self.assertEqual(self.dialogs(), before + 1)
+        dock = int(subprocess.check_output(['/usr/bin/pgrep', '-x', 'Dock']).split()[0])
+        self.dialogs('mock-deny')
+        other = self.dispatch('click', {'pid': dock}, workDir=str(self.work))['result']
+        self.assertEqual(other['reason'], 'owner_declined')
+        self.assertEqual(self.dialogs(), before + 2)
+        print('app_grant=one_dialog pointer_and_keyboard=dispatched')
+
+    def test_allow_all_covers_other_apps_but_system_settings_still_asks(self):
+        before = self.dialogs('mock-allow-all')
+        first = self.dispatch('click', {'pid': finder()}, workDir=str(self.work))['result']
+        self.assertTrue(first['dispatched'], first)
+        self.assertEqual(self.dialogs('mock-deny'), before + 1)
+        dock = int(subprocess.check_output(['/usr/bin/pgrep', '-x', 'Dock']).split()[0])
+        second = self.dispatch('type_text', {'pid': dock}, workDir=str(self.work))['result']
+        self.assertTrue(second['dispatched'], second)
+        self.assertEqual(self.dialogs(), before + 1)
+
+        guarded = self.resolve('launch_app', {'bundle_id': 'com.apple.systempreferences'}, action='resolve')
+        self.assertEqual(guarded['reason'], 'owner_declined')
+        self.assertEqual(self.dialogs(), before + 2)
+        print('wildcard=shared_between_apps system_settings=asks_separately')
+
+    def test_owner_decline_is_returned_to_the_original_dispatch(self):
+        pid = finder()
+        self.dialogs('mock-deny')
+        reply = self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']
+        self.assertEqual(reply['reason'], 'owner_declined')
+        self.assertFalse(reply['dispatched'])
+        print('owner_decline=returned no_driver_input=1')
+
+    def test_owner_wait_is_bounded_and_window_listing_needs_no_target(self):
+        pid = finder()
+        self.dialogs('mock-hold')
+        reply = self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']
+        self.assertEqual(reply['reason'], 'waiting_for_owner')
+        self.assertFalse(reply['dispatched'])
+        self.dialogs('mock-allow')
+        wait_until(lambda: 'value' in self.resolve('click', {'pid': pid}, action='resolve'))
+        self.assertFalse(list(self.work.glob('d-*')))
+        next_call = self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']
+        self.assertTrue(next_call['dispatched'], next_call)
+        listed = self.dispatch('list_windows', {}, workDir=str(self.work))['result']
+        self.assertTrue(listed['dispatched'], listed)
+        print('owner_wait=bounded list_windows=dispatched')
+
+    def test_simultaneous_classes_share_the_owner_dialog(self):
+        pid = finder()
+        before = self.dialogs('mock-hold')
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(self.dispatch, 'click', {'pid': pid}, workDir=str(self.work))
+            wait_until(lambda: self.dialogs() == before + 1)
+            second = pool.submit(self.dispatch, 'type_text', {'pid': pid}, workDir=str(self.work))
+            self.dialogs('mock-allow')
+            replies = [first.result(timeout=10)['result'], second.result(timeout=10)['result']]
+        self.assertTrue(all(reply['dispatched'] for reply in replies), replies)
+        self.assertEqual(self.dialogs(), before + 1)
+        print('simultaneous_classes=one_dialog both_dispatched=1')
+
+    def test_driver_error_reaches_the_caller_with_its_body(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        reply = self.dispatch('click', {'pid': pid, 'fixture_error': True}, workDir=str(self.work))['result']
+        self.assertEqual((reply['decision'], reply['reason']), ('allowed', 'driver_error'))
+        self.assertEqual(reply['content'], [{'type': 'text', 'text': 'Call get_window_state first'}])
+        self.assertEqual(reply['structuredContent'], {'code': 'no_screenshot'})
+        self.assertEqual(self.call('status')['result']['state'], 'running')
+        print('driver_error=reported body=returned driver_kept=1')
+
+    def test_screen_lock_reaches_the_caller_for_observation_and_input(self):
+        locked = self.dispatch('list_windows', {'fixture_screen_locked': True}, workDir=str(self.work))['result']
+        self.assertEqual((locked['decision'], locked['reason'], locked['dispatched']), ('refused', 'screen_locked', False))
+        self.assertEqual(self.call('status')['result']['state'], 'stopped')
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        for tool, expected in (
+            ('get_window_state', {'degraded_reason': 'screen_locked: window is hidden'}),
+            ('click', {'code': 'screen_locked', 'effect': 'refused'}),
+        ):
+            with self.subTest(tool=tool):
+                reply = self.dispatch(tool, {'pid': pid, 'fixture_locked': True}, workDir=str(self.work))['result']
+                self.assertEqual(reply['reason'], 'screen_locked')
+                self.assertTrue(reply['dispatched'])
+                self.assertEqual(reply['structuredContent'], expected)
+        reply = self.dispatch('get_window_state', {'pid': pid}, workDir=str(self.work))['result']
+        self.assertIsNone(reply['reason'])
+        print('screen_locked=3 resumed=1')
+
+    def test_a_full_window_screenshot_reaches_the_caller(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        reply = self.dispatch('click', {'pid': pid, 'fixture_large': True}, workDir=str(self.work))['result']
+        self.assertIsNone(reply['reason'])
+        self.assertEqual(len(reply['content'][0]['data']), 3 << 20)
+        self.assertEqual(self.call('status')['result']['state'], 'running')
+        print('screenshot_bytes=3MiB driver_kept=1')
 
     def test_daemon_advert_uses_the_process_birth_even_after_a_long_suite(self):
         from unittest.mock import patch

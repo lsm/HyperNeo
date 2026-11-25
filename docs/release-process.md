@@ -6,12 +6,14 @@ Releases go directly from the `dev` branch via version tags.
 
 ### 1) Bump version and update changelog
 
-Create a branch from `dev`, bump the version in all `package.json` files, update `CHANGELOG.md`, and run `bun install` to update `bun.lock`:
+Create a branch from `dev`, bump the version in all `package.json` files, bump `packages/desktop/src-tauri/tauri.conf.json`, `packages/desktop/src-tauri/Cargo.toml`, and the
+`hyperneo-desktop` entry in `packages/desktop/src-tauri/Cargo.lock`, update `CHANGELOG.md`, and run `bun install` to update `bun.lock`:
 
 ```bash
 git checkout -b release/vX.Y.Z origin/dev
 # Update version in all package.json files: root, packages/*, npm/hyperneo,
 # npm/hyperneod (including its optionalDependencies pins)
+# Update packages/desktop/src-tauri/tauri.conf.json, Cargo.toml, and Cargo.lock versions
 # Add CHANGELOG.md entry
 bun install
 git commit -m "chore(release): bump version to X.Y.Z"
@@ -22,12 +24,14 @@ Open a PR: `release/vX.Y.Z` → `dev`
 
 ### 2) Tag after merge to `dev`
 
-Once the version bump PR is merged to `dev`:
+Once the version bump PR is merged to `dev`, choose the exact commit whose
+latest `dev` push CI run has completed successfully. A missing, running, failed,
+or cancelled run blocks publication. Run the release proofs for that same commit:
 
 ```bash
 git checkout dev
 git pull --ff-only origin dev
-git tag vX.Y.Z
+git tag vX.Y.Z <verified-commit>
 git push origin vX.Y.Z
 ```
 
@@ -35,7 +39,8 @@ git push origin vX.Y.Z
 
 - Tagged commit is on `dev`
 - Package versions match the tag version
-- CI passed for the tagged commit
+- The latest `dev` push CI run for the tagged commit succeeded
+- The tag's ratchets pass against the tagged commit's first parent
 
 ### 3) GitHub Release
 
@@ -124,8 +129,13 @@ gh release create vX.Y.Z --title "vX.Y.Z" --notes "..."
 - Every smoke-tested target (all except `linux-arm64`) boots the compiled binary on its native runner and runs the RPC smoke suite before upload; daemon binaries run the same suite with `--daemon`.
 - The release version check covers `npm/hyperneo` and `npm/hyperneod`, so both wrapper packages (including their optionalDependencies pins) must be bumped with every release.
 - npm publishing uses Trusted Publishing (OIDC); a first-time publish of a new package (`hyperneod`, `@hyperneo/hyperneod-<target>`) requires wiring it up as a trusted-publishing partner for this workflow in npm settings first.
-- macOS desktop artifacts are signed and notarized in CI. Linux and Windows installers are **unsigned**: Windows shows SmartScreen warnings until a code-signing certificate is wired up (`bundle.windows.certificateThumbprint` in `tauri.conf.json`; the workflow passes no signing secrets for Windows today).
+- CI signs and notarizes the macOS app, then submits each signed DMG to Apple using the same App Store Connect key. Each DMG must pass `stapler validate` and Gatekeeper's disk-image assessment before CI creates the app ZIP, computes checksums, or uploads artifacts. The release publishes no updater manifest.
+- Linux and Windows installers are **unsigned**: Windows shows SmartScreen warnings until a code-signing certificate is wired up (`bundle.windows.certificateThumbprint` in `tauri.conf.json`; the workflow passes no signing secrets for Windows today).
+
+## macOS release audit
+
+Use the [disk image verification journey](../.claude/skills/verify/journeys/release-macos-dmg.md) to audit both downloaded macOS DMGs, both app ZIPs, and their checksums. Record the workflow run or release tag and the validation results for each architecture.
 
 ## Dry runs (workflow_dispatch)
 
-`release.yml` can also be dispatched manually from any ref. With the `publish` input off (the default) it runs the build, desktop, and package jobs only — the way to validate new targets (e.g. the Windows legs) without touching npm or creating a GitHub Release. The dev-branch and CI-wait gates apply to tag pushes only. With `publish` on, the dispatch must run from the commit carrying the `v<version>` tag (the release-retry path); dispatching publish from an untagged ref fails in `wait-for-ci` so an existing release's assets can never be clobbered from a branch build.
+`release.yml` can also be dispatched manually from any ref. With the `publish` input off (the default) it runs the build, desktop, and package jobs only — the way to validate new targets (e.g. the Windows legs) without touching npm or creating a GitHub Release. With `publish` on, the dispatch must run from the commit carrying the `v<version>` tag and requires the same successful exact-commit dev CI and tag ratchets as a tag push. Dispatching publish from an untagged ref fails so an existing release's assets cannot be clobbered from a branch build.

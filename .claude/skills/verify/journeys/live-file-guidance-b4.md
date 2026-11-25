@@ -28,3 +28,21 @@ record owner build/PID/health and repeat the isolated RPC proof from the merged
 commit, then write the slice evidence. Browser/phone file taps are covered by
 their reader/card journeys; do not substitute a model's report for those proofs
 or claim a paired-human production click from this isolated contract check.
+
+## Screenshot sets
+
+Run the following from the repository root.
+
+```sh
+bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-dir \
+  .claude/skills/verify/screenshot-card-guidance.ts
+```
+
+The helper opens Neo over RPC, reads the running session's configured prompt,
+publishes a PNG contact sheet reference with PNG and JPEG originals, and reads
+all three files back byte-for-byte through `file.reference.read`. The folder
+reference must be refused. The baseline exits 1 with the three successful
+reads and missing delivery guidance. The fixed run exits 0 with the same
+reads and guidance for both individual paths and a one-tap contact sheet.
+This fixture checks the shipped guidance and reader. For client taps, use
+`live-file-web-a4.md` and the iOS live-file-formats journey.

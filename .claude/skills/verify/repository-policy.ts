@@ -1,3 +1,4 @@
+import { seedHistoricalAsk } from './accepted-ask-fixtures.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -8,8 +9,7 @@ import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/oper
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { createWorkVerbOperations } from '../../../packages/daemon/src/lib/drivers/work-operations.ts';
 import { neoStartPlace } from '../../../packages/daemon/src/lib/neo/start-place.ts';
-import { neoTodoRepository } from '../../../packages/daemon/src/lib/neo/pack-contract.ts';
-import { neoTodoPolicies } from '../../../packages/daemon/src/lib/neo/packs/todo-policies.ts';
+import { createCodingStartPlacePolicy } from '../../../packages/daemon/src/lib/neo/packs/coding/start-place.ts';
 import { createArtifactReferenceResolve } from '../../../packages/daemon/src/lib/artifacts/resolve-operation.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
@@ -45,7 +45,8 @@ try {
     } }],
     remote: { list: () => [], invoke: async () => { throw new Error('No remote calls'); } },
     isOpenTodo: (id, owner) => store.getTodo(id)?.askId === 'policy' && owner === root,
-    startPlace: neoStartPlace({ db, machine: 'synthetic', workspaceRoot: join(run, 'workspace'), repository: (todo, ask) => neoTodoRepository(todo ?? { check: null, named: null }, neoTodoPolicies(db), { ask, todo, start: true }) }),
+    acceptedTodo: (id) => !!store.getTodo(id),
+    startPlace: neoStartPlace({ db, machine: 'synthetic', workspaceRoot: join(run, 'workspace'), policy: createCodingStartPlacePolicy(db) }),
   }).find((op) => op.name === 'work.start')!;
   const reference = createArtifactReferenceResolve(() => db, join(run, 'data'), join(run, 'home'), async (target) => ({ url: `https://${target.repository}/pull/${target.number}`, repository: target.repository, number: target.number, title: 'Synthetic PR', body: '', state: 'OPEN', headSha: 'a'.repeat(40), checks: 'passing', review: 'approved', changedFiles: 0, files: [], filesTruncated: false }));
   const original = app.sessionManager.getOperationRegistry();
@@ -62,7 +63,8 @@ try {
   };
   const retryDraft = { after: [], title: 'Recorded retry', check: { pack: 'coding', kind: 'pr_merged', params: { urls: ['https://github.com/synthetic/retry/pull/1'] } } };
   const retryInput = { title: 'Repository read budget', request: 'Keep the same card', todos: [retryDraft] };
-  const opened = await call('neo.ask.open', retryInput);
+  seedHistoricalAsk(store, root, retryInput);
+  const opened = await call('neo.ask.propose', retryInput);
   const prepare = db.prepare;
   let repositoryStatements = 0;
   db.prepare = (...args: Parameters<typeof prepare>) => {
@@ -70,7 +72,7 @@ try {
     return Reflect.apply(prepare, db, args);
   };
   try {
-    const retried = await call('neo.ask.open', { ...retryInput, todos: Array.from({ length: 20 }, () => retryDraft) });
+    const retried = await call('neo.ask.propose', { ...retryInput, todos: Array.from({ length: 20 }, () => retryDraft) });
     assert.deepEqual(retried.todos.map((todo: { id: string }) => todo.id), [opened.todos[0].id]);
     assert.equal(repositoryStatements, 3, 'one ask scope and one stored todo read per operation');
     observed.repositoryStatements = repositoryStatements;

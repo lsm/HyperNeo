@@ -51,7 +51,7 @@ const DESCRIPTION =
   'Read the primary long-horizon agent owner of one goal, with the conflicting assignments and the degraded reason when the owner agent is not active. A goal outside the caller Space reads as goal_not_found. Returns { accepted: true, owner } or { accepted: false, reason }.';
 
 export function createGetGoalOwnerOperation(deps: GetGoalOwnerDependencies) {
-  const getGoalOwner = (superpipe({ deps })('goal-owner-get') as PipelineAPI)
+  const getGoalOwner = (superpipe({ deps })('goal.owner.get') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitGoalOwnerRead, ['input', 'caller', 'deps'], 'result:outcome')
     .pipe(presentGoalOwner, ['outcome', 'deps'], 'outcome')

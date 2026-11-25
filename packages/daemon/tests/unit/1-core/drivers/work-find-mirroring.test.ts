@@ -1,4 +1,4 @@
-import { recordStartedWork } from '../../../../src/storage/work-started-sessions';
+import { recordWorkerStarted } from '../../../../src/storage/repositories/work-started-sessions-worker';
 import { expect, test } from 'bun:test';
 import { createFindWorkOperation } from '../../../../src/lib/drivers/find-operation';
 import { mirrorNeoWorkspaceProjects } from '../../../../src/lib/neo/packs/coding/project-mirror';
@@ -12,7 +12,7 @@ test.each(['delayed', 'memory'])(
   'work.find replies after the discovered project is mirrored using %s storage',
   async (mode) => {
     const db = await createTestDb();
-    recordStartedWork(db.getDatabase(), { adapter: 'fixture', id: 'owned' });
+    recordWorkerStarted(db.getDatabase(), { adapter: 'fixture', id: 'owned' });
     let pending = Promise.resolve();
     const operation = createFindWorkOperation({
       adapters: () => [

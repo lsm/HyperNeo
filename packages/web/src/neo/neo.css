@@ -1,6 +1,10 @@
+:root {
+  --neo-shell-bg: light-dark(#f6f7f8, #171a20);
+}
+
 .neo-shell {
   height: var(--safe-height, 100dvh);
-  --bg: light-dark(#f6f7f8, #171a20);
+  --bg: var(--neo-shell-bg);
   --surface: light-dark(#ffffff, #20242b);
   --surface-overlay: light-dark(#faf9f7, #24262b);
   --surface-raised: light-dark(#ffffff, #24262b);
@@ -35,6 +39,7 @@
   --neo-action-hover: color-mix(in srgb, var(--fg) 5%, transparent);
   --neo-teal: light-dark(#2c7a7b, #7fd1c7);
   --neo-plum: light-dark(#8a4f7d, #d9a5cc);
+  --neo-desktop-control: light-dark(#2563eb, #6ea8fe);
   --neo-markdown-quote-background: color-mix(in srgb, var(--neo-markdown-quote) 6%, transparent);
 
   --neo-user-accent: light-dark(#486594, #a5b9d9);

@@ -37,9 +37,10 @@ const PRESETS = {
 };
 
 function hasLiveRoute(voice: VoiceSettingsConfig): boolean {
-  if (voice.streamProtocol && voice.streamProtocol !== 'deepgram') return false;
+  const protocol = voice.live?.provider ?? voice.streamProtocol ?? 'deepgram';
+  if (protocol !== 'deepgram' && protocol !== 'openai-realtime') return false;
   try {
-    const url = new URL(voice.streamEndpoint?.trim() ?? '');
+    const url = new URL((voice.live?.endpoint ?? voice.streamEndpoint)?.trim() ?? '');
     return url.protocol === 'ws:' || url.protocol === 'wss:';
   } catch {
     return false;
@@ -53,6 +54,7 @@ export function VoiceSettings() {
   const liveRoute = hasLiveRoute(settings);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [hostKeys, setHostKeys] = useState<Record<string, string>>({});
   const pendingSaveRef = useRef<Promise<void>>(Promise.resolve());
   const lastSaveFailedRef = useRef(false);
 
@@ -60,17 +62,23 @@ export function VoiceSettings() {
     setDraft(globalSettings.value?.voice ?? DEFAULT_VOICE);
   }, [settings]);
 
-  const save = async (next: VoiceSettingsConfig, options?: { silent?: boolean }) => {
+  const save = async (
+    next: VoiceSettingsConfig,
+    options?: { silent?: boolean; successMessage?: string }
+  ) => {
     const { hasApiKey: _omitHasApiKey, ...payload } = next;
-    setDraft(next);
+    const { hostKey: _omitHostKey, ...display } = next;
+    setDraft(display);
     if (next.apiKey?.trim()) {
       setDraft((d) => ({ ...d, apiKey: '' }));
     }
     if (!options?.silent) setSaving(true);
     const run = async () => {
       try {
-        await updateGlobalSettings({ voice: payload }, { timeout: 120_000 });
+        const result = await updateGlobalSettings({ voice: payload }, { timeout: 120_000 });
+        if (!result.success) throw new Error('Failed to save voice settings');
         lastSaveFailedRef.current = false;
+        if (options?.successMessage) toast.success(options.successMessage);
       } catch (error) {
         setDraft(globalSettings.value?.voice ?? DEFAULT_VOICE);
         toast.error(error instanceof Error ? error.message : 'Failed to save voice settings');
@@ -102,14 +110,91 @@ export function VoiceSettings() {
     }
   };
 
-  const patchOnBlur = (field: 'endpoint' | 'streamEndpoint' | 'model') => {
-    const current = draft[field]?.trim() ?? '';
-    if (current === (settings[field] ?? '').trim()) return;
-    void save({ ...draft, [field]: current } as VoiceSettingsConfig, { silent: true });
+  const recorded = draft.recorded ?? {
+    provider: 'openai' as const,
+    endpoint: draft.endpoint,
+    model: draft.model,
+  };
+  const live = draft.live ?? {
+    provider: draft.streamProtocol ?? 'deepgram',
+    endpoint: draft.streamEndpoint ?? '',
+  };
+  const speech = draft.speech ?? {
+    provider: 'openai' as const,
+    endpoint: '',
+    model: '',
+    voice: '',
+  };
+  const hosts = [
+    ...new Set(
+      [
+        draft.recorded?.endpoint ?? draft.endpoint,
+        draft.live?.endpoint ?? draft.streamEndpoint,
+        draft.speech?.endpoint,
+      ].flatMap((endpoint) => {
+        try {
+          const url = new URL(endpoint?.trim() ?? '');
+          return url.protocol === 'https:' || url.protocol === 'wss:' ? [url.host] : [];
+        } catch {
+          return [];
+        }
+      })
+    ),
+  ];
+  const saveHostKey = (host: string, apiKey?: string) => {
+    setHostKeys((keys) => ({ ...keys, [host]: '' }));
+    void save(
+      { ...draft, apiKey: undefined, hostKey: { host, ...(apiKey ? { apiKey } : {}) } },
+      {
+        silent: true,
+        successMessage: apiKey ? `Key saved for ${host}` : `No host-specific key saved for ${host}`,
+      }
+    );
+  };
+
+  const patchPart = (part: 'recorded' | 'live' | 'speech', field: string, value: string) => {
+    const current = part === 'recorded' ? recorded : part === 'live' ? live : speech;
+    const next = { ...current, [field]: value };
+    const legacy =
+      part === 'recorded'
+        ? {
+            ...(field === 'endpoint' ? { endpoint: value } : {}),
+            ...(field === 'model' ? { model: value } : {}),
+          }
+        : part === 'live'
+          ? {
+              ...(field === 'endpoint' ? { streamEndpoint: value } : {}),
+              ...(field === 'provider'
+                ? { streamProtocol: value as VoiceSettingsConfig['streamProtocol'] }
+                : {}),
+            }
+          : {};
+    const updated = { ...draft, ...legacy, [part]: next } as VoiceSettingsConfig;
+    setDraft(updated);
+    return updated;
+  };
+
+  const savePartOnBlur = (part: 'recorded' | 'live' | 'speech', field: string, value: string) => {
+    const current = value.trim();
+    const previous =
+      part === 'recorded'
+        ? (settings.recorded?.[field as 'endpoint' | 'model'] ??
+          settings[field as 'endpoint' | 'model'])
+        : part === 'live'
+          ? (settings.live?.endpoint ?? settings.streamEndpoint)
+          : settings.speech?.[field as 'endpoint' | 'model' | 'voice'];
+    if (current === (previous ?? '').trim()) return;
+    void save(patchPart(part, field, current), { silent: true });
   };
 
   const applyPreset = (preset: keyof typeof PRESETS) => {
-    patch(PRESETS[preset]);
+    const values = PRESETS[preset];
+    patch({
+      ...values,
+      recorded: { provider: 'openai', endpoint: values.endpoint, model: values.model },
+      live: { provider: 'deepgram', endpoint: values.streamEndpoint },
+      streamProtocol: 'deepgram',
+    });
   };
 
   const testConnection = async () => {
@@ -197,6 +282,21 @@ export function VoiceSettings() {
           </div>
         </SettingsRow>
 
+        <SettingsRow label="Recorded provider" layout="stacked">
+          <select
+            aria-label="Recorded provider"
+            value={recorded.provider}
+            disabled={saving}
+            onChange={(event) =>
+              void save(patchPart('recorded', 'provider', event.currentTarget.value))
+            }
+            class={FORM_CONTROL_CLASS}
+          >
+            <option value="openai">OpenAI compatible</option>
+            <option value="deepgram">Deepgram</option>
+          </select>
+        </SettingsRow>
+
         <SettingsRow
           label="Batch endpoint"
           description="Full HTTP or HTTPS URL for batch transcription. Used exactly as entered."
@@ -205,13 +305,45 @@ export function VoiceSettings() {
           <input
             type="url"
             aria-label="Batch endpoint"
-            value={draft.endpoint}
+            value={recorded.endpoint}
             disabled={saving}
-            onInput={(event) => setDraft({ ...draft, endpoint: event.currentTarget.value })}
-            onBlur={() => patchOnBlur('endpoint')}
+            onInput={(event) => patchPart('recorded', 'endpoint', event.currentTarget.value)}
+            onBlur={(event) => savePartOnBlur('recorded', 'endpoint', event.currentTarget.value)}
             placeholder="https://api.openai.com/v1/audio/transcriptions"
             class={FORM_CONTROL_CLASS}
           />
+        </SettingsRow>
+
+        <SettingsRow
+          label="Recorded model"
+          description="Model names vary by backend."
+          layout="stacked"
+        >
+          <input
+            type="text"
+            aria-label="Recorded model"
+            value={recorded.model}
+            disabled={saving}
+            onInput={(event) => patchPart('recorded', 'model', event.currentTarget.value)}
+            onBlur={(event) => savePartOnBlur('recorded', 'model', event.currentTarget.value)}
+            placeholder="whisper-1"
+            class={FORM_CONTROL_CLASS}
+          />
+        </SettingsRow>
+
+        <SettingsRow label="Live provider" layout="stacked">
+          <select
+            aria-label="Live provider"
+            value={live.provider}
+            disabled={saving}
+            onChange={(event) =>
+              void save(patchPart('live', 'provider', event.currentTarget.value))
+            }
+            class={FORM_CONTROL_CLASS}
+          >
+            <option value="deepgram">Deepgram</option>
+            <option value="openai-realtime">OpenAI Realtime</option>
+          </select>
         </SettingsRow>
 
         <SettingsRow
@@ -222,84 +354,143 @@ export function VoiceSettings() {
           <input
             type="url"
             aria-label="Live endpoint"
-            value={draft.streamEndpoint ?? ''}
+            value={live.endpoint}
             disabled={saving}
-            onInput={(event) => setDraft({ ...draft, streamEndpoint: event.currentTarget.value })}
-            onBlur={() => patchOnBlur('streamEndpoint')}
+            onInput={(event) => patchPart('live', 'endpoint', event.currentTarget.value)}
+            onBlur={(event) => savePartOnBlur('live', 'endpoint', event.currentTarget.value)}
             placeholder="wss://asr.example.com/v1/listen"
             class={FORM_CONTROL_CLASS}
           />
         </SettingsRow>
 
-        <SettingsRow label="Model" description="Model names vary by backend." layout="stacked">
-          <input
-            type="text"
-            value={draft.model}
+        <SettingsRow label="Speech provider" layout="stacked">
+          <select
+            aria-label="Speech provider"
+            value={speech.provider}
             disabled={saving}
-            onInput={(event) => setDraft({ ...draft, model: event.currentTarget.value })}
-            onBlur={() => patchOnBlur('model')}
-            placeholder="whisper-1"
+            onChange={(event) =>
+              void save(patchPart('speech', 'provider', event.currentTarget.value))
+            }
             class={FORM_CONTROL_CLASS}
-          />
+          >
+            <option value="openai">OpenAI compatible</option>
+            <option value="deepgram">Deepgram</option>
+          </select>
         </SettingsRow>
-
-        <SettingsRow
-          label="API key"
-          description="Optional. Leave blank for local backends that do not require Authorization. A saved key is bound to the batch endpoint it was saved for."
-          layout="stacked"
-        >
-          <div class="space-y-2">
+        {(['endpoint', 'model', 'voice'] as const).map((field) => (
+          <SettingsRow key={field} label={`Speech ${field}`} layout="stacked">
             <input
-              type="password"
-              value={draft.apiKey ?? ''}
+              type={field === 'endpoint' ? 'url' : 'text'}
+              aria-label={`Speech ${field}`}
+              value={speech[field] ?? ''}
               disabled={saving}
-              onInput={(event) => setDraft({ ...draft, apiKey: event.currentTarget.value })}
-              onBlur={() => {
-                const apiKey = draft.apiKey?.trim();
-                if (apiKey) void save({ ...draft, apiKey }, { silent: true });
-              }}
-              placeholder="sk-..."
+              onInput={(event) => patchPart('speech', field, event.currentTarget.value)}
+              onBlur={(event) => savePartOnBlur('speech', field, event.currentTarget.value)}
               class={FORM_CONTROL_CLASS}
             />
-            {draft.hasApiKey &&
-              !draft.apiKey &&
-              (() => {
-                const normalizeEndpoint = (url: string) => {
-                  try {
-                    return new URL(url.trim()).toString();
-                  } catch {
-                    return url.trim();
-                  }
-                };
-                const keyScopedElsewhere =
-                  draft.apiKeyEndpoint &&
-                  draft.endpoint.trim() &&
-                  normalizeEndpoint(draft.apiKeyEndpoint) !== normalizeEndpoint(draft.endpoint);
-                return (
-                  <div class="flex items-center justify-between gap-3">
-                    <div
-                      class={keyScopedElsewhere ? 'text-xs text-warning' : 'text-xs text-success'}
-                    >
-                      {keyScopedElsewhere
-                        ? 'Saved key is scoped to a different endpoint. Re-enter it for this endpoint.'
-                        : 'Key saved. Enter a new key to replace it.'}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void removeKey();
-                      }}
-                      disabled={saving}
-                      class="rounded-md border border-danger/40 px-2 py-1 text-xs text-danger-soft transition-colors hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Remove key
-                    </button>
-                  </div>
-                );
-              })()}
-          </div>
-        </SettingsRow>
+          </SettingsRow>
+        ))}
+        {hosts.map((host) => (
+          <SettingsRow
+            key={host}
+            label={`API key for ${host}`}
+            layout="stacked"
+            description="Optional. Saved securely for this host."
+          >
+            <div class="space-y-2">
+              <input
+                type="password"
+                aria-label={`API key for ${host}`}
+                value={hostKeys[host] ?? ''}
+                disabled={saving}
+                autoComplete="new-password"
+                class={FORM_CONTROL_CLASS}
+                onInput={(event) => {
+                  const value = event.currentTarget.value;
+                  setHostKeys((keys) => ({ ...keys, [host]: value }));
+                }}
+                onBlur={(event) => {
+                  if (
+                    event.relatedTarget instanceof HTMLElement &&
+                    event.relatedTarget.getAttribute('aria-label') === `Remove API key for ${host}`
+                  )
+                    return;
+                  const key = event.currentTarget.value.trim();
+                  if (key) saveHostKey(host, key);
+                }}
+              />
+              <button
+                type="button"
+                aria-label={`Remove API key for ${host}`}
+                onPointerDown={(event) => event.preventDefault()}
+                disabled={saving}
+                onClick={() => saveHostKey(host)}
+                class="rounded-md border border-danger/40 px-2 py-1 text-xs text-danger-soft transition-colors hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Remove key
+              </button>
+            </div>
+          </SettingsRow>
+        ))}
 
+        {draft.hasApiKey && (
+          <SettingsRow
+            label="Legacy API key"
+            description="Key saved for the batch endpoint using the previous settings. You can replace or remove it here."
+            layout="stacked"
+          >
+            <div class="space-y-2">
+              <input
+                type="password"
+                value={draft.apiKey ?? ''}
+                disabled={saving}
+                onInput={(event) => setDraft({ ...draft, apiKey: event.currentTarget.value })}
+                onBlur={() => {
+                  const apiKey = draft.apiKey?.trim();
+                  if (apiKey) void save({ ...draft, apiKey }, { silent: true });
+                }}
+                placeholder="sk-..."
+                class={FORM_CONTROL_CLASS}
+              />
+              {draft.hasApiKey &&
+                !draft.apiKey &&
+                (() => {
+                  const hostOf = (url: string) => {
+                    try {
+                      return new URL(url.trim()).host;
+                    } catch {
+                      return url.trim();
+                    }
+                  };
+                  const keyScopedElsewhere =
+                    draft.apiKeyEndpoint &&
+                    draft.endpoint.trim() &&
+                    hostOf(draft.apiKeyEndpoint) !== hostOf(draft.endpoint);
+                  return (
+                    <div class="flex items-center justify-between gap-3">
+                      <div
+                        class={keyScopedElsewhere ? 'text-xs text-warning' : 'text-xs text-success'}
+                      >
+                        {keyScopedElsewhere
+                          ? 'Saved key is scoped to a different host. Re-enter it for this endpoint.'
+                          : 'Key saved. Enter a new key to replace it.'}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void removeKey();
+                        }}
+                        disabled={saving}
+                        class="rounded-md border border-danger/40 px-2 py-1 text-xs text-danger-soft transition-colors hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Remove key
+                      </button>
+                    </div>
+                  );
+                })()}
+            </div>
+          </SettingsRow>
+        )}
         <SettingsRow
           label="Allow insecure TLS"
           description="Only enable for trusted self-signed local gateways."

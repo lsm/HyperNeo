@@ -1,20 +1,18 @@
-import { workerEngine, workerIdentity } from '@hyperneo/shared/types/worker-identity';
+import { todoEvidenceFile } from '../work-locations.ts';
 import type { NeoWorkerNameSource } from './worker-name.ts';
 import { Logger } from '../logger.ts';
 import { neoTrackerReads } from '../../storage/repositories/neo-tracker-mirror.ts';
 import { planNeoTrackerStarts } from './tracker-start-gate.ts';
 import { workerSandboxOn } from '../drivers/worker-sandbox.ts';
-import { withWorkerProvenance } from '../drivers/worker-provenance.ts';
+import { withWorkerDeliveryId, withWorkerProvenance } from '../drivers/worker-provenance.ts';
 import { createWorkQueue } from '../work-queue/sweep.ts';
 import { NEO_TODO_FAILURE_NEXT, neoQuestionCoversTodo, neoTodoAwaitsHuman } from './todo-state.ts';
-import { workerBlockerReminderDue } from './worker-blocker.ts';
 import { neoStartRetryDue } from './daemon-cards.ts';
-import { neoDaemonCardWrite } from '../../storage/repositories/neo-daemon-card-write.ts';
 import { neoTodoPrerequisiteRefusal, neoTodoStartRefusal } from './todo-start-gate.ts';
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import { neoTodoRunnerWrites } from '../../storage/repositories/neo-todo-runner-state.ts';
 import { neoSyncedWorkers, neoWorkerStatusDue } from './worker-status-gate.ts';
-import type { NeoAsk, NeoQuestionSource, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -27,7 +25,7 @@ import {
   type NeoTodoSessionRepository,
 } from '../../storage/repositories/neo-todo-session-repository.ts';
 import type { Place, WorkRef, WorkTurnQuestion } from '../drivers/types.ts';
-import { isBusyWork } from '../drivers/work-operations.ts';
+import { isBusyWork, WORK_MESSAGE_MAX } from '../drivers/work-operations.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import {
@@ -41,6 +39,7 @@ import {
   readDriverIdentity,
   readDriverInputs,
   readDriverFollowUp,
+  readDriverFolder,
   isWaitingOnPrompt,
   readDriverLastInputAt,
   readDriverLive,
@@ -59,7 +58,8 @@ import { sameNeoTodoCheck } from './todo-completion.ts';
 import { planNudge } from './nudge.ts';
 import { isNeoTodoWorkerWait, planNeoTodoWaits } from './todo-worker-wait.ts';
 import { planNeoTurnReportSweep } from './turn-report-sweep.ts';
-import { releaseNeoTodoWorkers } from './todo-release.ts';
+import { compactBeforeReuse } from '../drivers/worker-compaction.ts';
+import { releaseNeoTodoWorkers, type WorkerCompact } from './todo-release.ts';
 import { neoTurnOrigin } from './turn-origin.ts';
 import { deliverNeoTurnReport } from './turn-report.ts';
 import { neoDerivedId } from './derived-id.ts';
@@ -77,6 +77,8 @@ type Startable = {
   todo: NeoTodo;
   ask: NeoAsk;
   target: Extract<NeoDriverTarget, { verb: 'start' | 'send' }>;
+  moved?: string;
+  replaced?: WorkRef;
 };
 
 const fail = (reason: string): { reason: Rejection } => ({ reason: { ok: false, reason } });
@@ -91,6 +93,7 @@ export interface NeoTodoRunnerDeps {
     ref?: WorkRef
   ) => Promise<string>;
   workerNames?: () => NeoWorkerNameSource | undefined;
+  workerCompact?: WorkerCompact;
   store: NeoAskTodoRepository;
   sessions: NeoTodoSessionRepository;
   invoke(
@@ -103,8 +106,7 @@ export interface NeoTodoRunnerDeps {
   tell(ask: NeoAsk, todo: NeoTodo, note: string, key: string, kind: 'event'): Promise<void>;
   attend(event: NeoAttentionEvent): Promise<unknown>;
   changed(): void;
-  limits(): { running: number; perGroup: number };
-  readSource?(ref: WorkRef): Promise<NeoQuestionSource | null>;
+  limits(): { running: number; perGroup: number; hold?: string | null };
 }
 
 const CARD_STATUS: Record<NeoTodo['state'], NeoWork['status']> = {
@@ -112,7 +114,6 @@ const CARD_STATUS: Record<NeoTodo['state'], NeoWork['status']> = {
   doing: 'queued',
   blocked: 'queued',
   done: 'reported',
-  failed: 'failed',
   removed: 'cancelled',
 };
 
@@ -207,7 +208,7 @@ export function neoTodoNeedsYouNote(
 }
 
 export const neoTodoFailed = (todo: Pick<NeoTodo, 'state' | 'blockedBy'>) =>
-  todo.state === 'failed' || (todo.state === 'blocked' && todo.blockedBy === 'failure');
+  todo.state === 'blocked' && todo.blockedBy === 'failure';
 
 export function requireNeoTodoRetryable(read: {
   todo: NeoTodo | null;
@@ -299,7 +300,6 @@ export function planNeoTodoCheck(
 }
 
 export function neoTodoNote(todo: NeoTodo): string {
-  if (todo.state === 'failed') return `Todo "${todo.title}" failed: ${todo.reason ?? ''}`;
   if (todo.state === 'done' && todo.evidence)
     return `Todo "${todo.title}" is done: ${todo.evidence}`;
   if (todo.state === 'done')
@@ -347,6 +347,13 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     (deps.packs().find((pack) => pack.workGoal)?.workGoal ?? withWorkGoal)(instruction, goal);
   const { store, sessions } = deps;
   const workerBrief = (todo: NeoTodo, instruction: string, harness: string, existing = true) => {
+    if (
+      todo.check?.pack === 'core' &&
+      todo.check.kind === 'evidence' &&
+      todo.check.params.path === todoEvidenceFile(todo.id)
+    ) {
+      instruction += `\n\nThis legacy check requires ${todoEvidenceFile(todo.id)}. Satisfy it privately; if it is outside your sandbox, report blocked until authorized access is available.`;
+    }
     instruction += `\n\nEven when told to stay quiet, report questions or blockers requiring a human decision with message.send {to: the sending Neo, kind: question or blocked, text: original report, question: {todoId: "${todo.id}", title: short question, options: 2–6 short options, language: en or zh-Hans}} in the human's configured language. Do not keep working while waiting for that answer.`;
     instruction = [
       ...(deps.enabledPacks?.() ?? deps.packs()).map((pack) => pack.workerContext?.()),
@@ -383,6 +390,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     )
     .endAsync('status') as (todoId: string, ref: WorkRef, ask: NeoAsk) => Promise<OperationOutcome>;
   const starting = new Set<string>();
+  const compacting = new Map<string, () => void>();
   let reportCursor = 0;
   const caller = (ask: NeoAsk) => driverWorkCaller({ originSessionId: ask.sessionId });
   const recompute = (superpipe({})('neo.todo.recompute-committed') as PipelineAPI)
@@ -438,19 +446,27 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       await recompute(todo, planNeoTodoFailure(todo, reason) ?? {}, now);
       return retry(todo.id, true);
     }
-    await deps.write(neoDaemonCardWrite, {
-      kind: 'retries',
-      todoId: todo.id,
-      reason: failure,
-      now,
-    });
-    deps.changed();
-    const blocked = store.getTodo(todo.id) ?? todo;
+    const blocked = await recompute(todo, planNeoTodoFailure(todo, failure) ?? {}, now);
     await noteState(blocked);
     return { ok: true as const, todo: blocked };
   };
 
-  const dispatch = async ({ todo, ask, target }: Startable) => {
+  const dispatch = async ({ todo, ask, target, moved, replaced }: Startable) => {
+    if (target.verb === 'send') {
+      const sameAsk = await sessions.read('reusesAskWorker', todo.id);
+      if (sameAsk) compacting.get(todo.id)?.();
+      await compactBeforeReuse(
+        {
+          ref: target.ref,
+          sameAsk,
+          compact: deps.workerCompact?.(target.ref.adapter)?.compact,
+        },
+        caller(ask),
+        (text, error) => log.warn(text, { todoId: todo.id }, error)
+      );
+      const current = store.getTodo(todo.id);
+      if (current && current.state !== 'doing') return { ok: true as const, todo: current };
+    }
     const status = target.verb === 'send' ? await refreshIdentity(todo.id, target.ref, ask) : null;
     const prepare = deps.packs().find((pack) => pack.id === todo.check?.pack);
     const exclusions =
@@ -482,11 +498,22 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           ? await names?.(target.adapter, target.place)
           : undefined
       );
-      if (target.verb === 'start' && prepare?.workerStartBrief)
-        call.input.message = prepare.workerStartBrief(
+      if (target.verb === 'start' && prepare?.workerStartBrief) {
+        const oldStatus =
+          replaced && !replaced.daemon
+            ? await deps.invoke(caller(ask), 'work.status', { ref: replaced }).catch(() => null)
+            : null;
+        const folder = oldStatus ? readDriverFolder(oldStatus) : undefined;
+        call.input.message = await prepare.workerStartBrief(
           String(call.input.message),
-          target.preparationParameters
+          replaced
+            ? {
+                ...target.preparationParameters,
+                replacedWorker: { ...replaced, ...(folder ? { folder } : {}) },
+              }
+            : target.preparationParameters
         );
+      }
       if (target.verb === 'start' && prepare?.prepareExecution && workerSandboxOn(target.sandbox))
         call.input.preparation = {
           pack: prepare.id,
@@ -495,6 +522,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         };
       call.input.todoId = todo.id;
       if (target.verb === 'start') {
+        call.input.role = 'do';
         call.input.provenance = true;
         if (exclusions) call.input.excludeRefs = exclusions.value;
       }
@@ -518,6 +546,13 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       ? names.withStart(target.adapter, target.place, deliver)
       : deliver());
     const result = readDriverOutcome(target, outcome);
+    if (!('ref' in result) && result.reason === 'worker_busy') {
+      const waiting = store.getTodo(todo.id);
+      if (waiting?.state === 'todo' && sessions.get(todo.id)?.verb === 'send') {
+        deps.changed();
+        return { ok: true as const, todo: waiting };
+      }
+    }
     if (!('ref' in result) && !result.reason) sessions.recordStartInterrupted(todo.id);
     if (!('ref' in result) && result.reason !== 'needs_you')
       return startFailed(todo, ask, result.failure);
@@ -555,6 +590,10 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     sessions.clearRetries(todo.id);
     if (!committed.askOpen)
       await deps.invoke(caller(ask), 'work.stop', { ref: result.ref }).catch(() => null);
+    if (moved)
+      await note('todo.line_moved', todo, Date.now(), moved).catch((error) =>
+        log.warn('Line-moved note not recorded', { todoId: todo.id }, error)
+      );
     deps.changed();
     return { ok: true as const, todo: committed.todo ?? todo };
   };
@@ -662,7 +701,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   const chooseTarget = async (
     todoId: string,
     hold: string | null
-  ): Promise<Gate<NeoTodoTarget | null>> => {
+  ): Promise<Gate<NeoTodoTarget | null> & { note?: string }> => {
     const todo = store.getTodo(todoId);
     const ask = todo && store.getAsk(todo.askId);
     const target = sessions.get(todoId);
@@ -677,8 +716,28 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       neoTodoStartRefusal(todo, store.listFamilyTodos(ask.id), store.gateQuestions(ask), hold)
     )
       return { value: null };
-    const decision = await pack.workerTarget(todo, target, (ref) =>
-      deps.invoke(caller(ask), 'work.status', { ref })
+    const decision = await pack.workerTarget(
+      todo,
+      target,
+      (ref) => deps.invoke(caller(ask), 'work.status', { ref }),
+      async (input) => {
+        const outcome = await deps.invoke(caller(ask), 'pack.preferences.ask', {
+          askId: ask.id,
+          ...input,
+        });
+        const reply = outcome.kind === 'completed' ? (outcome.value as { ok?: boolean }) : null;
+        if (!reply?.ok)
+          await note(
+            'todo.unworked',
+            todo,
+            Date.now(),
+            `A settings question for this todo could not be opened (${JSON.stringify(outcome)}); the work continues without it.`,
+            { reason: 'settings_question' }
+          ).catch((error) =>
+            log.warn('Settings question note pending', { todoId: todo.id }, error)
+          );
+        return outcome;
+      }
     );
     if ('reason' in decision) {
       const reason = `${TARGET_WAIT}${decision.reason}`;
@@ -698,14 +757,21 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       (target.verb !== 'send' || neoWorkerKey(target.ref) !== neoWorkerKey(chosen.ref))
     )
       await sessions.write('queueOn', todoId, chosen.ref, '');
-    return { value: chosen.verb === 'start' ? chosen : null };
+    return chosen.verb === 'start'
+      ? { value: chosen, ...(decision.note ? { note: decision.note } : {}) }
+      : { value: null };
   };
 
   const claimAndDispatch = (superpipe({})('neo.todo.start') as PipelineAPI)
-    .input(['todoId'])
+    .input(['todoId', 'replaced'])
     .pipe(async (todoId: string) => (await trackerHolds())[todoId] ?? null, 'todoId', 'hold')
     .pipe(chooseTarget, ['todoId', 'hold'], 'chosen')
-    .pipe((chosen: Gate<NeoTodoTarget | null>) => chosen, 'chosen', 'result:outcome')
+    .pipe(
+      (chosen: Gate<NeoTodoTarget | null>) =>
+        'reason' in chosen ? { reason: chosen.reason } : { value: chosen.value },
+      'chosen',
+      'result:outcome'
+    )
     .pipe(awaitFreeWorker, 'todoId', 'result:outcome')
     .pipe(
       (todoId: string, hold: string | null) =>
@@ -716,8 +782,9 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     .pipe(
       async (
         receipt: ReturnType<InstanceType<typeof neoTodoRunnerWrites.Repository>['claim']>,
-        chosen: { value: NeoTodoTarget | null },
-        todoId: string
+        chosen: { value: NeoTodoTarget | null; note?: string },
+        todoId: string,
+        replaced?: WorkRef
       ): Promise<Gate<Startable>> => {
         if (receipt.changed) deps.changed();
         const refused = !receipt.ok && chosen.value?.verb === 'start' && store.getTodo(todoId);
@@ -737,17 +804,38 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
                     receipt.target.verb === 'start' && chosen.value?.verb === 'start'
                       ? chosen.value
                       : receipt.target,
+                  ...(chosen.note ? { moved: chosen.note } : {}),
+                  ...(replaced ? { replaced } : {}),
                 },
               }
             : { reason: { ok: true, todo: receipt.todo, records: receipt.records ?? [] } };
       },
-      ['receipt', 'chosen', 'todoId'],
+      ['receipt', 'chosen', 'todoId', 'replaced'],
       'result:outcome'
     )
     .pipe(dispatch, 'outcome', 'outcome')
     .endAsync('outcome') as (
-    todoId: string
+    todoId: string,
+    replaced?: WorkRef
   ) => Promise<{ ok: true; todo: NeoTodo; records?: string[] } | Rejection>;
+
+  const startQueued = async (todoId: string) => {
+    try {
+      return await start(todoId);
+    } catch (error) {
+      const todo = store.getTodo(todoId);
+      if (todo)
+        await note(
+          'todo.unworked',
+          todo,
+          todo.updatedAt,
+          `Todo "${todo.title}" (${todo.id}) could not start: ${String(error)}`
+        );
+      throw error;
+    } finally {
+      compacting.delete(todoId);
+    }
+  };
 
   const queue = createWorkQueue<NudgeClaim>(
     {
@@ -755,20 +843,9 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       waiting: () => readQueue(Date.now()),
       claim: (todoId, now, move) => nudge(todoId, now, move),
       act: (claim, now) => act(claim, now),
-      start: async (todoId) => {
-        try {
-          return await start(todoId);
-        } catch (error) {
-          const todo = store.getTodo(todoId);
-          if (todo)
-            await note(
-              'todo.unworked',
-              todo,
-              todo.updatedAt,
-              `Todo "${todo.title}" (${todo.id}) could not start: ${String(error)}`
-            );
-          throw error;
-        }
+      start: (todoId) => {
+        const yielded = new Promise<void>((resolve) => compacting.set(todoId, resolve));
+        return Promise.race([startQueued(todoId), yielded]);
       },
     },
     deps.limits
@@ -776,11 +853,11 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   const fill = () => queue.fill();
   const advance = () => fill().catch(() => undefined);
 
-  const start = async (todoId: string) => {
+  const start = async (todoId: string, replaced?: WorkRef) => {
     const tracked = starting.has(todoId);
     starting.add(todoId);
     try {
-      return await claimAndDispatch(todoId);
+      return await claimAndDispatch(todoId, replaced);
     } finally {
       if (!tracked) starting.delete(todoId);
     }
@@ -1066,24 +1143,6 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     )
     .endAsync('todo') as (todo: NeoTodo, now: number) => Promise<NeoTodo | null>;
 
-  const cardBlocker = async (id: string, now: number) => {
-    const due = workerBlockerReminderDue(store, sessions, id, now);
-    const ref = sessions.readRef(id);
-    const incident = sessions.readNudge(id);
-    if (!due || !ref || !incident?.blockerReport) return;
-    const source = (await deps.readSource?.(ref)) ?? {
-      ...workerIdentity(ref, null),
-      provider: workerEngine(ref.adapter),
-      link: null,
-    };
-    await deps.write(neoDaemonCardWrite, { kind: 'blocker', todoId: id, source, now });
-    sessions.recordNudge(id, {
-      ...incident,
-      blockerReport: { ...incident.blockerReport, remindedAt: now },
-    });
-    deps.changed();
-  };
-
   const follow = (superpipe({})('neo-todo-follow') as PipelineAPI)
     .input(['todo', 'now'])
     .pipe(
@@ -1173,7 +1232,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   };
 
   const retireWorker = ({ todo, ref }: NudgeClaim) =>
-    ['done', 'failed', 'removed'].includes(store.getTodo(todo.id)?.state ?? 'removed')
+    ['done', 'removed'].includes(store.getTodo(todo.id)?.state ?? 'removed')
       ? null
       : sessions.write('markWorkerUnusable', ref);
 
@@ -1181,7 +1240,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     .input(['claim', 'reason', 'now'])
     .pipe(
       (claim: NudgeClaim) =>
-        ['done', 'failed', 'removed'].includes(store.getTodo(claim.todo.id)?.state ?? 'removed')
+        ['done', 'removed'].includes(store.getTodo(claim.todo.id)?.state ?? 'removed')
           ? { reason: null }
           : { value: claim },
       'claim',
@@ -1202,7 +1261,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     .pipe(
       ({ todo }: NudgeClaim, reason: string, now: number) => {
         const current = store.getTodo(todo.id) ?? todo;
-        if (['done', 'failed', 'removed'].includes(current.state)) return current;
+        if (['done', 'removed'].includes(current.state)) return current;
         return recompute(
           current,
           planNeoTodoBlocked(current, 'stalled', reason, NEO_TODO_STALL_NEXT) ?? {},
@@ -1348,7 +1407,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     )
     .pipe(
       async (context: NudgeContext) =>
-        (await neoPackWaiting(deps.packs(), [context.todo])).has(context.todo.id)
+        (await neoPackWaiting(deps.packs(), [context.todo], 'parked')).has(context.todo.id)
           ? { reason: null }
           : { value: context },
       'admission',
@@ -1496,11 +1555,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
             current.updatedAt,
             `Todo "${todo.title}" was stalled, so the daemon started a fresh worker for it where its last worker ran.`
           );
-        if (
-          current &&
-          (current.state === 'failed' ||
-            (current.state === 'blocked' && current.blockedBy === 'failure'))
-        ) {
+        if (current && current.state === 'blocked' && current.blockedBy === 'failure') {
           const restored = await recompute(
             current,
             {
@@ -1560,12 +1615,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     if ('reason' in gate) return gate.reason;
     const { todo, ask, ref } = gate.value;
     const status = await refreshIdentity(todo.id, ref, ask);
-    const text = formatGoal(workerBrief(todo, message, ref.adapter), {
-      workId: todo.id,
-      goal: null,
-      doneWhen: todo.doneWhen,
-      checkKind: todo.check?.kind ?? null,
-    });
+    const text = withWorkerDeliveryId(message).slice(0, WORK_MESSAGE_MAX);
     const live = readDriverLive(status);
     if (live && isWaitingOnPrompt(live))
       return fail(
@@ -1766,10 +1816,6 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         ).catch((error) => warn('Worker human turn report pending', error));
       }
       for (const todo of await store.read('listCheckable')) {
-        if (todo.blockedBy === 'needs-human')
-          await cardBlocker(todo.id, Date.now()).catch((error) =>
-            warn('Worker blocker card pending', error)
-          );
         await waitOnHuman(todo, Date.now()).catch((error) =>
           warn('Todo human wait pending', error)
         );
@@ -1789,7 +1835,25 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         );
       }
       await fill().catch((error) => warn('Queued todo start pending', error));
-      await releaseNeoTodoWorkers(sessions, deps.invoke, warn);
+      await releaseNeoTodoWorkers(
+        sessions,
+        deps.invoke,
+        warn,
+        Date.now(),
+        async (row, reason) => {
+          const todo = store.getTodo(row.todoId);
+          const ask = todo && store.getAsk(todo.askId);
+          if (!todo || !ask) throw new Error('Pending worker todo or ask is missing');
+          await deps.tell(
+            ask,
+            todo,
+            `Finished todo "${todo.title}" (${todo.id}) has a worker (${row.ref.adapter}:${row.ref.id}) pending release for 24 hours: ${reason}.`,
+            neoDerivedId(JSON.stringify(['worker-release-pending', row.ref])),
+            'event'
+          );
+        },
+        deps.workerCompact
+      );
     },
   };
 }

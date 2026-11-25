@@ -76,6 +76,15 @@ describe('DesktopControl', () => {
     expect(invoke).toHaveBeenCalledWith(hub, 'desktop.status', {});
   });
 
+  it('has no ask-or-not switch and reads no preference', async () => {
+    invoke.mockImplementation(async () => ({ workers: [] }));
+    const view = render(<DesktopControl />);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(hub, 'desktop.status', {}));
+    expect(screen.queryByRole('switch')).toBeNull();
+    expect(invoke.mock.calls.map((call) => call[1])).not.toContain('pack.preferences.get');
+    expect(view.container.innerHTML).toBe('');
+  });
+
   it('shows nothing when the status read is refused', async () => {
     invoke.mockResolvedValue({ accepted: false, reason: 'not_admitted' });
     const { container } = render(<DesktopControl />);

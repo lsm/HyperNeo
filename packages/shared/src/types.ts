@@ -2,6 +2,7 @@ import type { ResolvedQuestion } from './state-types.ts';
 import type { SDKConfig, ToolsPresetConfig } from './types/sdk-config.ts';
 import type { ChatDisplayMode, SettingSource } from './types/settings.ts';
 import type { DeclarativeToolGuard } from './types/space.ts';
+import type { OxapHarnessId } from './types/oxap-harnesses.ts';
 import type { SessionToolProfile, SessionToolSelection } from './types/session-tool-choice.ts';
 
 export type {
@@ -225,7 +226,7 @@ export const THINKING_OPTIONS: Array<{ value: ThinkingLevel; label: string }> = 
 );
 
 export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
-  harness?: 'sdk' | 'codex';
+  harness?: 'sdk' | OxapHarnessId;
 
   toolSelection?: SessionToolSelection;
   toolProfile?: SessionToolProfile;
@@ -336,6 +337,7 @@ export interface SessionProgress {
 }
 
 export interface PendingModelSwitch {
+  thinkingLevel?: ThinkingLevel;
   model: string;
   provider: string;
   requestedAt: number;
@@ -385,7 +387,13 @@ export interface SessionMetadata {
   sdkCapabilities?: string[];
   pastSdkSessionIds?: string[];
   oapClearThreadId?: string;
-  oapRecovery?: { previous: string | null; text: string; pendingOpen: boolean; claim?: string };
+  oapRecovery?: {
+    previous: string | null;
+    text: string;
+    pendingOpen: boolean;
+    claim?: string;
+    failure?: 'same_native_thread';
+  };
   pendingModelSwitch?: PendingModelSwitch | null;
   worktreeChoice?: {
     status: 'pending' | 'completed';

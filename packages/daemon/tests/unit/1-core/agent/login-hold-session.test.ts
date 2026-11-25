@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { createHumanSendRecovery } from '../../../../src/lib/agent/human-send-recovery';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { ProviderRefreshClock } from '../../../../src/lib/credentials/oauth-refresh-scheduler';
 import type { RefreshNowOutcome } from '../../../../src/lib/credentials/oauth-refresh-scheduler';
@@ -280,6 +281,53 @@ describe('login hold', () => {
     expect(h.agent.isLoginHeld()).toBe(false);
     expect(h.resume).toHaveBeenCalledTimes(1);
     await h.agent.cleanup();
+  });
+
+  it('a human send preserves a restored login hold and resumes its prompt after sign-in', async () => {
+    const h = await harness({
+      processingState: JSON.stringify({
+        status: 'rate_limit_cooldown',
+        reason: 'login',
+        retryCount: 0,
+        maxRetries: 0,
+        retryAt: Date.now() + 60_000,
+      }),
+      needsLoginAt: Date.now(),
+    });
+    const reset = spyOn(h.agent, 'resetQuery');
+    const refresh = mock(async () => 'definitive');
+    const recovery = createHumanSendRecovery({
+      getSession: async () => h.agent,
+      refreshCredentials: refresh,
+      wakeParked: async () => {},
+      reopen: async () => false,
+    });
+    try {
+      expect(await recovery.prepare('login-hold')).toBe('deliver');
+      expect(await h.deliverWhileQueued('human-login', 'do the thing')).toMatchObject({
+        outcome: 'blocked',
+      });
+      expect(reset).not.toHaveBeenCalled();
+      expect(refresh).not.toHaveBeenCalled();
+      expect(h.agent.getProcessingState()).toMatchObject({ reason: 'login' });
+      expect(JSON.parse((await h.persisted()) ?? '{}')).toMatchObject({
+        reason: 'login',
+        heldPrompt: { uuid: 'human-login', content: 'do the thing' },
+      });
+      h.setNeedsLogin('anthropic', null);
+      h.clocks.clear();
+      for (const listener of h.writes) listener('anthropic');
+      await new Promise((done) => setTimeout(done, 0));
+      await new Promise((done) => setTimeout(done, 0));
+      expect(h.agent.isLoginHeld()).toBe(false);
+      expect(h.resume).toHaveBeenCalledWith('human-login', 'do the thing', undefined, {
+        prepend: true,
+      });
+    } finally {
+      recovery.stop();
+      reset.mockRestore();
+      await h.agent.cleanup();
+    }
   });
 
   it('a restart keeps when a saved login hold started', async () => {

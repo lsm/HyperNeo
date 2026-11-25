@@ -2813,6 +2813,7 @@ class SpaceStore {
     const result = await hub.request<
       | { id: string }
       | { accepted: false; reason: 'has_clones'; clones: CloneSummary[] }
+      | { accepted: false; reason: 'owns_goals'; clones: CloneSummary[] }
       | { accepted: false; reason: 'requires_confirmation'; commitStatus: WorktreeCommitStatus }
     >('spaceAgentV2.delete', {
       id: agentId,
@@ -2821,6 +2822,10 @@ class SpaceStore {
       ...(confirmed ? { confirmed } : {}),
     });
     if ('accepted' in result && !result.accepted) {
+      if (result.reason === 'owns_goals')
+        throw new Error(
+          `A child chat runs a goal (${result.clones.map((clone) => clone.title).join(', ')}). Close the goal first.`
+        );
       return result.reason === 'has_clones'
         ? { clones: result.clones }
         : { commitStatus: result.commitStatus };

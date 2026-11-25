@@ -128,12 +128,24 @@ const parkedJobs = () => (daemon.app.db.getDatabase().prepare(
 
 const cases: Record<string, (marker: string) => Promise<Record<string, unknown>>> = {
   async healthy_chat_send_is_not_rebuilt(marker) {
-    const { sessionId } = await daemon.hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'home'), config: { model: 'haiku' } });
+    const { sessionId } = await daemon.hub.request<{ sessionId: string }>('session.create', { title: 'Healthy Claude Code chat', workspacePath: join(run, 'home'), config: { model: 'haiku' } });
     const first = await daemon.app.sessionManager.getSessionAsync(sessionId);
     await daemon.hub.request('message.send', { sessionId, content: marker });
-    await until(() => served.some((body) => body.includes(marker)), 20_000, 'plain chat answered');
+    const resultCount = () => daemon.app.db.getSDKMessages(sessionId).messages
+      .filter((message) => message.type === 'result' && !message.is_error).length;
+    await until(() => resultCount() === 1, 20_000, 'plain chat answered');
+    await Bun.sleep(6_500);
+    assert.equal(resultCount(), 1, 'the chat has one completed turn');
+    const requests = seen.filter((body) => {
+      const { messages } = JSON.parse(body) as {
+        messages: Array<{ role: string; content: string | Array<{ text?: string }> }>;
+      };
+      return messages.some(({ role, content }) => role === 'user' &&
+        (typeof content === 'string' ? content === marker : content.some((block) => block.text === marker)));
+    }).length;
+    assert.equal(requests, 1, 'the SDK sent the prompt once');
     assert.equal(daemon.app.sessionManager.getCachedSession(sessionId), first);
-    return {};
+    return { requests };
   },
   async failure_latch(marker) {
     await latch();

@@ -1,3 +1,4 @@
+import { acceptProposalFixture } from './accepted-ask-fixtures.ts';
 import { createSpaceAdapter } from '../../../packages/space/src/drivers/space-adapter.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -25,7 +26,6 @@ const app = await createDaemonApp({
 });
 const names: string[] = [];
 const entered = Promise.withResolvers<void>();
-const overlap = Promise.withResolvers<void>();
 const release = Promise.withResolvers<void>();
 try {
   await app.jobProcessor.stop();
@@ -82,9 +82,6 @@ try {
     })
   );
   const world = packWorkerStartFixture(app.db.getDatabase(), {
-    beforeStart: (todo) => {
-      if (todo.title === 'Implement synthetic task') overlap.resolve();
-    },
     workerNames: createWorkerNameSource(() => adapters, place),
     invoke: (name, input) => invokeOperation(verbs, name, input, caller),
   });
@@ -99,35 +96,32 @@ try {
     assert(result.ok, JSON.stringify(result));
     return result;
   };
-  const opened = await call('neo.ask.open', {
+  const opened = await call('neo.ask.propose', {
     title: 'Synthetic matter',
     request: 'Name the workers',
     todos: [],
   });
   const askId = world.store.listOpenAsks()[0].id;
   assert(opened.ok);
+  acceptProposalFixture(world.store, askId);
   const first = call('neo.todo.add', { after: [],
     askId,
     ...world.draft('Investigate synthetic task'),
     target: { verb: 'start', adapter: 'hyperneo' },
   });
-  await entered.promise;
+  await Promise.race([entered.promise, first.then(() => { throw new Error('First todo finished before dispatch'); }, (error) => { throw error; })]);
   const second = call('neo.todo.add', { after: [],
     askId,
     ...world.draft('Implement synthetic task'),
     target: { verb: 'start', adapter: 'hyperneo', place },
   });
-  try {
-    await overlap.promise;
-    await new Promise<void>((resolve) => setImmediate(resolve));
-  } finally {
-    release.resolve();
-  }
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  release.resolve();
   for (const result of await Promise.all([first, second])) assert.equal(result.todo.state, 'doing');
   assert.deepEqual(names, ['HyperNeo project 1', 'HyperNeo project 2']);
   const description = world.operations.find((op) => op.name === 'neo.todo.add')!.description;
   assert(description.includes('target.name'));
-  assert(description.includes('local starts'));
+  assert(description.includes("New local workers default to '<engine> <project> <n>'"));
   assert(!description.includes('use work.rename after starting'));
   const db = app.db.getDatabase();
   const spacePlace = { machine: 'synthetic', spaceId: 'naming-space', name: 'Space' };

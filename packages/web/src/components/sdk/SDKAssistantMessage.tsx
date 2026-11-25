@@ -20,6 +20,8 @@ import {
 import { useEffect, useState } from 'preact/hooks';
 import { toast } from '../../lib/toast.ts';
 import { cn, copyToClipboard } from '../../lib/utils.ts';
+import { ChatErrorActions, type ChatErrorRowAction } from '../ChatErrorRow.tsx';
+import { isApiErrorText, TranscriptErrorMessage } from '../ChatErrorMessage.tsx';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
 import { QuestionPrompt } from '../QuestionPrompt.tsx';
 import { IconButton } from '../ui/IconButton.tsx';
@@ -51,6 +53,7 @@ interface Props {
   runningToolUseIds?: Set<string>;
   flattenSubagentTools?: boolean;
   stopped?: StoppedEpisode;
+  errorActions?: ChatErrorRowAction[];
 }
 
 function rawStoppedError(error: string): string {
@@ -76,6 +79,7 @@ export function SDKAssistantMessage({
   runningToolUseIds,
   flattenSubagentTools = false,
   stopped,
+  errorActions,
 }: Props) {
   const { message: apiMessage } = message;
   const contentBlocks = apiMessage.content as ContentBlock[];
@@ -133,6 +137,8 @@ export function SDKAssistantMessage({
   };
 
   const textBlocks = contentBlocks.filter(isTextBlock);
+  const errorText = hasError ? getTextContent() : '';
+  const apiError = hasError && isApiErrorText(errorText);
   const toolBlocks = contentBlocks
     .filter(isToolUseBlock)
     .filter((block) => !minimal || MINIMAL_TOOLS.has(block.name));
@@ -156,34 +162,29 @@ export function SDKAssistantMessage({
           'space-y-3'
         )}
       >
-        {hasError && (
-          <div class="flex items-center gap-2 text-danger text-sm font-medium">
-            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-              />
-            </svg>
-            <span>API Error</span>
-          </div>
-        )}
+        {apiError && <strong class="block text-sm font-semibold text-danger">API Error</strong>}
         {hasError && stopped && (
           <p class="border-l-2 border-danger/50 pl-2.5 text-[13px] leading-normal text-fg-soft">
             <strong class="font-semibold">Stopped after {stopped.failures} failures.</strong> <br />
             Send a message to recover.
           </p>
         )}
-        {textBlocks.map((block: Extract<ContentBlock, { type: 'text' }>, idx: number) => (
-          <div key={idx} class={hasError ? 'text-danger-soft' : 'text-accent-fg'}>
-            <MarkdownRenderer
-              content={block.text}
-              class="dark:prose-invert prose-pre:bg-surface prose-pre:text-fg"
-            />
-          </div>
-        ))}
-        {hasError && stopped && (
+        {hasError && !apiError ? (
+          <TranscriptErrorMessage
+            message={errorText}
+            log={stopped ? `${errorText}\n\n${rawStoppedError(stopped.error)}` : undefined}
+          />
+        ) : (
+          textBlocks.map((block: Extract<ContentBlock, { type: 'text' }>, idx: number) => (
+            <div key={idx} class={hasError ? 'text-danger-soft' : 'text-accent-fg'}>
+              <MarkdownRenderer
+                content={block.text}
+                class="dark:prose-invert prose-pre:bg-surface prose-pre:text-fg"
+              />
+            </div>
+          ))
+        )}
+        {apiError && stopped && (
           <details class="text-xs text-fg-muted">
             <summary class="cursor-pointer">Technical details</summary>
             <pre class="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono">
@@ -192,6 +193,11 @@ export function SDKAssistantMessage({
           </details>
         )}
 
+        {errorActions && (
+          <div class="flex flex-wrap gap-2">
+            <ChatErrorActions actions={errorActions} />
+          </div>
+        )}
         {message.parent_tool_use_id && (
           <div class="text-xs text-fg-muted italic">
             Sub-agent response (parent: {message.parent_tool_use_id.slice(0, 8)}...)

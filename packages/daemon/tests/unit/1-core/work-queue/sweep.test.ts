@@ -4,7 +4,11 @@ import { createWorkQueue } from '../../../../src/lib/work-queue/sweep.ts';
 
 type Claim = { id: string; plan: { kind: 'remind' | 'redispatch' | 'stall' } };
 
-function world(plans: Record<string, Claim['plan']['kind']>, running: RunningWork[] = []) {
+function world(
+  plans: Record<string, Claim['plan']['kind']>,
+  running: RunningWork[] = [],
+  hold: string | null = null
+) {
   const candidates: WorkCandidate[] = [];
   const started: string[] = [];
   const acted: string[] = [];
@@ -20,7 +24,10 @@ function world(plans: Record<string, Claim['plan']['kind']>, running: RunningWor
       act: async (claim) => acted.push(`${claim.plan.kind}:${claim.id}`),
       start: async (id) => started.push(id),
     },
-    () => ({ running: 2, perGroup: 2 })
+    () => {
+      const limits = { running: 2, perGroup: 2, hold };
+      return limits;
+    }
   );
   return { queue, candidates, started, acted };
 }
@@ -69,5 +76,14 @@ describe('work queue sweep', () => {
     w.candidates.push(candidate('late', 2), candidate('early', 1));
     await w.queue.fill();
     expect(w.started).toEqual(['early']);
+  });
+
+  test('a disk hold starts nothing new while running work is still followed through', async () => {
+    const w = world({ a: 'remind' }, [{ group: 'p', worker: 'w1' }], 'disk below floor');
+    w.candidates.push(candidate('queued', 1));
+    await w.queue.fill();
+    await w.queue.followThrough('a', 0);
+    expect(w.started).toEqual([]);
+    expect(w.acted).toEqual(['remind:a']);
   });
 });

@@ -88,6 +88,14 @@ export class QueryFailureGovernor {
   success(id: string) {
     return this.change(() => empty(id), id);
   }
+  terminal(error: string) {
+    return this.change(() => ({
+      ...empty(),
+      failures: 1,
+      error: error.slice(0, 4096),
+      failed: true,
+    }));
+  }
   reset() {
     return this.change(() => empty());
   }

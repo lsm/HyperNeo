@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { createCodexDesktopAdapter } from '../../../packages/daemon/src/lib/drivers/codex-desktop-adapter.ts';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import type { Result, WorkStarted } from '../../../packages/daemon/src/lib/drivers/types.ts';
 
 const run = resolve(process.argv[2]);
@@ -29,14 +30,13 @@ const dataRoot = process.env.HYPERNEO_DATA_DIR ?? '';
 const workLocations: Record<string, Record<string, string>> = {};
 function assertWorkLocations(env: Record<string, string>, route: string) {
   assert(env.HYPERNEO_WORKTREES === join(dataRoot, 'worktrees'), `${route} HYPERNEO_WORKTREES must be the data-root worktrees dir`);
-  assert(env.HYPERNEO_EVIDENCE?.startsWith(join(dataRoot, 'work', 'evidence')), `${route} HYPERNEO_EVIDENCE must sit under the data root`);
+  assert.equal(env.HYPERNEO_EVIDENCE, undefined, `${route} must not assign hidden evidence`);
   assert(env.HYPERNEO_BUILDS?.startsWith(join(dataRoot, 'work', 'builds')), `${route} HYPERNEO_BUILDS must sit under the data root`);
   assert(env.TMPDIR?.startsWith(join(dataRoot, 'work', 'scratch')), `${route} TMPDIR must be the per-session scratch dir`);
-  for (const path of [env.HYPERNEO_WORKTREES, env.HYPERNEO_EVIDENCE, env.HYPERNEO_BUILDS, env.TMPDIR, env.XDG_CACHE_HOME])
+  for (const path of [env.HYPERNEO_WORKTREES, env.HYPERNEO_BUILDS, env.TMPDIR, env.XDG_CACHE_HOME])
     assert(existsSync(path), `${route} work location must be created on demand: ${path}`);
   workLocations[route] = {
     HYPERNEO_WORKTREES: env.HYPERNEO_WORKTREES,
-    HYPERNEO_EVIDENCE: env.HYPERNEO_EVIDENCE,
     HYPERNEO_BUILDS: env.HYPERNEO_BUILDS,
     TMPDIR: env.TMPDIR,
     XDG_CACHE_HOME: env.XDG_CACHE_HOME,
@@ -84,7 +84,7 @@ try {
   await verifyCleanupWriteBoundary(run);
   app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
   assert.notEqual(app.server.port, 8399);
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  ws = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('connection failed')); });
   const rpc = (name: string, input: unknown) => new Promise<unknown>((done, fail) => {
     const id = crypto.randomUUID();
@@ -177,7 +177,7 @@ try {
       'write',
     'Codex writable roots must exclude the shared worktrees tree'
   );
-  for (const key of ['HYPERNEO_EVIDENCE', 'HYPERNEO_BUILDS', 'TMPDIR']) {
+  for (const key of ['HYPERNEO_BUILDS', 'TMPDIR']) {
     assert(
       codexFilesystem[codexLaunch.config.shell_environment_policy.set[key]] === 'write',
       `Codex writable roots must include ${key}`

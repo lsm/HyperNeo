@@ -155,6 +155,7 @@ function harness(): Harness {
     isPreparing: () => false,
     hasPendingWork: () => false,
     notify: async () => {},
+    engineOf: (provider) => (provider === 'anthropic-codex' ? 'oxap-codex' : 'sdk'),
   });
   for (const op of ops) h.operations.set(op.name, op);
   return h;
@@ -218,6 +219,79 @@ describe('session.runtimeSettings.read', () => {
   });
 });
 
+describe('session.runtimeSettings.update on a cold chat and an OXAP provider', () => {
+  const oxapConfig = {
+    model: 'gpt-5.5',
+    provider: 'anthropic-codex',
+    harness: 'oxap-codex',
+    maxTokens: 8192,
+    temperature: 0,
+  } as SessionConfig;
+
+  test('refuses moving a Claude Code chat to an OXAP provider before it commits', async () => {
+    const h = harness();
+    h.sessions.set('plain', makeSession({ id: 'plain' }));
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'plain',
+      provider: 'anthropic-codex',
+      model: 'gpt-5.5',
+    });
+    expect(result).toEqual({
+      ok: false,
+      reason: expect.stringContaining('cannot move to an OXAP Codex provider'),
+    });
+    expect(h.persisted.size).toBe(0);
+  });
+
+  test('refuses an inferred OXAP provider for a cold Claude Code chat', async () => {
+    const h = harness();
+    const config = { model: 'claude-sonnet-5', maxTokens: 8192, temperature: 0 } as SessionConfig;
+    catalog.mockReturnValue([model('gpt-5.5', 'anthropic-codex')]);
+    h.sessions.set('plain', makeSession({ id: 'plain', config }));
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'plain',
+      model: 'gpt-5.5',
+    });
+    expect(result).toEqual({
+      ok: false,
+      reason: expect.stringContaining('cannot move to'),
+    });
+    expect(h.persisted.size).toBe(0);
+    expect(h.sessions.get('plain')!.config).toEqual(config);
+  });
+
+  test('refuses moving an OXAP chat to another provider before it commits', async () => {
+    for (const provider of ['anthropic', 'glm']) {
+      const h = harness();
+      h.sessions.set('codex', makeSession({ id: 'codex', config: oxapConfig }));
+      const result = await run(h, 'session.runtimeSettings.update', {
+        sessionId: 'codex',
+        provider,
+      });
+      expect(result).toEqual({
+        ok: false,
+        reason: expect.stringContaining('OXAP Codex chat cannot change its provider'),
+      });
+      expect(h.persisted.size).toBe(0);
+      expect(h.sessions.get('codex')!.config).toEqual(oxapConfig);
+    }
+  });
+
+  test('refuses a thinking level on an OXAP chat before it commits', async () => {
+    const h = harness();
+    h.sessions.set('codex', makeSession({ id: 'codex', config: oxapConfig }));
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'codex',
+      thinkingLevel: 'think16k',
+    });
+    expect(result).toEqual({
+      ok: false,
+      reason: expect.stringContaining('OXAP Codex does not take a thinking level'),
+    });
+    expect(h.persisted.size).toBe(0);
+  });
+});
+
 describe('session.runtimeSettings.update', () => {
   test('changes model on a live ordinary session through the live switch path', async () => {
     const h = harness();
@@ -251,6 +325,51 @@ describe('session.runtimeSettings.update', () => {
     });
     expect((result.notes as string[]).join(' ')).toContain('starts under it next time');
     expect(result.appliesFrom).toBe('next-turn');
+  });
+
+  test('persists a thinking effort label as its thinking-level ID', async () => {
+    const h = harness();
+    h.sessions.set('plain', makeSession({ id: 'plain' }));
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'plain',
+      thinkingLevel: 'high',
+    });
+    expect(result).toMatchObject({ ok: true, settings: { thinkingLevel: 'think24k' } });
+    expect(h.persisted.get('plain')?.thinkingLevel).toBe('think24k');
+  });
+
+  test('resolves a unique display name across providers regardless of case', async () => {
+    const h = harness();
+    catalog.mockReturnValue([{ ...model('review-flash', 'openrouter'), name: 'Review Flash' }]);
+    h.sessions.set('plain', makeSession({ id: 'plain' }));
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'plain',
+      model: 'review FLASH',
+    });
+    expect(result).toMatchObject({ ok: true, settings: { model: 'review-flash' } });
+    expect(h.persisted.get('plain')).toMatchObject({
+      model: 'review-flash',
+      provider: 'openrouter',
+    });
+  });
+
+  test('keeps the current provider when an exact model ID is shared', async () => {
+    const h = harness();
+    catalog.mockReturnValue([model('shared-flash', 'openrouter'), model('shared-flash')]);
+    h.sessions.set('plain', makeSession({ id: 'plain' }));
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'plain',
+      model: 'shared-flash',
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      settings: { model: 'shared-flash', provider: 'anthropic' },
+      changes: { model: true, provider: false },
+    });
+    expect(h.persisted.get('plain')).toMatchObject({
+      model: 'shared-flash',
+      provider: 'anthropic',
+    });
   });
 
   test('a running turn refuses settings without entering the native switch', async () => {
@@ -334,15 +453,35 @@ describe('session.runtimeSettings.update', () => {
     expect(h.liveConfigs).toHaveLength(0);
   });
 
-  test('thinking level normalizes unknown values to off', async () => {
+  test.each([
+    {
+      input: { thinkingLevel: 'maximum' },
+      refusal: { ok: false, reason: 'invalid_thinking_level' },
+    },
+    {
+      input: { model: 'Shared Name' },
+      refusal: {
+        ok: false,
+        reason: 'ambiguous_model',
+        availableModels: ['first-model', 'second-model'],
+      },
+    },
+  ])('returns a validated refusal for $input without writing', async ({ input, refusal }) => {
     const h = harness();
     h.sessions.set('plain', makeSession({ id: 'plain' }));
-    const result = await run(h, 'session.runtimeSettings.update', {
-      sessionId: 'plain',
-      thinkingLevel: 'maximum',
-    });
-    expect(result.ok).toBe(true);
-    expect((result.settings as Record<string, unknown>).thinkingLevel).toBe('off');
+    catalog.mockReturnValue([
+      { ...model('first-model'), name: 'Shared Name' },
+      { ...model('second-model'), name: 'Shared Name' },
+    ]);
+    const registry = createOperationRegistry([...h.operations.values()]);
+    const outcome = await invokeOperation(
+      registry,
+      'session.runtimeSettings.update',
+      { sessionId: 'plain', ...input },
+      { source: 'rpc' }
+    );
+    expect(outcome).toEqual({ kind: 'completed', value: refusal });
+    expect(h.persisted.size).toBe(0);
   });
 
   test('provider-only updates use the non-interrupting joint switch', async () => {

@@ -14,7 +14,10 @@ neo.todo.edit each return only the changed todo, with no `todos` list and no
 other todo's instruction. neo.ask.read lists each todo as id, title and state
 only. neo.todo.read returns one todo in full: its instruction and report, and no
 other todo's. The human RPC neo.ask.read still returns every todo in full for
-the web card.
+the web card. A passive hold refuses a step already covered by an open question.
 
 Evidence: `sizes.json` (bytes of each reply, and of the full todo list a change
 used to carry) and `agent-ask-read.json`.
+
+The helper seeds an accepted historical ask for its unrelated work fixture.
+Use new-work-source.md for the real proposal and human-approval path.

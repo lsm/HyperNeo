@@ -1,17 +1,18 @@
 import { describe, expect, test } from 'bun:test';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import { NEO_ROOT_PROMPT } from '@hyperneo/prompts';
+import { NEO_ROOT_TURN_END } from '@hyperneo/prompts';
 import { projectNeoAskEntries } from '../../../../src/lib/neo/ask-entries.ts';
 import { workerWorkLocationsBrief, todoEvidenceFile } from '../../../../src/lib/work-locations.ts';
 
 describe('human report locations', () => {
-  test('the delivered worker brief separates reports from private completion evidence', () => {
+  test('the delivered worker brief directs reports to a visible folder', () => {
     const brief = workerWorkLocationsBrief('/repo');
     expect(brief).toContain('~/HyperNeo/<matter>/');
-    expect(brief).toMatch(/never link/i);
+    expect(brief).not.toContain('HYPERNEO_EVIDENCE');
     expect(brief).toContain('full absolute path');
-    expect(NEO_ROOT_PROMPT).toContain('~/HyperNeo/<matter>/');
-    expect(NEO_ROOT_PROMPT).toContain('~/.hyperneo/work');
+    expect(NEO_ROOT_TURN_END).toContain('~/HyperNeo/<matter>/');
+    expect(NEO_ROOT_TURN_END).toContain('configured workspace');
+    expect(NEO_ROOT_TURN_END).toContain('Never write in the home root or link hidden state');
   });
 
   test.each(['assigned', 'human-evidence', 'another-todo'])(

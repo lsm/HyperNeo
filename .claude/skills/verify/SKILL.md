@@ -10,7 +10,7 @@ its web UI. Lint, types and unit tests are not proof. Every helper named here
 lives next to this file in `.claude/skills/verify/`. Run commands from the repo
 root of your worktree.
 
-Check `bun --version` before proof jobs. Select the pinned Bun 1.4.2 binary's
+Check `bun --version` before proof jobs. Select the pinned Bun 1.4.4 binary's
 directory on PATH when the host default differs. The wrapper carries that PATH
 into its isolated child environment and CLI subprocesses.
 
@@ -130,6 +130,13 @@ It redeems the synthetic code through the real `/pair` endpoint and returns
 its viewport and clipboard permissions. Reuse the state across sibling checkers;
 the pairing code is single-use. Only use the fresh isolated fixture's fields.
 Never reuse a human profile or the live daemon's credential for browser proofs.
+
+## Accepted ask fixtures
+
+For journeys that exercise unrelated behavior on historical work, the
+`accepted-ask-fixtures.ts` helper seeds a historical ask or records a synthetic
+approval. These are setup only. Use `journeys/new-work-source.md` to verify the
+actual Neo MCP and human RPC approval path.
 
 ## In-process RPC proofs
 
@@ -307,13 +314,14 @@ this exercises the SDK/MCP path but is not evidence of OS sandbox enforcement.
 Dispatch helpers use `codex-desktop-peer.ts` for a synthetic Desktop IPC peer.
 They put their run's `bin` first on PATH; the helper stubs `ps` and refuses
 `open`, so owner discovery cannot inspect or open the real desktop app.
-Explicit Desktop steering and thread creation require the IPC peer. Automatic Codex
+Explicit Desktop steering and thread creation use the IPC peer when it listens. Automatic Codex
 sends route by Desktop ownership: while the stubbed probe reports Desktop running
 they deliver through owner discovery plus follower steer or turn start, and their
 proofs must show no app-server `thread/resume` or native queue call; while it
 reports Desktop not running they use the native app-server queue, checking the
 loaded list and resuming saved unloaded threads before settings or enqueue, with
-already loaded threads never resumed.
+already loaded threads never resumed. A running Desktop whose IPC socket is
+missing or refuses (the ChatGPT-hosted Codex has none) routes like a stopped one.
 
 ```bash
 .claude/skills/verify/doctor.sh 9311 "$RUN"
@@ -335,6 +343,7 @@ UI is served, that RPC answers, and that the mock model API is up. It ends with
   `seed-ledger.sh` (journey 4),
   `merge-check.sh` (journey 24), `archive-guard-check.sh` (journey 10) and
   `quote-summary-check.mjs` (journey 18),
+  `neo-front-execution.ts` (Front handoff admission fixture),
   `seed-schedule-interrupt.ts` (journey 22), `external-reply-check.ts` (journey 23), and `feed-scope.sh` (work-feed-scope). Artifact preview helpers
   (including `preview-media-web.mjs seed`) delegate DB fixture creation to
   `preview-register.ts seed`, only in the fresh synthetic run.
@@ -450,3 +459,5 @@ host policy allowing those namespaces; this journey changes no local host policy
 The cleanup OS boundary stays enabled during these tests.
 
 For opt-in speech separate from publications, follow [spoken replies](journeys/spoken-replies.md).
+
+For pipeline route reporting, follow [system map routes](journeys/system-map-routes.md).

@@ -127,6 +127,8 @@ async function start(
         },
       },
       isOpenTodo: (id, owner) => id === 'todo' && owner === sessionId,
+      acceptedTodo: () => true,
+      noticeReply: () => true,
       startPlace: neoStartPlace({
         db,
         machine: 'local',
@@ -296,12 +298,14 @@ describe('shared non-coding work.start home', () => {
 
 describe('read checkout placement', () => {
   const view = () => join(root, 'data', 'worktrees', 'synthetic', 'repo', 'neo-read');
-  test('a ready read checkout is accepted as an explicit place', async () => {
+  test('no session starts in the read mirror, even for a coding todo of that repository', async () => {
     execFileSync('git', ['init', '-q', view()]);
     execFileSync('git', ['-C', view(), 'read-tree', '--empty']);
+    db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ?').run('synthetic/repo', 'ask');
     expect(await start(view(), { createFolder: false })).toMatchObject({
-      ok: true,
-      value: { place: { folder: view() } },
+      ok: false,
+      reason: 'invalid_place',
+      detail: expect.stringContaining('read mirror'),
     });
   });
   test('a ready local read checkout does not admit a remote or other-machine place', async () => {

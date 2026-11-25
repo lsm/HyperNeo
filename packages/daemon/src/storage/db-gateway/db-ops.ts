@@ -1,5 +1,8 @@
+import { workerOwnershipWrites } from '../repositories/worker-ownership-write-worker.ts';
+import { workerOwnershipFacts } from '../repositories/worker-ownership-read-worker.ts';
 import { workerInputReads, workerInputWrites } from '../repositories/worker-input-worker.ts';
 import { neoFrontReads } from '../repositories/neo-front-read-worker.ts';
+import { sessionGoalReviewReads } from '../repositories/session-goal-review-read-worker.ts';
 import { anthropicRateLimitEventsRead } from '../repositories/anthropic-usage-read.ts';
 import {
   neoFrontDeliveryWrites,
@@ -17,7 +20,6 @@ import {
   pairingRequestWrites,
 } from '../repositories/pairing-request-repository.ts';
 import { neoStallReminderWrite } from '../repositories/neo-stall-reminder-write.ts';
-import { neoDaemonCardWrite } from '../repositories/neo-daemon-card-write.ts';
 import { neoTodoDesktopControlWrite } from '../repositories/neo-todo-desktop-control-write.ts';
 import { historySnapshotReads } from '../repositories/sdk-history-snapshot-read.ts';
 import { toolRecoveryWrites } from '../repositories/tool-continuation-recovery-repository.ts';
@@ -63,7 +65,10 @@ import {
   codingBranchReads,
   codingBranchWrites,
 } from '../../lib/neo/packs/coding/branch-facts-db.ts';
-import { neoProjectForgetWrites } from '../repositories/neo-project-forget-writes.ts';
+import {
+  neoProjectForgetWrites,
+  projectSessionPathsReads,
+} from '../repositories/neo-project-forget-writes.ts';
 import { jobEnqueueWrites } from '../repositories/job-enqueue-writes.ts';
 import { neoProjectCleanupWrites } from '../repositories/neo-project-cleanup-writes.ts';
 import { toolDefaultTransitions } from '../repositories/tool-default-transition.ts';
@@ -74,7 +79,19 @@ import {
 } from '../repositories/neo-todo-session-repository.ts';
 import { codingTodoPrReads } from '../../lib/neo/packs/coding/todo-prs.ts';
 import { neoTodoReads, neoTodoWrites } from '../repositories/neo-ask-todo-repository.ts';
-import { SDK_MESSAGE_TRANSACTIONS } from '../repositories/sdk-message-transactions.ts';
+import {
+  sdkPendingRemoval,
+  sdkPromptEnsure,
+  sdkPromptActivate,
+  sdkPromptRetry,
+  sdkNeoIntake,
+  sdkNeoWakeQueue,
+  sdkDeliveryTeardown,
+  sdkMailboxFailure,
+  sdkColumnBackfillChunk,
+  sdkColumnBackfillComplete,
+  sdkDeliveryFencedStatus,
+} from '../repositories/sdk-message-transactions.ts';
 import { neoWakeQueueWrite } from '../repositories/neo-wake-queue-repository.ts';
 import { externalEventSweeps } from '../repositories/space-external-event-sweep-repository.ts';
 import {
@@ -91,12 +108,18 @@ import {
   codingHandoffWrites,
 } from '../../lib/neo/packs/coding/review-merge-hold-worker.ts';
 import { codingSweepReads, codingSweepWrites } from '../../lib/neo/packs/coding/pr-sweep.ts';
+import {
+  codingReviewAfterReads,
+  codingReviewAfterWrites,
+} from '../../lib/neo/packs/coding/review-after-worker.ts';
 import { codingTurnPrReads } from '../../lib/neo/packs/coding/turn-prs.ts';
 import { codingTodoPrWrites } from '../../lib/neo/packs/coding/todo-prs.ts';
+import { codingSessionAssignmentReads } from '../../lib/neo/packs/coding/session-assignments-worker.ts';
+import { mailboxDeliveryReads } from '../repositories/mailbox-delivery-read-worker.ts';
 import {
-  codingSessionAssignmentReads,
-  codingSessionAssignmentWrites,
-} from '../../lib/neo/packs/coding/session-assignments-worker.ts';
+  workStartedSessionReads,
+  workStartedSessionWrites,
+} from '../repositories/work-started-sessions-worker.ts';
 import { codingTodoStorageWrites } from '../../lib/neo/packs/coding/todo-storage.ts';
 import { codingDeliveryWrites } from '../../lib/neo/packs/coding/delivery-facts.ts';
 import {
@@ -233,6 +256,9 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     neoFrontDeliveryWrites,
     neoFrontInputReads,
     neoFrontReads,
+    sessionGoalReviewReads,
+    workerOwnershipFacts,
+    workerOwnershipWrites,
     anthropicRateLimitEventsRead,
     neoAskSettlementReads,
     neoAskSettlementWrites,
@@ -263,12 +289,14 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     codingBranchReads,
     codingBranchWrites,
     neoProjectForgetWrites,
+    projectSessionPathsReads,
     neoProjectCleanupWrites,
     reserveNeoHomeProjects,
     neoTodoSessionReads,
+    workCleanupReads,
+    workCleanupWrites,
     neoTodoSessionWrites,
     neoStallReminderWrite,
-    neoDaemonCardWrite,
     neoTodoDesktopControlWrite,
     codingTodoPrReads,
     neoAskInputReads,
@@ -279,7 +307,17 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     neoTodoWrites,
     sdkMessageWrites,
     neoWakeQueueWrite,
-    ...SDK_MESSAGE_TRANSACTIONS,
+    sdkPendingRemoval,
+    sdkPromptEnsure,
+    sdkPromptActivate,
+    sdkPromptRetry,
+    sdkNeoIntake,
+    sdkNeoWakeQueue,
+    sdkDeliveryTeardown,
+    sdkMailboxFailure,
+    sdkColumnBackfillChunk,
+    sdkColumnBackfillComplete,
+    sdkDeliveryFencedStatus,
     recordWouldRefuse,
     enrollLocalDevice,
     deviceKindByCredential,
@@ -310,12 +348,16 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     codingAssignmentWrites,
     codingTodoPrWrites,
     codingSessionAssignmentReads,
-    codingSessionAssignmentWrites,
+    mailboxDeliveryReads,
+    workStartedSessionReads,
+    workStartedSessionWrites,
     codingTodoStorageWrites,
     codingDeliveryWrites,
     codingSweepReads,
     codingTurnPrReads,
     codingSweepWrites,
+    codingReviewAfterReads,
+    codingReviewAfterWrites,
     claudeDesktopOutboxWrites,
     recordOperationRefusal,
     recordClaudeInboxRoute,
@@ -407,3 +449,4 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     gitHubWatchPollingWrite,
   ].map((op) => [op.name, op])
 );
+import { workCleanupReads, workCleanupWrites } from '../repositories/work-cleanup-worker.ts';

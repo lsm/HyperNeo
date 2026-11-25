@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { openCopilotWorker } from '../../../packages/daemon/src/lib/drivers/copilot-worker.ts';
 
 const [portText, runText] = process.argv.slice(2);
@@ -33,7 +34,7 @@ try {
     if (data.action === 'abort') { await worker.abort(); return worker.snapshot(); }
     return worker.snapshot();
   });
-  ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+  ws = createLocalSocket(`ws://127.0.0.1:${port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('connection failed')); });
   const rpc = (method: string, data: unknown) => new Promise<unknown>((done, fail) => {
     const id = crypto.randomUUID();
@@ -91,7 +92,7 @@ try {
   await assert.rejects(rpc('verify.copilot', { action: 'hold' }), /permission/);
   assert.equal((await rpc('verify.copilot', { action: 'snapshot' }) as { status: string }).status, 'needs_you');
   const adapters = await rpc('operation.invoke', { name: 'work.adapters', input: {} }) as { value: { id: string; capabilities: string[] }[] };
-  assert.deepEqual(adapters.value.find(a => a.id === 'copilot-cli')?.capabilities, ['find', 'start', 'rename', 'send', 'queue', 'withdraw', 'status', 'stop', 'archive']);
+  assert.deepEqual(adapters.value.find(a => a.id === 'copilot-cli')?.capabilities, ['find', 'start', 'rename', 'send', 'steer', 'queue', 'withdraw', 'status', 'turns', 'stop', 'archive']);
   const calls = readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
   assert(calls.every(call => !call.secretPresent));
   evidence.push({ sdkProtocolCalls: calls });

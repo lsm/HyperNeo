@@ -128,6 +128,25 @@ describe('claude-desktop adapter against the app session records', () => {
   let spawned: Array<{ args: string[]; cwd?: string }>;
   let liveReads = 0;
   let clock = 0;
+  let appArchives: string[] = [];
+  let appArchiveRefusal: { ok: false; reason: 'not_delivered'; detail: string } | null = null;
+  async function archiveLikeTheApp(target: { sessionId: string }) {
+    appArchives.push(target.sessionId);
+    if (appArchiveRefusal) return appArchiveRefusal;
+    const cache: ClaudeRecordCache = new Map();
+    await readClaudeDesktopRecords(dir, cache);
+    for (const [path, entry] of cache)
+      if (entry.records.some((record) => record.sessionId === target.sessionId))
+        writeFileSync(
+          path,
+          JSON.stringify({
+            ...JSON.parse(readFileSync(path, 'utf8')),
+            isArchived: true,
+            archiveSetAtMs: 1,
+          })
+        );
+    return { ok: true as const, value: { archived: true } };
+  }
 
   function adapter(
     live: ClaudeLiveSession[] | Error | (() => ClaudeLiveSession[]) = [
@@ -148,7 +167,10 @@ describe('claude-desktop adapter against the app session records', () => {
   ) {
     spawned = [];
     clock = 0;
+    appArchives = [];
+    appArchiveRefusal = null;
     return createClaudeDesktopAdapter({
+      archiveInApp: archiveLikeTheApp,
       sendInbox,
       readInput,
       admitInbox: sendInbox
@@ -617,7 +639,11 @@ describe('claude-desktop adapter against the app session records', () => {
     const driver = adapter([]);
     const ref = { adapter: driver.id, id: 'local_a1' };
     expect(await driver.archive!(ref, () => null)).toEqual({ ok: true, value: { archived: true } });
-    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ ...before, isArchived: true });
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({
+      ...before,
+      isArchived: true,
+      archiveSetAtMs: 1,
+    });
     expect(existsSync(env.TMPDIR)).toBe(false);
     expect(existsSync(env.XDG_CACHE_HOME)).toBe(false);
     expect(existsSync(root)).toBe(true);
@@ -682,6 +708,65 @@ describe('claude-desktop adapter against the app session records', () => {
     expect(existsSync(folder)).toBe(false);
   });
 
+  test('asks the app to archive and leaves the record and worktree alone when it does not', async () => {
+    const { repo, git } = createPushedWorkerRepo(dir);
+    const folder = join(repo, '.claude', 'worktrees', 'worker');
+    git('worktree', 'add', '--detach', folder, 'HEAD');
+    const path = join(dir, 'acct-a/scope-1/local_a1.json');
+    writeFileSync(
+      path,
+      JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf8')), cwd: folder, originCwd: repo })
+    );
+    const before = readFileSync(path, 'utf8');
+    const driver = adapter([]);
+    appArchiveRefusal = { ok: false, reason: 'not_delivered', detail: 'helper did not archive' };
+    expect(
+      await driver.archive!({ adapter: 'claude-desktop', id: 'local_a1' }, () => null)
+    ).toEqual(appArchiveRefusal);
+    expect(appArchives).toEqual(['local_a1']);
+    expect(readFileSync(path, 'utf8')).toBe(before);
+    expect(existsSync(folder)).toBe(true);
+  });
+
+  test('asks the app to archive a record whose archived flag the app never stamped', async () => {
+    const path = join(dir, 'acct-a/scope-1/local_a1.json');
+    writeFileSync(
+      path,
+      JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf8')), isArchived: true })
+    );
+    const driver = adapter([]);
+    expect(
+      await driver.archive!({ adapter: 'claude-desktop', id: 'local_a1' }, () => null)
+    ).toMatchObject({ ok: true, value: { archived: true } });
+    expect(appArchives).toEqual(['local_a1']);
+    expect(JSON.parse(readFileSync(path, 'utf8')).archiveSetAtMs).toBe(1);
+  });
+
+  test('refuses to archive without the app helper instead of editing the record', async () => {
+    const path = join(dir, 'acct-a/scope-1/local_a1.json');
+    const before = readFileSync(path, 'utf8');
+    const driver = createClaudeDesktopAdapter({
+      sessionsDir: dir,
+      projectsDir: join(dir, 'projects'),
+      machine: 'laptop',
+      liveSessions: async () => [],
+      folderExists: () => true,
+      makeFolder: () => {},
+      homeDir: '/Users/test',
+      gitCheckout: async () => null,
+      newId: () => 'unused',
+      sleep: async () => {},
+      now: () => 0,
+      spawn: () => {
+        throw new Error('no spawn expected');
+      },
+    });
+    expect(
+      await driver.archive!({ adapter: 'claude-desktop', id: 'local_a1' }, () => null)
+    ).toMatchObject({ ok: false, reason: 'unsupported' });
+    expect(readFileSync(path, 'utf8')).toBe(before);
+  });
+
   test('keeps the Claude record unarchived when runtime removal fails', async () => {
     const path = join(dir, 'acct-a/scope-1/local_a1.json');
     const failure = vi
@@ -704,7 +789,12 @@ describe('claude-desktop adapter against the app session records', () => {
     const env = await prepareWorkerSandbox(root);
     writeFileSync(
       path,
-      JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf8')), cwd: root, isArchived: true })
+      JSON.stringify({
+        ...JSON.parse(readFileSync(path, 'utf8')),
+        cwd: root,
+        isArchived: true,
+        archiveSetAtMs: 1,
+      })
     );
     try {
       expect(

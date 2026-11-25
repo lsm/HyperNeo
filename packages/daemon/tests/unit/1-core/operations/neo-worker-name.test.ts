@@ -1,6 +1,7 @@
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { packWorkerStartFixture } from '../../helpers/pack-worker-start.ts';
+import { historicalAsk } from '../../helpers/accepted-ask.ts';
 import { describe, expect, spyOn, test } from 'bun:test';
 import { planNeoWorkerName } from '../../../../src/lib/neo/worker-name.ts';
 import { createWorkerNameSource } from '../../../../src/lib/drivers/worker-names.ts';
@@ -143,6 +144,7 @@ test('direct and queue-driven starts share one naming lane for a default place',
   let direct: Promise<unknown> | undefined;
   let fill: Promise<unknown> | undefined;
   try {
+    historicalAsk(world.store, 'fixture-neo', 'Synthetic matter');
     await world.open();
     const askId = world.store.listOpenAsks()[0]!.id;
     const add = (id: string, title: string) => {
@@ -244,6 +246,7 @@ test.each([undefined, 'Codex remote 7'])(
       }),
     });
     try {
+      historicalAsk(world.store, 'fixture-neo', 'Synthetic matter');
       await world.open();
       const askId = world.store.listOpenAsks()[0]!.id;
       const result = await world.invoke('neo.todo.add', {
@@ -259,7 +262,7 @@ test.each([undefined, 'Codex remote 7'])(
       expect(reads).toBe(0);
       expect(lane).not.toHaveBeenCalled();
       expect(world.operations.find((op) => op.name === 'neo.todo.add')!.description).toContain(
-        'local starts'
+        "New local workers default to '<engine> <project> <n>'"
       );
     } finally {
       lane.mockRestore();

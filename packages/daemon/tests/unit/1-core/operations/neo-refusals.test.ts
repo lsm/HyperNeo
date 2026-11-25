@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { explainNeoRefusal, NEO_REFUSALS } from '@hyperneo/shared/types/neo-refusals';
-import { NEO_REPLY_CHAR_LIMIT, NEO_REPLY_LINE_LIMIT } from '@hyperneo/shared/types/neo-publication';
+import { NEO_REPLY_CHAR_LIMIT } from '@hyperneo/shared/types/neo-publication';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
 import {
   createOperationRegistry,
@@ -13,7 +13,7 @@ import {
 const NEO_SOURCE = join(import.meta.dirname, '../../../../src/lib/neo');
 const REFUSAL_CODES = [
   /\b(?:ok|accepted):\s*false(?:\s+as\s+const)?,\s*reason:\s*'([a-z][a-z0-9_]*)'(?!,\s*detail:)/g,
-  /\b(?:fail|refuse|reject)\('([a-z][a-z0-9_]*)'(?!,\s*['`])/g,
+  /\b(?:fail|refuse|reject)\('([a-z][a-z0-9_]*)'(?!,\s*['`\w])/g,
   /\.reason\s*\?\?\s*'([a-z][a-z0-9_]*)'/g,
 ];
 
@@ -29,6 +29,11 @@ function neoRefusalCodes(): Set<string> {
 }
 
 describe('explainNeoRefusal', () => {
+  test('points an unconfigured speech backend to the voice settings', () => {
+    expect(NEO_REFUSALS.speech_backend_not_configured).toContain('voice settings');
+    expect(NEO_REFUSALS.speech_backend_not_configured).not.toContain('HYPERNEO_SPEECH_URL');
+  });
+
   test.each([
     'speech_backend_not_configured',
     'speech_backend_unavailable',
@@ -81,9 +86,8 @@ describe('NEO_REFUSALS', () => {
   test('states the shared reply limit in every refusal that quotes it', () => {
     const quoted = ['reply_needs_details', 'reply_summary_too_long', 'deliverable_card_reply'];
     for (const code of quoted) {
-      expect(NEO_REFUSALS[code]).toContain(
-        `${NEO_REPLY_CHAR_LIMIT} characters and ${NEO_REPLY_LINE_LIMIT} lines`
-      );
+      expect(NEO_REFUSALS[code]).toContain(`${NEO_REPLY_CHAR_LIMIT} characters`);
+      expect(NEO_REFUSALS[code]).not.toContain('lines');
     }
   });
 });

@@ -1596,6 +1596,57 @@ describe('openai-responses-bridge server', () => {
     }
   );
 
+  it.skipIf(!isBun)('surfaces a rejected image as a non-retryable request error', async () => {
+    const message = 'input_image image_url could not parse image: Format error decoding Png';
+    server = await createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models,
+      fetchImpl: Object.assign(
+        async () =>
+          sse([
+            {
+              event: 'error',
+              data: {
+                type: 'error',
+                error: { message, type: 'invalid_request_error', param: null, code: null },
+              },
+            },
+          ]),
+        { preconnect: () => undefined }
+      ),
+    });
+
+    const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        max_tokens: 128,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: 'image/png',
+                  data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABAQMAAAAl21bKAAAABlBMVEX/AAAAAAD2gwNJAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==',
+                },
+              },
+            ],
+          },
+        ],
+      }),
+    });
+
+    const events = await readSSEEvents(resp.body);
+    expect(events.find((event) => event.event === 'error')?.data).toEqual({
+      type: 'error',
+      error: { type: 'invalid_request_error', message },
+    });
+  });
+
   it.skipIf(!isBun)('maps upstream streaming failures to Anthropic SSE errors', async () => {
     server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },

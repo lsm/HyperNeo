@@ -2,7 +2,7 @@
 
 The wrapper isolates HOME/data, provider credentials and GitHub, uses ephemeral listeners
 and removes temporary data after preserving evidence. Record actual versions: local Bun
-1.4.3 does not establish pinned Bun 1.4.2 native coverage. No runtime install, provider
+1.4.3 does not establish pinned Bun 1.4.4 native coverage. No runtime install, provider
 turn, live daemon or port 8399 is needed.
 
 Commit the failing connection-observation proof first. The trigger is the already

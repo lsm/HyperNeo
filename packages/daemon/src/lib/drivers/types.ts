@@ -46,9 +46,16 @@ const DesktopUIEvidenceSchema = z.object({
   detail: z.string(),
 });
 
+export const COPILOT_ADAPTER_ID = 'copilot-cli';
+export const COPILOT_DESKTOP_UNAVAILABLE =
+  'Copilot Desktop is unavailable on the selected machine. Open the signed-in GitHub Copilot app there under the same system user as the HyperNeo server.';
+export const CopilotClientSchema = z.enum(['desktop', 'cli']);
+export const CopilotStartClientSchema = z.enum(['auto', ...CopilotClientSchema.options]);
+
 export const WorkSummarySchema = z.object({
   execution: z.object({ directory: z.string().min(1), machine: z.string().min(1) }).optional(),
   worker: WorkerIdentitySchema.optional(),
+  copilotClient: CopilotClientSchema.optional(),
   ref: WorkRefSchema,
   title: z.string(),
   place: PlaceSchema,
@@ -134,6 +141,7 @@ export const WorkRejectionSchema = z.enum([
   'busy',
   'human_only',
   'live_todo',
+  'not_started_by_us',
   'todo_required',
 ]);
 
@@ -298,6 +306,7 @@ export type WorkVerb =
   | 'status'
   | 'turns'
   | 'stop'
+  | 'compact'
   | 'archive';
 export type WorkTurnFact = z.infer<typeof WorkTurnFactSchema>;
 export type WorkWithdrawal = {
@@ -310,6 +319,7 @@ export type ArchiveAdmission = () => Rejected | null;
 
 export interface FindQuery {
   all?: true;
+  id?: string;
   idPrefix?: string;
   text?: string;
   folder?: string;
@@ -330,6 +340,7 @@ export interface StartRequest {
   preparation?: z.infer<typeof workStartPreparation.schema>;
   model?: string;
   effort?: string;
+  copilotClient?: z.infer<typeof CopilotStartClientSchema>;
 }
 
 export interface WorkCallContext {
@@ -357,13 +368,19 @@ export interface WorkSessionFact {
 
 export interface WorkAdapter {
   readonly id: string;
+  readonly copilotClients?: readonly z.infer<typeof CopilotClientSchema>[];
   readonly capabilities: readonly WorkVerb[];
+  readonly steerBehavior?: 'best_effort';
   readonly unsupportedCapabilities?: Partial<Record<WorkVerb, string>>;
   readonly resolveStartConfiguration?: (
     request: StartRequest
   ) => Promise<Result<
     z.infer<typeof workStartConfiguration.schema> & { provider?: string }
   > | null>;
+  readonly reconfigure?: (
+    ref: WorkRef,
+    settings: z.infer<typeof workStartConfiguration.schema> & { provider?: string }
+  ) => Promise<boolean>;
   readonly supportsStartEffort?: boolean;
   readonly supportsStartPreparation?: boolean;
   find(query: FindQuery): PlaceGroup[] | Promise<PlaceGroup[]>;
@@ -375,7 +392,7 @@ export interface WorkAdapter {
     before: number,
     after: number,
     cursor?: WorkTurnPage['nextCursor']
-  ) => WorkTurnPage | null;
+  ) => WorkTurnPage | null | Promise<WorkTurnPage | null>;
   readonly start?: (
     request: StartRequest,
     context: WorkCallContext
@@ -408,5 +425,10 @@ export interface WorkAdapter {
     receipt?: WorkDelivery['receipt']
   ) => Promise<Result<WorkDetail>>;
   readonly stop?: (ref: WorkRef, context: WorkCallContext) => Promise<Result<{ stopped: boolean }>>;
+  readonly compact?: (
+    ref: WorkRef,
+    context: WorkCallContext
+  ) => Promise<Result<{ compacted: boolean }>>;
+  readonly cacheUntil?: (ref: WorkRef) => Promise<number | null>;
   readonly archive?: (ref: WorkRef, admit: ArchiveAdmission) => Promise<Result<WorkArchived>>;
 }

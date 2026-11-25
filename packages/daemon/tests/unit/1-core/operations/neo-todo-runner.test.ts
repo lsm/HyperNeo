@@ -16,7 +16,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
-import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
+import { workerEngine, workerIdentity } from '@hyperneo/shared/types/worker-identity';
+import { NEO_WORKER_BLOCKER, neoDaemonCardDraft } from '../../../../src/lib/neo/daemon-cards.ts';
+import { openHumanCard } from '../../../../src/lib/neo/human-card.ts';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoAttentionEvent } from '../../../../src/lib/neo/attention/decide.ts';
 import type { NeoPack, NeoTodoCheckResult } from '../../../../src/lib/neo/pack-contract.ts';
@@ -40,6 +42,34 @@ import { createTables, runMigrations } from '../../../../src/storage/schema/inde
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { qualifyRemoteOrigin, renderAddress } from '../../../../src/lib/mailbox/address.ts';
 import { sessionSender } from '../../../../src/lib/messaging/message-send.ts';
+
+const legacyBlockerCard = (
+  store: NeoAskTodoRepository,
+  sessions: NeoTodoSessionRepository,
+  todoId: string
+) => {
+  const todo = store.getTodo(todoId)!;
+  const ref = sessions.readRef(todoId)!;
+  const source = {
+    ...workerIdentity(ref, null),
+    provider: workerEngine(ref.adapter),
+    link: null,
+  };
+  const card = openHumanCard(
+    store,
+    crypto.randomUUID(),
+    todo.askId,
+    {
+      ...neoDaemonCardDraft(NEO_WORKER_BLOCKER, [todo]),
+      todoId,
+      document: todo.report,
+      sourceSession: source,
+    },
+    Date.now()
+  );
+  store.questionAnswers.bind(card.id, todoId, source);
+  return card;
+};
 
 const ref = { adapter: 'hyperneo', id: 'worker-1' };
 const receipt = { executionId: ref.id, inputId: 'input-1' };
@@ -242,7 +272,7 @@ describe('neo todo runner', () => {
       h.db.close();
     }
   });
-  test.each(['doing', 'done', 'failed', 'blocked', 'todo'] as const)(
+  test.each(['doing', 'done', 'blocked', 'todo'] as const)(
     'reports direct human work once on an open ask with todo state %s',
     async (state) => {
       const h = setup(false);
@@ -626,7 +656,7 @@ describe('neo todo runner', () => {
     }
   });
 
-  test('supplies recorded identity to follow-ups without guessing missing start metadata', async () => {
+  test('requests provenance at start and refreshes recorded identity on follow-ups', async () => {
     const h = setup();
     try {
       const todo = h.add({ pack: 'coding', kind: 'pr', params: {} });
@@ -654,8 +684,7 @@ describe('neo todo runner', () => {
       await h.runner.proceed(todo.id, 'Write the PR body.');
       const followup = h.calls.findLast((call) => call.name === 'work.send')!.input
         .message as string;
-      expect(followup).toContain('Agent: claude-opus-5-5 (effort: medium) via HyperNeo');
-      expect(followup).not.toContain('<effort>');
+      expect(followup.split('\n').slice(1)).toEqual(['Write the PR body.']);
       expect(h.sessions.readCard(todo.id)).toMatchObject({
         model: 'claude-opus-5-5',
         effort: 'medium',
@@ -702,8 +731,7 @@ describe('neo todo runner', () => {
       });
       await h.runner.proceed(todo.id, 'Continue coding.');
       const next = h.calls.findLast((call) => call.name === 'work.send')!.input.message as string;
-      expect(next).toContain('Agent: claude-sonnet-5 (effort: unknown) via Claude');
-      expect(next).not.toContain('effort: medium');
+      expect(next.split('\n').slice(1)).toEqual(['Continue coding.']);
       expect(h.sessions.readCard(todo.id)).toMatchObject({
         model: 'claude-sonnet-5',
         effort: null,
@@ -755,9 +783,6 @@ describe('neo todo runner', () => {
           model: 'claude-opus-5-5',
           effort: 'medium',
         });
-        expect(h.calls.findLast((call) => call.name === 'work.send')!.input.message).toContain(
-          'Agent: claude-opus-5-5 (effort: medium) via HyperNeo'
-        );
       } finally {
         h.db.close();
       }
@@ -796,9 +821,10 @@ describe('neo todo runner', () => {
     }
   });
 
-  test('Codex identity-silent follow-ups retain the pair confirmed at start', async () => {
+  test('Codex follow-ups deliver only the instruction and keep the recorded identity', async () => {
     const h = setup();
     try {
+      h.packs.push(createDelegationPack(() => h.db));
       const todo = h.add();
       await h.runner.start(todo.id);
       const worker = { adapter: 'codex-desktop', id: 'codex-thread' };
@@ -809,9 +835,11 @@ describe('neo todo runner', () => {
       });
       await h.runner.proceed(todo.id, 'Continue coding.');
       expect(h.sessions.readCard(todo.id)).toMatchObject({ model: 'gpt-6.1-sol', effort: 'high' });
-      expect(h.calls.findLast((call) => call.name === 'work.send')!.input.message).toContain(
-        'Agent: gpt-6.1-sol (effort: high) via Codex'
-      );
+      const message = String(h.calls.findLast((call) => call.name === 'work.send')!.input.message);
+      expect(message.split('\n')).toEqual([
+        expect.stringMatching(/^Worker delivery: [\da-f-]{36}$/),
+        'Continue coding.',
+      ]);
     } finally {
       h.db.close();
     }
@@ -834,9 +862,6 @@ describe('neo todo runner', () => {
       });
       await h.runner.proceed(todo.id, 'Continue.');
       expect(h.sessions.readCard(todo.id)).toMatchObject({ model: null, effort: null });
-      expect(h.calls.findLast((call) => call.name === 'work.send')!.input.message).toContain(
-        'Agent: unknown (effort: unknown) via HyperNeo'
-      );
     } finally {
       h.db.close();
     }
@@ -970,7 +995,11 @@ describe('neo todo runner', () => {
         ref,
         delivery: { delivered: false, queuedSubmissionId: 'queue-next' },
       });
-      h.store.updateTodo(h.store.getTodo(todo.id)!, { state: 'failed' }, Date.now());
+      h.store.updateTodo(
+        h.store.getTodo(todo.id)!,
+        { state: 'blocked', blockedBy: 'failure' },
+        Date.now()
+      );
       expect(h.db.prepare('SELECT count(*) AS n FROM work_delivery_inputs').get()).toEqual({
         n: 2,
       });
@@ -2271,7 +2300,7 @@ describe('neo todo runner', () => {
     }
   });
 
-  for (const state of ['done', 'blocked', 'failed', 'removed'] as const) {
+  for (const state of ['done', 'blocked', 'removed'] as const) {
     test(`a todo changed to ${state} during recovery keeps the recorded decision`, async () => {
       const { db, store, sessions, runner, told, add } = setup();
       try {
@@ -2322,7 +2351,7 @@ describe('neo todo runner', () => {
     });
   });
 
-  test('a start the driver keeps refusing is retried twice, then waits on one card', async () => {
+  test('a start the driver keeps refusing is retried twice, then is Neo’s with no card', async () => {
     const { db, store, add, told } = setup();
     const todo = add();
     const starts: string[] = [];
@@ -2346,25 +2375,10 @@ describe('neo todo runner', () => {
     expect(starts).toEqual(['work.start', 'work.start', 'work.start']);
     expect(result.ok && result.todo).toMatchObject({
       state: 'blocked',
+      blockedBy: 'failure',
       blockedReason: 'unavailable: login expired',
     });
-    expect(
-      store.listQuestions('ask').map(({ state, cause, todos, options, text }) => ({
-        state,
-        cause,
-        todos,
-        options,
-        text,
-      }))
-    ).toEqual([
-      {
-        state: 'open',
-        cause: 'retries_exhausted',
-        todos: [todo.id],
-        options: ['Retry', 'Mark done', 'Remove'],
-        text: '"Rows" could not start after 2 automatic retries: unavailable: login expired. Retry, mark done, or remove?',
-      },
-    ]);
+    expect(store.listQuestions('ask')).toEqual([]);
     expect(told).toEqual([]);
   });
 
@@ -2802,12 +2816,12 @@ describe('neoTodoStateEvent', () => {
     });
   });
 
-  test.each([
-    ['a failed row', todo({ state: 'failed' })],
-    ['a todo blocked by its failure', todo({ state: 'blocked', blockedBy: 'failure' })],
-  ])("%s raises nothing: the sweep's Neo step tells it", (_name, item) => {
-    expect(neoTodoStateEvent(item)).toBeNull();
-  });
+  test.each([['a todo blocked by its failure', todo({ state: 'blocked', blockedBy: 'failure' })]])(
+    "%s raises nothing: the sweep's Neo step tells it",
+    (_name, item) => {
+      expect(neoTodoStateEvent(item)).toBeNull();
+    }
+  );
 });
 
 describe('neoTodoNote', () => {
@@ -2822,12 +2836,6 @@ describe('neoTodoNote', () => {
       } as NeoTodo)
     ).toBe(
       'Todo "T" reported, and nothing checks it: record evidence for "Lane merged"; closing it without a passed outcome check leaves it blocked, never done.\nIts report:\nWaiting on CI'
-    );
-  });
-
-  test('says a failure with its reason', () => {
-    expect(neoTodoNote({ title: 'T', state: 'failed', reason: 'gone' } as NeoTodo)).toBe(
-      'Todo "T" failed: gone'
     );
   });
 
@@ -3058,25 +3066,19 @@ describe('blocked todos', () => {
     expect([starts, store.getTodo(todo.id)?.state]).toEqual([2, 'doing']);
     store.updateTodo(
       store.getTodo(todo.id)!,
-      { state: 'failed', reason: 'Worker died' },
+      { state: 'blocked', blockedBy: 'failure', blockedReason: 'Worker died' },
       Date.now()
     );
     db.prepare('UPDATE neo_todo_sessions SET ref = NULL WHERE todo_id = ?').run(todo.id);
     await flaky.retry(todo.id);
     expect(starts).toBe(5);
-    const [card] = store.listQuestions('ask');
-    expect(card).toMatchObject({ cause: 'retries_exhausted', state: 'open' });
-    store.answerQuestion(card, ['Retry'], 'button', Date.now());
+    expect(store.listQuestions('ask')).toEqual([]);
     await flaky.retry(todo.id);
     expect(starts).toBe(8);
-    expect(
-      store
-        .listQuestions('ask')
-        .filter((q) => q.state === 'open' && q.cause === 'retries_exhausted')
-    ).toHaveLength(1);
+    expect(store.getTodo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'failure' });
   });
 
-  test('a send that keeps failing after its identity is read still ends on one retries card', async () => {
+  test('a send that keeps failing after its identity is read ends failed with no card', async () => {
     const { db, store } = setup();
     const sessions = new NeoTodoSessionRepository(db);
     const todo = store.addTodo(
@@ -3120,13 +3122,11 @@ describe('blocked todos', () => {
     await runner.start(todo.id);
     expect(sessions.readRef(todo.id)).toBeNull();
     expect([sends, store.getTodo(todo.id)?.state]).toEqual([3, 'blocked']);
-    expect(store.listQuestions('ask').map((q) => [q.cause, q.state, q.todos])).toEqual([
-      ['retries_exhausted', 'open', [todo.id]],
-    ]);
+    expect(store.listQuestions('ask')).toEqual([]);
     expect(told).toEqual([]);
   });
 
-  test('a todo whose retries ran out starts again on retry once its card is answered', async () => {
+  test('a todo whose retries ran out starts again when Neo retries it', async () => {
     const { db, store, runner, add, told } = setup();
     const todo = add();
     const failing = createNeoTodoRunner({
@@ -3144,8 +3144,7 @@ describe('blocked todos', () => {
     });
     await failing.start(todo.id);
     expect(store.getTodo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'failure' });
-    const [card] = store.listQuestions('ask');
-    store.answerQuestion(card, ['Retry'], 'button', Date.now());
+    expect(store.listQuestions('ask')).toEqual([]);
     expect(await runner.retry(todo.id)).toMatchObject({ ok: true });
     expect(store.getTodo(todo.id)).toMatchObject({ state: 'doing', blockedBy: null });
   });
@@ -3663,7 +3662,12 @@ describe('failed todo retry in place', () => {
       const original = h.sessions.inputs.list(todo.id)[0];
       h.store.updateTodo(
         h.store.getTodo(todo.id)!,
-        { state: 'failed', reason: 'Synthetic failure', report: 'Prior failure report' },
+        {
+          state: 'blocked',
+          blockedBy: 'failure',
+          blockedReason: 'Synthetic failure',
+          report: 'Prior failure report',
+        },
         3
       );
       h.setStatus({ ok: true, value: { status: 'failed', lastActivityAt: 2000 } });
@@ -3735,7 +3739,7 @@ describe('worker final-line blockers', () => {
     }
   );
   test.each(['unchanged', 'edited', 'question', 'closed', 'new-input'] as const)(
-    'opens one card after an untouched hour, with no reminder to Neo: %s',
+    'opens no card after an untouched hour; the blocker stays with Neo: %s',
     async (action) => {
       const h = setup(false);
       const clock = vi.spyOn(Date, 'now');
@@ -3801,20 +3805,10 @@ describe('worker final-line blockers', () => {
         const open = h.store
           .listQuestions('ask')
           .filter((q) => q.todoId === todo.id && q.state === 'open');
-        expect(open).toHaveLength(['question', 'unchanged'].includes(action) ? 1 : 0);
-        if (action === 'edited') expect(h.store.getTodo(todo.id)?.blockedBy).toBe('needs-human');
+        expect(open).toHaveLength(action === 'question' ? 1 : 0);
+        if (['edited', 'unchanged'].includes(action))
+          expect(h.store.getTodo(todo.id)?.blockedBy).toBe('needs-human');
         expect(h.told.filter((note) => note.includes('still waits on'))).toHaveLength(0);
-        if (action === 'unchanged') {
-          expect(open[0]).toMatchObject({
-            cause: 'worker_blocker',
-            todos: [todo.id],
-            options: ['Mark done', 'Remove'],
-            document: 'Blocked (needs_human): Awaiting Neo confirmation',
-            text: '"Rows" is blocked: Awaiting Neo confirmation. Reply to its worker, mark it done, or remove it?',
-          });
-          await h.runner.refresh(() => {});
-          expect(h.store.listQuestions('ask').filter((q) => q.todoId === todo.id)).toHaveLength(1);
-        }
         expect(h.calls.filter((c) => c.name === 'work.send')).toHaveLength(0);
       } finally {
         clock.mockRestore();
@@ -3992,7 +3986,7 @@ describe('worker blocker ownership', () => {
       h.db.close();
     }
   });
-  test('a free reply to a blocker card opened while its source was unreadable reaches the worker once it recovers', async () => {
+  test('a free reply to a blocker card still open from before reaches the worker once it recovers', async () => {
     const h = setup(false);
     const clock = vi.spyOn(Date, 'now');
     try {
@@ -4010,10 +4004,7 @@ describe('worker blocker ownership', () => {
       });
       await h.runner.refresh(() => {});
       clock.mockReturnValue(start + 60 * 60_000);
-      await h.runner.refresh(() => {});
-      const [card] = h.store
-        .listQuestions('ask')
-        .filter((q) => q.cause === 'worker_blocker' && q.state === 'open');
+      const card = legacyBlockerCard(h.store, h.sessions, todo.id);
       h.store.answerQuestion(card, 'Use the staging host', 'chat', Date.now());
       const sent: unknown[] = [];
       const deliver = (up: boolean) =>
@@ -4048,7 +4039,7 @@ describe('worker blocker ownership', () => {
     ['Mark done', 'neo.todo.done'],
     ['Remove', 'neo.todo.remove'],
   ])(
-    'after a restart, a blocker card answered %s runs its action once and never reaches the worker',
+    'after a restart, a blocker card still open from before, answered %s, runs its action once and never reaches the worker',
     async (answer, action) => {
       const h = setup(false);
       const clock = vi.spyOn(Date, 'now');
@@ -4067,10 +4058,7 @@ describe('worker blocker ownership', () => {
         });
         await h.runner.refresh(() => {});
         clock.mockReturnValue(start + 60 * 60_000);
-        await h.runner.refresh(() => {});
-        const [card] = h.store
-          .listQuestions('ask')
-          .filter((q) => q.cause === 'worker_blocker' && q.state === 'open');
+        const card = legacyBlockerCard(h.store, h.sessions, todo.id);
         h.store.answerQuestion(card, [answer], 'button', Date.now());
         const calls: string[] = [];
         const sweep = () =>
@@ -4260,7 +4248,7 @@ describe('a todo for a busy worker', () => {
       expect(h.sessions.sendsNow(doing.id, ref)).toBe(true);
       const blocked = h.store.updateTodo(doing, { state: 'blocked', blockedBy: 'check' }, 2);
       expect(h.sessions.sendsNow(blocked.id, ref)).toBe(true);
-      h.store.updateTodo(blocked, { state: 'failed', finishedAt: 3 }, 3);
+      h.store.updateTodo(blocked, { state: 'done', finishedAt: 3 }, 3);
       expect(h.sessions.sendsNow(todo.id, ref)).toBe(false);
     } finally {
       h.db.close();

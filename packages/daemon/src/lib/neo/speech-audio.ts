@@ -4,9 +4,36 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { Logger } from '../logger.ts';
 import { voiceDiagnostic } from '../voice/diagnostics.ts';
 import type { ClientEventData } from '../operations/client-event-schemas.ts';
+import { readLimitedResponseText } from '../voice/transcribe-fetch.ts';
+import { redactVoiceReason } from '../voice/voice-parts.ts';
+import { withVoiceCredentialLock } from '../rpc-handlers/voice-credential-lock.ts';
 type Target = { id: string; sessionId: string; clientId: string; text: string };
 type SpeechRetry = { retryInMs: number } | { giveUp: string };
 const SPEECH_DEADLINE_MS = 180_000;
+const OPENAI_VOICES = [
+  'alloy',
+  'ash',
+  'ballad',
+  'coral',
+  'echo',
+  'fable',
+  'nova',
+  'onyx',
+  'sage',
+  'shimmer',
+  'verse',
+  'marin',
+  'cedar',
+];
+
+export type SpeechPart = {
+  provider?: 'openai' | 'deepgram';
+  endpoint: string;
+  model?: string;
+  voice?: string;
+  key?: string;
+};
+type SpeechBackend = { base?: string; part?: SpeechPart };
 
 const retryAfterMs = (header: string | null, now: number): number | null => {
   if (header === null) return null;
@@ -48,6 +75,12 @@ export const planSpeechRetry = (superpipe({})('neo.speech.retry') as PipelineAPI
   now: number
 ) => SpeechRetry;
 
+const authorization = (part?: SpeechPart): Record<string, string> =>
+  part?.key
+    ? { Authorization: `${part.provider === 'deepgram' ? 'Token' : 'Bearer'} ${part.key}` }
+    : {};
+const isDeepgram = (backend: SpeechBackend) => backend.part?.provider === 'deepgram';
+
 export class NeoSpeechAudio {
   private readonly jobs = new Map<string, AbortController>();
   private serial: Promise<unknown> = Promise.resolve();
@@ -56,12 +89,18 @@ export class NeoSpeechAudio {
     private readonly send: (client: string, data: ClientEventData<'neo.speech'>) => boolean,
     private readonly failed: (target: Target) => Promise<unknown>,
     private readonly base = process.env.HYPERNEO_SPEECH_URL,
-    private readonly request: typeof fetch = fetch
+    private readonly request: typeof fetch = fetch,
+    private readonly speechPart: () => Promise<SpeechPart | undefined> = async () => undefined
   ) {}
 
-  private url(path: string): URL {
-    if (!this.base) throw new Error('speech_backend_not_configured');
-    const address = this.base.replace(/\/$/, '') + path;
+  private async backend(): Promise<SpeechBackend> {
+    const part = await this.speechPart();
+    return part ? { base: part.endpoint, part } : { base: this.base };
+  }
+
+  private url({ base, part }: SpeechBackend, path: string): URL {
+    if (!base) throw new Error('speech_backend_not_configured');
+    const address = base.replace(/\/$/, '') + path;
     const url = URL.canParse(address) ? new URL(address) : null;
     if (
       !url ||
@@ -71,20 +110,51 @@ export class NeoSpeechAudio {
       url.hash ||
       !(
         url.protocol === 'https:' ||
-        (url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname))
+        (url.protocol === 'http:' &&
+          !part?.key &&
+          ['localhost', '127.0.0.1'].includes(url.hostname))
       )
     )
       throw new Error('invalid_speech_backend');
     return url;
   }
 
+  private speechRequest(backend: SpeechBackend, text: string, voice: string | undefined) {
+    const part = backend.part;
+    if (part?.provider === 'deepgram') {
+      const url = this.url(backend, '/v1/speak');
+      const model = voice ?? part.voice ?? part.model;
+      if (model) url.searchParams.set('model', model);
+      url.searchParams.set('encoding', 'linear16');
+      url.searchParams.set('sample_rate', '24000');
+      url.searchParams.set('container', 'none');
+      return { url, body: { text } };
+    }
+    const spoken = voice ?? (part ? part.voice : 'vivian');
+    return {
+      url: this.url(backend, '/v1/audio/speech'),
+      body: part
+        ? {
+            ...(part.model ? { model: part.model } : {}),
+            input: text,
+            ...(spoken ? { voice: spoken } : {}),
+            response_format: 'pcm',
+          }
+        : { input: text, voice: spoken, language: 'auto', response_format: 'pcm' },
+    };
+  }
+
   async catalog(): Promise<{ ok: true; catalog: unknown } | { ok: false; reason: string }> {
     const signal = AbortSignal.timeout(10_000);
     try {
-      const response = await this.request(this.url('/v1/audio/voices'), {
+      const backend = await this.backend();
+      const path = isDeepgram(backend) ? '/v1/models' : '/v1/audio/voices';
+      const response = await this.request(this.url(backend, path), {
         signal,
         redirect: 'error',
+        headers: authorization(backend.part),
       }).catch((error) => {
+        if (backend.part && !isDeepgram(backend)) return null;
         if (
           error instanceof TypeError ||
           (error instanceof DOMException && ['TimeoutError', 'AbortError'].includes(error.name))
@@ -92,8 +162,15 @@ export class NeoSpeechAudio {
           throw new Error('speech_backend_unavailable');
         throw error;
       });
-      if (!response.ok) throw new Error('speech_backend_unavailable');
-      return { ok: true, catalog: await response.json() };
+      if (backend.part && !isDeepgram(backend) && !response?.ok)
+        return { ok: true, catalog: { data: OPENAI_VOICES.map((id) => ({ id })) } };
+      if (!response?.ok) throw new Error('speech_backend_unavailable');
+      if (!isDeepgram(backend)) return { ok: true, catalog: await response.json() };
+      const models = (await response.json()) as { tts?: { canonical_name?: string }[] };
+      const data = (models.tts ?? []).flatMap((m) =>
+        m.canonical_name ? [{ id: m.canonical_name }] : []
+      );
+      return { ok: true, catalog: { data } };
     } catch (error) {
       if (signal.aborted) return { ok: false, reason: 'speech_backend_unavailable' };
       if (
@@ -109,7 +186,57 @@ export class NeoSpeechAudio {
     }
   }
 
-  start(target: Target, voice: string): void {
+  async test(
+    savedKeys: () => Promise<string[]>
+  ): Promise<{ ok: true } | { ok: false; reason: string }> {
+    const snapshot = await withVoiceCredentialLock(async () => ({
+      backend: await this.backend(),
+      keys: await savedKeys(),
+    }));
+    let result: { ok: true } | { ok: false; reason: string };
+    try {
+      const backend = snapshot.backend;
+      const speech = this.speechRequest(backend, 'Hello, this is a voice test.', undefined);
+      const response = await this.request(speech.url, {
+        method: 'POST',
+        signal: AbortSignal.timeout(10_000),
+        redirect: 'error',
+        headers: { 'Content-Type': 'application/json', ...authorization(backend.part) },
+        body: JSON.stringify(speech.body),
+      });
+      if (!response.ok) {
+        const body = await readLimitedResponseText(response).catch(() => 'Response unavailable');
+        result = { ok: false, reason: `HTTP ${response.status}: ${body.trim()}` };
+      } else {
+        const type = response.headers.get('content-type') ?? '';
+        if (!type.startsWith(isDeepgram(backend) ? 'audio/l16' : 'audio/pcm') || !response.body) {
+          await response.body?.cancel().catch(() => {});
+          result = { ok: false, reason: 'Speech service returned no PCM audio' };
+        } else {
+          const reader = response.body.getReader();
+          try {
+            const first = await reader.read();
+            result = first.value?.byteLength
+              ? { ok: true }
+              : { ok: false, reason: 'Speech service returned no audio' };
+          } finally {
+            await reader.cancel();
+          }
+        }
+      }
+    } catch (error) {
+      result = { ok: false, reason: error instanceof Error ? error.message : String(error) };
+    }
+    if (result.ok) return result;
+    return withVoiceCredentialLock(async () => {
+      return {
+        ok: false as const,
+        reason: redactVoiceReason(result.reason, [...snapshot.keys, ...(await savedKeys())]),
+      };
+    });
+  }
+
+  start(target: Target, voice: string | undefined): void {
     const timing = { speechId: target.id, sessionId: target.sessionId, clientId: target.clientId };
     voiceDiagnostic('voice.tts.queued', { ...timing, atMs: Date.now() });
     const controller = new AbortController();
@@ -121,18 +248,15 @@ export class NeoSpeechAudio {
       .then(async () => {
         controller.signal.throwIfAborted();
         voiceDiagnostic('voice.tts.request_started', { ...timing, atMs: Date.now() });
+        const backend = await this.backend();
+        const speech = this.speechRequest(backend, target.text, voice);
         const synthesize = () =>
-          this.request(this.url('/v1/audio/speech'), {
+          this.request(speech.url, {
             method: 'POST',
             signal: controller.signal,
             redirect: 'error',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              input: target.text,
-              voice,
-              language: 'auto',
-              response_format: 'pcm',
-            }),
+            headers: { 'Content-Type': 'application/json', ...authorization(backend.part) },
+            body: JSON.stringify(speech.body),
           });
         let response = await synthesize();
         for (let attempt = 0; !response.ok; attempt++) {
@@ -151,22 +275,37 @@ export class NeoSpeechAudio {
           response = await synthesize();
         }
         fault.status = response.status;
+        const type = response.headers.get('content-type') ?? '';
         if (
           !response.ok ||
-          !response.headers.get('content-type')?.startsWith('audio/pcm') ||
+          !type.startsWith(isDeepgram(backend) ? 'audio/l16' : 'audio/pcm') ||
           !response.body
         )
           throw new Error('speech_backend_unavailable');
         const reader = response.body.getReader();
         let bytes = 0,
           seq = 0;
+        let head: Uint8Array | null = new Uint8Array(0);
         try {
           while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            controller.signal.throwIfAborted();
-            if (!bytes && value.byteLength)
-              voiceDiagnostic('voice.tts.first_chunk', { ...timing, atMs: Date.now() });
+            const read = await reader.read();
+            if (!read.done) controller.signal.throwIfAborted();
+            let value: Uint8Array = read.value ?? new Uint8Array(0);
+            if (head) {
+              value = Buffer.concat([head, value]);
+              if (value.byteLength < 4 && !read.done) {
+                head = value;
+                continue;
+              }
+              head = null;
+              if (Buffer.from(value.subarray(0, 4)).toString('latin1') === 'RIFF')
+                throw new Error('invalid_speech_audio');
+            }
+            if (!value.byteLength) {
+              if (read.done) break;
+              continue;
+            }
+            if (!bytes) voiceDiagnostic('voice.tts.first_chunk', { ...timing, atMs: Date.now() });
             bytes += value.byteLength;
             if (bytes > 5_760_000) throw new Error('speech_audio_too_long');
             for (let offset = 0; offset < value.length; offset += 3840) {
@@ -183,6 +322,7 @@ export class NeoSpeechAudio {
               if (seq === 1)
                 voiceDiagnostic('voice.tts.first_chunk_sent', { ...timing, atMs: Date.now() });
             }
+            if (read.done) break;
           }
           if (!bytes || bytes % 2) throw new Error('invalid_speech_audio');
           if (

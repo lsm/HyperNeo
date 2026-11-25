@@ -58,7 +58,7 @@ try {
       todo.run(`${id}-todo`, id, 'done', 'Full synthetic instruction', 'Full synthetic report');
     }
     for (const suffix of ['unverified', 'waiting']) ask.run(`${project}-${suffix}`, project, root, `${project} ${suffix}`, 'done', -1, -1);
-    todo.run(`${project}-unverified-todo`, `${project}-unverified`, 'failed', 'Inspect this unfinished task', 'Not verified');
+    todo.run(`${project}-unverified-todo`, `${project}-unverified`, 'blocked', 'Inspect this unfinished task', 'Not verified');
     db.prepare(`INSERT INTO neo_questions (id,ask_id,text,kind,state,created_at) VALUES (?,?,'Answer this older question','reply','open',-1)`).run(`${project}-q`, `${project}-waiting`);
   }
   await opened;

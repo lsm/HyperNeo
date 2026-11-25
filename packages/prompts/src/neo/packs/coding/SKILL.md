@@ -2,6 +2,7 @@
 name: coding-pack
 description: Neo's coding pack guidance. Load it before planning, assigning, reviewing or merging any software work in a git repository, such as pull requests, CI, review, merge rules and coding workers.
 ---
+When telling the human about a pull request or issue, say in a few plain words what it changes before its number, for example "the reply length fix (HyperNeo#10631)".
 Read repository code from <HyperNeo data dir>/worktrees/<lowercase owner>/<lowercase repo>/neo-read, kept current by the GitHub poller; never use or update the human's checkout.
 Dev workers are long-lived and named for the project and a number (never a task title); one dev worker carries many PRs for its project. Use work.rename if a session inherits a task title.
 For multi-PR work, use one PR per todo, with all steps added up front. Order comes only
@@ -86,21 +87,25 @@ target.preparationParameters.verifySkill "create", and merge it under the
 repository's merge rule. Put the real work in later todos.
 
 Include coding.provenance in the existing first-use pack preference question.
-Use one preference shape for Write, Review and Verify: `write.harness/model/effort`,
-`review.harness/model/effort` and `verify.harness/model/effort` in the coding pack.
-All prefer a configuration; empty means default. Before starting a coding Write
-todo, read `write.harness`, `write.model` and `write.effort` with
-`pack.preferences.get` for the coding pack and repository scope. Repository keys
-match case-insensitively; use the saved scope spelling from `pack.preferences.list`.
-Trim saved preference text. A missing repository value inherits the global
-value; an explicit empty value uses the default for that field. Keep available target configurations in default-first order.
-Choose the candidate matching the most nonempty preferences, comparing harness
-to its adapter and model/effort to their corresponding fields. Break ties by the
-original default-first order. For each preference the selected target cannot
-match, report the preferred value and the fallback value being used. Pass the
-selected configuration as a `target` with `verb: "start"` to `neo.todo.add`
-through the existing coding todo path. Use the existing pack preference question to propose changes; never
-save unanswered defaults. Review preferences do not apply to configured bots.
+Use one preference shape for Write, Review and Verify: `write.harness/effort`,
+`review.harness/effort` and `verify.harness/effort` in the coding pack. Empty
+means default. The model is not a coding preference: it comes from `model-routing`
+routes for the `coding.write`, `coding.review` and `coding.verify` kinds, so propose
+a model change as a `model-routing` route, never as a coding key. Older installs may
+still have saved coding model values; coding keeps reading them until their
+migration is confirmed, so do not delete them. Before starting a coding Write todo,
+read `write.harness` and `write.effort` with `pack.preferences.get` for the coding
+pack and repository scope. Repository keys match case-insensitively; use the saved
+scope spelling from `pack.preferences.list`. Trim saved preference text. A missing
+repository value inherits the global value; an explicit empty value uses the default
+for that field. Keep available target configurations in default-first order. Choose
+the candidate matching the most nonempty preferences, comparing harness to its
+adapter and effort to its effort. Break ties by the original default-first order.
+For each preference the selected target cannot match, report the preferred value and
+the fallback value being used. Pass the selected configuration as a `target` with
+`verb: "start"` to `neo.todo.add` through the existing coding todo path; coding ranks
+its model line again at start. Use the existing pack preference question to propose
+changes; never save unanswered defaults. Review preferences do not apply to configured bots.
 Read the saved repository preference with pack.preferences.get; an unanswered
 provenance preference falls back to on without saving a value or marking it answered.
 Keep provenance an explicit pack preference. Keeping the current settings on an

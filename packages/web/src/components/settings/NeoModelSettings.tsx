@@ -1,4 +1,3 @@
-import { NeoRelaySendersSettings } from './NeoRelaySendersSettings.tsx';
 import { neoWorkerPermissionMode } from '@hyperneo/shared/types/settings';
 import { navigateToSettings } from '../../lib/router.ts';
 import { globalSettings } from '../../lib/state.ts';
@@ -21,7 +20,7 @@ function NeoRelatedSettings() {
           description={`Claude worker permission: ${permission}${unset} · Worker sandbox: ${settings?.workerSandbox ?? 'off'}`}
         >
           <Button variant="secondary" size="sm" onClick={() => navigateToSettings('harness')}>
-            Sessions & Harness →
+            Sessions & Clients →
           </Button>
         </SettingsRow>
         <SettingsRow label="Coding pack" description="Merge rules, review bot and human sign-off">
@@ -44,7 +43,6 @@ export function NeoModelSettings() {
       <div class="mt-4">
         <NeoTodoLimitsSettings />
       </div>
-      <NeoRelaySendersSettings />
       <NeoMutedSessionsSettings />
       <NeoRelatedSettings />
     </>

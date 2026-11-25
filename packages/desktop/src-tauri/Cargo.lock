@@ -1230,16 +1230,16 @@ dependencies = [
 
 [[package]]
 name = "cua-cursor-motion"
-version = "0.44.0"
-source = "git+https://github.com/lsm/cua.git?tag=hyperneo-cua-driver-v0.44.0-1#3d680c2f659f4eddef76c5690c7311faede07aac"
+version = "0.55.0"
+source = "git+https://github.com/lsm/cua.git?rev=a3320a58111cfb41fdcedb21bde43931dacfccf9#a3320a58111cfb41fdcedb21bde43931dacfccf9"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "cua-driver-contract"
-version = "0.44.0"
-source = "git+https://github.com/lsm/cua.git?tag=hyperneo-cua-driver-v0.44.0-1#3d680c2f659f4eddef76c5690c7311faede07aac"
+version = "0.55.0"
+source = "git+https://github.com/lsm/cua.git?rev=a3320a58111cfb41fdcedb21bde43931dacfccf9#a3320a58111cfb41fdcedb21bde43931dacfccf9"
 dependencies = [
  "schemars 1.2.1",
  "serde",
@@ -1249,8 +1249,8 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-core"
-version = "0.44.0"
-source = "git+https://github.com/lsm/cua.git?tag=hyperneo-cua-driver-v0.44.0-1#3d680c2f659f4eddef76c5690c7311faede07aac"
+version = "0.55.0"
+source = "git+https://github.com/lsm/cua.git?rev=a3320a58111cfb41fdcedb21bde43931dacfccf9#a3320a58111cfb41fdcedb21bde43931dacfccf9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1292,8 +1292,8 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-sdk"
-version = "0.44.0"
-source = "git+https://github.com/lsm/cua.git?tag=hyperneo-cua-driver-v0.44.0-1#3d680c2f659f4eddef76c5690c7311faede07aac"
+version = "0.55.0"
+source = "git+https://github.com/lsm/cua.git?rev=a3320a58111cfb41fdcedb21bde43931dacfccf9#a3320a58111cfb41fdcedb21bde43931dacfccf9"
 dependencies = [
  "async-trait",
  "core-foundation 0.10.1",
@@ -1315,8 +1315,8 @@ dependencies = [
 
 [[package]]
 name = "cursor-overlay"
-version = "0.44.0"
-source = "git+https://github.com/lsm/cua.git?tag=hyperneo-cua-driver-v0.44.0-1#3d680c2f659f4eddef76c5690c7311faede07aac"
+version = "0.55.0"
+source = "git+https://github.com/lsm/cua.git?rev=a3320a58111cfb41fdcedb21bde43931dacfccf9#a3320a58111cfb41fdcedb21bde43931dacfccf9"
 dependencies = [
  "anyhow",
  "cua-cursor-motion",
@@ -1477,7 +1477,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1719,7 +1719,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2678,8 +2678,9 @@ dependencies = [
 
 [[package]]
 name = "hyperneo-desktop"
-version = "0.58.0"
+version = "0.63.1"
 dependencies = [
+ "cc",
  "core-foundation 0.10.1",
  "core-graphics 0.25.0",
  "cua-driver-sdk",
@@ -2687,6 +2688,7 @@ dependencies = [
  "dispatch2",
  "libc",
  "log",
+ "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "reqwest 0.12.28",
@@ -2715,7 +2717,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
@@ -3139,7 +3141,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e9ec52138abedcc58dc17a7c6c0c00a2bdb4f3427c7f63fa97fd0d859155caf"
 dependencies = [
  "gtk-sys",
- "libloading",
+ "libloading 0.7.4",
  "once_cell",
 ]
 
@@ -3166,6 +3168,16 @@ checksum = "b67380fd3b2fbe7527a606e18729d21c6f3951633d0500574c4dc22d2d638b9f"
 dependencies = [
  "cfg-if",
  "winapi",
+]
+
+[[package]]
+name = "libloading"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
+dependencies = [
+ "cfg-if",
+ "windows-link 0.2.1",
 ]
 
 [[package]]
@@ -3363,7 +3375,7 @@ dependencies = [
  "png 0.18.1",
  "serde",
  "thiserror 2.0.18",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3565,7 +3577,7 @@ version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "680998035259dcfcafe653688bf2aa6d3e2dc05e98be6ab46afb089dc84f1df8"
 dependencies = [
- "proc-macro-crate 3.5.0",
+ "proc-macro-crate 1.3.1",
  "proc-macro2",
  "quote",
  "syn 2.0.118",
@@ -3974,7 +3986,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.45.0",
 ]
 
 [[package]]
@@ -4132,14 +4144,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
-name = "pip-preview"
-version = "0.44.0"
-source = "git+https://github.com/lsm/cua.git?tag=hyperneo-cua-driver-v0.44.0-1#3d680c2f659f4eddef76c5690c7311faede07aac"
-dependencies = [
- "serde_json",
-]
-
-[[package]]
 name = "piper"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4164,8 +4168,8 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "platform-linux"
-version = "0.44.0"
-source = "git+https://github.com/lsm/cua.git?tag=hyperneo-cua-driver-v0.44.0-1#3d680c2f659f4eddef76c5690c7311faede07aac"
+version = "0.55.0"
+source = "git+https://github.com/lsm/cua.git?rev=a3320a58111cfb41fdcedb21bde43931dacfccf9#a3320a58111cfb41fdcedb21bde43931dacfccf9"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -4184,9 +4188,9 @@ dependencies = [
  "futures-util",
  "image",
  "libc",
+ "libloading 0.8.9",
  "memmap2",
  "meval",
- "pip-preview",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -4210,8 +4214,8 @@ dependencies = [
 
 [[package]]
 name = "platform-macos"
-version = "0.44.0"
-source = "git+https://github.com/lsm/cua.git?tag=hyperneo-cua-driver-v0.44.0-1#3d680c2f659f4eddef76c5690c7311faede07aac"
+version = "0.55.0"
+source = "git+https://github.com/lsm/cua.git?rev=a3320a58111cfb41fdcedb21bde43931dacfccf9#a3320a58111cfb41fdcedb21bde43931dacfccf9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4232,7 +4236,6 @@ dependencies = [
  "objc2-app-kit 0.2.2",
  "objc2-foundation 0.2.2",
  "objc2-quartz-core 0.2.2",
- "pip-preview",
  "screencapturekit",
  "security-framework",
  "serde",
@@ -4249,8 +4252,8 @@ dependencies = [
 
 [[package]]
 name = "platform-windows"
-version = "0.44.0"
-source = "git+https://github.com/lsm/cua.git?tag=hyperneo-cua-driver-v0.44.0-1#3d680c2f659f4eddef76c5690c7311faede07aac"
+version = "0.55.0"
+source = "git+https://github.com/lsm/cua.git?rev=a3320a58111cfb41fdcedb21bde43931dacfccf9#a3320a58111cfb41fdcedb21bde43931dacfccf9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4261,7 +4264,6 @@ dependencies = [
  "cursor-overlay",
  "getrandom 0.4.3",
  "image",
- "pip-preview",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -4936,7 +4938,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5499,7 +5501,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52d1cfed4120b4d927bf7c0f86d2087a4a7d6027c906d9f9d525a80573b9be51"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -6096,7 +6098,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6546,7 +6548,7 @@ dependencies = [
  "png 0.18.1",
  "serde",
  "thiserror 2.0.18",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -6614,7 +6616,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset 0.9.1",
  "tempfile",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -6715,7 +6717,7 @@ dependencies = [
  "serde",
  "tempfile",
  "textwrap",
- "toml 0.8.2",
+ "toml 0.9.12+spec-1.1.0",
  "uniffi_internal_macros",
  "uniffi_meta",
  "uniffi_pipeline",
@@ -6761,7 +6763,7 @@ dependencies = [
  "quote",
  "serde",
  "syn 2.0.118",
- "toml 0.8.2",
+ "toml 0.9.12+spec-1.1.0",
  "uniffi_meta",
 ]
 
@@ -7264,7 +7266,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7367,19 +7369,6 @@ dependencies = [
  "windows-link 0.1.3",
  "windows-result 0.3.4",
  "windows-strings 0.4.2",
-]
-
-[[package]]
-name = "windows-core"
-version = "0.62.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8e83a14d34d0623b51dce9581199302a221863196a1dde71a7663a4c2be9deb"
-dependencies = [
- "windows-implement 0.60.2",
- "windows-interface 0.59.3",
- "windows-link 0.2.1",
- "windows-result 0.4.1",
- "windows-strings 0.5.1",
 ]
 
 [[package]]

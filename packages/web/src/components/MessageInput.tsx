@@ -1,10 +1,12 @@
 import { generateUUID } from '@hyperneo/shared';
+import { isOxapHarness, oxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import type {
   MessageDeliveryMode,
   MessageImage,
   ModelInfo,
   ReferenceMention,
   SessionFeatures,
+  SessionConfig,
   SessionType,
 } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
@@ -176,6 +178,8 @@ interface MessageInputProps {
   sessionId: string;
   pendingAttachmentKey?: string;
   sessionType?: SessionType;
+  harness?: SessionConfig['harness'];
+  imagesSupported?: boolean;
   onSend: (
     content: string,
     images?: MessageImage[],
@@ -205,6 +209,8 @@ export default function MessageInput({
   sessionId,
   pendingAttachmentKey,
   sessionType,
+  harness,
+  imagesSupported = !isOxapHarness(harness),
   onSend,
   disabled,
   onOpenTools,
@@ -225,6 +231,7 @@ export default function MessageInput({
   registerDropTarget,
   store,
 }: MessageInputProps) {
+  const textOnly = !imagesSupported;
   const isTouchDeviceRef = useRef(
     window.matchMedia('(pointer: coarse)').matches ||
       ('ontouchstart' in window && window.innerWidth < 768)
@@ -254,6 +261,15 @@ export default function MessageInput({
     loading: modelLoading,
     switchModel,
   } = useModelSwitcher(sessionId, pendingModelSwitch);
+  const clientName = isOxapHarness(harness) ? oxapHarness(harness).label : 'This client';
+  const modelName =
+    currentModelInfo?.name || currentModel || store?.sessionInfo.value?.config.model;
+  const explainImageLimit = useCallback(() => {
+    const model = modelName ? ` with ${modelName}` : '';
+    toast.info(
+      `${clientName} cannot attach images${model}. Send text here, or start a chat with OXAP DeepSeek and DeepSeek V4 Flash for images.`
+    );
+  }, [clientName, modelName]);
   const pendingModelName = pendingModelSwitch
     ? (availableModels.find(
         (m) => m.id === pendingModelSwitch.model && m.provider === pendingModelSwitch.provider
@@ -305,13 +321,19 @@ export default function MessageInput({
     voiceRecorder.isRecording ||
     isTranscribing ||
     voiceRecorder.durationLimitHit;
+  const showRecordingControls = voiceActive && !voiceRecorder.isStarting;
 
   useEffect(() => {
     registerDropTarget?.((files) => {
-      if (!disabled) void handleFileDrop(files);
+      if (disabled) return;
+      if (!textOnly) {
+        void handleFileDrop(files);
+      } else if (Array.from(files).some((file) => file.type.startsWith('image/'))) {
+        explainImageLimit();
+      }
     });
     return () => registerDropTarget?.(null);
-  }, [disabled, handleFileDrop, registerDropTarget]);
+  }, [disabled, textOnly, explainImageLimit, handleFileDrop, registerDropTarget]);
 
   useEffect(() => {
     onDraftActiveChange?.(content.trim().length > 0);
@@ -834,9 +856,7 @@ export default function MessageInput({
   }, []);
 
   const agentWorking = isProcessing ?? isAgentWorking.value;
-  const [queuedForCurrentTurn, setQueuedForCurrentTurn] = useState<QueuePreviewMessage[]>([]);
   const [queuedForNextTurn, setQueuedForNextTurn] = useState<QueuePreviewMessage[]>([]);
-  const [queuedCurrentTurnTotal, setQueuedCurrentTurnTotal] = useState<number | undefined>();
   const [queuedNextTurnTotal, setQueuedNextTurnTotal] = useState<number | undefined>();
 
   const syncMessagesContainerPadding = useCallback(() => {
@@ -877,21 +897,11 @@ export default function MessageInput({
     const refreshSeq = queueRefreshSeqRef.current + 1;
     queueRefreshSeqRef.current = refreshSeq;
     try {
-      const [enqueuedResponse, deferredResponse] = (await Promise.all([
-        hub.request('session.messages.byStatus', {
-          sessionId: targetSessionId,
-          status: 'enqueued',
-          limit: QUEUE_FETCH_LIMIT,
-        }),
-        hub.request('session.messages.byStatus', {
-          sessionId: targetSessionId,
-          status: 'deferred',
-          limit: QUEUE_FETCH_LIMIT,
-        }),
-      ])) as [
-        { messages?: QueuePreviewMessage[]; total?: number },
-        { messages?: QueuePreviewMessage[]; total?: number },
-      ];
+      const deferredResponse = (await hub.request('session.messages.byStatus', {
+        sessionId: targetSessionId,
+        status: 'deferred',
+        limit: QUEUE_FETCH_LIMIT,
+      })) as { messages?: QueuePreviewMessage[]; total?: number };
       if (sessionIdRef.current !== targetSessionId) {
         return;
       }
@@ -899,9 +909,7 @@ export default function MessageInput({
         return;
       }
       queueRefreshAppliedSeqRef.current = refreshSeq;
-      setQueuedForCurrentTurn(enqueuedResponse.messages ?? []);
       setQueuedForNextTurn(deferredResponse.messages ?? []);
-      setQueuedCurrentTurnTotal(enqueuedResponse.total);
       setQueuedNextTurnTotal(deferredResponse.total);
     } catch {}
   }, [sessionId]);
@@ -913,9 +921,6 @@ export default function MessageInput({
         return;
       }
 
-      setQueuedForCurrentTurn((messages) =>
-        messages.filter((message) => message.dbId !== queued.dbId)
-      );
       setQueuedForNextTurn((messages) =>
         messages.filter((message) => message.dbId !== queued.dbId)
       );
@@ -952,42 +957,9 @@ export default function MessageInput({
       setQueuedForNextTurn((messages) =>
         messages.filter((message) => message.dbId !== queued.dbId)
       );
-      setQueuedForCurrentTurn((messages) =>
-        messages.some((message) => message.dbId === queued.dbId)
-          ? messages
-          : [...messages, { ...queued, status: 'enqueued' }]
-      );
 
       try {
         await hub.request('session.messages.promotePending', {
-          sessionId,
-          messageDbId: queued.dbId,
-        });
-      } finally {
-        await refreshQueuedMessages();
-      }
-    },
-    [refreshQueuedMessages, sessionId]
-  );
-
-  const handleDeferQueuedMessage = useCallback(
-    async (queued: QueuePreviewMessage) => {
-      const hub = connectionManager.getHubIfConnected();
-      if (!hub) {
-        return;
-      }
-
-      setQueuedForCurrentTurn((messages) =>
-        messages.filter((message) => message.dbId !== queued.dbId)
-      );
-      setQueuedForNextTurn((messages) =>
-        messages.some((message) => message.dbId === queued.dbId)
-          ? messages
-          : [...messages, { ...queued, status: 'deferred' }]
-      );
-
-      try {
-        await hub.request('session.messages.deferPending', {
           sessionId,
           messageDbId: queued.dbId,
         });
@@ -1007,7 +979,6 @@ export default function MessageInput({
   }, [
     syncMessagesContainerPadding,
     attachments.length,
-    queuedForCurrentTurn.length,
     queuedForNextTurn.length,
     pendingVoiceEntries.length,
   ]);
@@ -1017,9 +988,7 @@ export default function MessageInput({
   }, [refreshQueuedMessages]);
 
   useEffect(() => {
-    setQueuedForCurrentTurn([]);
     setQueuedForNextTurn([]);
-    setQueuedCurrentTurnTotal(undefined);
     setQueuedNextTurnTotal(undefined);
   }, [sessionId]);
 
@@ -1051,8 +1020,7 @@ export default function MessageInput({
   }, [sessionId, refreshQueuedMessages, connectionState.value]);
 
   useEffect(() => {
-    if (!agentWorking && queuedForCurrentTurn.length === 0 && queuedForNextTurn.length === 0)
-      return;
+    if (!agentWorking && queuedForNextTurn.length === 0) return;
     const timer = setInterval(() => {
       if (document.hidden) {
         return;
@@ -1060,7 +1028,7 @@ export default function MessageInput({
       void refreshQueuedMessages();
     }, QUEUE_FALLBACK_POLL_MS);
     return () => clearInterval(timer);
-  }, [agentWorking, queuedForCurrentTurn.length, queuedForNextTurn.length, refreshQueuedMessages]);
+  }, [agentWorking, queuedForNextTurn.length, refreshQueuedMessages]);
 
   const handleTextareaHeightChange = useCallback(
     (_heightPx: number) => {
@@ -1071,7 +1039,7 @@ export default function MessageInput({
 
   const handleSubmit = useCallback(
     async (deliveryMode: MessageDeliveryMode = 'immediate') => {
-      if (disabled) {
+      if (disabled || (textOnly && attachments.length > 0)) {
         return;
       }
       if (
@@ -1109,12 +1077,7 @@ export default function MessageInput({
             return;
           }
 
-          if (
-            agentWorking ||
-            deliveryMode === 'defer' ||
-            queuedForCurrentTurn.length > 0 ||
-            queuedForNextTurn.length > 0
-          ) {
+          if (agentWorking || deliveryMode === 'defer' || queuedForNextTurn.length > 0) {
             await refreshQueuedMessages();
           }
         } finally {
@@ -1124,6 +1087,7 @@ export default function MessageInput({
     },
     [
       disabled,
+      textOnly,
       extractOutgoingMessage,
       attachments,
       clearDraft,
@@ -1133,7 +1097,6 @@ export default function MessageInput({
       onSend,
       holdDraftAdoption,
       agentWorking,
-      queuedForCurrentTurn.length,
       queuedForNextTurn.length,
       refreshQueuedMessages,
       isTranscribing,
@@ -1250,29 +1213,23 @@ export default function MessageInput({
             </div>
           )}
 
-          {(queuedForCurrentTurn.length > 0 || queuedForNextTurn.length > 0 || pendingModelName) &&
-            !disabled && (
-              <QueuePreviewTray
-                pendingModel={pendingModelName}
-                onCancelPendingModel={() => {
-                  void handleCancelPendingModel();
-                }}
-                currentTurnMessages={queuedForCurrentTurn}
-                nextTurnMessages={queuedForNextTurn}
-                currentTurnTotal={queuedCurrentTurnTotal}
-                nextTurnTotal={queuedNextTurnTotal}
-                className="mb-2 sm:ml-[58px]"
-                onDeferMessage={(queued) => {
-                  void handleDeferQueuedMessage(queued);
-                }}
-                onPromoteMessage={(queued) => {
-                  void handlePromoteQueuedMessage(queued);
-                }}
-                onRemoveMessage={(queued) => {
-                  void handleRemoveQueuedMessage(queued);
-                }}
-              />
-            )}
+          {(queuedForNextTurn.length > 0 || pendingModelName) && !disabled && (
+            <QueuePreviewTray
+              pendingModel={pendingModelName}
+              onCancelPendingModel={() => {
+                void handleCancelPendingModel();
+              }}
+              nextTurnMessages={queuedForNextTurn}
+              nextTurnTotal={queuedNextTurnTotal}
+              className="mb-2 sm:ml-[58px]"
+              onPromoteMessage={(queued) => {
+                void handlePromoteQueuedMessage(queued);
+              }}
+              onRemoveMessage={(queued) => {
+                void handleRemoveQueuedMessage(queued);
+              }}
+            />
+          )}
 
           {pendingVoiceEntries.length > 0 && !disabled && (
             <PendingVoiceAudioTray
@@ -1301,7 +1258,8 @@ export default function MessageInput({
               modelLoading={modelLoading}
               onModelSwitch={handleModelSwitch}
               onOpenTools={() => onOpenTools?.()}
-              onAttachFile={openFilePicker}
+              onAttachFile={textOnly ? explainImageLimit : openFilePicker}
+              showTools={!isOxapHarness(harness)}
               coordinatorMode={coordinatorMode}
               coordinatorSwitching={coordinatorSwitching}
               onCoordinatorModeChange={onCoordinatorModeChange}
@@ -1317,7 +1275,7 @@ export default function MessageInput({
               type="file"
               accept="image/png,image/jpeg,image/gif,image/webp"
               multiple
-              onChange={handleFileSelect}
+              onChange={textOnly ? undefined : handleFileSelect}
               class="hidden"
             />
 
@@ -1329,7 +1287,7 @@ export default function MessageInput({
               onSubmit={() => {
                 void handleSubmit('immediate');
               }}
-              disabled={disabled}
+              disabled={disabled || voiceRecorder.isStarting}
               placeholder={placeholderProp ?? getPlaceholderForSessionType(sessionType)}
               showAgentMentionAutocomplete={showAgentMentionAutocomplete}
               agentMentionCandidates={filteredAgentMentionCandidates}
@@ -1361,7 +1319,20 @@ export default function MessageInput({
                   : undefined
               }
               onStop={handleInterrupt}
-              onPaste={disabled ? undefined : handlePaste}
+              onPaste={
+                disabled
+                  ? undefined
+                  : textOnly
+                    ? (e) => {
+                        const files = e.clipboardData?.files;
+                        if (!files?.length) return;
+                        e.preventDefault();
+                        if (Array.from(files).some((file) => file.type.startsWith('image/'))) {
+                          explainImageLimit();
+                        }
+                      }
+                    : handlePaste
+              }
               textareaRef={textareaInputRef}
               transparent={true}
               transcribing={isTranscribing}
@@ -1374,19 +1345,18 @@ export default function MessageInput({
                   : undefined
               }
               recordingBody={
-                voiceActive ? (
+                showRecordingControls ? (
                   <VoiceWaveform
                     getLevel={voiceRecorder.getLevel}
                     isRecording={voiceRecorder.isRecording}
                     isTranscribing={isTranscribing}
-                    isStarting={voiceRecorder.isStarting}
                     onCancel={cancelRecording}
                     startedAt={voiceRecorder.recordingStartedAt}
                   />
                 ) : undefined
               }
               voiceControl={
-                voiceActive ? (
+                showRecordingControls ? (
                   <>
                     <button
                       type="button"
@@ -1486,27 +1456,30 @@ export default function MessageInput({
                   <button
                     type="button"
                     onClick={() => {
-                      void handleVoiceClick();
+                      if (voiceRecorder.isStarting) cancelRecording();
+                      else void handleVoiceClick();
                     }}
                     disabled={
-                      (disabled && !voiceRecorder.isRecording) ||
-                      isTranscribing ||
-                      resendingVoiceRecordId !== null
+                      !voiceRecorder.isStarting && (disabled || resendingVoiceRecordId !== null)
                     }
                     title={
-                      voiceSupported
-                        ? 'Start voice input'
-                        : 'Voice input requires HTTPS or localhost'
+                      voiceRecorder.isStarting
+                        ? 'Cancel microphone startup'
+                        : voiceSupported
+                          ? 'Start voice input'
+                          : 'Voice input requires HTTPS or localhost'
                     }
-                    aria-label="Start voice input"
-                    class={`w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 ${
-                      isTranscribing
-                        ? 'bg-accent/80 text-accent-fg cursor-wait focus-visible:ring-accent/70'
-                        : 'bg-fill-strong/70 text-fg-soft hover:bg-line-strong hover:text-fg focus-visible:ring-accent/60'
-                    } ${disabled ? 'opacity-50 cursor-not-allowed' : 'active:scale-95'}`}
+                    aria-label={
+                      voiceRecorder.isStarting ? 'Cancel microphone startup' : 'Start voice input'
+                    }
+                    aria-busy={voiceRecorder.isStarting}
+                    class="w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 bg-fill-strong/70 text-fg-soft hover:bg-line-strong hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {isTranscribing ? (
-                      <span class="w-4 h-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                    {voiceRecorder.isStarting ? (
+                      <span
+                        aria-hidden="true"
+                        class="w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin motion-reduce:animate-none"
+                      />
                     ) : (
                       <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="currentColor">
                         <path d="M12 14a3 3 0 003-3V6a3 3 0 10-6 0v5a3 3 0 003 3z" />

@@ -11,6 +11,12 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logger.ts';
 import { startCodexDesktopTurn, steerCodexDesktopTurn } from '../../../packages/daemon/src/lib/drivers/codex-desktop-handoff.ts';
 import { spawnProcess } from '../../../packages/daemon/src/lib/runtime-spawn/index.ts';
+import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
+import { createNeoTodoRunner } from '../../../packages/daemon/src/lib/neo/todo-runner.ts';
+import { createDelegationPack } from '../../../packages/daemon/src/lib/neo/packs/delegation/pack.ts';
+import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
+import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
+import { gatewayFor } from '../../../packages/daemon/src/storage/db-gateway/db-gateway.ts';
 import { mock } from 'bun:test';
 const sandboxExports = { ...await import('../../../packages/daemon/src/lib/drivers/worker-sandbox.ts') };
 
@@ -175,10 +181,11 @@ let ws: WebSocket | undefined;
 const app = await createDaemonApp({ config: getConfig({ port, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
 try {
   await app.spaceRuntimeService.ready();
-  ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+  ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, {
+    headers: { authorization: `Bearer ${readLocalCredential(join(run, 'data/local-rpc.credential'))}` },
+  } as unknown as string[]);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('connection failed')); });
-  const send = (mode?: string, describe = false, adapters = false, receipt?: { executionId: string; inputId: string }, message = 'synthetic marker') => new Promise<any>((done, fail) => {
-    const workerSandbox = mode === 'sandbox-off' ? 'off' : mode === 'sandbox-always' ? 'always' : undefined;
+  const rpc = (method: string, data: unknown) => new Promise<any>((done, fail) => {
     const id = crypto.randomUUID();
     const timer = setTimeout(() => fail(new Error('RPC timeout')), 10000);
     const listener = (event: MessageEvent) => {
@@ -188,8 +195,15 @@ try {
       if (reply.error) fail(new Error(JSON.stringify(reply.error))); else done(reply.data);
     };
     ws!.addEventListener('message', listener);
-    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: workerSandbox ? 'settings.global.update' : 'operation.invoke', data: workerSandbox ? { updates: { workerSandbox } } : receipt ? { name: 'work.status', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, receipt } } : adapters ? { name: 'work.adapters', input: {} } : describe ? { name: 'operations.describe', input: { name: 'work.send' } } : { name: 'work.send', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, message, ...(mode ? { mode } : {}) } }, timestamp: new Date().toISOString(), version: '1.0.0' }));
+    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method, data, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
+  const ref = { adapter: 'codex-desktop', id: 'synthetic' };
+  const send = (mode?: string, describe = false, adapters = false, receipt?: { executionId: string; inputId: string }, message = 'synthetic marker') => {
+    const workerSandbox = mode === 'sandbox-off' ? 'off' : mode === 'sandbox-always' ? 'always' : undefined;
+    return workerSandbox
+      ? rpc('settings.global.update', { updates: { workerSandbox } })
+      : rpc('operation.invoke', receipt ? { name: 'work.status', input: { ref, receipt } } : adapters ? { name: 'work.adapters', input: {} } : describe ? { name: 'operations.describe', input: { name: 'work.send' } } : { name: 'work.send', input: { ref, message, ...(mode ? { mode } : {}) } });
+  };
   await send('sandbox-always');
   await startCodexDesktopTurn(join(home, 'ipc/ipc.sock'), spawnProcess, 'new-handoff-control', { threadId: 'new-handoff-control', input: [{ type: 'text', text: 'synthetic opening turn', text_elements: [] }] });
   assert(calls.some(call => {
@@ -286,6 +300,9 @@ try {
     assert.equal(result.ok, false);
     assert.equal(result.reason, 'not_delivered');
     assert.equal(result.notSent, fault === 'refused' ? true : undefined, 'Only a definite refusal permits automatic retry');
+    if (fault === 'refused') {
+      assert.match(result.detail, /The app may have reverted after an update, so quit and reopen it or rerun `hyperneo codex-setup`\./);
+    }
     assert.equal(calls.slice(before).filter(call => (call as { server?: string }).server === 'thread/queue/add').length, 1);
   }
   queueFault = '';
@@ -303,6 +320,47 @@ try {
   assert.deepEqual(nextTurn.params.turnStart.request.sandboxPolicy, { type: 'dangerFullAccess' }, 'Current off preference must replace the old Desktop policy for the next turn');
   const opens = readFileSync(openLog, 'utf8').trim().split('\n').map(line => JSON.parse(line));
   assert.equal(opens.length, 2, 'Only new-thread creation and the first ownerless automatic send open Desktop');
+  const ipcPath = join(home, 'ipc/ipc.sock');
+  renameSync(ipcPath, `${ipcPath}.held`);
+  await new Promise<void>((done) => desktop.close(() => done()));
+  renameSync(`${ipcPath}.held`, ipcPath);
+  owner = 'missing'; refuse = false; loaded = true; active = false;
+  const absent = calls.length;
+  const routed = await send();
+  assert.equal(routed.ok, true, JSON.stringify(routed));
+  assert.equal(routed.value.queuedSubmissionId, 'synthetic-queue', 'Running Desktop without an IPC listener must queue on the shared app-server');
+  assert(!calls.slice(absent).some(call => (call as { desktop?: string }).desktop));
+  assert.equal(calls.slice(absent).filter(call => (call as { server?: string }).server === 'thread/queue/add').length, 1);
+  assert(JSON.stringify(logs).includes('desktop_ipc_absent'), 'The route log names the absent Desktop IPC endpoint');
+  const raw = app.db.getDatabase();
+  const store = new NeoAskTodoRepository(raw);
+  const sessions = new NeoTodoSessionRepository(raw);
+  const askId = crypto.randomUUID();
+  const at = Date.now();
+  const sessionId = 'synthetic-neo';
+  store.openAsk({ id: askId, sessionId, projectId: null, originMessageId: 'fixture', title: 'Worker follow-ups', request: 'Check delivery text', createdAt: at });
+  const todo = store.addTodo(crypto.randomUUID(), askId, { title: 'Bound Codex worker', instruction: 'Original task', doneWhen: 'Worker reports completion', check: null, named: null }, at);
+  store.updateTodo(todo, { state: 'doing' }, at);
+  sessions.bind(todo.id, ref, at);
+  sessions.recordRef(todo.id, ref, at, undefined, { model: 'gpt-6.1-sol', effort: 'high' });
+  const runner = createNeoTodoRunner({
+    write: gatewayFor(raw).run.bind(gatewayFor(raw)), store, sessions,
+    limits: () => ({ running: 99, perGroup: 99 }), packs: () => [createDelegationPack(() => raw)],
+    tell: async () => {}, attend: async () => {}, changed: () => {},
+    invoke: async (_caller, name, input) => ({ kind: 'completed', value: await rpc('operation.invoke', { name, input }) }),
+  });
+  const instruction = 'Review the second file.';
+  const firstFollowUp = await runner.proceed(todo.id, instruction);
+  assert(firstFollowUp.ok, JSON.stringify(firstFollowUp));
+  const firstText = pendingText;
+  const secondFollowUp = await runner.proceed(todo.id, instruction);
+  assert(secondFollowUp.ok, JSON.stringify(secondFollowUp));
+  assert.notEqual(firstText, pendingText, 'Identical follow-ups need distinct delivery openings');
+  for (const delivered of [firstText, pendingText]) {
+    const [opening, ...body] = delivered.split('\n');
+    assert.match(opening, /^Worker delivery: [\da-f-]{36}$/);
+    assert.equal(body.join('\n'), instruction, 'The Codex queue must receive only the follow-up instruction after the delivery ID');
+  }
   console.log(`${action} PASS: ${run}/evidence/observed.json`);
 } finally {
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ action, replies, calls, logs, timings, collisions }, null, 2));

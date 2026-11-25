@@ -1,0 +1,28 @@
+# Discover Antigravity CLI sessions
+
+Use the isolated daemon and pinned Bun from the Verify skill. Run each mode
+with a fresh evidence directory.
+
+```sh
+bash .claude/skills/verify/proof-run.sh /absolute/fixture-evidence \
+  .claude/skills/verify/antigravity-find.ts fixture
+bash .claude/skills/verify/proof-run.sh /absolute/absent-evidence \
+  .claude/skills/verify/antigravity-find.ts absent
+bash .claude/skills/verify/proof-run.sh /absolute/signed-out-evidence \
+  .claude/skills/verify/antigravity-find.ts signed-out /absolute/vendor/agy
+```
+
+The daemon's real RPC catalog exposes `antigravity-cli` only when the executable
+is present. The ACP fixture takes 2.5 seconds to initialize, checks that proxy
+configuration is passed without unrelated environment variables, and returns
+the matching session on page two. Verify
+its source, title and workspace through `work.find` and check the journal for
+one `initialize` and two `session/list` calls. Discovery must not load or modify
+sessions. Check that the catalog explains the missing rename and archive
+methods. A rename request must return the catalog's guidance to use the CLI
+conversation picker, without sending a rename request to the fixture.
+The vendor binary in an isolated, signed-out home must surface its
+sign-in requirement through the same operation. Require exit code 0 in each
+mode. The fixture does not verify discovery from a signed-in account.
+
+For owned session creation and initial turn status, see [Antigravity start](antigravity-start.md).

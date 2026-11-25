@@ -24,7 +24,7 @@ export function createCodingResultOperation(
   assignments: CodingAssignmentsRepository,
   ledger: CodingPrLedgerRepository
 ) {
-  const record = (superpipe({})('coding.record-assigned-result') as PipelineAPI)
+  const record = (superpipe({})('neo.coding.result') as PipelineAPI)
     .input(['input'])
     .pipe(
       (input: Input) => {
@@ -42,19 +42,22 @@ export function createCodingResultOperation(
     )
     .pipe(
       async (fact: CodingStageFact): Promise<Result> =>
-        (await ledger.write('recordStage', fact))
+        (await ledger.write('recordStage', fact, Date.now()))
           ? { ok: true }
           : { ok: false, reason: 'head_changed_or_failed_stage' },
       'fact',
       'fact'
     )
-    .endAsync('fact') as (input: Input) => Promise<Result>;
-  return defineOperation({
-    name: 'neo.coding.result',
-    description: neoToolDescription('neo.coding.result'),
-    inputSchema: Input,
-    resultSchema: z.object({ ok: z.boolean(), reason: z.string().optional() }),
-    policy: { safetyClass: 'mutate', roles: ['neo'] },
-    execute: (input) => record(input),
-  });
+    .endAsync('fact');
+  return {
+    ...defineOperation({
+      name: 'neo.coding.result',
+      description: neoToolDescription('neo.coding.result'),
+      inputSchema: Input,
+      resultSchema: z.object({ ok: z.boolean(), reason: z.string().optional() }),
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: (input) => record(input),
+    }),
+    pipelineRunner: record,
+  };
 }

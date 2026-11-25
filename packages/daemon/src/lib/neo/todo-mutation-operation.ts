@@ -1,4 +1,5 @@
-import superpipe, { type PipelineAPI } from 'superpipe';
+import superpipe, { type PipelineAPI, type SuperPipeFactory } from 'superpipe';
+import { neoToolDescription } from '@hyperneo/prompts';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import type { DbGateway } from '../../storage/db-gateway/db-gateway.ts';
@@ -9,14 +10,22 @@ import {
   neoTodoReads,
   type NeoTodoPatch,
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
-import type { OperationCaller, OperationDefinition } from '../operations/registry.ts';
+import {
+  defineOperation,
+  type OperationCaller,
+  type OperationDefinition,
+} from '../operations/registry.ts';
 import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 import type { NeoPack, NeoTodoCheckResult } from './pack-contract.ts';
-import { todoEvidenceFile } from '../work-locations.ts';
-import { neoEvidenceRefusal, withAssignedEvidence } from './core-todo-checks.ts';
+import { getDataDir } from '../data-dir.ts';
+import { neoEvidencePathRefusal } from './core-todo-checks.ts';
 import { readNeoTodoCompletion } from './todo-completion.ts';
-import type { NeoTodoControls } from './todo-operations.ts';
-import { neoTodoRepository } from './pack-contract.ts';
+import {
+  NeoTodoDoneInput,
+  TodoResult,
+  type NeoTodoControls,
+  type WriteNeoTodoHold,
+} from './todo-operations.ts';
 
 type Input = Parameters<InstanceType<typeof neoTodoMutationReads.Repository>['plan']>[0];
 type Plan = { todo: NeoTodo; patch: NeoTodoPatch; records?: string[] };
@@ -36,51 +45,23 @@ interface Dependencies {
 }
 const kinds = new Map<string, Input['kind']>([
   ['neo.todo.edit', 'edit'],
-  ['neo.todo.hold', 'edit'],
-  ['neo.todo.done', 'done'],
   ['neo.todo.remove', 'remove'],
 ]);
 
-const holdAsEdit = (name: string, input: unknown): object => {
-  if (name !== 'neo.todo.hold') return input as object;
-  const { todoId, reason } = input as { todoId: string; reason: string | null };
-  return { todoId, hold: reason };
-};
+async function presentMutation(deps: Dependencies, result: Result): Promise<Result> {
+  if (!result.ok) return result;
+  const [todo] = await deps.project([result.todo]);
+  return {
+    ok: true,
+    todo,
+    ...(result.records ? { records: result.records } : {}),
+  };
+}
 
-export function wireNeoTodoMutations(
-  definitions: readonly OperationDefinition[],
-  deps: Dependencies
-): OperationDefinition[] {
-  const present = (superpipe({})('neo.todo.present-mutation') as PipelineAPI)
-    .input(['result'])
-    .pipe(
-      (result: Result) => (result.ok ? { value: result } : { reason: result }),
-      'result',
-      'result:outcome'
-    )
-    .pipe(
-      async (receipt: Receipt) => {
-        const [todo] = await deps.project([receipt.todo]);
-        return {
-          ok: true as const,
-          todo,
-          ...(receipt.records ? { records: receipt.records } : {}),
-        };
-      },
-      'outcome',
-      'outcome'
-    )
-    .endAsync('outcome') as (result: Result) => Promise<Result>;
-  const mutate = (superpipe({})('neo.todo.mutate-through-writer') as PipelineAPI)
+function buildTodoMutation(deps: Dependencies, pipeline: ReturnType<SuperPipeFactory>) {
+  return (pipeline as PipelineAPI)
     .input(['raw', 'caller'])
-    .pipe(
-      (raw: Input): Input =>
-        raw.kind === 'edit' && raw.check
-          ? { ...raw, check: withAssignedEvidence(raw.check, todoEvidenceFile(raw.todoId)) }
-          : raw,
-      'raw',
-      'request'
-    )
+    .pipe((raw: Input) => raw, 'raw', 'request')
     .pipe(
       async (request: Input) => {
         if (request.kind !== 'edit' || request.target?.verb !== 'send') return { value: request };
@@ -116,7 +97,7 @@ export function wireNeoTodoMutations(
           Date.now(),
           registered
         );
-        return 'patch' in plan ? { value: plan } : { reason: plan };
+        return 'patch' in plan ? { value: plan } : { reason: await presentMutation(deps, plan) };
       },
       ['input', 'registered'],
       'result:outcome'
@@ -125,13 +106,7 @@ export function wireNeoTodoMutations(
       async (plan: Plan, input: Input) => {
         if (input.kind !== 'edit' || !input.check) return { value: plan };
         const current = await deps.gateway.call(neoTodoReads, 'getTodo', input.todoId);
-        const ask = await deps.gateway.call(neoTodoReads, 'getAsk', plan.todo.askId);
-        const repo = neoTodoRepository(
-          { check: input.check, named: plan.todo.named, target: input.target },
-          deps.packs(),
-          { ask, todo: current }
-        );
-        const reason = neoEvidenceRefusal(input.check, repo, deps.userFolder, current?.check);
+        const reason = neoEvidencePathRefusal(input.check, current?.check, getDataDir());
         return reason ? { reason: { ok: false as const, reason } } : { value: plan };
       },
       ['outcome', 'input'],
@@ -147,7 +122,9 @@ export function wireNeoTodoMutations(
     )
     .pipe(
       async (plan: Plan, input: Input) => {
-        const failure = input.kind === 'edit' ? null : await deps.stop(plan.todo);
+        const shouldStop =
+          input.kind !== 'edit' || (input.hold != null && plan.todo.startedAt !== null);
+        const failure = shouldStop ? await deps.stop(plan.todo) : null;
         return failure
           ? {
               reason: {
@@ -170,6 +147,8 @@ export function wireNeoTodoMutations(
         deps.write(neoTodoMutations, {
           input,
           checked: { check: plan.todo.check, result: completion },
+          holdStartedAt:
+            input.kind === 'edit' && input.hold != null ? plan.todo.startedAt : undefined,
           now: Date.now(),
           registered,
         }),
@@ -177,8 +156,19 @@ export function wireNeoTodoMutations(
       'outcome'
     )
     .pipe(
-      (result: Result) => (result.ok ? { value: result } : { reason: result }),
-      'outcome',
+      (result: Result, input: Input) =>
+        result.ok
+          ? { value: result }
+          : {
+              reason:
+                input.kind === 'done' && result.reason.startsWith('card_unanswered:')
+                  ? {
+                      ...result,
+                      reason: `${result.reason} Its session may have stopped; the todo is unchanged.`,
+                    }
+                  : result,
+            },
+      ['outcome', 'input'],
       'result:outcome'
     )
     .pipe(
@@ -199,17 +189,37 @@ export function wireNeoTodoMutations(
       ['outcome', 'input'],
       'outcome'
     )
+    .pipe((result: Result) => presentMutation(deps, result), 'outcome', 'outcome')
     .endAsync('outcome') as (input: Input, caller: OperationCaller) => Promise<Result>;
-  return definitions.map((entry) => {
+}
+
+export function wireNeoTodoMutations(
+  createDefinitions: (writeHold: WriteNeoTodoHold) => readonly OperationDefinition[],
+  deps: Dependencies
+): OperationDefinition[] {
+  const mutate = buildTodoMutation(deps, superpipe({})('neo.todo.mutate-through-writer'));
+  const done = buildTodoMutation(deps, superpipe({})('neo.todo.done'));
+  const definitions = createDefinitions(({ todoId, reason }, caller) =>
+    mutate({ todoId, hold: reason, kind: 'edit' }, caller)
+  );
+  const operations = definitions.map<OperationDefinition>((entry) => {
     const kind = kinds.get(entry.name);
     return kind
       ? {
           ...entry,
-          execute: (input, caller) =>
-            entry.name === 'neo.todo.hold' && (input as { reason: unknown }).reason !== null
-              ? entry.execute(input, caller)
-              : mutate({ ...holdAsEdit(entry.name, input), kind } as Input, caller).then(present),
+          execute: (input, caller) => mutate({ ...(input as object), kind } as Input, caller),
         }
       : entry;
   });
+  return [
+    ...operations,
+    defineOperation({
+      name: 'neo.todo.done',
+      description: neoToolDescription('neo.todo.done'),
+      inputSchema: NeoTodoDoneInput,
+      resultSchema: TodoResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: (input, caller) => done({ ...input, kind: 'done' }, caller),
+    }),
+  ];
 }

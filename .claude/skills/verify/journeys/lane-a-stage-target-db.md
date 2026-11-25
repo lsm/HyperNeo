@@ -6,7 +6,9 @@ Use the shared isolated setup and resource guard in `../SKILL.md`.
 bash .claude/skills/verify/proof-run.sh "$EVIDENCE" .claude/skills/verify/lane-a-stage-target-db.ts verify
 ```
 
-The helper saves Write/Review/Verify settings through authenticated WebSocket RPC.
+The helper saves the Write/Review/Verify harness and effort settings through
+authenticated WebSocket RPC and checks that model keys are refused (model choices
+are model-routing routes). A saved legacy model row is seeded directly and still read.
 It calls the retained Verify selector through `CodingAssignmentsRepository` and
 the daemon gateway, checking default-first ordering, preferred targets, fallback
 explanations and persistence after restart. An unanswered repository saves nothing.

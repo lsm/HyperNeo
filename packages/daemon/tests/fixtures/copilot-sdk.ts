@@ -16,6 +16,8 @@ if (process.argv.includes('--disable-builtin-mcps')) {
 
 let buffer = Buffer.alloc(0);
 let sessionId = '';
+let sessionModel: unknown;
+let sessionEffort: unknown;
 let input = 0;
 let eventId = 0;
 let pendingAck: (() => void) | undefined;
@@ -101,6 +103,15 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
                   limits: { max_context_window_tokens: 10000 },
                 },
               },
+              {
+                id: 'synthetic-effort-model',
+                name: 'Synthetic with reasoning effort',
+                capabilities: {
+                  supports: { reasoningEffort: true },
+                  limits: { max_context_window_tokens: 10000 },
+                },
+                supportedReasoningEfforts: ['medium', 'high'],
+              },
             ],
       });
       break;
@@ -131,8 +142,18 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
     }
     case 'session.create':
       sessionId = String(msg.params?.sessionId);
+      sessionModel = msg.params?.model;
+      sessionEffort = msg.params?.reasoningEffort;
       if (process.argv.includes('--durable-inputs')) writeFileSync(fixtureState(), '0');
       reply({ sessionId });
+      break;
+    case 'session.model.getCurrent':
+      reply({
+        modelId: sessionModel,
+        reasoningEffort: existsSync(join(process.cwd(), 'copilot-effort-mismatch'))
+          ? 'medium'
+          : sessionEffort,
+      });
       break;
     case 'session.resume':
       sessionId = String(msg.params?.sessionId);
@@ -149,6 +170,8 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
         });
         break;
       }
+      sessionModel = msg.params?.model;
+      sessionEffort = msg.params?.reasoningEffort;
       input = Number(readFileSync(fixtureState(), 'utf8'));
       reply({ sessionId });
       break;
@@ -156,6 +179,23 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
       const prompt = msg.params?.prompt;
       const id = prompt === 'hostile' ? '__proto__' : `input-${++input}`;
       if (process.argv.includes('--durable-inputs')) writeFileSync(fixtureState(), String(input));
+      if (prompt === 'steer-current') {
+        event('user.message', {
+          messageId: id,
+          interactionId: 'interaction-1',
+          content: prompt,
+          delivery: 'steering',
+        });
+        event('assistant.message', {
+          messageId: 'steered-reply',
+          interactionId: 'interaction-1',
+          content: 'ADJUSTED_REPLY',
+          phase: 'final_answer',
+        });
+        event('session.idle', {});
+        reply({ messageId: id });
+        break;
+      }
       if (String(prompt).startsWith('serial:')) {
         serial.push({ id, interaction: `interaction-${input}`, prompt: String(prompt) });
         if (serial.length === 1) {
@@ -312,6 +352,31 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
         );
         event('session.idle', {});
       }
+      if (prompt === 'permission-send' || prompt === 'permission-shell') {
+        event('permission.requested', {
+          requestId: 'permission-shell-1',
+          permissionRequest: {
+            kind: 'shell',
+            fullCommandText:
+              prompt === 'permission-send'
+                ? 'hyperneo send caller-1 --from copilot-cli:worker-1 --kind done "all set"'
+                : 'hyperneo send caller-1 --from copilot-cli:worker-1 "x"; rm -rf ~',
+            intention: 'reply',
+            commands: [{ identifier: 'hyperneo', readOnly: false }],
+            possiblePaths: [],
+            possibleUrls: [],
+            hasWriteFileRedirection: false,
+            canOfferSessionApproval: false,
+          },
+        });
+        event('assistant.message', {
+          messageId: `reply-${input}`,
+          content: 'SENT',
+          interactionId: `interaction-${input}`,
+          phase: 'final_answer',
+        });
+        event('session.idle', {});
+      }
       if (prompt === 'settled' || prompt === 'late-ack' || prompt === 'ping-ack') {
         event('assistant.message', {
           messageId: `reply-${input}`,
@@ -420,6 +485,13 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
           if (process.argv.includes('--idle-after-abort')) event('session.idle', {});
         },
         process.argv.includes('--delayed-abort') ? 2250 : 15
+      );
+      break;
+    case 'session.history.compact':
+      reply(
+        existsSync(join(process.cwd(), 'refuse-compaction'))
+          ? { success: false, tokensRemoved: 0, messagesRemoved: 0 }
+          : { success: true, tokensRemoved: 512, messagesRemoved: 3 }
       );
       break;
     case 'ping':

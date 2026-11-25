@@ -1,8 +1,10 @@
 import { neoToolDescription } from '@hyperneo/prompts';
+import { hasPendingTodoDecision } from './proposal.ts';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
+import { NeoTopicPick } from './ask-topic.ts';
 import type {
   NeoAskTodoRepository,
   NeoQuestionDraft,
@@ -14,18 +16,18 @@ import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 import { type Place, type WorkRef } from '../drivers/types.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import { todoEvidenceFile } from '../work-locations.ts';
-import { neoEvidenceRefusal, withAssignedEvidence } from './core-todo-checks.ts';
+import { getDataDir } from '../data-dir.ts';
+import { type DesktopAppName, DesktopAppsSchema } from '../desktop/app-scope.ts';
+import { neoEvidencePathRefusal } from './core-todo-checks.ts';
 import { planNeoHoldCard } from './daemon-cards.ts';
 import { openHumanCard } from './human-card.ts';
 import { NeoTodoAddTargetSchema, NeoTodoTargetSchema } from './driver-work.ts';
-import { neoUserFolder } from './folder.ts';
 import { type NeoInputReads, noNeoInputReads, resolveNeoInputAsk } from './input-ask.ts';
 import {
+  neoTodoRepository,
   type NeoPack,
   type NeoTodoPolicyScope,
   type NeoTodoRepositoryDraft,
-  neoTodoRepository,
 } from './pack-contract.ts';
 import { wireNeoTodoAdd } from './todo-add-operation.ts';
 import {
@@ -41,6 +43,7 @@ import {
   planNeoTodoDependencies,
 } from './todo-dependencies.ts';
 import { isNeoTodoStartable, neoTodoFailed } from './todo-runner.ts';
+import { neoTodoCovered } from './todo-state.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -67,6 +70,7 @@ export interface NeoTodoControls {
     Gate<WorkRef> & { place?: Pick<Place, 'folder' | 'remotes'>; workerRemotes?: readonly string[] }
   >;
   refreshIdentity?(todoId: string): Promise<void>;
+  desktopAppName?: DesktopAppName;
   advance(): Promise<unknown>;
   recompute(todo: NeoTodo, patch: NeoTodoPatch): Promise<NeoTodo>;
   proceed(todoId: string, message: string): Ran;
@@ -88,9 +92,8 @@ const TodoDraft = z.object({
   target: NeoTodoAddTargetSchema.optional(),
   named: z
     .record(z.string(), z.unknown())
-    .refine((named) => !('desktopControl' in named), {
-      message:
-        'Only the human can turn desktop control on, from the todo on the Neo page. Leave desktopControl out of named.',
+    .refine((named) => named.desktopControl === undefined || named.desktopControl === true, {
+      message: 'Use desktopControl: true only for a todo that needs the computer.',
     })
     .refine((named) => !('requestFrom' in named), {
       message:
@@ -109,7 +112,7 @@ const TodoDraft = z.object({
     .array(z.union([Text, z.number().int().min(0)]))
     .max(20)
     .describe(
-      'Required. The earlier steps of this ask this todo waits for: indexes of earlier todos in the same neo.ask.open call, or todo ids. [] means it waits for nothing. The daemon starts each step once everything it waits for is done.'
+      'Required. The earlier steps of this ask this todo waits for: indexes of earlier todos in the same neo.ask.propose call, or todo ids. [] means it waits for nothing. The daemon starts each step once everything it waits for is done.'
     ),
 });
 
@@ -130,10 +133,16 @@ export const NeoTodoDraftSchema = TodoDraft.superRefine(refineNeoTodoDraft);
 
 const Add = TodoDraft.extend({
   askId: Text.optional().describe(
-    'For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask.'
+    'For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask. A session-request ask is for the reply only; open a separate proposal to do work.'
   ),
   input: Text.optional().describe(
     'The id on the `<human-message>` tag of the human message this todo serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else its recorded follow-up binding, else a new one.'
+  ),
+  topic: NeoTopicPick.optional().describe(
+    'The topic of a new ask, up to 12 display cells. Joining an existing ask keeps its topic.'
+  ),
+  desktopApps: DesktopAppsSchema.optional().describe(
+    'Bundle ids of the apps on this Mac this todo drives. Each must be on its ask’s approved proposal card, or named by the human message in input. Only this todo gets them. For any other app, propose a new ask with desktopApps.'
   ),
   after: z
     .array(Text)
@@ -263,8 +272,7 @@ export async function recordNeoTodo(
   packs: readonly NeoPack[]
 ): Promise<{ ok: true; todo?: NeoTodo; records?: string[] } | Rejection> {
   const id = crypto.randomUUID();
-  const check = withAssignedEvidence(input.check, todoEvidenceFile(id));
-  const planned = planNeoTodoDraft({ ...input, check }, packs);
+  const planned = planNeoTodoDraft(input, packs);
   if ('reason' in planned) return planned.reason;
   const draft = planned.value;
   const peers = todos.listTodos(ask.id);
@@ -272,7 +280,7 @@ export async function recordNeoTodo(
   const repo = neoTodoRepository(draft, packs, scope);
   const placeless = neoTodoPlaceRefusal(draft, packs, scope);
   if (placeless) return { ok: false, reason: placeless };
-  const misplaced = neoEvidenceRefusal(check, repo, controls.userFolder ?? neoUserFolder());
+  const misplaced = neoEvidencePathRefusal(input.check, null, getDataDir());
   if (misplaced) return { ok: false, reason: misplaced };
   if (ask.status !== 'open')
     return {
@@ -329,8 +337,14 @@ type EditPlan = Omit<z.infer<typeof Edit>, 'hold'> & { hold?: string | null };
 
 const Hold = z.object({
   todoId: Text,
-  reason: Text.nullable().describe('Why it must wait; null releases it.'),
+  reason: Text.nullable().describe('Why this step waits; null releases it.'),
+  decision: z.boolean().optional().describe('Ask the human to start, resume or remove this step.'),
 });
+
+export type WriteNeoTodoHold = (
+  input: { todoId: string; reason: string | null },
+  caller: OperationCaller
+) => Promise<TodoReceipt | Rejection>;
 
 const Remove = z.object({
   todoId: Text,
@@ -340,12 +354,13 @@ const Remove = z.object({
     .enum(['continue', 'remove'])
     .optional()
     .describe(
-      'What the unstarted todos that wait for this one do: continue without it, or be removed too. Leave it out when the human has not said; the daemon then asks them.'
+      'What the unstarted todos that wait for this one do: continue without it, or be removed too. Leave it out when the human has not said; they then wait, and deciding is your next step.'
     ),
 });
 
 export const NeoTodoSchema = z.object({
   worker: WorkerIdentitySchema.nullable().optional(),
+  desktopApps: z.array(z.object({ bundleId: z.string(), name: z.string() })).optional(),
   id: z.string(),
   askId: z.string(),
   position: z.number(),
@@ -354,7 +369,7 @@ export const NeoTodoSchema = z.object({
   check: TodoCheck.nullable(),
   instruction: z.string().nullable(),
   named: z.record(z.string(), z.unknown()).nullable(),
-  state: z.enum(['todo', 'doing', 'blocked', 'done', 'failed', 'removed']),
+  state: z.enum(['todo', 'doing', 'blocked', 'done', 'removed']),
   reason: z.string().nullable(),
   blockedReason: z.string().nullable(),
   nextAction: z.string().nullable(),
@@ -407,6 +422,16 @@ export function requireNeoOpenTodo(todo: NeoTodo | null, ask: NeoAsk | null): Ga
   return 'reason' in open ? open : { value: todo };
 }
 
+export function requireNeoHoldCardClear(
+  todo: NeoTodo,
+  input: { hold?: string | null },
+  cards: readonly NeoQuestion[]
+): Gate<NeoTodo> {
+  return input.hold != null && neoTodoCovered(todo, cards)
+    ? fail('already_waiting: this todo already waits on an open card; answer that one.')
+    : { value: todo };
+}
+
 export function planNeoTodoEdit(todo: NeoTodo, input: EditPlan, now = Date.now()): Gate<TodoPlan> {
   if (todo.state === 'removed') return fail('todo_removed: this todo was removed.');
   if (input.done && !input.evidence)
@@ -429,9 +454,9 @@ export function planNeoTodoEdit(todo: NeoTodo, input: EditPlan, now = Date.now()
     );
   if (input.hold !== undefined && (input.done || input.artifacts))
     return fail('hold_with_done: hold or release a todo separately from ticking it done.');
-  if (input.hold && !isNeoTodoStartable(todo) && !held)
+  if (input.hold && !isNeoTodoStartable(todo) && todo.state !== 'doing' && !held)
     return fail(
-      `not_holdable: only a todo that has not started can be held; this one is ${todo.state}.`
+      `not_holdable: only a waiting or running todo can be held; this one is ${todo.state}.`
     );
   if (input.hold === null && !held) return fail('not_held: this todo is not held.');
   return {
@@ -451,10 +476,19 @@ export function planNeoTodoEdit(todo: NeoTodo, input: EditPlan, now = Date.now()
               state: 'blocked',
               blockedBy: 'held',
               blockedReason: input.hold,
-              nextAction: 'The human releases it.',
+              nextAction: 'Release it when ready.',
             }
           : {}),
-        ...(input.hold === null ? { state: 'todo' } : {}),
+        ...(input.hold === null
+          ? todo.startedAt === null
+            ? { state: 'todo' }
+            : {
+                state: 'blocked',
+                blockedBy: 'worker',
+                blockedReason: 'The hold was released.',
+                nextAction: 'Continue the worker.',
+              }
+          : {}),
         ...(input.after ? { dependsOn: input.after } : {}),
       },
     },
@@ -518,14 +552,14 @@ export function planNeoTodoRemove(
 
 const Continue = z.object({ todoId: Text, message: Text.optional() });
 
-const Done = z.object({ todoId: Text, reason: Text.optional() });
+export const NeoTodoDoneInput = z.object({ todoId: Text, reason: Text.optional() });
 
 export function planNeoTodoDone(
   todo: NeoTodo,
-  input: z.infer<typeof Done>,
+  input: z.infer<typeof NeoTodoDoneInput>,
   now = Date.now()
 ): Gate<TodoPlan> {
-  if (!['todo', 'doing', 'blocked', 'failed'].includes(todo.state))
+  if (!['todo', 'doing', 'blocked'].includes(todo.state))
     return fail(`todo_not_live: this todo is ${todo.state}.`);
   return {
     value: {
@@ -546,7 +580,8 @@ export function createNeoTodoOperations(
   packs: () => readonly NeoPack[],
   artifact: ArtifactRefReader,
   project: <T extends NeoTodo>(todos: readonly T[]) => Promise<T[]> = async (todos) => [...todos],
-  inputs: NeoInputReads = noNeoInputReads
+  inputs: NeoInputReads = noNeoInputReads,
+  writeHold?: WriteNeoTodoHold
 ) {
   const present = async (result: TodoReceipt | Rejection) => {
     if (!result.ok || !result.todo) return result;
@@ -603,6 +638,14 @@ export function createNeoTodoOperations(
     if (input?.addUrls || input?.check || input?.hold !== undefined) {
       const latest = requireNeoOpenTodo(todos.getTodo(plan.todo.id), todos.getAsk(plan.todo.askId));
       if ('reason' in latest) return latest.reason;
+      const clear = requireNeoHoldCardClear(
+        latest.value,
+        input,
+        input.hold != null ? todos.todoCards(latest.value) : []
+      );
+      if ('reason' in clear) return clear.reason;
+      if (input.hold != null && checked.startedAt !== latest.value.startedAt)
+        return { ok: false, reason: 'todo_changed: the worker changed; retry the hold.' };
       const edited = planNeoTodoEdit(latest.value, input);
       if ('reason' in edited) return edited.reason;
       const rebased = withCheck(edited.value, input);
@@ -687,6 +730,12 @@ export function createNeoTodoOperations(
   ) => Promise<TodoReceipt | Rejection>;
 
   const edit = owned(superpipe({})('neo.todo.edit') as PipelineAPI)
+    .pipe(
+      (todo: NeoTodo, input: EditPlan) =>
+        requireNeoHoldCardClear(todo, input, input.hold != null ? todos.todoCards(todo) : []),
+      ['outcome', 'input'],
+      'result:outcome'
+    )
     .pipe(planNeoTodoEdit, ['outcome', 'input'], 'result:outcome')
     .pipe(
       (plan: { patch: NeoTodoPatch }, caller: OperationCaller) =>
@@ -698,6 +747,17 @@ export function createNeoTodoOperations(
     .pipe(withCheck, ['outcome', 'input'], 'result:outcome')
     .pipe(completion, 'outcome', 'completion')
     .pipe(requireNeoTodoMayFinish, ['outcome', 'completion'], 'result:outcome')
+    .pipe(
+      async (plan: TodoPlan, input: EditPlan): Promise<Gate<TodoPlan>> => {
+        const failed =
+          input.hold && plan.todo.startedAt !== null ? await controls.stop(plan.todo) : null;
+        return failed
+          ? fail(`${failed}; the todo is unchanged, its session may still run.`)
+          : { value: plan };
+      },
+      ['outcome', 'input'],
+      'result:outcome'
+    )
     .pipe(write, ['outcome', 'input'], 'outcome')
     .endAsync('outcome') as (
     input: EditPlan,
@@ -718,6 +778,14 @@ export function createNeoTodoOperations(
   ) => Promise<TodoReceipt | Rejection>;
 
   const proceed = owned(superpipe({})('neo.todo.continue') as PipelineAPI)
+    .pipe(
+      (todo: NeoTodo): Gate<NeoTodo> =>
+        hasPendingTodoDecision(todos.listQuestions(todo.askId), todo.id)
+          ? fail('human_decision_required: the human must answer this work decision.')
+          : { value: todo },
+      'outcome',
+      'result:outcome'
+    )
     .pipe(
       (todo: NeoTodo, input: z.infer<typeof Continue>): Gate<NeoTodo> =>
         input.message || neoTodoFailed(todo)
@@ -759,20 +827,38 @@ export function createNeoTodoOperations(
     caller: OperationCaller
   ) => Promise<TodoReceipt | Rejection>;
 
-  const holdCard = owned(superpipe({})('neo.todo.hold') as PipelineAPI)
+  const hold = (superpipe({})('neo.todo.hold') as PipelineAPI)
+    .input(['input', 'caller'])
     .pipe(
-      (
-        todo: NeoTodo,
-        input: { reason: string }
-      ): Gate<{ todo: NeoTodo; draft: NeoQuestionDraft }> => {
+      async (input: z.infer<typeof Hold>) => {
+        if (input.reason === null || input.decision !== true)
+          return { value: { kind: 'edit' as const, request: input } };
+        const todo = todos.getTodo(input.todoId);
+        if (!todo) return requireNeoOpenTodo(todo, null);
+        const admitted = admit(todos.getAsk(todo.askId), todo);
+        if ('reason' in admitted) return { reason: await present(admitted.reason) };
         const plan = planNeoHoldCard(todo, todos.todoCards(todo), input.reason);
-        return 'reason' in plan ? fail(plan.reason) : { value: { todo, draft: plan.value } };
+        return 'reason' in plan
+          ? fail(plan.reason)
+          : { value: { kind: 'card' as const, todo, draft: plan.value } };
       },
-      ['outcome', 'input'],
+      'input',
       'result:outcome'
     )
     .pipe(
-      async ({ todo, draft }: { todo: NeoTodo; draft: NeoQuestionDraft }) => {
+      async (
+        plan:
+          | { kind: 'edit'; request: z.infer<typeof Hold> }
+          | { kind: 'card'; todo: NeoTodo; draft: NeoQuestionDraft },
+        caller: OperationCaller
+      ) => {
+        if (plan.kind === 'edit')
+          return writeHold
+            ? writeHold(plan.request, caller)
+            : present(
+                await edit({ todoId: plan.request.todoId, hold: plan.request.reason }, caller)
+              );
+        const { todo, draft } = plan;
         const failed = todo.startedAt === null ? null : await controls.stop(todo);
         if (failed)
           return {
@@ -781,17 +867,17 @@ export function createNeoTodoOperations(
           };
         const card = openHumanCard(todos, crypto.randomUUID(), todo.askId, draft, Date.now());
         await controls.advance();
-        return {
+        return present({
           ok: true as const,
           todo: todos.getTodo(todo.id) ?? todo,
           records: [`held: card ${card.id} holds it until the human answers.`],
-        };
+        });
       },
-      'outcome',
+      ['outcome', 'caller'],
       'outcome'
     )
     .endAsync('outcome') as (
-    input: { todoId: string; reason: string },
+    input: z.infer<typeof Hold>,
     caller: OperationCaller
   ) => Promise<TodoReceipt | Rejection>;
 
@@ -818,12 +904,7 @@ export function createNeoTodoOperations(
       inputSchema: Hold,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) =>
-        present(
-          input.reason === null
-            ? await edit({ todoId: input.todoId, hold: null }, caller)
-            : await holdCard({ todoId: input.todoId, reason: input.reason }, caller)
-        ),
+      execute: hold,
     }),
     defineOperation({
       name: 'neo.todo.remove',
@@ -840,16 +921,6 @@ export function createNeoTodoOperations(
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => present(await proceed(input, caller)),
-    }),
-    defineOperation({
-      name: 'neo.todo.done',
-      description: neoToolDescription('neo.todo.done'),
-      inputSchema: Done,
-      resultSchema: TodoResult,
-      policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async () => {
-        throw new Error('neo.todo.done runs through the todo writer');
-      },
     }),
   ];
   return wireNeoTodoAdd(definitions, todos, sessions, controls, packs, project, inputs);

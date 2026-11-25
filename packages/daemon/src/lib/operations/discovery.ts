@@ -104,7 +104,7 @@ function renderDiscovery(
     ? compactNeoDiscovery(summaries, input.prefix, input.cursor)
     : summaries;
 }
-const listOperations = (superpipe({})('list-operations') as PipelineAPI)
+const listOperations = (superpipe({})('operations.list') as PipelineAPI)
   .input(['registry', 'caller', 'input'])
   .pipe(discoverySummaries, ['registry', 'caller', 'input'], 'summaries')
   .pipe(renderDiscovery, ['summaries', 'caller', 'input'], 'listing')
@@ -208,7 +208,7 @@ export function describeOperationDefinition(
   };
 }
 
-const describeOperation = (superpipe({})('describe-operation') as PipelineAPI)
+const describeOperation = (superpipe({})('operations.describe') as PipelineAPI)
   .input(['registry', 'name', 'caller'])
   .pipe(findDescribedOperation, ['registry', 'name', 'caller'], 'result:description')
   .pipe(describeOperationDefinition, ['description', 'caller'], 'description')

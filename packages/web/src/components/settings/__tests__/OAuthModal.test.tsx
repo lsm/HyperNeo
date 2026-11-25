@@ -198,7 +198,11 @@ describe('OAuthModal', () => {
       );
       openButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
-      expect(openMock).toHaveBeenCalledWith('https://example.com/verify', '_blank');
+      expect(openMock).toHaveBeenCalledWith(
+        'https://example.com/verify',
+        '_blank',
+        'noopener,noreferrer'
+      );
     });
   });
 
@@ -234,6 +238,22 @@ describe('OAuthModal', () => {
       expect(codeElement).toBeNull();
     });
 
+    it('asks the user to open the sign-in page instead of pointing at an opened tab', () => {
+      render(
+        <OAuthModal
+          providerName="TestProvider"
+          authUrl="https://example.com/auth"
+          onCancel={mockOnCancel}
+          onComplete={mockOnComplete}
+        />
+      );
+
+      expect(document.body.textContent).toContain(
+        'Click Open Auth URL to authorize with TestProvider'
+      );
+      expect(document.body.textContent).not.toContain('tab that opened');
+    });
+
     it('should open auth URL in new window when Open Auth URL button is clicked', () => {
       const openMock = vi.spyOn(window, 'open').mockImplementation(() => null);
 
@@ -252,7 +272,11 @@ describe('OAuthModal', () => {
       );
       openButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
-      expect(openMock).toHaveBeenCalledWith('https://example.com/auth', '_blank');
+      expect(openMock).toHaveBeenCalledWith(
+        'https://example.com/auth',
+        '_blank',
+        'noopener,noreferrer'
+      );
     });
 
     it('should prefer device flow when both authUrl and device flow params provided', () => {

@@ -85,7 +85,7 @@ impl Channel {
         .await
         .unwrap_or_else(|_| Err("Driver startup timed out".into()));
         let ready = ready.and_then(|ready| {
-            if ready["metadata"]["driver_version"] == "0.44.0" {
+            if ready["metadata"]["driver_version"] == "0.55.0" {
                 Ok(())
             } else {
                 Err("Driver version validation failed".into())
@@ -133,7 +133,8 @@ impl Channel {
         stream.get_mut().write_all(&line).await?;
         self.sent = true;
         let mut reply = String::new();
-        (&mut *stream).take(1 << 20).read_line(&mut reply).await?;
+        // Room for a full-window Retina screenshot.
+        (&mut *stream).take(8 << 20).read_line(&mut reply).await?;
         let response: ChannelResponse = serde_json::from_str(&reply)?;
         if response.request_id != request.request_id || response.generation != self.generation {
             return Err("Driver response does not match its request".into());
@@ -149,6 +150,11 @@ impl Channel {
 
     pub(super) fn running(&mut self) -> bool {
         self.stream.is_some() && matches!(self.child.try_wait(), Ok(None))
+    }
+
+    #[cfg(test)]
+    pub(super) fn drop_stream(&mut self) {
+        self.stream.take();
     }
 
     pub(super) async fn close(&mut self) -> Result<()> {

@@ -139,6 +139,34 @@ describe('StateProjectionService', () => {
       expect(result.meta.channel).toBe('global');
       expect(mockSessionManager.listSessions).not.toHaveBeenCalled();
     });
+
+    it.each([
+      [
+        'https://user:pass@cards.example.test:9443/path?key=value#fragment',
+        'http://alias.test',
+        'https://cards.example.test:9443',
+      ],
+      [undefined, 'http://127.0.0.1:9283/path', 'http://127.0.0.1:9283'],
+      ['not a URL', 'https://alias.test', null],
+      ['ftp://cards.example.test', undefined, null],
+      [undefined, undefined, null],
+    ])('publishes only the configured HTTP(S) origin (%s, %s)', async (primary, alias, origin) => {
+      const entries = [
+        ['HYPERNEO_PUBLIC_URL', primary],
+        ['PUBLIC_URL', alias],
+      ] as const;
+      const previous = entries.map(([name]) => process.env[name]);
+      const set = (name: string, value: string | null | undefined) => {
+        if (value == null) delete process.env[name];
+        else process.env[name] = value;
+      };
+      try {
+        for (const [name, value] of entries) set(name, value);
+        expect((await service.getGlobalSystemSnapshot()).system.shareOrigin).toBe(origin);
+      } finally {
+        entries.forEach(([name], index) => set(name, previous[index]));
+      }
+    });
   });
 
   describe('GLOBAL_SNAPSHOT handler', () => {

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations.ts';
 import type { WorkAdapter } from '../../../../src/lib/drivers/types.ts';
+import { replyMessageBodyLength } from '../../../../src/lib/messaging/session-reply.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -32,6 +33,8 @@ function fixture(workInputs?: unknown) {
       daemonName: 'fixture',
       workInputs,
       isOpenTodo: (id: string, owner: string) => id === 'open-todo' && owner === 'root',
+      acceptedTodo: (id: string) => id === 'open-todo',
+      noticeReply: () => true,
     } as never)
   );
   return { delivered, registry };
@@ -42,6 +45,7 @@ describe('Neo and daemon sends say what they are', () => {
     ['work.send', neo],
     ['work.send', daemon],
     ['work.queue', neo],
+    ['work.send', { source: 'mcp', sessionId: 'worker' } as OperationCaller],
   ] as const)('%s with neither a todo nor notice is refused unsent', async (name, caller) => {
     const { registry, delivered } = fixture();
     const reply = await invokeOperation(registry, name, { ref, message: 'Hello' }, caller);
@@ -58,7 +62,6 @@ describe('Neo and daemon sends say what they are', () => {
     [{ notice: true }, neo],
     [{ notice: true }, daemon],
     [{}, { source: 'rpc' } as OperationCaller],
-    [{}, { source: 'mcp', sessionId: 'worker' } as OperationCaller],
   ] as const)('%j from a caller is delivered', async (purpose, caller) => {
     const { registry, delivered } = fixture();
     const reply = await invokeOperation(
@@ -68,7 +71,7 @@ describe('Neo and daemon sends say what they are', () => {
       caller
     );
     expect(reply).toMatchObject({ kind: 'completed', value: { ok: true } });
-    expect(delivered).toEqual(['Hello']);
+    expect(delivered.map((text) => text.slice(0, replyMessageBodyLength(text)))).toEqual(['Hello']);
   });
 
   test.each([

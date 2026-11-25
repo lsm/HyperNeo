@@ -114,13 +114,14 @@ export class Database extends DatabaseSync {
     path: string,
     options?: ConstructorParameters<typeof DatabaseSync>[1] & {
       readonly?: boolean;
+      readonlyUri?: boolean;
       queryObservability?: SQLiteQueryObservabilityOptions;
     }
   ) {
-    const { readonly, queryObservability, ...rest } = options ?? {};
+    const { readonly, readonlyUri, queryObservability, ...rest } = options ?? {};
     super(path, {
       enableForeignKeyConstraints: false,
-      ...(readonly ? { readOnly: true } : {}),
+      ...(readonly || readonlyUri ? { readOnly: true } : {}),
       ...rest,
     });
     if (queryObservability) {

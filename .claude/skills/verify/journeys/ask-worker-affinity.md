@@ -16,9 +16,12 @@ No native worker, model turn, provider key or external service is involved.
 
 Require ask-worker-affinity.json to show the latest same-ask worker receiving
 the follow-up, a busy latest worker yielding to another free same-ask worker,
-an author excluded before independent review, the oldest-settled latest ask
-winning different-ask reuse, and one new worker when no candidate is idle.
+an author excluded before independent review, a new worker for a new ask even
+when workers of other asks are free, and one new worker when no candidate is idle.
 Every started todo must have its expected binding, doing state and one recorded
 delivery input. The helper closes its daemon in finally; the wrapper retains
 evidence and removes the temporary HOME/data. Native client behavior is covered
 by existing adapter journeys, independently of this selection proof.
+
+The helper records a synthetic human approval before adding fixture todos.
+Use new-work-source.md to verify approval through the human RPC.

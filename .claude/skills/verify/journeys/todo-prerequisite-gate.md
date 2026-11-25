@@ -18,3 +18,6 @@ return `not_ready`, send nothing and leave the steps as they were (the refused a
 records no todo). Once the prerequisite is done, the same calls succeed; the bound
 todo is doing and the retry queues its follow-up for the worker.
 `evidence/todo-prerequisite-gate.json` holds one row per call.
+
+The helper seeds an accepted historical ask for its unrelated work fixture.
+Use new-work-source.md for the real proposal and human-approval path.

@@ -39,3 +39,6 @@ reuse the original todo and issue exactly three repository statements: the ask
 and distinct sibling reads once, plus the stored todo read once. Unit coverage
 changes that stored repository between operations to prove the next operation
 reads fresh facts. Each scope object represents one operation snapshot.
+
+The helper seeds an accepted historical ask for its unrelated work fixture.
+Use new-work-source.md for the real proposal and human-approval path.

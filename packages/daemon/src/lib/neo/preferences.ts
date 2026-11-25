@@ -41,3 +41,23 @@ export function getNeoPackPreference(
       }
     : null;
 }
+
+export function saveNeoPackPreference(
+  db: Database,
+  pack: string,
+  scope: NeoPackPreferenceScope,
+  key: string,
+  value: unknown,
+  now: number
+): void {
+  db.prepare(`INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
+    VALUES (?, ?, ?, ?, ?, 'human', ?) ON CONFLICT (pack, scope_kind, scope_key, key)
+    DO UPDATE SET value_json=excluded.value_json, set_by=excluded.set_by, set_at=excluded.set_at`).run(
+    pack,
+    scope.kind,
+    scope.key,
+    key,
+    JSON.stringify(value),
+    now
+  );
+}

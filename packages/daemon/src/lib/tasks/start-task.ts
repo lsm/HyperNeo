@@ -66,9 +66,7 @@ export function createStartTaskOperation(
   dependencies: DirectStartOperationDependencies
 ) {
   const start = (
-    superpipe({ getDatabase, jobQueue, policy, ...dependencies })(
-      'start-direct-task-operation'
-    ) as PipelineAPI
+    superpipe({ getDatabase, jobQueue, policy, ...dependencies })('task.start') as PipelineAPI
   )
     .input(['input', 'caller'])
     .pipe(getDatabase, undefined, 'db')

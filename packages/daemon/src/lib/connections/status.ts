@@ -1,8 +1,12 @@
 import { z } from 'zod';
 
+export const connectionProviders = ['google', 'microsoft'] as const;
+
+const connectionProvider = z.enum(connectionProviders);
+
 export const connectionStatus = z.object({
   id: z.string().min(1).max(200),
-  provider: z.literal('google'),
+  provider: connectionProvider,
   accountId: z.string().min(1).max(200),
   email: z.string().email(),
   scopes: z.array(z.string().max(300)).max(20),
@@ -10,6 +14,27 @@ export const connectionStatus = z.object({
 });
 
 export type ConnectionStatus = z.infer<typeof connectionStatus>;
+
+const graphScopes = [
+  'openid',
+  'profile',
+  'email',
+  'offline_access',
+  'Mail.ReadWrite',
+  'Calendars.Read',
+];
+
+export const grantedScopes = (scope: string) =>
+  scope
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((name) => {
+      const short = name.replace(/^https:\/\/graph\.microsoft\.com\//i, '').toLowerCase();
+      return graphScopes.find((known) => known.toLowerCase() === short) ?? name;
+    });
+
+export const googleConnections = (rows: ConnectionStatus[]) =>
+  rows.filter((row) => row.provider === 'google');
 
 export const googleClient = z.object({
   clientId: z.string().trim().min(1).max(500),

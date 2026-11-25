@@ -1,6 +1,6 @@
 # Multi-PR todo chain guidance
 
-Run the shared isolated metadata-only wrapper with Bun 1.4.2:
+Run the shared isolated metadata-only wrapper with Bun 1.4.4:
 
 ```sh
 TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory .claude/skills/verify/pr-todo-chain-guidance.ts

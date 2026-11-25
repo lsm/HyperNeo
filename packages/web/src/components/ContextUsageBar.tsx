@@ -3,6 +3,7 @@ import type { ContextInfo } from '@hyperneo/shared';
 import { formatTokens } from '../lib/utils.ts';
 
 interface ContextUsageBarProps {
+  unavailable?: boolean;
   contextUsage?: ContextInfo;
   maxContextTokens?: number;
 }
@@ -17,7 +18,11 @@ const AUTOCOMPACT_BUFFER_TOOLTIP =
   'Autocompact buffer — reserved for context compression. Not available for conversation.';
 const AUTOCOMPACT_THRESHOLD_TOOLTIP = 'Autocompact threshold';
 
-export default function ContextUsageBar({ contextUsage, maxContextTokens }: ContextUsageBarProps) {
+export default function ContextUsageBar({
+  contextUsage,
+  maxContextTokens,
+  unavailable,
+}: ContextUsageBarProps) {
   const [showContextDetails, setShowContextDetails] = useState(false);
   const [dropdownBottom, setDropdownBottom] = useState(96);
   const indicatorRef = useRef<HTMLDivElement>(null);
@@ -195,7 +200,13 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
             setShowContextDetails(!showContextDetails);
           }
         }}
-        title={hasContextData ? 'Click for context details' : 'Context data loading...'}
+        title={
+          unavailable
+            ? 'Context usage unavailable'
+            : hasContextData
+              ? 'Click for context details'
+              : 'Context data loading...'
+        }
       >
         <svg width="32" height="32" viewBox="0 0 36 36" class="relative">
           <g class="transform rotate-[-90deg]" transform-origin="18 18">
@@ -251,7 +262,7 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
             font-size="12"
             class={`font-bold fill-current ${getContextColor()}`}
           >
-            {Math.round(contextPercentage)}
+            {unavailable ? '–' : Math.round(contextPercentage)}
           </text>
         </svg>
       </div>

@@ -8,7 +8,7 @@ import {
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { googleConnectionReads } from '../../storage/repositories/google-connections-worker.ts';
-import { connectionStatus } from './status.ts';
+import { connectionStatus, googleConnections } from './status.ts';
 import type { createConnectionLifecycle } from './lifecycle.ts';
 const failure = z.object({ ok: z.literal(false), reason: z.string() });
 export const id = z.string().min(1).max(200);
@@ -104,19 +104,24 @@ export function project(value: unknown) {
 }
 
 export function createGoogleReadOperations(db: () => Database, service: () => Promise<Service>) {
-  const accounts = (superpipe({})('google-session-accounts') as PipelineAPI)
+  const accounts = (superpipe({})('google.accounts') as PipelineAPI)
     .input('caller')
     .pipe(admit, 'caller', 'result:result')
     .pipe(() => gatewayFor(db()).call(googleConnectionReads, 'list'), 'result', 'rows')
     .pipe(
       (rows: z.infer<typeof connectionStatus>[]) => ({
-        connections: rows.map(({ id, email, scopes, health }) => ({ id, email, scopes, health })),
+        connections: googleConnections(rows).map(({ id, email, scopes, health }) => ({
+          id,
+          email,
+          scopes,
+          health,
+        })),
       }),
       'rows',
       'result'
     )
     .endAsync('result');
-  const search = (superpipe({})('gmail-session-search') as PipelineAPI)
+  const search = (superpipe({})('gmail.search') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admit, 'caller', 'result:result')
     .pipe(() => service(), 'result', 'service')

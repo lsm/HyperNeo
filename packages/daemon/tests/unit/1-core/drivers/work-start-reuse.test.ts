@@ -11,6 +11,7 @@ import {
   type WorkVerbDeps,
 } from '../../../../src/lib/drivers/work-operations';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
 import {
   createOperationRegistry,
   type OperationCaller,
@@ -24,6 +25,7 @@ function harness(
     id: string;
     status: WorkStatus;
     liveStatus?: WorkStatus;
+    copilotClient?: 'cli' | 'desktop';
     turnQuestion?: WorkTurnQuestion;
     folder?: string;
     refusal?: 'not_open' | 'uncertain' | 'throws';
@@ -34,19 +36,29 @@ function harness(
     model?: string;
     effort?: string;
     unavailable?: boolean;
+    statusThrows?: boolean;
+    waitResult?: 'none' | 'instruction';
     provider?: string;
     requestedProvider?: string;
     unresolvedDefault?: boolean;
+    reuse?: 'long_lived' | 'per_ask' | 'per_todo';
+    sameAsk?: string[];
+    reconfigure?: 'applies' | 'refused' | 'unchanged';
+    compact?: boolean | 'throws';
+    copilotClients?: WorkAdapter['copilotClients'];
   },
   history?: ReadonlyMap<string, { sameAskAt: number | null; settledAt: number | null }>,
-  claim?: Pick<WorkVerbDeps, 'claimWorker' | 'unclaimWorker'>
+  claim?: Pick<WorkVerbDeps, 'claimWorker' | 'unclaimWorker' | 'isOpenTodo'>
 ) {
   const sent: string[] = [];
+  const events: string[] = [];
   const messages: string[] = [];
   const started: string[] = [];
   const unusable: WorkRef[] = [];
+  const waiting: string[] = [];
   const adapter: WorkAdapter = {
     id: config?.adapter ?? 'claude-desktop',
+    copilotClients: config?.copilotClients,
     supportsStartEffort: true,
     resolveStartConfiguration: config
       ? async (request) => {
@@ -65,6 +77,17 @@ function harness(
               };
         }
       : undefined,
+    reconfigure: config?.reconfigure
+      ? async (_ref, settings) => {
+          if (config.reconfigure === 'refused') return false;
+          if (config.reconfigure === 'applies') {
+            config.model = settings.model ?? config.model;
+            config.effort = settings.effort ?? config.effort;
+            config.provider = settings.provider ?? config.provider;
+          }
+          return true;
+        }
+      : undefined,
     capabilities: ['find', 'start', 'send'],
     find: (query) => [
       {
@@ -80,6 +103,7 @@ function harness(
             title: worker.id,
             place: { ...place, folder: worker.folder ?? place.folder },
             status: worker.status,
+            copilotClient: worker.copilotClient,
             lastActivityAt: 1,
           })),
       },
@@ -97,8 +121,9 @@ function harness(
         },
       };
     },
-    status: async (ref) =>
-      config?.unavailable
+    status: async (ref) => {
+      if (config?.statusThrows) throw new Error('Synthetic status failure');
+      return config?.unavailable
         ? { ok: false, reason: 'unreachable', detail: 'offline' }
         : {
             ok: true,
@@ -116,9 +141,21 @@ function harness(
               effort: config?.effort ?? 'medium',
               ...(config?.provider ? { provider: config.provider } : {}),
             },
+          };
+    },
+    compact:
+      config?.compact === undefined
+        ? undefined
+        : async (ref) => {
+            events.push(`compact ${ref.id}`);
+            if (config.compact === 'throws') throw new Error('Synthetic compaction failure');
+            return config.compact
+              ? { ok: true, value: { compacted: true } }
+              : { ok: false, reason: 'busy', detail: 'Synthetic refusal' };
           },
     send: async (ref, message) => {
       messages.push(message);
+      events.push(`send ${ref.id}`);
       sent.push(ref.id);
       await Promise.resolve();
       const refusal = workers.find((worker) => worker.id === ref.id)?.refusal;
@@ -139,6 +176,18 @@ function harness(
           ? new Map(free.map((id) => [id, history.get(id) ?? { sameAskAt: null, settledAt: null }]))
           : new Set(free),
       markUnusable: (ref) => void unusable.push(ref),
+      ...(config?.reuse
+        ? {
+            reusePolicy: async () => ({ mode: config.reuse!, sameAsk: config.sameAsk ?? [] }),
+            todoWorker: {
+              on: () => false,
+              wait: async (_todoId: string, ref: WorkRef) => {
+                waiting.push(ref.id);
+                return config.waitResult ?? 'instruction';
+              },
+            },
+          }
+        : {}),
       ...claim,
     })
   );
@@ -163,8 +212,101 @@ function harness(
     if (outcome.kind !== 'completed') throw new Error(outcome.message);
     return outcome.value as { ok: boolean; value?: { ref: WorkRef; reused?: true } };
   };
-  return { start, sent, started, unusable, messages };
+  return { start, sent, events, started, unusable, messages, waiting, registry };
 }
+
+describe('work.start session reuse preference', () => {
+  test('per todo starts a new session even when another worker is free', async () => {
+    const run = harness([{ id: 'other', status: 'done' }], ['other'], {
+      adapter: 'claude-desktop',
+      reuse: 'per_todo',
+    });
+    expect((await run.start(neo, false, { todoId: 'next' })).value?.ref.id).toBe('fresh');
+    expect(run.sent).toEqual([]);
+  });
+
+  test.each(['long_lived', 'per_ask'] as const)(
+    '%s starts a new session instead of another matter’s worker',
+    async (reuse) => {
+      const run = harness([{ id: 'other', status: 'done' }], ['other'], {
+        adapter: 'claude-desktop',
+        reuse,
+        sameAsk: [],
+      });
+      expect((await run.start(neo, false, { todoId: 'next' })).value?.ref.id).toBe('fresh');
+      expect(run.sent).toEqual([]);
+    }
+  );
+
+  test.each([true, false, 'throws'] as const)(
+    'compacts the matter’s own worker before reusing it (%s)',
+    async (compact) => {
+      const own = `compacted-${compact}`;
+      const run = harness([{ id: own, status: 'done' }], [own], {
+        adapter: 'claude-desktop',
+        reuse: 'long_lived',
+        sameAsk: [own],
+        compact,
+      });
+      expect((await run.start(neo, false, { todoId: 'next' })).value?.reused).toBe(true);
+      expect(run.events).toEqual([`compact ${own}`, `send ${own}`]);
+    }
+  );
+
+  test('does not message a todo that closed while its worker compacted', async () => {
+    const own = 'closed-while-compacting';
+    const undone: string[] = [];
+    const run = harness(
+      [{ id: own, status: 'done' }],
+      [own],
+      { adapter: 'claude-desktop', reuse: 'long_lived', sameAsk: [own], compact: true },
+      undefined,
+      {
+        claimWorker: async () => true,
+        unclaimWorker: async (_todoId, ref) => void undone.push(ref.id),
+        isOpenTodo: () => !run.events.includes(`compact ${own}`),
+      }
+    );
+    const result = await run.start(neo, false, { todoId: 'next' });
+    expect(result).toMatchObject({ ok: false, reason: 'todo_required', notSent: true });
+    expect(run.events).toEqual([`compact ${own}`]);
+    expect(run.started).toEqual([]);
+    expect(undone).toEqual([own]);
+  });
+
+  test('per ask waits when that matter’s worker is busy', async () => {
+    const run = harness([{ id: 'own', status: 'running' }], [], {
+      adapter: 'claude-desktop',
+      reuse: 'per_ask',
+      sameAsk: ['own'],
+    });
+    expect((await run.start(neo, false, { todoId: 'next' })).ok).toBe(false);
+    expect(run.waiting).toEqual(['own']);
+    expect(run.started).toEqual([]);
+  });
+
+  test('a todo that cannot be queued starts a fresh session', async () => {
+    const run = harness([{ id: 'own', status: 'running' }], [], {
+      adapter: 'claude-desktop',
+      reuse: 'per_ask',
+      sameAsk: ['own'],
+      waitResult: 'none',
+    });
+    expect((await run.start(neo, false, { todoId: 'next' })).value?.ref.id).toBe('fresh');
+    expect(run.waiting).toEqual(['own']);
+  });
+
+  test('a failing busy-worker status check falls back to a fresh start', async () => {
+    const run = harness([{ id: 'own', status: 'running' }], [], {
+      adapter: 'claude-desktop',
+      reuse: 'per_ask',
+      sameAsk: ['own'],
+      statusThrows: true,
+    });
+    expect((await run.start(neo, false, { todoId: 'next' })).value?.ref.id).toBe('fresh');
+    expect(run.waiting).toEqual([]);
+  });
+});
 
 describe('work.start against a worker release', () => {
   const claims = () => {
@@ -269,27 +411,30 @@ describe('work.start against a worker release', () => {
 });
 
 describe('work.start reuses an idle worker', () => {
-  test('offers a follow-up to its most recently used same-ask worker first', async () => {
-    const run = harness(
-      [
-        { id: 'affinity-other', status: 'done' },
-        { id: 'affinity-older', status: 'done' },
-        { id: 'affinity-latest', status: 'done' },
-      ],
-      ['affinity-other', 'affinity-older', 'affinity-latest'],
-      undefined,
-      new Map([
-        ['affinity-other', { sameAskAt: null, settledAt: 1 }],
-        ['affinity-older', { sameAskAt: 10, settledAt: null }],
-        ['affinity-latest', { sameAskAt: 20, settledAt: null }],
-      ])
-    );
-    expect((await run.start(neo, false, { todoId: 'follow-up' })).value?.ref.id).toBe(
-      'affinity-latest'
-    );
-    expect(run.sent).toEqual(['affinity-latest']);
-    expect(run.started).toEqual([]);
-  });
+  test.each(['claude-desktop', 'copilot-cli'])(
+    'offers a follow-up to its most recently used same-ask worker first (%s)',
+    async (adapter) => {
+      const run = harness(
+        [
+          { id: 'affinity-other', status: 'done', copilotClient: 'desktop' },
+          { id: 'affinity-older', status: 'done', copilotClient: 'desktop' },
+          { id: 'affinity-latest', status: 'done', copilotClient: 'cli' },
+        ],
+        ['affinity-other', 'affinity-older', 'affinity-latest'],
+        { adapter, copilotClients: adapter === 'copilot-cli' ? ['desktop', 'cli'] : undefined },
+        new Map([
+          ['affinity-other', { sameAskAt: null, settledAt: 1 }],
+          ['affinity-older', { sameAskAt: 10, settledAt: null }],
+          ['affinity-latest', { sameAskAt: 20, settledAt: null }],
+        ])
+      );
+      expect((await run.start(neo, false, { todoId: 'follow-up' })).value?.ref.id).toBe(
+        'affinity-latest'
+      );
+      expect(run.sent).toEqual(['affinity-latest']);
+      expect(run.started).toEqual([]);
+    }
+  );
 
   test('skips a busy same-ask worker and offers another free same-ask worker', async () => {
     const run = harness(
@@ -363,6 +508,13 @@ describe('work.start reuses an idle worker', () => {
     expect(result.value?.reused).toBe(true);
     expect(run.sent).toEqual(['idle']);
     expect(run.started).toEqual([]);
+  });
+
+  test('tells a reused worker its own id in the reply line', async () => {
+    const run = harness([{ id: 'reply-idle', status: 'done' }], ['reply-idle']);
+    expect((await run.start(neo, true)).value?.reused).toBe(true);
+    expect(run.messages[0]).toContain('hyperneo send neo --from claude-desktop:reply-idle --kind');
+    expect(run.messages[0].split('hyperneo send ')).toHaveLength(2);
   });
 
   test('refreshes identity before delivering a new todo to a reused worker', async () => {
@@ -534,6 +686,42 @@ describe('work.start provider-aware reuse', () => {
   );
 });
 
+describe('work.start reuse for a shared model id whose default is not the first provider', () => {
+  test('a bare start may reuse any idle worker; the pinned selector starts fresh on another provider', async () => {
+    const config = {
+      adapter: 'hyperneo',
+      model: 'gpt-6.1-sol',
+      provider: 'first',
+      requestedProvider: 'second',
+    };
+    const bare = harness([{ id: 'idle-first', status: 'done' }], ['idle-first'], config);
+    expect((await bare.start(neo, false, {})).value?.ref.id).toBe('idle-first');
+    const pinned = harness([{ id: 'idle-first', status: 'done' }], ['idle-first'], config);
+    expect((await pinned.start(neo, false, { model: 'Sol 6.1' })).value?.ref.id).toBe('fresh');
+    expect(pinned.sent).toEqual([]);
+  });
+});
+
+describe('work.start switches an idle worker in place', () => {
+  test.each([
+    { reconfigure: 'applies' as const, reuse: true },
+    { reconfigure: 'refused' as const, reuse: false },
+    { reconfigure: 'unchanged' as const, reuse: false },
+  ])('reuses only after the switch is confirmed: %j', async ({ reconfigure, reuse }) => {
+    const id = `switch-${reconfigure}`;
+    const run = harness([{ id, status: 'done' }], [id], {
+      adapter: 'hyperneo',
+      model: 'other-model',
+      effort: 'low',
+      reconfigure,
+    });
+    const result = await run.start(neo, false, { model: 'Sol 6.1', effort: 'high' });
+    expect(result.value?.ref.id).toBe(reuse ? id : 'fresh');
+    expect(run.sent).toEqual(reuse ? [id] : []);
+    if (reuse) expect(result.value).toMatchObject({ model: 'gpt-6.1-sol', effort: 'high' });
+  });
+});
+
 describe('work.start effort-only reuse', () => {
   test.each([
     { model: 'gpt-6.1-sol', unresolvedDefault: false, reuse: true },
@@ -575,6 +763,51 @@ describe('work.start independent worker reuse', () => {
 });
 
 describe('work.start remote actor exclusions', () => {
+  test('a forwarded start creates a fresh session instead of reusing a remote worker', async () => {
+    const destination = harness([{ id: 'other', status: 'done' }], ['other'], {
+      adapter: 'claude-desktop',
+      reuse: 'per_ask',
+      sameAsk: [],
+    });
+    const rpc = createOperationRpcHandler(destination.registry, () => ({}));
+    const sender = createOperationRegistry(
+      createWorkVerbOperations({
+        adapters: () => [],
+        daemonName: 'origin',
+        remote: {
+          list: () => [{ daemonId: 'peer' }],
+          invoke: async (_daemon, name, input) =>
+            rpc(
+              { name, input },
+              {
+                messageId: 'synthetic',
+                sessionId: 'global',
+                method: 'operation.invoke',
+                timestamp: new Date().toISOString(),
+              }
+            ),
+        },
+      })
+    );
+    const result = await invokeOperation(
+      sender,
+      'work.start',
+      {
+        adapter: 'claude-desktop',
+        place: { ...place, daemon: 'peer' },
+        todoId: 'remote-todo',
+        title: 'loader',
+        message: 'Fix the loader.',
+      },
+      neo
+    );
+    expect(result).toMatchObject({
+      value: { ok: true, value: { ref: { id: 'fresh', daemon: 'peer' } } },
+    });
+    expect(destination.sent).toEqual([]);
+    expect(destination.started).toEqual(['loader']);
+  });
+
   test('qualifies exclusions for the destination before forwarding a start', async () => {
     const forwarded: unknown[] = [];
     const registry = createOperationRegistry(

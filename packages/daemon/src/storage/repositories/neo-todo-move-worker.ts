@@ -2,7 +2,7 @@ import type { WorkRef } from '../../lib/drivers/types.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 import type { ReactiveDatabase } from '../reactive-database.ts';
-import { markWorkUnusable } from '../work-started-sessions.ts';
+import { markWorkUnusable } from './work-started-sessions-worker.ts';
 import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository, neoWorkerKey } from './neo-todo-session-repository.ts';
 
@@ -85,7 +85,7 @@ class NeoTodoMoves {
     const refs = this.db
       .prepare(`SELECT s.todo_id AS id, COALESCE(s.ref, json_extract(s.target, '$.ref')) AS ref
       FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
-      WHERE s.todo_id <> ? AND t.state IN ('todo', 'doing', 'blocked', 'failed')
+      WHERE s.todo_id <> ? AND t.state IN ('todo', 'doing', 'blocked')
       UNION ALL SELECT todo_id AS id, json_extract(target, '$.ref') AS ref FROM work_delivery_inputs WHERE outcome IS NULL`)
       .all(todoId) as { id: string | null; ref: string | null }[];
     if (refs.some((row) => row.ref && neoWorkerKey(JSON.parse(row.ref)) === neoWorkerKey(fromRef)))
@@ -102,7 +102,7 @@ class NeoTodoMoves {
   reopen(move: NeoTodoMove): boolean {
     if (!this.active(move)) return false;
     const store = new NeoAskTodoRepository(this.db);
-    markWorkUnusable(this.db, move.fromRef);
+    markWorkUnusable(this.db, move.fromRef, 'todo moved');
     store.updateTodo(
       store.getTodo(move.todoId)!,
       { state: 'todo', startedAt: null, finishedAt: null },

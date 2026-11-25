@@ -16,9 +16,12 @@ import type {
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
 import type { Database } from '../../../../src/storage/database.ts';
-import type { OapEngine, OapEngineOptions } from '../../../../src/lib/oap/oap-engine.ts';
-import { OapHubRequestError, type OapHubClient } from '../../../../src/lib/oap/oap-hub-client.ts';
-import { createOapRuntime } from '../../../../src/lib/oap/oap-runtime.ts';
+import type { OxapEngine, OxapEngineOptions } from '../../../../src/lib/oxap/oxap-engine.ts';
+import {
+  OxapHubRequestError,
+  type OxapHubClient,
+} from '../../../../src/lib/oxap/oxap-hub-client.ts';
+import { bindCodexRuntime as createOxapRuntime } from '../../../helpers/oxap-codex-runtime.ts';
 
 function makeEventBus(): InternalEventBus<DaemonInternalEventMap> {
   return {
@@ -31,7 +34,7 @@ function makeEventBus(): InternalEventBus<DaemonInternalEventMap> {
 function createAgentSession(
   overrides: Partial<Session> = {},
   eventBus: InternalEventBus<DaemonInternalEventMap> = makeEventBus(),
-  oap?: import('../../../../src/lib/agent/agent-session.ts').AgentSessionRuntimeOptions['oap']
+  oxap?: import('../../../../src/lib/agent/agent-session.ts').AgentSessionRuntimeOptions['oxap']
 ): AgentSession {
   const mockSession: Session = {
     id: `test-session-${Math.random()}`,
@@ -75,7 +78,7 @@ function createAgentSession(
     undefined,
     undefined,
     undefined,
-    { oap }
+    { oxap }
   );
 }
 
@@ -132,12 +135,12 @@ describe('AgentSession.clearConversationContext', () => {
         agent.session.sdkSessionId = 'native-thread-2';
       });
       const runtime = { openDirectorySupported: true, clear } as unknown as NonNullable<
-        import('../../../../src/lib/agent/agent-session.ts').AgentSessionRuntimeOptions['oap']
+        import('../../../../src/lib/agent/agent-session.ts').AgentSessionRuntimeOptions['oxap']
       >;
       agent = createAgentSession(
         {
           sdkSessionId: 'native-thread-1',
-          config: { model: 'synthetic', harness: 'codex' },
+          config: { model: 'synthetic', harness: 'oxap-codex' },
         } as Partial<Session>,
         makeEventBus(),
         runtime
@@ -159,12 +162,12 @@ describe('AgentSession.clearConversationContext', () => {
       throw new Error('synthetic close failure');
     });
     const runtime = { openDirectorySupported: true, clear } as unknown as NonNullable<
-      import('../../../../src/lib/agent/agent-session.ts').AgentSessionRuntimeOptions['oap']
+      import('../../../../src/lib/agent/agent-session.ts').AgentSessionRuntimeOptions['oxap']
     >;
     const agent = createAgentSession(
       {
         sdkSessionId: 'native-thread-1',
-        config: { model: 'synthetic', harness: 'codex' },
+        config: { model: 'synthetic', harness: 'oxap-codex' },
       } as Partial<Session>,
       makeEventBus(),
       runtime
@@ -196,22 +199,21 @@ describe('AgentSession.clearConversationContext', () => {
               payload: { features: { 'session.open.reopen': { level: 'native' } } },
             };
           }
-          throw new OapHubRequestError('unknown_session', 'synthetic missing history');
+          throw new OxapHubRequestError('unknown_session', 'synthetic missing history');
         }),
-      } as unknown as OapHubClient;
+      } as unknown as OxapHubClient;
       const engine = {
         getHub: mock(async () => client),
         isCurrentHub: mock(() => true),
-      } as unknown as OapEngine;
-      const options: OapEngineOptions = {
-        binaryPath: '/synthetic/oapx',
+      } as unknown as OxapEngine;
+      const options: OxapEngineOptions = {
+        binaryPath: '/synthetic/oxap',
         identity: { version: 'synthetic', sha256: 'a'.repeat(64) },
         stateDirectory: '/synthetic/state',
-        codexExecutable: '/synthetic/codex',
-        codexHome: '/synthetic/home',
+        hub: { adapters: {}, environment: {} },
       };
       type Runtime = NonNullable<
-        import('../../../../src/lib/agent/agent-session.ts').AgentSessionRuntimeOptions['oap']
+        import('../../../../src/lib/agent/agent-session.ts').AgentSessionRuntimeOptions['oxap']
       >;
       let runtime!: Runtime;
       const proxy: Runtime = {
@@ -224,12 +226,12 @@ describe('AgentSession.clearConversationContext', () => {
       const agent = createAgentSession(
         {
           sdkSessionId: 'native-thread-1',
-          config: { model: 'synthetic', harness: 'codex' },
+          config: { model: 'synthetic', harness: 'oxap-codex', provider: 'anthropic-codex' },
         } as Partial<Session>,
         makeEventBus(),
         proxy
       );
-      runtime = createOapRuntime(
+      runtime = createOxapRuntime(
         engine,
         options,
         agent.internalEventBus,
@@ -250,6 +252,7 @@ describe('AgentSession.clearConversationContext', () => {
       );
       expect(error).toBeInstanceOf(ClearConversationUnsupportedError);
       expect((error as Error).message).toMatch(/could not clear/i);
+      if (failure === 'open') expect(client.request).toHaveBeenCalled();
       expect(agent.db.saveSDKMessage).toHaveBeenCalledTimes(1);
       expect(agent.messageHub.event).toHaveBeenCalledTimes(1);
       expect(agent.db.saveSDKMessage).toHaveBeenCalledWith(
@@ -271,7 +274,7 @@ describe('AgentSession.clearConversationContext', () => {
       const session = createAgentSession({
         sdkSessionId: 'native-thread-1',
         sdkOriginPath: '/synthetic/original',
-        config: { model: 'synthetic', harness: 'codex' },
+        config: { model: 'synthetic', harness: 'oxap-codex' },
       } as Partial<Session>);
       const reset = spyOn(session, 'resetQuery').mockResolvedValue({ success: true });
       const enqueue = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
@@ -330,7 +333,7 @@ describe('AgentSession.clearConversationContext', () => {
     async (operation) => {
       const session = createAgentSession({
         sdkSessionId: 'native-thread-1',
-        config: { model: 'synthetic', harness: 'codex' },
+        config: { model: 'synthetic', harness: 'oxap-codex' },
       } as Partial<Session>);
       spyOn(session, 'showNotice').mockRejectedValue(new Error('synthetic storage failure'));
       const reset = spyOn(session, 'resetQuery').mockResolvedValue({ success: true });
@@ -350,7 +353,7 @@ describe('AgentSession.clearConversationContext', () => {
   it('publishes a session error when the Codex refusal cannot be saved', async () => {
     const session = createAgentSession({
       sdkSessionId: 'native-thread-1',
-      config: { model: 'synthetic', harness: 'codex' },
+      config: { model: 'synthetic', harness: 'oxap-codex' },
     } as Partial<Session>);
     spyOn(session.db, 'saveSDKMessage').mockResolvedValue(false);
     await expect(session.startFreshContext()).rejects.toBeInstanceOf(

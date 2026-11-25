@@ -45,3 +45,6 @@ Keep todo-add-activation.json, proof.log and wrapper exit status. Require clean
 worker/daemon shutdown and exit zero. Temporary HOME/data are removed after
 evidence is saved. External worker dispatch, browser layout and the 250 ms
 contention target are not verified. Keep #8712 open for remaining routes/deletion.
+
+The helper seeds an accepted historical ask for its unrelated work fixture.
+Use new-work-source.md for the real proposal and human-approval path.

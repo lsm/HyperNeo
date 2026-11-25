@@ -1,6 +1,6 @@
 import { generateUUID } from '@hyperneo/shared';
 import type { SessionScheduleListResult } from '@hyperneo/shared/types/session-schedule';
-import superpipe, { type PipelineAPI } from 'superpipe';
+import superpipe, { type PipelineAPI, type SuperPipeFactory } from 'superpipe';
 import { z } from 'zod';
 import type { SessionSchedule } from '../../storage/repositories/session-schedule-repository.ts';
 import { WorkRefSchema } from '../drivers/types.ts';
@@ -25,7 +25,10 @@ export const SessionScheduleCadenceSchema = z.discriminatedUnion('kind', [
 ]);
 const Create = z.object({
   target: WorkRefSchema,
-  cadence: SessionScheduleCadenceSchema,
+  cadence: z.discriminatedUnion('kind', [
+    ...SessionScheduleCadenceSchema.options,
+    z.object({ kind: z.literal('once'), at: z.number().int().describe('Epoch milliseconds') }),
+  ]),
   note: z.string().trim().min(1).max(2000),
   nudgeEvery: z
     .number()
@@ -37,6 +40,7 @@ const Create = z.object({
 });
 const List = z.object({ target: WorkRefSchema.optional() });
 const ById = z.object({ scheduleId: z.string().min(1) });
+const Runs = ById.extend({ limit: z.number().int().min(1).max(500).default(100) });
 
 const ScheduleShape = z.object({ id: z.string(), status: z.string() }).passthrough();
 const ScheduleResult = z.union([
@@ -48,6 +52,22 @@ const ListResult = z.union([
   z.object({
     ok: z.literal(true),
     schedules: z.array(ScheduleShape.extend({ sourceLabel: z.string().nullable() })),
+  }),
+]);
+
+const RunsResult = z.union([
+  z.object({ ok: z.literal(false), reason: z.string() }),
+  z.object({
+    ok: z.literal(true),
+    runs: z.array(
+      z.object({
+        dueAt: z.number().nullable(),
+        firedAt: z.number(),
+        outcome: z.string(),
+        skipReason: z.string().nullable(),
+        messageId: z.string().nullable(),
+      })
+    ),
   }),
 ]);
 
@@ -68,8 +88,8 @@ export function requireScheduleStatus(
 }
 
 export function createSessionScheduleOperations(scheduler: SessionScheduler) {
-  const byId = (name: string, status: SessionSchedule['status'] | null) =>
-    (superpipe({})(name) as PipelineAPI)
+  const byId = (pipeline: ReturnType<SuperPipeFactory>, status: SessionSchedule['status'] | null) =>
+    (pipeline as PipelineAPI)
       .input(['input', 'caller'])
       .pipe(admitScheduleCaller, 'caller', 'result:outcome')
       .pipe(
@@ -125,11 +145,11 @@ export function createSessionScheduleOperations(scheduler: SessionScheduler) {
     .end('outcome');
 
   const changed = (
-    name: string,
+    pipeline: ReturnType<SuperPipeFactory>,
     status: SessionSchedule['status'] | null,
     act: (s: SessionSchedule) => SessionSchedule | null
   ) =>
-    byId(name, status)
+    byId(pipeline, status)
       .pipe(
         (schedule: SessionSchedule) => {
           const changedTo = act(schedule);
@@ -140,13 +160,28 @@ export function createSessionScheduleOperations(scheduler: SessionScheduler) {
       )
       .end('outcome');
 
-  const pause = changed('schedule.session.pause', 'active', (s) => scheduler.pause(s));
-  const resume = changed('schedule.session.resume', 'paused', (s) => scheduler.resume(s));
-  const remove = byId('schedule.session.delete', null)
+  const pause = changed(superpipe({})('schedule.session.pause'), 'active', (s) =>
+    scheduler.pause(s)
+  );
+  const resume = changed(superpipe({})('schedule.session.resume'), 'paused', (s) =>
+    scheduler.resume(s)
+  );
+  const remove = byId(superpipe({})('schedule.session.delete'), null)
     .pipe(
       (schedule: SessionSchedule) =>
         scheduler.delete(schedule) ? { ok: true as const, schedule } : BUSY,
       'outcome',
+      'outcome'
+    )
+    .end('outcome');
+
+  const runs = byId(superpipe({})('schedule.session.runs'), null)
+    .pipe(
+      (schedule: SessionSchedule, input: z.infer<typeof Runs>) => ({
+        ok: true as const,
+        runs: scheduler.repo.listRuns(schedule.id, input.limit),
+      }),
+      ['outcome', 'input'],
       'outcome'
     )
     .end('outcome');
@@ -160,7 +195,7 @@ export function createSessionScheduleOperations(scheduler: SessionScheduler) {
     defineOperation({
       name: 'schedule.session.create',
       description:
-        'Create a fact-driven reminder schedule: cadence every (everyMs, at least one minute) or cron (cron, timezone) sets check times, not forced turns. After the first delivery, unchanged reminders stay quiet and back off; due time is not a new fact. nudgeEvery is legacy compatibility only. The target is a work ref from work.find. Neo or the user only.',
+        'Create a reminder schedule. Cadence every (everyMs, at least one minute), cron (cron, timezone) or once (at, a future epoch-ms time). every and cron are fact-driven: they set check times, not forced turns; after the first delivery, unchanged reminders stay quiet and back off, because due time is not a new fact. once always fires: it delivers at its time even if nothing changed, waits while the target is busy, then the schedule is done. An uncertain external send is never resent: it is checked by its receipt, or without one the schedule ends with delivery unconfirmed. nudgeEvery is legacy compatibility only. The target is a work ref from work.find. Neo or the user only.',
       inputSchema: Create,
       resultSchema: ScheduleResult,
       policy: policy('mutate'),
@@ -175,6 +210,15 @@ export function createSessionScheduleOperations(scheduler: SessionScheduler) {
       resultSchema: ListResult,
       policy: policy('read'),
       execute: async (input, caller) => (list as Run)(input, caller) as z.infer<typeof ListResult>,
+    }),
+    defineOperation({
+      name: 'schedule.session.runs',
+      description:
+        "List a session schedule's newest runs first (limit, default 100): due time, fired time, outcome, skip reason and the message id when one was sent.",
+      inputSchema: Runs,
+      resultSchema: RunsResult,
+      policy: policy('read'),
+      execute: async (input, caller) => (runs as Run)(input, caller) as z.infer<typeof RunsResult>,
     }),
     defineOperation({
       name: 'schedule.session.pause',

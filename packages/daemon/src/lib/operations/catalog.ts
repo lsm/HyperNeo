@@ -1,3 +1,4 @@
+import { createSdkDownloadOperation } from '../agent/sdk-download-operation.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import { createDiscoveryOperations } from './discovery.ts';
 import {
@@ -51,6 +52,7 @@ export function createDaemonOperationCatalog(
       messaging.workerReport,
       messaging.inNeoProject
     ),
+    createSdkDownloadOperation(),
     createAttachDaemonOperation(remoteDaemons),
     createProbeDaemonOperation(remoteDaemons),
     createListDaemonsOperation(remoteDaemons),

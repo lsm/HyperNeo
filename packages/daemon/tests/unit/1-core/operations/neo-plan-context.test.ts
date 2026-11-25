@@ -68,8 +68,31 @@ describe('neoPlanLines', () => {
       { ...asks[1], topic: null },
     ];
     const lines = neoPlanLines(labelled, [], []);
-    expect(lines[0].text).toContain('topic=邮件');
-    expect(lines[1].text).toContain('topic=none');
+    expect(lines[1].text).toContain('topic=邮件');
+    expect(lines[2].text).toContain('topic=none');
+  });
+  test('lists the topics of the last 30 days first, folded for case and spacing', () => {
+    const topics = [
+      { topic: 'kids', count: 1 },
+      { topic: 'Kids', count: 2 },
+      { topic: '邮件', count: 1 },
+      { topic: '家长控制', count: 4 },
+    ];
+    expect(neoPlanLines(asks.slice(0, 1), [], [], topics)[0].text).toBe(
+      'Topics used in the last 30 days (asks open or settled): 家长控制 4, Kids 3, 邮件 1'
+    );
+    expect(neoPlanLines([], [], [], [])[0].text).toBe(
+      'Topics used in the last 30 days (asks open or settled): none'
+    );
+  });
+  test('keeps the topic list when over budget', () => {
+    const lines = neoPlanLines(
+      asks,
+      asks.map((ask, i) => todo(`step-${i}`, { askId: ask.id, title: 'Detail '.repeat(1000) })),
+      [],
+      [{ topic: '邮件', count: 1 }]
+    );
+    expect(fitNeoPlanLines(lines, 400)[0].text).toContain('邮件 1');
   });
   test('describes an absent reason as display text', () => {
     const line = neoPlanLines(asks, [todo('first')], []).find((item) => item.id === 'first');
@@ -83,16 +106,16 @@ describe('neoPlanLines', () => {
       []
     );
     const fitted = fitNeoPlanLines(lines, 400);
-    expect(fitted.map((line) => line.id)).toEqual(asks.map((ask) => ask.id));
+    expect(fitted.map((line) => line.id)).toEqual(['topics', ...asks.map((ask) => ask.id)]);
     for (const ask of asks)
       expect(fitted.find((line) => line.id === ask.id)?.text).toContain(`neo.ask.read ${ask.id}`);
-    expect(lines.filter((line) => line.id !== line.askId)).toHaveLength(12);
+    expect(lines.filter((line) => line.kind === 'todo')).toHaveLength(12);
   });
   test('retains details under budget and counts encoded bytes', () => {
     const lines = neoPlanLines(asks.slice(0, 1), [todo('first', { title: '亮'.repeat(50) })], []);
     expect(fitNeoPlanLines(lines, 10000)).toEqual(lines);
     const text = lines.map((line) => line.text).join('\n');
-    expect(fitNeoPlanLines(lines, text.length)).toHaveLength(1);
+    expect(fitNeoPlanLines(lines, text.length).map((line) => line.kind)).toEqual(['topics', 'ask']);
   });
 });
 
@@ -122,7 +145,13 @@ describe('planNeoPlanContext', () => {
     const delta = planNeoPlanContext(lines, changed, 'prompt');
     expect(delta).toContain('doing');
     expect(delta).not.toContain('ask-11');
-    expect(planNeoPlanContext(lines, changed.slice(1), 'prompt')).toContain('ask-0');
+    expect(
+      planNeoPlanContext(
+        lines,
+        changed.filter((line) => line.id !== 'ask-0'),
+        'prompt'
+      )
+    ).toContain('ask-0');
   });
 });
 

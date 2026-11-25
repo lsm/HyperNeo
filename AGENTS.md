@@ -14,7 +14,7 @@ This file holds the rules for every change. Before you edit inside one of these 
 
 ## Setup and commands
 
-- Use Bun 1.4.2 for the daemon and native proof jobs ([runtimes](docs/supported-runtimes.md)).
+- Use Bun 1.4.4 for the daemon and native proof jobs ([runtimes](docs/supported-runtimes.md)).
 - Pin exact dependency versions; no `^` or `~`.
 - Run `bun install --frozen-lockfile` in fresh worktrees before committing.
 - Always pass a unique `DB_PATH` from a worktree; the DB has a PID lock.
@@ -52,8 +52,11 @@ Never run `bun test` from the repo root. Pre-commit checks lint, format, types a
 ## Change decomposition and Git
 
 - Measure touched code and callers before slicing; never estimate from a brief.
-- Before settling a design or plan, and before changing code that has no written plan, run `bun run system-map impact <files>` (or `--diff` on a branch) and account for every file it lists outside the plan; `bun run system-map where <name>` shows who defines, calls, reads or writes an operation, RPC method, event or table.
-- When a pull request where you ran `system-map` is done, add one comment to the feedback log, issue #10836, in the format given there: the command, what it showed that the plan lacked, and anything it missed or got wrong.
+- For every design, run `bun run system-map map` for package, component and operation placement, then `bun run system-map impact <files>` once the plan names files.
+- For every code change, run `bun run system-map impact --diff`. Use `map` when there are no mapped sources and `map --diff` when component placement changes or is unclear.
+- In designs and code, run `bun run system-map where <name>` for operation, RPC, event or table contracts and `bun run system-map routes <module> <export>` for pipeline runners.
+- Put one `system-map-impact` block in every PR body. Run `bun scripts/system-map-impact.ts --print` for the current head and base, attest to the reads you performed, and give a reason for each required path. Use the collapsed System map CI report to refresh the block. A maintainer's `revert` label waives path entries only. Use #10836 for missing or wrong links and runtime problems.
+- System map CI verifies the exact snapshots and path coverage. The read entries and reasons are author claims. It compares the branch with its own fork point from `dev`, so a `dev` push does not change the result; body or label changes can race the merge. See [Limits](docs/design/system-map-ci.md#limits).
 - When re-slicing, use a three-dot diff against freshly fetched `origin/dev`.
 - Keep PRs near 300 production lines; tests ride their slice. The limit only splits work, never bundles unrelated work.
 - One PR per rung: Pin (preserve behavior in tests) → Extract (verbatim moves, tests unchanged) → Build (tested, reachable for knip, not called) → Wire (one call site; flags only for staged behavior) → Delete (removal only).

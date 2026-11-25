@@ -33,10 +33,13 @@ import type {
   SessionType,
   SkillEnablementOverride,
   SystemPromptConfig,
+  ThinkingLevel,
 } from '@hyperneo/shared';
 import { generateUUID, DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
 import type { McpSetServersResult } from '@hyperneo/shared/sdk';
 import type { SessionToolInventory } from '@hyperneo/shared/types/observed-tool-inventory';
+import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
+import { sdkFallbackProviders } from './session-engine.ts';
 import type { Database } from '../../storage/database.ts';
 import type { SDKTranscriptCheck } from '../sdk-session-file-manager.ts';
 import { AgentChildProcessRepository } from '../../storage/repositories/agent-child-process-repository.ts';
@@ -56,7 +59,7 @@ import {
   type LoginRefreshState,
 } from './login-recovery.ts';
 import { Logger } from '../logger.ts';
-import { OapReopenRefusedError } from '../oap/oap-reopen.ts';
+import { OxapReopenRefusedError } from '../oxap/oxap-reopen.ts';
 import { reservedMcpRenameSource } from '../mcp/built-in-servers.ts';
 import {
   type CallerScopeResolver,
@@ -80,6 +83,8 @@ import {
 } from './network-outage-pause.ts';
 import { runRateLimitManualCancel } from './rate-limit-manual-cancel.ts';
 import { runRateLimitManualRetry } from './rate-limit-manual-retry.ts';
+import { getDataDir } from '../data-dir.ts';
+import type { DesktopTurn } from '../desktop/host-dispatch.ts';
 
 export const RECENTLY_EXITED_ROOT_PID_RETENTION_MS = 15 * 60 * 1000;
 
@@ -163,7 +168,7 @@ export interface AgentSessionInit {
 }
 
 export interface AgentSessionRuntimeOptions {
-  oap?: import('./query-runner.ts').OapQueryRuntime;
+  oxap?: import('./query-runner.ts').OxapQueryRuntime;
   getGithubToken?(): Promise<string | null>;
   operationRegistryProvider?: () => OperationRegistry | undefined;
   callerScopeResolver?: CallerScopeResolver;
@@ -377,26 +382,40 @@ export class AgentSession
     );
   }
 
+  private desktopTurn?: DesktopTurn;
+
   getOperationMcpServer(
-    inputOrigin?: () => { messageId: string } | null
+    inputOrigin?: () => { messageId: string } | null,
+    desktopTurn?: () => DesktopTurn | null
   ): ReturnType<typeof createOperationMcpServer> {
     const descriptionRole = this.operationCallerIdentity().role;
     const descriptionKey =
       descriptionRole === 'neo'
         ? JSON.stringify([descriptionRole, enabledOperationPacks(this.resolveOperationRegistry())])
         : descriptionRole;
-    if (!inputOrigin && this.operationMcpServer && this.operationMcpServerKey === descriptionKey)
+    const scoped = inputOrigin || desktopTurn;
+    if (!scoped && this.operationMcpServer && this.operationMcpServerKey === descriptionKey)
       return this.operationMcpServer;
     const server = createOperationMcpServer(
       () => this.resolveOperationRegistry(),
-      () => ({
-        ...this.operationCallerIdentity(),
-        consumedInputId: inputOrigin?.()?.messageId,
-      }),
+      (operation) => {
+        const turn =
+          operation === 'desktop.call' && desktopTurn
+            ? this.isInterruptInProgress()
+              ? null
+              : desktopTurn()
+            : undefined;
+        if (turn) this.desktopTurn = turn;
+        return {
+          ...this.operationCallerIdentity(),
+          consumedInputId: inputOrigin?.()?.messageId,
+          desktopTurn: turn,
+        };
+      },
       this.recordOperationRefusal,
       descriptionRole
     );
-    if (!inputOrigin) {
+    if (!scoped) {
       this.operationMcpServer = server;
       this.operationMcpServerKey = descriptionKey;
     }
@@ -544,8 +563,8 @@ export class AgentSession
     return this.db.mcpEnablement;
   }
 
-  get oap(): import('./query-runner.ts').OapQueryRuntime | undefined {
-    return this.runtimeOptions.oap;
+  get oxap(): import('./query-runner.ts').OxapQueryRuntime | undefined {
+    return this.runtimeOptions.oxap;
   }
 
   constructor(
@@ -1259,8 +1278,8 @@ export class AgentSession
     return this.queryModeHandler.sendEnqueuedMessagesOnTurnEnd(options);
   }
 
-  async ensureQueryStarted(): Promise<void> {
-    await this.lifecycleManager.ensureQueryStarted();
+  async ensureQueryStarted(signal?: AbortSignal): Promise<void> {
+    await this.lifecycleManager.ensureQueryStarted(signal);
   }
 
   async startQueryAndEnqueue(
@@ -1332,6 +1351,7 @@ export class AgentSession
   }): Promise<void> {
     this.interruptRequests += 1;
     this.interruptedAt = Date.now();
+    const desktopStop = this.desktopTurn?.cancel(getDataDir(), this.session.id);
     try {
       this.rateLimitWatchdog.cancel();
       this.networkPause.stop();
@@ -1347,6 +1367,8 @@ export class AgentSession
       }
 
       await this.interruptHandler.handleInterrupt(opts);
+      if ((await desktopStop) === false)
+        throw new Error('Desktop turn stop could not be confirmed');
     } finally {
       this.interruptRequests -= 1;
     }
@@ -1389,6 +1411,7 @@ export class AgentSession
       .catch(() => null);
     return {
       status: this.stateManager.getState().status,
+      needsLoginAt: this.loginNeedsLoginAt(),
       held:
         latched ||
         this.authRejected ||
@@ -1470,7 +1493,7 @@ export class AgentSession
 
   async clearConversationContext(boundaryOwner?: ContextClearBoundaryOwner): Promise<void> {
     const clear = () =>
-      this.session.config.harness === 'codex'
+      isOxapHarness(this.session.config.harness)
         ? this.clearCodexContext()
         : this.runClearConversationFlow();
     if (boundaryOwner) {
@@ -1486,7 +1509,7 @@ export class AgentSession
   }
 
   async startFreshContext(): Promise<void> {
-    if (this.session.config.harness === 'codex') {
+    if (isOxapHarness(this.session.config.harness)) {
       const owner = await acquireContextClearBoundary(this.session.id);
       try {
         await this.clearCodexContext();
@@ -1507,14 +1530,14 @@ export class AgentSession
   }
 
   private async clearCodexContext(): Promise<void> {
-    if (!this.oap?.clear) await this.refuseContextClear();
+    if (!this.oxap?.clear) await this.refuseContextClear();
     try {
       const reset = await this.resetQuery({ restartQuery: false });
       if (!reset.success) await this.lifecycleManager.stop({ catchQueryErrors: true });
       await this.retirePastSdkContext();
-      await this.oap!.clear!();
+      await this.oxap!.clear!();
     } catch (error) {
-      if (error instanceof OapReopenRefusedError)
+      if (error instanceof OxapReopenRefusedError)
         throw new ClearConversationUnsupportedError(error.message);
       this.logger.warn('Failed to clear the Codex thread:', error);
       await this.refuseContextClear('Could not clear the Codex thread. No message was sent.');
@@ -1848,14 +1871,22 @@ export class AgentSession
     newModel: string,
     newProvider: string,
     nonInterrupting = false,
-    commit?: RuntimeSettingsCommit
+    commit?: RuntimeSettingsCommit,
+    thinkingLevel?: ThinkingLevel
   ): Promise<ModelSwitchResult> {
-    const result = await (commit
-      ? this.modelSwitchHandler.switchModel(newModel, newProvider, nonInterrupting, commit)
-      : nonInterrupting
-        ? this.modelSwitchHandler.switchModel(newModel, newProvider, true)
-        : this.modelSwitchHandler.switchModel(newModel, newProvider));
-    if (result.success) await this.rateLimitWatchdog.forgetModelLimits();
+    const args: [boolean?, RuntimeSettingsCommit?, boolean?, ThinkingLevel?] =
+      thinkingLevel !== undefined
+        ? [false, undefined, false, thinkingLevel]
+        : commit
+          ? [nonInterrupting, commit]
+          : nonInterrupting
+            ? [true]
+            : [];
+    const result = await this.modelSwitchHandler.switchModel(newModel, newProvider, ...args);
+    if (result.success) {
+      if (thinkingLevel !== undefined) await this.applyThinkingLevel();
+      await this.rateLimitWatchdog.forgetModelLimits();
+    }
     return result;
   }
 
@@ -1879,18 +1910,20 @@ export class AgentSession
   requestModelSwitch(
     model: string,
     provider: string,
-    stillWanted?: () => boolean
+    stillWanted?: () => boolean,
+    thinkingLevel?: ThinkingLevel
   ): Promise<{ success: boolean; model: string; error?: string; pending?: PendingModelSwitch }> {
     return this.queueModelSwitch(async () =>
       stillWanted && !stillWanted()
         ? { success: false, model: this.session.config.model, error: 'The switch was superseded' }
-        : this.runModelSwitchRequest(model, provider)
+        : this.runModelSwitchRequest(model, provider, thinkingLevel)
     );
   }
 
   private async runModelSwitchRequest(
     model: string,
-    provider: string
+    provider: string,
+    thinkingLevel?: ThinkingLevel
   ): Promise<{ success: boolean; model: string; error?: string; pending?: PendingModelSwitch }> {
     const invalid = await this.modelSwitchHandler.invalidModel(model, provider);
     if (invalid) {
@@ -1900,9 +1933,10 @@ export class AgentSession
     const live = await this.modelSwitchHandler.canSwitchLive(model, provider);
     if (modelSwitchTiming(this.stateManager.getState().status, live) === 'now') {
       await this.setPendingModelSwitch(undefined);
-      return this.handleModelSwitch(model, provider);
+      return this.handleModelSwitch(model, provider, false, undefined, thinkingLevel);
     }
-    const pending = { model, provider, requestedAt: Date.now() };
+    const pending: PendingModelSwitch = { model, provider, requestedAt: Date.now() };
+    if (thinkingLevel !== undefined) pending.thinkingLevel = thinkingLevel;
     await this.setPendingModelSwitch(pending);
     const applied =
       modelSwitchTiming(this.stateManager.getState().status) === 'now' &&
@@ -1925,7 +1959,8 @@ export class AgentSession
     const pending = this.session.metadata?.pendingModelSwitch;
     if (!pending || modelSwitchTiming(this.stateManager.getState().status) !== 'now') return false;
     await this.setPendingModelSwitch(undefined);
-    const result = await this.handleModelSwitch(pending.model, pending.provider);
+    const { model, provider, thinkingLevel } = pending;
+    const result = await this.handleModelSwitch(model, provider, false, undefined, thinkingLevel);
     if (!result.success && !result.reported) {
       const message = `The switch to ${pending.model} requested during the last turn failed: ${result.error ?? 'unknown error'}`;
       this.logger.warn(message);
@@ -3241,7 +3276,7 @@ export class AgentSession
         model: this.session.config.model || 'sonnet',
         settings: this.db.getGlobalSettings(),
       },
-      registry.getAll()
+      sdkFallbackProviders(registry.getAll(), (id) => this.db.providers.getProviderByProviderId(id))
     );
     if (plan.kind === 'wait') {
       if (!this.providerWaitAnnounced) {
@@ -3291,7 +3326,7 @@ export class AgentSession
           if (this.db.getSession(this.session.id)?.status === 'archived') {
             throw new MessageDeliveryTerminalTurnError('Session is archived');
           }
-          if (this.session.config.harness === 'codex') {
+          if (isOxapHarness(this.session.config.harness)) {
             const delivery = this.db
               .getSDKMessageRepo()
               .getDeliveryContent(this.session.id, messageUuid);
@@ -3334,7 +3369,10 @@ export class AgentSession
             throw new MessageDeliveryTerminalTurnError(message, 'provider_retired');
           }
           const registry = initializeProviders();
-          if (this.session.config.harness !== 'codex' && (pinned || !registry.has('anthropic'))) {
+          if (
+            !isOxapHarness(this.session.config.harness) &&
+            (pinned || !registry.has('anthropic'))
+          ) {
             await waitForOptionalProviderRegistration(registry, pinned !== undefined);
             const { provider } = await resolveAvailableQueryProvider(
               registry,
@@ -3377,8 +3415,10 @@ export class AgentSession
 
           if (this.networkPause.isActive()) await this.resumeNetworkPauseFor(messageUuid);
 
-          if (this.isLoginHeld())
+          if (this.isLoginHeld()) {
+            await this.loginRecovery?.hold(this.providerId(), { uuid: messageUuid, content });
             return { outcome: 'blocked', retryAt: Date.now() + LOGIN_HOLD_PARK_MS };
+          }
 
           if (this.loginNeedsLoginAt() !== null) {
             const plan = await this.enterLoginHoldForWaitingMessage(messageUuid);

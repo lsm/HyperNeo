@@ -1,11 +1,33 @@
-import type { SessionFeatures } from '@hyperneo/shared';
+import type { ChatDisplayMode, SessionFeatures } from '@hyperneo/shared';
+import { t } from '../lib/i18n/index.ts';
 import { connectionState } from '../lib/state';
+import { toast } from '../lib/toast';
+import { copyToClipboard } from '../lib/utils.ts';
 import { Dropdown, type DropdownMenuItem } from './ui/Dropdown.tsx';
 import { IconButton } from './ui/IconButton.tsx';
+import { GitBranchIcon } from './icons/GitBranchIcon.tsx';
+import { ChatMenuGlyph, type ChatMenuGlyphName } from './icons/ChatMenuIcons.tsx';
+
+const DISPLAY_MODES: Array<{ mode: ChatDisplayMode; label: string; icon: ChatMenuGlyphName }> = [
+  { mode: 'full', label: 'Full view', icon: 'full' },
+  { mode: 'compact', label: 'Compact view', icon: 'compact' },
+  { mode: 'minimal', label: 'Minimal view', icon: 'minimal' },
+];
+
+const COPY_ICONS: Record<string, ChatMenuGlyphName> = {
+  'Session ID': 'id',
+  'Workspace path': 'folder',
+};
+
+export interface ChatHeaderCopyItem {
+  label: string;
+  value: string;
+}
 
 export interface ChatHeaderMenuProps {
   features: SessionFeatures;
   readonly: boolean;
+  showTools?: boolean;
   archived: boolean;
   archiving: boolean;
   resettingAgent: boolean;
@@ -16,11 +38,25 @@ export interface ChatHeaderMenuProps {
   onDeleteClick: () => void;
   onMoveUnderClick?: () => void;
   onMoveToTopClick?: () => void;
+  onRenameClick?: () => void;
+  onSchedulesClick?: () => void;
+  schedulesOpen?: boolean;
+  copyItems?: ChatHeaderCopyItem[];
+  displayMode?: ChatDisplayMode;
+  onDisplayModeChange?: (mode: ChatDisplayMode) => void;
+}
+
+function copyValue(label: string, value: string) {
+  void copyToClipboard(value).then((ok) => {
+    if (ok) toast.success(`${label} copied`);
+    else toast.error(`Failed to copy ${label.toLowerCase()}`);
+  });
 }
 
 export function ChatHeaderMenu({
   features,
   readonly,
+  showTools = true,
   archived,
   archiving,
   resettingAgent,
@@ -31,53 +67,135 @@ export function ChatHeaderMenu({
   onDeleteClick,
   onMoveUnderClick,
   onMoveToTopClick,
+  onRenameClick,
+  onSchedulesClick,
+  schedulesOpen = false,
+  copyItems = [],
+  displayMode,
+  onDisplayModeChange,
 }: ChatHeaderMenuProps) {
   const isConnected = connectionState.value === 'connected';
-  const items: DropdownMenuItem[] = [];
-  if (!readonly) {
-    items.push({ label: 'Tools', title: 'Tools', onClick: onToolsClick, disabled: !isConnected });
-  }
-  items.push({
-    label: 'Export chat',
-    title: 'Export chat',
-    onClick: onExportClick,
-    disabled: !isConnected,
-  });
-  items.push({
-    label: resettingAgent ? 'Resetting agent…' : 'Reset agent',
-    title: 'Reset agent',
-    onClick: onResetClick,
-    disabled: resettingAgent || !isConnected,
-  });
+
+  const viewItems: DropdownMenuItem[] =
+    displayMode && onDisplayModeChange
+      ? DISPLAY_MODES.map(({ mode, label, icon }) => ({
+          label,
+          title: label,
+          icon: <ChatMenuGlyph name={icon} />,
+          trailing: mode === displayMode ? <ChatMenuGlyph name="check" /> : undefined,
+          onClick: () => onDisplayModeChange(mode),
+        }))
+      : [];
+
+  const schedulesItems: DropdownMenuItem[] = onSchedulesClick
+    ? [
+        {
+          label: t('schedules.title'),
+          title: t('schedules.title'),
+          icon: <ChatMenuGlyph name="schedules" />,
+          trailing: schedulesOpen ? <ChatMenuGlyph name="check" /> : undefined,
+          onClick: onSchedulesClick,
+        },
+      ]
+    : [];
+
+  const editItems: DropdownMenuItem[] = [];
+  if (onRenameClick)
+    editItems.push({
+      label: 'Rename',
+      title: 'Rename conversation',
+      icon: <ChatMenuGlyph name="rename" />,
+      onClick: onRenameClick,
+      disabled: !isConnected,
+    });
   if (onMoveUnderClick)
-    items.push({
+    editItems.push({
       label: 'Move under…',
       title: 'Move under another chat',
+      icon: <ChatMenuGlyph name="moveUnder" />,
       onClick: onMoveUnderClick,
       disabled: !isConnected,
     });
   if (onMoveToTopClick)
-    items.push({
+    editItems.push({
       label: 'Move to top level',
       title: 'Move to top level',
+      icon: <ChatMenuGlyph name="moveTop" />,
       onClick: onMoveToTopClick,
       disabled: !isConnected,
     });
+  editItems.push({
+    label: 'Export chat',
+    title: 'Export chat',
+    icon: <ChatMenuGlyph name="export" />,
+    onClick: onExportClick,
+    disabled: !isConnected,
+  });
+
+  const copyMenuItems: DropdownMenuItem[] = copyItems.map(({ label, value }) => ({
+    label,
+    title: `Copy ${label.toLowerCase()}`,
+    icon: COPY_ICONS[label] ? (
+      <ChatMenuGlyph name={COPY_ICONS[label]} />
+    ) : (
+      <GitBranchIcon className="h-4 w-4" />
+    ),
+    trailing: <ChatMenuGlyph name="copy" />,
+    onClick: () => copyValue(label, value),
+  }));
+
+  const toolItems: DropdownMenuItem[] =
+    !readonly && showTools
+      ? [
+          {
+            label: 'Tools',
+            title: 'Tools',
+            icon: <ChatMenuGlyph name="tools" />,
+            onClick: onToolsClick,
+            disabled: !isConnected,
+          },
+        ]
+      : [];
+
+  const dangerItems: DropdownMenuItem[] = [
+    {
+      label: resettingAgent ? 'Resetting agent…' : 'Reset agent',
+      title: 'Reset agent',
+      icon: <ChatMenuGlyph name="reset" />,
+      onClick: onResetClick,
+      disabled: resettingAgent || !isConnected,
+    },
+  ];
   if (features.archive) {
-    items.push({ type: 'divider' });
-    items.push({
+    dangerItems.push({
       label: archiving ? 'Archiving…' : 'Archive chat',
       title: 'Archive chat',
+      icon: <ChatMenuGlyph name="archive" />,
       onClick: onArchiveClick,
       disabled: archiving || archived || !isConnected,
     });
-    items.push({
+    dangerItems.push({
       label: 'Delete chat',
       title: 'Delete chat',
+      icon: <ChatMenuGlyph name="trash" />,
       onClick: onDeleteClick,
       disabled: !isConnected,
       danger: true,
     });
+  }
+
+  const items: DropdownMenuItem[] = [];
+  for (const group of [
+    viewItems,
+    schedulesItems,
+    editItems,
+    copyMenuItems,
+    toolItems,
+    dangerItems,
+  ]) {
+    if (group.length === 0) continue;
+    if (items.length > 0) items.push({ type: 'divider' });
+    items.push(...group);
   }
 
   return (

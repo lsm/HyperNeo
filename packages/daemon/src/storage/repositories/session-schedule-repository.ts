@@ -31,7 +31,9 @@ function toSchedule(row: Row): SessionSchedule {
     cadence:
       row.cadence_kind === 'cron'
         ? { kind: 'cron', cron: row.cron as string, timezone: row.timezone as string }
-        : { kind: 'every', everyMs: row.every_ms as number },
+        : row.cadence_kind === 'once'
+          ? { kind: 'once', at: row.once_at as number }
+          : { kind: 'every', everyMs: row.every_ms as number },
     nudgeEvery: row.nudge_every as number,
     status: row.status as SessionScheduleStatus,
     nextRunAt: num('next_run_at'),
@@ -48,8 +50,59 @@ function toSchedule(row: Row): SessionSchedule {
   };
 }
 
+const skipReason = (outcome: string) => (outcome.startsWith('skipped_') ? outcome.slice(8) : null);
+
+export interface SessionScheduleRun {
+  dueAt: number | null;
+  firedAt: number;
+  outcome: string;
+  skipReason: string | null;
+  messageId: string | null;
+}
+
 export class SessionScheduleRepository {
   constructor(private readonly db: BunDatabase) {}
+
+  recordRun(
+    schedule: SessionSchedule,
+    outcome: string,
+    messageId: string | null,
+    firedAt: number
+  ): void {
+    this.db
+      .prepare(`INSERT OR IGNORE INTO session_schedule_runs
+      (schedule_id, source_kind, source_id, due_at, fired_at, outcome, message_id)
+      SELECT id, source_kind, source_id, ?, ?, ?, ? FROM session_schedules WHERE id = ?`)
+      .run(schedule.nextRunAt, firedAt, outcome, messageId, schedule.id);
+  }
+
+  budgetRuns(sourceKind: string, sourceId: string, since: number) {
+    return this.db
+      .prepare(`SELECT COUNT(*) FILTER (WHERE outcome = 'fired') AS fired,
+      COUNT(*) FILTER (WHERE outcome = 'skipped_budget' AND message_id IS NOT NULL) AS noticed
+      FROM session_schedule_runs WHERE source_kind = ? AND source_id = ? AND fired_at > ?`)
+      .get(sourceKind, sourceId, since) as { fired: number; noticed: number };
+  }
+
+  listRuns(scheduleId: string, limit: number): SessionScheduleRun[] {
+    return (
+      this.db
+        .prepare(`SELECT due_at, fired_at, outcome, message_id FROM session_schedule_runs
+        WHERE schedule_id = ? ORDER BY id DESC LIMIT ?`)
+        .all(scheduleId, limit) as {
+        due_at: number | null;
+        fired_at: number;
+        outcome: string;
+        message_id: string | null;
+      }[]
+    ).map((row) => ({
+      dueAt: row.due_at,
+      firedAt: row.fired_at,
+      outcome: row.outcome,
+      skipReason: skipReason(row.outcome),
+      messageId: row.message_id,
+    }));
+  }
 
   recordWake(
     sessionId: string,
@@ -57,10 +110,14 @@ export class SessionScheduleRepository {
     metadata: { scheduleId: string; sourceKind: string; sourceId: string },
     firedAt: number
   ): void {
-    this.db
-      .prepare(`INSERT OR IGNORE INTO session_schedule_wakes
-      (session_id, message_id, metadata_json, fired_at) VALUES (?, ?, ?, ?)`)
-      .run(sessionId, messageId, JSON.stringify(metadata), firedAt);
+    this.db.run(
+      `INSERT OR IGNORE INTO session_schedule_wakes
+      (session_id, message_id, metadata_json, fired_at) VALUES (?, ?, ?, ?)`,
+      sessionId,
+      messageId,
+      JSON.stringify(metadata),
+      firedAt
+    );
   }
 
   create(input: NewSessionSchedule, nextRunAt: number, now = Date.now()): SessionSchedule {
@@ -69,9 +126,9 @@ export class SessionScheduleRepository {
     this.db
       .prepare(
         `INSERT INTO session_schedules (id, target, source_kind, source_id, note, cadence_kind,
-           every_ms, cron, timezone, nudge_every, next_run_at, created_by_session, created_at,
-           updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           every_ms, cron, timezone, once_at, nudge_every, next_run_at, created_by_session,
+           created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -83,6 +140,7 @@ export class SessionScheduleRepository {
         cadence.kind === 'every' ? cadence.everyMs : null,
         cadence.kind === 'cron' ? cadence.cron : null,
         cadence.kind === 'cron' ? cadence.timezone : 'UTC',
+        cadence.kind === 'once' ? cadence.at : null,
         input.nudgeEvery,
         nextRunAt,
         input.createdBySession,
@@ -136,11 +194,41 @@ export class SessionScheduleRepository {
   reserveExternalDelivery(schedule: SessionSchedule, messageId: string): boolean {
     return (
       this.db
-        .prepare(`UPDATE session_schedules SET last_message_id = ?,
+        .prepare(`UPDATE session_schedules SET last_message_id = ?, delivery_receipt = NULL,
       last_outcome = 'sending', updated_at = ? WHERE id = ? AND status = 'active'
       AND pending_job_id IS ? AND last_message_id IS NOT ?`)
         .run(messageId, Date.now(), schedule.id, schedule.pendingJobId, messageId).changes > 0
     );
+  }
+
+  releaseExternalDelivery(schedule: SessionSchedule, messageId: string): void {
+    this.db.run(
+      `UPDATE session_schedules SET last_message_id = ?, last_outcome = ?, updated_at = ?
+      WHERE id = ? AND last_message_id = ? AND last_outcome = 'sending' AND delivery_receipt IS NULL`,
+      schedule.lastMessageId,
+      schedule.lastOutcome,
+      Date.now(),
+      schedule.id,
+      messageId
+    );
+  }
+
+  saveDeliveryReceipt(id: string, messageId: string, receipt: unknown): void {
+    this.db.run(
+      'UPDATE session_schedules SET delivery_receipt = ? WHERE id = ? AND last_message_id = ?',
+      JSON.stringify(receipt),
+      id,
+      messageId
+    );
+  }
+
+  deliveryReceipt(id: string, messageId: string): unknown {
+    const row = this.db
+      .prepare(
+        'SELECT delivery_receipt FROM session_schedules WHERE id = ? AND last_message_id = ?'
+      )
+      .get(id, messageId) as { delivery_receipt: string | null } | null;
+    return row?.delivery_receipt ? JSON.parse(row.delivery_receipt) : null;
   }
 
   countDue(id: string, jobId: string, dueAt: number, now: number): SessionSchedule | null {
@@ -185,7 +273,7 @@ export class SessionScheduleRepository {
       due_count = ?, updated_at = ? WHERE id = ? AND status = 'active' AND pending_job_id = ?`)
         .run(
           outcome,
-          outcome.startsWith('skipped_') ? outcome.slice(8) : null,
+          skipReason(outcome),
           digest,
           messageId,
           outcome === 'fired' || outcome === 'progress' ? 0 : schedule.dueCount,
@@ -198,12 +286,15 @@ export class SessionScheduleRepository {
 
   setPending(id: string, expectedJobId: string | null, jobId: string, nextRunAt: number): boolean {
     return (
-      this.db
-        .prepare(
-          `UPDATE session_schedules SET pending_job_id = ?, next_run_at = ?, updated_at = ?
-           WHERE id = ? AND pending_job_id IS ?`
-        )
-        .run(jobId, nextRunAt, Date.now(), id, expectedJobId).changes > 0
+      this.db.run(
+        `UPDATE session_schedules SET pending_job_id = ?, next_run_at = ?, updated_at = ?
+         WHERE id = ? AND pending_job_id IS ?`,
+        jobId,
+        nextRunAt,
+        Date.now(),
+        id,
+        expectedJobId
+      ).changes > 0
     );
   }
 
@@ -233,10 +324,18 @@ export class SessionScheduleRepository {
   }
 
   delete(id: string, expectedJobId: string | null): boolean {
-    return (
-      this.db
-        .prepare('DELETE FROM session_schedules WHERE id = ? AND pending_job_id IS ?')
-        .run(id, expectedJobId).changes > 0
-    );
+    return this.db.transaction(() => {
+      const deleted =
+        this.db
+          .prepare('DELETE FROM session_schedules WHERE id = ? AND pending_job_id IS ?')
+          .run(id, expectedJobId).changes > 0;
+      if (deleted)
+        this.db.run(
+          `DELETE FROM session_schedule_runs WHERE fired_at <= ?
+          AND schedule_id NOT IN (SELECT id FROM session_schedules)`,
+          Date.now() - 86_400_000
+        );
+      return deleted;
+    })();
   }
 }

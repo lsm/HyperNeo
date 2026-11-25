@@ -9,6 +9,9 @@ const {
   mockNavigateToSession,
   mockNavigateToSessions,
   mockGetWorkspaceHistory,
+  mockListSystemProjects,
+  mockFindProjectWork,
+  mockForgetSystemProject,
   mockAddWorkspaceToHistory,
   mockRemoveWorkspaceFromHistory,
   mockArchiveSession,
@@ -22,6 +25,9 @@ const {
   mockNavigateToSession: vi.fn(),
   mockNavigateToSessions: vi.fn(),
   mockGetWorkspaceHistory: vi.fn(),
+  mockListSystemProjects: vi.fn(),
+  mockFindProjectWork: vi.fn(),
+  mockForgetSystemProject: vi.fn(),
   mockAddWorkspaceToHistory: vi.fn(),
   mockRemoveWorkspaceFromHistory: vi.fn(),
   mockArchiveSession: vi.fn(),
@@ -34,10 +40,18 @@ const {
 }));
 
 let mockSessionsSignal: ReturnType<typeof signal<Session[]>>;
+let mockProjectArchiveVisibility: ReturnType<typeof signal<Map<string, boolean>>>;
+let mockSettingsSignal: ReturnType<typeof signal<{ showArchived: boolean } | null>>;
 let mockSessionStatusesSignal: ReturnType<typeof signal<Map<string, unknown>>>;
 
 vi.mock('../../lib/state.ts', () => ({
-  get sessions() {
+  get globalSettings() {
+    return mockSettingsSignal;
+  },
+  get projectArchivedVisibility() {
+    return mockProjectArchiveVisibility;
+  },
+  get sidebarSessions() {
     return computed(() => mockSessionsSignal.value);
   },
 }));
@@ -49,6 +63,9 @@ vi.mock('../../lib/router.ts', () => ({
 
 vi.mock('../../lib/api-helpers.ts', () => ({
   getWorkspaceHistory: mockGetWorkspaceHistory,
+  listSystemProjects: mockListSystemProjects,
+  findProjectWork: mockFindProjectWork,
+  forgetSystemProject: mockForgetSystemProject,
   addWorkspaceToHistory: mockAddWorkspaceToHistory,
   removeWorkspaceFromHistory: mockRemoveWorkspaceFromHistory,
   archiveSession: mockArchiveSession,
@@ -83,6 +100,8 @@ vi.mock('../../components/ArchiveConfirmDialog.tsx', () => ({
 }));
 
 mockSessionsSignal = signal<Session[]>([]);
+mockProjectArchiveVisibility = signal(new Map());
+mockSettingsSignal = signal(null);
 mockSessionStatusesSignal = signal(new Map());
 
 import {
@@ -121,15 +140,42 @@ function createHistory(path: string, lastUsedAt = 1): WorkspaceHistoryEntry {
   };
 }
 
+function openProjectMenu(name: string) {
+  const trigger = screen.getByRole('button', { name: `Project actions for ${name}`, exact: true });
+  if (trigger.getAttribute('aria-expanded') === 'true') return;
+  const openMenu = screen.queryByRole('menu');
+  if (openMenu) fireEvent.keyDown(openMenu, { key: 'Escape' });
+  fireEvent.click(trigger);
+}
+
+function projectDelete(name: string) {
+  openProjectMenu(name);
+  return screen.getByRole('menuitem', { name: 'Delete this project' });
+}
+
+async function findProjectDelete(name: string) {
+  await screen.findByRole('button', { name: `Project actions for ${name}`, exact: true });
+  return projectDelete(name);
+}
+
 describe('SessionsSidebar', () => {
   beforeEach(() => {
     cleanup();
     vi.clearAllMocks();
     mockSessionsSignal.value = [];
+    mockProjectArchiveVisibility.value = new Map();
+    mockSettingsSignal.value = null;
     mockSessionStatusesSignal.value = new Map();
     mockGetWorkspaceHistory.mockResolvedValue([]);
-    mockAddWorkspaceToHistory.mockImplementation(async (path: string) => createHistory(path, 2));
-    mockRemoveWorkspaceFromHistory.mockResolvedValue({ success: true });
+    mockListSystemProjects.mockResolvedValue([]);
+    mockFindProjectWork.mockResolvedValue(false);
+    mockForgetSystemProject.mockResolvedValue(undefined);
+    mockAddWorkspaceToHistory.mockImplementation(async (path: string) => {
+      const entry = createHistory(path, 2);
+      mockGetWorkspaceHistory.mockResolvedValue([entry]);
+      return entry;
+    });
+    mockRemoveWorkspaceFromHistory.mockResolvedValue(true);
     mockArchiveSession.mockResolvedValue({ success: true });
     mockHubRequest.mockResolvedValue({ path: '/workspace/new-project' });
     mockGetHubIfConnected.mockReturnValue({ request: mockHubRequest });
@@ -180,6 +226,47 @@ describe('SessionsSidebar', () => {
     expect(screen.getAllByTestId('project-group-header')).toHaveLength(1);
   });
 
+  it('shows one row for two repository checkouts and removes both saved folders', async () => {
+    const repositoryProject = { id: 'repository:fixture', name: 'Project' };
+    const first = '/primary/project';
+    const second = '/secondary/project';
+    const unrelated = createHistory('/other/project');
+    mockGetWorkspaceHistory.mockResolvedValue([
+      { ...createHistory(first, 3), repositoryProject },
+      { ...createHistory(second, 2), repositoryProject },
+      unrelated,
+    ]);
+    render(<SessionsSidebar />);
+
+    expect(await screen.findByText(second)).toBeTruthy();
+    expect(screen.getByText(first)).toBeTruthy();
+    expect(screen.getAllByTestId('project-group-header')).toHaveLength(2);
+    expect(mockGetWorkspaceHistory).toHaveBeenCalledWith({ includeRepositoryProjects: true });
+    fireEvent.click(screen.getByRole('button', { name: 'New session in Project', exact: true }));
+    expect(newChatProjectSignal.value).toBe(first);
+
+    mockGetWorkspaceHistory.mockResolvedValue([unrelated]);
+    fireEvent.click(projectDelete('Project'));
+    await waitFor(() => expect(screen.getAllByTestId('project-group-header')).toHaveLength(1));
+    expect(mockRemoveWorkspaceFromHistory.mock.calls).toEqual([[first], [second]]);
+    expect(
+      screen.queryByRole('button', { name: 'New session in Project', exact: true })
+    ).toBeNull();
+    expect(
+      screen.getByRole('button', { name: 'New session in project', exact: true })
+    ).toBeTruthy();
+  });
+
+  it('shows saved folders when the repository grouping request times out', async () => {
+    mockGetWorkspaceHistory
+      .mockRejectedValueOnce(new Error('Request timed out'))
+      .mockResolvedValueOnce([createHistory('/primary/project')]);
+    render(<SessionsSidebar />);
+
+    expect(await screen.findByRole('button', { name: 'New session in project' })).toBeTruthy();
+    expect(mockGetWorkspaceHistory.mock.calls).toEqual([[{ includeRepositoryProjects: true }], []]);
+  });
+
   it('refreshes the sidebar after a partial project removal failure and retries only remaining folders', async () => {
     const project = { id: 'p1', name: 'Product', folders: ['/code', '/docs'] };
     mockGetWorkspaceHistory.mockResolvedValue(
@@ -190,20 +277,272 @@ describe('SessionsSidebar', () => {
     const remaining = { ...project, folders: ['/docs'] };
     mockGetWorkspaceHistory.mockResolvedValue([{ ...createHistory('/docs'), project: remaining }]);
     mockRemoveWorkspaceFromHistory
-      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValueOnce(true)
       .mockRejectedValueOnce(new Error('Disconnected'));
-    fireEvent.click(screen.getByRole('button', { name: 'Remove project Product' }));
+    fireEvent.click(projectDelete('Product'));
     await waitFor(() => expect(mockToastError).toHaveBeenCalledWith('Failed to remove project'));
     await waitFor(() => expect(screen.queryByText('/code')).toBeNull());
     expect(mockGetWorkspaceHistory).toHaveBeenCalledTimes(2);
-    expect(screen.getByRole('button', { name: 'Remove project Product' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Project actions for Product' })).toBeTruthy();
     mockRemoveWorkspaceFromHistory.mockClear();
     mockGetWorkspaceHistory.mockResolvedValue([]);
-    fireEvent.click(screen.getByRole('button', { name: 'Remove project Product' }));
+    fireEvent.click(projectDelete('Product'));
     await waitFor(() =>
-      expect(screen.queryByRole('button', { name: 'Remove project Product' })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Project actions for Product' })).toBeNull()
     );
     expect(mockRemoveWorkspaceFromHistory.mock.calls).toEqual([['/docs']]);
+  });
+
+  it('reports a refused history removal', async () => {
+    mockGetWorkspaceHistory.mockResolvedValue([createHistory('/code')]);
+    mockRemoveWorkspaceFromHistory.mockResolvedValue(false);
+    render(<SessionsSidebar />);
+    fireEvent.click(await findProjectDelete('code'));
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledWith('Failed to remove project'));
+  });
+
+  it('shows archived chats only in the project whose toggle is on', async () => {
+    mockSessionsSignal.value = [
+      createMockSession('active', 'Active chat', '/workspace/alpha'),
+      createMockSession('archived', 'Archived chat', '/workspace/alpha', 'archived'),
+      createMockSession('other', 'Other archive', '/workspace/beta', 'archived'),
+    ];
+    mockGetWorkspaceHistory.mockResolvedValue([createHistory('/workspace/beta')]);
+    render(<SessionsSidebar />);
+
+    expect(screen.queryByText('Archived chat')).toBeNull();
+    openProjectMenu('alpha');
+    const toggle = () => screen.getByRole('menuitemcheckbox', { name: 'Show archived chats' });
+    expect(toggle().getAttribute('aria-checked')).toBe('false');
+    fireEvent.click(toggle());
+    expect(await screen.findByText('Archived chat')).toBeTruthy();
+    expect(screen.queryByText('Other archive')).toBeNull();
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+
+    openProjectMenu('alpha');
+    expect(toggle().getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(toggle());
+    expect(screen.queryByText('Archived chat')).toBeNull();
+    expect(screen.getByText('Active chat')).toBeTruthy();
+  });
+
+  it('archives every open chat after confirmation and then removes the project', async () => {
+    mockSessionsSignal.value = [
+      createMockSession('open-1', 'Review one', '/workspace/neo-read'),
+      createMockSession('open-2', 'Review two', '/workspace/neo-read'),
+      createMockSession('old', 'Old review', '/workspace/neo-read', 'archived'),
+    ];
+    mockGetWorkspaceHistory.mockResolvedValue([createHistory('/workspace/neo-read')]);
+    render(<SessionsSidebar />);
+    await waitFor(() => expect(mockGetWorkspaceHistory).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(projectDelete('neo-read'));
+    expect(screen.getByText(/This archives 2 chats in this project/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByTestId('project-remove-confirm')).toBeNull();
+    expect(mockArchiveSession).not.toHaveBeenCalled();
+
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    fireEvent.click(projectDelete('neo-read'));
+    fireEvent.click(screen.getByTestId('project-remove-confirm'));
+
+    await waitFor(() =>
+      expect(mockRemoveWorkspaceFromHistory).toHaveBeenCalledWith('/workspace/neo-read')
+    );
+    expect(mockArchiveSession.mock.calls).toEqual([['open-1'], ['open-2']]);
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  it('keeps the project when a chat needs its own archive decision', async () => {
+    mockSessionsSignal.value = [
+      createMockSession('clean', 'Clean', '/workspace/neo-read'),
+      createMockSession('dirty', 'Dirty', '/workspace/neo-read'),
+    ];
+    mockArchiveSession
+      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValueOnce({ success: false, requiresConfirmation: true, commitStatus: {} });
+    render(<SessionsSidebar />);
+
+    fireEvent.click(projectDelete('neo-read'));
+    fireEvent.click(screen.getByTestId('project-remove-confirm'));
+
+    await waitFor(() =>
+      expect(mockToastError).toHaveBeenCalledWith(
+        '1 chat still needs to be archived one by one before the project can be removed'
+      )
+    );
+    expect(mockArchiveSession).toHaveBeenCalledTimes(2);
+    expect(mockRemoveWorkspaceFromHistory).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('project-remove-confirm')).toBeNull();
+  });
+
+  it('shows every system project, including ones without chats', async () => {
+    mockSessionsSignal.value = [createMockSession('chat', 'Review', '/code/neo-read')];
+    mockListSystemProjects.mockResolvedValue([
+      {
+        id: 'p-read',
+        name: 'Neo Read',
+        folders: ['/code/neo-read', '/code/neo-read-2'],
+        updatedAt: 1,
+      },
+      { id: 'p-idle', name: 'Idle', folders: ['/code/idle'], updatedAt: 2 },
+      { id: 'p-section', name: 'Section', folders: [], updatedAt: 3 },
+    ]);
+    render(<SessionsSidebar />);
+
+    await waitFor(() => expect(screen.getAllByTestId('project-group-header')).toHaveLength(3));
+    const names = screen.getAllByTestId('project-group-header').map((row) => row.textContent);
+    expect(names).toEqual(['Neo Read', 'Section', 'Idle']);
+    expect(screen.getByText('Review')).toBeTruthy();
+    expect(screen.queryByText('neo-read')).toBeNull();
+    expect(screen.getAllByText('No chats')).toHaveLength(2);
+    expect(projectDelete('Neo Read').hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Project actions for Idle' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'New session in Idle' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'New session in Section' })).toBeNull();
+  });
+
+  it('keeps the empty-project control available across unrelated session updates', async () => {
+    mockListSystemProjects.mockImplementation(async () => [
+      {
+        id: 'idle',
+        name: 'Idle',
+        folders: [],
+        updatedAt: 2,
+        hasSessions: false,
+        unknownWork: false,
+      },
+    ]);
+    render(<SessionsSidebar />);
+    const remove = await findProjectDelete('Idle');
+    await waitFor(() => expect(remove.hasAttribute('disabled')).toBe(false));
+    expect(mockFindProjectWork).toHaveBeenCalledTimes(1);
+    mockSessionsSignal.value = [createMockSession('chat', 'Other', '/code/other')];
+    await screen.findByText('Other');
+    await waitFor(() => expect(mockListSystemProjects.mock.calls.length).toBeGreaterThan(1));
+    expect(remove.hasAttribute('disabled')).toBe(false);
+    expect(mockFindProjectWork).toHaveBeenCalledTimes(1);
+    fireEvent.click(remove);
+    fireEvent.click(screen.getByRole('button', { name: 'Forget project' }));
+    await waitFor(() => expect(mockForgetSystemProject).toHaveBeenCalledWith('idle'));
+  });
+
+  it('rechecks a failed work lookup after the project list refreshes', async () => {
+    mockListSystemProjects.mockImplementation(async () => [
+      {
+        id: 'idle',
+        name: 'Idle',
+        folders: ['/code/idle'],
+        updatedAt: 2,
+        hasSessions: false,
+        unknownWork: false,
+      },
+      {
+        id: 'ok',
+        name: 'Okay',
+        folders: ['/code/okay'],
+        updatedAt: 1,
+        hasSessions: false,
+        unknownWork: false,
+      },
+    ]);
+    mockFindProjectWork.mockImplementation(async (folders: string[]) => {
+      if (
+        folders[0] === '/code/idle' &&
+        mockFindProjectWork.mock.calls.filter((args) => args[0][0] === '/code/idle').length === 1
+      )
+        throw new Error('offline');
+      return false;
+    });
+    render(<SessionsSidebar />);
+    const idle = await findProjectDelete('Idle');
+    await waitFor(() => expect(idle.getAttribute('title')).toBe('Could not check project work'));
+    const okay = await findProjectDelete('Okay');
+    await waitFor(() => expect(okay.hasAttribute('disabled')).toBe(false));
+    const retried = projectDelete('Idle');
+    mockSessionsSignal.value = [createMockSession('other', 'Other', '/code/other')];
+    await waitFor(() => expect(retried.hasAttribute('disabled')).toBe(false));
+    expect(
+      mockFindProjectWork.mock.calls.filter((args) => args[0][0] === '/code/idle')
+    ).toHaveLength(2);
+    expect(
+      mockFindProjectWork.mock.calls.filter((args) => args[0][0] === '/code/okay')
+    ).toHaveLength(1);
+  });
+
+  it('checks work again after a project stops reporting chats', async () => {
+    let hasSessions = false;
+    mockListSystemProjects.mockImplementation(async () => [
+      {
+        id: 'idle',
+        name: 'Idle',
+        folders: ['/code/idle'],
+        updatedAt: 2,
+        hasSessions,
+        unknownWork: false,
+      },
+    ]);
+    render(<SessionsSidebar />);
+    const remove = await findProjectDelete('Idle');
+    await waitFor(() => expect(remove.hasAttribute('disabled')).toBe(false));
+    hasSessions = true;
+    mockSessionsSignal.value = [createMockSession('one', 'Other', '/code/other')];
+    await waitFor(() => expect(remove.getAttribute('title')).toBe('Project has active work'));
+    hasSessions = false;
+    mockSessionsSignal.value = [createMockSession('two', 'Other', '/code/other')];
+    await waitFor(() => expect(mockFindProjectWork).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(remove.hasAttribute('disabled')).toBe(false));
+  });
+
+  it('disables removal of a protected project', async () => {
+    mockListSystemProjects.mockResolvedValue([
+      {
+        id: 'inbox',
+        name: 'Inbox',
+        folders: [],
+        updatedAt: 1,
+        hasSessions: false,
+        unknownWork: false,
+        isProtected: true,
+      },
+    ]);
+    render(<SessionsSidebar />);
+    const remove = await findProjectDelete('Inbox');
+    expect(remove.hasAttribute('disabled')).toBe(true);
+    expect(remove.getAttribute('title')).toBe('This project cannot be forgotten.');
+  });
+
+  it('refuses when a project has work that cannot be checked', async () => {
+    mockListSystemProjects.mockResolvedValue([
+      {
+        id: 'remote',
+        name: 'Remote',
+        folders: [],
+        updatedAt: 1,
+        hasSessions: false,
+        unknownWork: true,
+      },
+    ]);
+    render(<SessionsSidebar />);
+    const remove = await findProjectDelete('Remote');
+    expect(remove.hasAttribute('disabled')).toBe(true);
+    expect(remove.getAttribute('title')).toBe('Cannot check all work for this project');
+  });
+
+  it('adds no empty duplicate when a sidebar project already owns the folders', async () => {
+    const project = { id: 'p1', name: 'Product', folders: ['/code'] };
+    mockGetWorkspaceHistory.mockResolvedValue([{ ...createHistory('/code'), project }]);
+    mockListSystemProjects.mockResolvedValue([
+      { id: 'n1', name: 'Product mirror', folders: ['/code'], updatedAt: 5 },
+    ]);
+    mockSessionsSignal.value = [createMockSession('chat', 'Code chat', '/code')];
+    render(<SessionsSidebar />);
+
+    await waitFor(() => expect(mockListSystemProjects).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByText('Product')).toBeTruthy());
+    expect(screen.getAllByTestId('project-group-header')).toHaveLength(1);
+    expect(screen.queryByText('Product mirror')).toBeNull();
+    expect(screen.queryByText('No chats')).toBeNull();
   });
 
   it('renders the empty chats state', () => {

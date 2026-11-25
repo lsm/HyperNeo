@@ -8,7 +8,6 @@ export const NEO_REPLY_FIELD_LIMIT = 16000;
 export const NEO_DELIVERABLE_CHAR_LIMIT = 4 * NEO_REPLY_FIELD_LIMIT;
 export const NEO_REPLY_CHAR_LIMIT = 400;
 export const NEO_REPLY_WORD_LIMIT = 60;
-export const NEO_REPLY_LINE_LIMIT = 5;
 export const NEO_FRONT_REPLY_CHAR_LIMIT = 150;
 export const NEO_FRONT_ACK_CHAR_LIMIT = 80;
 

@@ -3,11 +3,12 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { answerCodexProbeLocally, OXAP_CODEX_MODEL, seedSyntheticCodexAdmission } from './oxap-codex-provider.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
-import type { OapQueryRuntime } from '../../../packages/daemon/src/lib/agent/query-runner.ts';
-import { OapEngine } from '../../../packages/daemon/src/lib/oap/oap-engine.ts';
-import type { OapHubClient } from '../../../packages/daemon/src/lib/oap/oap-hub-client.ts';
-import { createOapQueryHub } from '../../../packages/daemon/src/lib/oap/oap-query-hub.ts';
+import type { OxapQueryRuntime } from '../../../packages/daemon/src/lib/agent/query-runner.ts';
+import { OxapEngine } from '../../../packages/daemon/src/lib/oxap/oxap-engine.ts';
+import type { OxapHubClient } from '../../../packages/daemon/src/lib/oxap/oxap-hub-client.ts';
+import { createOxapQueryHub } from '../../../packages/daemon/src/lib/oxap/oxap-query-hub.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 
@@ -33,8 +34,8 @@ require('node:readline').createInterface({input:process.stdin}).on('line',text=>
   for(const e of [{type:'content.delta',payload:{part:{type:'text',text:'Verified executable reply'}}},{type:'run.completed',payload:{final_response:{content:'Verified executable reply'}}}])process.stdout.write(JSON.stringify({id:subscription,event:'envelope',envelope:{...e,id:e.type,session_id:r.session_id,run_id:'synthetic-run'}})+'\\n');
 });`;
 writeFileSync(binaryPath, script, { mode: 0o700 });
-const engine = new OapEngine();
-let client: OapHubClient | undefined;
+const engine = new OxapEngine();
+let client: OxapHubClient | undefined;
 const stateDirectory = join(run, 'data/oap');
 const stale = join(stateDirectory, 'oap-verified-x');
 mkdirSync(stale, { recursive: true });
@@ -43,11 +44,12 @@ let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let transport: WebSocketClientTransport | undefined;
 const evidence: Record<string, unknown> = { syntheticHub: true };
 try {
-  client = await engine.getHub({ binaryPath, identity: { version: 'synthetic-1', sha256: createHash('sha256').update(script).digest('hex') }, stateDirectory, codexExecutable: process.execPath, codexHome: join(run, 'home') });
+  client = await engine.getHub(async () => ({ binaryPath, identity: { version: 'synthetic-1', sha256: createHash('sha256').update(script).digest('hex') }, stateDirectory, hub: { adapters: {}, environment: {} } }));
   assert(!existsSync(stale));
   evidence.staleSnapshotRemoved = true;
   assert.notEqual(readFileSync(binaryPath, 'utf8'), script);
   assert(!existsSync(marker));
+  answerCodexProbeLocally();
   app = await createDaemonApp({
     config: { ...getConfig({ host: '127.0.0.1', port: 0, dbPath: join(run, 'data/daemon.db'), workspaceRoot: join(run, 'workspace') }), disableWorktrees: true, disableGoalProcessing: true },
     verbose: false,
@@ -59,10 +61,11 @@ try {
   rpc.registerTransport(transport);
   await transport.initialize();
   await rpc.request('providers.create', { params: { providerId: 'anthropic', displayName: 'Synthetic provider', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-devproxy-test-key' } });
-  const { sessionId } = await rpc.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic busy recovery', config: { model: 'haiku', provider: 'anthropic', harness: 'codex' } });
+  await seedSyntheticCodexAdmission(rpc, app.settingsManager);
+  const { sessionId } = await rpc.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic busy recovery', config: { model: OXAP_CODEX_MODEL, provider: 'anthropic-codex' } });
   const agent = app.sessionManager.getSession(sessionId);
   assert(agent);
-  (agent as unknown as { runtimeOptions: { oap: OapQueryRuntime } }).runtimeOptions.oap = { openDirectorySupported: true, hub: createOapQueryHub(client) };
+  (agent as unknown as { runtimeOptions: { oxap: OxapQueryRuntime } }).runtimeOptions.oxap = { openDirectorySupported: true, hub: createOxapQueryHub(client) };
   await rpc.request('message.send', { sessionId, content: 'Synthetic request' });
   const deadline = Date.now() + 10_000;
   while (!app.db.getSDKMessages(sessionId).messages.some((row) => row.type === 'result' && 'result' in row && row.result === 'Verified executable reply') || agent.queryPromise || agent.messageQueue.isRunning()) {

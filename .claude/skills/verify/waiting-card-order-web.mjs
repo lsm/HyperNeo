@@ -9,9 +9,23 @@ const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}) });
 const out = `${run}/evidence/${phase}`;
 mkdirSync(out, { recursive: true });
-const expected = ['waiting-old', 'waiting-b', 'waiting-a', 'blocked', 'queued', 'running', 'done'];
-const expectedCards = ['waiting-old-question', 'waiting-b-report', 'waiting-a-question', 'waiting-b-question', 'waiting-old-early', 'waiting-a-held'];
+const expectedCards = ['waiting-old-question', 'waiting-old-early', 'waiting-b-report', 'waiting-b-question', 'waiting-a-question', 'waiting-a-held', 'waiting-a-question', 'waiting-a-held'];
+const expectedGroups = { waiting: ['waiting-a', 'waiting-b', 'waiting-old'], progress: ['blocked', 'queued', 'running'], cards: ['done'] };
 const observations = [];
+const daemonQueue = () => {
+  const output = execFileSync('bun', ['.claude/skills/verify/rpc.ts', 'neo.snapshot', '{}'], {
+    encoding: 'utf8',
+    env: { ...process.env, VERIFY_PORT: String(port), HYPERNEO_DATA_DIR: `${run}/data` },
+  });
+  const find = value => value && typeof value === 'object'
+    ? (value.humanQueue ?? Object.values(value).map(find).find(Boolean)) : undefined;
+  const queue = find(JSON.parse(output).reply);
+  assert(queue, 'the snapshot carries the human queue');
+  return {
+    cards: queue.items.filter(item => item.state !== 'progress').map(item => item.questionId),
+    progressTodos: queue.items.filter(item => item.state === 'progress').map(item => item.todoId),
+  };
+};
 const pair = async (page) => {
   const code = execFileSync('bun', ['.claude/skills/verify/rpc.ts', 'device.pair.create', JSON.stringify({ kind: 'human', name: 'Synthetic order browser' })], {
     encoding: 'utf8',
@@ -31,17 +45,32 @@ try {
       await page.goto(`http://127.0.0.1:${port}/neo`);
       const openWork = async () => {
         if (width < 800) await page.getByRole('button', { name: /^Your work/ }).click();
-        await page.locator('[data-ask="waiting-a"]:visible').waitFor();
+        await page.locator(phase === 'after' ? '[data-human-queue]:visible [data-queue-ask="waiting-a"]' : '[data-ask="waiting-a"]:visible').waitFor();
         await page.evaluate(async () => {
           await Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished.catch(() => {})));
         });
       };
-      const order = () => page.locator('[data-ask]:visible').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-ask')));
-      const cardOrder = () => page.locator('[id^="neo-ref-question-"]:visible').evaluateAll(nodes => nodes.map(node => node.id.replace('neo-ref-question-', '')));
+      const shown = (selector, attribute) => page.locator(`${selector}:visible`).evaluateAll((nodes, name) => nodes.map(node => name ? node.getAttribute(name) : node.id.replace('neo-ref-question-', '')), attribute);
+      const queue = page.locator('[data-human-queue]:visible');
+      const state = name => queue.locator(`[data-queue-state="${name}"]`).click();
+      const queueOrder = async () => {
+        await state('waiting');
+        const waiting = await shown('[data-human-queue] [data-queue-ask]', 'data-queue-ask');
+        const waitingCards = await shown('[data-human-queue] [id^="neo-ref-question-"]');
+        await state('held');
+        const heldCards = await shown('[data-human-queue] [id^="neo-ref-question-"]');
+        await state('progress');
+        const progress = await shown('[data-human-queue] [data-queue-ask]', 'data-queue-ask');
+        const progressTodos = await shown('[data-human-queue] [data-ask-todo]', 'data-ask-todo');
+        await state('waiting');
+        return { waiting, progress, cards: await shown('[data-ask]', 'data-ask'), queueCards: [...waitingCards, ...heldCards], progressTodos };
+      };
+      const order = () => phase === 'after' ? queueOrder() : shown('[data-ask]', 'data-ask');
+      const cardOrder = () => shown('[id^="neo-ref-question-"]');
       await openWork();
       const initial = await order();
-      const cards = await cardOrder();
-      assert.equal(await page.locator('[data-ask="waiting-a"]:visible').getByText('Waiting on you', { exact: true }).count(), 1);
+      const cards = phase === 'after' ? initial.queueCards : await cardOrder();
+      if (phase !== 'after') assert.equal(await page.locator('[data-ask="waiting-a"]:visible').getByText('Waiting on you', { exact: true }).count(), 1);
       const show = (selector, block) => page.locator(`${selector}:visible`).first().evaluate((node, at) => node.scrollIntoView({ block: at }), block);
       const report = page.locator('#neo-ref-question-waiting-b-report:visible').first();
       let tail = false;
@@ -56,10 +85,13 @@ try {
         await page.emulateMedia({ colorScheme: scheme });
         await page.evaluate(() => document.querySelectorAll('*').forEach((node) => { if (node.scrollTop) node.scrollTop = 0; }));
         await page.screenshot({ path: `${out}/waiting-order-${width}-${scheme}-top.png` });
+        if (phase === 'after') await state('held');
         await show('#neo-ref-question-waiting-a-held', 'center');
         await page.screenshot({ path: `${out}/waiting-order-${width}-${scheme}-held.png` });
-        await show('[data-scene-group="attention"]', 'start');
+        if (phase === 'after') await state('progress');
+        await show(phase === 'after' ? '[data-human-queue]' : '[data-scene-group="attention"]', 'start');
         await page.screenshot({ path: `${out}/waiting-order-${width}-${scheme}-asks.png` });
+        if (phase === 'after') await state('waiting');
         if (!tail) continue;
         await report.getByRole('button', { name: 'View full report' }).click();
         await page.getByRole('dialog').getByText('TAIL-OF-REPORT').evaluate((node) => node.scrollIntoView({ block: 'end' }));
@@ -82,8 +114,11 @@ try {
       assert(fits, 'no horizontal overflow');
       if (phase === 'after') {
         assert.deepEqual(reloaded, initial, 'unrelated status update and reload keep the same order');
-        assert.deepEqual(initial, expected);
-        assert.deepEqual(cards, expectedCards, 'unanswered cards newest first across asks, held cards after');
+        for (const key of ['waiting', 'progress', 'cards']) assert.deepEqual([...new Set(initial[key])].sort(), expectedGroups[key], key);
+        assert.deepEqual(cards, expectedCards, 'each ask shows once as its full card, asks ordered by their newest card; Held shows the held ask in full');
+        const daemon = daemonQueue();
+        assert.deepEqual([...new Set(reloaded.queueCards)].sort(), [...new Set(daemon.cards)].sort(), 'every queued card renders inside its full ask');
+        assert.deepEqual(reloaded.progressTodos, daemon.progressTodos, 'work renders in the daemon queue order');
         assert(tail, 'the promoted long report opens in full');
       }
       else assert.notDeepEqual(cards, expectedCards, 'reproduce cards grouped by ask instead of by card time');

@@ -4,6 +4,12 @@
       "entitlements": "SignedEntitlements.plist",
       "files": {
         "MacOS/cua-driver": "binaries/cua-driver",
+        "MacOS/hyperneo-locked-use": "binaries/hyperneo-locked-use",
+        "Resources/locked-use/HyperNeoLockedUse.bundle": "binaries/HyperNeoLockedUse.bundle",
+        "Resources/locked-use/install.sh": "../locked-use/install.sh",
+        "Resources/locked-use/uninstall.sh": "../locked-use/uninstall.sh",
+        "Resources/locked-use/policy.sh": "../locked-use/policy.sh",
+        "Resources/locked-use/policy.jxa": "../locked-use/policy.jxa",
         "Resources/cua-driver-LICENSE": "binaries/cua-driver-LICENSE",
         "Resources/cua-driver-THIRD_PARTY_NOTICES.md": "binaries/cua-driver-THIRD_PARTY_NOTICES.md",
         "embedded.provisionprofile": "embedded.provisionprofile"

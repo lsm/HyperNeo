@@ -3,6 +3,7 @@ import type { NeoAskEntry, NeoTodoEntry } from '@hyperneo/shared/types/neo-ask';
 export function testTodo(id: string, patch: Partial<NeoTodoEntry> = {}): NeoTodoEntry {
   return {
     id,
+    desktopApps: [{ bundleId: 'com.google.Chrome', name: 'Chrome' }],
     askId: 'ask',
     position: 0,
     priority: 'normal',

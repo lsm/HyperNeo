@@ -1,11 +1,14 @@
 // @ts-nocheck
 import { signal } from '@preact/signals';
-import { cleanup, render } from '@testing-library/preact';
+import { cleanup, fireEvent, render } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockAgentWorking = signal(false);
 
 const handleFileDrop = vi.fn(async () => {});
+const handlePaste = vi.fn();
+const openFilePicker = vi.fn();
+let menuOpen = false;
 
 vi.mock('../../lib/state.ts', () => ({
   globalSettings: { value: { voice: { enabled: false } } },
@@ -42,7 +45,7 @@ vi.mock('../../hooks', () => ({
     loading: false,
     switchModel: vi.fn(async () => {}),
   }),
-  useModal: () => ({ isOpen: false, toggle: vi.fn(), close: vi.fn() }),
+  useModal: () => ({ isOpen: menuOpen, toggle: vi.fn(), close: vi.fn() }),
   useCommandAutocomplete: () => ({
     showAutocomplete: false,
     filteredCommands: [],
@@ -68,9 +71,9 @@ vi.mock('../../hooks', () => ({
     handleRemove: vi.fn(),
     clear: vi.fn(),
     restore: vi.fn(),
-    openFilePicker: vi.fn(),
+    openFilePicker,
     getImagesForSend: vi.fn(() => undefined),
-    handlePaste: vi.fn(),
+    handlePaste,
   }),
   useInterrupt: () => ({ interrupting: false, handleInterrupt: vi.fn(async () => {}) }),
 }));
@@ -81,7 +84,11 @@ vi.mock('../../lib/connection-manager', () => ({
   },
 }));
 
+import ToastContainer from '../../islands/ToastContainer.tsx';
+import { toastsSignal } from '../../lib/toast.ts';
 import MessageInput from '../MessageInput';
+
+const imageNotice = /OXAP Codex.*mock-model.*Send text.*DeepSeek V4 Flash/;
 
 function makeFileList(files: File[]): FileList {
   return {
@@ -97,6 +104,10 @@ describe('MessageInput registerDropTarget', () => {
   beforeEach(() => {
     cleanup();
     handleFileDrop.mockClear();
+    handlePaste.mockClear();
+    openFilePicker.mockClear();
+    menuOpen = false;
+    toastsSignal.value = [];
     mockAgentWorking.value = false;
     Object.defineProperty(window, 'matchMedia', {
       writable: true,
@@ -176,5 +187,55 @@ describe('MessageInput registerDropTarget', () => {
     await Promise.resolve();
 
     expect(handleFileDrop).not.toHaveBeenCalled();
+  });
+  it('explains the image limit after Attach image is selected', async () => {
+    menuOpen = true;
+    const { queryByText, getByRole, findByText } = render(
+      <>
+        <MessageInput sessionId="s1" onSend={vi.fn()} harness="oxap-codex" />
+        <ToastContainer />
+      </>
+    );
+    expect(queryByText(/text only|cannot attach images/i)).toBeNull();
+    fireEvent.click(getByRole('button', { name: 'Attach image' }));
+    expect(await findByText(imageNotice)).toBeTruthy();
+    expect(openFilePicker).not.toHaveBeenCalled();
+  });
+
+  it('explains the image limit after an image paste', async () => {
+    const { getByRole, findByText } = render(
+      <>
+        <MessageInput sessionId="s1" onSend={vi.fn()} harness="oxap-codex" />
+        <ToastContainer />
+      </>
+    );
+    const event = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'clipboardData', {
+      value: { files: [new File(['x'], 'a.png', { type: 'image/png' })] },
+    });
+    fireEvent(getByRole('textbox'), event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(handlePaste).not.toHaveBeenCalled();
+    expect(await findByText(imageNotice)).toBeTruthy();
+  });
+
+  it('explains the image limit after an image drop', async () => {
+    let target: ((files: FileList) => void) | null = null;
+    const { findByText } = render(
+      <>
+        <MessageInput
+          sessionId="s1"
+          onSend={vi.fn()}
+          harness="oxap-codex"
+          registerDropTarget={(fn) => {
+            target = fn;
+          }}
+        />
+        <ToastContainer />
+      </>
+    );
+    target!(makeFileList([new File(['x'], 'a.png', { type: 'image/png' })]));
+    expect(handleFileDrop).not.toHaveBeenCalled();
+    expect(await findByText(imageNotice)).toBeTruthy();
   });
 });

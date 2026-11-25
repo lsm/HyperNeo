@@ -219,7 +219,7 @@ describe('router', () => {
     }
   );
 
-  it('opens Sessions & Harness for the old Models link', () => {
+  it('opens Sessions & Clients for the old Models link', () => {
     setPath('/settings?tab=models');
     initializeRouter();
     expect(navSectionSignal.value).toBe('settings');

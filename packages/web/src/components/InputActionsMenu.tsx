@@ -18,6 +18,7 @@ export interface InputActionsMenuProps {
   onModelSwitch?: (model: ModelInfo) => void;
   onOpenTools: () => void;
   onAttachFile: () => void;
+  showTools?: boolean;
   coordinatorMode?: boolean;
   coordinatorSwitching?: boolean;
   onCoordinatorModeChange?: (enabled: boolean) => void;
@@ -41,6 +42,7 @@ export function InputActionsMenu({
   onModelSwitch: _onModelSwitch,
   onOpenTools,
   onAttachFile,
+  showTools = true,
   coordinatorMode = false,
   coordinatorSwitching = false,
   onCoordinatorModeChange,
@@ -197,6 +199,7 @@ export function InputActionsMenu({
           <button
             type="button"
             onClick={handleToolsClick}
+            style={{ display: showTools ? undefined : 'none' }}
             class="w-full px-4 py-3 text-left flex items-center gap-3 transition-colors text-fg-soft hover:bg-fill-strong/50"
           >
             <svg class="w-5 h-5 text-warning" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -216,7 +219,7 @@ export function InputActionsMenu({
             <span class="text-sm">Tools</span>
           </button>
 
-          <div class="h-px bg-line-strong" />
+          {showTools && <div class="h-px bg-line-strong" />}
 
           <button
             type="button"

@@ -1,10 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { MessageHub, MessageHubRouter } from '@hyperneo/shared';
 import { NeoSpeech } from '../../../../src/lib/neo/speech.ts';
-import {
-  createNeoPublisher,
-  createNeoPublicationOperation,
-} from '../../../../src/lib/neo/publication-operation.ts';
+import { createNeoPublicationOperation } from '../../../../src/lib/neo/publication-operation.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -105,7 +102,7 @@ describe('publication speech follows the committed version', () => {
     };
     const registry = createOperationRegistry([
       ...speech.operations,
-      createNeoPublicationOperation(createNeoPublisher(runtime)),
+      createNeoPublicationOperation(runtime).operation,
     ]);
     const mcp = createOperationMcpHandler(registry, () => caller);
     send = async (input = draft) =>
@@ -260,7 +257,7 @@ describe('publication speech follows the committed version', () => {
       const refused = await send({ ...textOnly, requestId, text, details, cardReply });
       expect(refused).toMatchObject({ accepted: false });
       expect(String(refused.reason)).toStartWith(reason);
-      expect(String(refused.reason)).toContain('server ceiling of 400 characters and 5 lines');
+      expect(String(refused.reason)).toContain('server ceiling of 400 characters.');
       expect(String(refused.reason)).toContain('Write at most 60 words:');
     }
     expect(ledger.list(conversationId)).toHaveLength(1);

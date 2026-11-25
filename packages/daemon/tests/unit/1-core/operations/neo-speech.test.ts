@@ -411,6 +411,339 @@ describe('spoken replies separate from publications', () => {
     }
   });
 
+  describe('speech part from voice settings', () => {
+    type Seen = { url: string; headers: Record<string, string>; body?: Record<string, unknown> };
+    const fakeServer = (respond: (url: URL) => Response) => {
+      const seen: Seen[] = [];
+      const request = (async (url: URL | string, init?: RequestInit) => {
+        seen.push({
+          url: url.toString(),
+          headers: (init?.headers ?? {}) as Record<string, string>,
+          body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
+        });
+        return respond(new URL(url.toString()));
+      }) as typeof fetch;
+      return { seen, request };
+    };
+    const pcm = () =>
+      new Response(new Uint8Array([1, 0, 2, 0]), { headers: { 'content-type': 'audio/pcm' } });
+    const withPart = (
+      part:
+        | {
+            provider?: 'openai' | 'deepgram';
+            endpoint: string;
+            key?: string;
+            model?: string;
+            voice?: string;
+          }
+        | undefined,
+      request: typeof fetch
+    ) =>
+      new NeoSpeech(
+        hub,
+        runDbOpOn(mailbox.db),
+        (id) => id.startsWith('neo:'),
+        'http://127.0.0.1:18555',
+        request,
+        undefined,
+        (id) => !!mailbox.db.prepare('SELECT 1 FROM sessions WHERE id = ?').get(id),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        async () => part
+      );
+    const speakOnce = async (speaker: NeoSpeech, voice: string | null = 'alloy') => {
+      const parts = createOperationRegistry(speaker.operations);
+      await invokeOperation(
+        parts,
+        'neo.speech.listen',
+        { sessionId, enabled: true, audio: true, ...(voice ? { voice } : {}) },
+        human
+      );
+      await invokeOperation(parts, 'neo.speech.say', { requestId: 'part', text: 'Hello.' }, neo);
+      for (let i = 0; i < 200 && !messages.some((item) => item.message.data.type === 'end'); i++)
+        await new Promise((done) => setTimeout(done, 1));
+    };
+    const catalogOf = async (speaker: NeoSpeech) =>
+      invokeOperation(createOperationRegistry(speaker.operations), 'neo.speech.catalog', {}, human);
+
+    test('synthesis posts the OpenAI shape with the key to the speech part', async () => {
+      const server = fakeServer(() => pcm());
+      const speaker = withPart(
+        { endpoint: 'https://api.openai.com', key: 'sk-speech', model: 'gpt-4o-mini-tts' },
+        server.request
+      );
+      try {
+        await speakOnce(speaker);
+        expect(server.seen).toHaveLength(1);
+        expect(server.seen[0].url).toBe('https://api.openai.com/v1/audio/speech');
+        expect(server.seen[0].headers.Authorization).toBe('Bearer sk-speech');
+        expect(server.seen[0].body).toEqual({
+          model: 'gpt-4o-mini-tts',
+          input: 'Hello.',
+          voice: 'alloy',
+          response_format: 'pcm',
+        });
+        expect(messages.at(-1)?.message.data).toMatchObject({ type: 'end' });
+      } finally {
+        await speaker.dispose();
+      }
+    });
+
+    test.each([
+      [null, 'echo'],
+      ['alloy', 'alloy'],
+    ])(
+      'a listener voice of %s speaks with %s over the configured voice',
+      async (listener, spoken) => {
+        const server = fakeServer(() => pcm());
+        const speaker = withPart(
+          { endpoint: 'https://api.openai.com', key: 'k', model: 'gpt-4o-mini-tts', voice: 'echo' },
+          server.request
+        );
+        try {
+          await speakOnce(speaker, listener);
+          expect(server.seen[0].body?.voice).toBe(spoken);
+        } finally {
+          await speaker.dispose();
+        }
+      }
+    );
+
+    test('the environment fallback keeps vivian when the listener names no voice', async () => {
+      const server = fakeServer(() => pcm());
+      const speaker = withPart(undefined, server.request);
+      try {
+        await speakOnce(speaker, null);
+        expect(server.seen[0].body?.voice).toBe('vivian');
+      } finally {
+        await speaker.dispose();
+      }
+    });
+
+    test('Deepgram speech asks for raw PCM with a Token header and streams it unchanged', async () => {
+      const server = fakeServer(
+        () =>
+          new Response(new Uint8Array([1, 0, 2, 0]), {
+            headers: { 'content-type': 'audio/l16;rate=24000' },
+          })
+      );
+      const speaker = withPart(
+        { provider: 'deepgram', endpoint: 'https://api.deepgram.com', key: 'dg' },
+        server.request
+      );
+      try {
+        await speakOnce(speaker, 'aura-2-thalia-en');
+        expect(server.seen[0].url).toBe(
+          'https://api.deepgram.com/v1/speak?model=aura-2-thalia-en&encoding=linear16&sample_rate=24000&container=none'
+        );
+        expect(server.seen[0].headers.Authorization).toBe('Token dg');
+        expect(server.seen[0].body).toEqual({ text: 'Hello.' });
+        const audio = messages.filter((item) => item.message.data.type === 'audio');
+        expect(audio.map((item) => item.message.data.pcm)).toEqual(['AQACAA==']);
+        expect(messages.at(-1)?.message.data).toMatchObject({ type: 'end' });
+      } finally {
+        await speaker.dispose();
+      }
+    });
+
+    test('a WAV container from Deepgram never reaches clients', async () => {
+      const wav = new Uint8Array(48);
+      wav.set(new TextEncoder().encode('RIFF'), 0);
+      wav.set(new TextEncoder().encode('WAVE'), 8);
+      const server = fakeServer(
+        () => new Response(wav, { headers: { 'content-type': 'audio/l16;rate=24000' } })
+      );
+      const speaker = withPart(
+        {
+          provider: 'deepgram',
+          endpoint: 'https://api.deepgram.com',
+          key: 'dg',
+          voice: 'aura-2-thalia-en',
+        },
+        server.request
+      );
+      try {
+        await speakOnce(speaker, null);
+        for (
+          let i = 0;
+          i < 200 && !messages.some((item) => item.message.data.type === 'failed');
+          i++
+        )
+          await new Promise((done) => setTimeout(done, 1));
+        expect(server.seen[0].url).toContain('model=aura-2-thalia-en');
+        expect(messages.some((item) => item.message.data.type === 'audio')).toBe(false);
+        expect(messages.some((item) => item.message.data.type === 'failed')).toBe(true);
+      } finally {
+        await speaker.dispose();
+      }
+    });
+
+    const deepgramChunks = (chunks: Uint8Array[], type = 'audio/l16;rate=24000') =>
+      fakeServer(
+        () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                for (const chunk of chunks) controller.enqueue(chunk);
+                controller.close();
+              },
+            }),
+            { headers: { 'content-type': type } }
+          )
+      );
+    const settled = async () => {
+      for (
+        let i = 0;
+        i < 200 && !messages.some((item) => ['end', 'failed'].includes(item.message.data.type));
+        i++
+      )
+        await new Promise((done) => setTimeout(done, 1));
+    };
+    const deepgramPart = {
+      provider: 'deepgram' as const,
+      endpoint: 'https://api.deepgram.com',
+      key: 'dg',
+    };
+
+    test('a WAV header split across chunks never reaches clients', async () => {
+      const rest = new Uint8Array(46);
+      rest.set(new TextEncoder().encode('FF'), 0);
+      rest.set(new TextEncoder().encode('WAVE'), 6);
+      const server = deepgramChunks([new TextEncoder().encode('RI'), rest]);
+      const speaker = withPart(deepgramPart, server.request);
+      try {
+        await speakOnce(speaker, 'aura-2-thalia-en');
+        await settled();
+        expect(messages.some((item) => item.message.data.type === 'audio')).toBe(false);
+        expect(messages.some((item) => item.message.data.type === 'failed')).toBe(true);
+      } finally {
+        await speaker.dispose();
+      }
+    });
+
+    test('raw PCM split across tiny chunks still reaches clients whole', async () => {
+      const server = deepgramChunks([new Uint8Array([1]), new Uint8Array([0, 2, 0])]);
+      const speaker = withPart(deepgramPart, server.request);
+      try {
+        await speakOnce(speaker, 'aura-2-thalia-en');
+        await settled();
+        const audio = Buffer.concat(
+          messages
+            .filter((item) => item.message.data.type === 'audio')
+            .map((item) => Buffer.from(item.message.data.pcm, 'base64'))
+        );
+        expect([...audio]).toEqual([1, 0, 2, 0]);
+        expect(messages.at(-1)?.message.data).toMatchObject({ type: 'end' });
+      } finally {
+        await speaker.dispose();
+      }
+    });
+
+    test('a Deepgram reply that is not raw PCM fails without audio', async () => {
+      const server = deepgramChunks([new TextEncoder().encode('{}')], 'application/json');
+      const speaker = withPart(deepgramPart, server.request);
+      try {
+        await speakOnce(speaker, 'aura-2-thalia-en');
+        await settled();
+        expect(messages.some((item) => item.message.data.type === 'audio')).toBe(false);
+        expect(messages.some((item) => item.message.data.type === 'failed')).toBe(true);
+      } finally {
+        await speaker.dispose();
+      }
+    });
+
+    test('the Deepgram voice list is its text-to-speech model names', async () => {
+      const server = fakeServer(() =>
+        Response.json({
+          stt: [{ canonical_name: 'nova-3' }],
+          tts: [{ canonical_name: 'aura-2-thalia-en' }, { canonical_name: 'aura-2-orion-en' }],
+        })
+      );
+      const speaker = withPart(
+        { provider: 'deepgram', endpoint: 'https://api.deepgram.com', key: 'dg' },
+        server.request
+      );
+      try {
+        expect(await catalogOf(speaker)).toMatchObject({
+          kind: 'completed',
+          value: {
+            ok: true,
+            catalog: { data: [{ id: 'aura-2-thalia-en' }, { id: 'aura-2-orion-en' }] },
+          },
+        });
+        expect(server.seen[0].url).toBe('https://api.deepgram.com/v1/models');
+        expect(server.seen[0].headers.Authorization).toBe('Token dg');
+      } finally {
+        await speaker.dispose();
+      }
+    });
+
+    test('an empty speech part falls back to the configured base as today', async () => {
+      const server = fakeServer(() => pcm());
+      const speaker = withPart(undefined, server.request);
+      try {
+        await speakOnce(speaker);
+        expect(server.seen[0].url).toBe('http://127.0.0.1:18555/v1/audio/speech');
+        expect(server.seen[0].headers.Authorization).toBeUndefined();
+        expect(server.seen[0].body).toEqual({
+          input: 'Hello.',
+          voice: 'alloy',
+          language: 'auto',
+          response_format: 'pcm',
+        });
+      } finally {
+        await speaker.dispose();
+      }
+    });
+
+    test('the voice list comes from the part server when it answers', async () => {
+      const server = fakeServer(() => Response.json({ data: [{ id: 'own-voice' }] }));
+      const speaker = withPart({ endpoint: 'https://tts.example.com', key: 'k' }, server.request);
+      try {
+        expect(await catalogOf(speaker)).toMatchObject({
+          kind: 'completed',
+          value: { ok: true, catalog: { data: [{ id: 'own-voice' }] } },
+        });
+        expect(server.seen[0].url).toBe('https://tts.example.com/v1/audio/voices');
+        expect(server.seen[0].headers.Authorization).toBe('Bearer k');
+      } finally {
+        await speaker.dispose();
+      }
+    });
+
+    test("the voice list falls back to OpenAI's published voices", async () => {
+      const server = fakeServer(() => new Response('not found', { status: 404 }));
+      const speaker = withPart({ endpoint: 'https://api.openai.com', key: 'k' }, server.request);
+      try {
+        const result = await catalogOf(speaker);
+        expect(result).toMatchObject({ kind: 'completed', value: { ok: true } });
+        const ids = (
+          (result as { value: { catalog: { data: { id: string }[] } } }).value.catalog.data ?? []
+        ).map((voice) => voice.id);
+        expect(ids).toContain('alloy');
+        expect(ids).toContain('nova');
+      } finally {
+        await speaker.dispose();
+      }
+    });
+
+    test('a key is never sent to a plain HTTP speech part', async () => {
+      const server = fakeServer(() => Response.json({ data: [] }));
+      const speaker = withPart({ endpoint: 'http://127.0.0.1:18556', key: 'k' }, server.request);
+      try {
+        expect(await catalogOf(speaker)).toMatchObject({
+          kind: 'completed',
+          value: { ok: false, reason: 'invalid_speech_backend' },
+        });
+        expect(server.seen).toEqual([]);
+      } finally {
+        await speaker.dispose();
+      }
+    });
+  });
+
   test('server sends audio before synthesis finishes without blocking MCP or replaying it', async () => {
     await call('listen', { sessionId, enabled: true, audio: true, voice: 'ryan' });
     const saved = await say();

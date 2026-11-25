@@ -5,6 +5,7 @@ import {
 } from '../../storage/repositories/neo-front-input-worker.ts';
 import { catchUpBlock } from './front-catch-up.ts';
 import { neoIntakeMessage, readNeoReply } from './intake.ts';
+import { neoLocalTimeLine } from './local-time.ts';
 import type { NeoService } from './service.ts';
 
 export async function handOffToNeo(
@@ -46,7 +47,10 @@ export async function handOffToNeo(
             { ...ask, sessionId: origin },
             origin,
             readNeoReply(ask.replyTo, service.todos),
-            null,
+            neoLocalTimeLine(
+              new Date(ask.createdAt),
+              Intl.DateTimeFormat().resolvedOptions().timeZone
+            ),
             undefined,
             ask.previewContext ?? null,
             block

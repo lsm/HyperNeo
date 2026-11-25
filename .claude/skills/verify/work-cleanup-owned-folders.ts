@@ -10,6 +10,7 @@ import { cleanupOwnedWorktree } from '../../../packages/daemon/src/lib/drivers/w
 import { prepareCodingExecution } from '../../../packages/daemon/src/lib/neo/packs/coding/prepare-execution.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
+import { recordWorkerStarted } from '../../../packages/daemon/src/storage/repositories/work-started-sessions-worker.ts';
 
 const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -84,6 +85,7 @@ try {
   const ask = todos.openAsk({ id: 'cleanup', sessionId: `neo:${crypto.randomUUID()}`, projectId: null, originMessageId: null,
     title: 'Cleanup proof', request: 'Cleanup proof', createdAt: Date.now() });
   for (const [key, id] of Object.entries(workers)) {
+    recordWorkerStarted(raw, { adapter: 'hyperneo', id });
     const todo = todos.addTodo(`todo-${key}`, ask.id, { title: `Finished ${key}`, doneWhen: 'Done', instruction: null, named: null, check: null }, Date.now());
     sessions.create(todo.id, { verb: 'start', adapter: 'hyperneo' });
     raw.prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ?').run(JSON.stringify({ adapter: 'hyperneo', id }), todo.id);

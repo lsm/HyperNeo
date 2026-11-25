@@ -1,30 +1,18 @@
+import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import { ChevronLeftGlyph } from './icons/common-glyphs.tsx';
 import type { ChatDisplayMode, Session, SessionFeatures } from '@hyperneo/shared';
 import { DEFAULT_WORKER_FEATURES } from '@hyperneo/shared';
 import { sessionStore } from '../lib/session-store.ts';
 import { conversationTitle } from '../lib/session-sidebar-status.ts';
 import { rightPanelTargetSignal } from '../lib/signals.ts';
-import { cn } from '../lib/utils.ts';
+import { shellExtensions } from '../lib/web-extensions.ts';
+import { useSessionRename } from '../hooks/useSessionRename.ts';
 import { MobileMenuButton } from './ui/MobileMenuButton';
-import { ChatHeaderMenu } from './ChatHeaderMenu.tsx';
-import { IconButton } from './ui/IconButton.tsx';
+import { ChatHeaderMenu, type ChatHeaderCopyItem } from './ChatHeaderMenu.tsx';
 import { CloneIcon } from './icons/CloneIcon.tsx';
 import { MoveSessionDialog, movableSession, moveSession } from './MoveSessionDialog.tsx';
 import { sessions } from '../lib/state.ts';
 import { useState } from 'preact/hooks';
-import { nextChatDisplayMode } from './sdk/chat-display-mode.ts';
-
-const DISPLAY_MODE_TITLES: Record<ChatDisplayMode, string> = {
-  full: 'Full view: switch to compact',
-  compact: 'Compact view: switch to minimal',
-  minimal: 'Minimal view: switch to full',
-};
-
-const DISPLAY_MODE_ICONS: Record<ChatDisplayMode, string> = {
-  full: 'M4 6h16M4 10h16M4 14h16M4 18h16',
-  compact: 'M4 7h16M4 12h10M4 17h16',
-  minimal: 'M4 9h16M4 15h10',
-};
 
 export interface ChatHeaderProps {
   session: Session | null;
@@ -69,15 +57,31 @@ export function ChatHeader({
   const movable = !!session && !readonly && movableSession(session);
   const hasChildren =
     !!session && sessions.value.some((item) => item.parentSessionId === session.id);
+  const { isEditing, startEditing, inputProps } = useSessionRename(
+    session?.id ?? '',
+    session?.title ?? ''
+  );
+  const agentOwned =
+    !!session &&
+    shellExtensions().flatMap((extension) => extension.sessionAgent(session.id) ?? []).length > 0;
+  const renamable = !!session && !readonly && !agentOwned;
   const target = rightPanelTargetSignal.value;
-  const inspectorAvailable = !!session && sessionStore.activeSessionId.value === session.id;
-  const inspectorOpen = target?.type === 'inspector' && target.sessionId === session?.id;
-  const toggleInspector = () => {
+  const schedulesAvailable = !!session && sessionStore.activeSessionId.value === session.id;
+  const schedulesOpen = target?.type === 'schedules' && target.sessionId === session?.id;
+  const toggleSchedules = () => {
     if (!session) return;
-    rightPanelTargetSignal.value = inspectorOpen
+    rightPanelTargetSignal.value = schedulesOpen
       ? null
-      : { type: 'inspector', sessionId: session.id };
+      : { type: 'schedules', sessionId: session.id };
   };
+  const branch = session?.worktree?.branch ?? session?.gitBranch;
+  const copyItems: ChatHeaderCopyItem[] = session
+    ? [
+        { label: 'Session ID', value: session.id },
+        ...(folder ? [{ label: 'Workspace path', value: folder }] : []),
+        ...(branch ? [{ label: 'Branch', value: branch }] : []),
+      ]
+    : [];
 
   return (
     <div
@@ -117,17 +121,26 @@ export function ChatHeader({
               <CloneIcon className="h-4 w-4" />
             </span>
           )}
-          <h2
-            data-testid="chat-header-title"
-            title={conversationTitle(
-              titleOverride || session?.title || 'New conversation',
-              isClone
-            )}
-            class="min-w-0 truncate text-sm font-semibold text-fg"
-            data-tauri-drag-region
-          >
-            {conversationTitle(titleOverride || session?.title || 'New conversation', isClone)}
-          </h2>
+          {isEditing ? (
+            <input
+              {...inputProps}
+              data-testid="chat-header-rename-input"
+              placeholder="Conversation title"
+              class="min-w-0 flex-1 rounded-md border border-line-strong bg-surface/80 px-2 py-1 text-sm font-semibold text-fg outline-none focus:border-fg-faint"
+            />
+          ) : (
+            <h2
+              data-testid="chat-header-title"
+              title={conversationTitle(
+                titleOverride || session?.title || 'New conversation',
+                isClone
+              )}
+              class="min-w-0 truncate text-sm font-semibold text-fg"
+              data-tauri-drag-region
+            >
+              {conversationTitle(titleOverride || session?.title || 'New conversation', isClone)}
+            </h2>
+          )}
           {folder && (
             <span
               data-testid="chat-header-folder"
@@ -178,6 +191,7 @@ export function ChatHeader({
         <ChatHeaderMenu
           features={features}
           readonly={readonly}
+          showTools={!isOxapHarness(session?.config?.harness)}
           archived={session?.status === 'archived'}
           archiving={archiving}
           resettingAgent={resettingAgent}
@@ -190,43 +204,15 @@ export function ChatHeader({
           onMoveToTopClick={
             movable && isChild ? () => void moveSession(session!.id, null) : undefined
           }
+          onRenameClick={renamable ? startEditing : undefined}
+          onSchedulesClick={schedulesAvailable ? toggleSchedules : undefined}
+          schedulesOpen={schedulesOpen}
+          copyItems={copyItems}
+          displayMode={displayMode}
+          onDisplayModeChange={onDisplayModeChange}
         />
         {session && moving && (
           <MoveSessionDialog session={session} isOpen onClose={() => setMoving(false)} />
-        )}
-        {displayMode && onDisplayModeChange && (
-          <IconButton
-            title={DISPLAY_MODE_TITLES[displayMode]}
-            data-testid="display-mode-btn"
-            onClick={() => onDisplayModeChange(nextChatDisplayMode(displayMode))}
-            class="flex-shrink-0 text-fg-muted"
-          >
-            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width={1.9}
-                d={DISPLAY_MODE_ICONS[displayMode]}
-              />
-            </svg>
-          </IconButton>
-        )}
-        {inspectorAvailable && (
-          <IconButton
-            title="Conversation info"
-            data-testid="session-info-btn"
-            onClick={toggleInspector}
-            class={cn('flex-shrink-0 text-fg-muted', inspectorOpen && 'bg-fill text-fg')}
-          >
-            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width={1.9}
-                d="M12 11.5v5M12 7.25h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
-              />
-            </svg>
-          </IconButton>
         )}
       </div>
     </div>

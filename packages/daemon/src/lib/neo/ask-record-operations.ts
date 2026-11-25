@@ -1,9 +1,10 @@
+import { proposalCardRecord, proposalQuestionId } from './proposal.ts';
+import { openHumanCard, requireHumanCard } from './human-card.ts';
 import { neoToolDescription } from '@hyperneo/prompts';
 import { neoTodoAfterRefusal } from './todo-dependencies.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import { todoEvidenceFile } from '../work-locations.ts';
-import { neoEvidenceRefusal, withAssignedEvidence } from './core-todo-checks.ts';
-import { neoUserFolder } from './folder.ts';
+import { getDataDir } from '../data-dir.ts';
+import { neoEvidencePathRefusal } from './core-todo-checks.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
@@ -19,9 +20,11 @@ import {
   type NeoTodoControls,
   NeoTodoDraftSchema,
   planNeoTodoDraft,
+  neoTodoPlaceRefusal,
   requireNeoOpenAsk,
 } from './todo-operations.ts';
-import { recordNeoTodoAdmission } from './todo-add-operation.ts';
+import { DESKTOP_CONTROL_REFUSAL, recordNeoTodoAdmission } from './todo-add-operation.ts';
+import { DesktopAppsSchema, desktopAppsLine, resolveDesktopApps } from '../desktop/app-scope.ts';
 import type { NeoPack, NeoTodoPolicyScope } from './pack-contract.ts';
 import { neoTodoRepository } from './pack-contract.ts';
 import { neoTodoFollowUpRefusal } from './todo-follow-up.ts';
@@ -34,26 +37,37 @@ import {
   neoAskTodosVersion,
 } from '../../storage/repositories/neo-ask-settlement.ts';
 import type { WorkRef } from '../drivers/types.ts';
+import type { LanguageSetting } from '@hyperneo/shared/types/settings';
+import { NeoTopicFrom, NeoTopicPick } from './ask-topic.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
 type AskReceipt = { ok: true; ask: NeoAsk; todos: NeoTodo[]; records?: string[] };
 
 const Text = z.string().trim().min(1);
-const Topic = Text.max(12);
 
 const Open = z.object({
   title: Text.max(200),
-  topic: Topic.optional(),
+  topic: NeoTopicPick.optional(),
   request: Text.max(4000),
+  yesLabel: Text.max(24).optional(),
+  noLabel: Text.max(24).optional(),
   projectId: Text.nullable().optional(),
   goalId: Text.nullable().optional(),
   todos: z.array(NeoTodoDraftSchema).max(20).default([]),
+  desktopApps: DesktopAppsSchema.optional().describe(
+    'Bundle ids of the apps on this Mac the work will drive. The card lists their names; after yes, each todo you add may claim some of them in its own desktopApps.'
+  ),
 });
 
 const Outcome = z.object({ askId: Text, outcome: Text.max(4000) });
 
-const TopicInput = z.object({ askId: Text, topic: Topic });
+const TopicInput = z.object({ askId: Text, topic: NeoTopicPick });
+const TopicMerge = z.object({ from: NeoTopicFrom, to: NeoTopicPick });
+const TopicMerged = z.union([
+  z.object({ ok: z.literal(false), reason: z.string() }),
+  z.object({ ok: z.literal(true), merged: z.number() }),
+]);
 
 const Settle = z.object({
   askId: Text,
@@ -159,11 +173,11 @@ export function createNeoAskRecordOperations(
   packs: () => readonly NeoPack[] = () => [],
   readGoal: (id: string) => SessionGoal | null = () => null,
   project: <T extends NeoTodo>(todos: readonly T[]) => Promise<T[]> = async (todos) => [...todos],
-  settlement: { gateway: DbGateway; changed(): void }
+  settlement: { gateway: DbGateway; changed(): void; language?(): LanguageSetting | undefined }
 ) {
   const present = async (result: AskReceipt | Rejection) =>
     result.ok ? { ...result, todos: await project(result.todos) } : result;
-  const open = (superpipe({})('neo.ask.open') as PipelineAPI)
+  const open = (superpipe({})('neo.ask.propose') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe((caller: OperationCaller) => requireAskSession(caller), 'caller', 'result:outcome')
     .pipe(
@@ -187,14 +201,48 @@ export function createNeoAskRecordOperations(
       'result:outcome'
     )
     .pipe(
+      (
+        context: { sessionId: string; projectId: string | null; goalId: string | null },
+        input: z.infer<typeof Open>
+      ) => {
+        const prior = store.findAsk(context.sessionId, null, input.title, context.goalId);
+        return {
+          context,
+          hasTodos: input.todos.length > 0,
+          proposal: prior
+            ? prior.status === 'open' && !!store.getQuestion(proposalQuestionId(prior.id))
+            : true,
+        };
+      },
+      ['outcome', 'input'],
+      'proposalFacts'
+    )
+    .pipe(
+      (facts: {
+        context: { sessionId: string; projectId: string | null; goalId: string | null };
+        hasTodos: boolean;
+        proposal: boolean;
+      }) =>
+        facts.hasTodos && facts.proposal
+          ? {
+              reason: {
+                ok: false as const,
+                reason:
+                  'proposal_todos: open the proposal without todos and wait for human approval.',
+              },
+            }
+          : { value: facts.context },
+      'proposalFacts',
+      'result:outcome'
+    )
+    .pipe(
       async (
         {
           sessionId,
           projectId,
           goalId,
         }: { sessionId: string; projectId: string | null; goalId: string | null },
-        input: z.infer<typeof Open>,
-        _caller: OperationCaller
+        input: z.infer<typeof Open>
       ): Promise<AskReceipt | Rejection> => {
         const policies = packs();
         const origin = null;
@@ -246,15 +294,10 @@ export function createNeoAskRecordOperations(
         const refused = input.todos
           .filter((todo) => !recordedRow(todo))
           .map((todo) => {
-            const check = withAssignedEvidence(todo.check, todoEvidenceFile('pending'));
-            const reason = neoEvidenceRefusal(
-              check,
-              neoTodoRepository(todo, policies, readScope),
-              controls.userFolder ?? neoUserFolder()
-            );
+            const reason = neoEvidencePathRefusal(todo.check, null, getDataDir());
             return reason
               ? { reason: { ok: false as const, reason } }
-              : planNeoTodoDraft({ ...todo, check }, policies);
+              : planNeoTodoDraft(todo, policies);
           })
           .find((planned) => 'reason' in planned);
         if (refused && 'reason' in refused) return refused.reason;
@@ -283,12 +326,26 @@ export function createNeoAskRecordOperations(
           }
           const resolved = await resolveNeoTodoDraft(todo, controls.resolveTarget);
           if ('reason' in resolved) return resolved.reason;
+          const placeRefusal = neoTodoPlaceRefusal(resolved.value, policies, {
+            ...readScope,
+            workerRemotes: resolved.value.workerRemotes,
+          });
+          if (placeRefusal) return { ok: false, reason: placeRefusal };
           drafts.push(resolved.value);
         }
         const current = priorAsk
           ? store.getAsk(priorAsk.id)
           : store.findAsk(sessionId, origin, input.title, goalId);
         if (priorAsk && !current) return { ok: false, reason: 'not_found: no such ask.' };
+        if (
+          input.todos.length &&
+          (!current ||
+            (current.status === 'open' && store.getQuestion(proposalQuestionId(current.id))))
+        )
+          return {
+            ok: false,
+            reason: 'proposal_todos: open the proposal without todos and wait for human approval.',
+          };
         const taken = current
           ? null
           : neoAskMatterRefusal(
@@ -297,24 +354,66 @@ export function createNeoAskRecordOperations(
               policies
             );
         if (taken) return { ok: false, reason: taken };
+        if (current && input.desktopApps)
+          return {
+            ok: false,
+            reason:
+              'desktop_apps_need_new_card: this ask already has its card. Propose a new ask that lists the app.',
+          };
+        const desktop = input.desktopApps
+          ? await resolveDesktopApps(input.desktopApps, controls.desktopAppName)
+          : null;
+        if (desktop && 'missing' in desktop)
+          return {
+            ok: false,
+            reason: `app_not_found: no installed app has bundle id ${desktop.missing}. Use the bundleId desktop.access.request returned.`,
+          };
+        const cardText = desktop
+          ? `${input.request}\n\n${desktopAppsLine(desktop.value)}`
+          : input.request;
+        if (!current) {
+          const card = requireHumanCard({ text: cardText, kind: 'yesno' }, settlement.language?.());
+          if ('reason' in card) return card.reason;
+        }
         const ask =
           current ??
-          store.openAsk({
-            id: crypto.randomUUID(),
-            projectId,
-            goalId,
-            sessionId,
-            originMessageId: origin,
-            title: input.title,
-            topic: input.topic ?? null,
-            request: input.request,
-            createdAt: Date.now(),
+          store.inTransaction(() => {
+            const now = Date.now();
+            const opened = store.openAsk({
+              id: crypto.randomUUID(),
+              projectId,
+              goalId,
+              sessionId,
+              originMessageId: origin,
+              title: input.title,
+              topic: input.topic ?? null,
+              request: input.request,
+              createdAt: now,
+              ...(desktop ? { desktopApps: desktop.value } : {}),
+            });
+            openHumanCard(
+              store,
+              proposalQuestionId(opened.id),
+              opened.id,
+              {
+                text: cardText,
+                kind: 'yesno',
+                options: null,
+                multiple: false,
+                noLabel: input.noLabel ?? null,
+                yesLabel: input.yesLabel ?? null,
+              },
+              now
+            );
+            return opened;
           });
         recorded.push(...family(ask));
         const records: string[] = [];
         const ids: (string | undefined)[] = [];
         const currentScope = priorAsk?.id === ask.id ? readScope : { ask };
         const rows = drafts.map((todo) => recordedRow(todo, currentScope));
+        if (drafts.some((todo, index) => !rows[index] && todo.named?.desktopControl === true))
+          return DESKTOP_CONTROL_REFUSAL;
         for (const [index, todo] of drafts.entries()) {
           const row = rows[index];
           const after = todo.after.map((ref) =>
@@ -338,6 +437,8 @@ export function createNeoAskRecordOperations(
           ids.push(row?.id ?? ('todo' in added ? added.todo?.id : undefined));
           if ('records' in added && added.records) records.push(...added.records);
         }
+        const card = store.getQuestion(proposalQuestionId(ask.id));
+        if (card?.state === 'open') records.unshift(proposalCardRecord(card.id));
         return {
           ok: true,
           ask: store.getAsk(ask.id) ?? ask,
@@ -345,7 +446,7 @@ export function createNeoAskRecordOperations(
           ...(records.length ? { records } : {}),
         };
       },
-      ['outcome', 'input', 'caller'],
+      ['outcome', 'input'],
       'outcome'
     )
     .endAsync('outcome') as (
@@ -436,6 +537,26 @@ export function createNeoAskRecordOperations(
     caller: OperationCaller
   ) => AskReceipt | Rejection;
 
+  const mergeTopic = (superpipe({})('neo.topic.merge') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (caller: OperationCaller) => requireNeoAskSession(caller, isNeoSession),
+      'caller',
+      'result:merged'
+    )
+    .pipe(
+      (input: z.infer<typeof TopicMerge>) => ({
+        ok: true as const,
+        merged: store.mergeTopic(input.from, input.to),
+      }),
+      'input',
+      'merged'
+    )
+    .end('merged') as (
+    input: z.infer<typeof TopicMerge>,
+    caller: OperationCaller
+  ) => z.infer<typeof TopicMerged>;
+
   const refKey = (ref: WorkRef | null) =>
     ref ? JSON.stringify([ref.adapter, ref.id, ref.daemon ?? null]) : null;
   const settle = (superpipe({})('neo.ask.settle') as PipelineAPI)
@@ -518,8 +639,8 @@ export function createNeoAskRecordOperations(
 
   return [
     defineOperation({
-      name: 'neo.ask.open',
-      description: neoToolDescription('neo.ask.open'),
+      name: 'neo.ask.propose',
+      description: neoToolDescription('neo.ask.propose'),
       inputSchema: Open,
       resultSchema: AskResult,
       policy: {
@@ -551,6 +672,14 @@ export function createNeoAskRecordOperations(
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => present(await settle(input, caller)),
+    }),
+    defineOperation({
+      name: 'neo.topic.merge',
+      description: neoToolDescription('neo.topic.merge'),
+      inputSchema: TopicMerge,
+      resultSchema: TopicMerged,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: async (input, caller) => mergeTopic(input, caller),
     }),
   ];
 }

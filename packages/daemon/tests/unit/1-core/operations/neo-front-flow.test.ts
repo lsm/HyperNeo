@@ -11,6 +11,9 @@ import { NEO_FRONT_ACK_CHAR_LIMIT } from '@hyperneo/shared/types/neo-publication
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createNeoService } from '../../helpers/neo-service.ts';
 import { createNeoFrontHandler } from '../../../../src/lib/neo/front-job.ts';
+import { handOffToNeo } from '../../../../src/lib/neo/front-handoff.ts';
+import { createNeoRetryOperation } from '../../../../src/lib/neo/retry-operation.ts';
+import { createNeoConversationAskReadOperation } from '../../../../src/lib/neo/conversation-ask-read-operation.ts';
 import { settleConvoInput } from '../../../../src/lib/neo/front-outcome.ts';
 import { neoIntakeMessage } from '../../../../src/lib/neo/intake.ts';
 import { frontSession } from '../../../../src/lib/neo/front-session.ts';
@@ -1456,17 +1459,17 @@ test('Neo answers a message the front already answered', async () => {
   expect(service.publications.list(conversationId)).toHaveLength(2);
 });
 
-test('a front reply over the shared line limit is told to shorten, not to add details', async () => {
+test('a front reply over the shared character limit is told to shorten, not to add details', async () => {
   const { id } = await deliveredConvoInput();
   const refused = await convoPublish({
-    requestId: 'six-lines',
+    requestId: 'too-long',
     replyTo: [id],
-    fullText: 'Status\n- a\n- b\n- c\n- d\n- e',
+    fullText: 'x'.repeat(401),
     verbatim: true,
   });
   expect(refused.accepted).toBe(false);
   expect(refused.reason).toMatch(/^front_reply_too_long: Shorten/);
-  expect(refused.reason).toContain('at most 150 characters and 5 lines');
+  expect(refused.reason).toContain('at most 150 characters.');
   expect(service.publications.list(conversationId) ?? []).toHaveLength(0);
 });
 
@@ -1945,6 +1948,7 @@ test('a reply that answers hands the input to the full session with that answer 
   expect(said).toContain('<already-said>');
   expect(said).toContain('The build passed.');
   expect(said).not.toContain('Front');
+  expect(said).toMatch(/\(local time: \w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} [^)]+\)/);
 });
 
 test('the hand-off tells the full session whether the reply answered or promised work', async () => {
@@ -2392,10 +2396,10 @@ test('the full session prompt carries no dual-mode acknowledgment rule', () => {
   expect(NEO_FRONT).toContain('never say you cannot');
   expect(NEO_FRONT).not.toMatch(/another session/i);
   expect(NEO_FRONT).not.toMatch(/\bworkers?\b/i);
-  expect(NEO_ROOT_TURN_END).toContain('work_on="true" one that said what you will do');
+  expect(NEO_ROOT_PROMPT).toContain('work_on="true" only acknowledged it');
   expect(NEO_ROOT_TURN_END).toContain('worker reports and wakes also get a natural spoken result');
-  expect(NEO_ROOT_TURN_END).toContain('already answered it correctly with work_on="false"');
-  expect(NEO_ROOT_PROMPT).toContain('if work_on="false" and right, publish nothing');
+  expect(NEO_ROOT_TURN_END).toContain('already answered it correctly');
+  expect(NEO_ROOT_TURN_END).toContain('unless the work_on="false" reply');
 });
 
 test('a dual-mode hand-off keeps the listening fact and carries no acknowledgment note', async () => {
@@ -2651,4 +2655,273 @@ test('settlement leaves an input Neo already consumed as handed off', async () =
 
   expect(settled).toEqual({ delivered: true, outcome: 'handed_off' });
   expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBe('consumed');
+});
+
+test.each([
+  { owner: 'neo', status: 400, parent: null, expected: 'failed', reason: 'Provider refused' },
+  { owner: 'front', status: 400, parent: null, expected: 'consumed', reason: null },
+  { owner: 'neo', status: 503, parent: null, expected: 'consumed', reason: null },
+  { owner: 'neo', status: 400, parent: 'tool-child', expected: 'consumed', reason: null },
+] as const)(
+  'result save projects only a top-level Neo-owned 400 ($owner, $status, $parent)',
+  async ({ owner, status, parent, expected, reason }) => {
+    const { id } = await accept();
+    const inputs = new NeoFrontInputRepository(db.getDatabase());
+    expect(inputs.claim(conversationId, [id], owner)).toBe('claimed');
+    await db.saveUserMessage(
+      root,
+      neoIntakeMessage({ sessionId: root, requestId: id, content: 'Hello' }),
+      'consumed'
+    );
+    const saved = await db.saveSDKMessage(root, {
+      type: 'result',
+      subtype: 'success',
+      uuid: crypto.randomUUID(),
+      session_id: root,
+      is_error: true,
+      api_error_status: status,
+      result: 'Provider refused',
+      user_message_uuid: id,
+      parent_tool_use_id: parent,
+    } as unknown as import('@hyperneo/shared/sdk').SDKMessage);
+    expect(saved).toBe(true);
+    expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBe(expected);
+    const row = db
+      .getDatabase()
+      .prepare(
+        'SELECT failure_reason AS reason FROM neo_front_inputs WHERE conversation_id = ? AND message_id = ?'
+      )
+      .get(conversationId, id);
+    expect(row).toEqual({ reason });
+  }
+);
+
+test('a failed reason write rolls back the result and consumed input transition', async () => {
+  const { id } = await accept();
+  expect(new NeoFrontInputRepository(db.getDatabase()).claim(conversationId, [id], 'neo')).toBe(
+    'claimed'
+  );
+  await db.saveUserMessage(
+    root,
+    neoIntakeMessage({ sessionId: root, requestId: id, content: 'Hello' }),
+    'consumed'
+  );
+  db.getDatabase().exec(
+    "CREATE TRIGGER refuse_failure_reason BEFORE UPDATE OF failure_reason ON neo_front_inputs BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END"
+  );
+  const resultId = crypto.randomUUID();
+  expect(
+    await db.saveSDKMessage(root, {
+      type: 'result',
+      subtype: 'success',
+      uuid: resultId,
+      session_id: root,
+      is_error: true,
+      api_error_status: 400,
+      result: 'Provider refused',
+      user_message_uuid: id,
+    } as import('@hyperneo/shared/sdk').SDKMessage)
+  ).toBe(false);
+  expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBe('consumed');
+  expect(
+    db
+      .getDatabase()
+      .prepare('SELECT COUNT(*) AS count FROM sdk_messages WHERE sdk_uuid = ?')
+      .get(resultId)
+  ).toEqual({ count: 0 });
+});
+
+test('retry operation accepts only a failed local input and refuses another retry', async () => {
+  const { id } = await accept();
+  const operation = createNeoRetryOperation(service);
+  const human = { source: 'rpc' as const, principal: 'local' as const };
+  const input = { conversationId, requestId: id };
+  expect(await operation.execute(input, human)).toMatchObject({
+    accepted: false,
+    reason: 'not_failed',
+  });
+  expect(
+    await operation.execute({ ...input, conversationId: crypto.randomUUID() }, human)
+  ).toMatchObject({ accepted: false, reason: 'conversation_not_found' });
+  expect(
+    await operation.execute(input, { source: 'mcp', role: 'neo', sessionId: root })
+  ).toMatchObject({ accepted: false, reason: 'human_only' });
+  expect(new NeoFrontInputRepository(db.getDatabase()).claim(conversationId, [id], 'neo')).toBe(
+    'claimed'
+  );
+  await db.saveUserMessage(
+    root,
+    neoIntakeMessage({ sessionId: root, requestId: id, content: 'Hello' }),
+    'consumed'
+  );
+  await db.saveSDKMessage(root, {
+    type: 'result',
+    subtype: 'success',
+    uuid: crypto.randomUUID(),
+    session_id: root,
+    is_error: true,
+    api_error_status: 400,
+    result: 'Provider refused',
+    user_message_uuid: id,
+  } as import('@hyperneo/shared/sdk').SDKMessage);
+  const retry = (await operation.execute(input, human)) as
+    | { accepted: true; requestId: string }
+    | { accepted: false; reason: string };
+  expect(retry).toMatchObject({ accepted: true });
+  if (!retry.accepted) throw new Error(retry.reason);
+  expect(service.asks.find(conversationId, retry.requestId)).toMatchObject({
+    retryOf: id,
+    content: [{ type: 'text', text: 'Hello' }],
+  });
+  expect(await operation.execute(input, human)).toMatchObject({
+    accepted: false,
+    reason: 'already_retried',
+  });
+  expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBe('failed');
+});
+
+test('retry keeps the quoted question, answers it, and gives Neo its reference', async () => {
+  const originalId = crypto.randomUUID();
+  const askId = crypto.randomUUID();
+  const questionId = crypto.randomUUID();
+  service.todos.openAsk({
+    id: askId,
+    projectId: null,
+    sessionId: root,
+    originMessageId: originalId,
+    title: 'Review',
+    request: 'Choose a report',
+    createdAt: Date.now(),
+  });
+  service.todos.askQuestion(
+    questionId,
+    askId,
+    {
+      kind: 'choice',
+      text: 'Which report?',
+      options: ['Summary', 'Details'],
+      multiple: false,
+      noLabel: null,
+      yesLabel: null,
+    },
+    Date.now()
+  );
+  await service.asks.acceptPrompt(
+    conversationId,
+    neoIntakeMessage({
+      sessionId: root,
+      requestId: originalId,
+      content: 'Details',
+      replyTo: { kind: 'question', id: questionId },
+    }),
+    'immediate',
+    db.getSDKMessageRepo(),
+    db.getJobQueueRepo()
+  );
+  expect(
+    new NeoFrontInputRepository(db.getDatabase()).claim(conversationId, [originalId], 'neo')
+  ).toBe('claimed');
+  await db.saveUserMessage(
+    root,
+    neoIntakeMessage({ sessionId: root, requestId: originalId, content: 'Details' }),
+    'consumed'
+  );
+  await db.saveSDKMessage(root, {
+    type: 'result',
+    subtype: 'success',
+    uuid: crypto.randomUUID(),
+    session_id: root,
+    is_error: true,
+    api_error_status: 400,
+    result: 'Provider refused',
+    user_message_uuid: originalId,
+  } as import('@hyperneo/shared/sdk').SDKMessage);
+  const retry = (await createNeoRetryOperation(service).execute(
+    { conversationId, requestId: originalId },
+    { source: 'rpc', principal: 'local' }
+  )) as { accepted: true; requestId: string } | { accepted: false; reason: string };
+  expect(retry.accepted).toBe(true);
+  if (!retry.accepted) throw new Error(retry.reason);
+  expect(service.todos.getQuestion(questionId)?.state).toBe('answered');
+  const ask = service.asks.find(conversationId, retry.requestId)!;
+  expect(ask.replyTo).toMatchObject({ kind: 'question', id: questionId });
+  expect(await handOffToNeo(service, conversationId, ask, retry.requestId)).toBe('reserved');
+  const delivered = JSON.stringify(
+    db.getSDKMessageRepo().getDeliveryContent(root, retry.requestId)
+  );
+  expect(delivered).toContain('<reference');
+  expect(delivered).toContain('Which report?');
+});
+
+test('a retried photo keeps the original thumbnail in the public conversation', async () => {
+  const id = crypto.randomUUID();
+  const content = [
+    { type: 'text' as const, text: 'Compare these photos' },
+    {
+      type: 'image' as const,
+      source: { type: 'base64' as const, media_type: 'image/png' as const, data: 'AAAA' },
+    },
+    {
+      type: 'image' as const,
+      source: { type: 'base64' as const, media_type: 'image/png' as const, data: 'AAAA' },
+    },
+  ];
+  await service.asks.acceptPrompt(
+    conversationId,
+    neoIntakeMessage({ sessionId: root, requestId: id, content }),
+    'immediate',
+    db.getSDKMessageRepo(),
+    db.getJobQueueRepo()
+  );
+  service.asks.recordImages(conversationId, id, [
+    { index: 1, width: 64, height: 48, thumbnail: { mediaType: 'image/jpeg', data: 'dGh1bWI=' } },
+    { index: 2, width: null, height: null, thumbnail: null },
+  ]);
+  expect(new NeoFrontInputRepository(db.getDatabase()).claim(conversationId, [id], 'neo')).toBe(
+    'claimed'
+  );
+  await db.saveUserMessage(
+    root,
+    neoIntakeMessage({ sessionId: root, requestId: id, content }),
+    'consumed'
+  );
+  await db.saveSDKMessage(root, {
+    type: 'result',
+    subtype: 'success',
+    uuid: crypto.randomUUID(),
+    session_id: root,
+    is_error: true,
+    api_error_status: 400,
+    result: 'Provider refused',
+    user_message_uuid: id,
+  } as import('@hyperneo/shared/sdk').SDKMessage);
+  const result = (await createNeoRetryOperation(service).execute(
+    { conversationId, requestId: id },
+    { source: 'rpc', principal: 'local' }
+  )) as { accepted: true; requestId: string } | { accepted: false; reason: string };
+  expect(result.accepted).toBe(true);
+  if (!result.accepted) throw new Error(result.reason);
+  const operation = createNeoConversationAskReadOperation(service.repo, service.asks);
+  const page = await operation.execute(
+    { conversationId, after: 0, limit: 50, imageRefs: true },
+    { source: 'rpc', principal: 'local' }
+  );
+  expect(page).toMatchObject({
+    ok: true,
+    items: expect.arrayContaining([
+      expect.objectContaining({
+        requestId: result.requestId,
+        content: [
+          expect.anything(),
+          expect.objectContaining({
+            type: 'image_ref',
+            thumbnail: { mediaType: 'image/jpeg', data: 'dGh1bWI=' },
+            width: 64,
+            height: 48,
+          }),
+          expect.objectContaining({ type: 'image_ref', thumbnail: null }),
+        ],
+      }),
+    ]),
+  });
 });

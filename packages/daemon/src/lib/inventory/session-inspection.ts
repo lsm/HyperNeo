@@ -116,7 +116,7 @@ export function presentSessionInspection(
 
 export function createSessionInspectionOperation(deps: SessionInspectionDependencies) {
   const inspect = (
-    superpipe({ now: deps.now ?? Date.now })('ordinary-session-inspection') as PipelineAPI
+    superpipe({ now: deps.now ?? Date.now })('daemon.session.inspect') as PipelineAPI
   )
     .input(['input', 'caller'])
     .pipe(admitSessionInspection, ['input', 'caller'], 'result:inspection')

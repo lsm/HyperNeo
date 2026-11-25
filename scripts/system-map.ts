@@ -1,5 +1,14 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { dirname, join, normalize } from 'node:path';
+import { dirname, join, normalize, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import ts from 'typescript';
+import {
+  createLocalPipelineResolver,
+  directTryReturn,
+  unwrapPipelineExpression,
+} from './pipeline-route-resolver.ts';
+
+export { createLocalPipelineResolver } from './pipeline-route-resolver.ts';
 
 type Kind = 'op' | 'rpc' | 'event' | 'table';
 type Role = 'defines' | 'uses' | 'handles' | 'calls' | 'emits' | 'listens' | 'reads' | 'writes';
@@ -53,6 +62,7 @@ const EVENT_LISTENS = new Set(['subscribe', 'onEvent']);
 export function isSource(path: string): boolean {
   return (
     /^packages\/[^/]+\/src\/.+\.tsx?$/.test(path) &&
+    !path.includes('\n') &&
     !path.endsWith('.d.ts') &&
     !/\/(tests?|__tests__|__mocks__)\/|\.(test|spec)\./.test(path)
   );
@@ -295,26 +305,185 @@ export function formatImpact(impacts: readonly Impact[]): string {
   return lines.join('\n');
 }
 
-function git(root: string, ...args: string[]): string[] {
-  const result = Bun.spawnSync(['git', '-C', root, ...args]);
-  if (result.exitCode !== 0) throw new Error(result.stderr.toString().trim());
-  return result.stdout.toString().split('\n').filter(Boolean);
+function gitOutput(root: string, ...args: string[]): Buffer {
+  const result = Bun.spawnSync(['git', '-C', root, '-c', 'core.quotePath=false', ...args]);
+  if (result.exitCode !== 0) {
+    throw new Error(`git ${args.join(' ')}: ${result.stderr.toString().trim()}`);
+  }
+  return result.stdout;
 }
 
-function loadRepository(root: string): SystemMap {
-  const sources = new Map(
-    git(root, 'ls-files', '--', 'packages')
+function git(root: string, ...args: string[]): string[] {
+  return gitOutput(root, ...args)
+    .toString()
+    .split('\0')
+    .filter(Boolean);
+}
+
+export function readRepositorySources(root: string, includeUntracked = false): Map<string, string> {
+  const options = includeUntracked ? ['--cached', '--others', '--exclude-standard'] : [];
+  return new Map(
+    git(root, 'ls-files', '-z', ...options, '--', 'packages')
       .filter((path) => isSource(path) && existsSync(join(root, path)))
       .map((path) => [path, readFileSync(join(root, path), 'utf8')])
   );
+}
+
+function changedSources(root: string, base = 'origin/dev'): string[] {
+  return git(root, 'diff', '--name-only', '-z', '--no-renames', '--merge-base', base, '--').filter(
+    isSource
+  );
+}
+
+type DrillRoute = ReturnType<
+  typeof import('./pipeline-verdict-report.ts').reportPipelineVerdicts
+>[number];
+
+function componentPath(file: string): [pkg: string, area: string] {
+  const [, pkg, , first, second, ...remaining] = file.split('/');
+  if (first === 'lib' && remaining.length) return [pkg, second];
+  return [pkg, second === undefined ? '' : first];
+}
+
+function componentAnchor(key: string): string {
+  return Array.from(Buffer.from(key), (byte) => {
+    const char = String.fromCharCode(byte);
+    return /[a-z0-9]/.test(char) ? char : `_${byte.toString(16).padStart(2, '0')}`;
+  }).join('');
+}
+
+function escapeLabel(label: string): string {
+  return label.replace(/[!-/:-@[-`{-~]/g, '\\$&');
+}
+
+function codeSpan(name: string): string {
+  const ticks = name.match(/`+/g) ?? [];
+  const fence = '`'.repeat(1 + Math.max(0, ...ticks.map((run) => run.length)));
+  const pad = ticks.length || (name.trim() && name.startsWith(' ') && name.endsWith(' '));
+  return pad ? `${fence} ${name} ${fence}` : `${fence}${name}${fence}`;
+}
+
+function sourceLink(file: string): string {
+  const target = file
+    .split('/')
+    .map((part) =>
+      encodeURIComponent(part).replace(
+        /[!'()*]/g,
+        (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`
+      )
+    )
+    .join('/');
+  return `[${escapeLabel(file.slice(file.lastIndexOf('/') + 1))}](${target})`;
+}
+
+function drillDownMap(routes: DrillRoute[], changed: string[]): string {
+  const packages = new Map<string, { count: number; areas: Map<string, DrillRoute[]> }>();
+  const touchedFiles = new Set(changed);
+  const touchedComponents = new Set<string>();
+  function addComponent(file: string, route?: DrillRoute) {
+    const [pkg, area] = componentPath(file);
+    const group = packages.get(pkg) ?? { count: 0, areas: new Map<string, DrillRoute[]>() };
+    packages.set(pkg, group);
+    const entries = group.areas.get(area) ?? [];
+    group.areas.set(area, entries);
+    if (route) {
+      entries.push(route);
+      group.count++;
+    } else {
+      touchedComponents.add(`${pkg}/${area}`);
+    }
+  }
+  for (const route of routes) addComponent(route.file, route);
+  for (const file of changed) addComponent(file);
+
+  const named = routes.filter((route) => route.verdict === 'named').length;
+  const unreadable = routes.filter((route) => route.verdict === 'unreadable').length;
+  const index = [
+    `# System map — ${routes.length} routes, ${named} named, ${unreadable} unreadable`,
+    '',
+  ];
+  const sections: string[] = [];
+  const touch = (touched: boolean) => (touched ? ' (touched)' : '');
+  const sortedPackages = [...packages].sort(
+    ([a, x], [b, y]) => y.count - x.count || a.localeCompare(b)
+  );
+  for (const [pkg, { count, areas }] of sortedPackages) {
+    sections.push('', `## ${escapeLabel(pkg)} — ${count} routes`);
+    const sortedAreas = [...areas].sort(
+      ([a, x], [b, y]) => y.length - x.length || a.localeCompare(b)
+    );
+    for (const [area, entries] of sortedAreas) {
+      const key = `${pkg}/${area}`;
+      const id = componentAnchor(key);
+      const summary = `${entries.length} routes${touch(touchedComponents.has(key))}`;
+      const label = `${escapeLabel(pkg)}/${escapeLabel(area)}`;
+      index.push(`- [${label}](#${id}) — ${summary}${area ? '' : ' (package root)'}`);
+      sections.push(
+        '',
+        `<a id="${id}"></a>`,
+        '',
+        `### ${escapeLabel(area) || 'package root'} — ${summary}`
+      );
+      for (const { file, name, variant } of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+        const alternate = variant ? ` (${variant})` : '';
+        sections.push(
+          `- ${codeSpan(name)}${alternate}${touch(touchedFiles.has(file))} — ${sourceLink(file)}`
+        );
+      }
+    }
+  }
+  return [...index, ...sections].join('\n');
+}
+
+function readRevision(root: string, revision: string): Map<string, string> {
+  const entries = git(
+    root,
+    'ls-tree',
+    '-r',
+    '-z',
+    '--format=%(objectname)%x09%(objectsize)%x09%(path)',
+    revision,
+    '--',
+    'packages'
+  ).flatMap((entry) => {
+    const header = /^(\w+)\t(\d+)\t/.exec(entry);
+    if (!header) return [];
+    const path = entry.slice(header[0].length);
+    return isSource(path) || /^packages\/[^/]+\/package\.json$/.test(path)
+      ? [{ object: header[1], size: Number(header[2]), path }]
+      : [];
+  });
+  const files = new Map<string, string>();
+  for (let index = 0; index < entries.length; index += 128) {
+    const batch = entries.slice(index, index + 128);
+    const output = gitOutput(root, 'show', '--no-textconv', ...batch.map(({ object }) => object));
+    let offset = 0;
+    for (const { path, size } of batch) {
+      files.set(path, output.toString('utf8', offset, offset + size));
+      offset += size;
+    }
+    if (offset !== output.length)
+      throw new Error(`git show returned an unexpected size for ${revision}`);
+  }
+  return files;
+}
+
+export function loadRepository(root: string, revision?: string): SystemMap {
+  const files = revision ? readRevision(root, revision) : undefined;
+  const sources = files
+    ? new Map([...files].filter(([path]) => isSource(path)))
+    : readRepositorySources(root);
+  const manifests = files
+    ? [...files.keys()].filter((path) => !isSource(path))
+    : readdirSync(join(root, 'packages'))
+        .map((name) => `packages/${name}/package.json`)
+        .filter((path) => existsSync(join(root, path)));
   const packages = new Map<string, PackageEntry>();
-  for (const name of readdirSync(join(root, 'packages'))) {
-    const file = join(root, 'packages', name, 'package.json');
-    if (!existsSync(file)) continue;
-    const manifest = JSON.parse(readFileSync(file, 'utf8'));
+  for (const path of manifests) {
+    const manifest = JSON.parse(files?.get(path) ?? readFileSync(join(root, path), 'utf8'));
     const exports = Object.entries(typeof manifest.exports === 'object' ? manifest.exports : {});
     packages.set(manifest.name, {
-      dir: `packages/${name}`,
+      dir: dirname(path),
       exports: Object.fromEntries(exports.filter(([, target]) => typeof target === 'string')),
       main: manifest.main ?? 'src/index.ts',
     });
@@ -322,25 +491,123 @@ function loadRepository(root: string): SystemMap {
   return buildSystemMap(sources, packages);
 }
 
+interface PipelineDescription {
+  name: string;
+  inputs: unknown;
+  steps: { name: string; input?: unknown; output?: unknown }[];
+  output?: unknown;
+}
+
+async function describeRunner(path: string, name: string): Promise<PipelineDescription> {
+  const module = await import(pathToFileURL(resolve(path)).href);
+  const runner = module[name];
+  const pipeline = runner?.pipeline;
+  if (typeof runner !== 'function' || !pipeline || !Array.isArray(pipeline.steps)) {
+    throw new Error(`export ${name} is not a built pipeline runner`);
+  }
+  return pipeline;
+}
+
+function formatRoute(pipeline: PipelineDescription): string {
+  const lines = [`${pipeline.name}  inputs: ${JSON.stringify(pipeline.inputs)}`];
+  for (const step of pipeline.steps) {
+    lines.push(
+      `  ${step.name}  inputs: ${JSON.stringify(step.input ?? null)}  outputs: ${JSON.stringify(step.output ?? null)}`
+    );
+  }
+  lines.push(`  output: ${JSON.stringify(pipeline.output ?? null)}`);
+  return lines.join('\n');
+}
+
+async function listRoutes(root: string): Promise<void> {
+  let describable = 0;
+  let unavailable = 0;
+  for (const path of git(root, 'ls-files', '-z', '--', 'packages').filter(isSource)) {
+    if (!existsSync(join(root, path))) continue;
+    const source = readFileSync(join(root, path), 'utf8');
+    const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
+    const exports: string[] = [];
+    function visit(node: ts.Node): void {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === 'superpipe'
+      ) {
+        let parent: ts.Node | undefined = node.parent;
+        while (parent && !ts.isVariableDeclaration(parent) && !ts.isStatement(parent))
+          parent = parent.parent;
+        const declaration = parent && ts.isVariableDeclaration(parent) ? parent : undefined;
+        const statement = declaration?.parent.parent;
+        if (
+          declaration &&
+          ts.isIdentifier(declaration.name) &&
+          statement &&
+          ts.isVariableStatement(statement) &&
+          statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)
+        ) {
+          exports.push(declaration.name.text);
+        } else {
+          unavailable++;
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(file);
+    for (const name of exports) {
+      try {
+        const description = await describeRunner(join(root, path), name);
+        console.log(`${path} ${name}  ${description.name}`);
+        describable++;
+      } catch {
+        unavailable++;
+      }
+    }
+  }
+  console.log(`${describable} describable, ${unavailable} not describable (source scan)`);
+}
+
 const USAGE = `Usage:
+  bun run system-map routes <module> <export>  describe an exported runner
+  bun run system-map routes list               list discoverable runners
   bun run system-map where <name>            who defines, calls, reads or writes an operation,
                                              RPC method, event or table
   bun run system-map impact <file>...        what the planned files are linked to outside the plan
-  bun run system-map impact --diff [base]    the same for files changed since base (origin/dev)`;
+  bun run system-map impact --diff [base]    the same for files changed since base (origin/dev)
+  bun run system-map map [--diff [base]]     print the strict route map as Markdown`;
 
-function main(args: readonly string[]): number {
+async function main(args: readonly string[]): Promise<number> {
   const root = process.cwd();
   const [command, ...rest] = args;
+  if (command === 'map' && (!rest.length || (rest[0] === '--diff' && rest.length <= 2))) {
+    const changed = rest[0] === '--diff' ? changedSources(root, rest[1]) : [];
+    const sources = readRepositorySources(root, true);
+    const { reportPipelineVerdicts } = await import('./pipeline-verdict-report.ts');
+    const routes = reportPipelineVerdicts(sources, (input) =>
+      countPipelineRoutes(input, true, sources)
+    );
+    console.log(drillDownMap(routes, changed));
+    return 0;
+  }
+  if (command === 'routes' && rest.length === 1 && rest[0] === 'list') {
+    await listRoutes(root);
+    return 0;
+  }
+  if (command === 'routes' && rest.length === 2) {
+    try {
+      console.log(formatRoute(await describeRunner(rest[0], rest[1])));
+      return 0;
+    } catch (error) {
+      console.error(`not describable: ${error instanceof Error ? error.message : String(error)}`);
+      return 1;
+    }
+  }
   if (command === 'where' && rest.length === 1) {
     const links = where(loadRepository(root), rest[0]);
     console.log(links.length ? formatWhere(links) : `No links found for ${rest[0]}`);
     return links.length ? 0 : 1;
   }
   if (command === 'impact' && rest.length) {
-    const plan =
-      rest[0] === '--diff'
-        ? git(root, 'diff', '--name-only', '--merge-base', rest[1] ?? 'origin/dev').filter(isSource)
-        : rest;
+    const plan = rest[0] === '--diff' ? changedSources(root, rest[1]) : rest;
     console.log(formatImpact(impact(loadRepository(root), plan)));
     return 0;
   }
@@ -348,4 +615,460 @@ function main(args: readonly string[]): number {
   return 2;
 }
 
-if (import.meta.main) process.exit(main(process.argv.slice(2)));
+if (import.meta.main) process.exit(await main(process.argv.slice(2)));
+
+export interface PipelineCounts {
+  missing: number;
+  misnamed: number;
+  dynamic: number;
+  unreadable: number;
+}
+
+interface PipelineToken {
+  text: string;
+  offset: number;
+}
+
+function pipelineTokens(source: string): PipelineToken[] {
+  const pattern =
+    /\/\*[\s\S]*?\*\/|\/\/[^\n]*|(?:'[^'\\]*(?:\\.[^'\\]*)*'|"[^"\\]*(?:\\.[^"\\]*)*"|`[^`\\]*(?:\\.[^`\\]*)*`)|[A-Za-z_$][\w$]*|\d+|[^\s]/g;
+  return [...source.matchAll(pattern)]
+    .filter((match) => !match[0].startsWith('//') && !match[0].startsWith('/*'))
+    .map((match) => ({ text: match[0], offset: match.index }));
+}
+
+function closeToken(tokens: PipelineToken[], start: number): number {
+  const pairs: Record<string, string> = { '(': ')', '{': '}', '[': ']' };
+  const pending: string[] = [];
+  for (let i = start; i < tokens.length; i++) {
+    const text = tokens[i].text;
+    if (Object.hasOwn(pairs, text)) pending.push(pairs[text]);
+    else if (text === ')' || text === '}' || text === ']') {
+      if (pending.pop() !== text) return -1;
+      if (!pending.length) return i;
+    }
+  }
+  return -1;
+}
+
+function stringToken(text: string | undefined): string | undefined {
+  if (!text || !/^(['"])[\s\S]*\1$/.test(text)) return undefined;
+  return text.slice(1, -1);
+}
+
+export function countPipelineRoutes(
+  sources: Map<string, string>,
+  strictCalls = false,
+  sourceContext: ReadonlyMap<string, string> = sources
+): PipelineCounts {
+  const counts: PipelineCounts = { missing: 0, misnamed: 0, dynamic: 0, unreadable: 0 };
+  for (const [file, source] of sources) {
+    if (!isSource(file)) continue;
+    const tokens = pipelineTokens(source);
+    let resolveLocal: ReturnType<typeof createLocalPipelineResolver> | undefined;
+    const countResolved = (name: string) => {
+      const resolved = (resolveLocal ??= createLocalPipelineResolver(
+        source,
+        file,
+        strictCalls,
+        sourceContext
+      ))(name);
+      if (resolved.kind !== 'named' || (!strictCalls && resolved.name !== name))
+        counts.unreadable++;
+      else if (resolved.name !== name && !resolved.terminal) counts.misnamed++;
+    };
+    let parsedCalls: ts.SourceFile | undefined;
+    const hasTypedDirectCall = (start: number): boolean => {
+      const parsed = (parsedCalls ??= ts.createSourceFile(
+        file,
+        source,
+        ts.ScriptTarget.Latest,
+        true
+      ));
+      const offset = tokens[start].offset;
+      let execute: ts.ArrowFunction | undefined;
+      const find = (node: ts.Node) => {
+        if (node.getStart(parsed) === offset && ts.isArrowFunction(node)) execute = node;
+        else if (node.pos <= offset && node.end > offset) ts.forEachChild(node, find);
+      };
+      find(parsed);
+      if (!execute || ts.isBlock(execute.body)) return false;
+      const body = unwrapPipelineExpression(execute.body);
+      if (!ts.isCallExpression(body) || body.questionDotToken) return false;
+      const callee = unwrapPipelineExpression(body.expression);
+      const parameters = execute.parameters;
+      return (
+        ts.isIdentifier(callee) &&
+        parameters.every(
+          (parameter) =>
+            ts.isIdentifier(parameter.name) && !parameter.initializer && !parameter.dotDotDotToken
+        ) &&
+        body.arguments.every(
+          (argument) =>
+            ts.isIdentifier(argument) &&
+            parameters.some(
+              (parameter) =>
+                ts.isIdentifier(parameter.name) && parameter.name.text === argument.text
+            )
+        ) &&
+        (body !== execute.body || callee !== body.expression)
+      );
+    };
+    const hasUnconditionalCall = (start: number, name: string, inlineOffset?: number): boolean => {
+      const parsed = (parsedCalls ??= ts.createSourceFile(
+        file,
+        source,
+        ts.ScriptTarget.Latest,
+        true
+      ));
+      const offset = tokens[start].offset;
+      let execute: ts.Node | undefined;
+      const find = (node: ts.Node) => {
+        if (node.getStart(parsed) === offset && ts.isArrowFunction(node)) execute = node;
+        else if (node.pos <= offset && node.end > offset) ts.forEachChild(node, find);
+      };
+      find(parsed);
+      if (!execute || !ts.isArrowFunction(execute)) return false;
+      const isInlineRunner = (expression: ts.Expression): boolean => {
+        const runner = unwrapPipelineExpression(expression);
+        if (
+          inlineOffset === undefined ||
+          !ts.isCallExpression(runner) ||
+          !!(runner.flags & ts.NodeFlags.OptionalChain) ||
+          !ts.isPropertyAccessExpression(runner.expression) ||
+          !['end', 'endAsync'].includes(runner.expression.name.text)
+        )
+          return false;
+        let current = unwrapPipelineExpression(runner.expression.expression);
+        while (ts.isCallExpression(current) && ts.isPropertyAccessExpression(current.expression)) {
+          if (
+            current.flags & ts.NodeFlags.OptionalChain ||
+            !['input', 'pipe'].includes(current.expression.name.text)
+          )
+            return false;
+          current = unwrapPipelineExpression(current.expression.expression);
+        }
+        if (!ts.isCallExpression(current) || current.flags & ts.NodeFlags.OptionalChain)
+          return false;
+        const factory = unwrapPipelineExpression(current.expression);
+        if (!ts.isCallExpression(factory) || factory.flags & ts.NodeFlags.OptionalChain)
+          return false;
+        const id = unwrapPipelineExpression(factory.expression);
+        return (
+          ts.isIdentifier(id) && id.text === 'superpipe' && id.getStart(parsed) === inlineOffset
+        );
+      };
+      let body: ts.Node = execute.body;
+      if (ts.isBlock(body)) {
+        const statements = body.statements;
+        if (statements.length === 2 && inlineOffset !== undefined) {
+          const declaration = statements[0];
+          const binding =
+            ts.isVariableStatement(declaration) &&
+            declaration.declarationList.flags & ts.NodeFlags.Const &&
+            declaration.declarationList.declarations.length === 1
+              ? declaration.declarationList.declarations[0]
+              : undefined;
+          if (ts.isExpressionStatement(declaration)) name = '';
+          else if (
+            !binding ||
+            !ts.isIdentifier(binding.name) ||
+            binding.name.text !== name ||
+            !binding.initializer ||
+            !isInlineRunner(binding.initializer)
+          )
+            return false;
+        } else if (statements.length !== 1) return false;
+        let statement: ts.Statement | undefined = statements[statements.length - 1];
+        if (ts.isTryStatement(statement)) statement = directTryReturn(statement);
+        if (!statement || !ts.isReturnStatement(statement)) return false;
+        const expression = statement.expression;
+        if (!expression) return false;
+        body = expression;
+      }
+      let found = false;
+      const visit = (node: ts.Node) => {
+        if (
+          ts.isBinaryExpression(node) &&
+          [
+            ts.SyntaxKind.AmpersandAmpersandToken,
+            ts.SyntaxKind.BarBarToken,
+            ts.SyntaxKind.QuestionQuestionToken,
+            ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+            ts.SyntaxKind.BarBarEqualsToken,
+            ts.SyntaxKind.QuestionQuestionEqualsToken,
+          ].includes(node.operatorToken.kind)
+        ) {
+          visit(node.left);
+          return;
+        }
+        if (
+          ts.isFunctionLike(node) ||
+          ts.isConditionalExpression(node) ||
+          !!(node.flags & ts.NodeFlags.OptionalChain)
+        )
+          return;
+        if (ts.isCallExpression(node)) {
+          if (ts.isIdentifier(node.expression) && node.expression.text === name) found = true;
+          if (isInlineRunner(node.expression)) found = true;
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(body);
+      return found;
+    };
+    const scopes: number[][] = [];
+    const scope: number[] = [];
+    for (let i = 0; i < tokens.length; i++) {
+      scopes.push([...scope]);
+      if (tokens[i].text === '{') scope.push(i);
+      else if (tokens[i].text === '}') scope.pop();
+    }
+    let bindingScopes: { name: string; start: number; end: number }[] | undefined;
+    const bindingShadows = (reference: number, pipeline: number, name: string): boolean => {
+      if (!bindingScopes) {
+        bindingScopes = [];
+        const parsed = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+        const add = (binding: ts.BindingName, scope: ts.Node) => {
+          if (ts.isIdentifier(binding)) {
+            bindingScopes!.push({ name: binding.text, start: scope.pos, end: scope.end });
+          } else {
+            for (const element of binding.elements) {
+              if (ts.isBindingElement(element)) add(element.name, scope);
+            }
+          }
+        };
+        const declarationScope = (node: ts.VariableDeclaration): ts.Node | undefined => {
+          if (ts.isCatchClause(node.parent)) return node.parent.block;
+          if (!ts.isVariableDeclarationList(node.parent)) return undefined;
+          const blockScoped = (node.parent.flags & ts.NodeFlags.BlockScoped) !== 0;
+          for (let scope: ts.Node | undefined = node.parent.parent; scope; scope = scope.parent) {
+            if (ts.isSourceFile(scope) || ts.isModuleBlock(scope)) return scope;
+            if (
+              blockScoped &&
+              (ts.isBlock(scope) ||
+                ts.isCaseBlock(scope) ||
+                ts.isForStatement(scope) ||
+                ts.isForInStatement(scope) ||
+                ts.isForOfStatement(scope))
+            )
+              return scope;
+            if (!blockScoped && ts.isFunctionLike(scope)) {
+              return (scope as ts.FunctionLikeDeclaration).body ?? scope;
+            }
+          }
+          return undefined;
+        };
+        const visit = (node: ts.Node) => {
+          if (ts.isFunctionLike(node)) {
+            const fn = node as ts.FunctionLikeDeclaration;
+            if (fn.body) {
+              for (const parameter of fn.parameters) add(parameter.name, fn.body);
+            }
+          }
+          if (ts.isVariableDeclaration(node)) {
+            const scope = declarationScope(node);
+            if (scope) add(node.name, scope);
+          }
+          if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name) {
+            let scope: ts.Node | undefined = node.parent;
+            while (
+              scope &&
+              !ts.isBlock(scope) &&
+              !ts.isCaseBlock(scope) &&
+              !ts.isModuleBlock(scope) &&
+              !ts.isSourceFile(scope)
+            )
+              scope = scope.parent;
+            if (scope) add(node.name, scope);
+          }
+          ts.forEachChild(node, visit);
+        };
+        visit(parsed);
+      }
+      const ref = tokens[reference].offset;
+      const declaration = tokens[pipeline].offset;
+      return bindingScopes.some(
+        (scope) =>
+          scope.name === name &&
+          ref >= scope.start &&
+          ref < scope.end &&
+          (declaration < scope.start || declaration >= scope.end)
+      );
+    };
+    const isParameter = (index: number, name: string | undefined): boolean => {
+      if (!name || !/^[A-Za-z_$][\w$]*$/.test(name)) return false;
+      for (const open of [...scopes[index]].reverse()) {
+        let end = open - 1;
+        if (tokens[end]?.text === '>' && tokens[end - 1]?.text === '=') end -= 2;
+        if (tokens[end]?.text !== ')') continue;
+        let depth = 1;
+        let start = end - 1;
+        for (; start >= 0 && depth; start--) {
+          if (tokens[start].text === ')') depth++;
+          else if (tokens[start].text === '(') depth--;
+        }
+        if (depth || ['if', 'while', 'for', 'switch', 'catch'].includes(tokens[start]?.text))
+          continue;
+        if (tokens.slice(start + 2, end).some((token) => token.text === name)) return true;
+      }
+      return false;
+    };
+    const pipelines: { index: number; name?: string; variable?: string }[] = [];
+    for (let i = 0; i < tokens.length; i++) {
+      if (tokens[i].text !== 'superpipe' || tokens[i + 1]?.text !== '(') continue;
+      const close = closeToken(tokens, i + 1);
+      if (close < 0 || tokens[close + 1]?.text !== '(') continue;
+      const end = closeToken(tokens, close + 1);
+      if (end < 0) continue;
+      const name = end === close + 3 ? stringToken(tokens[close + 2]?.text) : undefined;
+      let variable: string | undefined;
+      for (let j = i - 1; j >= 0 && i - j < 12; j--) {
+        if ([';', '{', '}'].includes(tokens[j].text)) break;
+        if (tokens[j].text === '=' && tokens[j - 2]?.text === 'const') {
+          variable = tokens[j - 1].text;
+          break;
+        }
+      }
+      pipelines.push({ index: i, name, variable });
+      if (!name) {
+        if (end === close + 3 && isParameter(i, tokens[close + 2]?.text)) counts.unreadable++;
+        else counts.dynamic++;
+      }
+    }
+    for (let i = 0; i < tokens.length; i++) {
+      if (
+        tokens[i].text === 'onRequest' &&
+        tokens[i - 1]?.text === '.' &&
+        tokens[i + 1]?.text === '('
+      ) {
+        const end = closeToken(tokens, i + 1);
+        const comma = tokens.findIndex(
+          (token, index) => index > i + 1 && index < end && token.text === ','
+        );
+        if (comma < 0) continue;
+        const arg = tokens.slice(i + 2, comma).map((token) => token.text);
+        if (arg.length === 1 && stringToken(arg[0])) continue;
+        if ((arg.length === 1 && isParameter(i, arg[0])) || (arg.length === 3 && arg[1] === '.'))
+          counts.unreadable++;
+        else counts.dynamic++;
+      }
+      if (
+        tokens[i].text !== 'defineOperation' ||
+        tokens[i + 1]?.text !== '(' ||
+        tokens[i + 2]?.text !== '{'
+      )
+        continue;
+      const end = closeToken(tokens, i + 2);
+      if (end < 0) {
+        counts.unreadable++;
+        continue;
+      }
+      let name: string | undefined;
+      let executeStart = -1;
+      let executeEnd = -1;
+      let ambiguousProperties = false;
+      let shorthandExecute = false;
+      let executorProperties = 0;
+      for (let j = i + 3; j < end; j++) {
+        if (
+          (j === i + 3 || tokens[j - 1]?.text === ',') &&
+          (tokens[j].text === '.' || tokens[j].text === '[')
+        )
+          ambiguousProperties = true;
+        if (tokens[j].text === 'execute' && (j === i + 3 || tokens[j - 1]?.text === ',')) {
+          executorProperties++;
+          if (j + 1 === end || tokens[j + 1]?.text === ',') shorthandExecute = true;
+        }
+        if (tokens[j].text === 'name' && tokens[j + 1]?.text === ':')
+          name = stringToken(tokens[j + 2]?.text);
+        if (tokens[j].text === 'execute' && tokens[j + 1]?.text === ':') {
+          executeStart = j + 2;
+          let k = executeStart;
+          while (k < end && tokens[k].text !== ',') {
+            if (['(', '[', '{'].includes(tokens[k].text)) {
+              const close = closeToken(tokens, k);
+              if (close < 0) break;
+              k = close + 1;
+            } else k++;
+          }
+          executeEnd = k;
+        }
+        if (['(', '[', '{'].includes(tokens[j].text)) {
+          const close = closeToken(tokens, j);
+          if (close < 0) break;
+          j = close;
+        }
+      }
+      if (
+        !strictCalls &&
+        name &&
+        shorthandExecute &&
+        executorProperties === 1 &&
+        !ambiguousProperties
+      ) {
+        const resolved = createLocalPipelineResolver(source, file, true, sourceContext)(name);
+        if (resolved.kind !== 'named') counts.unreadable++;
+        else if (resolved.name !== name) counts.misnamed++;
+        i = end;
+        continue;
+      }
+      if ((strictCalls && ambiguousProperties) || !name || executeStart < 0 || executeEnd < 0) {
+        if (strictCalls && name && !ambiguousProperties) countResolved(name);
+        else counts.unreadable++;
+        i = end;
+        continue;
+      }
+      const body = tokens.slice(executeStart, executeEnd).map((token) => token.text);
+      const reached = pipelines.filter(
+        (pipeline) =>
+          (pipeline.index >= executeStart &&
+            pipeline.index < executeEnd &&
+            (!strictCalls ||
+              hasUnconditionalCall(
+                executeStart,
+                pipeline.variable ?? '',
+                tokens[pipeline.index].offset
+              ))) ||
+          (pipeline.variable &&
+            scopes[pipeline.index].every((part, index) => scopes[i][index] === part) &&
+            ((body.length === 1 &&
+              body[0] === pipeline.variable &&
+              !bindingShadows(executeStart, pipeline.index, pipeline.variable)) ||
+              body.some(
+                (token, index) =>
+                  token === pipeline.variable &&
+                  (body[index - 1] !== '.' ||
+                    (body[index - 2] === '.' && body[index - 3] === '.')) &&
+                  body[index + 1] === '(' &&
+                  (!strictCalls || hasUnconditionalCall(executeStart, token)) &&
+                  !bindingShadows(executeStart + index, pipeline.index, token)
+              )))
+      );
+      if (reached.length === 0) {
+        if (!strictCalls && hasTypedDirectCall(executeStart)) {
+          const resolved = createLocalPipelineResolver(source, file, true, sourceContext)(name);
+          if (resolved.kind === 'named' && resolved.name === name) {
+            i = end;
+            continue;
+          }
+        }
+        const arrow = body.includes('=>') || (body.includes('=') && body.includes('>'));
+        const call = body.some(
+          (token, index) =>
+            /^[A-Za-z_$][\w$]*$/.test(token) &&
+            (body[index + 1] === '(' ||
+              (strictCalls &&
+                body[index + 1] === '?' &&
+                body[index + 2] === '.' &&
+                body[index + 3] === '('))
+        );
+        if (arrow && !call) {
+          counts.missing++;
+        } else countResolved(name);
+      } else if (!reached.some((pipeline) => pipeline.name === name)) counts.misnamed++;
+      i = end;
+    }
+  }
+  return counts;
+}

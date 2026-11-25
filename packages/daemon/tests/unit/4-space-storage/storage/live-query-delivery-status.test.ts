@@ -105,6 +105,30 @@ describe('messages.bySession delivery-status reactive pipeline', () => {
     await Promise.resolve();
   }
 
+  test('a deferred (next-turn) user message stays out of the feed until it is promoted', async () => {
+    const diffs: QueryDiff<Record<string, unknown>>[] = [];
+    engine.subscribe(SQL, [sessionId, 100], (diff) => diffs.push(diff), {
+      rowFingerprint: NAMED_QUERY_REGISTRY.get('messages.bySession')!.rowFingerprint,
+    });
+    await flush();
+
+    const rowId = await reactiveDb.db.saveUserMessage(
+      sessionId,
+      makeUserMessage('u-next', 'later'),
+      'deferred'
+    );
+    await flush();
+    expect(diffs.slice(1).flatMap((diff) => diff.added ?? [])).toHaveLength(0);
+
+    bunDb.prepare(`UPDATE sdk_messages SET send_status = 'enqueued' WHERE id = ?`).run(rowId);
+    reactiveDb.notifyChange('sdk_messages');
+    await flush();
+
+    const promoted = diffs.slice(1).flatMap((diff) => diff.added ?? []);
+    expect(promoted.map((row) => row.id)).toEqual([rowId]);
+    expect(promoted[0].sendStatus).toBe('enqueued');
+  });
+
   test('a send_status transition emits an UPDATED delta on the same row (no duplicate)', async () => {
     const diffs: QueryDiff<MessageRow>[] = [];
     engine.subscribe<MessageRow>(SQL, [sessionId, 100], (diff) => diffs.push(diff), {

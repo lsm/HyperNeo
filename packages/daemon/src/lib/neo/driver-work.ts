@@ -12,6 +12,7 @@ import { type NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
 import { z } from 'zod';
 import { workStartConfiguration } from '../drivers/start-configuration.ts';
 import {
+  CopilotStartClientSchema,
   PlaceSchema,
   type Place,
   type WorkDelivery,
@@ -47,6 +48,7 @@ const NeoStartWorkTarget = z.object({
       'For a Codex start, set a generic sessionTitle, never the task title. When omitted, the driver assigns the next free generic project name.'
     ),
   adapter: z.string().min(1).max(80),
+  copilotClient: CopilotStartClientSchema.optional(),
   name: z.string().trim().min(1).max(80).optional(),
   place: PlaceSchema.optional(),
   createFolder: z.boolean().optional(),
@@ -131,6 +133,7 @@ export function driverWorkCall(
         name: 'work.start',
         input: {
           adapter: target.adapter,
+          ...(target.copilotClient ? { copilotClient: target.copilotClient } : {}),
           place: target.place,
           title:
             target.name ??
@@ -265,6 +268,11 @@ function parseDriverStatusReply(outcome: OperationOutcome): DriverStatusReply | 
 function parseDriverStatus(outcome: OperationOutcome): DriverStatus | null {
   const reply = parseDriverStatusReply(outcome);
   return reply?.ok ? reply.value : null;
+}
+
+export function readDriverFolder(outcome: OperationOutcome): string | undefined {
+  const status = parseDriverStatus(outcome);
+  return status?.execution?.directory ?? status?.place?.folder;
 }
 
 export function readDriverLive(outcome: OperationOutcome): {

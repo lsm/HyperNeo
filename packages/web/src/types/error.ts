@@ -16,6 +16,7 @@ export enum ErrorCategory {
 export interface StructuredError {
   category: ErrorCategory;
   code: string;
+  title?: string;
   message: string;
   userMessage: string;
   details?: unknown;

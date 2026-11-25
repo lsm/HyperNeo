@@ -33,7 +33,15 @@ export function resolveSender(env: Env): string | null {
   if (env.HYPERNEO_SESSION_ID) return env.HYPERNEO_SESSION_ID;
   if (env.CODEX_THREAD_ID) return `codex-desktop:${env.CODEX_THREAD_ID}`;
   if (env.CLAUDE_CODE_SESSION_ID) return `claude-code:${env.CLAUDE_CODE_SESSION_ID}`;
+  if (env.COPILOT_AGENT_SESSION_ID) return `copilot-cli:${env.COPILOT_AGENT_SESSION_ID}`;
+  if (env.CURSOR_CONVERSATION_ID) return `cursor-cli:${env.CURSOR_CONVERSATION_ID}`;
   return null;
+}
+
+export function takeSendFrom(args: string[]): { args: string[]; from: string | null } {
+  return args[0] === 'send' && args[2] === '--from' && args[3]?.trim() && !args[3].startsWith('-')
+    ? { args: [args[0], args[1], ...args.slice(4)], from: args[3].trim() }
+    : { args, from: null };
 }
 
 export function planSessionCommand(
@@ -41,26 +49,8 @@ export function planSessionCommand(
   sender: string
 ): { value: { name: string; input: unknown } } | { reason: string } {
   const [command, target, ...rest] = args;
-  if (command === 'relay') {
-    const [whereFlag, where, whenFlag, when, separator, ...words] = rest;
-    return target &&
-      whereFlag === '--where' &&
-      where?.trim() &&
-      whenFlag === '--when' &&
-      when?.trim() &&
-      separator === '--' &&
-      words.join(' ').trim()
-      ? {
-          value: {
-            name: 'neo.question.answer',
-            input: { questionId: target, where, when, answer: words.join(' ') },
-          },
-        }
-      : {
-          reason:
-            'relay_incomplete: use relay <questionId> --where <place> --when <time> -- <exact words>.',
-        };
-  }
+  if (command === 'send' && (target === '--from' || rest.includes('--from')))
+    return { reason: SESSION_CLI_USAGE };
   if (command === 'send' && target && rest[0] === '--kind') {
     const kind = WORKER_REPORT_KINDS.find((value) => value === rest[1]);
     const text = rest.slice(2).join(' ');
@@ -83,6 +73,17 @@ export function planSessionCommand(
     return { value: { name: 'system.build', input: {} } };
   if (command === 'reserve-restart' && !target && !rest.length)
     return { value: { name: 'system.restart.reserve', input: {} } };
+  if (
+    command === 'codex-setup' &&
+    !rest.length &&
+    (!target || target === '--undo' || target === '--no-remote-control')
+  )
+    return {
+      value: {
+        name: 'system.codex.setup',
+        input: { undo: target === '--undo', noRemoteControl: target === '--no-remote-control' },
+      },
+    };
   if (command === 'pair') return planPairCommand(args.slice(1));
   if (command === 'devices' && !target) return { value: { name: 'device.list', input: {} } };
   if (command === 'devices' && target === 'reset-human' && !rest.length)
@@ -143,11 +144,19 @@ export async function runSessionCommand(args: string[], env: Env = process.env):
     return 0;
   }
   if (args[0] === 'read') return readCard(args.slice(1), env.HYPERNEO_DATA_DIR);
+  if (args[0] === 'codex-setup' && process.platform !== 'darwin') {
+    console.error('Codex setup requires macOS.');
+    return 1;
+  }
+  const explicit = takeSendFrom(args);
+  args = explicit.args;
   const sender =
-    resolveSender(env) ?? (['pair', 'devices', 'reserve-restart'].includes(args[0]) ? 'cli' : null);
+    explicit.from ??
+    resolveSender(env) ??
+    (['pair', 'devices', 'reserve-restart', 'codex-setup'].includes(args[0]) ? 'cli' : null);
   if (!sender) {
     console.error(
-      'hyperneo send: no sender. Run it inside a HyperNeo, Codex or Claude Code session (HYPERNEO_SESSION_ID, CODEX_THREAD_ID or CLAUDE_CODE_SESSION_ID).'
+      'hyperneo send: no sender. Pass --from <session-id>, or run it inside a HyperNeo, Codex, Claude Code, Copilot or Cursor session (HYPERNEO_SESSION_ID, CODEX_THREAD_ID, CLAUDE_CODE_SESSION_ID, COPILOT_AGENT_SESSION_ID or CURSOR_CONVERSATION_ID).'
     );
     return 1;
   }
@@ -187,10 +196,6 @@ export async function runSessionCommand(args: string[], env: Env = process.env):
     return 1;
   }
   const value = outcome.value as { kind?: string; ok?: boolean; reason?: string; health?: string };
-  if (args[0] === 'relay' && value.ok === false) {
-    console.error(value.reason);
-    return 1;
-  }
   console.log(JSON.stringify(value, null, 2));
   return value.kind === 'rejected' || value.ok === false || value.health === 'fail' ? 1 : 0;
 }

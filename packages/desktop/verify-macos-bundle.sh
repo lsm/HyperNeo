@@ -1,14 +1,30 @@
 #!/bin/bash
 set -euo pipefail
 
-app="$1"
-driver="$app/Contents/MacOS/cua-driver"
 requirement='anchor apple generic and certificate leaf[subject.OU] = "P5R65T296V" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists'
 
-verify_signature() {
-    codesign --verify --strict --test-requirement "=$requirement${2:-}" "$1" &&
-        codesign --display --verbose=2 "$1" 2>&1 | grep 'flags=.*(runtime)' >/dev/null
+hardened_slices() {
+    local arch flags present=0
+    for arch in arm64 arm64e x86_64 x86_64h; do
+        flags="$(codesign --display --verbose=2 --arch "$arch" "$1" 2>&1)" || continue
+        grep -E 'flags=0x[0-9a-f]+\([^)]*runtime' >/dev/null <<< "$flags" || return 1
+        present=1
+    done
+    [[ "$present" == 1 ]]
 }
+
+verify_signature() {
+    codesign --verify --strict --all-architectures --test-requirement "=$requirement${2:-}" "$1" &&
+        hardened_slices "$1"
+}
+
+if [[ "${1:-}" == --hardened ]]; then
+    hardened_slices "$2"
+    exit
+fi
+
+app="$1"
+driver="$app/Contents/MacOS/cua-driver"
 
 if ! verify_signature "$driver" ' and identifier "cua-driver"'; then
     echo "cua-driver signature verification failed" >&2
@@ -27,6 +43,21 @@ done
 
 if [[ "${2:-}" == --driver-only ]]; then exit 0; fi
 
+if ! verify_signature "$app/Contents/MacOS/hyperneo-locked-use" ' and identifier "io.hyperneo.locked-use"'; then
+    echo "hyperneo-locked-use signature verification failed" >&2
+    exit 1
+fi
+locked="$app/Contents/Resources/locked-use"
+if ! verify_signature "$locked/HyperNeoLockedUse.bundle" ' and identifier "io.hyperneo.locked-use.plugin"'; then
+    echo "Locked Use plugin signature verification failed" >&2
+    exit 1
+fi
+for script in install.sh uninstall.sh policy.sh policy.jxa; do
+    if ! cmp -s "$locked/$script" "$(dirname "$0")/locked-use/$script"; then
+        echo "Locked Use $script missing or changed in the bundle" >&2
+        exit 1
+    fi
+done
 verify_signature "$app"
 codesign --display --entitlements - --xml "$app" > "$entitlements"
 security cms -D -i "$app/Contents/embedded.provisionprofile" > "$entitlements.profile"

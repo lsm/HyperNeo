@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { hostname } from 'node:os';
 import { createNeoProjectForgetOperation } from '../../../../src/lib/neo/project-forget-operation.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
@@ -53,14 +54,29 @@ describe('neo.project.forget', () => {
   });
 
   test('concurrent forget requests admit only one winner', async () => {
-    const results = await Promise.all([forget(atlas), forget(atlas)]);
-    expect(results.filter((result) => (result as { ok: boolean }).ok)).toHaveLength(1);
-    expect(results).toContainEqual({ ok: false, reason: 'project_missing' });
+    const cleaned: string[][] = [];
+    const registry = createOperationRegistry([
+      createNeoProjectForgetOperation(repo, async (repos) => {
+        expect(repo.getProject(atlas)).toBeNull();
+        cleaned.push([...repos]);
+      }),
+    ]);
+    const call = () => invokeOperation(registry, 'neo.project.forget', { projectId: atlas }, human);
+    const results = await Promise.all([call(), call()]);
+    expect(results).toContainEqual({
+      kind: 'completed',
+      value: { ok: true, repos: ['lsm/neo-atlas'] },
+    });
+    expect(results).toContainEqual({
+      kind: 'completed',
+      value: { ok: false, reason: 'project_missing' },
+    });
+    expect(cleaned).toEqual([['lsm/neo-atlas']]);
   });
 
   test('an external callback failure cannot roll back a committed forget', async () => {
     const registry = createOperationRegistry([
-      createNeoProjectForgetOperation(repo, () => {
+      createNeoProjectForgetOperation(repo, async () => {
         expect(repo.getProject(atlas)).toBeNull();
         throw new Error('synthetic external effect failure');
       }),
@@ -109,6 +125,80 @@ describe('neo.project.forget', () => {
       .run('session:worker', atlas);
     expect(await forget(atlas)).toEqual({ ok: false, reason: 'project_in_use' });
     expect(repo.getProject(atlas)?.title).toBe('atlas');
+  });
+
+  test('sidebar forget refuses a session that is hidden from the sidebar', async () => {
+    alias(`folder:${hostname()}\0/code/hidden`, atlas);
+    await db.createSession({
+      ...createTestSession('session:hidden'),
+      workspacePath: '/code/hidden',
+    });
+    db.getDatabase()
+      .prepare("UPDATE sessions SET type = 'space_task_agent' WHERE id = ?")
+      .run('session:hidden');
+    const registry = createOperationRegistry([createNeoProjectForgetOperation(repo)]);
+    const result = await invokeOperation(
+      registry,
+      'neo.project.forget',
+      { projectId: atlas, removeHistory: true },
+      human
+    );
+    expect(result).toMatchObject({
+      kind: 'completed',
+      value: { ok: false, reason: 'project_in_use' },
+    });
+    expect(repo.getProject(atlas)).not.toBeNull();
+  });
+
+  test.each([
+    { status: 'archived', type: 'worker', canForget: true },
+    { status: 'ended', type: 'space_task_agent', canForget: true },
+    { status: 'ended', type: 'worker', spaceId: 'space:fixture', canForget: true },
+    { status: 'ended', type: 'worker', canForget: false },
+  ] as const)(
+    'sidebar forget keeps $status $type sessions in history (canForget: $canForget)',
+    async (scenario) => {
+      const { status, type, canForget } = scenario;
+      alias(`folder:${hostname()}\0/code/history`, atlas);
+      await db.createSession({
+        ...createTestSession('session:history'),
+        workspacePath: '/code/history',
+        status,
+        context: 'spaceId' in scenario ? { spaceId: scenario.spaceId } : undefined,
+      });
+      db.getDatabase()
+        .prepare('UPDATE sessions SET type = ? WHERE id = ?')
+        .run(type, 'session:history');
+      const registry = createOperationRegistry([createNeoProjectForgetOperation(repo)]);
+      const result = await invokeOperation(
+        registry,
+        'neo.project.forget',
+        { projectId: atlas, removeHistory: true },
+        human
+      );
+      expect(result).toMatchObject({
+        kind: 'completed',
+        value: canForget ? { ok: true } : { ok: false, reason: 'project_in_use' },
+      });
+      expect(repo.getProject(atlas)?.id ?? null).toBe(canForget ? null : atlas);
+      expect(db.getSession('session:history')?.status).toBe(status);
+    }
+  );
+
+  test('sidebar forget refuses a project with work on another machine', async () => {
+    alias('folder:remote-machine\0/code/project', atlas);
+    const registry = createOperationRegistry([createNeoProjectForgetOperation(repo)]);
+    const result = await invokeOperation(
+      registry,
+      'neo.project.forget',
+      { projectId: atlas, removeHistory: true },
+      human
+    );
+    expect(result).toMatchObject({
+      kind: 'completed',
+      value: { ok: false, reason: 'project_in_use' },
+    });
+    expect(repo.getProject(atlas)).not.toBeNull();
   });
 
   test('an open ask blocks forget; a settled ask moves to the root', async () => {

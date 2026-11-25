@@ -1,3 +1,4 @@
+import { ChatErrorMessage, type ChatErrorDetails } from '../components/ChatErrorMessage.tsx';
 import type { NeoCardReply } from '@hyperneo/shared/types/neo-publication';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { SessionStore } from '../lib/session-store.ts';
@@ -7,6 +8,7 @@ import type { NeoPendingAsk, NeoQuote } from './neo-intake.ts';
 import { projectNeoMessageStatuses } from './message-status.ts';
 import {
   type NeoEditUndelivered,
+  type NeoRetryUndelivered,
   NeoPublicConversation,
   type NeoSessionMute,
   PendingAsk,
@@ -27,6 +29,7 @@ export function NeoConversation({
   onRetryAsk,
   onEditAsk,
   onEditUndelivered,
+  onRetryUndelivered,
   mute,
   onQuote,
   onOpenWork,
@@ -38,6 +41,7 @@ export function NeoConversation({
   onOpenSession?: (link: string, label: string) => void;
   mute?: NeoSessionMute;
   onEditUndelivered?: NeoEditUndelivered;
+  onRetryUndelivered?: NeoRetryUndelivered;
   pendingAsks?: readonly NeoPendingAsk[];
   onRetryAsk?: (requestId: string) => void;
   onEditAsk?: (requestId: string) => void;
@@ -50,6 +54,7 @@ export function NeoConversation({
   const sentHere = useMemo(() => new Set<string>(), [sessionId]);
   pendingAsks?.forEach((ask) => sentHere.add(ask.requestId));
   const state = store.agentState.value;
+  const error = store.error.value;
   const pending = state.status === 'waiting_for_input' ? state.pendingQuestion : null;
   const epoch = useMemo(
     () => (pending ? Object.freeze({ store, sessionId, toolUseId: pending.toolUseId }) : null),
@@ -93,6 +98,7 @@ export function NeoConversation({
             onRetry={onRetryPublic}
             onLoadEarlier={onLoadEarlierPublic}
             onEditUndelivered={onEditUndelivered}
+            onRetryUndelivered={onRetryUndelivered}
             mute={mute}
             onQuote={onQuote}
             onOpenWork={onOpenWork}
@@ -131,21 +137,21 @@ export function NeoConversation({
             }}
           />
         )}
-        {store.error.value && (
-          <p
+        {error && (
+          <div
             role="alert"
             class="rounded-xl border border-danger/30 bg-danger/5 p-4 text-sm text-danger"
           >
-            {store.error.value.message}
-          </p>
+            <ChatErrorMessage message={error.message} details={error.details as ChatErrorDetails} />
+          </div>
         )}
         {replyError && (
-          <p
+          <div
             role="alert"
             class="rounded-xl border border-danger/30 bg-danger/5 p-4 text-sm text-danger"
           >
-            {replyError}
-          </p>
+            <ChatErrorMessage message={replyError} />
+          </div>
         )}
       </section>
     </>

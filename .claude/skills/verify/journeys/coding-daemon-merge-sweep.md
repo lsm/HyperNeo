@@ -288,6 +288,19 @@ Review coverage changes invalidate a cached sign-off hold on the next sweep.
 A successful human-label operation also invalidates its URL, including a label
 first observed during the final merge read rather than by ledger reconciliation.
 
+Add `unchanged-pr` to hold a PR on an old-head bot review. The second sweep must
+make no GitHub calls because the ledger's `updatedAt` and state did not change.
+After the synthetic list reports a newer `updatedAt` with the review on the head,
+the next sweep reads fresh facts and merges once. Facts outside the list
+(review threads) are still refreshed after ten minutes.
+
 Add `label-invalidation-race` to pause a synthetic GitHub label read, remove the
 label through the real human-merge operation, then release the stale read. The
 next sweep must merge immediately rather than caching that stale sign-off hold.
+
+Add `rate-limited` to make the merge command fail with GitHub's rate-limit error
+while `/rate_limit` reports a reset about a minute ahead. The receipt is released
+without charging a failure, and the next sweep issues no merge before the reset.
+After the reset (the helper waits in real time), one pinned merge and one
+confirmation follow, and the failure budget is still empty. The hold lives in
+the sweep, so a daemon restart costs at most one more rate-limited command.

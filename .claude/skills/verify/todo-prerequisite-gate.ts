@@ -1,3 +1,4 @@
+import { seedHistoricalAsk } from './accepted-ask-fixtures.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -51,7 +52,8 @@ try {
     for (const id of [sender, ref.id]) db.prepare("INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?, 'Synthetic worker', '/tmp', '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z', 'active', '{}', '{}')").run(id);
     new NeoRepository(db).reserveBinding({ sessionId: sender, kind: 'neo', projectId: null });
     const bound = { verb: 'bind', ref };
-    const opened = await invoke('neo.ask.open', { title: 'Synthetic prerequisites', request: 'Finish A before J and X before Y', todos: [{ title: 'A', check, after: [], target: bound }, { title: 'J', check, after: [0] }, { title: 'X', check, after: [], target: bound }] });
+    seedHistoricalAsk(store, sender, { title: 'Synthetic prerequisites', request: 'Finish A before J and X before Y' });
+    const opened = await invoke('neo.ask.propose', { title: 'Synthetic prerequisites', request: 'Finish A before J and X before Y', todos: [{ title: 'A', check, after: [], target: bound }, { title: 'J', check, after: [0] }, { title: 'X', check, after: [], target: bound }] });
     assert.equal(opened.ok, true, JSON.stringify(opened));
     const [a, j, x] = opened.todos.map((todo: { id: string }) => todo.id);
     const askId = opened.todos[0].askId;
@@ -72,9 +74,9 @@ try {
     set(j, { state: 'doing', startedAt: 1, approvedAt: 1, instruction: 'Synthetic step' });
     set(a, { state: 'doing', finishedAt: null });
     await row('continue while prerequisite A is reopened', 'refused', 'neo.todo.continue', { todoId: j, message: 'Synthetic next step' } as { todoId: string });
-    set(j, { state: 'failed', reason: 'Synthetic failure' });
+    set(j, { state: 'blocked', blockedBy: 'failure', blockedReason: 'Synthetic failure' });
     await row('retry with a worker while prerequisite A is reopened', 'refused', 'neo.todo.continue', { todoId: j });
-    assert.equal(store.getTodo(j)?.state, 'failed');
+    assert.equal(store.getTodo(j)?.state, 'blocked');
     set(a, { state: 'done' }); set(x, { state: 'done' });
     await row('retry after A finished', 'ok', 'neo.todo.continue', { todoId: j });
     await row('continue after A finished', 'ok', 'neo.todo.continue', { todoId: j, message: 'Synthetic next step' } as { todoId: string });

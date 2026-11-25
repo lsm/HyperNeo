@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
 import { RemoteDaemonRegistry } from '../../../../src/lib/remote-daemons/registry';
 import { describe, expect, test } from 'bun:test';
+import { createCopilotDesktopAdapter } from '../../../../src/lib/drivers/copilot-desktop-adapter';
 import {
   annotateUnreachable,
   SendWorkResultSchema,
@@ -80,6 +81,8 @@ async function call(
       remote: { list: () => [{ daemonId: 'laptop' }], invoke },
       daemonName: 'imac',
       isOpenTodo: (todoId) => todoId === 'open-todo',
+      acceptedTodo: (todoId) => todoId === 'open-todo',
+      noticeReply: () => true,
     })
   );
   const outcome = await invokeOperation(registry, name, input, caller);
@@ -102,6 +105,58 @@ describe('work verb operations', () => {
       expect(description).toContain('never a task title');
     }
   });
+
+  test.each(['legacy', 'cli-only', 'both'] as const)(
+    'starts on a remote Desktop only when the server advertises that choice (%s)',
+    async (availability) => {
+      const copilotClients =
+        availability === 'legacy'
+          ? undefined
+          : availability === 'cli-only'
+            ? ['cli']
+            : ['desktop', 'cli'];
+      const forwarded: { name: string; input: unknown }[] = [];
+      const remote: Invoke = async (_daemon, name, input) => {
+        forwarded.push({ name, input });
+        return name === 'work.adapters'
+          ? { ok: true, value: [{ id: 'copilot-cli', capabilities: ['start'], copilotClients }] }
+          : {
+              ok: true,
+              value: { ...summary('copilot-cli', 'desktop-session'), copilotClient: 'desktop' },
+            };
+      };
+      const result = await call(
+        'work.start',
+        {
+          adapter: 'copilot-cli',
+          copilotClient: 'desktop',
+          place: { ...place, daemon: 'laptop' },
+          title: 'Copilot work',
+          message: 'Start here',
+          model: 'gpt-5.4',
+          effort: 'high',
+        },
+        remote
+      );
+      if (copilotClients?.includes('desktop')) {
+        expect(result).toMatchObject({
+          ok: true,
+          value: { copilotClient: 'desktop', ref: { daemon: 'laptop' } },
+        });
+        expect(forwarded[1]).toMatchObject({
+          name: 'work.start',
+          input: { copilotClient: 'desktop', model: 'gpt-5.4', effort: 'high' },
+        });
+      } else {
+        expect(result).toMatchObject({
+          ok: false,
+          notSent: true,
+          reason: copilotClients ? 'unreachable' : 'unsupported',
+        });
+        expect(forwarded.map(({ name }) => name)).toEqual(['work.adapters']);
+      }
+    }
+  );
 
   test.each(['before-connect', 'after-dispatch'] as const)(
     'remote work.send preserves certainty for a failure %s',
@@ -311,28 +366,39 @@ describe('work verb operations', () => {
     }
   });
 
-  test('advertises implemented steer locally and preserves it from remote discovery', async () => {
-    const adapter: WorkAdapter = {
-      ...desktop,
-      capabilities: ['find', 'send', 'steer'],
-      steer: async () => ({ ok: true, value: { delivered: true, steeredIntoTurnId: 'active' } }),
-    };
-    const expected = {
-      ok: true,
-      value: [{ id: adapter.id, capabilities: ['find', 'send', 'steer'] }],
-    };
-    expect(await call('work.adapters', {}, undefined, { source: 'rpc' }, [adapter])).toEqual(
-      expected
-    );
-    expect(await call('work.adapters', { daemon: 'laptop' }, async () => expected)).toEqual(
-      expected
-    );
-  });
+  test.each([undefined, 'best_effort'] as const)(
+    'advertises implemented steer locally and remotely with behavior %s',
+    async (steerBehavior) => {
+      const adapter: WorkAdapter = {
+        ...desktop,
+        capabilities: ['find', 'send', 'steer'],
+        steerBehavior,
+        steer: async () => ({ ok: true, value: { delivered: false } }),
+      };
+      const expected = {
+        ok: true,
+        value: [
+          {
+            id: adapter.id,
+            capabilities: ['find', 'send', 'steer'],
+            ...(steerBehavior ? { steerBehavior } : {}),
+          },
+        ],
+      };
+      expect(await call('work.adapters', {}, undefined, { source: 'rpc' }, [adapter])).toEqual(
+        expected
+      );
+      expect(await call('work.adapters', { daemon: 'laptop' }, async () => expected)).toEqual(
+        expected
+      );
+    }
+  );
 
   test('operation discovery omits unrouted or unimplemented driver capabilities', async () => {
     const adapter: WorkAdapter = {
       ...desktop,
-      capabilities: ['find', 'send', 'steer', 'queue', 'withdraw'],
+      capabilities: ['find', 'send', 'steer', 'queue', 'withdraw', 'compact'],
+      compact: async () => ({ ok: true, value: { compacted: true } }),
     };
     expect(
       await call('work.adapters', {}, undefined, { source: 'rpc', principal: 'local' }, [adapter])
@@ -341,6 +407,27 @@ describe('work verb operations', () => {
       value: [{ id: adapter.id, capabilities: ['find', 'send'] }],
     });
     expect(adapter.capabilities).toContain('steer');
+  });
+
+  test('lists a disconnected Copilot Desktop as read-only', async () => {
+    const adapter = createCopilotDesktopAdapter(
+      async () => [],
+      'imac',
+      '/fixture',
+      () => false
+    );
+    expect(await call('work.adapters', {}, undefined, { source: 'rpc' }, [adapter])).toEqual({
+      ok: true,
+      value: [
+        {
+          id: 'copilot-cli',
+          displayName: 'Copilot',
+          copilotClients: [],
+          capabilities: ['find', 'status', 'turns'],
+          unsupportedCapabilities: expect.objectContaining({ steer: expect.any(String) }),
+        },
+      ],
+    });
   });
 
   test('queue/withdraw are discoverable routes and preserve the authoritative caller origin', async () => {
@@ -369,6 +456,8 @@ describe('work verb operations', () => {
       createWorkVerbOperations({
         adapters: () => [adapter],
         isOpenTodo: (id) => id === 'open-todo',
+        acceptedTodo: (id) => id === 'open-todo',
+        noticeReply: () => true,
         daemonName: 'imac',
         remote: { list: () => [], invoke: async () => ({}) },
       })
@@ -407,7 +496,7 @@ describe('work verb operations', () => {
     expect(received).toEqual([
       [
         ref,
-        'next\n\nMessage Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send self --kind <kind> "<text>" (not SendMessage). Choose kind done, blocked, question or failed; use done for a PR milestone. Keep working after you send.',
+        'next\n\nMessage Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send self --from claude-desktop:d1 --kind <kind> "<text>" (not SendMessage). Choose kind done, blocked, question or failed; use done for a PR milestone. Keep working after you send.',
         { from: 'session:self', caller },
       ],
       [ref, 'q1', { from: 'session:self', caller }],
@@ -461,7 +550,7 @@ describe('work verb operations', () => {
           ...(verb === 'queue'
             ? {
                 message:
-                  'next\n\nMessage Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send daemon:imac::session:self --kind <kind> "<text>" (not SendMessage). Choose kind done, blocked, question or failed; use done for a PR milestone. Keep working after you send.',
+                  'next\n\nMessage Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send daemon:imac::session:self --from claude-desktop:d1 --kind <kind> "<text>" (not SendMessage). Choose kind done, blocked, question or failed; use done for a PR milestone. Keep working after you send.',
               }
             : {}),
           ref: { adapter: desktop.id, id: 'd1' },
@@ -815,7 +904,7 @@ describe('work verb operations', () => {
     expect(
       await call(
         'work.send',
-        { ref: { adapter: 'hyperneo', id: 's1' }, message: 'hi' },
+        { ref: { adapter: 'hyperneo', id: 's1' }, message: 'hi', todoId: 'open-todo' },
         undefined,
         { source: 'mcp', sessionId: 'neo:root' }
       )
@@ -854,7 +943,7 @@ describe('work verb operations', () => {
       value: { delivered: true },
     });
     expect(
-      await call('work.send', { ...relayed, from: 'chat' }, undefined, {
+      await call('work.send', { ...relayed, from: 'chat', todoId: 'open-todo' }, undefined, {
         source: 'mcp',
         sessionId: 'agent-1',
       })

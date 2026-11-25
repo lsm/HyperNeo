@@ -61,7 +61,11 @@ const StoredAsk = z
       createdAt: z.iso.datetime(),
       messageStatus: z.enum(NEO_MESSAGE_STATUSES).optional(),
       delivery: z
-        .object({ state: z.literal('failed') })
+        .object({
+          state: z.literal('failed'),
+          reason: z.string().optional(),
+          supersededBy: z.uuid().optional(),
+        })
         .strict()
         .optional(),
       ask: NeoConversationAskSchema,
@@ -100,7 +104,14 @@ export const NeoConversationAskPageSchema = z.object({
   createdAt: z.iso.datetime(),
   replyTo: NeoReplyToSchema.optional(),
   previewContext: NeoPreviewReferenceSchema.optional(),
-  delivery: z.object({ state: z.literal('failed') }).optional(),
+  retryOf: z.uuid().optional(),
+  delivery: z
+    .object({
+      state: z.literal('failed'),
+      reason: z.string().optional(),
+      supersededBy: z.uuid().optional(),
+    })
+    .optional(),
   messageStatus: z.enum(NEO_MESSAGE_STATUSES).optional(),
 });
 
@@ -178,7 +189,7 @@ function readAskImageRefs(
   };
 }
 
-const read = (superpipe({})('neo-conversation-ask-read') as PipelineAPI)
+const read = (superpipe({})('neo.conversation.asks.read') as PipelineAPI)
   .input(['request', 'caller', 'repo', 'ledger', 'presentStatus', 'database'])
   .pipe((request: AskPage): Page => request, 'request', 'page')
   .pipe(
@@ -275,7 +286,7 @@ export function readNeoConversationImage(
     : { ok: false, reason: 'image_not_found' };
 }
 
-const readImage = (superpipe({})('neo-conversation-image-read') as PipelineAPI)
+const readImage = (superpipe({})('neo.conversation.image.read') as PipelineAPI)
   .input(['input', 'caller', 'repo', 'ledger'])
   .pipe(
     (caller: OperationCaller, repo: NeoRepository) =>

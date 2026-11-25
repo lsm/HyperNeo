@@ -12,6 +12,7 @@ import {
   warmupSDKCliBinary,
   _resetForTesting,
   awaitSDKCliPath,
+  awaitSDKCliPathForQuery,
 } from '../../../../src/lib/agent/sdk-cli-resolver';
 
 const mocks = vi.hoisted(() => ({
@@ -57,6 +58,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
   return {
     ...actual,
+    mkdtemp: async (prefix: string) => `${prefix}fixture`,
     readFile: passthrough(mocks.readFile, actual.readFile),
     writeFile: passthrough(mocks.writeFile, actual.writeFile),
   };
@@ -92,9 +94,16 @@ function resetModuleMocks(): void {
   }
 }
 
+function packageManagerMissing(file: string, done: (...r: unknown[]) => void): boolean {
+  if (file !== 'npm' && file !== 'pnpm') return false;
+  setImmediate(() => done(Object.assign(new Error('not found'), { code: 'ENOENT' })));
+  return true;
+}
+
 function curlMock(run: (file: string, args?: string[]) => unknown): void {
   mocks.execFile.mockImplementation(
     (file: string, args: string[], _options: unknown, done: (...r: unknown[]) => void) => {
+      if (packageManagerMissing(file, done)) return;
       try {
         const out = run(file, args);
         setImmediate(() => done(null, out, ''));
@@ -667,8 +676,10 @@ describe('warmupSDKCliBinary', () => {
       return curl(args);
     });
     mocks.execFile.mockImplementation(
-      (_file: string, args: string[], _options: unknown, done: (...r: unknown[]) => void) =>
-        setTimeout(() => done(null, curl(args), ''), 200)
+      (file: string, args: string[], _options: unknown, done: (...r: unknown[]) => void) => {
+        if (packageManagerMissing(file, done)) return;
+        setTimeout(() => done(null, curl(args), ''), 200);
+      }
     );
 
     let ticks = 0;
@@ -710,6 +721,42 @@ describe('warmupSDKCliBinary', () => {
     expect(curlCalls).toBe(2);
   });
 
+  it('reports a slow download as a download cause while it continues', async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.existsSync.mockReturnValue(false);
+      let finishDownload: ((error: Error, stdout: string, stderr: string) => void) | undefined;
+      let calls = 0;
+      mocks.execFile.mockImplementation(
+        (
+          _file: string,
+          _args: string[],
+          _options: unknown,
+          done: (error: Error, stdout: string, stderr: string) => void
+        ) => {
+          calls++;
+          finishDownload = done;
+        }
+      );
+      const result = awaitSDKCliPathForQuery().catch((error: Error) => error);
+      const warmup = warmupSDKCliBinary();
+
+      await vi.advanceTimersByTimeAsync(45_001);
+      const error = await Promise.race([result, Promise.resolve('still waiting')]);
+      expect(error).toBeInstanceOf(Error);
+      expect(error).toMatchObject({
+        name: 'PackageDownloadError',
+        message: 'Claude Code is still downloading. Try again shortly.',
+      });
+      expect(calls).toBe(1);
+      expect(finishDownload).toBeDefined();
+      finishDownload?.(Object.assign(new Error('offline'), { code: 7 }), '', 'curl: offline');
+      expect((await warmup).status).toBe('failed');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('gives a session one clear error when the download fails', async () => {
     mocks.existsSync.mockImplementation((path: fs.PathLike) => {
       const p = String(path);
@@ -722,9 +769,7 @@ describe('warmupSDKCliBinary', () => {
 
     const startup = warmupSDKCliBinary();
 
-    await expect(awaitSDKCliPath()).rejects.toThrow(
-      'Claude Code binary unavailable: Could not download'
-    );
+    await expect(awaitSDKCliPath()).rejects.toThrow("Can't download Claude Code:");
     expect((await startup).status).toBe('failed');
   });
 

@@ -12,6 +12,7 @@ type Input = {
   askId: string;
   todoId: string;
   notice: NeoSessionNotice;
+  relayedQuestion?: boolean;
   now: number;
 };
 type Result =
@@ -65,7 +66,7 @@ const track = (superpipe({})('neo.session.track-commit') as PipelineAPI)
       changes: ChangeRecorder
     ): Result => {
       const { notice, now } = input;
-      const messageId = `neo-track:${notice.key}:${input.askId}`;
+      const messageId = `neo-track:${notice.key}:${input.askId}${input.relayedQuestion ? ':relay-pending' : ''}`;
       const done = 'The session finishes its work';
       const ask = store.openAsk({
         id: input.askId,

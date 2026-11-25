@@ -10,7 +10,7 @@ export type BeforeVoiceDispatch = () => void | (() => void) | Promise<void | (()
 export async function fetchTranscriptionWithRedirects(
   endpoint: URL,
   headers: Record<string, string>,
-  form: FormData,
+  form: FormData | Uint8Array,
   allowPrivateNetwork: boolean,
   allowInsecureTls: boolean,
   signal: AbortSignal,
@@ -26,7 +26,7 @@ export async function fetchTranscriptionWithRedirects(
   );
   let requestHeaders = { ...headers };
   let requestMethod: string = 'POST';
-  let requestBody: FormData | undefined = form;
+  let requestBody: FormData | Uint8Array | undefined = form;
   let response: Response | undefined;
   for (let hop = 0; hop <= MAX_TRANSCRIPTION_REDIRECTS; hop++) {
     response = undefined;

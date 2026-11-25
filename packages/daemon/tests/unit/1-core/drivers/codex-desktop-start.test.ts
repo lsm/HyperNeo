@@ -2,7 +2,9 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
 import { CODEX_WORKER_INSTRUCTIONS } from '@hyperneo/prompts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { once } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
@@ -44,7 +46,6 @@ const threadAccess = {
     shell_environment_policy: {
       set: {
         HYPERNEO_WORKTREES: expect.stringMatching(/worktrees$/),
-        HYPERNEO_EVIDENCE: expect.stringContaining('/work/evidence/'),
         HYPERNEO_BUILDS: expect.stringContaining('/work/builds/'),
       },
     },
@@ -63,6 +64,8 @@ function adapter(
     exit?: number;
     linked?: boolean;
     prepareExecution?: WorkExecutionPreparer;
+    shared?: CodexAppServer;
+    desktopSocketPath?: string;
   } = {}
 ) {
   const calls: Array<[string, Record<string, unknown>]> = [];
@@ -76,6 +79,7 @@ function adapter(
       ? undefined
       : async () => ({ roots: [], folders: [], threads: git.threads ?? [] }),
     prepareExecution: git.prepareExecution,
+    desktopSocketPath: git.desktopSocketPath,
     worktreesDir: '/codex/worktrees',
     machine: 'laptop',
     now: () => NOW,
@@ -91,7 +95,15 @@ function adapter(
       };
     },
     appServer: async () => {
-      throw new Error('Shared daemon must not create desktop threads');
+      const shared = git.shared;
+      if (!shared) throw new Error('Shared daemon must not create desktop threads');
+      return {
+        ...shared,
+        close: async () => {
+          await shared.close();
+          closed = true;
+        },
+      };
     },
     prepareDesktopProject: async (folder) => {
       projectFolders.push(folder);
@@ -223,7 +235,7 @@ describe('codex-desktop start', () => {
     expect(opening.sandbox).toBe('danger-full-access');
   });
 
-  test('tells a new Codex worker how to trim only its own merged or closed PR links', async () => {
+  test('tells a new Codex worker how to trim only its own PR links and to wait without short polls', async () => {
     const { instance, calls } = adapter({
       call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}),
     });
@@ -233,7 +245,7 @@ describe('codex-desktop start', () => {
         calls.find(([method]) => method === 'desktop/start-turn')?.[1].input as { text: string }[]
       )[0].text
     ).toBe(
-      `${request.message}\nTo trim this thread's PR links, call mcp__codex_app__list_artifacts, check each PR's GitHub state, then call mcp__codex_app__remove_artifact({artifact_type:"pull_request", url}) for merged/closed PRs; own thread only; never edit ~/.codex state files directly.`
+      `${request.message}\nTo trim this thread's PR links, call mcp__codex_app__list_artifacts, check each PR's GitHub state, then call mcp__codex_app__remove_artifact({artifact_type:"pull_request", url}) for merged/closed PRs; own thread only; never edit ~/.codex state files directly.\nPass yield_time_ms 30000 to exec_command. While a command still runs, wait with one empty write_stdin of yield_time_ms 60000, and give the enclosing exec or wait call the same time; each returns as soon as the command exits, so never poll in short steps.`
     );
   });
 
@@ -960,6 +972,94 @@ describe('codex-desktop start', () => {
     expect(closed()).toBe(true);
   });
 
+  test.each(['ECONNREFUSED', 'ENOENT'])(
+    'opens the first turn on the shared app-server when Desktop IPC is absent: %s',
+    async (code) => {
+      const shared: Array<[string, Record<string, unknown>]> = [];
+      const { instance } = adapter(
+        {
+          call: async (method) => {
+            if (method === 'desktop/start-turn')
+              throw Object.assign(new Error(`connect ${code} ipc.sock`), { code });
+            return method === 'thread/start' ? { thread: { id: 'th1' } } : {};
+          },
+        },
+        ['/focus/dolmen'],
+        {
+          shared: {
+            call: async (method, params) => {
+              shared.push([method, params]);
+              return {};
+            },
+            close: async () => {},
+          },
+        }
+      );
+      expect(await instance.start?.(request, user)).toMatchObject({
+        ok: true,
+        value: { ref: { adapter: 'codex-desktop', id: 'th1' }, status: 'running' },
+      });
+      expect(shared).toEqual([
+        ['thread/resume', { threadId: 'th1', sandbox: 'danger-full-access' }],
+        [
+          'turn/start',
+          {
+            ...turnAccess,
+            threadId: 'th1',
+            input: [{ type: 'text', text: openingMessage, text_elements: [] }],
+          },
+        ],
+      ]);
+    }
+  );
+
+  test('creates the thread on the shared app-server, which the app lists, when Desktop IPC is missing', async () => {
+    const shared: string[] = [];
+    const { instance, calls } = adapter(
+      {
+        call: async (method) => {
+          if (method === 'desktop/start-turn')
+            throw Object.assign(new Error('connect ENOENT ipc.sock'), { code: 'ENOENT' });
+          return {};
+        },
+      },
+      ['/focus/dolmen'],
+      {
+        desktopSocketPath: join(namingDir, 'missing-ipc.sock'),
+        shared: {
+          call: async (method) => {
+            shared.push(method);
+            return method === 'thread/start' ? { thread: { id: 'th1' } } : {};
+          },
+          close: async () => {},
+        },
+      }
+    );
+    expect(await instance.start?.(request, user)).toMatchObject({
+      ok: true,
+      value: { ref: { adapter: 'codex-desktop', id: 'th1' }, status: 'running' },
+    });
+    expect(shared).toContain('thread/start');
+    expect(calls.map(([method]) => method)).not.toContain('thread/start');
+  });
+
+  test('keeps creating through the bootstrap server while Desktop IPC listens', async () => {
+    const socketPath = join(namingDir, 'ipc.sock');
+    const listener = createServer().listen(socketPath);
+    await once(listener, 'listening');
+    try {
+      const { instance, calls } = adapter(
+        { call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}) },
+        ['/focus/dolmen'],
+        { desktopSocketPath: socketPath }
+      );
+      expect(await instance.start?.(request, user)).toMatchObject({ ok: true });
+      expect(calls.map(([method]) => method)).toContain('thread/start');
+    } finally {
+      listener.close();
+    }
+  });
+
   test('the opening text includes the spans Desktop needs to render its live turn', async () => {
     const { instance, calls } = adapter({
       call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}),
@@ -987,7 +1087,6 @@ describe('codex-desktop start', () => {
         shell_environment_policy: {
           set: {
             HYPERNEO_WORKTREES: expect.stringMatching(/worktrees$/),
-            HYPERNEO_EVIDENCE: expect.stringContaining('/work/evidence/'),
             HYPERNEO_BUILDS: expect.stringContaining('/work/builds/'),
           },
         },

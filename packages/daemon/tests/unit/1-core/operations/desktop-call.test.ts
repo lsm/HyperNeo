@@ -28,6 +28,8 @@ let dispatched: boolean;
 let workspace: string | null;
 let worktree: string | undefined;
 let mismatchedReply: boolean;
+let hostBusy: boolean;
+let body: { content?: Record<string, unknown>[]; structuredContent?: unknown };
 const caller: OperationCaller = {
   source: 'mcp',
   sessionId: 'worker-a',
@@ -39,14 +41,16 @@ beforeEach(async () => {
   workspace = root;
   worktree = undefined;
   mismatchedReply = false;
+  hostBusy = false;
+  body = {};
   await mkdir(join(root, 'desktop'));
   db = new Database(':memory:');
-  db.exec(`CREATE TABLE neo_asks(id TEXT, status TEXT);
-    CREATE TABLE neo_todos(id TEXT, ask_id TEXT, title TEXT, state TEXT, approved_at INTEGER, named TEXT);
+  db.exec(`CREATE TABLE neo_asks(id TEXT, status TEXT, desktop_apps TEXT);
+    CREATE TABLE neo_todos(id TEXT, ask_id TEXT, title TEXT, state TEXT, approved_at INTEGER, named TEXT, desktop_apps TEXT DEFAULT '[{"bundleId":"org.example.app","name":"app"}]');
     CREATE TABLE neo_todo_sessions(todo_id TEXT, ref TEXT);
     CREATE TABLE mcp_audit_log(id TEXT, timestamp INTEGER, agent_name TEXT, session_id TEXT, tool_name TEXT, params_summary TEXT, space_id TEXT, task_id TEXT, workflow_run_id TEXT);
-    INSERT INTO neo_asks VALUES('ask','open');
-    INSERT INTO neo_todos VALUES('todo','ask','Synthetic action','doing',1,'{"desktopControl":true}');
+    INSERT INTO neo_asks VALUES('ask','open','[{"bundleId":"org.example.app","name":"app"}]');
+    INSERT INTO neo_todos(id, ask_id, title, state, approved_at, named) VALUES('todo','ask','Synthetic action','doing',1,'{"desktopControl":true}');
     INSERT INTO neo_todo_sessions VALUES('todo','{"adapter":"hyperneo","id":"worker-a"}');`);
   requests = [];
   reason = null;
@@ -58,6 +62,10 @@ beforeEach(async () => {
       if (!line.includes('\n')) return;
       const request = JSON.parse(line);
       requests.push(request);
+      if (hostBusy) {
+        socket.end(JSON.stringify({ ok: false, error: 'desktop_busy' }) + '\n');
+        return;
+      }
       socket.end(
         JSON.stringify({
           ok: true,
@@ -68,6 +76,7 @@ beforeEach(async () => {
             decision: reason ? 'refused' : 'allowed',
             reason,
             dispatched,
+            ...body,
           },
         }) + '\n'
       );
@@ -113,6 +122,21 @@ const audit = () =>
     timestamp: number;
   }>;
 
+test('desktop.call reports when the Desktop app is not connected', async () => {
+  await new Promise<void>((done) => server.close(() => done()));
+  const outcome = await call();
+  expect(outcome).toMatchObject({
+    value: { ok: false, reason: 'desktop_app_not_connected', dispatched: false },
+  });
+});
+
+test('desktop.call reports a saturated Desktop host as busy', async () => {
+  hostBusy = true;
+  expect(await call()).toMatchObject({
+    value: { ok: false, reason: 'desktop_busy', dispatched: false },
+  });
+});
+
 test.each(['universal_read', 'direct_task_worker'] as const)(
   'in-process MCP dispatch from a %s todo worker uses only its session and workspace',
   async (role) => {
@@ -146,6 +170,71 @@ test.each(['universal_read', 'direct_task_worker'] as const)(
   }
 );
 
+test('a driver error reaches the session with the driver message and screenshot', async () => {
+  reason = 'driver_error';
+  body = {
+    content: [
+      { type: 'text', text: 'Call get_window_state first' },
+      { type: 'image', data: 'aW1n', mimeType: 'image/png' },
+    ],
+    structuredContent: { code: 'no_screenshot' },
+  };
+  const handler = createOperationMcpHandler(registry(), () => ({
+    sessionId: 'worker-a',
+    role: 'direct_task_worker',
+  }));
+  const response = await handler({ name: 'desktop.call', input });
+  expect(JSON.parse(response.content[0].text)).toMatchObject({
+    ok: false,
+    reason: 'driver_error',
+    structuredContent: { code: 'no_screenshot' },
+  });
+  expect(response.content.slice(1)).toEqual(body.content);
+  expect(response.isError).toBe(true);
+});
+
+test('a full-window screenshot larger than 2 MiB reaches the session', async () => {
+  body = { content: [{ type: 'image', data: 'A'.repeat(3 << 20), mimeType: 'image/png' }] };
+  const handler = createOperationMcpHandler(registry(), () => ({
+    sessionId: 'worker-a',
+    role: 'direct_task_worker',
+  }));
+  const response = await handler({ name: 'desktop.call', input });
+  expect(JSON.parse(response.content[0].text)).toMatchObject({ ok: true });
+  expect(response.content[1]).toEqual(body.content?.[0]);
+  expect(response.isError).toBeFalsy();
+});
+
+test('a screenshot over the model image limit is replaced by a note', async () => {
+  body = { content: [{ type: 'image', data: 'A'.repeat(6 << 20), mimeType: 'image/png' }] };
+  const handler = createOperationMcpHandler(registry(), () => ({
+    sessionId: 'worker-a',
+    role: 'direct_task_worker',
+  }));
+  const response = await handler({ name: 'desktop.call', input });
+  expect(response.content).toHaveLength(2);
+  expect(response.content[1]).toMatchObject({
+    type: 'text',
+    text: expect.stringContaining('max_image_dimension'),
+  });
+});
+
+test('a malformed driver image block still returns the reply', async () => {
+  body = { content: [{ type: 'image' }] };
+  const handler = createOperationMcpHandler(registry(), () => ({
+    sessionId: 'worker-a',
+    role: 'direct_task_worker',
+  }));
+  const response = await handler({ name: 'desktop.call', input });
+  expect(JSON.parse(response.content[0].text)).toMatchObject({ ok: true, dispatched: true });
+});
+
+test('driver content that is not a list is dropped and the call is still audited', async () => {
+  body = { content: 'not-a-list' } as unknown as typeof body;
+  expect(await call()).toMatchObject({ kind: 'completed', value: { ok: true, dispatched: true } });
+  expect(audit()).toHaveLength(1);
+});
+
 test.each([
   { source: 'rpc', principal: 'local', sessionId: 'worker-a', role: 'direct_task_worker' },
   { source: 'internal', sessionId: 'worker-a', role: 'direct_task_worker' },
@@ -154,12 +243,13 @@ test.each([
   { source: 'rpc', principal: 'local', sessionId: 'worker-a', role: 'universal_read' },
   { source: 'mcp', sessionId: 'worker-a' },
   { source: 'mcp', role: 'direct_task_worker' },
+  { source: 'mcp', sessionId: 'neo:coordinator', role: 'neo' },
 ] as OperationCaller[])(
   'refuses caller $source/$role/$principal before contacting the host',
   async (identity) => {
     expect(await call(identity)).toMatchObject({
       kind: 'completed',
-      value: { ok: false, reason: 'desktop_not_enabled', dispatched: false },
+      value: { ok: false, reason: 'desktop_worker_only', dispatched: false },
     });
     expect(requests).toHaveLength(0);
     expect(audit()).toHaveLength(0);
@@ -167,11 +257,12 @@ test.each([
 );
 
 test.each([
-  "UPDATE neo_todos SET named='{}'",
+  `UPDATE neo_todos SET named='{"desktopControl":false}'`,
   'UPDATE neo_todos SET approved_at=NULL',
-  "UPDATE neo_todos SET state='todo'",
   "UPDATE neo_asks SET status='closed'",
-  `INSERT INTO neo_todos VALUES('second','ask','Other','doing',1,'{"desktopControl":true}'); INSERT INTO neo_todo_sessions VALUES('second','{"adapter":"hyperneo","id":"worker-a"}')`,
+  'UPDATE neo_todos SET desktop_apps=NULL',
+  "UPDATE neo_todos SET desktop_apps='[]'",
+  `INSERT INTO neo_todos(id, ask_id, title, state, approved_at, named) VALUES('second','ask','Other','doing',1,'{"desktopControl":true}'); INSERT INTO neo_todo_sessions VALUES('second','{"adapter":"hyperneo","id":"worker-a"}')`,
   `UPDATE neo_todo_sessions SET ref='{"adapter":"hyperneo","id":"worker-a","daemon":"remote"}'`,
 ])('refuses an uncovered or ambiguous binding before any host request', async (sql) => {
   db.exec(sql);
@@ -180,6 +271,22 @@ test.each([
     value: { reason: 'desktop_not_enabled', dispatched: false },
   });
   expect(requests).toHaveLength(0);
+});
+
+test('dispatches only the apps approved for the todo', async () => {
+  db.exec("UPDATE neo_todos SET named='{}'");
+  expect(await call()).toMatchObject({ kind: 'completed', value: { dispatched: true } });
+  expect(requests).toEqual([expect.objectContaining({ apps: ['org.example.app'] })]);
+});
+
+test.each(['todo', 'blocked'])('dispatches for an approved opted-in %s todo', async (state) => {
+  db.prepare('UPDATE neo_todos SET state=?').run(state);
+  expect(await call()).toMatchObject({
+    kind: 'completed',
+    value: { reason: null, dispatched: true },
+  });
+  expect(requests).toHaveLength(1);
+  expect(JSON.parse(audit()[0].params_summary)).toMatchObject({ todo: 'todo' });
 });
 
 test('missing workspace and unlisted tools cannot reach resolve or a grant dialog', async () => {
@@ -207,6 +314,8 @@ test('operations.describe lists every catalog tool with its arguments', () => {
     expect(described).toContain(tool.description);
   }
   expect(described).toContain('"window_id"');
+  expect(described).toContain('For * and other shifted symbols, send the base key with shift');
+  expect(described).toContain('Unknown key names return driver_error');
 });
 
 test('input cannot impersonate a different worker or choose a workspace', async () => {
@@ -237,10 +346,11 @@ test('host refusal and a sent driver error each produce one truthful audit row',
 });
 
 test('the pure decision refuses a missing binding or workspace', () => {
-  const todo = { id: 'todo', worker: 'worker-a', title: 'Synthetic', named: '{}', active: 1 };
+  const apps = '[{"bundleId":"org.example.app","name":"app"}]';
+  const todo = { id: 'todo', worker: 'worker-a', title: 'Synthetic', named: '{}', apps, active: 1 };
   const facts = { todo, worker: 'worker-a', workDir: root };
   expect(decideDesktopCall(facts)).toEqual({
-    value: { todo: 'todo', worker: 'worker-a', workDir: root },
+    value: { todo: 'todo', worker: 'worker-a', workDir: root, apps: ['org.example.app'] },
   });
   expect(decideDesktopCall({ ...facts, todo: null })).toHaveProperty(
     'reason.reason',

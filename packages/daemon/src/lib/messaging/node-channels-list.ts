@@ -52,7 +52,7 @@ const LIST_CHANNELS_DESCRIPTION =
   'List the channels declared in this workflow — the full messaging topology. The calling node-agent session identifies the workflow run; only workflow worker sessions are admitted. Rejects not_a_node_agent when the caller is not a live node-agent session and node_caller_denied when the caller is not a workflow worker or belongs to another Space.';
 
 export function createListNodeChannelsOperation(deps: NodeMessagingDependencies) {
-  const run = (superpipe({ deps })('list-node-channels') as PipelineAPI)
+  const run = (superpipe({ deps })('workflow.run.channel.list') as PipelineAPI)
     .input(['caller'])
     .pipe(admitNodeCaller, 'caller', 'result:outcome')
     .pipe(resolveNodeContext, ['outcome', 'caller', 'deps'], 'result:outcome')

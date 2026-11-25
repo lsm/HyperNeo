@@ -146,7 +146,7 @@ test('a refused worker card leaves the stalled card open', async () => {
   }
 });
 
-test('a passed check completes human-blocked work and retires its unanswered card', async () => {
+test('a passed check completes human-blocked work while its unanswered card stays open', async () => {
   const { db, store, ref, write } = setup();
   try {
     const first = await write(ref, report);
@@ -163,7 +163,7 @@ test('a passed check completes human-blocked work and retires its unanswered car
       evidence: 'Observed outcome',
       blockedBy: null,
     });
-    expect(store.getQuestion(first.question.id)).toMatchObject({ state: 'retired', answer: null });
+    expect(store.getQuestion(first.question.id)).toMatchObject({ state: 'open', answer: null });
   } finally {
     db.close();
   }

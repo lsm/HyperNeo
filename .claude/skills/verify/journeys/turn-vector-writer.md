@@ -1,7 +1,7 @@
 # Turn embedding writes keep the daemon responsive
 
 Use SKILL.md's shared isolation, resource check and cleanup. No model, real DB,
-provider, simulator or GUI is involved. Run with pinned Bun 1.4.2:
+provider, simulator or GUI is involved. Run with pinned Bun 1.4.4:
 
 ```bash
 TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory .claude/skills/verify/turn-vector-reader.ts 1200 writer

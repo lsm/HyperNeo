@@ -7,7 +7,7 @@ import {
 import { vi } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { voicePeerReasonBytes } from '../../../../src/lib/voice/diagnostics';
-import { deepgram, joinFinals } from '../../../../src/lib/voice/stream-protocols';
+import { deepgram, joinFinals, streamProtocol } from '../../../../src/lib/voice/stream-protocols';
 import {
   pcm16Wav,
   VoiceStream,
@@ -66,7 +66,12 @@ describe('voice stream settings', () => {
       voiceStreamRoute({ ...voice, endpoint: 'not a url', streamEndpoint: undefined })
     ).toBeNull();
     expect(voiceStreamRoute({ ...voice, streamEndpoint: 'https://ai0:8011/v1/listen' })).toBeNull();
-    expect(voiceStreamRoute({ ...voice, streamProtocol: 'openai-realtime' })).toBeNull();
+    expect(voiceStreamRoute({ ...voice, streamProtocol: 'unsupported' as never })).toBeNull();
+    expect(
+      voiceStreamRoute({ ...voice, streamProtocol: 'openai-realtime' })?.url.searchParams.get(
+        'intent'
+      )
+    ).toBe('transcription');
   });
 
   test('voiceStreamRoute never infers a live endpoint from the batch URL', () => {
@@ -142,6 +147,7 @@ describe('VoiceStream against a stub Deepgram server', () => {
   let logs: StructuredLogEvent[];
   let unsubscribe: () => void;
   let connections: URL[];
+  let authorizations: (string | undefined)[];
   const relays = new Set<AsrRelay>();
 
   beforeEach(async () => {
@@ -153,6 +159,7 @@ describe('VoiceStream against a stub Deepgram server', () => {
     pushed = [];
     batches = [];
     connections = [];
+    authorizations = [];
     onAudio = (socket, bytes) => socket.send(results(`heard ${bytes}`, false));
     onCloseStream = (socket) => {
       socket.send(results(`heard ${received}`, true));
@@ -165,6 +172,7 @@ describe('VoiceStream against a stub Deepgram server', () => {
     server.on('connection', (socket, request) => {
       const url = new URL(request.url!, 'http://stub');
       connections.push(url);
+      authorizations.push(request.headers.authorization);
       expect(url.searchParams.get('sample_rate')).toBe('16000');
       socket.on('message', (data: Buffer, isBinary: boolean) => {
         if (!isBinary) {
@@ -210,6 +218,38 @@ describe('VoiceStream against a stub Deepgram server', () => {
     if ('error' in started) throw new Error(started.error);
     return started;
   };
+
+  test('streams to the live part when settings hold one', async () => {
+    const { via, stream } = await start({
+      streamEndpoint: undefined,
+      live: { provider: 'deepgram', endpoint: `ws://127.0.0.1:${port}/v1/listen` },
+    });
+    expect(via).toBe('streaming');
+    expect(connections[0].pathname).toBe('/v1/listen');
+    stream.close();
+  });
+
+  test.each([
+    ['a stored key', { hasApiKey: true, apiKeyEndpoint: 'https://api.example.com/v1/audio' }],
+    ['an inline key', { apiKey: 'inline-key' }],
+  ] as const)('%s for the batch host is not sent to a live host elsewhere', async (_, key) => {
+    const { via, stream } = await VoiceStream.start('s1', {
+      ...deps({ endpoint: 'https://api.example.com/v1/audio', ...key }),
+      credentialManager: {
+        getCredentials: async (id: string) =>
+          id === 'voice-transcription' ? { type: 'api_key' as const, apiKey: 'stored-key' } : null,
+      },
+    }).then((started) => {
+      if ('error' in started) throw new Error(started.error);
+      return started;
+    });
+    try {
+      expect(via).toBe('streaming');
+      expect(authorizations).toEqual([undefined]);
+    } finally {
+      stream.close();
+    }
+  });
 
   test.each([undefined, 'zh', 'en'] as const)(
     'sends language %s on the ASR connection request',
@@ -327,10 +367,12 @@ describe('VoiceStream against a stub Deepgram server', () => {
       const starting = VoiceStream.start('s1', {
         ...deps({ apiKeyEndpoint: endpoint }),
         credentialManager: {
-          getCredentials: () =>
-            new Promise<null>((resolve) => {
-              release = resolve;
-            }),
+          getCredentials: (id: string) =>
+            id !== 'voice-transcription'
+              ? Promise.resolve(null)
+              : new Promise<null>((resolve) => {
+                  release = resolve;
+                }),
         },
       });
       await vi.advanceTimersByTimeAsync(8_001);
@@ -351,10 +393,12 @@ describe('VoiceStream against a stub Deepgram server', () => {
       const starting = VoiceStream.start('s1', {
         ...deps({ apiKeyEndpoint: `http://127.0.0.1:${port}/v1/audio/transcriptions` }),
         credentialManager: {
-          getCredentials: () =>
-            new Promise<null>((resolve) => {
-              release = resolve;
-            }),
+          getCredentials: (id: string) =>
+            id !== 'voice-transcription'
+              ? Promise.resolve(null)
+              : new Promise<null>((resolve) => {
+                  release = resolve;
+                }),
         },
       });
       await vi.advanceTimersByTimeAsync(8_001);
@@ -382,6 +426,20 @@ describe('VoiceStream against a stub Deepgram server', () => {
       expect(via).toBe('batch');
       expect(connections).toHaveLength(0);
       await stream.stop();
+    }
+  });
+
+  test('an empty configured live part falls back to batch even in streaming mode', async () => {
+    for (const endpoint of ['', '   ']) {
+      const { via, stream } = await start({
+        mode: 'streaming',
+        streamEndpoint: 'wss://old.example.test/listen',
+        live: { provider: 'openai-realtime', endpoint },
+      });
+      expect(via).toBe('batch');
+      expect(connections).toHaveLength(0);
+      stream.write(new Uint8Array([1, 0, 2, 0]));
+      expect(await stream.stop()).toEqual({ text: 'batch text', via: 'batch' });
     }
   });
 
@@ -655,5 +713,156 @@ describe('VoiceStream against a stub Deepgram server', () => {
     expect(await VoiceStream.start('s2', deps({ enabled: false }))).toEqual({
       error: 'Voice input is disabled',
     });
+  });
+});
+
+describe('VoiceStream against a fake OpenAI Realtime server', () => {
+  let server: WebSocketServer;
+  let port: number;
+  let appended: number;
+  let opening: unknown[];
+  let closed: boolean;
+  let onCommit: (socket: WebSocket) => void;
+  let batches: string[];
+  const relays = new Set<AsrRelay>();
+
+  beforeEach(async () => {
+    appended = 0;
+    opening = [];
+    closed = false;
+    batches = [];
+    onCommit = (socket) =>
+      socket.send(
+        JSON.stringify({
+          type: 'conversation.item.input_audio_transcription.completed',
+          transcript: 'hello there',
+        })
+      );
+    server = new WebSocketServer({ port: 0 });
+    await new Promise((resolve) => server.once('listening', resolve));
+    port = (server.address() as { port: number }).port;
+    server.on('connection', (socket) => {
+      socket.on('close', () => {
+        closed = true;
+      });
+      socket.on('message', (data: Buffer) => {
+        const message = JSON.parse(data.toString()) as { type: string; audio?: string };
+        if (message.type === 'input_audio_buffer.append') {
+          appended += Buffer.from(message.audio ?? '', 'base64').length;
+          socket.send(
+            JSON.stringify({
+              type: 'conversation.item.input_audio_transcription.delta',
+              delta: 'hello',
+            })
+          );
+        } else if (message.type === 'input_audio_buffer.commit') onCommit(socket);
+        else opening.push(message);
+      });
+    });
+  });
+
+  afterEach(() => {
+    for (const relay of relays) relay.close();
+    relays.clear();
+    return new Promise((resolve) => server.close(resolve));
+  });
+
+  const start = async () => {
+    const started = await VoiceStream.start('rt', {
+      voice: (): VoiceSettings => ({
+        enabled: true,
+        endpoint: `http://127.0.0.1:${port}/v1/audio/transcriptions`,
+        model: 'm',
+        streamEndpoint: `ws://127.0.0.1:${port}/v1/realtime`,
+        streamProtocol: 'openai-realtime',
+        allowPrivateNetwork: true,
+      }),
+      transcribeWav: async (wav: string): Promise<VoiceTranscribeOutcome> => {
+        batches.push(wav);
+        return { action: 'transcribed', text: 'batch text' };
+      },
+      push: () => {},
+      createRelay: (open: Parameters<typeof createInThreadAsrRelay>[0]) => {
+        const relay = createInThreadAsrRelay(open);
+        relays.add(relay);
+        return relay;
+      },
+    });
+    if ('error' in started) throw new Error(started.error);
+    return started;
+  };
+  const socketClosed = async () => {
+    for (let i = 0; i < 200 && !closed; i++) await new Promise((done) => setTimeout(done, 5));
+    return closed;
+  };
+
+  test('completed settles the stop while the socket stays open, then the relay closes it', async () => {
+    const { via, stream } = await start();
+    expect(via).toBe('streaming');
+    stream.write(new Uint8Array(3200));
+    const began = Date.now();
+    expect(await stream.stop()).toEqual({ text: 'hello there', via: 'streaming' });
+    expect(Date.now() - began).toBeLessThan(2_000);
+    expect(await socketClosed()).toBe(true);
+    expect(appended).toBe(4798);
+    expect(opening).toMatchObject([{ type: 'session.update' }]);
+    expect(batches).toEqual([]);
+  }, 4_000);
+
+  test('an error event falls back to batch without waiting and closes the socket', async () => {
+    onCommit = (socket) => socket.send(JSON.stringify({ type: 'error', error: { message: 'x' } }));
+    const { stream } = await start();
+    stream.write(new Uint8Array(3200));
+    const began = Date.now();
+    expect(await stream.stop()).toEqual({ text: 'batch text', via: 'batch' });
+    expect(Date.now() - began).toBeLessThan(2_000);
+    expect(await socketClosed()).toBe(true);
+  }, 4_000);
+
+  test('a delta then a close without completed falls back to batch', async () => {
+    onCommit = (socket) => {
+      socket.send(
+        JSON.stringify({ type: 'conversation.item.input_audio_transcription.delta', delta: 'hal' })
+      );
+      socket.close(1000);
+    };
+    const { stream } = await start();
+    stream.write(new Uint8Array(3200));
+    expect(await stream.stop()).toEqual({ text: 'batch text', via: 'batch' });
+  }, 4_000);
+
+  test('resampling gives the same 24 kHz audio however the capture is split', () => {
+    const pcm = (...samples: number[]) => {
+      const view = new DataView(new ArrayBuffer(samples.length * 2));
+      samples.forEach((sample, i) => view.setInt16(i * 2, sample, true));
+      return new Uint8Array(view.buffer);
+    };
+    const sent = (frames: Uint8Array[]) => {
+      const protocol = streamProtocol('openai-realtime')!;
+      const out = frames.flatMap((frame) => [
+        ...Buffer.from(
+          (JSON.parse(protocol.audio(frame) as string) as { audio: string }).audio,
+          'base64'
+        ),
+      ]);
+      const view = new DataView(new Uint8Array(out).buffer);
+      return Array.from({ length: out.length / 2 }, (_, i) => view.getInt16(i * 2, true));
+    };
+    const whole = sent([pcm(300, 600, 900, 1200, 1500)]);
+    expect(whole).toEqual([300, 500, 700, 900, 1100, 1300, 1500]);
+    expect(sent([pcm(300), pcm(600), pcm(900, 1200), pcm(1500)])).toEqual(whole);
+    expect(sent([pcm(300), pcm(600)])).toEqual(sent([pcm(300, 600)]));
+  });
+
+  test('a server that never completes falls back to batch and the socket is closed', async () => {
+    onCommit = () => {};
+    const { stream } = await start();
+    stream.write(new Uint8Array(3200));
+    expect(await stream.stop()).toEqual({ text: 'batch text', via: 'batch' });
+    expect(await socketClosed()).toBe(true);
+  }, 9_000);
+
+  test('the Realtime adapter authorizes with a Bearer key', () => {
+    expect(streamProtocol('openai-realtime')?.authorization('sk-live')).toBe('Bearer sk-live');
   });
 });

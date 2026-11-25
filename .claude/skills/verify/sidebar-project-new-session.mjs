@@ -1,3 +1,4 @@
+import { projectActions, projectDelete } from './sidebar-project-menu.mjs';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -101,7 +102,7 @@ try {
     result.hoverAlpha = await opacity(plus(page, 'alpha'));
     result.hoverBeta = await opacity(plus(page, 'beta'));
     await page.screenshot({ path: `${run}/evidence/sidebar-${scheme}-hover.png` });
-    const remove = page.getByRole('button', { name: 'Remove project alpha' });
+    const remove = projectActions(page, 'alpha');
     const size = async (locator) => {
       const box = await locator.boundingBox();
       return `${Math.round(box.width)}x${Math.round(box.height)}`;
@@ -117,7 +118,7 @@ try {
     await remove.hover();
     await page.waitForTimeout(300);
     result.removeHoverBackground = await background(remove);
-    result.removeIsTrash = await remove.locator('path[d="M3 6h18"]').count();
+    result.hasMenu = await remove.getAttribute('aria-haspopup');
     await page.screenshot({ path: `${run}/evidence/sidebar-${scheme}-hover-remove.png` });
     await page.mouse.move(900, 700);
     await page.getByTestId('project-group-header').filter({ hasText: 'beta' }).focus();
@@ -229,7 +230,7 @@ try {
     const staleInput = page.getByPlaceholder('Folder path');
     await staleInput.waitFor({ timeout: 5000 });
     await page.getByTestId('project-group-header').filter({ hasText: `gamma-${scheme}` }).hover();
-    await page.getByRole('button', { name: `Remove project gamma-${scheme}` }).click();
+    await (await projectDelete(page, `gamma-${scheme}`)).click();
     await page.waitForTimeout(800);
     result.staleFormOpen = await staleInput.count();
     await staleInput.fill(`${run}/projects/gamma-${scheme}-assets`);
@@ -283,7 +284,7 @@ try {
     assert.equal(result.plusSize, result.removeSize);
     assert.notEqual(result.plusHoverBackground, result.plusRestBackground);
     assert.equal(result.removeHoverBackground, result.plusHoverBackground);
-    assert.equal(result.removeIsTrash, 1);
+    assert.equal(result.hasMenu, 'menu');
     assert.deepEqual(result.pageErrors, []);
     await context.close();
   }
@@ -328,7 +329,7 @@ try {
     const first = headers.first();
     const name = ((await first.textContent()) ?? '').trim();
     await first.hover();
-    await onlyPage.getByRole('button', { name: `Remove project ${name}` }).click();
+    await (await projectDelete(onlyPage, name)).click();
     await onlyPage.waitForTimeout(700);
   }
   seen.only = { formOpen: await onlyInput.count() };

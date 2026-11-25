@@ -1,5 +1,5 @@
 import type { ModelHold } from './model-hold.ts';
-import type { NeoAskEntry, NeoStatusCode } from './neo-ask.ts';
+import type { NeoAskEntry, NeoStatusCode, NeoTopicLabel } from './neo-ask.ts';
 import type { NeoProject } from './neo-context.ts';
 import type { NeoConversationWake } from './neo-wake.ts';
 import type { NeoRuleSource } from './settings';
@@ -221,7 +221,7 @@ export type NeoHumanQueueItem =
       todos: { id: string; title: string }[];
     }
   | {
-      state: 'progress';
+      state: 'progress' | 'waiting';
       askId: string;
       todoId: string;
       title: string;
@@ -231,6 +231,7 @@ export type NeoHumanQueueItem =
 export interface NeoHumanQueue {
   items: NeoHumanQueueItem[];
   counts: Record<string, Record<NeoHumanQueueState, number>>;
+  topics?: Record<string, NeoTopicLabel>;
 }
 
 export type NeoWorkingStatus = 'queued' | 'processing' | 'rate_limit_cooldown';

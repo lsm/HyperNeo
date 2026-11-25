@@ -274,9 +274,44 @@ try {
   const reported = await send('synthetic-worker', 'Which synthetic region should I use?');
   assert.equal((reported as { value?: { kind?: string } }).value?.kind, 'accepted');
   assert.equal(allAsks(), asksBefore, "a worker's own report records no request todo");
+  const delivered = (text: string) =>
+    (
+      db
+        .prepare(
+          `SELECT json_extract(payload, '$.message.message.content') AS text
+             FROM job_queue WHERE queue = 'mailbox' AND json_extract(payload, '$.to.sessionId') = ?`
+        )
+        .all(root) as { text: string }[]
+    )
+      .map((row) => String(row.text))
+      .filter((content) => content.startsWith('<session-message') && content.includes(text));
+  const report = delivered('Which synthetic region should I use?');
+  assert.equal(report.length, 1);
+  assert.doesNotMatch(report[0]!, / ask="/, "a worker's own report carries no ask");
+  const split = 'Label the synthetic pull request';
+  await send('synthetic-requester', split);
+  const splitAsk = requestAsks().find((ask) => ask.title === split)!;
+  const [envelope] = delivered(split);
+  const named = envelope!.match(/^<session-message from-session="synthetic-requester" ask="([^"]+)"/)?.[1];
+  assert.equal(named, splitAsk.id, 'the delivered request names its recorded ask');
+  const filed = await invokeOperation(
+    registry,
+    'neo.todo.add',
+    {
+      askId: named,
+      title: 'Add the synthetic label',
+      check: { pack: 'core', kind: 'evidence', params: {} },
+      after: [],
+    },
+    asNeo
+  );
+  assert.equal((filed as { kind?: string }).kind, 'completed', JSON.stringify(filed));
+  assert.equal((filed as { value?: { ok?: boolean } }).value?.ok, false, JSON.stringify(filed));
+  assert.deepEqual(todos.listTodos(splitAsk.id).map((todo) => todo.title), [split]);
+  (evidence.checks as unknown[]).push({ name: 'request cannot accept work', envelope, report, filed });
   evidence.passed = true;
   console.log(
-    `PASS request_todos=1 wakes_at_30m=${half.length} wakes_at_1h=${hour.length} replies=${replies.length} answers=${answers.length} human_answers=${humanAnswers.length} reply_failed=woke_neo closed_repeat=rejected snapshot_marker=request_only human_queue=no_request`
+    `PASS request_todos=1 wakes_at_30m=${half.length} wakes_at_1h=${hour.length} replies=${replies.length} answers=${answers.length} human_answers=${humanAnswers.length} reply_failed=woke_neo closed_repeat=rejected snapshot_marker=request_only human_queue=no_request envelope_ask=request_only work_on_request_ask=refused`
   );
 } catch (error) {
   evidence.error = String(error);

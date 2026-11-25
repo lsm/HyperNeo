@@ -23,6 +23,7 @@ const goal: SessionGoal = {
   nextSteps: [],
   mandateRef: null,
   mandateRev: null,
+  dailyRunLimit: 24,
   createdAt: 1,
   updatedAt: 2,
   completedAt: null,

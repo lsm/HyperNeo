@@ -6,8 +6,16 @@ Use shared isolation/resource guards from SKILL.md; heavy jobs run serially.
 python3 .claude/skills/verify/lane-a-project-save-db-run.py bun verify
 ```
 
+To retain evidence outside the checkout, use the shared metadata-only wrapper:
+
+```sh
+TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/evidence/project-save \
+  .claude/skills/verify/lane-a-project-save-db.ts verify
+```
+
 Each run owns fresh HOME/data/TMPDIR and an ephemeral non-8399 daemon. HTTP is refused; gh
-is a refusing stub. No provider, credentials, GitHub, real data, GUI or simulator is used.
+is a refusing stub. WebSocket RPC authenticates with the isolated daemon's local
+credential. No provider, real credentials, GitHub, real data, GUI or simulator is used.
 The helper owns a Python child holding only its synthetic WAL writer for 1.2 seconds,
 waits for it and removes all temporary daemon data after preserving evidence. Both modes
 run the checked-out code; reproduce the baseline from the regression commit.

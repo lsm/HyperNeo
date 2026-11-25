@@ -189,6 +189,7 @@ interface Props {
   onRewind?: (uuid: string) => void;
   rewindingMessageUuid?: string | null;
   showToolResultMessages?: boolean;
+  disableDeliveryRetry?: boolean;
 }
 
 export function SDKUserMessage({
@@ -201,6 +202,7 @@ export function SDKUserMessage({
   onRewind,
   rewindingMessageUuid,
   showToolResultMessages = false,
+  disableDeliveryRetry = false,
 }: Props) {
   const { message: apiMessage } = message;
   const [copied, setCopied] = useState(false);
@@ -406,6 +408,8 @@ export function SDKUserMessage({
     </div>
   );
 
+  const awaitingDelivery = !isDeliveryTerminal(message.deliveryStatus);
+
   const messageActions = (
     <div class="flex items-center justify-end gap-2 mt-2 px-1">
       <Tooltip content={getFullTimestamp()} position="left">
@@ -420,16 +424,34 @@ export function SDKUserMessage({
         </Tooltip>
       )}
 
-      {message.deliveryStatus && message.deliveryStatus !== 'delivered' && (
-        <UserMessageDeliveryBadge status={message.deliveryStatus} />
+      {message.deliveryStatus === 'queued' || message.deliveryStatus === 'processing' ? (
+        <Tooltip content={DELIVERY_BADGE_COPY[message.deliveryStatus].tooltip} position="left">
+          <span
+            class="inline-flex h-9 w-9 items-center justify-center"
+            data-testid="user-delivery-spinner"
+          >
+            <div
+              class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-fg-faint border-t-transparent"
+              role="status"
+              aria-label="Sending"
+            />
+          </span>
+        </Tooltip>
+      ) : (
+        message.deliveryStatus &&
+        message.deliveryStatus !== 'delivered' && (
+          <UserMessageDeliveryBadge status={message.deliveryStatus} />
+        )
       )}
 
-      <UserMessageRetryControl
-        sessionId={sessionId}
-        messageDbId={typeof message.id === 'string' ? message.id : undefined}
-        deliveryStatus={message.deliveryStatus}
-        deliveryRetry={message.deliveryRetry}
-      />
+      {(!disableDeliveryRetry || message.deliveryStatus !== 'failed') && (
+        <UserMessageRetryControl
+          sessionId={sessionId}
+          messageDbId={typeof message.id === 'string' ? message.id : undefined}
+          deliveryStatus={message.deliveryStatus}
+          deliveryRetry={message.deliveryRetry}
+        />
+      )}
 
       {!isReplay &&
         onRewind &&
@@ -453,7 +475,7 @@ export function SDKUserMessage({
           </Tooltip>
         ))}
 
-      {sessionInfo && (
+      {sessionInfo && !awaitingDelivery && (
         <Dropdown
           trigger={<MessageInfoButton />}
           items={[]}
@@ -461,31 +483,33 @@ export function SDKUserMessage({
         />
       )}
 
-      <IconButton
-        size="md"
-        onClick={handleCopy}
-        title={copied ? 'Copied!' : 'Copy message'}
-        class={copied ? 'text-success' : ''}
-      >
-        {copied ? (
-          <CheckGlyph
-            class="w-5 h-5"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
-          />
-        ) : (
-          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+      {!awaitingDelivery && (
+        <IconButton
+          size="md"
+          onClick={handleCopy}
+          title={copied ? 'Copied!' : 'Copy message'}
+          class={copied ? 'text-success' : ''}
+        >
+          {copied ? (
+            <CheckGlyph
+              class="w-5 h-5"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
             />
-          </svg>
-        )}
-      </IconButton>
+          ) : (
+            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+              />
+            </svg>
+          )}
+        </IconButton>
+      )}
     </div>
   );
 

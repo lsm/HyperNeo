@@ -69,7 +69,8 @@ export class WorkTurnRepository {
   cursor(ref: WorkRef): string | null {
     const row = this.db
       .prepare(`SELECT cursor FROM work_turns WHERE ref = ?
-        ORDER BY json_extract(cursor, '$.seq') DESC LIMIT 1`)
+        ORDER BY json_extract(cursor, '$.seq') DESC,
+          json_extract(cursor, '$.consumed') DESC LIMIT 1`)
       .get(storedRef(ref)) as { cursor: string } | null;
     return row?.cursor ?? null;
   }

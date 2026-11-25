@@ -10,7 +10,7 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import {
   readReusableWorkers,
   recordWorkerStarted,
-} from '../../../../src/storage/work-started-sessions';
+} from '../../../../src/storage/repositories/work-started-sessions-worker';
 
 const place = { machine: 'imac', folder: '/focus/repo', name: 'repo' };
 
@@ -99,6 +99,7 @@ function setup(gate?: Promise<void>) {
       freeWorkers: (id, todoId, sessionId) => readReusableWorkers(db, id, todoId, sessionId),
       claimWorker: async (ref, todoId) => sessions.claimWorker(ref, todoId ?? null),
       unclaimWorker: async (todoId, ref) => sessions.unclaimWorker(todoId, ref),
+      acceptedTodo: (todoId) => !!store.getTodo(todoId),
       isOpenTodo: (todoId, sessionId) => {
         const todo = store.getTodo(todoId);
         const ask = todo ? store.getAsk(todo.askId) : null;
@@ -140,7 +141,7 @@ describe('work.start reuse binds only a todo the caller owns', () => {
         { source: 'mcp', sessionId: 'neo-a', role: 'neo' }
       );
       expect(outcome.kind).toBe('completed');
-      expect((outcome as { value: { ok: boolean } }).value.ok).toBe(true);
+      expect((outcome as { value: { ok: boolean } }).value.ok).toBe(false);
       expect(h.sessions.readRef('foreign')).toMatchObject({ id: 'w-foreign' });
     } finally {
       h.db.close();

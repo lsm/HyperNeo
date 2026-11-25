@@ -1,0 +1,356 @@
+import { generateUUID } from '@hyperneo/shared';
+import type { SDKMessage, SDKUserMessage, RewindFilesResult } from '@hyperneo/shared/sdk';
+import type { QueryLike } from '../agent/query-like.ts';
+import { isDefiniteOxapRefusal, type OxapHubRequestError } from './oxap-hub-client.ts';
+import { mapUserInputRequest } from './oxap-permission-map.ts';
+import { initialOxapTranslatorState, translateOxapEvent } from './oxap-sdk-translator.ts';
+export { createOxapQueryHub } from './oxap-query-hub.ts';
+export { createOxapRuntime } from './oxap-runtime.ts';
+
+type OxapEvent = { type: string; [key: string]: unknown };
+
+export type OxapQueryHub = {
+  submit(
+    sessionId: string,
+    message: SDKUserMessage,
+    owner?: symbol,
+    isLive?: () => boolean
+  ): Promise<{ runId: string }>;
+  events(sessionId: string, runId: string, signal: AbortSignal): AsyncIterable<OxapEvent>;
+  cancel(sessionId: string, runId: string): Promise<void>;
+  release?(owner?: symbol): void;
+  reportAdmissionFailure?(
+    message: SDKUserMessage,
+    owner: symbol,
+    isLive: () => boolean
+  ): Promise<void>;
+};
+
+type OxapQueryTranslator = {
+  beginRun?(startedAt: number): void;
+  translate(event: OxapEvent): SDKMessage[];
+  flush?(): SDKMessage[];
+  settlesTool?(event: OxapEvent): boolean;
+};
+
+type OxapQueryOptions = {
+  sessionId: string;
+  prompt: AsyncIterable<SDKUserMessage>;
+  hub: OxapQueryHub;
+  translator: OxapQueryTranslator;
+  isLive?: () => boolean;
+  maySettleInterrupted?: () => boolean;
+  onSubmitted?: (message: SDKUserMessage) => Promise<void>;
+  onAccepted?: (message: SDKUserMessage, runId: string) => Promise<void>;
+  onRefused?: (message: SDKUserMessage, error: OxapHubRequestError) => Promise<void>;
+};
+
+function isTerminal(event: OxapEvent): boolean {
+  return (
+    event.type === 'run.completed' || event.type === 'run.failed' || event.type === 'run.cancelled'
+  );
+}
+
+function unsupportedInteraction(event: OxapEvent): string | undefined {
+  if (event.type === 'action.permission.requested') return 'permission requests are not supported';
+  if (event.type !== 'user.input.requested') return undefined;
+  try {
+    const mapped = mapUserInputRequest(event.payload);
+    return 'kind' in mapped ? mapped.reason : 'user questions are not supported';
+  } catch {
+    return 'invalid user input request is not supported';
+  }
+}
+
+async function* untilClosed<T>(source: AsyncIterable<T>, signal: AbortSignal): AsyncGenerator<T> {
+  const iterator = source[Symbol.asyncIterator]();
+  let abort!: () => void;
+  const closed = new Promise<undefined>((resolve) => {
+    abort = () => resolve(undefined);
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+  });
+  try {
+    while (!signal.aborted) {
+      const next = await Promise.race([iterator.next(), closed]);
+      if (!next || next.done) return;
+      yield next.value;
+    }
+  } finally {
+    signal.removeEventListener('abort', abort);
+    if (iterator.return)
+      void Promise.resolve()
+        .then(() => iterator.return?.())
+        .catch(() => {});
+  }
+}
+
+export class OxapQuery implements QueryLike {
+  readonly sessionId: string;
+  private readonly prompt: AsyncIterable<SDKUserMessage>;
+  private readonly hub: OxapQueryHub;
+  private readonly translator: OxapQueryTranslator;
+  private readonly isLive: () => boolean;
+  private readonly maySettleInterrupted: () => boolean;
+  private readonly onSubmitted?: OxapQueryOptions['onSubmitted'];
+  private readonly onAccepted?: OxapQueryOptions['onAccepted'];
+  private readonly onRefused?: OxapQueryOptions['onRefused'];
+  private activeRun: string | undefined;
+  private pendingRun: Promise<string> | undefined;
+  private cancelPromise: Promise<void> | undefined;
+  private runSettled: Promise<void> | undefined;
+  private interrupted = false;
+  private closed = false;
+  private started = false;
+  private readonly closeSignal = new AbortController();
+  private readonly owner = Symbol();
+
+  constructor(options: OxapQueryOptions) {
+    this.sessionId = options.sessionId;
+    this.prompt = options.prompt;
+    this.hub = options.hub;
+    this.translator = options.translator;
+    this.isLive = options.isLive ?? (() => true);
+    this.maySettleInterrupted = options.maySettleInterrupted ?? (() => false);
+    this.onSubmitted = options.onSubmitted;
+    this.onAccepted = options.onAccepted;
+    this.onRefused = options.onRefused;
+  }
+
+  async *[Symbol.asyncIterator](): AsyncGenerator<SDKMessage> {
+    if (this.started) throw new Error('OAP query can only be iterated once');
+    this.started = true;
+    for await (const message of untilClosed(this.prompt, this.closeSignal.signal)) {
+      if (this.closed || this.interrupted || !this.isLive()) return;
+      try {
+        await this.onSubmitted?.(message);
+      } catch (error) {
+        await this.hub.reportAdmissionFailure?.(
+          message,
+          this.owner,
+          () => !this.closed && !this.interrupted && this.isLive()
+        );
+        throw error;
+      }
+      if (this.closed || this.interrupted || !this.isLive()) return;
+      let settle!: () => void;
+      const settled = new Promise<void>((resolve) => {
+        settle = resolve;
+      });
+      this.runSettled = settled;
+      const finish = () => {
+        settle();
+        if (this.runSettled === settled) this.runSettled = undefined;
+      };
+      const startedAt = performance.now();
+      this.pendingRun = this.hub
+        .submit(
+          this.sessionId,
+          message,
+          this.owner,
+          () => !this.closed && !this.interrupted && this.isLive()
+        )
+        .then(({ runId }) => {
+          this.activeRun = runId;
+          return runId;
+        })
+        .catch(async (error: unknown) => {
+          finish();
+          if (isDefiniteOxapRefusal(error) && this.isLive()) {
+            await this.onRefused?.(message, error);
+          }
+          throw error;
+        });
+      const runId = await this.pendingRun;
+      this.pendingRun = undefined;
+      try {
+        this.translator.beginRun?.(startedAt);
+        if (this.closed || this.interrupted || !this.isLive()) {
+          await this.cancelActive();
+          if (this.closed || (!this.isLive() && !this.canSettleInterrupted())) {
+            finish();
+            return;
+          }
+        }
+        if (this.isLive()) await this.onAccepted?.(message, runId);
+      } catch (error) {
+        try {
+          await this.cancelActive();
+        } finally {
+          finish();
+        }
+        throw error;
+      }
+      if (this.closed || (!this.isLive() && !this.canSettleInterrupted())) {
+        try {
+          await this.cancelActive();
+        } finally {
+          finish();
+        }
+        return;
+      }
+      let terminal = false;
+      try {
+        for await (const event of untilClosed(
+          this.hub.events(this.sessionId, runId, this.closeSignal.signal),
+          this.closeSignal.signal
+        )) {
+          if (!this.isLive() && !this.canSettleInterrupted()) {
+            await this.cancelActive();
+            return;
+          }
+          if (this.interrupted && !isTerminal(event) && !this.translator.settlesTool?.(event))
+            continue;
+          const unsupported = unsupportedInteraction(event);
+          if (unsupported) {
+            try {
+              await this.cancelActive();
+            } catch (cause) {
+              throw new Error(`OAP ${unsupported}; cancellation failed`, { cause });
+            }
+            throw new Error(`OAP ${unsupported}; run cancelled`);
+          }
+          let translated: SDKMessage[];
+          try {
+            translated = this.translator.translate(event);
+          } catch (error) {
+            try {
+              await this.cancelActive();
+            } catch (cause) {
+              throw new Error(`${String(error)}; cancellation failed`, { cause });
+            }
+            throw error;
+          }
+          if (isTerminal(event)) {
+            terminal = true;
+            this.activeRun = undefined;
+            this.hub.release?.(this.owner);
+          }
+          for (const message of translated) {
+            if (!this.isLive() && !this.canSettleInterrupted()) return;
+            yield message;
+          }
+          if (terminal) break;
+        }
+        if (!terminal && this.closed && this.isLive()) {
+          for (const message of this.translator.flush?.() ?? []) {
+            if (!this.isLive()) break;
+            yield message;
+          }
+        }
+        if (!terminal && !this.closed)
+          throw new Error('OAP event stream ended before run terminal');
+      } catch (error) {
+        if (!this.closed && (this.isLive() || this.canSettleInterrupted())) {
+          for (const message of this.translator.flush?.() ?? []) {
+            if (!this.isLive() && !this.canSettleInterrupted()) break;
+            yield message;
+          }
+        }
+        throw error;
+      } finally {
+        this.activeRun = undefined;
+        finish();
+      }
+      if (this.closed || this.interrupted) return;
+    }
+  }
+
+  prepareInterrupt(): void {
+    this.interrupted = true;
+  }
+
+  wasInterrupted(): boolean {
+    return this.interrupted;
+  }
+
+  async interrupt(): Promise<undefined> {
+    if (this.closed) return undefined;
+    this.prepareInterrupt();
+    if (this.pendingRun) await this.pendingRun;
+    await this.cancelActive();
+    if (this.runSettled) await this.runSettled;
+    return undefined;
+  }
+
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.closeSignal.abort();
+    this.hub.release?.(this.owner);
+    void this.cancelActive().catch(() => {});
+  }
+
+  rewindFiles(): Promise<RewindFilesResult> {
+    return Promise.resolve({ canRewind: false, error: 'OAP sessions do not support file rewind.' });
+  }
+
+  private cancelActive(): Promise<void> {
+    if (!this.activeRun) return Promise.resolve();
+    this.cancelPromise ??= this.hub.cancel(this.sessionId, this.activeRun);
+    return this.cancelPromise;
+  }
+
+  private canSettleInterrupted(): boolean {
+    return this.interrupted && this.maySettleInterrupted();
+  }
+}
+
+export function createOxapQuery(options: Omit<OxapQueryOptions, 'translator'>): OxapQuery {
+  let state = initialOxapTranslatorState(options.sessionId);
+  let runScope = '';
+  let startedAt = 0;
+  return new OxapQuery({
+    ...options,
+    translator: {
+      beginRun: (runStartedAt) => {
+        startedAt = runStartedAt;
+        state = initialOxapTranslatorState(options.sessionId);
+        runScope = generateUUID();
+      },
+      settlesTool: (event) => {
+        if (
+          !['action.call.completed', 'action.call.failed', 'action.call.cancelled'].includes(
+            event.type
+          )
+        )
+          return false;
+        const payload = event.payload;
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+        const id = (payload as Record<string, unknown>).tool_call_id;
+        return (
+          typeof id === 'string' && state.tools.some((tool) => tool.id === id && !tool.settled)
+        );
+      },
+      flush: () => {
+        const result = translateOxapEvent(state, {
+          type: 'stream.flush',
+          id: runScope,
+          payload: {},
+        });
+        state = result.state;
+        return result.messages;
+      },
+      translate: (event) => {
+        if (
+          typeof event.id !== 'string' ||
+          !event.id ||
+          !event.payload ||
+          typeof event.payload !== 'object' ||
+          Array.isArray(event.payload)
+        ) {
+          throw new Error('Invalid OAP event');
+        }
+        const result = translateOxapEvent(state, {
+          type: event.type,
+          id: `${runScope}:${event.id}`,
+          timestamp_ms: typeof event.timestamp_ms === 'number' ? event.timestamp_ms : undefined,
+          elapsedMs: Math.round(performance.now() - startedAt),
+          payload: event.payload as Record<string, unknown>,
+        });
+        state = result.state;
+        return result.messages;
+      },
+    },
+  });
+}

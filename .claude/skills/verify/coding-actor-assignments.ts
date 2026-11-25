@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { hostname } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
@@ -97,9 +98,16 @@ try {
         ws!.onmessage = event => { const reply = JSON.parse(String(event.data)); if (reply.id !== id && reply.requestId !== id) return; clearTimeout(timer); evidence.push({ phase, name, input, reply }); if (reply.error) fail(new Error(JSON.stringify(reply.error))); else done(reply.data); };
         ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
       });
-      const seed = async (name: string, number: number, repo: string, view = true) => {
+      const seed = async (name: string, number: number, repo: string, project = true) => {
         const url = `https://github.com/${repo}/pull/${number}`;
-        if (view) git(run, 'clone', '-q', origin, join(run, 'data/worktrees', repo, 'neo-read'));
+        git(run, 'clone', '-q', origin, join(run, 'data/worktrees', repo, 'neo-read'));
+        if (project) {
+          const folder = join(run, 'projects', repo); git(run, 'clone', '-q', origin, folder);
+          git(folder, 'remote', 'set-url', 'origin', `https://github.com/${repo}.git`);
+          git(folder, 'config', `url.${origin}.insteadOf`, `https://github.com/${repo}.git`);
+          db.prepare("INSERT INTO neo_concerns (id,title,summary,context,revision,created_at,updated_at) VALUES (?,?,'','',1,1,1)").run(`project-${name}`, repo);
+          for (const alias of [`repository:github.com/${repo}`, `folder:${hostname()}\u0000${folder}`]) db.prepare('INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)').run(alias, `project-${name}`);
+        }
         git(origin, 'update-ref', `refs/pull/${number}/head`, head);
         metadata[url] = { body: 'Agent: gpt-6-sol (effort: high) via fixture-author', headRefOid: head, state: 'OPEN' }; publish();
         db.prepare('INSERT INTO neo_asks (id,session_id,title,request,created_at,updated_at) VALUES (?,?,?,?,1,1)').run(`ask-${name}`, 'fixture-neo', name, name);
@@ -112,6 +120,16 @@ try {
       const assign = (input: unknown) => rpc('neo.coding.assign', input) as Promise<{ ok: boolean; reason?: string; assignment: { actor: { kind: string; id: string; model: string; harness: string }; ref: { adapter: string; id: string }; fallback: string[]; bot?: string; effort?: string } }>;
       assert.equal((await rpc('operations.describe', { name: 'neo.coding.result' }) as { found: boolean }).found, true);
       if (phase === 'initial') {
+        const wrong = await seed('wrong', 22, 'synthetic/wrong');
+        const wrongFolder = join(run, 'projects/synthetic/wrong');
+        git(wrongFolder, 'remote', 'set-url', 'origin', 'https://github.com/synthetic/different.git');
+        git(wrongFolder, 'config', '--add', `url.${origin}.insteadOf`, 'https://github.com/synthetic/different.git');
+        const beforeWrong = attempts;
+        assert.match((await assign({ ...wrong, stage: 'review', candidates: [defaultTarget] })).reason ?? '', /has no known project folder/);
+        assert.equal(attempts, beforeWrong, 'A checkout of another repository must not start an actor');
+        const alias = await seed('alias', 21, 'synthetic/alias');
+        db.prepare('INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)').run('repository:github.com/synthetic/zother', 'project-alias');
+        assert((await assign({ ...alias, stage: 'review', candidates: [defaultTarget] })).ok, 'A second repository alias must not hide the matching checkout');
         const bot = await seed('bot', 7, 'synthetic/bot'); await setting('synthetic/bot', 'reviewBot', 'fixture-bot');
         const beforeBot = attempts;
         assert.equal((await assign({ ...bot, stage: 'review', candidates: [], human: 'unused-human' })).assignment.bot, 'fixture-bot');
@@ -119,20 +137,21 @@ try {
         const botVerify = await assign({ ...bot, stage: 'verify', candidates: [verifyTarget] }); assert(botVerify.ok);
         assert.deepEqual(await rpc('neo.coding.result', { todoId: bot.todoId, ref: botVerify.assignment.ref, fact: { url: bot.url, head, stage: 'verify', actor: botVerify.assignment.actor, verdict: 'inconclusive', acceptanceContract: bot.acceptanceContract, evidence: ['artifact:inconclusive-observation'] } }), { ok: true });
         assert.equal(ledger.stageFacts.read(bot.url)[0].stage, 'qa');
-        assert.equal(starts.at(-1)!.folder, join(run, 'data/worktrees/synthetic/bot/neo-read'), 'Verify starts in the repository read view');
+        assert.equal(starts.at(-1)!.folder, join(run, 'projects/synthetic/bot'), 'Verify starts in the repository project folder, not the read mirror');
         const unsynced = await seed('unsynced', 12, 'synthetic/unsynced', false); const beforeUnsynced = attempts;
-        assert.match((await assign({ ...unsynced, stage: 'review', candidates: [defaultTarget] })).reason ?? '', /has no read-only view yet/); assert.equal(attempts, beforeUnsynced, 'No actor starts without a read view');
+        assert.match((await assign({ ...unsynced, stage: 'review', candidates: [defaultTarget] })).reason ?? '', /has no known project folder/); assert.equal(attempts, beforeUnsynced, 'No actor starts without a known project folder');
         const session = await seed('session', 8, 'synthetic/session');
-        const readView = join(run, 'data/worktrees/synthetic/session/neo-read');
-        for (const [field, value] of Object.entries({ harness: preferredTarget.adapter, model: preferredTarget.model, effort: preferredTarget.effort })) await setting('synthetic/session', `review.${field}`, value);
-        const review = await assign({ ...session, stage: 'review', candidates: [authorModel, defaultTarget, preferredTarget] }); assert(review.ok); assert.equal(starts.at(-1)!.folder, readView, 'Review starts in the repository read view'); assert.equal(review.assignment.actor.harness, preferredTarget.adapter); assert.equal(review.assignment.effort, preferredTarget.effort);
-        const probeId = await createDriverSession(app.sessionManager, readView, 'Review place probe');
+        const readView = join(run, 'data/worktrees/synthetic/session/neo-read'), projectFolder = join(run, 'projects/synthetic/session');
+        for (const [field, value] of Object.entries({ harness: preferredTarget.adapter, effort: preferredTarget.effort })) await setting('synthetic/session', `review.${field}`, value);
+        const review = await assign({ ...session, stage: 'review', candidates: [authorModel, defaultTarget, preferredTarget] }); assert(review.ok); assert.equal(starts.at(-1)!.folder, projectFolder, 'Review starts in the repository project folder'); assert.notEqual(starts.at(-1)!.folder, readView, 'Review never starts in the read mirror'); assert.equal(review.assignment.actor.harness, preferredTarget.adapter); assert.equal(review.assignment.effort, preferredTarget.effort);
+        const probeId = await createDriverSession(app.sessionManager, starts.at(-1)!.folder!, 'Review place probe');
         const probe = app.sessionManager.getSessionFromDB(probeId)!; const actorCwd = probe.worktree?.worktreePath ?? probe.workspacePath!;
         const placeProof = { readView, readViewHead: git(readView, 'rev-parse', 'HEAD'), actorCwd, actorHead: git(actorCwd, 'rev-parse', 'HEAD'), actorGitDir: git(actorCwd, 'rev-parse', '--absolute-git-dir'), readViewBranch: git(readView, 'rev-parse', '--abbrev-ref', 'HEAD'), actorBranch: git(actorCwd, 'rev-parse', '--abbrev-ref', 'HEAD') };
-        assert.notEqual(resolve(actorCwd), resolve(readView), 'A session started on the read view runs in its own worktree'); assert(probe.worktree?.isWorktree); assert.notEqual(placeProof.actorGitDir, join(readView, '.git'));
+        const actorCommonDir = resolve(actorCwd, git(actorCwd, 'rev-parse', '--git-common-dir')), projectGitDir = git(projectFolder, 'rev-parse', '--absolute-git-dir');
+        assert.notEqual(resolve(actorCwd), resolve(projectFolder), 'A session started on the project folder runs in its own worktree'); assert(probe.worktree?.isWorktree); assert.equal(actorCommonDir, projectGitDir, 'The actor worktree belongs to the project folder'); assert(!resolve(actorCwd).startsWith(resolve(readView)), 'The actor worktree is not under the read mirror'); assert.notEqual(placeProof.actorGitDir, join(readView, '.git'));
         git(readView, 'checkout', '-q', '--detach', head); const actorHeadAfterSync = git(actorCwd, 'rev-parse', 'HEAD'); assert.equal(actorHeadAfterSync, placeProof.actorHead, 'A read-view sync checkout leaves the actor HEAD');
         git(readView, 'checkout', '-q', '--detach', placeProof.readViewHead); git(actorCwd, 'checkout', '-q', '--detach', head); const readViewHeadAfterActor = git(readView, 'rev-parse', 'HEAD'); assert.equal(readViewHeadAfterActor, placeProof.readViewHead, 'An actor checkout leaves the read view HEAD');
-        writeFileSync(join(run, 'evidence/read-view-place.json'), JSON.stringify({ ...placeProof, syncMovedReadViewTo: head, actorHeadAfterSync, actorMovedTo: git(actorCwd, 'rev-parse', 'HEAD'), readViewHeadAfterActor }, null, 2));
+        writeFileSync(join(run, 'evidence/read-view-place.json'), JSON.stringify({ ...placeProof, projectFolder, projectGitDir, actorCommonDir, syncMovedReadViewTo: head, actorHeadAfterSync, actorMovedTo: git(actorCwd, 'rev-parse', 'HEAD'), readViewHeadAfterActor }, null, 2));
         const verify = await assign({ ...session, stage: 'verify', candidates: [verifyTarget] }); assert(verify.ok); assert.notEqual(verify.assignment.ref.id, review.assignment.ref.id);
         const beforeRetry = attempts;
         assert((await assign({ ...session, stage: 'review', candidates: [] })).ok); assert((await assign({ ...session, stage: 'verify', candidates: [] })).ok); assert.equal(attempts, beforeRetry);
@@ -142,7 +161,7 @@ try {
         assert.equal((await assign({ ...missing, stage: 'review', candidates: [defaultTarget] })).ok, false);
         await setting('synthetic/missing', 'provenance', false);
         assert((await assign({ ...missing, stage: 'review', candidates: [authorModel] })).ok);
-        const fallback = await seed('fallback', 11, 'synthetic/fallback'); await setting('synthetic/fallback', 'review.model', preferredTarget.model); rejectPreferred = true;
+        const fallback = await seed('fallback', 11, 'synthetic/fallback'); await setting('synthetic/fallback', 'review.harness', preferredTarget.adapter); rejectPreferred = true;
         const fallbackResult = await assign({ ...fallback, stage: 'review', candidates: [defaultTarget, preferredTarget] }); assert(fallbackResult.ok); assert.equal(fallbackResult.assignment.actor.model, defaultTarget.model); assert(fallbackResult.assignment.fallback.some(text => text.includes('qualifying default'))); rejectPreferred = false;
         assert.equal((await assign({ ...session, acceptanceContract: 'changed', stage: 'review', candidates: [] })).ok, false);
         git(origin, 'checkout', 'candidate'); writeFileSync(join(origin, 'behavior.txt'), 'new-head'); git(origin, 'commit', '-am', 'new head'); head = git(origin, 'rev-parse', 'HEAD'); git(origin, 'update-ref', 'refs/pull/8/head', head); git(origin, 'checkout', 'dev');
@@ -156,7 +175,7 @@ try {
         const before = attempts;
         const stored = assignments.read('session', 'https://github.com/synthetic/session/pull/8', head); assert(stored.review?.ref);
         const replay = await assign({ todoId: 'session', url: 'https://github.com/synthetic/session/pull/8', head, acceptanceContract: 'artifact:contract-session', stage: 'review', candidates: [] }); assert(replay.ok); assert.deepEqual(replay.assignment.ref, stored.review.ref); assert.equal(attempts, before);
-        assert.equal(db.prepare('SELECT COUNT(*) AS n FROM neo_todos').get().n, 6);
+        assert.equal(db.prepare('SELECT COUNT(*) AS n FROM neo_todos').get().n, 8);
         assert(db.prepare('SELECT state FROM neo_todos').all().every((row: { state: string }) => row.state === 'doing'));
         assert.equal(git(source, 'rev-parse', 'HEAD'), baseHead); assert.equal(readFileSync(join(source, 'behavior.txt'), 'utf8'), 'preserve dirty author source');
         evidence.push({ phase, stored, todoStates: db.prepare('SELECT id,state FROM neo_todos').all() });

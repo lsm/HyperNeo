@@ -1,5 +1,5 @@
 import type { Session } from '@hyperneo/shared';
-import superpipe, { type PipelineAPI } from 'superpipe';
+import superpipe, { type PipelineAPI, type SuperPipeFactory } from 'superpipe';
 import { z } from 'zod';
 import type { Job } from '../../storage/repositories/job-queue-repository.ts';
 import type { SendStatus } from '../../storage/repositories/sdk-message-repository.ts';
@@ -219,8 +219,7 @@ export function readSessionEvent(
 }
 
 function ownSessionPipeline<Input, Result>(
-  name: string,
-  deps: SessionEventDependencies,
+  pipeline: ReturnType<SuperPipeFactory>,
   apply: (
     sessionId: string,
     input: Input,
@@ -228,7 +227,7 @@ function ownSessionPipeline<Input, Result>(
     caller: OperationCaller
   ) => Result
 ) {
-  return (superpipe({ deps })(name) as PipelineAPI)
+  return (pipeline as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitSessionCaller, ['caller', 'deps'], 'result:outcome')
     .pipe(apply, ['outcome', 'input', 'deps', 'caller'], 'outcome')
@@ -258,7 +257,10 @@ export function createSessionEventOperations(
       description: `Subscribe this session to external events matching a topic glob (e.g. github/lsm/neokai/pull_request/*.review_*), or pass prUrl instead of topicPattern to follow one GitHub pull request; exactly one of the two is required. Returns { ok, topicPattern }, or { ok: false, error } naming the repo when its watch could not start; the subscription is kept, so subscribing again retries the watch. ${SESSION_DOC}`,
       inputSchema: SubscribeInput,
       resultSchema: z.union([OutcomeSchema, TopicRejections]),
-      execute: ownSessionPipeline('subscribe-session-event', deps, subscribeOwnSession),
+      execute: ownSessionPipeline(
+        superpipe({ deps })('event.external.subscribe'),
+        subscribeOwnSession
+      ),
     }),
     defineOperation({
       name: 'event.external.unsubscribe',
@@ -266,7 +268,10 @@ export function createSessionEventOperations(
       description: `Remove this session's subscription for a topic glob, or for the pull request named by prUrl; exactly one of the two is required. Idempotent. ${SESSION_DOC}`,
       inputSchema: UnsubscribeInput,
       resultSchema: z.union([OutcomeSchema, TopicRejections]),
-      execute: ownSessionPipeline('unsubscribe-session-event', deps, unsubscribeOwnSession),
+      execute: ownSessionPipeline(
+        superpipe({ deps })('event.external.unsubscribe'),
+        unsubscribeOwnSession
+      ),
     }),
     defineOperation({
       name: 'event.external.subscription.list',
@@ -282,8 +287,9 @@ export function createSessionEventOperations(
         }),
         REJECTIONS,
       ]),
-      execute: ownSessionPipeline('list-session-event-subscriptions', deps, (sessionId) =>
-        listOwnSubscriptions(sessionId, deps)
+      execute: ownSessionPipeline(
+        superpipe({ deps })('event.external.subscription.list'),
+        (sessionId) => listOwnSubscriptions(sessionId, deps)
       ),
     }),
     defineOperation({
@@ -295,7 +301,7 @@ export function createSessionEventOperations(
         z.object({ event: ExternalEventSchema, state: ExternalEventStateSchema }),
         z.enum(['caller_denied', 'session_inactive', 'event_not_found']),
       ]),
-      execute: ownSessionPipeline('get-session-event', deps, readSessionEvent),
+      execute: ownSessionPipeline(superpipe({ deps })('event.external.get'), readSessionEvent),
     }),
     defineOperation({
       name: 'event.external.delivery.list',
@@ -303,7 +309,10 @@ export function createSessionEventOperations(
       description: `List the external events delivered to this session, newest first, with each delivery's state: delivered once the session consumed the message, pending while it waits. Covers the ${RECENT_EVENT_WINDOW} most recent events while their mailbox jobs are retained. ${SESSION_DOC}`,
       inputSchema: DeliveryListInput,
       resultSchema: z.union([z.object({ deliveries: z.array(DeliverySchema) }), REJECTIONS]),
-      execute: ownSessionPipeline('list-session-event-deliveries', deps, readSessionDeliveries),
+      execute: ownSessionPipeline(
+        superpipe({ deps })('event.external.delivery.list'),
+        readSessionDeliveries
+      ),
     }),
   ];
 }

@@ -1,6 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import { isNeoUnattendedCleanup } from './project-cleanup.ts';
+import { neoTopicList, type NeoTopicCount } from './plan-context.ts';
 import type { NeoReorganized } from './reorganize-operation.ts';
 
 export const NEO_TOPICS_REORGANIZE_NIGHTLY = 'neo.projects.reorganize.nightly';
@@ -12,6 +13,8 @@ export interface NeoNightlyReorganizeDeps {
   lastHumanAt(): number | null;
   reorganize(): Promise<NeoReorganized>;
   log(line: string): void;
+  topics(): NeoTopicCount[];
+  wake(key: string, text: string): Promise<boolean>;
 }
 
 type NightlyPlan = { lastRunAt: number | null; nextAt: number; run: boolean };
@@ -82,6 +85,19 @@ export const runNeoNightlyReorganize = (
       return { ran: true };
     },
     ['job', 'deps'],
+    'result'
+  )
+  .pipe(
+    async (deps: NeoNightlyReorganizeDeps, plan: NightlyPlan, result: NightlyResult) => {
+      const list = neoTopicList(deps.topics());
+      if (list.length > 1)
+        await deps.wake(
+          `neo-topic-tidy:${plan.lastRunAt}`,
+          `Daily topic tidy. Topics you picked on asks, with their ask counts: ${list.join(', ')}. If two of them name the same lasting area, fold the smaller into the other with neo.topic.merge {from, to}; otherwise change nothing.`
+        );
+      return result;
+    },
+    ['deps', 'plan', 'result'],
     'result'
   )
   .endAsync('result') as (

@@ -1,5 +1,10 @@
+import {
+  archiveSession,
+  deleteSession,
+  getSessionInfo,
+  unarchiveSession,
+} from '@anthropic-ai/claude-agent-sdk';
 import { generateUUID } from '@hyperneo/shared';
-import { getDataDir } from './data-dir.ts';
 import {
   copyFileSync,
   existsSync,
@@ -7,14 +12,13 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
-  renameSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { open } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { Database } from '../storage/database.ts';
 import { stripDisallowedBlockKeys } from './content-block-keys.ts';
 
@@ -73,61 +77,15 @@ export function migrateSDKSessionFile(
   }
 }
 
-function findSDKSessionFile(workspacePath: string, kaiSessionId: string): string | null {
-  try {
-    const sessionDir = getSDKProjectDir(workspacePath);
-
-    if (!existsSync(sessionDir)) {
-      return null;
-    }
-
-    const files = readdirSync(sessionDir).filter((f) => f.endsWith('.jsonl'));
-
-    const matchingFiles: Array<{ path: string; mtime: number }> = [];
-
-    for (const file of files) {
-      const filePath = join(sessionDir, file);
-      const content = readFileSync(filePath, 'utf-8');
-
-      if (content.includes(kaiSessionId)) {
-        const stats = statSync(filePath);
-        matchingFiles.push({ path: filePath, mtime: stats.mtimeMs });
-      }
-    }
-
-    if (matchingFiles.length === 0) {
-      return null;
-    }
-
-    matchingFiles.sort((a, b) => b.mtime - a.mtime);
-    return matchingFiles[0].path;
-  } catch {
-    return null;
-  }
-}
-
 export function removeToolResultFromSessionFile(
   workspacePath: string,
   sdkSessionId: string | null,
-  messageUuid: string,
-  kaiSessionId?: string
+  messageUuid: string
 ): boolean {
   try {
-    let sessionFile: string | null = null;
-
-    if (sdkSessionId) {
-      sessionFile = getSDKSessionFilePath(workspacePath, sdkSessionId);
-      if (!existsSync(sessionFile)) {
-        return false;
-      }
-    } else if (kaiSessionId) {
-      sessionFile = findSDKSessionFile(workspacePath, kaiSessionId);
-      if (!sessionFile) {
-        return false;
-      }
-    } else {
-      return false;
-    }
+    if (!sdkSessionId) return false;
+    const sessionFile = getSDKSessionFilePath(workspacePath, sdkSessionId);
+    if (!existsSync(sessionFile)) return false;
 
     const content = readFileSync(sessionFile, 'utf-8');
     const lines = content.split('\n').filter((line) => line.trim());
@@ -694,190 +652,58 @@ async function validateAndRepairSessionFile(
   return { valid: false, repairError: repair.errors.join('; ') || 'repair failed' };
 }
 
-export interface SDKDeleteResult {
-  success: boolean;
-  deletedFiles: string[];
-  deletedSize: number;
-  errors: string[];
-}
-
-export interface SDKArchiveResult {
-  success: boolean;
-  archivePath: string | null;
-  archivedFiles: string[];
-  totalSize: number;
-  errors: string[];
-}
-
-interface ArchiveMetadata {
-  kaiSessionId: string;
-  originalWorkspacePath: string;
-  originalFilePaths: string[];
-  archivedAt: string;
-  totalSize: number;
-  fileCount: number;
-}
-
-function getArchiveDir(kaiSessionId: string): string {
-  const baseDir = process.env.TEST_SDK_SESSION_DIR || getDataDir();
-  return join(baseDir, 'claude-session-archives', kaiSessionId);
-}
-
-function findAllSDKFilesForSession(
+export async function archiveSDKSessions(
   workspacePath: string,
-  sdkSessionId: string | null,
-  kaiSessionId: string
-): Array<{ path: string; size: number }> {
-  const results: Array<{ path: string; size: number }> = [];
-
-  try {
-    const sessionDir = getSDKProjectDir(workspacePath);
-
-    if (!existsSync(sessionDir)) {
-      return results;
-    }
-
-    if (sdkSessionId) {
-      const filePath = getSDKSessionFilePath(workspacePath, sdkSessionId);
-      if (existsSync(filePath)) {
-        const stats = statSync(filePath);
-        results.push({ path: filePath, size: stats.size });
-      }
-    }
-
-    const files = readdirSync(sessionDir).filter((f) => f.endsWith('.jsonl'));
-
-    for (const file of files) {
-      const filePath = join(sessionDir, file);
-
-      if (results.some((r) => r.path === filePath)) {
-        continue;
-      }
-
-      try {
-        const content = readFileSync(filePath, 'utf-8');
-        if (content.includes(kaiSessionId)) {
-          const stats = statSync(filePath);
-          results.push({ path: filePath, size: stats.size });
-        }
-      } catch {}
-    }
-  } catch {}
-
-  return results;
+  sdkSessionIds: readonly string[]
+): Promise<number> {
+  let archived = 0;
+  for (const id of sdkSessionIds)
+    if (await ifSessionFound(() => archiveSession(id, { dir: workspacePath }))) archived++;
+  return archived;
 }
 
-export function deleteSDKSessionFiles(
+export async function withUnarchivedSDKSessions(
   workspacePath: string,
-  sdkSessionId: string | null,
-  kaiSessionId: string
-): SDKDeleteResult {
-  const result: SDKDeleteResult = {
-    success: true,
-    deletedFiles: [],
-    deletedSize: 0,
-    errors: [],
-  };
-
+  sdkSessionIds: readonly string[],
+  commit: () => Promise<boolean>
+): Promise<boolean> {
+  const restored: string[] = [];
+  let committed = false;
+  const options = { dir: workspacePath };
   try {
-    const files = findAllSDKFilesForSession(workspacePath, sdkSessionId, kaiSessionId);
-
-    if (files.length === 0) {
-      return result;
+    for (const id of sdkSessionIds) {
+      if (!(await getSessionInfo(id, options))?.archived) continue;
+      if (await ifSessionFound(() => unarchiveSession(id, options))) restored.push(id);
     }
-
-    for (const file of files) {
-      try {
-        unlinkSync(file.path);
-        validatedSessionFiles.delete(file.path);
-        sessionFileRewrites.delete(file.path);
-        result.deletedFiles.push(file.path);
-        result.deletedSize += file.size;
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        result.errors.push(`Failed to delete ${file.path}: ${errorMsg}`);
-        result.success = false;
-      }
-    }
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    result.errors.push(`Delete operation failed: ${errorMsg}`);
-    result.success = false;
+    committed = await commit();
+    return committed;
+  } finally {
+    if (!committed) await archiveSDKSessions(workspacePath, restored);
   }
-
-  return result;
 }
 
-export function archiveSDKSessionFiles(
+export async function deleteSDKSessions(
   workspacePath: string,
-  sdkSessionId: string | null,
-  kaiSessionId: string
-): SDKArchiveResult {
-  const result: SDKArchiveResult = {
-    success: true,
-    archivePath: null,
-    archivedFiles: [],
-    totalSize: 0,
-    errors: [],
-  };
-
-  try {
-    const files = findAllSDKFilesForSession(workspacePath, sdkSessionId, kaiSessionId);
-
-    if (files.length === 0) {
-      return result;
-    }
-
-    const archiveDir = getArchiveDir(kaiSessionId);
-    mkdirSync(archiveDir, { recursive: true });
-    result.archivePath = archiveDir;
-
-    const originalPaths: string[] = [];
-
-    for (const file of files) {
-      try {
-        const fileName = basename(file.path);
-        const archivePath = join(archiveDir, fileName);
-
-        try {
-          renameSync(file.path, archivePath);
-        } catch {
-          copyFileSync(file.path, archivePath);
-          unlinkSync(file.path);
-        }
-        validatedSessionFiles.delete(file.path);
-        sessionFileRewrites.delete(file.path);
-
-        result.archivedFiles.push(archivePath);
-        result.totalSize += file.size;
-        originalPaths.push(file.path);
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        result.errors.push(`Failed to archive ${file.path}: ${errorMsg}`);
-        result.success = false;
-      }
-    }
-
-    if (result.archivedFiles.length > 0) {
-      const metadata: ArchiveMetadata = {
-        kaiSessionId,
-        originalWorkspacePath: workspacePath,
-        originalFilePaths: originalPaths,
-        archivedAt: new Date().toISOString(),
-        totalSize: result.totalSize,
-        fileCount: result.archivedFiles.length,
-      };
-
-      const metadataPath = join(archiveDir, 'archive-metadata.json');
-      writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
-    }
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    result.errors.push(`Archive operation failed: ${errorMsg}`);
-    result.success = false;
+  sdkSessionIds: readonly string[]
+): Promise<number> {
+  let deleted = 0;
+  for (const id of sdkSessionIds) {
+    if (await ifSessionFound(() => deleteSession(id, { dir: workspacePath }))) deleted++;
+    const filePath = getSDKSessionFilePath(workspacePath, id);
+    validatedSessionFiles.delete(filePath);
+    sessionFileRewrites.delete(filePath);
   }
+  return deleted;
+}
 
-  return result;
+async function ifSessionFound(mutate: () => Promise<void>): Promise<boolean> {
+  try {
+    await mutate();
+    return true;
+  } catch (error) {
+    if (error instanceof Error && /not found/i.test(error.message)) return false;
+    throw error;
+  }
 }
 
 export interface StripThinkingBlocksResult {
@@ -949,20 +775,10 @@ export function stripThinkingBlocksFromSessionFile(
 export function truncateSessionFileAtMessage(
   workspacePath: string,
   sdkSessionId: string | null | undefined,
-  kaiSessionId: string,
   messageUuid: string
 ): { truncated: boolean; linesRemoved: number } {
-  let filePath: string | null = null;
-  if (sdkSessionId) {
-    const candidatePath = getSDKSessionFilePath(workspacePath, sdkSessionId);
-    if (existsSync(candidatePath)) {
-      filePath = candidatePath;
-    }
-  }
+  const filePath = resolveSDKSessionFilePath(workspacePath, sdkSessionId);
   if (!filePath) {
-    filePath = findSDKSessionFile(workspacePath, kaiSessionId);
-  }
-  if (!filePath || !existsSync(filePath)) {
     return { truncated: false, linesRemoved: 0 };
   }
 
@@ -1009,19 +825,17 @@ export function truncateSessionFileAtMessage(
 export function messageUuidExistsInSessionFile(
   workspacePath: string,
   sdkSessionId: string | null | undefined,
-  kaiSessionId: string,
   messageUuid: string
 ): boolean {
-  const messageUuids = readMessageUuidsFromSessionFile(workspacePath, sdkSessionId, kaiSessionId);
+  const messageUuids = readMessageUuidsFromSessionFile(workspacePath, sdkSessionId);
   return messageUuids?.has(messageUuid) ?? false;
 }
 
 function readMessageUuidsFromSessionFile(
   workspacePath: string,
-  sdkSessionId: string | null | undefined,
-  kaiSessionId: string
+  sdkSessionId: string | null | undefined
 ): Set<string> | null {
-  const filePath = resolveSDKSessionFilePath(workspacePath, sdkSessionId, kaiSessionId);
+  const filePath = resolveSDKSessionFilePath(workspacePath, sdkSessionId);
   if (!filePath) {
     return null;
   }
@@ -1036,24 +850,11 @@ function readMessageUuidsFromSessionFile(
 
 function resolveSDKSessionFilePath(
   workspacePath: string,
-  sdkSessionId: string | null | undefined,
-  kaiSessionId: string
+  sdkSessionId: string | null | undefined
 ): string | null {
-  let filePath: string | null = null;
-  if (sdkSessionId) {
-    const candidatePath = getSDKSessionFilePath(workspacePath, sdkSessionId);
-    if (existsSync(candidatePath)) {
-      filePath = candidatePath;
-    }
-  }
-  if (!filePath) {
-    filePath = findSDKSessionFile(workspacePath, kaiSessionId);
-  }
-  if (!filePath || !existsSync(filePath)) {
-    return null;
-  }
-
-  return filePath;
+  if (!sdkSessionId) return null;
+  const filePath = getSDKSessionFilePath(workspacePath, sdkSessionId);
+  return existsSync(filePath) ? filePath : null;
 }
 
 function extractMessageUuids(content: string): Set<string> {

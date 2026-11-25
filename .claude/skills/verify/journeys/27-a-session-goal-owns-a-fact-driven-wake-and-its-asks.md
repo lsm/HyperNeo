@@ -2,7 +2,7 @@
     `VERIFY_MOCK=neo-script-api.ts`, register the synthetic provider from Launch,
     then run `bun .claude/skills/verify/goal-schedule.ts <port> "$RUN"`. It creates
     an hourly-capable goal with a one-minute cadence for verification. The mock
-    model calls `neo.ask.open` through the real MCP door with that `goalId`.
+    model calls `neo.ask.propose` through the real MCP door with that `goalId`, without todos; the resulting proposal awaits human approval.
     End state: `evidence/goal-schedule.json` contains the linked ask, a delivered
     `<daemon-note kind="scheduled_wake">` in root Neo's transcript with mandate
     and journal run identity, the full goal-cycle instructions prefixed inside that wake, the schedule digest covering goal facts and received work, and an
@@ -14,8 +14,9 @@
     to open the root session transcript headlessly and capture
     `evidence/goal-schedule-transcript.png`. Keep the `neo:` colon unescaped in
     the session route; the router does not decode a percent-encoded session id.
-    CI covers foreign-goal rejection, failed/unconfirmed delivery, unchanged
-    skips/backoff, linked question/PR changes, repository splits and migration reruns.
+    CI covers foreign-goal rejection, failed/unconfirmed delivery, work wakes at
+    every due time with the daily run limit, linked question/PR changes,
+    repository splits and migration reruns.
     Missing and closed Neo targets finish `target_gone`; open interrupted Neo
     targets remain active with `skipped_busy` and can fire when idle. Delivery
     rechecks closure after facts load, so a closing target receives no wake.

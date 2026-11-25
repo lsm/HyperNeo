@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mirrorNeoWorkspaceProjectsAsync } from '../../../../src/lib/neo/packs/coding/project-mirror-async';
 import { mergePlaceGroups } from '../../../../src/lib/drivers/places';
 import type { PlaceGroup } from '../../../../src/lib/drivers/types';
-import { recordStartedWork } from '../../../../src/storage/work-started-sessions';
+import { recordWorkerStarted } from '../../../../src/storage/repositories/work-started-sessions-worker';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository';
 import { createTestDb } from '../../../helpers/database';
 
@@ -55,7 +55,7 @@ describe('automatic project ownership', () => {
   );
 
   test('only owned work contributes aliases from a mixed discovery group', async () => {
-    recordStartedWork(db.getDatabase(), { adapter: 'codex-desktop', id: 'owned' });
+    recordWorkerStarted(db.getDatabase(), { adapter: 'codex-desktop', id: 'owned' });
     const foreign = group('foreign', '/foreign');
     const owned = group('owned', '/owned');
     foreign.place.codeIdentity = owned.place.codeIdentity;
@@ -88,7 +88,7 @@ describe('automatic project ownership', () => {
   });
 
   test('remote work cannot claim a colliding local owned id', async () => {
-    recordStartedWork(db.getDatabase(), { adapter: 'codex-desktop', id: 'owned' });
+    recordWorkerStarted(db.getDatabase(), { adapter: 'codex-desktop', id: 'owned' });
     const remote = group('owned', '/remote');
     remote.work[0].ref.daemon = 'other';
     await mirrorNeoWorkspaceProjectsAsync(db, [remote]);

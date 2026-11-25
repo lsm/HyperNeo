@@ -47,9 +47,15 @@ import type {
 } from './public-conversation.ts';
 import { neoCardReplyTitle } from './public-conversation.ts';
 import { neoMessageAnchor } from './reply-context.ts';
-import { neoAppLabel, neoSessionKind, neoSessionLink } from './work-driver.ts';
+import {
+  handoffNativeSessionLink,
+  neoAppLabel,
+  neoSessionKind,
+  neoSessionLink,
+} from './work-driver.ts';
 
 export type NeoEditUndelivered = (ask: NeoAskItem) => boolean | void | Promise<boolean | void>;
+export type NeoRetryUndelivered = (ask: NeoAskItem) => Promise<boolean>;
 type AskPhoto = { kind: 'inline'; src: string } | { kind: 'ref'; ref: NeoConversationImageRef };
 
 function publicAskPhotos(content: NeoAskItem['content']): AskPhoto[] {
@@ -345,6 +351,9 @@ function NoticeRow({
             {link ? (
               <a
                 href={link}
+                onClick={(event) => {
+                  if (handoffNativeSessionLink(link)) event.preventDefault();
+                }}
                 class="flex min-h-9 items-center gap-1.5 justify-self-end rounded-md px-3 text-accent hover:bg-fill-soft"
                 aria-label={t('chat.openNamed', { name: notice.title })}
               >
@@ -429,6 +438,7 @@ function PublicEntry({
   entry,
   arrive = true,
   onEditUndelivered,
+  onRetryUndelivered,
   replyLabels,
   onQuote,
   onSeek,
@@ -445,6 +455,7 @@ function PublicEntry({
   replyLabels?: ReadonlyMap<string, { label: string; askId: string }>;
   onQuote?: (quote: NeoQuote) => void;
   onEditUndelivered?: NeoEditUndelivered;
+  onRetryUndelivered?: NeoRetryUndelivered;
 }) {
   const ask = entry.kind === 'ask' ? entry.ask : null;
   const undelivered = ask?.messageStatus === 'failed' || ask?.delivery?.state === 'failed';
@@ -456,6 +467,7 @@ function PublicEntry({
   const article = useRef<HTMLElement>(null);
   const menu = useNeoMessageMenu();
   const [showReason, setShowReason] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [restored, setRestored] = useState(
     () => !!ask && restoredUndelivered().includes(ask.requestId)
   );
@@ -496,7 +508,7 @@ function PublicEntry({
     : undefined;
   const time = messageTime((ask ?? publication)!.createdAt);
   const author = publication ? 'Neo' : t('chat.you');
-  const notDelivered = t('chat.notDelivered');
+  const notDelivered = t(ask?.delivery?.reason ? 'chat.refused' : 'chat.notDelivered');
   const links = publication?.links.filter((link) => link.kind === 'work') ?? [];
   const anchor = ask
     ? neoMessageAnchor(ask.askOrigin.sessionId, ask.askOrigin.messageId)
@@ -700,16 +712,44 @@ function PublicEntry({
         </div>
       ) : null}
       {undelivered && (
-        <div class="flow-root mt-1 px-1 text-xs text-danger">
-          {showReason && <span>{notDelivered}</span>}
-          <ContentDisclosureControl
-            expanded={showReason}
-            onToggle={() => setShowReason(!showReason)}
-            aria-label={notDelivered}
-          />
+        <div class="flow-root mt-1 whitespace-pre-wrap break-words px-1 text-xs text-danger">
+          {ask?.delivery?.reason ? (
+            <span>{ask.delivery.reason}</span>
+          ) : (
+            showReason && <span>{notDelivered}</span>
+          )}
+          {!ask?.delivery?.reason && (
+            <ContentDisclosureControl
+              expanded={showReason}
+              onToggle={() => setShowReason(!showReason)}
+              aria-label={notDelivered}
+            />
+          )}
+          {ask?.delivery?.supersededBy && <span class="ml-2">{t('chat.retried')}</span>}
         </div>
       )}
       <div class={`mt-1 flex items-center gap-3 ${ask ? 'justify-end' : ''}`}>
+        {undelivered &&
+          ask?.delivery?.reason &&
+          !ask.delivery.supersededBy &&
+          onRetryUndelivered && (
+            <button
+              type="button"
+              disabled={retrying}
+              class="text-sm text-accent hover:underline disabled:opacity-50"
+              onClick={() => {
+                setRetrying(true);
+                void onRetryUndelivered(ask).then(
+                  (accepted) => {
+                    if (!accepted) setRetrying(false);
+                  },
+                  () => setRetrying(false)
+                );
+              }}
+            >
+              {t('chat.retry')}
+            </button>
+          )}
         {undelivered && onEditUndelivered && !restored && (
           <button
             type="button"
@@ -917,6 +957,7 @@ export function NeoPublicConversation({
   onOpenWork,
   onOpenSession,
   onEditUndelivered,
+  onRetryUndelivered,
   replyLabels,
   mute,
   onQuote,
@@ -928,6 +969,7 @@ export function NeoPublicConversation({
   onQuote?: (quote: NeoQuote) => void;
   mute?: NeoSessionMute;
   onEditUndelivered?: NeoEditUndelivered;
+  onRetryUndelivered?: NeoRetryUndelivered;
   onRetry?: () => void;
   onLoadEarlier?: () => void;
   onOpenWork?: (anchor: string, cardReply?: NeoCardReply) => void;
@@ -994,6 +1036,7 @@ export function NeoPublicConversation({
             onOpenWork={onOpenWork}
             onOpenSession={onOpenSession}
             onEditUndelivered={onEditUndelivered}
+            onRetryUndelivered={onRetryUndelivered}
             replyLabels={labels}
             onSeek={seek}
             onQuote={onQuote}

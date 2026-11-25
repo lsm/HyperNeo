@@ -14,11 +14,26 @@ import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/loca
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoPublicationRepository } from '../../../packages/daemon/src/storage/repositories/neo-publication-repository.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
-import { neoIntakeMessage } from '../../../packages/daemon/src/lib/neo/intake.ts';
 import { NeoFrontInputRepository } from '../../../packages/daemon/src/storage/repositories/neo-front-input-worker.ts';
 import { frontSessionId } from '../../../packages/daemon/src/lib/neo/front-mode.ts';
+import { NeoService } from '../../../packages/daemon/src/lib/neo/service.ts';
 
 const run = resolve(process.argv.at(-1)!);
+const saturated = process.argv.includes('--saturated');
+let releaseRefresh: (() => void) | undefined;
+let refreshStarted = 0;
+const refreshJobIds: string[] = [];
+let lagTimer: ReturnType<typeof setInterval> | undefined;
+let maxLagMs = 0;
+let lagSamples = 0;
+const originalRefresh = NeoService.prototype.refreshDriverWork;
+if (saturated) {
+  const held = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+  NeoService.prototype.refreshDriverWork = async () => {
+    refreshStarted++;
+    await held;
+  };
+}
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 for (const name of ['workspace', 'bin', 'evidence', 'sdk'])
@@ -68,14 +83,22 @@ const fixture = createServer(async (request, response) => {
     evidence.neoSawAcknowledgment = true;
   const active = [failedDeliveryId, handoffId, humanId].find(id => history.includes(id)) ?? humanId;
   const stage = stages.get(active) ?? 0;
+  if (front && active === failedDeliveryId && stage === 0) {
+    const changed = app!.db.getDatabase().prepare(
+      'UPDATE neo_front_inputs SET eligible = 0 WHERE message_id = ? AND eligible = 1'
+    ).run(failedDeliveryId).changes;
+    assert.equal(changed, 1);
+    stages.set(active, 1);
+    evidence.handoffAdmissionRefused = true;
+  }
   let block: Record<string, unknown> = { type: 'text', text: front ? 'Hello from Neo.' : 'Internal assistant text.' };
   if (front && stage === 0 && active === humanId) {
     block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__reply',
-      input: { requestId: `final-${active}`, replyTo: [active], text: 'Hello from Neo.' } };
+      input: { requestId: `final-${active}`, replyTo: [active], text: 'Hello from Neo.', work_on: false } };
     stages.set(active, 4);
   } else if (front && stage === 0 && active === handoffId) {
     block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__reply',
-      input: { requestId: `work-${active}`, replyTo: [active], text: 'I will handle that.' } };
+      input: { requestId: `work-${active}`, replyTo: [active], text: 'I will handle that.', work_on: true } };
     stages.set(active, 2);
   }
   const publish = block.type === 'tool_use';
@@ -143,8 +166,8 @@ let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let transport: WebSocketClientTransport | undefined;
 let hub: MessageHub | undefined;
 const evidence: Record<string, unknown> = {};
-async function waitFor(check: () => boolean) {
-  const deadline = Date.now() + 90_000;
+async function waitFor(check: () => boolean, timeoutMs = 90_000) {
+  const deadline = Date.now() + timeoutMs;
   while (!check() && Date.now() < deadline) await new Promise((done) => setTimeout(done, 100));
   assert(check(), 'condition did not complete');
 }
@@ -195,7 +218,7 @@ try {
     createdAt: new Date().toISOString(),
     lastActiveAt: new Date().toISOString(),
     status: 'active',
-    config: { provider: 'kimi', model: model.id, queryMode: 'manual', thinkingLevel: 'off' },
+    config: { provider: 'kimi', model: model.id, queryMode: 'immediate', thinkingLevel: 'off' },
     metadata: {
       messageCount: 0,
       totalTokens: 0,
@@ -238,6 +261,21 @@ try {
     exa: { type: 'http', url: `http://127.0.0.1:${port}/exa-probe` },
   });
   assert(convo.getSessionData().config.mcpServers?.exa);
+  if (saturated) {
+    for (let i = 0; i < 5; i++)
+      refreshJobIds.push(app.db.getJobQueueRepo().enqueue({ queue: 'neo.work.driver.refresh', payload: {} }).id);
+    await waitFor(() => refreshStarted >= 1, 15_000);
+    await new Promise((done) => setTimeout(done, 2_000));
+    evidence.refreshJobsHeld = refreshStarted;
+    let lastTick = performance.now();
+    lagTimer = setInterval(() => {
+      const now = performance.now();
+      maxLagMs = Math.max(maxLagMs, now - lastTick - 100);
+      lagSamples++;
+      lastTick = now;
+    }, 100);
+  }
+  const sentAt = Date.now();
   assert.equal(
     (
       await invoke<{ ok: boolean }>('neo.message.send', {
@@ -248,116 +286,148 @@ try {
     ).ok,
     true
   );
-  await waitFor(() => replies().length === 1);
-  await waitFor(
-    () => app!.sessionManager.getCachedSession(front)?.getProcessingState().status === 'idle'
-  );
-  const nativeId = app.db.getSession(front)?.sdkSessionId;
-  assert(nativeId);
-  const back = createOperationMcpHandler(app.sessionManager.getOperationRegistry(), () => ({
-    source: 'mcp',
-    role: 'neo',
-    sessionId: root,
-  }));
-  assert.equal(
-    (await invoke<{ ok: boolean }>('neo.message.send', {
+  let deliveredWhileHeld = true;
+  try {
+    await waitFor(
+      () => saturated
+        ? !!app!.db.getSDKMessageRepo().getMessageByStatusAndUuid(front, 'consumed', humanId)
+        : replies().length === 1,
+      saturated ? 10_000 : 90_000
+    );
+  } catch (error) {
+    if (!saturated) throw error;
+    deliveredWhileHeld = false;
+    releaseRefresh?.();
+    await waitFor(() => !!app!.db.getSDKMessageRepo().getMessageByStatusAndUuid(front, 'consumed', humanId));
+  }
+  if (!saturated) assert.equal(replies()[0].workOn, false);
+  evidence.firstDeliveryMs = Date.now() - sentAt;
+  evidence.deliveredWhileHeld = deliveredWhileHeld;
+  if (lagTimer) clearInterval(lagTimer);
+  if (saturated) {
+    evidence.maxLagMs = maxLagMs;
+    evidence.lagSamples = lagSamples;
+    assert(lagSamples > 0 && maxLagMs < 1_000, 'event loop stalled for at least one second');
+  }
+  NeoService.prototype.refreshDriverWork = originalRefresh;
+  releaseRefresh?.();
+  assert(deliveredWhileHeld, 'human input waited for refresh jobs to release');
+  if (saturated) {
+    await waitFor(() => refreshJobIds.filter((id) => app!.jobQueue.getJob(id)?.status === 'completed').length >= 2, 30_000);
+    evidence.realRefreshCompleted = true;
+  }
+  if (!saturated) {
+    await waitFor(
+      () => app!.sessionManager.getCachedSession(front)?.getProcessingState().status === 'idle'
+    );
+    const nativeId = app.db.getSession(front)?.sdkSessionId;
+    assert(nativeId);
+    const back = createOperationMcpHandler(app.sessionManager.getOperationRegistry(), () => ({
+      source: 'mcp',
+      role: 'neo',
       sessionId: root,
-      requestId: handoffId,
-      content: 'Delegate this action to Neo.',
-    })).ok,
-    true
-  );
-  await waitFor(() => !!app!.db.getSDKMessageRepo().getMessageByStatusAndUuid(root, 'consumed', handoffId));
-  await waitFor(() => app!.sessionManager.getCachedSession(root)?.getProcessingState().status === 'idle');
-  const publish = async (requestId: string, replyTo: string[], fullText: string) => {
-    const result = await back({
-      name: 'neo.publication.publish',
-      input: { requestId, text: fullText, replyTo },
-    });
-    return JSON.parse((result.content[0] as { text: string }).text);
-  };
-  assert.equal(new NeoFrontInputRepository(app.db.getDatabase()).get(conversationId, handoffId)?.owner, 'neo');
-  const answer = await publish('neo-answer', [handoffId], 'The job is complete. All files were copied and their checksums match.');
-  assert.equal(answer.accepted, true, JSON.stringify(answer));
-  const later = await publish('neo-later', [handoffId], 'The review is complete. Here is the later result.');
-  assert.equal(later.accepted, true, JSON.stringify(later));
-  assert.equal(
-    replies().filter((row) => row.replyTo?.includes(handoffId) && row.publishedBy === 'neo').length,
-    2
-  );
-  evidence.neoPublishedDirectly = true;
-  evidence.multipleRepliesAccepted = true;
-  await waitFor(() => app!.sessionManager.getCachedSession(front)?.getProcessingState().status === 'idle');
-  await app.db.saveUserMessage(
-    root,
-    neoIntakeMessage({ sessionId: root, requestId: failedDeliveryId, content: 'Queued handoff' }),
-    'deferred'
-  );
-  assert.equal((await invoke<{ ok: boolean }>('neo.message.send', {
-    sessionId: root,
-    requestId: failedDeliveryId,
-    content: 'Queued handoff',
-  })).ok, true);
-  const outcomes = new NeoFrontInputRepository(app.db.getDatabase());
-  await waitFor(() => !!outcomes.terminal(conversationId, front, failedDeliveryId));
-  const failedJob = () => app!.db.getJobQueueRepo().listJobs({ queue: 'neo.front' })
-    .find((job) => job.payload.messageId === failedDeliveryId);
-  assert(['pending', 'processing'].includes(failedJob()?.status ?? ''));
-  assert.equal(publications.list(conversationId)?.some((row) => row.replyTo?.includes(failedDeliveryId)), false);
-  assert.equal(app.db.getSDKMessageRepo().getUserSendStatus(root, failedDeliveryId), 'deferred');
-  assert(app.db.getSDKMessageRepo().markDeliveryFailedByUuid(root, failedDeliveryId));
-  await waitFor(() => failedJob()?.status === 'completed');
-  assert.deepEqual(failedJob()?.result, { delivered: true, outcome: 'failed' });
-  assert.deepEqual(
-    publications.list(conversationId)!.filter((row) => row.replyTo?.includes(failedDeliveryId)),
-    []
-  );
-  assert.equal(app.db.getSDKMessageRepo().getUserSendStatus(front, failedDeliveryId), 'failed');
-  evidence.queuedThenFailedSettled = failedJob()?.result;
-  evidence.failedDeliveryRetryable = true;
-  assert.equal((await invoke<{ ok: boolean }>('neo.front.set', { enabled: false })).ok, true);
-  assert.equal((await publish('single-mode', [], 'Single-mode reply.')).accepted, true);
-  const rows = replies();
-  assert.deepEqual(rows.map((row) => row.fullText), [
-    'Hello from Neo.', 'I will handle that.',
-    'The job is complete. All files were copied and their checksums match.',
-    'The review is complete. Here is the later result.', 'Single-mode reply.',
-  ]);
-  assert.equal(rows.filter((row) => row.replyTo?.includes(humanId)).length, 1);
-  assert.equal(
-    rows.filter((row) => row.replyTo?.includes(handoffId) && row.publishedBy === 'neo').length,
-    2
-  );
-  assert.deepEqual(rows[0].replyTo, [humanId]);
-  assert.equal(rows[0].verbatim, true);
-  assert(new NeoFrontInputRepository(app.db.getDatabase()).get(conversationId, humanId)?.owner);
-  evidence.humanAnswered = true;
-  assert.deepEqual(rows[2].replyTo, [handoffId]);
-  assert.equal(app.db.getSession(front)?.sdkSessionId, nativeId);
-  assert(childSessions.has(front));
-  assert(app.db.getSDKMessageRepo().getSDKMessages(front).messages.length > 0);
-  assert.equal(exaRequests, 0);
-  evidence.configuredExaExcluded = true;
-  evidence.exaRequests = exaRequests;
-  assert.equal(evidence.neoToolsPresent, true);
-  assert.equal(evidence.neoSawAcknowledgment, true);
-  evidence.passed = true;
-  evidence.nativeFrontSession = nativeId;
-  evidence.replies = rows.map((row) => ({ text: row.fullText, replyTo: row.replyTo, producerInput: row.producerInput }));
-  evidence.requests = requests;
-  evidence.normalSession = true;
-  evidence.modeSwitchPreservedSession = true;
+    }));
+    assert.equal(
+      (await invoke<{ ok: boolean }>('neo.message.send', {
+        sessionId: root,
+        requestId: handoffId,
+        content: 'Delegate this action to Neo.',
+      })).ok,
+      true
+    );
+    await waitFor(() => replies().some((row) => row.replyTo?.includes(handoffId)));
+    assert.equal(replies().find((row) => row.replyTo?.includes(handoffId))?.workOn, true);
+    await waitFor(() => !!app!.db.getSDKMessageRepo().getMessageByStatusAndUuid(root, 'consumed', handoffId));
+    await waitFor(() => app!.sessionManager.getCachedSession(root)?.getProcessingState().status === 'idle');
+    const publish = async (requestId: string, replyTo: string[], fullText: string) => {
+      const result = await back({
+        name: 'neo.publication.publish',
+        input: { requestId, text: fullText, replyTo },
+      });
+      return JSON.parse((result.content[0] as { text: string }).text);
+    };
+    assert.equal(new NeoFrontInputRepository(app.db.getDatabase()).get(conversationId, handoffId)?.owner, 'neo');
+    const answer = await publish('neo-answer', [handoffId], 'The job is complete. All files were copied and their checksums match.');
+    assert.equal(answer.accepted, true, JSON.stringify(answer));
+    const later = await publish('neo-later', [handoffId], 'The review is complete. Here is the later result.');
+    assert.equal(later.accepted, true, JSON.stringify(later));
+    assert.equal(
+      replies().filter((row) => row.replyTo?.includes(handoffId) && row.publishedBy === 'neo').length,
+      2
+    );
+    evidence.neoPublishedDirectly = true;
+    evidence.multipleRepliesAccepted = true;
+    await waitFor(() => app!.sessionManager.getCachedSession(front)?.getProcessingState().status === 'idle');
+    assert.equal((await invoke<{ ok: boolean }>('neo.message.send', {
+      sessionId: root,
+      requestId: failedDeliveryId,
+      content: 'Handle this request.',
+    })).ok, true);
+    const failedJob = () => app!.db.getJobQueueRepo().listJobs({ queue: 'neo.front' })
+      .find((job) => job.payload.messageId === failedDeliveryId);
+    await waitFor(() => failedJob()?.status === 'completed');
+    evidence.handoffOutcome = failedJob()?.result;
+    evidence.failedInputStatus = app.db.getSDKMessageRepo().getUserSendStatus(front, failedDeliveryId);
+    assert.equal(evidence.handoffAdmissionRefused, true);
+    assert.deepEqual(evidence.handoffOutcome, { delivered: true, outcome: 'failed' });
+    assert.equal(evidence.failedInputStatus, 'failed');
+    const asks = await invoke<{ ok: boolean; items: Array<{ requestId: string; messageStatus?: string; delivery?: { state: string } }> }>('neo.conversation.asks.read', { conversationId });
+    assert.equal(asks.ok, true);
+    const failedAsk = asks.items.find((item) => item.requestId === failedDeliveryId);
+    assert.equal(failedAsk?.messageStatus, 'failed');
+    assert.deepEqual(failedAsk?.delivery, { state: 'failed' });
+    assert.equal(publications.list(conversationId)?.some((row) => row.replyTo?.includes(failedDeliveryId)), false);
+    assert.equal((await invoke<{ ok: boolean }>('neo.front.set', { enabled: false })).ok, true);
+    assert.equal((await publish('single-mode', [], 'Single-mode reply.')).accepted, true);
+    const rows = replies();
+    assert.deepEqual(rows.map((row) => row.fullText), [
+      'Hello from Neo.', 'I will handle that.',
+      'The job is complete. All files were copied and their checksums match.',
+      'The review is complete. Here is the later result.', 'Single-mode reply.',
+    ]);
+    assert.equal(rows.filter((row) => row.replyTo?.includes(humanId)).length, 1);
+    assert.equal(
+      rows.filter((row) => row.replyTo?.includes(handoffId) && row.publishedBy === 'neo').length,
+      2
+    );
+    assert.deepEqual(rows[0].replyTo, [humanId]);
+    assert.equal(rows[0].verbatim, true);
+    assert(new NeoFrontInputRepository(app.db.getDatabase()).get(conversationId, humanId)?.owner);
+    evidence.humanAnswered = true;
+    assert.deepEqual(rows[2].replyTo, [handoffId]);
+    assert.equal(app.db.getSession(front)?.sdkSessionId, nativeId);
+    assert(childSessions.has(front));
+    assert(app.db.getSDKMessageRepo().getSDKMessages(front).messages.length > 0);
+    assert.equal(exaRequests, 0);
+    evidence.configuredExaExcluded = true;
+    evidence.exaRequests = exaRequests;
+    assert.equal(evidence.neoToolsPresent, true);
+    assert.equal(evidence.neoSawAcknowledgment, true);
+    evidence.passed = true;
+    evidence.nativeFrontSession = nativeId;
+    evidence.replies = rows.map((row) => ({ text: row.fullText, replyTo: row.replyTo, producerInput: row.producerInput }));
+    evidence.requests = requests;
+    evidence.normalSession = true;
+    evidence.modeSwitchPreservedSession = true;
+  } else {
+    evidence.passed = true;
+  }
 } finally {
+  if (lagTimer) clearInterval(lagTimer);
+  releaseRefresh?.();
   await transport?.close();
   hub?.cleanup();
   await app?.cleanup();
   for (const id of childSessions) releaseSessionKeyBridges(id);
   QueryOptionsBuilder.prototype.build = originalBuild;
+  NeoService.prototype.refreshDriverWork = originalRefresh;
   fixture.closeAllConnections();
   await new Promise<void>((done) => fixture.close(() => done()));
   evidence.resourcesClosed = true;
   writeFileSync(join(run, 'evidence/neo-front-execution.json'), JSON.stringify(evidence, null, 2));
 }
 console.log(
-  'PASS ordinary front session, one-call reply hand-off and direct Neo updates per human input'
+  saturated
+    ? 'PASS human input reached the front while refresh work remained held'
+    : 'PASS ordinary front session, one-call reply hand-off and direct Neo updates per human input'
 );

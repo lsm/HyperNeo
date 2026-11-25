@@ -1,10 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import { subscribeToStructuredLogs, type StructuredLogEvent } from '@hyperneo/shared';
-import {
-  createNeoPublisher,
-  createNeoPublicationOperation,
-} from '../../../../src/lib/neo/publication-operation.ts';
+import { createNeoPublicationOperation } from '../../../../src/lib/neo/publication-operation.ts';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { NeoFrontInputRepository } from '../../../../src/storage/repositories/neo-front-input-worker.ts';
@@ -21,11 +18,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { publishHandoff, publicHandoffReference } from '../../../../src/lib/handoffs/outbox.ts';
 import { DELIVERABLE_CHAR_LIMIT } from '../../../../src/lib/neo/publication.ts';
-import {
-  NEO_REPLY_CHAR_LIMIT,
-  NEO_REPLY_LINE_LIMIT,
-  neoCharCount,
-} from '@hyperneo/shared/types/neo-publication';
+import { NEO_REPLY_CHAR_LIMIT, neoCharCount } from '@hyperneo/shared/types/neo-publication';
+import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
 const root = { sessionId: `neo:${conversationId}`, kind: 'neo' as const, projectId: null };
@@ -43,7 +37,9 @@ const caller = { source: 'mcp' as const, sessionId: root.sessionId, role: 'neo' 
 describe('Neo publication without runtime input attribution', () => {
   let mailbox: MailboxTestDb;
   let ledger: NeoPublicationRepository;
-  let publish: ReturnType<typeof createNeoPublisher>;
+  let operation: ReturnType<typeof createNeoPublicationOperation>['operation'];
+  let publish: ReturnType<typeof createNeoPublicationOperation>['publish'];
+  let runtime: Parameters<typeof createNeoPublicationOperation>[0];
   const notify = vi.fn();
   let held: Promise<void> | null;
   let failWrite: boolean;
@@ -70,7 +66,7 @@ describe('Neo publication without runtime input attribution', () => {
     sourceSession = undefined;
     received = new Set();
     current = [];
-    publish = createNeoPublisher({
+    runtime = {
       ...{ currentHumanInputs: () => current },
       receivedHumanInput: (_sessionId, id) => received.has(id),
       getBinding: (id) => repo.getBindingBySession(id),
@@ -91,7 +87,8 @@ describe('Neo publication without runtime input attribution', () => {
         who.sessionId === root.sessionId
           ? ([report, video].find((ref) => ref.artifactId === id) ?? null)
           : null,
-    });
+    };
+    ({ publish, operation } = createNeoPublicationOperation(runtime));
   });
   afterEach(() => mailbox.close());
   const rawPayload = () =>
@@ -100,6 +97,57 @@ describe('Neo publication without runtime input attribution', () => {
         payload_json: string;
       }
     ).payload_json;
+
+  test('presents successful operation receipts without changing internal publication', async () => {
+    const present = vi.fn(async (items: NeoPublication[]) =>
+      items.map((item) => ({ ...item, shortText: 'Presented' }))
+    );
+    const { publish: internal, operation: publicOperation } = createNeoPublicationOperation(
+      runtime,
+      present
+    );
+    const internalReceipt = await internal({ ...draft, requestId: 'internal' }, caller);
+    expect(internalReceipt).toMatchObject({ accepted: true, publication: { shortText: 'Ready' } });
+    expect(present).not.toHaveBeenCalled();
+
+    const handler = createOperationMcpHandler(
+      createOperationRegistry([publicOperation]),
+      () => caller
+    );
+    const response = await handler({ name: 'neo.publication.publish', input: draft });
+    expect(JSON.parse(response.content[0].text)).toMatchObject({
+      accepted: true,
+      publication: { shortText: 'Presented' },
+    });
+    expect(present).toHaveBeenCalledTimes(1);
+    expect(ledger.list(conversationId)?.map((entry) => entry.shortText)).toEqual([
+      'Ready',
+      'Ready',
+    ]);
+
+    const rejected = await handler({
+      name: 'neo.publication.publish',
+      input: {
+        ...draft,
+        requestId: 'rejected',
+        replyTo: ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'],
+      },
+    });
+    expect(JSON.parse(rejected.content[0].text)).toMatchObject({
+      accepted: false,
+      reason: expect.stringContaining('unknown_reply_target'),
+    });
+    expect(present).toHaveBeenCalledTimes(1);
+  });
+
+  test('propagates publication presentation failures from the operation', async () => {
+    const { operation: publicOperation } = createNeoPublicationOperation(runtime, async () => {
+      throw new Error('presentation failed');
+    });
+    await expect(publicOperation.execute(draft as never, caller)).rejects.toThrow(
+      'presentation failed'
+    );
+  });
 
   test('retains verified worker handoffs and refuses forged, foreign or altered ones without writing', async () => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), 'publication-handoff-')));
@@ -152,10 +200,7 @@ describe('Neo publication without runtime input attribution', () => {
   });
 
   test('published and retried messages tell the model no assistant text is needed unless a record was requested', async () => {
-    const handler = createOperationMcpHandler(
-      createOperationRegistry([createNeoPublicationOperation(publish)]),
-      () => caller
-    );
+    const handler = createOperationMcpHandler(createOperationRegistry([operation]), () => caller);
     const send = (input = draft) => handler({ name: 'neo.publication.publish', input });
     const first = JSON.parse((await send()).content[0].text);
     expect(first).toMatchObject({
@@ -304,7 +349,6 @@ describe('Neo publication without runtime input attribution', () => {
   });
 
   test.each(['work', 'consultation'])('rejects %s links at the publish input schema', (kind) => {
-    const operation = createNeoPublicationOperation(publish);
     expect(
       operation.inputSchema.safeParse({ ...draft, links: [{ kind, id: 'old', label: 'Old' }] })
         .success
@@ -334,10 +378,7 @@ describe('Neo publication without runtime input attribution', () => {
   });
 
   test('session null is the same as no session', async () => {
-    const handler = createOperationMcpHandler(
-      createOperationRegistry([createNeoPublicationOperation(publish)]),
-      () => caller
-    );
+    const handler = createOperationMcpHandler(createOperationRegistry([operation]), () => caller);
     const reply = JSON.parse(
       (await handler({ name: 'neo.publication.publish', input: { ...draft, session: null } }))
         .content[0].text
@@ -561,7 +602,7 @@ describe('Neo publication without runtime input attribution', () => {
     );
   });
 
-  test('holds every reply text to the character and line limits, with or without details', async () => {
+  test('holds every reply text to the character limit, with or without details', async () => {
     const send = (requestId: string, text: string, details?: string) =>
       publish({ requestId, text, ...(details === undefined ? {} : { details }) }, caller);
     const long = `${'The build is green and the review is finished. '.repeat(10)}The branch is ready to merge.`;
@@ -578,21 +619,12 @@ describe('Neo publication without runtime input attribution', () => {
       accepted: false,
       reason: 'reply_summary_too_long',
     });
-    for (const [requestId, text] of [
-      ['six-lines', 'Status\n- a\n- b\n- c\n- d\n- e'],
-      ['blank-between', 'Merged.\n\n- CI green\n- Reviewed\n- Deployed\n- Docs updated'],
-      ['blank-runs', 'Merged.\n\n\nCI green.\nReviewed.\nDone.'],
-      ['trailing-blank', 'Title\n- a\n- b\n- c\n- d\n\n'],
-      ['trailing-run', 'Title\n- a\n- b\n- c\n- d\n\n\n'],
-    ] as const)
-      expect(await send(requestId, text)).toMatchObject({
-        accepted: false,
-        reason: 'reply_needs_details',
-      });
     expect(ledger.list(conversationId) ?? []).toHaveLength(0);
 
     for (const [requestId, text] of [
       ['chars-at-limit', 'x'.repeat(NEO_REPLY_CHAR_LIMIT)],
+      ['many-lines', 'Status\n- a\n- b\n- c\n- d\n- e\n- f\n- g\n- h'],
+      ['blank-between', 'Merged.\n\n- CI green\n- Reviewed\n- Deployed\n- Docs updated'],
       ['five-lines', 'Title\n- a\n- b\n- c\n- d'],
       ['blank-inside-five', 'Merged.\n\n- CI green\n- Reviewed\n- Docs updated'],
       ['terminal-newline', 'Title\n- a\n- b\n- c\n- d\n'],
@@ -615,7 +647,7 @@ describe('Neo publication without runtime input attribution', () => {
       accepted: true,
       publication: { shortText: 'a'.repeat(NEO_REPLY_CHAR_LIMIT - 5), fullText: 'b'.repeat(20) },
     });
-    expect(ledger.list(conversationId)).toHaveLength(7);
+    expect(ledger.list(conversationId)).toHaveLength(9);
   });
 
   test('refuses exactly one character over the reply limit', async () => {

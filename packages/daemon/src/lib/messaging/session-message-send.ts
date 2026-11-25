@@ -1,5 +1,6 @@
 import { generateUUID } from '@hyperneo/shared';
 import { z } from 'zod';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import type { AgentSession } from '../agent/agent-session.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { wrapSessionContent } from './session-envelope.ts';
@@ -221,21 +222,29 @@ function isAgentCaller(caller: OperationCaller): boolean {
 }
 
 export function createSendSessionMessageOperation(deps: SendSessionMessageDependencies) {
+  const send = (superpipe({})('session.message.send') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      async (input: SendInput, caller: OperationCaller): Promise<SendResult> => {
+        try {
+          return input.answerQuestion
+            ? await deliverAnswerQuestion(deps, input)
+            : await deliverSessionMessage(deps, input, caller);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return { success: false, error: message };
+        }
+      },
+      ['input', 'caller'],
+      'result'
+    )
+    .endAsync('result') as (input: SendInput, caller: OperationCaller) => Promise<SendResult>;
   return defineOperation({
     name: 'session.message.send',
     description:
       'Send a user message to a session in a Space and optionally clear a pending question; returns the delivery result.',
     inputSchema: SendSessionMessageInputSchema,
     resultSchema: SendSessionMessageResultSchema,
-    execute: async (input, caller) => {
-      try {
-        return input.answerQuestion
-          ? await deliverAnswerQuestion(deps, input)
-          : await deliverSessionMessage(deps, input, caller);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return { success: false, error: message };
-      }
-    },
+    execute: send,
   });
 }

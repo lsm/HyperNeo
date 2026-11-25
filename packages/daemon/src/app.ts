@@ -1,7 +1,10 @@
 import type { NeoAttentionEvent } from './lib/neo/attention/decide.ts';
 import { NEO_FRONT_INFERENCE } from './lib/job-queue-constants.ts';
+import { NEO_DRIVER_REFRESH } from './lib/neo/driver-refresh.ts';
 import { createPeerPairRoute } from './routes/neo-peer.ts';
 import { collectDaemonScratch } from './lib/drivers/daemon-scratch.ts';
+import { createCodexSetupHost } from './lib/drivers/codex-setup-host.ts';
+import { createCodexSetup } from './lib/drivers/codex-setup.ts';
 import {
   GitHubWatchInventory,
   reportGitHubWatchHealth,
@@ -13,11 +16,14 @@ import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import { startSessionDoor } from './lib/messaging/session-door.ts';
 import { stampActiveAttempt } from './lib/tasks/direct-attempt-flag.ts';
 import { homedir } from 'os';
+import { existsSync } from 'node:fs';
+import { codexStatePath } from './storage/codex-desktop-read.ts';
 import { parsePositiveInt, type Config } from './config.ts';
 import type { WebSocketData } from './types/websocket.ts';
 import { createHttpWsServer, type ServerHandle } from './lib/runtime-server/index.ts';
 import { releaseFailedStartup } from './lib/startup-cleanup.ts';
 import { createPairRoute } from './lib/pairing/pair-route.ts';
+import { createSetupRoute, mintSetupToken, type SetupLink } from './lib/pairing/setup-token.ts';
 import { createPair2Route } from './lib/pairing/pair2-route.ts';
 import { createAskMarkdownHandler } from './lib/neo/ask-markdown.ts';
 import { createRequestGuard } from './lib/pairing/origin-host.ts';
@@ -49,6 +55,7 @@ import {
 } from '@hyperneo/shared';
 import type { ProviderRecord } from '@hyperneo/shared';
 import type { Provider, ProviderCredentials } from '@hyperneo/shared/provider';
+import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import {
   createDaemonInternalEventBus,
@@ -139,7 +146,7 @@ import {
 import { createReactiveDatabase } from './storage/reactive-database.ts';
 import { LiveQueryEngine } from './storage/live-query.ts';
 import { installProcessFatalLogging } from './lib/process-fatal-logger.ts';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   armStallDetectionWhenStartupSettles,
   startEventLoopWatchdog,
@@ -187,6 +194,8 @@ import { registerMailboxJobs } from './lib/mailbox/registration.ts';
 import { boundDeliveryContent } from './lib/handoffs/bound-delivery.ts';
 import { resolveMailboxSession } from './lib/mailbox/session-lookup.ts';
 import { MAILBOX_LANE } from './lib/mailbox/enqueue.ts';
+import { notifyFailedMailboxDelivery } from './lib/mailbox/failure.ts';
+import { OXAP_REOPEN_DELIVERY_FAILURE } from './lib/oxap/oxap-reopen.ts';
 import { settleMessageDeliveryDeadLetter } from './lib/job-handlers/message-delivery-dead-letter.ts';
 import { asMessageDeliveryPayload } from './lib/agent/message-delivery.ts';
 import { deliveryMetrics } from './lib/agent/message-delivery-metrics.ts';
@@ -209,8 +218,12 @@ import { sweepOrphanedAgentChildren } from './lib/agent/orphan-child-sweep.ts';
 import { AgentChildProcessRepository } from './storage/repositories/agent-child-process-repository.ts';
 import { remoteDaemons } from './lib/remote-daemons/registry.ts';
 import { RemoteDaemonSecretRepository } from './storage/repositories/remote-daemon-secret-repository.ts';
-import { OapEngine } from './lib/oap/oap-engine.ts';
-import { createOapRuntime } from './lib/oap/oap-query.ts';
+import { OxapEngine } from './lib/oxap/oxap-engine.ts';
+import { createOxapRuntime } from './lib/oxap/oxap-query.ts';
+import { readHubOptions, type OxapSettingsDeps } from './lib/oxap/oxap-settings.ts';
+import { installOxapHub, type OxapHubBinary } from './lib/oxap/oxap-install.ts';
+import { getDataDir } from './lib/data-dir.ts';
+import { providerRpcWrites, providerWriter } from './storage/repositories/provider-rpc-writes.ts';
 
 const mailboxLog = new Logger('mailbox');
 
@@ -359,12 +372,15 @@ export interface CreateDaemonAppOptions {
   standalone?: boolean;
   onStructuredLogSinkReady?: (flush: () => Promise<void>) => void;
   googleConnections?: Parameters<typeof createGoogleConnectionRefreshLoop>[1];
+  codexSetupSpawn?: Parameters<typeof createCodexSetupHost>[0];
 }
 
 export interface DaemonAppContext {
-  oapEngine: OapEngine;
+  oxapEngine: OxapEngine;
+  oxapSettings: OxapSettingsDeps;
   server: ServerHandle;
   handlePair: (req: Request) => Promise<Response>;
+  handleSetup: (req: Request) => Promise<Response>;
   handlePair2: ((req: Request, remoteAddress: string | null) => Promise<Response>) | null;
   handleAskMarkdown: (req: Request, remoteAddress: string | null) => Promise<Response | null>;
   handleMessageImage: (req: Request, remoteAddress: string | null) => Promise<Response | null>;
@@ -416,7 +432,7 @@ async function invalidateInFlightModelLoads(): Promise<void> {
 
 export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<DaemonAppContext> {
   const { config, verbose = true, standalone = false } = options;
-  const oapEngine = new OapEngine();
+  const oxapEngine = new OxapEngine();
   let startupLogCaptureCleanup: (() => void) | null = null;
   let unsubscribeProviderFailureChanges: (() => void) | null = null;
   let eventLoopWatchdog: EventLoopWatchdogHandle | null = null;
@@ -500,7 +516,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     await db.initialize(reactiveDb);
     const usageDb = db.getDatabase();
     setRateLimitEventReader(() => gatewayFor(usageDb).run(anthropicRateLimitEventsRead, 200));
-    if (process.env.NODE_ENV !== 'test') db.warmEmbedder();
+    if (process.env['NODE_ENV'] !== 'test') db.warmEmbedder();
     const cutOffSessionIds = db.listProcessingSessionIds();
     const interruptedTurns = await db.markRestartInterruptedTurns();
     const liveQueries = new LiveQueryEngine(db.getDatabase(), reactiveDb);
@@ -552,6 +568,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       maxConcurrent,
       staleThresholdMs: 5 * 60 * 1000,
     });
+    const driverRefreshProcessor = new JobQueueProcessor(jobQueue, {
+      db: db.gateway,
+      pollIntervalMs: 1000,
+      maxConcurrent: 1,
+      staleThresholdMs: 5 * 60 * 1000,
+    });
     const mailboxExpireProcessor = new JobQueueProcessor(jobQueue, {
       db: db.gateway,
       pollIntervalMs: 1000,
@@ -570,6 +592,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       settlementGraceMs: 35_000,
     });
     jobProcessor.setChangeNotifier(() => {});
+    driverRefreshProcessor.setChangeNotifier(() => {});
     mailboxExpireProcessor.setChangeNotifier(() => {});
     messageDeliveryProcessor.setChangeNotifier((table, scope) => {
       reactiveDb.notifyChange(table, scope);
@@ -810,6 +833,33 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       logScratchError(error);
     }
 
+    const oxapStateDirectory = join(getDataDir(), 'oap');
+    let installingOxap: Promise<OxapHubBinary> | undefined;
+    const oxapSettings: OxapSettingsDeps = {
+      settings: () => settingsManager.getGlobalSettings(),
+      writeHub: (oxapHub) => settingsManager.updateGlobalSettings({ oxapHub }),
+      records: () => db.providers.listProviders(),
+      writeProvider: async (id, configJson) => {
+        await providerWriter(db.providers).call(providerRpcWrites, 'updateProvider', id, {
+          configJson,
+        });
+      },
+      key: async (providerId) => {
+        const credentials = await credentialManager.getCredentials(providerId);
+        return credentials?.type === 'api_key' ? credentials.apiKey : undefined;
+      },
+      install: (installed) => {
+        installingOxap ??= installOxapHub(join(oxapStateDirectory, 'install'), installed).finally(
+          () => {
+            installingOxap = undefined;
+          }
+        );
+        return installingOxap;
+      },
+      engine: oxapEngine,
+      stateDirectory: oxapStateDirectory,
+      environment: process.env,
+    };
     startupTimer.start('session manager');
     sessionManager = new SessionManager(
       reactiveDb.db,
@@ -822,6 +872,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         maxTokens: config.maxTokens,
         temperature: config.temperature,
         disableWorktrees: config.disableWorktrees,
+        readOxapProviderKey: oxapSettings.key,
       },
       jobQueue,
       jobProcessor,
@@ -833,7 +884,17 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             .getCredentialStore()
             .get(GITHUB_CREDENTIAL_SERVICE, GITHUB_CREDENTIAL_ACCOUNT)
         ),
-      createOapRuntime(oapEngine, config.oap, internalEventBus, reactiveDb.db, messageHub)
+      createOxapRuntime(
+        oxapEngine,
+        {
+          installed: () => !!oxapSettings.settings().oxapHub,
+          read: () => readHubOptions(oxapSettings),
+        },
+        internalEventBus,
+        reactiveDb.db,
+        messageHub,
+        (providerId) => db.providers.getProviderByProviderId(providerId)
+      )
     );
 
     sessionManager.setLoginRecovery(loginRecoveryPort);
@@ -969,8 +1030,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       },
       { subscriberName: 'session-external-events', namespaceId: SESSION_EVENT_SCOPE }
     );
+    const usesOxap = (sessionId: string) => isOxapHarness(db.getSession(sessionId)?.config.harness);
     const restartRecoveryDeps: RestartRecoveryDeps = {
       readEvidence: async (sessionId) => {
+        if (usesOxap(sessionId)) return null;
         await db.waitForSdkMessageColumns(sessionId);
         return db.getSDKMessageRepo().readRestartRecoveryEvidence(sessionId);
       },
@@ -1138,8 +1201,27 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     }
 
     startupTimer.start('rpc handlers + space runtime provision');
+    const codexHost =
+      process.platform === 'darwin' ? createCodexSetupHost(options.codexSetupSpawn) : undefined;
+    const codexSetup =
+      codexHost && (options.codexSetupSpawn || process.env.NODE_ENV !== 'test')
+        ? createCodexSetup(
+            codexHost,
+            () => settingsManager.getGlobalSettings().codexAppServerBridge,
+            (codexAppServerBridge) => {
+              settingsManager.updateGlobalSettings({ codexAppServerBridge });
+            }
+          )
+        : undefined;
     const rpcHandlers = await setupRPCHandlers(
       {
+        admitCodexWork:
+          codexHost &&
+          ((send) => {
+            codexSetup?.firstUse();
+            return codexHost.admit(send);
+          }),
+        codexSetup,
         extensions,
         purgeClaudeFeed: (sessionIds) => purgeWorkFeedSessions(db.gateway, 'claude', sessionIds),
         deviceOf: (clientId) => transport.deviceOf(clientId),
@@ -1164,6 +1246,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         liveQueries,
         skillsManager,
         mcpImportService,
+        oxapSettings,
       },
       spaceModule && spaceManager && spaceExternalEvents
         ? (rpcDeps, host) =>
@@ -1179,6 +1262,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         : undefined
     );
     jobProcessor.register(NEO_FRONT_INFERENCE, rpcHandlers.frontInference);
+    driverRefreshProcessor.register(NEO_DRIVER_REFRESH, rpcHandlers.driverRefresh);
     void recoverRestartCutTurns(cutOffSessionIds, restartRecoveryDeps)
       .then((results) => {
         const acted = results.filter((result) => result.resumed).length;
@@ -1239,6 +1323,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       now: Date.now,
       waits: daemonPairWaits,
     });
+    let setupLink: SetupLink | null = null;
+    const handleSetup = createSetupRoute({
+      db: db.gateway,
+      limiter: daemonPairingLimiter,
+      now: Date.now,
+      link: () => setupLink,
+    });
     const authenticateUpgrade = createUpgradeAuthenticator({
       db: () => db.gateway,
       now: Date.now,
@@ -1281,6 +1372,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         () => server?.stop(true),
         () => removeRuntimeDescriptorFile(),
         () => sessionDoor?.close(),
+        () => codexSetup?.close() ?? codexHost?.close(),
         () => {
           for (const timer of cooldownResumeTimers) clearTimeout(timer);
         },
@@ -1289,12 +1381,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         () => clientEventBridge.stop(),
         () => processWatchdog.stop(),
         () => jobProcessor.stopPolling(),
+        () => driverRefreshProcessor.stopPolling(),
         () => mailboxExpireProcessor.stopPolling(),
         () => messageDeliveryProcessor.stopPolling(),
         () => unsubscribeProviderFailureChanges?.(),
         () => oauthRefreshScheduler.stop(),
         () => googleRefresh.stop(),
         () => jobProcessor.stop(),
+        () => driverRefreshProcessor.stop(),
         () => mailboxExpireProcessor.stop(),
         () => taskAgentManager?.cleanupAll(),
         () => sessionManager?.cleanup(),
@@ -1318,6 +1412,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       ]);
       await releaseFailedStartup([() => db.close()]);
     };
+    const codexBridge = settingsManager.getGlobalSettings().codexAppServerBridge;
+    if (codexHost && codexBridge?.enabled === true) {
+      await (codexSetup?.login() ?? codexHost.startBridge(codexBridge.port)).catch(
+        (error: Error) => {
+          logError(`[Daemon] Codex bridge unavailable: ${error.message}`);
+        }
+      );
+    }
     server = await createHttpWsServer({
       hostname: config.host,
       port: config.port,
@@ -1383,6 +1485,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         }
 
         if (url.pathname === '/pair' && req.method === 'POST') return handlePair(req);
+        if (url.pathname === '/setup' && req.method === 'POST') return handleSetup(req);
         if (handlePair2 && url.pathname.startsWith('/pair2/'))
           return handlePair2(req, client?.remoteAddress ?? null);
         if (url.pathname === '/neo-peer/message' && req.method === 'POST')
@@ -1431,12 +1534,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     removeRuntimeDescriptorFile =
       process.env.NODE_ENV === 'test' ? () => {} : writeRuntimeDescriptor(config.host, server.port);
-    if (process.env.NODE_ENV !== 'test' || process.env.HYPERNEO_DATA_DIR)
+    if (process.env.NODE_ENV !== 'test' || process.env.HYPERNEO_DATA_DIR) {
       await ensureLocalCredential(
         db.gateway,
         'agent',
         new URL(`http://${dialableHost(config.host)}:${server.port}`).origin
       );
+      setupLink = await mintSetupToken(db.gateway);
+    }
 
     startupTimer.start('post-bind jobs + background services');
     void db.startSdkMessageColumnsBackfill(() => {
@@ -1509,12 +1614,16 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         ),
     });
 
+    const { prepare: prepareSdkHumanSend } = humanSend;
     messageDeliveryProcessor.register(
       MESSAGE_DELIVERY,
       createMessageDeliveryHandler({
         jobQueue,
-        prepareHumanSend: humanSend.prepare,
-        watchHumanSend: humanSend.watch,
+        prepareHumanSend: async (sessionId) =>
+          usesOxap(sessionId) ? 'deliver' : prepareSdkHumanSend(sessionId),
+        watchHumanSend: (sessionId, uuid) => {
+          if (!usesOxap(sessionId)) humanSend.watch(sessionId, uuid);
+        },
         getSession: async (sessionId: string) => {
           const indexed = taskAgentManager?.getSubSession(sessionId);
           if (indexed && sessionManager?.getCachedSession(sessionId) === indexed) {
@@ -1564,6 +1673,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           deliveryMetrics.recordDeadLetter();
           const payload = asMessageDeliveryPayload(job.payload);
           if (!payload) return;
+          if (job.error?.startsWith(OXAP_REOPEN_DELIVERY_FAILURE)) {
+            void notifyFailedMailboxDelivery(jobQueue, payload, job.error).catch((error) =>
+              logError('[Daemon] Could not report a failed worker input:', error)
+            );
+          }
           const store = reactiveDb?.db;
           if (!store) return;
           const session =
@@ -1627,6 +1741,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     await extensions.start();
     jobProcessor.start();
     logInfo('[Daemon] Job queue processor started');
+    driverRefreshProcessor.start();
+    logInfo('[Daemon] Driver refresh job processor started');
     mailboxExpireProcessor.start();
     logInfo('[Daemon] Mailbox expiration job processor started');
     messageDeliveryProcessor.start();
@@ -1645,6 +1761,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       processWatchdog.start();
       logInfo('[Daemon] Process watchdog started');
     }
+    if (codexSetup && (existsSync(codexStatePath(homedir())) || codexBridge?.decision))
+      codexSetup.check();
 
     let isCleanedUp = false;
     const cleanup = async () => {
@@ -1657,6 +1775,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       for (const timer of cooldownResumeTimers) clearTimeout(timer);
 
       removeRuntimeDescriptorFile();
+      await (codexSetup?.close() ?? codexHost?.close());
       await sessionDoor?.close();
 
       logExtensionStopFailures(await extensions.stop());
@@ -1712,6 +1831,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         logInfo('[Daemon] Mailbox expiration job polling stopped');
         jobProcessor.stopPolling();
         logInfo('[Daemon] Job queue polling stopped');
+        driverRefreshProcessor.stopPolling();
+        logInfo('[Daemon] Driver refresh job polling stopped');
         try {
           const requeued = jobQueue.requeueAllProcessing(MESSAGE_DELIVERY, Date.now());
           if (requeued.length > 0) {
@@ -1725,6 +1846,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         } catch {}
         await jobProcessor.stop();
         logInfo('[Daemon] Job queue processor stopped');
+        await driverRefreshProcessor.stop();
+        logInfo('[Daemon] Driver refresh job processor stopped');
         await mailboxExpireProcessor.stop();
         logInfo('[Daemon] Mailbox expiration job processor stopped');
         await taskAgentManager?.cleanupAll();
@@ -1736,7 +1859,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             .live.map((pid) => ({ pid, daemonPid: process.pid })),
         ];
         await sessionManager.cleanup();
-        await oapEngine.close();
+        await oxapEngine.close();
         try {
           await collectDaemonScratch(false, scratchChildrenAtExit, logScratchError);
         } catch (error) {
@@ -1789,7 +1912,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       } finally {
         try {
           try {
-            await oapEngine.close();
+            await oxapEngine.close();
           } finally {
             await closeFileLogCapture();
           }
@@ -1814,9 +1937,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     });
 
     return {
-      oapEngine,
+      oxapEngine,
+      oxapSettings,
       server,
       handlePair,
+      handleSetup,
       handlePair2,
       handleAskMarkdown,
       handleMessageImage,
@@ -1857,7 +1982,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
   } catch (error) {
     startupTimer.finish();
     await failedStartupCleanup?.();
-    await oapEngine.close();
+    await oxapEngine.close();
     stopEventLoopLagLog();
     eventLoopWatchdog?.stop();
     startupLogCaptureCleanup?.();

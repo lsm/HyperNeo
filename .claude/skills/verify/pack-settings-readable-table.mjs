@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { revealAsk } from './queue-ask.mjs';
 const [port, run] = process.argv.slice(2);
 assert(port && run && port !== '8399');
 const { askId, question, language } = JSON.parse(readFileSync(`${run}/fixture.json`, 'utf8'));
@@ -12,7 +13,7 @@ try {
     const page = await browser.newPage({ viewport: { width, height: 1100 } });
     await page.goto(`http://127.0.0.1:${port}/neo`);
     if (width === 390) await page.getByRole('button', { name: /^(Your work|你的事)/ }).click();
-    const card = page.locator(`[data-ask="${askId}"]:visible`);
+    const card = await revealAsk(page, askId);
     await card.waitFor();
     const body = card.locator(`[id="neo-ref-question-${question.id}"]`);
     await body.waitFor();

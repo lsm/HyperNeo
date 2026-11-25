@@ -17,12 +17,17 @@ vi.mock('node:child_process', async (original) => ({
     throw new Error('No system Claude executable');
   },
   execFile: (
-    _file: string,
+    file: string,
     args: string[],
     _options: unknown,
     done: (error: Error, stdout: string, stderr: string) => void
   ) => {
-    requests.push(...args.filter((arg) => arg.startsWith('https://registry.npmjs.org/')));
+    if (file === 'npm' || file === 'pnpm') {
+      queueMicrotask(() => done(Object.assign(new Error('not found'), { code: 'ENOENT' }), '', ''));
+      return;
+    }
+    if (file === 'curl')
+      requests.push(...args.filter((arg) => arg.startsWith('https://registry.npmjs.org/')));
     queueMicrotask(() => done(new Error('Isolated download refused'), '', ''));
   },
 }));

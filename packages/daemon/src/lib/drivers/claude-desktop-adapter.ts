@@ -28,7 +28,7 @@ import {
   fillPrompt,
 } from '@hyperneo/prompts';
 import { open, readdir, readFile, stat } from 'node:fs/promises';
-import { readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -160,6 +160,7 @@ export interface ClaudeDesktopAdapterDeps {
   now: () => number;
   searchChats?: (text: string) => Promise<readonly WorkChatMatch[]>;
   permissionMode?: () => string;
+  archiveInApp?: (target: { sessionId: string; title: string }) => Promise<Result<unknown>>;
 }
 
 type Gate<Value> = { value: Value } | { reason: Rejected };
@@ -1880,9 +1881,7 @@ async function archiveClaudeSession(
   );
   if (paths.length !== 1) return reject('not_found', 'Expected exactly one Claude session record.');
   const live = await deps.liveSessions();
-  const path = paths[0][0];
-  const original = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
-  const record = ClaudeDesktopRecordSchema.parse(original);
+  const record = ClaudeDesktopRecordSchema.parse(JSON.parse(readFileSync(paths[0][0], 'utf8')));
   if (record.sessionId !== ref.id) return reject('not_found', 'The Claude session changed.');
   if (
     record.cliSessionId &&
@@ -1906,20 +1905,14 @@ async function archiveClaudeSession(
             : [join(getDataDir(), 'claude-worktrees')]
         )
       : Promise.resolve(undefined);
-  if (record.isArchived) {
+  if (record.isArchived && record.archiveSetAtMs) {
     const worktree = await cleanup();
     return { ok: true, value: { archived: false, ...(worktree ? { worktree } : {}) } };
   }
-  const temporary = `${path}.${crypto.randomUUID()}.tmp`;
-  try {
-    writeFileSync(temporary, JSON.stringify({ ...original, isArchived: true }), {
-      flag: 'wx',
-      mode: 0o600,
-    });
-    renameSync(temporary, path);
-  } finally {
-    rmSync(temporary, { force: true });
-  }
+  if (!deps.archiveInApp)
+    return reject('unsupported', 'Archiving in Claude Desktop needs the neo-helper session.');
+  const archived = await deps.archiveInApp({ sessionId: record.sessionId, title: record.title });
+  if (!archived.ok) return archived;
   const worktree = await cleanup();
   return { ok: true, value: { archived: true, ...(worktree ? { worktree } : {}) } };
 }

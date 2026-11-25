@@ -118,7 +118,9 @@ function MenuFn({ as: Tag = Fragment, children, ...rest }: MenuProps) {
     setItems((prev) => {
       if (item.ref.current && itemsRef.current) {
         const allItems = Array.from(
-          itemsRef.current.querySelectorAll<HTMLElement>('[role="menuitem"]')
+          itemsRef.current.querySelectorAll<HTMLElement>(
+            '[role="menuitem"], [role="menuitemcheckbox"]'
+          )
         );
         const index = allItems.indexOf(item.ref.current);
         if (index !== -1) {
@@ -658,11 +660,18 @@ export const MenuItems = MenuItemsFn;
 interface MenuItemProps {
   as?: ElementType;
   disabled?: boolean;
+  checked?: boolean;
   children?: unknown;
   [key: string]: unknown;
 }
 
-function MenuItemFn({ as: Tag = Fragment, disabled = false, children, ...rest }: MenuItemProps) {
+function MenuItemFn({
+  as: Tag = Fragment,
+  disabled = false,
+  checked,
+  children,
+  ...rest
+}: MenuItemProps) {
   const {
     close,
     items,
@@ -771,7 +780,9 @@ function MenuItemFn({ as: Tag = Fragment, disabled = false, children, ...rest }:
   const ourProps: Record<string, unknown> = {
     id,
     ref,
-    role: 'menuitem',
+    role: checked === undefined ? 'menuitem' : 'menuitemcheckbox',
+    'aria-checked': checked,
+    disabled: Tag === 'button' && disabled ? true : undefined,
     tabIndex: disabled ? undefined : -1,
     'aria-disabled': disabled || undefined,
     onClick: handleClick,

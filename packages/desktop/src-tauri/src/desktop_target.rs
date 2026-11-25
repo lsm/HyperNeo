@@ -15,7 +15,7 @@ use security_framework::os::macos::code_signing::{
 use serde_json::{json, Value};
 use std::{ffi::c_void, str::FromStr};
 
-const ANCHOR: &str = "anchor apple or (anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists)";
+const ANCHOR: &str = "anchor apple or (anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists) or (anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.9] exists)";
 
 #[link(name = "Security", kind = "framework")]
 extern "C" {
@@ -44,6 +44,44 @@ extern "C" {
         id: CFStringRef,
         error: *mut c_void,
     ) -> *const c_void;
+}
+
+#[cfg(not(test))]
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGSessionCopyCurrentDictionary() -> CFDictionaryRef;
+}
+
+#[cfg(not(test))]
+pub(super) fn screen_locked() -> bool {
+    screen_lock_state().unwrap_or(false)
+}
+
+#[cfg(not(test))]
+pub(super) fn screen_lock_state() -> Option<bool> {
+    use core_foundation::boolean::CFBoolean;
+
+    let raw = unsafe { CGSessionCopyCurrentDictionary() };
+    if raw.is_null() {
+        return None;
+    }
+    let session: CFDictionary<CFString, CFType> =
+        unsafe { CFDictionary::wrap_under_create_rule(raw) };
+    Some(
+        session
+            .find(CFString::from_static_string("CGSSessionScreenIsLocked"))
+            .is_some_and(|value| {
+                value
+                    .clone()
+                    .downcast::<CFBoolean>()
+                    .is_some_and(bool::from)
+                    || value
+                        .clone()
+                        .downcast::<CFNumber>()
+                        .and_then(|flag| flag.to_i64())
+                        .is_some_and(|flag| flag != 0)
+            }),
+    )
 }
 
 pub(super) fn class(tool: &str) -> Option<&'static str> {
@@ -139,6 +177,19 @@ fn signer(code: *const c_void) -> Result<Signer, &'static str> {
     }
 }
 
+pub(super) fn matches_app(path: &str, bundle_id: &str, requirement: &str) -> bool {
+    let Some(url) = CFURL::from_path(path, true) else {
+        return false;
+    };
+    let Ok(code) = SecStaticCode::from_path(&url, Flags::NONE) else {
+        return false;
+    };
+    let anchor = SecRequirement::from_str(ANCHOR).expect("valid anchor requirement");
+    code.check_validity(Flags::STRICT_VALIDATE, &anchor).is_ok()
+        && signer(code.as_concrete_TypeRef() as _)
+            .is_ok_and(|signer| signer.bundle_id == bundle_id && signer.requirement == requirement)
+}
+
 fn owner(window: u32) -> Option<i32> {
     let owned = copy_window_info(kCGWindowListOptionAll, kCGNullWindowID)?;
     let windows: CFArray<CFDictionary<CFString, CFType>> =
@@ -154,6 +205,28 @@ fn owner(window: u32) -> Option<i32> {
             .then(|| number(&entry, unsafe { kCGWindowOwnerPID }).map(|pid| pid as i32))
             .flatten()
     })
+}
+
+pub(super) fn alive(instance: &Value, window: Option<u64>) -> bool {
+    let Some(pid) = instance["pid"]
+        .as_i64()
+        .and_then(|pid| i32::try_from(pid).ok())
+    else {
+        return false;
+    };
+    let born = started_at(pid).map(|(seconds, microseconds)| {
+        json!({"pid": pid, "startedAt": {"seconds": seconds, "microseconds": microseconds}})
+    });
+    if born.as_ref() != Some(instance) {
+        return false;
+    }
+    #[cfg(test)]
+    let _ = window;
+    #[cfg(not(test))]
+    if let Some(window) = window.and_then(|window| u32::try_from(window).ok()) {
+        return owner(window) == Some(pid);
+    }
+    true
 }
 
 pub(super) fn resolve(tool: &str, arguments: &Value, instance: Option<&Value>) -> Value {

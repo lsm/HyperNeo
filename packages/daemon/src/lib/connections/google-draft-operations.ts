@@ -13,7 +13,7 @@ const replySchema = z.object({ id, message: z.object({ id, threadId: id.optional
 type Input = z.infer<typeof draftInput>;
 type Service = ReturnType<typeof createConnectionLifecycle>;
 export function createGoogleDraftOperations(db: () => Database, service: () => Promise<Service>) {
-  const draft = (superpipe({})('gmail-prepare-draft') as PipelineAPI)
+  const draft = (superpipe({})('gmail.draft') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admit, 'caller', 'result:result')
     .pipe(() => gatewayFor(db()).call(googleConnectionReads, 'list'), 'result', 'connections')

@@ -11,8 +11,8 @@ import {
   readLimitedResponseText,
   withTimeout,
 } from './transcribe-fetch.ts';
+import { resolveVoiceKey, voiceParts } from './voice-parts.ts';
 
-const VOICE_CREDENTIAL_PROVIDER_ID = 'voice-transcription';
 const TRANSCRIPTION_TIMEOUT_MS = 120_000;
 const CREDENTIAL_LOOKUP_TIMEOUT_MS = 16_000;
 const MAX_AUDIO_BYTES = VOICE_MAX_AUDIO_BYTES;
@@ -75,6 +75,7 @@ interface VoiceTranscribeCtx extends VoiceTranscribeInput {
   admission: VoiceTranscribeAdmission;
   clientKey: string;
   endpoint?: URL;
+  provider?: 'openai' | 'deepgram';
   model?: string;
   allowPrivateNetwork?: boolean;
   allowInsecureTls?: boolean;
@@ -82,7 +83,7 @@ interface VoiceTranscribeCtx extends VoiceTranscribeInput {
   audio?: Uint8Array;
   apiKey?: string;
   headers?: Record<string, string>;
-  form?: FormData;
+  body?: FormData | Uint8Array;
   response?: Response;
   bodyText?: string;
   outcome?: VoiceTranscribeOutcome;
@@ -212,15 +213,16 @@ function commitTranscriptionAdmission(ctx: VoiceTranscribeCtx): VoiceTranscribeC
 function resolveTranscriptionEndpoint(ctx: VoiceTranscribeCtx): VoiceTranscribeCtx {
   const voice = ctx.deps.settingsManager.getGlobalSettings().voice;
   if (!voice?.enabled) return { ...ctx, outcome: denied('Voice input is disabled') };
-  if (!voice.endpoint?.trim()) {
+  const recorded = voiceParts(voice).recorded;
+  if (!recorded?.endpoint.trim()) {
     return { ...ctx, outcome: denied('Voice transcription endpoint is required') };
   }
-  if (!voice.model?.trim()) {
+  if (!recorded.model.trim()) {
     return { ...ctx, outcome: denied('Voice transcription model is required') };
   }
   let endpoint: URL;
   try {
-    endpoint = new URL(voice.endpoint);
+    endpoint = new URL(recorded.endpoint);
   } catch {
     return { ...ctx, outcome: denied('Voice transcription endpoint must be a valid URL') };
   }
@@ -238,7 +240,8 @@ function resolveTranscriptionEndpoint(ctx: VoiceTranscribeCtx): VoiceTranscribeC
   return {
     ...ctx,
     endpoint,
-    model: voice.model.trim(),
+    provider: recorded.provider,
+    model: recorded.model.trim(),
     allowPrivateNetwork: voice.allowPrivateNetwork ?? false,
     allowInsecureTls: voice.allowInsecureTls ?? false,
     tlsCaPem: voice.tlsCaPem?.trim() || undefined,
@@ -246,42 +249,21 @@ function resolveTranscriptionEndpoint(ctx: VoiceTranscribeCtx): VoiceTranscribeC
   };
 }
 
-export async function resolveApiKey(
-  legacyApiKey: string | undefined,
-  apiKeyEndpoint: string | undefined,
-  endpoint: URL,
-  credentialManager?: Pick<ProviderCredentialManager, 'getCredentials'>
-): Promise<string | undefined> {
-  const trimmedLegacyKey = legacyApiKey?.trim();
-  if (trimmedLegacyKey) return trimmedLegacyKey;
-  if (!apiKeyEndpoint || endpoint.toString() !== normalizeEndpoint(apiKeyEndpoint)) {
-    return undefined;
-  }
-  const credentials = await credentialManager?.getCredentials(VOICE_CREDENTIAL_PROVIDER_ID);
-  return credentials?.type === 'api_key' ? credentials.apiKey?.trim() : undefined;
-}
-
-function normalizeEndpoint(endpoint: string): string {
-  try {
-    return new URL(endpoint).toString();
-  } catch {
-    return endpoint;
-  }
-}
-
 async function acquireTranscriptionCredentials(
   ctx: VoiceTranscribeCtx
 ): Promise<VoiceTranscribeCtx> {
   let endpoint = ctx.endpoint!;
   let model = ctx.model!;
+  let provider = ctx.provider;
   let allowPrivateNetwork = ctx.allowPrivateNetwork!;
   let allowInsecureTls = ctx.allowInsecureTls!;
   let tlsCaPem = ctx.tlsCaPem;
   const key = await withVoiceCredentialLock(async () => {
     const liveVoice = ctx.deps.settingsManager.getGlobalSettings().voice;
-    if (liveVoice?.endpoint) {
+    const liveRecorded = voiceParts(liveVoice).recorded;
+    if (liveVoice && liveRecorded?.endpoint) {
       try {
-        const liveEndpoint = new URL(liveVoice.endpoint);
+        const liveEndpoint = new URL(liveRecorded.endpoint);
         if (liveEndpoint.protocol === 'http:' || liveEndpoint.protocol === 'https:') {
           endpoint = liveEndpoint;
         }
@@ -289,15 +271,11 @@ async function acquireTranscriptionCredentials(
       allowPrivateNetwork = liveVoice.allowPrivateNetwork ?? false;
       allowInsecureTls = liveVoice.allowInsecureTls ?? false;
       tlsCaPem = liveVoice.tlsCaPem?.trim() || undefined;
-      model = liveVoice.model?.trim() || model;
+      model = liveRecorded.model.trim() || model;
+      provider = liveRecorded.provider;
     }
     return withTimeout(
-      resolveApiKey(
-        liveVoice?.apiKey,
-        liveVoice?.apiKeyEndpoint,
-        endpoint,
-        ctx.deps.credentialManager
-      ),
+      resolveVoiceKey(liveVoice, endpoint, ctx.deps.credentialManager),
       CREDENTIAL_LOOKUP_TIMEOUT_MS,
       'Voice transcription credential lookup timed out',
       ctx.signal
@@ -307,6 +285,7 @@ async function acquireTranscriptionCredentials(
     ...ctx,
     apiKey: key,
     model,
+    provider,
     endpoint,
     allowPrivateNetwork,
     allowInsecureTls,
@@ -326,18 +305,25 @@ function buildTranscriptionRequest(ctx: VoiceTranscribeCtx): VoiceTranscribeCtx 
       ),
     };
   }
+  if (ctx.provider === 'deepgram') {
+    if (ctx.apiKey) headers.Authorization = `Token ${ctx.apiKey}`;
+    headers['Content-Type'] = ctx.data.mimeType;
+    const endpoint = new URL(ctx.endpoint!);
+    endpoint.searchParams.set('model', ctx.model!);
+    return { ...ctx, endpoint, headers, body: ctx.audio };
+  }
   if (ctx.apiKey) headers.Authorization = `Bearer ${ctx.apiKey}`;
   const form = new FormData();
   form.append('model', ctx.model!);
   form.append('file', new Blob([ctx.audio!], { type: ctx.data.mimeType }), 'audio.wav');
-  return { ...ctx, headers, form };
+  return { ...ctx, headers, body: form };
 }
 
 async function fetchTranscription(ctx: VoiceTranscribeCtx): Promise<VoiceTranscribeCtx> {
   const response = await fetchTranscriptionWithRedirects(
     ctx.endpoint!,
     ctx.headers!,
-    ctx.form!,
+    ctx.body!,
     ctx.allowPrivateNetwork!,
     ctx.allowInsecureTls!,
     ctx.signal,
@@ -351,11 +337,19 @@ async function readTranscriptionBody(ctx: VoiceTranscribeCtx): Promise<VoiceTran
   return { ...ctx, bodyText: await readLimitedResponseText(ctx.response!) };
 }
 
+type DeepgramListen = {
+  results?: { channels?: { alternatives?: { transcript?: unknown }[] }[] };
+};
+
 function parseTranscriptionText(ctx: VoiceTranscribeCtx): VoiceTranscribeCtx {
   if (!ctx.response!.ok) {
     return { ...ctx, outcome: failed(normalizeErrorMessage(ctx.bodyText!, ctx.response!.status)) };
   }
-  const text = parseJson(ctx.bodyText!)?.text;
+  const json = parseJson(ctx.bodyText!);
+  const text =
+    ctx.provider === 'deepgram'
+      ? (json as DeepgramListen | undefined)?.results?.channels?.[0]?.alternatives?.[0]?.transcript
+      : json?.text;
   if (typeof text !== 'string') {
     return { ...ctx, outcome: failed('Transcription response did not include text') };
   }

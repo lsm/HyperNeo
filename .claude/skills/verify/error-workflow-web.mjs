@@ -8,7 +8,7 @@ export async function verifyErrorWorkflow(page, { run, port = 9396, width, phase
   const evidence = { phase, width, synthetic: true, source: 'real isolated daemon session.error and Space RPC' };
   await page.setViewportSize({ width, height: 1000 });
   await page.goto(`http://127.0.0.1:${port}/session/${seed.worker}`);
-  await page.getByRole('button', { name: 'View Details', exact: true }).click();
+  await page.getByRole('button', { name: /^(View )?Details$/ }).click();
   const dialog = page.getByRole('dialog');
   await dialog.waitFor();
   await page.screenshot({ path: `${run}/evidence/${phase}-${width}-error-closed.png`, scale: 'css', animations: 'disabled' });

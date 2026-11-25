@@ -33,7 +33,7 @@ function readBuildStatus(probe: () => unknown): BuildStatus {
 }
 
 export function createBuildOperation(probe: () => unknown) {
-  const read = (superpipe({})('system-build') as PipelineAPI)
+  const read = (superpipe({})('system.build') as PipelineAPI)
     .input(['probe'])
     .pipe(readBuildStatus, 'probe', 'status')
     .end('status') as (probe: () => unknown) => BuildStatus;

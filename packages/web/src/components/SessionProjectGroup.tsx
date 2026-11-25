@@ -1,9 +1,12 @@
-import { QueueTrashIcon } from './icons/panel-icons.tsx';
+import { Menu, MenuButton, MenuItem, MenuItems } from '@hyperneo/ui';
 import type { Session } from '@hyperneo/shared';
 import { SessionConversationGroup } from './SessionConversationGroup.tsx';
 
 const ROW_ICON_BUTTON =
   'inline-flex h-[26px] w-[26px] flex-shrink-0 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-fill hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60';
+
+const PROJECT_MENU_ITEM =
+  'flex w-full items-center gap-3 px-4 py-2 text-left text-sm data-[focus]:bg-surface-raised';
 
 interface SessionProjectGroupProps {
   name: string;
@@ -16,7 +19,10 @@ interface SessionProjectGroupProps {
   onSessionClick: (sessionId: string) => void;
   onArchive: (sessionId: string) => void | Promise<void>;
   childrenOf?: (sessionId: string) => Session[];
-  onRemove?: () => void;
+  onRemove: () => void;
+  removeDisabledReason?: string;
+  showArchived: boolean;
+  onToggleArchived: () => void;
 }
 
 export function SessionProjectGroup({
@@ -31,12 +37,15 @@ export function SessionProjectGroup({
   onArchive,
   childrenOf,
   onRemove,
+  removeDisabledReason,
+  showArchived,
+  onToggleArchived,
 }: SessionProjectGroupProps) {
   const isEmpty = sessions.length === 0;
 
   return (
     <div>
-      <div class="group/project flex items-center gap-0.5 rounded-lg pr-1 transition-colors hover:bg-fill-soft">
+      <div class="group/project relative flex items-center gap-0.5 rounded-lg pr-1 transition-colors hover:bg-fill-soft">
         <button
           type="button"
           data-testid="project-group-header"
@@ -90,17 +99,50 @@ export function SessionProjectGroup({
             </svg>
           </button>
         )}
-        {onRemove && (
-          <button
-            type="button"
-            data-testid="project-remove"
-            onClick={onRemove}
-            title="Remove project"
-            aria-label={`Remove project ${name}`}
-            class={`${ROW_ICON_BUTTON} opacity-100 sm:opacity-0 sm:group-hover/project:opacity-100 group-focus-within/project:opacity-100 [@media(hover:none)]:opacity-100`}
+        <Menu>
+          <MenuButton aria-label={`Project actions for ${name}`} class={ROW_ICON_BUTTON}>
+            <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="5" cy="12" r="1.7" />
+              <circle cx="12" cy="12" r="1.7" />
+              <circle cx="19" cy="12" r="1.7" />
+            </svg>
+          </MenuButton>
+          <MenuItems
+            anchor={{ to: 'top end', gap: 4 }}
+            modal={false}
+            class="z-[9999] min-w-[200px] rounded-lg border border-line bg-surface-overlay py-1 shadow-xl"
           >
-            <QueueTrashIcon />
-          </button>
+            <MenuItem
+              as="button"
+              type="button"
+              checked={showArchived}
+              onClick={onToggleArchived}
+              class={PROJECT_MENU_ITEM}
+            >
+              <span class="w-4 text-center" aria-hidden="true">
+                {showArchived ? '✓' : ''}
+              </span>
+              Show archived chats
+            </MenuItem>
+            <MenuItem
+              as="button"
+              type="button"
+              disabled={!!removeDisabledReason}
+              title={removeDisabledReason}
+              onClick={onRemove}
+              class={`${PROJECT_MENU_ITEM} text-danger disabled:cursor-not-allowed disabled:text-fg-faint`}
+            >
+              Delete this project
+            </MenuItem>
+          </MenuItems>
+        </Menu>
+        {removeDisabledReason && (
+          <span
+            role="tooltip"
+            class="pointer-events-none absolute right-1 top-full z-50 hidden max-w-60 rounded-md border border-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg group-hover/project:block group-focus-within/project:block"
+          >
+            {removeDisabledReason}
+          </span>
         )}
       </div>
       {!collapsed && (

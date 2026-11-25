@@ -58,7 +58,7 @@ describe('operation invocation gates', () => {
 
 describe('unknown operation suggestions', () => {
   function suggestionFixture() {
-    const definitions = ['neo.snapshot', 'neo.ask.settle', 'neo.ask.open'].map((name) =>
+    const definitions = ['neo.snapshot', 'neo.ask.settle', 'neo.ask.propose'].map((name) =>
       defineOperation({
         name,
         description: name,
@@ -77,7 +77,7 @@ describe('unknown operation suggestions', () => {
         kind: 'failed',
         code: 'unknown_operation',
         message:
-          'Unknown operation: neo.ask.snapshot. Did you mean: neo.snapshot, neo.ask.open, neo.ask.settle?',
+          'Unknown operation: neo.ask.snapshot. Did you mean: neo.snapshot, neo.ask.propose, neo.ask.settle?',
       },
     });
   });

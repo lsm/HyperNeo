@@ -810,6 +810,28 @@ test('a question from a session with no open todo becomes a Neo todo that wakes 
   }
 });
 
+test('a request names its ask on the session message, and a worker report on an open todo does not', async () => {
+  const { db, service, send } = await setup();
+  const delivered = () =>
+    db
+      .getJobQueueRepo()
+      .listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })
+      .map((job) => JSON.stringify(job.payload));
+  try {
+    await send({ to: 'neo', kind: 'question', text: 'Label the pull request' }, 'stranger');
+    const [ask] = service.todos.listOpenAsks().filter((item) => item.id !== 'ask');
+    const request = delivered().find((text) => text.includes('Label the pull request'));
+    expect(request).toContain(`from-session=\\"stranger\\" ask=\\"${ask.id}\\"`);
+    await send({ to: 'neo', kind: 'question', text: 'Which region should I use?' }, 'worker');
+    const report = delivered().find((text) => text.includes('Which region should I use?'));
+    expect(report).toContain('from-session=\\"worker\\"');
+    expect(report).not.toContain(' ask=');
+  } finally {
+    service.dispose();
+    db.close();
+  }
+});
+
 test('a request todo names its sender, and a repeat after Neo closes it records nothing', async () => {
   const { db, service, send } = await setup();
   const now = Date.now();
@@ -984,7 +1006,7 @@ test('a request from an attached remote session is answered once through the rem
       expect.objectContaining({
         fromSession: 'neo',
         toSession: 'daemon:peer::session:worker',
-        text: 'Neo closed your request "Close the merged todo" as done: Merged',
+        text: 'Neo closed your request "Close the merged todo" as done: Merged\nNo todo was added for it.',
       }),
     ]);
     expect(wakes('did not reach')).toEqual([]);
@@ -1063,6 +1085,69 @@ test('a reply that keeps failing to send wakes Neo on its last attempt instead o
   }
 });
 
+test('the settle reply keeps its own key apart from the close reply, also through a deferred retry', async () => {
+  const start = Date.now();
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(start);
+  let limited = true;
+  const { db, service, forwarded } = await replySetup(async (_target, input) => {
+    if (limited && input.idempotencyKey?.startsWith('neo-request-settled:')) {
+      limited = false;
+      return { kind: 'rejected', reason: 'rate_limited: synthetic' };
+    }
+    return { kind: 'accepted', mailboxId: 'remote-mailbox', messageId: 'remote-message' };
+  });
+  try {
+    recordNeoRequestTodo(service.todos, {
+      incident: 'split',
+      neoSession: 'neo',
+      sender: 'daemon:peer::session:worker',
+      text: 'Label and review',
+      messageId: 'request-message',
+      now: 1,
+    });
+    const [ask] = service.todos.listOpenAsks();
+    const [request] = service.todos.listTodos(ask.id);
+    service.todos.addTodo(
+      'label',
+      ask.id,
+      { title: 'Label', doneWhen: 'Labelled', check: null, instruction: null, named: null },
+      1
+    );
+    await gatewayFor(db.getDatabase()).run(neoTodoMutations, {
+      input: { kind: 'done', todoId: request.id, reason: 'Split' },
+      now: start,
+    });
+    service.todos.updateTodo(
+      service.todos.getTodo('label')!,
+      { state: 'done', reason: 'Labelled', finishedAt: start },
+      start
+    );
+    service.todos.settleAsk(service.todos.getAsk(ask.id)!, 'done', 'All done', start);
+    const queue = db.getJobQueueRepo();
+    const deliver = async () => {
+      const kinds: string[] = [];
+      for (const job of queue.dequeue(NEO_REQUEST_REPLY, 10)) {
+        const result = await service.deliverRequestReply(job);
+        queue.complete(job.id, result);
+        kinds.push(String(result.kind));
+      }
+      return kinds;
+    };
+    expect(await deliver()).toEqual(['accepted', 'deferred']);
+    clock.mockReturnValue(start + 11 * 60_000);
+    expect(await deliver()).toEqual(['accepted']);
+    expect(forwarded.map((item) => item.idempotencyKey)).toEqual([
+      `neo-request-reply:${request.id}`,
+      `neo-request-settled:${ask.id}`,
+      `neo-request-settled:${ask.id}`,
+    ]);
+  } finally {
+    clock.mockRestore();
+    service.dispose();
+    db.close();
+  }
+});
+
 test('seven answers to one sender within a minute all arrive; the rate-limited one waits and retries', async () => {
   const start = Date.now();
   const clock = vi.spyOn(Date, 'now').mockReturnValue(start);
@@ -1098,7 +1183,11 @@ test('seven answers to one sender within a minute all arrive; the rate-limited o
     const [later] = queue.dequeue(NEO_REQUEST_REPLY, 1);
     expect(await service.deliverRequestReply(later)).toEqual({ kind: 'accepted' });
     expect(sent.map((item) => item.text)).toEqual(
-      Array.from({ length: 7 }, (_, i) => `Neo closed your request "Request ${i}" as done: Merged`)
+      Array.from(
+        { length: 7 },
+        (_, i) =>
+          `Neo closed your request "Request ${i}" as done: Merged\nNo todo was added for it.`
+      )
     );
     expect(wakes('did not reach')).toEqual([]);
   } finally {

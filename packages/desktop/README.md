@@ -15,6 +15,14 @@ would reject it. When neither an advertised daemon nor a freshly spawned sidecar
 comes up, the shell reports the failure inside the window instead of leaving the
 splash spinning.
 
+Desktop startup settings are read from `io.hyperneo.app/settings.json` in the
+user's platform configuration directory (Application Support on macOS). The
+optional JSON fields are `dataDir`, `port`, `workspace`, and `daemonEnv` (an
+object of additional environment variables). Paths must be absolute. The
+environment variables `HYPERNEO_DATA_DIR`, `HYPERNEO_DESKTOP_PORT`, and
+`HYPERNEO_DESKTOP_WORKSPACE` override their respective settings. If omitted,
+the app retains its default data directory, port 9283, and workspace.
+
 ```
 ┌─────────────────────────────────────┐
 │  Tauri webview                      │
@@ -102,7 +110,7 @@ Cross-target builds use the `build:macos`, `build:macos-intel`, `build:macos-uni
 ### Signed macOS builds
 
 Set `HYPERNEO_SIGNED_DESKTOP=1` for the macOS release path. It downloads the
-pinned Cua driver v0.44.0 from GitHub, checks its SHA-256 and version, and bundles
+pinned Cua driver v0.55.0 from GitHub, checks its SHA-256 and version, and bundles
 the executable and its license notices. Configure Tauri with the Developer ID
 Application identity for team P5R65T296V and Apple notarization credentials.
 The build requires the app and nested driver signatures and a stapled ticket.
@@ -135,12 +143,12 @@ workspace packages.
 Tauri's [sidecar](https://v2.tauri.app/develop/sidecar/) feature lets the
 desktop app ship and launch a precompiled child process. The Rust shell:
 
-- Attaches to a daemon advertised in `<data-dir>/runtime.json` when one is running;
-  otherwise spawns `hyperneo --port 9283 --workspace ~/.hyperneo/workspace`
-  (release mode only).
+- Attaches to a daemon advertised in the configured data directory when one is
+  running; otherwise spawns the sidecar with the configured settings (release
+  mode only).
 - Streams stdout/stderr into the Tauri log plugin.
-- Polls `http://localhost:9283/` for up to ~15 s and then navigates
-  the main window from `loading/index.html` to the live UI.
+- Polls the configured port for up to ~15 s and then navigates the main window
+  from `loading/index.html` to the live UI.
 - On failure (spawn error, early sidecar exit, or readiness timeout) renders the
   reason — including the daemon's own error line — inside the splash instead of
   spinning forever.

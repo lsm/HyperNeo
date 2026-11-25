@@ -33,6 +33,7 @@ export interface CustomEndpointConfig {
   baseUrl: string;
   apiKey?: string;
   headers?: Record<string, string>;
+  llamaCppThinkingOff?: boolean;
   models: CustomEndpointModel[];
   defaultModelId?: string;
 }

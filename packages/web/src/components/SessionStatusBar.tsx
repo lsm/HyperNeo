@@ -1,4 +1,5 @@
-import type { ContextInfo, ModelInfo, ThinkingLevel } from '@hyperneo/shared';
+import type { ContextInfo, ModelInfo, SessionConfig, ThinkingLevel } from '@hyperneo/shared';
+import { isOxapHarness, oxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import { useSignalEffect } from '@preact/signals';
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { useMessageHub } from '../hooks';
@@ -20,8 +21,11 @@ interface SessionStatusBarProps {
   currentModelInfo: ModelInfo | null;
   availableModels: ModelInfo[];
   modelSwitching: boolean;
+  modelLocked?: boolean;
   modelLoading: boolean;
   onModelSwitch: (model: ModelInfo) => void;
+  harness?: SessionConfig['harness'];
+  provider?: string;
   thinkingLevel?: ThinkingLevel;
   onThinkingLevelChange?: (level: ThinkingLevel) => Promise<void> | void;
   coordinatorSwitching?: boolean;
@@ -40,8 +44,11 @@ export default function SessionStatusBar({
   currentModelInfo,
   availableModels,
   modelSwitching,
+  modelLocked,
   modelLoading,
   onModelSwitch,
+  harness,
+  provider,
   thinkingLevel: thinkingLevelProp,
   onThinkingLevelChange,
   coordinatorSwitching = false,
@@ -92,17 +99,24 @@ export default function SessionStatusBar({
           activeModelInfo={currentModelInfo}
           activeModelLabel={_currentModel || 'Select model'}
           availableModels={availableModels}
+          harness={harness ?? 'sdk'}
+          provider={provider}
           loading={modelLoading}
-          disabled={modelSwitching || coordinatorSwitching || isRecovering}
+          disabled={modelLocked || modelSwitching || coordinatorSwitching || isRecovering}
           busy={modelSwitching}
           thinkingLevel={thinkingLevel}
+          showThinking={!isOxapHarness(harness) || oxapHarness(harness).thinking}
           onSelectModel={(model) => void onModelSwitch(model)}
           onSelectThinking={(level) => void handleThinkingLevelChange(level)}
         />
 
         <div class="h-6 w-px bg-fg-faint" />
 
-        <ContextUsageBar contextUsage={contextUsage} maxContextTokens={maxContextTokens} />
+        <ContextUsageBar
+          contextUsage={contextUsage}
+          maxContextTokens={maxContextTokens}
+          unavailable={isOxapHarness(harness) && !contextUsage}
+        />
       </div>
     </ContentContainer>
   );

@@ -3,7 +3,7 @@
 Use the SKILL.md metadata-only isolation rules: a fresh absolute RUN under
 /private/tmp, NODE_ENV=test, fresh HOME/data/DB, no provider/environment keys.
 Do not put its synthetic workspace under .codex or another excluded sensitive
-root. Use pinned Bun 1.4.2 on PATH. No model mock, fixed port, or GUI is needed.
+root. Use pinned Bun 1.4.4 on PATH. No model mock, fixed port, or GUI is needed.
 
 ```bash
 RUN=$(mktemp -d /private/tmp/hn-resolve-id-XXXXXX)

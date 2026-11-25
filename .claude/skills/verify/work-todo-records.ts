@@ -49,6 +49,7 @@ try {
   const registry = createOperationRegistry(createWorkVerbOperations({
     adapters: () => [adapter], daemonName: 'synthetic',
     remote: { list: () => [], invoke: async () => { throw new Error('Remote work must not run'); } },
+    acceptedTodo: (id) => id === 'open-todo',
     isOpenTodo: (id, sessionId) => {
       const todo = store.getTodo(id), ask = todo && store.getAsk(todo.askId);
       return !!ask && ask.status === 'open' && ask.sessionId === sessionId;
@@ -60,34 +61,31 @@ try {
     const value = JSON.parse(reply.content[0].text);
     receipts.push({ name, todoId, reply: value });
     assert.equal(reply.isError ?? false, false);
-    assert.equal(value.ok, true, JSON.stringify(value));
     return value;
   };
   for (const name of ['work.send', 'work.queue']) {
     for (const todoId of [undefined, 'unknown', 'closed-todo', 'foreign-todo']) {
       const reply = await call(name, todoId);
-      assert(reply.records?.some((record: string) => record.startsWith('todo_required:')));
-      assert.equal(reply.value.receipt.executionId, worker);
-      if (name === 'work.queue') assert.equal(reply.value.delivered, false);
+      assert.equal(reply.ok, false, JSON.stringify(reply));
+      assert.equal(reply.reason, 'todo_required');
     }
   }
-  assert.equal((await call('work.send', 'open-todo')).records, undefined);
+  assert.equal((await call('work.send', 'open-todo')).ok, true);
   const jobs = db.prepare("SELECT payload FROM job_queue WHERE queue='mailbox'").all();
-  assert.equal(jobs.length, 9);
+  assert.equal(jobs.length, 1);
   const queued = jobs.map((row) => JSON.parse((row as { payload: string }).payload));
-  assert.equal(queued.filter((entry) => entry.deliveryMode === 'defer').length, 4);
   assert(queued.every((entry) => entry.to.sessionId === worker && entry.origin === `session:${encodeURIComponent(root)}`));
   evidence.mailbox = queued;
   database.close();
   database = new DatabaseCore(join(run, 'data/daemon.db'));
   await database.initialize();
-  assert.equal(database.getDb().prepare("SELECT count(*) AS count FROM job_queue WHERE queue='mailbox'").get()?.count, 9);
+  assert.equal(database.getDb().prepare("SELECT count(*) AS count FROM job_queue WHERE queue='mailbox'").get()?.count, 1);
   const audits = database.getDb().prepare('SELECT operation,reason,accepted FROM operation_refusals').all();
-  assert.equal(audits.length, 8); assert(audits.every((audit) => (audit as { accepted: number }).accepted === 1));
+  assert.equal(audits.length, 8); assert(audits.every((audit) => (audit as { accepted: number }).accepted === 0));
   evidence.audits = audits;
   evidence.passed = true;
   evidence.scope = 'Production MCP receipt, HyperNeo adapter and durable mailbox acceptance across DB reopen; no provider execution or full daemon listener.';
-  console.log('PASS: eight untracked work calls accepted with visible records; all nine mailbox deliveries survive database reopen.');
+  console.log('PASS: eight untracked work calls were refused; one accepted mailbox delivery survived database reopen.');
 } finally {
   database.close();
   globalThis.fetch = originalFetch;

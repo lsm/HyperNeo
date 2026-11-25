@@ -12,6 +12,8 @@ import { EXA_CREDENTIAL_PROVIDER_ID } from '../agent/exa-web-tools.ts';
 import { assertNoToolSelectionDefaults } from '../tools/session-tool-choice.ts';
 import type { NeoPack } from '../neo/pack-contract.ts';
 import { refuseSecondLineRanker } from '../neo/pack-selection.ts';
+import { voiceParts } from '../voice/voice-parts.ts';
+import { Logger } from '../logger.ts';
 
 export const VOICE_CREDENTIAL_PROVIDER_ID = 'voice-transcription';
 export { EXA_CREDENTIAL_PROVIDER_ID };
@@ -71,13 +73,16 @@ export function registerSettingsHandlers(
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
   db: Database,
   credentialManager?: ProviderCredentialManager,
-  installedPacks: () => readonly NeoPack[] = () => []
+  installedPacks: () => readonly NeoPack[] = () => [],
+  onVoiceKeySaved?: (host: string) => Promise<unknown>
 ) {
   configureWorkerSandbox(() => settingsManager.getGlobalSettings().workerSandbox ?? 'off');
   messageHub.onRequest(
     'settings.global.update',
     async (data: { updates: Partial<GlobalSettings> }) => {
       assertNoToolSelectionDefaults(data.updates);
+      if (Object.hasOwn(data.updates, 'codexAppServerBridge'))
+        throw new Error('Use the local hyperneo codex-setup command to change the Codex bridge.');
       const packs = data.updates.neo?.packs;
       const refusal = packs ? refuseSecondLineRanker(packs, installedPacks()) : null;
       if (refusal) throw new Error(refusal);
@@ -117,7 +122,9 @@ export function registerSettingsHandlers(
             : false;
           const priorVoiceCredential =
             needsCredentialSnapshot && (voiceMutation.storeKey || voiceMutation.remove)
-              ? ((await credentialManager?.getCredentials(VOICE_CREDENTIAL_PROVIDER_ID)) ?? null)
+              ? ((await credentialManager?.getCredentials(
+                  voiceMutation.providerId ?? VOICE_CREDENTIAL_PROVIDER_ID
+                )) ?? null)
               : null;
           const priorExaCredential =
             needsCredentialSnapshot && (exaMutation.storeKey || exaMutation.remove)
@@ -129,7 +136,7 @@ export function registerSettingsHandlers(
             await applyCredentialMutation(
               voiceMutation,
               credentialManager,
-              VOICE_CREDENTIAL_PROVIDER_ID
+              voiceMutation.providerId ?? VOICE_CREDENTIAL_PROVIDER_ID
             );
             await applyCredentialMutation(
               exaMutation,
@@ -138,16 +145,20 @@ export function registerSettingsHandlers(
             );
           } catch (error) {
             await settingsManager.rollbackGlobalSettingsAsync(rollback);
-            await restorePriorCredential(
-              priorVoiceCredential,
-              credentialManager,
-              VOICE_CREDENTIAL_PROVIDER_ID
-            );
-            await restorePriorCredential(
-              priorExaCredential,
-              credentialManager,
-              EXA_CREDENTIAL_PROVIDER_ID
-            );
+            if (voiceMutation.storeKey || voiceMutation.remove) {
+              await restorePriorCredential(
+                priorVoiceCredential,
+                credentialManager,
+                voiceMutation.providerId ?? VOICE_CREDENTIAL_PROVIDER_ID
+              );
+            }
+            if (exaMutation.storeKey || exaMutation.remove) {
+              await restorePriorCredential(
+                priorExaCredential,
+                credentialManager,
+                EXA_CREDENTIAL_PROVIDER_ID
+              );
+            }
             throw error;
           }
           return result;
@@ -173,6 +184,20 @@ export function registerSettingsHandlers(
           clearModelsCache();
         }
         publishGlobalSettings(internalEventBus, updated, credentialManager);
+        if (
+          voiceMutation.storeKey &&
+          (data.updates.voice?.hostKey?.apiKey || data.updates.voice?.apiKey)
+        ) {
+          const host =
+            data.updates.voice?.hostKey?.host ??
+            (updated.voice?.apiKeyEndpoint && URL.canParse(updated.voice.apiKeyEndpoint)
+              ? new URL(updated.voice.apiKeyEndpoint).host
+              : undefined);
+          if (host)
+            await onVoiceKeySaved?.(host).catch((error) =>
+              new Logger('Settings').warn('Voice key notification failed', error)
+            );
+        }
         if (touchesCustomEndpoints || data.updates.providerModelAllowlists !== undefined) {
           internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
         }
@@ -257,6 +282,7 @@ export function registerSettingsHandlers(
 }
 
 interface VoiceCredentialMutation {
+  providerId?: string;
   storeKey?: string;
   remove?: boolean;
 }
@@ -297,6 +323,8 @@ async function prepareGlobalSettingsUpdate(
 ): Promise<Partial<GlobalSettings>> {
   if (!updates.voice) return updates;
   const voice = { ...updates.voice };
+  const hostKey = voice.hostKey;
+  delete voice.hostKey;
   const newApiKey = voice.apiKey?.trim();
   const clearRequested = voice.hasApiKey === false;
   delete voice.apiKey;
@@ -305,13 +333,43 @@ async function prepareGlobalSettingsUpdate(
 
   const persistedVoice = settingsManager.getGlobalSettings().voice;
 
+  if (hostKey) {
+    if (!credentialManager) throw new Error('Credential store is not available');
+    const endpoints = Object.values(voiceParts(voice)).map((part) => part?.endpoint);
+    const validHost = endpoints.some((endpoint) => {
+      try {
+        const url = new URL(endpoint ?? '');
+        return url.host === hostKey.host && (url.protocol === 'https:' || url.protocol === 'wss:');
+      } catch {
+        return false;
+      }
+    });
+    const key = hostKey.apiKey?.trim();
+    if (hostKey.apiKey !== undefined && !key) throw new Error('Voice key cannot be blank');
+    if (key && !validHost) throw new Error('Voice key host requires a configured secure endpoint');
+    const hostUrl = `https://${hostKey.host}`;
+    if (!URL.canParse(hostUrl) || new URL(hostUrl).host !== hostKey.host) {
+      throw new Error('Voice key host must be a valid host');
+    }
+    if (
+      newApiKey ||
+      (clearRequested && (persistedVoice?.hasApiKey || persistedVoice?.apiKey?.trim()))
+    ) {
+      throw new Error('Only one voice key may be changed at once');
+    }
+    mutation.providerId = `${VOICE_CREDENTIAL_PROVIDER_ID}:${hostKey.host}`;
+    if (key) mutation.storeKey = key;
+    else mutation.remove = true;
+  }
+
   if (newApiKey) {
     if (!credentialManager) throw new Error('Credential store is not available');
-    if (!voice.endpoint?.trim()) {
+    const recordedEndpoint = voiceParts(voice).recorded?.endpoint;
+    if (!recordedEndpoint) {
       throw new Error('Configure the voice transcription endpoint before saving an API key');
     }
     try {
-      const keyEndpoint = new URL(voice.endpoint);
+      const keyEndpoint = new URL(recordedEndpoint);
       if (keyEndpoint.protocol !== 'https:') {
         throw new Error('_protocol');
       }
@@ -323,13 +381,24 @@ async function prepareGlobalSettingsUpdate(
       );
     }
     voice.hasApiKey = true;
-    voice.apiKeyEndpoint = normalizeEndpoint(voice.endpoint);
+    voice.apiKeyEndpoint = normalizeEndpoint(recordedEndpoint);
     mutation.storeKey = newApiKey;
   } else if (clearRequested && persistedVoice?.hasApiKey === true) {
     mutation.remove = true;
+  } else if (hostKey && persistedVoice?.apiKey?.trim()) {
+    const oldEndpoint = voiceParts(persistedVoice).recorded?.endpoint ?? '';
+    const newEndpoint = voiceParts(voice).recorded?.endpoint ?? '';
+    const oldHost = URL.canParse(oldEndpoint) ? new URL(oldEndpoint).host : undefined;
+    const newHost = URL.canParse(newEndpoint) ? new URL(newEndpoint).host : undefined;
+    if (oldHost !== newHost) {
+      throw new Error('Save the legacy voice key before changing the recorded host');
+    }
+    voice.apiKey = persistedVoice.apiKey;
+    voice.hasApiKey = true;
+    voice.apiKeyEndpoint = persistedVoice.apiKeyEndpoint;
   } else if (persistedVoice?.apiKey?.trim()) {
     voice.hasApiKey = true;
-    voice.apiKeyEndpoint = normalizeEndpoint(persistedVoice.endpoint ?? '');
+    voice.apiKeyEndpoint = normalizeEndpoint(voiceParts(persistedVoice).recorded?.endpoint ?? '');
     mutation.storeKey = persistedVoice.apiKey.trim();
   } else if (persistedVoice) {
     voice.hasApiKey = persistedVoice.hasApiKey;
@@ -395,10 +464,15 @@ export function sanitizeGlobalSettings(
   credentialManager?: ProviderCredentialManager
 ): GlobalSettings {
   let sanitized = settings;
+  if (settings.codexAppServerBridge) {
+    sanitized = { ...settings };
+    delete sanitized.codexAppServerBridge;
+  }
   if (sanitized.voice) {
     const voice = { ...sanitized.voice };
     const hadInlineApiKey = !!voice.apiKey?.trim();
     delete voice.apiKey;
+    delete voice.hostKey;
     if (hadInlineApiKey || credentialManager) voice.hasApiKey = voice.hasApiKey ?? hadInlineApiKey;
     sanitized = { ...sanitized, voice };
   }

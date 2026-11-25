@@ -7,9 +7,16 @@ import { NeoAskTodoRepository } from '../../../../storage/repositories/neo-ask-t
 import { defineOperation, type OperationCaller } from '../../../operations/registry.ts';
 import { getDataDir } from '../../../data-dir.ts';
 import { ArtifactRefSchema, ArtifactRefusalSchema } from '../../../artifacts/file-contracts.ts';
-import { readBoundPrSummary } from '../../../artifacts/pr-summary.ts';
-import { readBoundGitBlob } from '../../../artifacts/git-blob.ts';
+import { boundPrSummaryReader } from '../../../artifacts/pr-summary.ts';
+import { boundGitBlobReader } from '../../../artifacts/git-blob.ts';
+import { artifactStorageAdmission } from '../../../artifacts/capture-admission.ts';
 import { captureGitArtifact } from '../../../artifacts/git-capture.ts';
+
+export const prFileGitBlob = boundGitBlobReader(superpipe({})('neo.coding.pr.file.blob'));
+const prFileSummary = boundPrSummaryReader(superpipe({})('neo.coding.pr.file.pr'));
+const prFileStorageAdmission = artifactStorageAdmission(
+  superpipe({})('neo.coding.pr.file.admission')
+);
 
 const inputSchema = z.strictObject({
   context: z.strictObject({ kind: z.enum(['todo', 'ask']), id: z.string().min(1).max(200) }),
@@ -36,8 +43,8 @@ export function createCodingPrFileOperation(
   database: () => Database,
   data = getDataDir(),
   home = homedir(),
-  readPr = readBoundPrSummary,
-  readGit = readBoundGitBlob
+  readPr = prFileSummary,
+  readGit = prFileGitBlob
 ) {
   function owns(input: Input, caller: OperationCaller) {
     const repo = new NeoAskTodoRepository(database());
@@ -64,7 +71,7 @@ export function createCodingPrFileOperation(
       : { reason: refused('source_changed') };
   }
   type Plan = Extract<Awaited<ReturnType<typeof plan>>, { value: unknown }>['value'];
-  const capture = (superpipe({})('neo-coding-pr-file') as PipelineAPI)
+  const capture = (superpipe({})('neo.coding.pr.file') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(plan, ['input', 'caller'], 'result:outcome')
     .pipe(
@@ -74,12 +81,16 @@ export function createCodingPrFileOperation(
           return 'value' in checked && JSON.stringify(checked.value) === JSON.stringify(selected);
         };
         const result = await captureGitArtifact(
+          {
+            capture: superpipe({})('neo.coding.pr.file.capture'),
+            admission: prFileStorageAdmission,
+            readBlob: readGit,
+          },
           database(),
           data,
           selected,
           input.requestId,
           current,
-          readGit,
           home
         );
         const checked = await plan(input, caller);
@@ -88,22 +99,25 @@ export function createCodingPrFileOperation(
       ['outcome', 'input', 'caller'],
       'outcome'
     )
-    .endAsync('outcome') as (input: Input, caller: OperationCaller) => Promise<unknown>;
-  return defineOperation({
-    name: 'neo.coding.pr.file',
-    description: neoToolDescription('neo.coding.pr.file'),
-    inputSchema,
-    resultSchema: z.union([
-      ArtifactRefusalSchema,
-      z.strictObject({
-        accepted: z.literal(false),
-        reason: z.literal('size_limit'),
-        actualBytes: z.number().int().nonnegative(),
-        limitBytes: z.number().int().positive(),
-      }),
-      z.strictObject({ accepted: z.literal(true), artifact: ArtifactRefSchema }),
-    ]),
-    policy: { safetyClass: 'mutate', roles: ['neo'] },
-    execute: capture,
-  });
+    .endAsync('outcome');
+  return {
+    ...defineOperation({
+      name: 'neo.coding.pr.file',
+      description: neoToolDescription('neo.coding.pr.file'),
+      inputSchema,
+      resultSchema: z.union([
+        ArtifactRefusalSchema,
+        z.strictObject({
+          accepted: z.literal(false),
+          reason: z.literal('size_limit'),
+          actualBytes: z.number().int().nonnegative(),
+          limitBytes: z.number().int().positive(),
+        }),
+        z.strictObject({ accepted: z.literal(true), artifact: ArtifactRefSchema }),
+      ]),
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: capture,
+    }),
+    pipelineRunner: capture,
+  };
 }

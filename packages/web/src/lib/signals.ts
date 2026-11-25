@@ -30,16 +30,13 @@ export type CommandPaletteMode = 'commands' | 'quick-open';
 export const commandPaletteOpenSignal = signal<boolean>(false);
 export const commandPaletteModeSignal = signal<CommandPaletteMode>('commands');
 
-export type InspectorSection = 'session' | 'work' | 'changes';
 export interface ExtensionPanelTarget {
   type: 'extension';
   panel: string;
   owner: string;
   item: string;
 }
-export type RightPanelTarget =
-  | { type: 'inspector'; sessionId: string; section?: InspectorSection }
-  | ExtensionPanelTarget;
+export type RightPanelTarget = { type: 'schedules'; sessionId: string } | ExtensionPanelTarget;
 export const rightPanelTargetSignal = signal<RightPanelTarget | null>(null);
 
 export type SettingsSection =

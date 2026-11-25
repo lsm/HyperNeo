@@ -5,6 +5,10 @@ import {
 } from '@hyperneo/prompts';
 import { workerEngine } from '@hyperneo/shared/types/worker-identity';
 
+export function withWorkerDeliveryId(instruction: string): string {
+  return `Worker delivery: ${crypto.randomUUID()}\n${instruction}`;
+}
+
 export function withWorkerProvenance(
   instruction: string,
   identity: { model: string | null; effort: string | null; harness: string }
@@ -12,8 +16,7 @@ export function withWorkerProvenance(
   const model = identity.model ?? 'unknown';
   const effort = identity.effort ?? 'unknown';
   const harness = workerEngine(identity.harness);
-  return [
-    `Worker delivery: ${crypto.randomUUID()}`,
+  const brief = [
     'Worker provenance (last observed runtime identity):',
     `Agent: ${model} (effort: ${effort}) via ${harness}`,
     identity.model && identity.effort
@@ -25,4 +28,5 @@ export function withWorkerProvenance(
     '',
     instruction,
   ].join('\n');
+  return withWorkerDeliveryId(brief);
 }

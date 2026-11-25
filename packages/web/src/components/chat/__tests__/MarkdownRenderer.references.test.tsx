@@ -69,6 +69,24 @@ describe('MarkdownRenderer preview references', () => {
     expect(screen.getByText('the notes').closest('[data-preview-reference]')).toBeTruthy();
   });
 
+  it('opens only the listed file URL through the in-app preview', async () => {
+    const reference = 'file:///owner/current%20report.md';
+    const open = vi.fn();
+    const { container } = render(
+      <MarkdownRenderer
+        content={`[Report](${reference}) [Other](file:///owner/other.md)`}
+        references={[reference]}
+        onReference={open}
+      />
+    );
+    const report = await screen.findByRole('link', { name: 'Report' });
+    fireEvent.keyDown(report, { key: 'Enter' });
+    fireEvent.click(screen.getByText('Other'));
+    expect(open.mock.calls).toEqual([[reference]]);
+    expect(screen.queryByRole('link', { name: 'Other' })).toBeNull();
+    expect(container.querySelector('[href]')).toBeNull();
+  });
+
   it('keeps previewable local links when the reference list is empty', async () => {
     const { container } = render(
       <MarkdownRenderer

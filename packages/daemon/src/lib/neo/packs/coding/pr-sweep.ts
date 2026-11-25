@@ -1,15 +1,19 @@
+import { createHash } from 'node:crypto';
 import { codingRepoWatched } from './watched-repos.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
-import { planNudge } from '../../nudge.ts';
+import { NUDGE_STEPS, planNudge } from '../../nudge.ts';
 import type { WorkRef } from '../../../drivers/types.ts';
 import { Logger } from '../../../logger.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
+import { JobQueueRepository } from '../../../../storage/repositories/job-queue-repository.ts';
 import { type CodingAttend, codingPrHeadEvent } from './attention.ts';
 import { CodingPrLedgerRepository, type CodingPrState } from './pr-ledger.ts';
+import { CodingStageFactsRepository, codingCrossModelFindings } from './stage-facts.ts';
+import { readCodingReviewThreads } from './connector-review-thread-reader.ts';
 
 export const CODING_PR_FRESH_MS = 15 * 60_000;
-export const CODING_PR_REMINDERS = 2;
+export const CODING_PR_REMINDERS = NUDGE_STEPS - 1;
 export const CODING_MANUAL_MERGE_NEXT_STEP =
   'Complete all required merge gates, re-read the head, then squash-merge manually with --match-head-commit and the full approved head SHA.';
 
@@ -26,12 +30,19 @@ export type CodingSweepRow = {
   nudges: number;
   owner: WorkRef | null;
   mergeBy?: 'owner' | 'daemon';
+  findings?: string[];
 };
 
 export type CodingSweepDeps = {
   host: string;
   human?(key: string, text: string): Promise<boolean>;
-  tell(ref: WorkRef, key: string, text: string, pr?: string): Promise<boolean>;
+  tell(
+    ref: WorkRef,
+    key: string,
+    text: string,
+    pr?: string,
+    findings?: readonly string[]
+  ): Promise<boolean>;
   wake(key: string, text: string): Promise<boolean>;
 };
 
@@ -45,6 +56,9 @@ export const STATE_TEXT: Partial<Record<CodingPrState, string>> = {
   waiting_ci: 'waiting for CI',
   waiting_cross_review: 'waiting for a cross-model review',
 };
+
+export const codingPrStillChased = (state: CodingPrState | null, nudges: number) =>
+  state !== null && !!STATE_TEXT[state] && nudges < NUDGE_STEPS;
 
 const NEXT_STEP: Partial<Record<CodingPrState, string>> = {
   approved_green: CODING_MANUAL_MERGE_NEXT_STEP,
@@ -70,6 +84,43 @@ const minutesSince = (row: CodingSweepRow, now: number) =>
   Math.round((now - row.stateSince) / 60_000);
 
 const owned = (ref: WorkRef) => `${ref.adapter}:${ref.id}${ref.daemon ? `@${ref.daemon}` : ''}`;
+
+const TRUNCATED = ' … (truncated; ask Neo for the full cross-model review of this head)';
+
+export function codingFindingsText(findings: readonly string[] = [], budget = Infinity): string {
+  const text = findings.length ? ` Review findings: ${findings.join(' ')}` : '';
+  if (text.length <= budget) return text;
+  if (budget <= TRUNCATED.length) return '';
+  const kept = text.slice(0, budget - TRUNCATED.length);
+  return `${kept.isWellFormed() ? kept : kept.slice(0, -1)}${TRUNCATED}`;
+}
+
+export const codingReviewKey = (findings: readonly string[] = []) =>
+  findings.length ? ':review' : '';
+
+export const codingDeliveryKey = (key: string) =>
+  key.length <= 200
+    ? key
+    : `${key.slice(0, 100)}:${createHash('sha256').update(key).digest('hex')}`;
+
+export const codingFailingReviewKey = (
+  row: Pick<CodingSweepRow, 'repo' | 'number' | 'head' | 'findings'>
+) =>
+  codingDeliveryKey(
+    `neo-pr-event:${row.repo}#${row.number}:${row.head}:failing:review:${createHash('sha256')
+      .update(JSON.stringify([...new Set(row.findings)].sort()))
+      .digest('hex')}`
+  );
+
+export const codingFailingReviewReceiptKey = (key: string, owner: WorkRef) =>
+  codingDeliveryKey(
+    `${key}:owner:${JSON.stringify([owner.adapter, owner.id, owner.daemon ?? null])}`
+  );
+
+export const codingFailingText = (
+  row: Pick<CodingSweepRow, 'repo' | 'number' | 'title' | 'head'>
+) =>
+  `${row.repo}#${row.number} "${row.title}" has failing CI on head ${row.head.slice(0, 7)}. Fix it and push.`;
 
 export function codingPrNudgeText(row: CodingSweepRow, now: number): string {
   return `${row.repo}#${row.number} "${row.title}" has been ${STATE_TEXT[row.state] ?? row.state} for ${minutesSince(row, now)} min on head ${row.head.slice(0, 7)}. ${NEXT_STEP[row.state] ?? ''}`;
@@ -104,6 +155,24 @@ export class CodingPrSweepRepository {
         ...row,
         mergeBy: new CodingPrLedgerRepository(this.db).policy(row.repo).mergeBy,
         owner: row.owner ? (JSON.parse(row.owner) as WorkRef) : null,
+        findings: ['changes_requested', 'failing'].includes(row.state)
+          ? [
+              ...codingCrossModelFindings(
+                row.head,
+                new CodingStageFactsRepository(this.db).read(
+                  `https://${process.env.GH_HOST ?? 'github.com'}/${row.repo}/pull/${row.number}`
+                )
+              ),
+              ...(() => {
+                const threads = readCodingReviewThreads(
+                  this.db,
+                  `https://${process.env.GH_HOST ?? 'github.com'}/${row.repo}/pull/${row.number}`,
+                  Date.now()
+                );
+                return threads?.headOid === row.head ? threads.unresolvedThreadUrls : [];
+              })(),
+            ]
+          : [],
       }));
   }
 
@@ -111,13 +180,31 @@ export class CodingPrSweepRepository {
     return gatewayFor(this.db).call(codingSweepWrites, 'mark', row, nudges, now);
   }
 
+  reviewSentLater(key: string): Promise<boolean> {
+    return gatewayFor(this.db).call(codingSweepReads, 'reviewSent', key);
+  }
+
+  markReviewLater(key: string): Promise<void> {
+    return gatewayFor(this.db).call(codingSweepWrites, 'markReview', key);
+  }
+
+  reviewSent(key: string): boolean {
+    return new JobQueueRepository(this.db).submissionReceipt(key, key) !== null;
+  }
+
+  markReview(key: string): void {
+    const receipts = new JobQueueRepository(this.db);
+    if (receipts.submissionReceipt(key, key) === null)
+      receipts.recordSubmissionReceipt(key, key, {});
+  }
+
   mark(row: CodingSweepRow, nudges: number, now: number): void {
     this.db
       .prepare(
         `UPDATE pack_coding_pr_ledger SET nudges = ?, told_at = ?
-          WHERE repo = ? AND number = ? AND head = ? AND state = ?`
+          WHERE repo = ? AND number = ? AND head = ? AND state = ? AND state_since = ?`
       )
-      .run(nudges, now, row.repo, row.number, row.head, row.state);
+      .run(nudges, now, row.repo, row.number, row.head, row.state, row.stateSince);
   }
 }
 
@@ -130,14 +217,37 @@ export async function sweepCodingPrs(
   now: number
 ): Promise<void> {
   for (const row of await repo.rowsAsync()) {
+    if (
+      row.state === 'failing' &&
+      row.owner &&
+      row.findings?.length &&
+      now - row.readAt <= CODING_PR_FRESH_MS
+    ) {
+      const key = codingFailingReviewKey(row);
+      const receipt = codingFailingReviewReceiptKey(key, row.owner);
+      const told =
+        !(await repo.reviewSentLater(receipt)) &&
+        (await deps
+          .tell(row.owner, key, codingFailingText(row), codingPrUrl(deps.host, row), row.findings)
+          .catch(() => false));
+      if (told) await repo.markReviewLater(receipt);
+    }
     const nudge = planCodingPrNudge(row, now);
     if (!nudge) continue;
-    const key = `neo-pr-sweep:${row.repo}#${row.number}:${row.head}:${row.state}:${nudge.nudges}`;
+    const key = codingDeliveryKey(
+      `neo-pr-sweep:${row.repo}#${row.number}:${row.head}:${row.state}${codingReviewKey(row.findings)}:${nudge.nudges}`
+    );
     const told =
       nudge.kind === 'remind' &&
       row.state !== 'waiting_cross_review' &&
       (await deps
-        .tell(row.owner!, key, codingPrNudgeText(row, now), codingPrUrl(deps.host, row))
+        .tell(
+          row.owner!,
+          key,
+          codingPrNudgeText(row, now),
+          codingPrUrl(deps.host, row),
+          row.findings
+        )
         .catch(() => false));
     if (nudge.kind === 'remind' && row.state !== 'waiting_cross_review')
       log.warn(`PR sweep ${key} to ${owned(row.owner!)}: ${told ? 'told' : 'not told'}`);
@@ -166,12 +276,12 @@ export const codingSweepWrites = defineRepositoryOp(
   'coding.sweepWrites',
   'write',
   CodingPrSweepRepository,
-  ['mark']
+  ['mark', 'markReview']
 );
 
 export const codingSweepReads = defineRepositoryOp(
   'coding.sweep.read',
   'read',
   CodingPrSweepRepository,
-  ['rows'] as const
+  ['rows', 'reviewSent'] as const
 );

@@ -17,9 +17,6 @@ vi.mock('../NeoMutedSessionsSettings.tsx', () => ({
 }));
 
 import { globalSettings } from '../../../lib/state.ts';
-vi.mock('../NeoRelaySendersSettings.tsx', () => ({
-  NeoRelaySendersSettings: () => <h2>Who may relay my words</h2>,
-}));
 import { NeoModelSettings } from '../NeoModelSettings.tsx';
 
 const settle = (settings: unknown) => {
@@ -31,16 +28,12 @@ afterEach(() => {
   navigateToSettings.mockClear();
 });
 
-test('orders coordinator, rules, relay senders, muted sessions and related settings', () => {
+test('orders coordinator, rules, muted sessions and related settings', () => {
   settle({});
   render(<NeoModelSettings />);
-  const titles = [
-    'Coordinator',
-    'Standing rules',
-    'Who may relay my words',
-    'Muted sessions',
-    'Related settings',
-  ].map((name) => screen.getByText(name));
+  const titles = ['Coordinator', 'Standing rules', 'Muted sessions', 'Related settings'].map(
+    (name) => screen.getByText(name)
+  );
   titles
     .slice(1)
     .forEach((title, index) =>
@@ -68,10 +61,10 @@ test('marks an unset worker permission and an unset sandbox by their effective v
   ).toBeTruthy();
 });
 
-test('links to Sessions & Harness and to Coding pack settings', () => {
+test('links to Sessions & Clients and to Coding pack settings', () => {
   settle({});
   render(<NeoModelSettings />);
-  fireEvent.click(screen.getByRole('button', { name: 'Sessions & Harness →' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Sessions & Clients →' }));
   expect(navigateToSettings).toHaveBeenLastCalledWith('harness');
   fireEvent.click(screen.getByRole('button', { name: 'Coding pack settings →' }));
   expect(navigateToSettings).toHaveBeenLastCalledWith('coding-pack');

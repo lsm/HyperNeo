@@ -1,14 +1,23 @@
 import { t } from '../lib/i18n/index.ts';
-import { NEO_OTHER_TOPIC, neoTopicColor } from './topic-color.ts';
+import { NEO_OTHER_TOPIC_KEY, type NeoAsk } from '@hyperneo/shared/types/neo-ask';
+import { neoTopicColor } from './topic-color.ts';
+import { neoTopicLabel } from './topic-label.ts';
 
-type Topical = { ask: { topic: string | null } };
+type Topical = { ask: Pick<NeoAsk, 'topic' | 'topicSource'> & { topicKey?: string | null } };
 
-export function neoTopicCounts(entries: readonly Topical[]): [string, number][] {
-  const counts = new Map<string, number>();
+export function neoTopicCounts(entries: readonly Topical[]): [string, string, number][] {
+  const counts = new Map<string, [string, string, number]>();
   for (const { ask } of entries)
-    if (ask.topic) counts.set(ask.topic, (counts.get(ask.topic) ?? 0) + 1);
-  return [...counts].sort(
-    ([a, x], [b, y]) => +(a === NEO_OTHER_TOPIC) - +(b === NEO_OTHER_TOPIC) || y - x
+    if (ask.topicKey && ask.topic) {
+      const known = counts.get(ask.topicKey);
+      counts.set(ask.topicKey, [
+        ask.topicKey,
+        known?.[1] ?? neoTopicLabel(ask)!,
+        (known?.[2] ?? 0) + 1,
+      ]);
+    }
+  return [...counts.values()].sort(
+    ([a, , x], [b, , y]) => +(a === NEO_OTHER_TOPIC_KEY) - +(b === NEO_OTHER_TOPIC_KEY) || y - x
   );
 }
 
@@ -37,13 +46,13 @@ export function NeoTopicChips({
       >
         {t('live.allTopics')} {entries.length}
       </button>
-      {topics.map(([topic, count]) => (
+      {topics.map(([key, topic, count]) => (
         <button
-          key={topic}
+          key={key}
           type="button"
-          aria-pressed={selected === topic}
-          class={`${chip} ${tone(selected === topic)}`}
-          onClick={() => onSelect(selected === topic ? null : topic)}
+          aria-pressed={selected === key}
+          class={`${chip} ${tone(selected === key)}`}
+          onClick={() => onSelect(selected === key ? null : key)}
         >
           <span
             aria-hidden="true"
