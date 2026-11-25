@@ -103,8 +103,9 @@ retry). It is read from a history that those do not touch. `neo_todo_roles` keep
 todo, worker and time, and removes one only when the delivery it was written for failed. Today
 only started and reused workers get a row; 225 of 997 bound todos of one week have none. So:
 
-- A `send`, an `adopt` and a follow-up to an earlier todo add a `do` row too, unless the
-  worker's newest row is already that todo's.
+- A `send`, an `adopt` and a follow-up to an earlier todo add a row too, using the worker's
+  assigned role for that todo. A reviewer follow-up keeps the reviewer role; a new ordinary
+  worker uses `do`. Add no row when the worker's newest row already has that todo and role.
 - A row for a known worker is written before the message is delivered, as `claimTodoWorker`
   does. A failed delivery removes only the row it wrote; if it reused an existing row,
   that row stays. The delivery keeps enough information to make the same decision after
@@ -165,9 +166,10 @@ Six PRs from `dev`, in order, failing tests first. System map read for the plann
    retry and after a restart keeps its todo; a failed delivery removes only its own row;
    a failed repeated follow-up preserves the earlier row, including after restart; a repeated
    follow-up adds none; another todo's row inside a turn gives no todo; a started worker's turn
-   before its row has its todo, an adopted or sent-to session's earlier turn has none; role
-   lookups for reviewers are unchanged; an uncertain start recovered after restart records
-   a proven worker, while an unproven session keeps its earlier turns unattributed.
+   before its row has its todo, an adopted or sent-to session's earlier turn has none; a
+   reviewer follow-up preserves its role for attribution, claim and unclaim; an uncertain start
+   recovered after restart records a proven worker, while an unproven session keeps its earlier
+   turns unattributed.
    Estimate: 5 files, 90 lines, 180 test lines.
 2. **Kind and estimate.** Core kinds, the checks on the two operations, the fact, the Neo tool
    text, and the estimate line in `AGENTS.md` for designs. Tests: missing or unknown kind is
