@@ -14,7 +14,7 @@ export interface InputTextareaProps {
   content: string;
   onContentChange: (content: string) => void;
   onKeyDown: (e: KeyboardEvent) => void;
-  onSubmit: () => void;
+  onSubmit?: () => void;
   disabled?: boolean;
   maxChars?: number;
   placeholder?: string;
@@ -157,7 +157,7 @@ export function InputTextarea({
   const showStop = isAgentWorking && !hasContent && !!onStop;
   const showQueue = isAgentWorking && hasContent && !!onQueue;
   const textareaLeftPadding = leadingElement ? (leadingPaddingClass ?? 'pl-28') : 'pl-5';
-  const controlCount = 1 + (showQueue ? 1 : 0) + (voiceControl ? 1 : 0);
+  const controlCount = Number(showStop || !!onSubmit) + Number(showQueue) + Number(!!voiceControl);
   const textareaRightPadding = controlCount >= 3 ? 'pr-36' : controlCount === 2 ? 'pr-24' : 'pr-14';
 
   const refCount = [...content.matchAll(new RegExp(REFERENCE_PATTERN.source, 'g'))].length;
@@ -349,40 +349,42 @@ export function InputTextarea({
                     </svg>
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={onSubmit}
-                  disabled={disabled || !hasContent}
-                  title={
-                    isAgentWorking
-                      ? 'Steer current turn (Enter or Cmd+Enter)'
-                      : 'Send message (Enter or Cmd+Enter)'
-                  }
-                  aria-label={isAgentWorking ? 'Steer current turn' : 'Send message'}
-                  data-testid="send-button"
-                  class={cn(
-                    'w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2',
-                    hasContent && !disabled
-                      ? isAgentWorking
-                        ? 'bg-warning text-on-warning hover:bg-warning active:scale-95 focus-visible:ring-warning/70'
-                        : 'bg-accent text-accent-fg hover:bg-accent-hover active:scale-95 focus-visible:ring-accent/70'
-                      : 'bg-fill-strong/50 text-fg-faint cursor-not-allowed'
-                  )}
-                >
-                  <svg
-                    class="w-4.5 h-4.5"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    stroke-width={2.5}
+                {onSubmit && (
+                  <button
+                    type="button"
+                    onClick={onSubmit}
+                    disabled={disabled || !hasContent}
+                    title={
+                      isAgentWorking
+                        ? 'Steer current turn (Enter or Cmd+Enter)'
+                        : 'Send message (Enter or Cmd+Enter)'
+                    }
+                    aria-label={isAgentWorking ? 'Steer current turn' : 'Send message'}
+                    data-testid="send-button"
+                    class={cn(
+                      'w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2',
+                      hasContent && !disabled
+                        ? isAgentWorking
+                          ? 'bg-warning text-on-warning hover:bg-warning active:scale-95 focus-visible:ring-warning/70'
+                          : 'bg-accent text-accent-fg hover:bg-accent-hover active:scale-95 focus-visible:ring-accent/70'
+                        : 'bg-fill-strong/50 text-fg-faint cursor-not-allowed'
+                    )}
                   >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      d="M5 10l7-7m0 0l7 7m-7-7v18"
-                    />
-                  </svg>
-                </button>
+                    <svg
+                      class="w-4.5 h-4.5"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      stroke-width={2.5}
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M5 10l7-7m0 0l7 7m-7-7v18"
+                      />
+                    </svg>
+                  </button>
+                )}
               </>
             )}
           </div>

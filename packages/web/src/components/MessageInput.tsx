@@ -346,10 +346,12 @@ export default function MessageInput({
     [setContent]
   );
 
+  const isOxapCodex = harness === 'oxap-codex';
   const commandAutocomplete = useCommandAutocomplete({
     content,
     onSelect: handleCommandSelect,
     store,
+    excludedCommand: isOxapCodex ? 'compact' : undefined,
   });
 
   const handleReferenceSelect = useCallback(
@@ -856,6 +858,7 @@ export default function MessageInput({
   }, []);
 
   const agentWorking = isProcessing ?? isAgentWorking.value;
+  const queueOnly = agentWorking && isOxapCodex;
   const [queuedForNextTurn, setQueuedForNextTurn] = useState<QueuePreviewMessage[]>([]);
   const [queuedNextTurnTotal, setQueuedNextTurnTotal] = useState<number | undefined>();
 
@@ -1054,7 +1057,12 @@ export default function MessageInput({
       if (!outgoing) return;
 
       const savedContent = outgoing.content;
+      if (isOxapCodex && /^\/compact(?:\s|$)/i.test(savedContent.trimStart())) {
+        toast.info('Manual compaction is unavailable in OXAP Codex.');
+        return;
+      }
       const savedAttachments = attachments;
+      const effectiveDelivery = queueOnly ? 'defer' : deliveryMode;
 
       submittingRef.current = true;
 
@@ -1067,7 +1075,7 @@ export default function MessageInput({
         }
 
         try {
-          const result = await onSend(savedContent, outgoing.images, deliveryMode);
+          const result = await onSend(savedContent, outgoing.images, effectiveDelivery);
 
           if (result === false) {
             setContent(savedContent);
@@ -1077,7 +1085,7 @@ export default function MessageInput({
             return;
           }
 
-          if (agentWorking || deliveryMode === 'defer' || queuedForNextTurn.length > 0) {
+          if (agentWorking || effectiveDelivery === 'defer' || queuedForNextTurn.length > 0) {
             await refreshQueuedMessages();
           }
         } finally {
@@ -1088,6 +1096,8 @@ export default function MessageInput({
     [
       disabled,
       textOnly,
+      isOxapCodex,
+      queueOnly,
       extractOutgoingMessage,
       attachments,
       clearDraft,
@@ -1222,9 +1232,7 @@ export default function MessageInput({
               nextTurnMessages={queuedForNextTurn}
               nextTurnTotal={queuedNextTurnTotal}
               className="mb-2 sm:ml-[58px]"
-              onPromoteMessage={(queued) => {
-                void handlePromoteQueuedMessage(queued);
-              }}
+              onPromoteMessage={isOxapCodex ? undefined : handlePromoteQueuedMessage}
               onRemoveMessage={(queued) => {
                 void handleRemoveQueuedMessage(queued);
               }}
@@ -1284,9 +1292,7 @@ export default function MessageInput({
               onContentChange={handleContentChange}
               onSelect={handleSelect}
               onKeyDown={handleKeyDown}
-              onSubmit={() => {
-                void handleSubmit('immediate');
-              }}
+              onSubmit={queueOnly ? undefined : () => void handleSubmit('immediate')}
               disabled={disabled || voiceRecorder.isStarting}
               placeholder={placeholderProp ?? getPlaceholderForSessionType(sessionType)}
               showAgentMentionAutocomplete={showAgentMentionAutocomplete}
@@ -1400,30 +1406,32 @@ export default function MessageInput({
                             </svg>
                           </button>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void stopAndTranscribe('send');
-                          }}
-                          disabled={isTranscribing || !voiceRecorder.isRecording}
-                          aria-label="Stop, transcribe and steer"
-                          title="Stop, transcribe and steer the current turn"
-                          class="grid h-9 w-9 place-items-center rounded-full bg-warning text-on-warning hover:bg-warning active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          <svg
-                            class="h-4.5 w-4.5"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width={2.5}
+                        {!queueOnly && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void stopAndTranscribe('send');
+                            }}
+                            disabled={isTranscribing || !voiceRecorder.isRecording}
+                            aria-label="Stop, transcribe and steer"
+                            title="Stop, transcribe and steer the current turn"
+                            class="grid h-9 w-9 place-items-center rounded-full bg-warning text-on-warning hover:bg-warning active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
                           >
-                            <path
-                              stroke-linecap="round"
-                              stroke-linejoin="round"
-                              d="M5 10l7-7m0 0l7 7m-7-7v18"
-                            />
-                          </svg>
-                        </button>
+                            <svg
+                              class="h-4.5 w-4.5"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width={2.5}
+                            >
+                              <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                d="M5 10l7-7m0 0l7 7m-7-7v18"
+                              />
+                            </svg>
+                          </button>
+                        )}
                       </>
                     ) : (
                       <button
