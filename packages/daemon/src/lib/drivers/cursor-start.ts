@@ -36,18 +36,27 @@ const Update = Session.extend({
   }),
 });
 const Permission = z.object({
+  toolCall: z.object({ toolCallId: z.string(), kind: z.literal('execute') }),
   options: z.array(z.object({ optionId: z.string(), kind: z.string() })),
 });
+const ToolCall = z.object({
+  update: z.object({
+    sessionUpdate: z.literal('tool_call'),
+    toolCallId: z.string(),
+    rawInput: z.object({ command: z.string() }),
+  }),
+});
+const REPLY_COMMAND = /^hyperneo send [^;&|`$<>(){}\\\r\n]+$/;
 const Completion = z.object({ stopReason: z.string() });
 type Gate<Value> = { value: Value } | { reason: Rejected };
 type Receipt = NonNullable<WorkDelivery['receipt']>;
 type StopResult = Result<{ stopped: boolean }>;
 
-export function cursorPermissionOutcome(params: unknown) {
-  const allow = Permission.safeParse(params).data?.options.find(
-    ({ kind }) => kind === 'allow_once'
-  );
-  return allow
+export function cursorPermissionOutcome(params: unknown, commands: ReadonlyMap<string, string>) {
+  const request = Permission.safeParse(params).data;
+  const allow = request?.options.find(({ kind }) => kind === 'allow_once');
+  const command = request ? commands.get(request.toolCall.toolCallId) : undefined;
+  return allow && command && REPLY_COMMAND.test(command)
     ? { outcome: { outcome: 'selected', optionId: allow.optionId } }
     : { outcome: { outcome: 'cancelled' } };
 }
@@ -141,6 +150,7 @@ export function createCursorStart(
   const connect = async (cwd: string, resumeId?: string) => {
     let collecting: string | undefined;
     let reply = '';
+    const commands = new Map<string, string>();
     const transport: ProcessJsonRpcTransport = new ProcessJsonRpcTransport({
       command: executable,
       args: ['acp'],
@@ -151,11 +161,13 @@ export function createCursorStart(
       onStderr: () => {},
       onRequest: ({ id, method, params }) => {
         if (method === 'session/request_permission')
-          transport.sendResponse(id, cursorPermissionOutcome(params));
+          transport.sendResponse(id, cursorPermissionOutcome(params, commands));
         else transport.sendErrorResponse(id, { code: -32601, message: 'Method not supported' });
       },
       onNotification: ({ method, params }) => {
         if (method !== 'session/update') return;
+        const call = ToolCall.safeParse(params).data?.update;
+        if (call) commands.set(call.toolCallId, call.rawInput.command);
         const update = Update.safeParse(params);
         if (update.success && update.data.sessionId === collecting)
           reply += update.data.update.content.text.slice(0, MAX_REPLY_CHARS - reply.length);

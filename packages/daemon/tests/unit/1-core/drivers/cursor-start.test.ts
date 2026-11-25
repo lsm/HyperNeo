@@ -178,19 +178,39 @@ describe('createCursorStart.stop', () => {
 });
 
 describe('cursorPermissionOutcome', () => {
-  it('allows the tool call once', () => {
+  const ask = (options = [{ optionId: 'allow-once', kind: 'allow_once' }]) => ({
+    toolCall: { toolCallId: 'call-1', kind: 'execute' },
+    options: [{ optionId: 'allow-always', kind: 'allow_always' }, ...options],
+  });
+  const ran = (command: string) => new Map([['call-1', command]]);
+
+  it('allows the hyperneo send reply command once', () => {
     expect(
-      cursorPermissionOutcome({
-        options: [
-          { optionId: 'allow-always', kind: 'allow_always' },
-          { optionId: 'allow-once', kind: 'allow_once' },
-        ],
-      })
+      cursorPermissionOutcome(
+        ask(),
+        ran("hyperneo send s-1 --from cursor-cli:c-1 --kind done 'Done'")
+      )
     ).toEqual({ outcome: { outcome: 'selected', optionId: 'allow-once' } });
   });
 
+  it.each([
+    'rm -rf ~',
+    'hyperneo send s-1 done; rm -rf ~',
+    'hyperneo send s-1 $(cat ~/.ssh/id_rsa)',
+  ])('cancels %s', (command) => {
+    expect(cursorPermissionOutcome(ask(), ran(command))).toEqual({
+      outcome: { outcome: 'cancelled' },
+    });
+  });
+
+  it('cancels a tool call whose command was never announced', () => {
+    expect(cursorPermissionOutcome(ask(), new Map())).toEqual({
+      outcome: { outcome: 'cancelled' },
+    });
+  });
+
   it('cancels when no allow-once option is offered', () => {
-    expect(cursorPermissionOutcome({ options: [] })).toEqual({
+    expect(cursorPermissionOutcome(ask([]), ran('hyperneo send s-1 hi'))).toEqual({
       outcome: { outcome: 'cancelled' },
     });
   });
