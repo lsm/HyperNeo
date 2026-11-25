@@ -54,6 +54,7 @@ It is refused once the todo has a row in `neo_todo_roles` or a start attempt has
 recorded in `work_delivery_inputs` before calling the driver. Ensure every todo start has
 that record. It survives a retry, adoption and move,
 including an uncertain start, so the estimate cannot be fitted to work already done. The
+estimate check and write are one atomic step, serialized with recording the start attempt. The
 start time cannot be the test: a retry or a move to another worker clears it. It is asked
 together with the kind and needs no model call of its own.
 
@@ -172,7 +173,8 @@ Six PRs from `dev`, in order, failing tests first. System map read for the plann
    text, and the estimate line in `AGENTS.md` for designs. Tests: missing or unknown kind is
    refused; a pack's kind is accepted only while the pack is on; an estimate after the first
    worker is refused, for `start`, `send` and `adopt`, also when a retry or a move cleared the
-   start; an uncertain start freezes the estimate through restart, adoption and move; a
+   start; an uncertain start freezes the estimate through restart, adoption and move; concurrent
+   estimate edits and start attempts cannot commit an edit after the attempt is recorded; a
    daemon-made todo without one is accepted; a todo with a kind matches the saved
    rules of that kind, and one without keeps today's fallbacks.
    Estimate: 8 files, 130 lines, 150 test lines.
