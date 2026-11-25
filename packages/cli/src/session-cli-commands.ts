@@ -6,8 +6,8 @@ const commands = {
   'desktop-mcp':
     '  hyperneo desktop-mcp --worker <id>   Serve bounded desktop tools over stdio MCP',
   read: '  hyperneo read <link>                Read a card Markdown page with the read-only agent credential',
-  send: `  hyperneo send <session-id> [--kind done|blocked|question|failed] <text>
-                                      Message another session; --kind marks a milestone report`,
+  send: `  hyperneo send <session-id> [--from <your-session-id>] [--kind done|blocked|question|failed] <text>
+                                      Message another session; --from names the sender, --kind marks a milestone report`,
   question: `  hyperneo question <question-id>     Read a Neo question and whether the human answered it`,
   build: `  hyperneo build                      Read daemon build and health through the owner-only session socket`,
   pair: `  hyperneo pair [--kind human|relay|daemon|agent] [--name <name>]

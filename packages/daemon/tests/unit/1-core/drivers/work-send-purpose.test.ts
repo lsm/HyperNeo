@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations.ts';
 import type { WorkAdapter } from '../../../../src/lib/drivers/types.ts';
+import { replyMessageBodyLength } from '../../../../src/lib/messaging/session-reply.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -70,7 +71,7 @@ describe('Neo and daemon sends say what they are', () => {
       caller
     );
     expect(reply).toMatchObject({ kind: 'completed', value: { ok: true } });
-    expect(delivered).toEqual(['Hello']);
+    expect(delivered.map((text) => text.slice(0, replyMessageBodyLength(text)))).toEqual(['Hello']);
   });
 
   test.each([
