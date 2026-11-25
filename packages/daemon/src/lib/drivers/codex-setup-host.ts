@@ -55,15 +55,16 @@ export function createCodexSetupHost(spawn: SpawnFn = spawnProcess, home = homed
       .catch(() => -1);
     if (code !== 0) throw new Error(failure);
   };
-  const managed = async <T>(read: (server: CodexAppServer) => Promise<T>) => {
-    const present = await stat(socket).then(
+  const present = () =>
+    stat(socket).then(
       () => true,
       (error: NodeJS.ErrnoException) => {
         if (error.code === 'ENOENT') return false;
         throw error;
       }
     );
-    if (!present) return null;
+  const managed = async <T>(read: (server: CodexAppServer) => Promise<T>) => {
+    if (!(await present())) return null;
     const server = await connectCodexAppServer(socket);
     try {
       return await read(server);
@@ -76,9 +77,9 @@ export function createCodexSetupHost(spawn: SpawnFn = spawnProcess, home = homed
   let token: Buffer;
   return {
     ...gate,
-    async startBridge(port?: number, nextToken?: Buffer) {
+    async startBridge(port?: number, nextToken?: Buffer, onUnreachable?: () => void) {
       token = nextToken ?? (await loadCodexBridgeToken());
-      close ??= await startCodexAppServerBridge(port, () => token);
+      close ??= await startCodexAppServerBridge(port, () => token, onUnreachable);
     },
     async close() {
       await close?.();
@@ -96,11 +97,20 @@ export function createCodexSetupHost(spawn: SpawnFn = spawnProcess, home = homed
         ],
         'Could not update the Codex login environment.'
       ),
-    startManaged: () =>
-      required(
-        [codexCommand(), 'app-server', 'daemon', 'start'],
-        'Could not start the managed Codex daemon.'
-      ),
+    async startManaged() {
+      try {
+        await required(
+          [codexCommand(), 'app-server', 'daemon', 'start'],
+          'Could not start the managed Codex daemon.'
+        );
+      } catch (error) {
+        if (await present()) throw error;
+        await required(
+          [codexCommand(), 'app-server', 'daemon', 'restart'],
+          'Could not restart the managed Codex daemon.'
+        );
+      }
+    },
     async managedRunning() {
       return (await managed(async () => true)) ?? false;
     },
