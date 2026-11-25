@@ -12,19 +12,25 @@ rounds after the PR opens, run at whatever limit the machine or the model has.
 
 ## 1. A compaction limit on every worker
 
-One constant, `WORKER_COMPACT_AT = 200_000` tokens, applied when the daemon starts a worker.
+One constant, `WORKER_COMPACT_AT = 200_000` tokens, applied to daemon-started workers.
 Each harness compacts by itself at that size, between requests; the daemon adds no trigger
 and no state. A lower limit already in force (a smaller model window, a model's own compact
 percent) stays; a higher one is replaced for workers only.
 
 | Harness | Where it is set |
 |---|---|
-| HyperNeo session | `autoCompactWindow` in the session config (`deps.sessions.create` in `hyperneo-adapter.ts`), the limit plus the SDK reserve (`autoCompactReserveTokens`) |
+| HyperNeo session | Cap the effective threshold in `query-options-builder.ts`, after resolving the routed model window and compact percent; convert the capped threshold to `autoCompactWindow` by adding the SDK reserve (`autoCompactReserveTokens`) |
 | Codex | `model_auto_compact_token_limit` in the `config` of `thread/start` (`codex-desktop-adapter.ts`) |
 | Claude Desktop, sandboxed worker | `autoCompactWindow` in the worker's own `.claude/settings.local.json` (`policy` in `claude-native-writes.ts`), limit plus reserve |
 | Claude Desktop, unsandboxed; Copilot, Antigravity, Cursor | unchanged: the daemon has no setting of its own there and must not write the human's files |
 
-Sessions the human started, and Neo's own session, are not touched.
+For HyperNeo workers, resolve the existing effective threshold first, including any session or
+model percent and explicit window. Use the lower of that threshold and 200k; do not set a
+200k window at `sessions.create`, where the routed model limit is not known. Emit the SDK
+window and percent consistently so the percent cannot override the cap or raise a lower
+threshold. Prove the SDK precedence for native models; leave a model out if its effective
+threshold cannot be established. Sessions the human started, and Neo's own session, are not
+touched.
 
 **Why 200k.** Replaying the same week's worker sessions with a limit, charging each
 compaction its summary, the rewritten prefix and four extra reading rounds:
@@ -41,8 +47,10 @@ experiment: it cannot show work that a summary loses.
 
 **Proof.** In an isolated daemon, start one worker per harness in the table with the limit
 lowered by the test, grow it past the limit, and record that it compacted and finished the
-todo. Codex must prove it after its thread is handed to Codex Desktop; if Desktop drops
-the value, leave Codex out and say so here. A week after release, compare the
+todo. For HyperNeo, also prove a smaller model window and a lower compact percent remain
+lower, and that a higher threshold is capped. Codex must prove it after its thread is handed
+to Codex Desktop; if Desktop drops the value, leave Codex out and say so here. A week after
+release, compare the
 same numbers and review rounds per PR; revert if review rounds rise.
 
 ## 2. No notice that needs no action
@@ -75,7 +83,8 @@ only spend.
 
 Two PRs from `dev`, no migration, no new setting.
 
-1. The limit: one exported constant and the three places above.
+1. The limit: one exported constant and the three harness paths above, including threshold
+   resolution in the HyperNeo options builder.
 2. The notices: `planCodingPrNudge` skips the owner reminder for the two states and keeps the
    escalation; `notify` marks the per-owner receipt and `deliverCodingPrEvents` reads it. Tests
    through the real sweep order: a daemon merge told to the owner sends one notice; **owner
