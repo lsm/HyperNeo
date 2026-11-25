@@ -82,7 +82,7 @@ try {
     assert.equal((await mcp('pack.preferences.ask', { askId, requestId: askId, values })).questionId, question.id);
     assert.equal((await rpc('neo.question.get', { questionId: question.id })).question.text, question.text);
     app.db.updateGlobalSettings({ language });
-    writeFileSync(join(run, 'fixture.json'), JSON.stringify({ askId, question: store.getQuestion(question.id), language }));
+    writeFileSync(join(run, 'fixture.json'), JSON.stringify({ askId: store.getQuestion(question.id)!.askId, question: store.getQuestion(question.id), language }));
     const browser = Bun.spawn([process.env.VERIFY_NODE!, '.claude/skills/verify/pack-settings-readable-table.mjs', String(port), run], { stdout: 'inherit', stderr: 'inherit' });
     assert.equal(await browser.exited, 0, 'headless question render failed');
     const answer = await rpc('neo.question.get', { questionId: question.id });

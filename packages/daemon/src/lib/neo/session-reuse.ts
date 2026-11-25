@@ -31,7 +31,6 @@ export const SESSION_REUSE_PREFERENCE: NeoPackPreferenceDeclaration = {
 export function sessionReuseQuestion(facts: SessionReuseFacts) {
   const prefix = `core.sessionReuse:${facts.scope.kind}:${facts.scope.key}:`;
   return {
-    askId: facts.askId,
     requestId: `${prefix}${crypto.randomUUID()}`,
     prefix,
     hold: false as const,

@@ -595,10 +595,10 @@ describe('immutable human settings proposals', () => {
         values: [{ ...values[0], value: 'invalid' }],
       })
     ).toMatchObject({ value: { ok: false } });
-    expect(service.todos.listQuestions('ask')).toEqual([]);
+    expect(service.todos.listOpenAsks().map(({ id }) => id)).toEqual(['ask']);
     const id = await propose();
     expect(await propose()).toBe(id);
-    expect(service.todos.listQuestions('ask')).toHaveLength(1);
+    expect(service.todos.listOpenAsks()).toHaveLength(2);
   });
   test.each([1, 0, 'retired'] as const)(
     'retry after %s reports a closed question and a new request reaches the human',
@@ -637,7 +637,7 @@ describe('immutable human settings proposals', () => {
     expect(
       await invoke('pack.preferences.ask', { askId: 'ask', requestId: 'fail', values })
     ).toMatchObject({ kind: 'failed' });
-    expect(service.todos.listQuestions('ask')).toEqual([]);
+    expect(service.todos.listOpenAsks().map(({ id }) => id)).toEqual(['ask']);
     db.getDatabase().exec('DROP TRIGGER synthetic_proposal_failure');
     const questionId = await propose();
     db.getDatabase()

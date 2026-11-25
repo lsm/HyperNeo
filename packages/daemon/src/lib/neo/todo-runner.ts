@@ -721,10 +721,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       target,
       (ref) => deps.invoke(caller(ask), 'work.status', { ref }),
       async (input) => {
-        const outcome = await deps.invoke(caller(ask), 'pack.preferences.ask', {
-          askId: ask.id,
-          ...input,
-        });
+        const outcome = await deps.invoke(caller(ask), 'pack.preferences.ask', input);
         const reply = outcome.kind === 'completed' ? (outcome.value as { ok?: boolean }) : null;
         if (!reply?.ok)
           await note(

@@ -21,7 +21,7 @@ a human message ID.
 A stale worker-permission Settings update cannot overwrite the saved consent
 reference. The helper also saves 10 additional rules and observes all of them in `neo.snapshot`.
 
-The preferred `neo.rule.ask {askId,requestId,add?,remove?}` path generates a choice
+The preferred `neo.rule.ask {requestId,add?,remove?}` path generates a choice
 to apply or keep the current rules and atomically binds its immutable exact edit. Keep, a bare yes or no answer
 leaves the rules unchanged. Apply applies only the stored edit; an agent cannot answer,
 replace the proposal after consent or pass new edit fields to the questionId-only

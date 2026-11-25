@@ -187,7 +187,7 @@ describe('createNeoTodoRunner asks the todo pack for its worker target', () => {
     expect(w.dispatched().map((call) => call.name)).toEqual(['work.start']);
   });
 
-  test('the pack can ask a settings question on the todo ask through the preferences operation', async () => {
+  test('the pack can ask a settings question through the preferences operation', async () => {
     const w = (current = world());
     await w.runner.start(w.add());
     const alternatives = [
@@ -197,7 +197,7 @@ describe('createNeoTodoRunner asks the todo pack for its worker target', () => {
     expect(w.calls.filter((call) => call.name === 'pack.preferences.ask')).toEqual([
       {
         name: 'pack.preferences.ask',
-        input: { askId: 'ask', requestId: 'synthetic-request', alternatives },
+        input: { requestId: 'synthetic-request', alternatives },
       },
     ]);
   });

@@ -45,6 +45,7 @@ import {
 import { readNeoAskTopics, readNeoTopicCounts, rewriteNeoTopicPick } from './neo-ask-topic-read.ts';
 import { NeoPublicationRepository } from './neo-publication-repository.ts';
 import { NeoQuestionAnswerRepository } from './neo-question-answer-repository.ts';
+import { cardAskId } from '../../lib/neo/card-ask.ts';
 import { applyNeoRuleAnswer } from './neo-rule-answer.ts';
 import type { neoTodoAddWrites } from './neo-todo-add-write.ts';
 import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
@@ -1225,6 +1226,9 @@ export class NeoAskTodoRepository {
         if (preferences.ok && preferences.applied) settingsChanged = 'preferences';
         const rules = applyNeoRuleAnswer(this.db, question.id, approval);
         if (rules.ok && rules.changed) settingsChanged = 'rules';
+        const kept = [answer].flat().join('\n') === question.options?.at(-1);
+        if (preferences.ok || rules.ok || kept)
+          this.settleCardAsk(question.id, preferences.ok || rules.ok, now);
       }
       return answered;
     })();
@@ -1232,6 +1236,23 @@ export class NeoAskTodoRepository {
     this.touchAsk(question.askId, now);
     if (settingsChanged) this.settingsChanged(settingsChanged);
     return this.getQuestion(question.id);
+  }
+
+  settleCardAsk(questionId: string, applied: boolean, now: number): void {
+    const ask = this.getAsk(cardAskId(questionId));
+    if (
+      ask?.status !== 'open' ||
+      this.listTodos(ask.id).some((todo) => ['todo', 'doing', 'blocked'].includes(todo.state)) ||
+      this.listQuestions(ask.id).some((question) => question.state === 'open') ||
+      this.listChildAsks(ask.id).some((child) => child.status === 'open')
+    )
+      return;
+    this.settleAsk(
+      ask,
+      applied ? 'done' : 'dropped',
+      applied ? 'The human applied the change.' : 'The human kept the current values.',
+      now
+    );
   }
 
   retireQuestion(
