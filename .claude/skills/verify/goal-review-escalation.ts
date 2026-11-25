@@ -5,6 +5,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
+import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { JobQueueProcessor, type JobHandler } from '../../../packages/daemon/src/storage/job-queue-processor.ts';
 
 const run = resolve(process.argv[2]);
@@ -98,6 +99,27 @@ try {
   assert((await call('neo.question.answer', { questionId: replacement.questionId, answer: ['Stop the goal'] })).ok, 'the replacement keeps the answer buttons');
   evidence.resumedAfterRetirement = await call('goal.session.update', { ownerSessionId, goalId: secondId, status: 'active', nextSteps: ['Try a new approach'] });
   assert.equal((evidence.resumedAfterRetirement as any).goal.status, 'active');
+  const asks = new NeoAskTodoRepository(db);
+  asks.openAsk({ id: 'goal-ask', projectId: null, sessionId: ownerSessionId, originMessageId: null, title: 'Grow the guide', topic: '研究', request: 'Grow the guide', createdAt: now });
+  const linked = await call('goal.session.create', { ownerSessionId, askId: 'goal-ask', title: 'Grow the guide', doneTest: 'Published', noEffectReviewLimit: 1 });
+  assert(linked.accepted, JSON.stringify(linked));
+  const taken = await call('goal.session.create', { ownerSessionId, askId: 'goal-ask', title: 'Another', doneTest: 'Published' });
+  assert(!taken.accepted && taken.reason.startsWith('ask_has_goal'), JSON.stringify(taken));
+  const linkedId = linked.goal.id;
+  const noEffect = async (run: number) => assert((await call('goal.journal.append', { ownerSessionId, goalId: linkedId, runId: `goal-review:synthetic:${run}`, done: 'Reviewed', effect: 'no', worked: 'Explore' })).accepted);
+  const cardFor = async () => (await call('neo.snapshot')).humanQueue.items.find((item: any) => item.text.includes('Grow the guide'));
+  await noEffect(1);
+  const onGoalAsk = await cardFor();
+  assert.deepEqual(asks.listGoalAsks(linkedId).map((ask) => ask.id), ['goal-ask'], 'the review card reuses the goal ask');
+  assert((await call('neo.question.answer', { questionId: onGoalAsk.questionId, answer: ['Continue as is'] })).ok);
+  assert((await call('goal.session.update', { ownerSessionId, goalId: linkedId, status: 'active' })).accepted);
+  assert((await call('neo.ask.settle', { askId: 'goal-ask', status: 'done', outcome: 'Closed' })).ok);
+  await noEffect(2);
+  const fresh = asks.listGoalAsks(linkedId).filter((ask) => ask.id !== 'goal-ask');
+  assert.equal(fresh.length, 1);
+  assert.equal(fresh[0]!.topic, '研究', 'a new review ask keeps the goal topic');
+  assert(await cardFor(), 'the new review ask shows its card');
+  evidence.goalAsk = { taken, onGoalAsk, fresh };
   console.log('PASS: three no-effect reviews pause the goal, show a choice card with metric, reviews and work in flight, and the answer reaches the next work wake');
 } finally {
   Date.now = clock;
