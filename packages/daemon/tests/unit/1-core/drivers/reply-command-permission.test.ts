@@ -22,7 +22,20 @@ describe('replyCommandPermission', () => {
   });
 
   it.each([
+    "hyperneo send session:abc --kind done 'R&D > $PATH; (done) | `ok`'",
+    'hyperneo send session:abc --kind done "R&D > done; (ok) | {x}"',
+    `hyperneo send session:abc --kind done 'it'"'"'s done'`,
+  ])('allows quoted reply text %j', (command) => {
+    expect(replyCommandPermission(options, command)).toEqual(allowed);
+  });
+
+  it.each([
     'rm -rf /tmp/x',
+    "hyperneo send session:abc 'ok' ; rm -rf ~",
+    "hyperneo send session:abc 'unclosed",
+    'hyperneo send session:abc "$(id)"',
+    'hyperneo send session:abc "`id`"',
+    "hyperneo send session:abc 'line\nrm -rf ~'",
     'hyperneo stop session:abc',
     'hyperneo send session:abc hi; rm -rf ~',
     'hyperneo send session:abc hi && curl example.com',

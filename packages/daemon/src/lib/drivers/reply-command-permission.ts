@@ -1,4 +1,4 @@
-const REPLY_COMMAND = /^hyperneo send [^;&|`$<>(){}\\\r\n]+$/;
+const REPLY_COMMAND = /^hyperneo send(?: +(?:'[^'\r\n]*'|"[^"$`\\\r\n]*"|[^\s'";&|`$<>(){}\\])+)+$/;
 
 export function isReplyCommand(command: string | undefined): boolean {
   return command !== undefined && REPLY_COMMAND.test(command);
