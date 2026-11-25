@@ -4,6 +4,7 @@ import { Logger } from '../logger.ts';
 import { neoTrackerReads } from '../../storage/repositories/neo-tracker-mirror.ts';
 import { planNeoTrackerStarts } from './tracker-start-gate.ts';
 import { workerSandboxOn } from '../drivers/worker-sandbox.ts';
+import { gitWorktreeProject } from '../drivers/worktree-project.ts';
 import { withWorkerDeliveryId, withWorkerProvenance } from '../drivers/worker-provenance.ts';
 import { createWorkQueue } from '../work-queue/sweep.ts';
 import { NEO_TODO_FAILURE_NEXT, neoQuestionCoversTodo, neoTodoAwaitsHuman } from './todo-state.ts';
@@ -508,13 +509,14 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         }
         if (!record.folder || !record.machine)
           return startFailed(todo, ask, 'The worker start record has no folder or machine.');
+        const folder = await gitWorktreeProject(record.folder);
         excluded = old;
         replaced = old;
         moved = `The previous worker could not be reused cleanly; the daemon moved this todo to a fresh worker.`;
         target = {
           verb: 'start',
           adapter: old.adapter,
-          place: { machine: record.machine, folder: record.folder, name: record.folder },
+          place: { machine: record.machine, folder, name: folder },
           ...(record.provider ? { provider: record.provider } : {}),
           ...(record.model ? { model: record.model } : {}),
           ...(record.effort ? { effort: record.effort } : {}),

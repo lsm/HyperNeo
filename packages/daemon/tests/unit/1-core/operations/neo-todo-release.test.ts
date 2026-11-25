@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, spyOn, test } from 'bun:test';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -1005,7 +1005,7 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
       await h.start(next.id);
       expect(h.events).toEqual([]);
       expect(h.sessions.readRef(next.id)).toEqual(fresh);
-      expect(place).toMatchObject({ folder: h.folder() });
+      expect(place).toMatchObject({ folder: realpathSync(h.folder()) });
     } finally {
       h.db.close();
     }
