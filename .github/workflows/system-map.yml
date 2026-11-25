@@ -16,21 +16,21 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.sha }}
-          fetch-depth: 2
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
           persist-credentials: false
 
-      - name: Save the exact event diff and check out the PR head
+      - name: Save the PR branch diff from its fork point
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          MERGE_SHA: ${{ github.sha }}
           PR_NUMBER: ${{ github.event.number }}
         run: |
-          git fetch --no-tags --depth=1 origin "$BASE_SHA"
-          bash scripts/system-map-diff.sh "$BASE_SHA" "$MERGE_SHA" > "$RUNNER_TEMP/system-map-paths"
-          git fetch --no-tags --depth=1 origin "refs/pull/$PR_NUMBER/head"
-          git checkout --detach "$HEAD_SHA"
+          git fetch --no-tags --depth=200 origin "$BASE_SHA" "refs/pull/$PR_NUMBER/head"
+          if ! git merge-base "$BASE_SHA" "$HEAD_SHA" > /dev/null; then
+            git fetch --no-tags --unshallow origin "$BASE_SHA" "refs/pull/$PR_NUMBER/head"
+          fi
+          bash scripts/system-map-diff.sh "$BASE_SHA" "$HEAD_SHA" > "$RUNNER_TEMP/system-map-paths"
 
       - uses: ./.github/actions/setup-bun
         with:
