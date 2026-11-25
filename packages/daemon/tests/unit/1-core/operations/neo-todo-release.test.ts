@@ -8,6 +8,7 @@ import { cleanupOwnedWorktree } from '../../../../src/lib/drivers/work-placement
 import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox.ts';
 import type { WorkAdapter } from '../../../../src/lib/drivers/types.ts';
 import type { NeoDriverTarget } from '../../../../src/lib/neo/driver-work.ts';
+import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import {
   admitSessionArchive,
@@ -92,6 +93,7 @@ function setup() {
   let folder = pushedCheckout();
   let next = worker;
   let onStart: ((input: Record<string, unknown>) => unknown) | undefined;
+  const packs: NeoPack[] = [];
   const reuse = (mode: string) =>
     db
       .prepare(
@@ -138,7 +140,7 @@ function setup() {
     sessions,
     invoke,
     workerCompact: () => ({ compact, cacheUntil }),
-    packs: () => [],
+    packs: () => packs,
     tell: async (_ask, _todo, note) => {
       notices.push(note);
     },
@@ -204,6 +206,7 @@ function setup() {
     setOnStart: (next: typeof onStart) => {
       onStart = next;
     },
+    packs,
     setOnStatus: (next: () => void) => {
       onStatus = next;
     },
@@ -995,6 +998,48 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
       expect(starts).toBe(0);
       expect(h.store.getTodo(next.id)?.state).toBe('blocked');
       expect(h.store.getTodo(next.id)?.blockedReason).toContain('sandbox');
+    } finally {
+      configureWorkerSandbox(() => 'off');
+      h.db.close();
+    }
+  });
+
+  test('keeps a replacement sandboxed when the setting permits it', async () => {
+    const h = setup();
+    try {
+      configureWorkerSandbox(() => 'on-demand');
+      await h.finishTodo(h.add(started));
+      recordWorkerStarted(h.db, worker, {
+        startedBy: 'neo',
+        machine: 'laptop',
+        folder: h.folder(),
+        harness: worker.adapter,
+        preparation: { pack: 'coding', sandbox: true, parameters: {} },
+      });
+      h.packs.push({
+        id: 'coding',
+        describe: 'coding',
+        instructions: () => null,
+        prepareExecution: async () => ({ ok: false, reason: 'unused' }),
+      });
+      h.setCompact(undefined);
+      let preparation: unknown;
+      const fresh = { adapter: 'hyperneo', id: 'fresh' };
+      h.setOnStart((input) => {
+        preparation = input.preparation;
+        return { ok: true, value: { ref: fresh, receipt: { executionId: 'fresh', inputId: 'i' } } };
+      });
+      const parameters = { target: 'dev' };
+      const next = h.add({
+        verb: 'send',
+        ref: worker,
+        preparationParameters: parameters,
+      } as NeoDriverTarget);
+      h.store.updateTodo(next, { check: { pack: 'coding', kind: 'pr', params: {} } }, Date.now());
+      await h.start(next.id);
+      expect(h.events).toEqual([]);
+      expect(h.sessions.readRef(next.id)).toEqual(fresh);
+      expect(preparation).toEqual({ pack: 'coding', parameters, sandbox: true });
     } finally {
       configureWorkerSandbox(() => 'off');
       h.db.close();
