@@ -1214,6 +1214,7 @@ test('seven answers to one sender within a minute all arrive; the rate-limited o
     throw new Error('no remote');
   });
   try {
+    await db.createSession(createTestSession('stranger'));
     const queue = db.getJobQueueRepo();
     const outcomes: string[] = [];
     for (let i = 0; i < 7; i++) {

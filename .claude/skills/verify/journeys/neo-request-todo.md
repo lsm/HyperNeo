@@ -7,7 +7,7 @@ Desktop peer listens on a private Unix socket and acknowledges inputs in its
 synthetic transcript. The helper refuses real app launches and process discovery.
 
 ```bash
-bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
+TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
   .claude/skills/verify/neo-request-todo.ts
 ```
 

@@ -32,37 +32,70 @@ const pid = 41001;
 const socketPath = join(run, `${pid}.sock`);
 const claudeHome = join(run, 'home/.claude');
 const projects = join(claudeHome, 'projects/-fixture');
-const desktop = join(run, 'home/Library/Application Support/Claude/claude-code-sessions/fixture/account');
+const desktop = join(
+  run,
+  'home/Library/Application Support/Claude/claude-code-sessions/fixture/account'
+);
 const transcript = join(projects, `${claudeId}.jsonl`);
-for (const dir of [projects, desktop, join(claudeHome, 'sessions')]) mkdirSync(dir, { recursive: true });
+for (const dir of [projects, desktop, join(claudeHome, 'sessions')])
+  mkdirSync(dir, { recursive: true });
 writeFileSync(transcript, '');
-writeFileSync(join(desktop, 'local_fixture.json'), JSON.stringify({
-  sessionId: 'local_fixture', cliSessionId: claudeId, cwd: '/fixture',
-  title: 'Synthetic Desktop', lastActivityAt: at, permissionMode: 'default',
-}));
-writeFileSync(join(claudeHome, `sessions/${pid}.json`), JSON.stringify({
-  sessionId: claudeId, pid, procStart: 1, entrypoint: 'claude-desktop',
-  version: 'fixture', messagingSocketPath: socketPath, peerProtocol: 1,
-  peerFeatures: ['notify_idle'],
-}));
-const agents = JSON.stringify([{ sessionId: claudeId, pid, name: 'Synthetic Desktop', status: 'idle' }]);
-writeFileSync(join(run, 'bin/claude'), `#!/bin/sh
+writeFileSync(
+  join(desktop, 'local_fixture.json'),
+  JSON.stringify({
+    sessionId: 'local_fixture',
+    cliSessionId: claudeId,
+    cwd: '/fixture',
+    title: 'Synthetic Desktop',
+    lastActivityAt: at,
+    permissionMode: 'default',
+  })
+);
+writeFileSync(
+  join(claudeHome, `sessions/${pid}.json`),
+  JSON.stringify({
+    sessionId: claudeId,
+    pid,
+    procStart: 1,
+    entrypoint: 'claude-desktop',
+    version: 'fixture',
+    messagingSocketPath: socketPath,
+    peerProtocol: 1,
+    peerFeatures: ['notify_idle'],
+  })
+);
+const agents = JSON.stringify([
+  { sessionId: claudeId, pid, name: 'Synthetic Desktop', status: 'idle' },
+]);
+writeFileSync(
+  join(run, 'bin/claude'),
+  `#!/bin/sh
 [ "$1" = agents ] && [ "$2" = --json ] || exit 2
 printf '%s\n' '${agents}'
-`, { mode: 0o700 });
+`,
+  { mode: 0o700 }
+);
 for (const name of ['open', 'ps'])
   writeFileSync(join(run, 'bin', name), '#!/bin/sh\nexit 2\n', { mode: 0o700 });
 const desktopInputs: { session_id: string; uuid: string; message: { content: string } }[] = [];
 const peer = createServer((socket) => {
   socket.setEncoding('utf8');
   let buffer = '';
-  socket.on('data', (chunk: string) => { buffer += chunk; });
+  socket.on('data', (chunk: string) => {
+    buffer += chunk;
+  });
   socket.on('end', () => {
     const input = JSON.parse(buffer) as typeof desktopInputs[number];
     desktopInputs.push(input);
-    appendFileSync(transcript, JSON.stringify({
-      type: 'user', uuid: input.uuid, timestamp: new Date(clock).toISOString(), message: input.message,
-    }) + '\n');
+    appendFileSync(
+      transcript,
+      JSON.stringify({
+        type: 'user',
+        uuid: input.uuid,
+        timestamp: new Date(clock).toISOString(),
+        message: input.message,
+      }) + '\n'
+    );
   });
 });
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
@@ -362,7 +395,10 @@ try {
   const desktopAsk = requestAsks().find((ask) => ask.title === desktopTitle)!;
   const [desktopTodo] = todos.listTodos(desktopAsk.id);
   const desktopClosed = await invokeOperation(
-    registry, 'neo.todo.done', { todoId: desktopTodo!.id, reason: 'Synthetic reply' }, asNeo
+    registry,
+    'neo.todo.done',
+    { todoId: desktopTodo!.id, reason: 'Synthetic reply' },
+    asNeo
   );
   assert.equal((desktopClosed as { value?: { ok?: boolean } }).value?.ok, true);
   const desktopResult = await deliver();
@@ -370,10 +406,19 @@ try {
   assert.deepEqual(desktopResult, [{ kind: 'accepted' }], JSON.stringify(inbox(root).slice(-1)));
   await app.jobProcessor.tick();
   await app.jobProcessor.stop();
-  assert.equal(desktopInputs.length, 1, JSON.stringify(app.jobQueue.listJobs({ queue: 'worker_input' })));
+  assert.equal(
+    desktopInputs.length,
+    1,
+    JSON.stringify(app.jobQueue.listJobs({ queue: 'worker_input' }))
+  );
   assert.equal(desktopInputs[0]!.session_id, claudeId);
-  assert.match(desktopInputs[0]!.message.content, /Neo closed your request "Answer the synthetic Desktop request" as done: Synthetic reply/);
-  const desktopFailures = inbox(root).filter((entry) => entry.text.includes(`did not reach session ${desktopSender}`));
+  assert.match(
+    desktopInputs[0]!.message.content,
+    /Neo closed your request "Answer the synthetic Desktop request" as done: Synthetic reply/
+  );
+  const desktopFailures = inbox(root).filter((entry) =>
+    entry.text.includes(`did not reach session ${desktopSender}`)
+  );
   assert.equal(desktopFailures.length, 0);
   console.log(`Desktop replies=${desktopInputs.length} failures=${desktopFailures.length}`);
   evidence.passed = true;
