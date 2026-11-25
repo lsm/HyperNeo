@@ -34,14 +34,15 @@ export const DESKTOP_CONTROL_REFUSAL = {
 };
 
 export function requireNeoTodoAddAsk(
-  ask: NeoAsk | null
+  ask: NeoAsk | null,
+  byAskId = false
 ): { value: NeoAsk } | { reason: { ok: false; reason: string } } {
   if (!ask) return { reason: { ok: false, reason: 'not_found: no such ask.' } };
   if (ask.status !== 'open')
     return {
       reason: {
         ok: false,
-        reason: `ask_settled: this ask is ${ask.status}; the todo was not added. Pass the human message input without askId to open a new ask, or use neo.ask.propose.`,
+        reason: `ask_settled: this ask is ${ask.status}; the todo was not added. ${byAskId ? 'Pass the human message input without askId to open a new ask, or use' : 'Use'} neo.ask.propose with a new title.`,
       },
     };
   return { value: ask };
@@ -129,11 +130,11 @@ export function wireNeoTodoAdd(
       'binding'
     )
     .pipe(
-      async (binding: Awaited<ReturnType<typeof resolveNeoInputAsk>>) =>
+      async (binding: Awaited<ReturnType<typeof resolveNeoInputAsk>>, input: AddInput) =>
         'reason' in binding
           ? binding
-          : requireNeoTodoAddAsk(await store.read('getAsk', binding.value.askId)),
-      'binding',
+          : requireNeoTodoAddAsk(await store.read('getAsk', binding.value.askId), !input.input),
+      ['binding', 'input'],
       'result:outcome'
     )
     .pipe((ask: NeoAsk) => ask, 'outcome', 'ask')

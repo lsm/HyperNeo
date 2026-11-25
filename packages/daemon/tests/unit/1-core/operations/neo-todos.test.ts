@@ -168,7 +168,7 @@ describe('neo.todo operations', () => {
     ).toEqual({
       ok: false,
       reason:
-        'ask_settled: this ask is done; the todo was not added. Pass the human message input without askId to open a new ask, or use neo.ask.propose.',
+        'ask_settled: this ask is done; the todo was not added. Pass the human message input without askId to open a new ask, or use neo.ask.propose with a new title.',
     });
     expect(
       await call('neo.todo.add', {
