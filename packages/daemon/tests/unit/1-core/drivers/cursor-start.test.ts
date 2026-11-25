@@ -6,6 +6,7 @@ import {
   createCursorStart,
   cursorPermissionOutcome,
 } from '../../../../src/lib/drivers/cursor-start.ts';
+import { withReplyLine } from '../../../../src/lib/messaging/session-reply.ts';
 
 type Options = {
   onNotification: (frame: { method: string; params: unknown }) => void;
@@ -98,6 +99,33 @@ describe('createCursorStart.start', () => {
       })
     );
     expect(peer.close).toHaveBeenCalledOnce();
+  });
+
+  it('names its own session id in the start reply line', async () => {
+    peer.request
+      .mockResolvedValueOnce(handshake)
+      .mockResolvedValueOnce({ result: { sessionId: ref.id } })
+      .mockReturnValueOnce(new Promise(() => {}));
+
+    await fixture.driver.start({
+      place: { machine: 'fixture', folder: fixture.folder, name: 'Workspace' },
+      title: 'Run',
+      message: withReplyLine('Go.', 'session:neo%3Aroot', 'cli'),
+    });
+    expect(peer.request).toHaveBeenNthCalledWith(
+      3,
+      'session/prompt',
+      {
+        sessionId: ref.id,
+        prompt: [
+          {
+            type: 'text',
+            text: withReplyLine('Go.', 'session:neo%3Aroot', 'cli', 'cursor-cli:cursor-1'),
+          },
+        ],
+      },
+      expect.anything()
+    );
   });
 
   it('tells the user to sign in when Cursor requires authentication', async () => {

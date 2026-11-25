@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { basename, isAbsolute } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
+import { withOwnReplySender } from '../messaging/session-reply.ts';
 import { JsonRpcRequestTimeoutError, ProcessJsonRpcTransport } from '../process-json-rpc.ts';
 import { buildSafeProcessEnv } from '../safe-process-env.ts';
 import { replyCommandPermission } from './reply-command-permission.ts';
@@ -328,7 +329,7 @@ export function createCursorStart(
     const work = launchTurn(
       opened,
       { title: request.sessionTitle ?? request.title, place: request.place },
-      request.message
+      withOwnReplySender(request.message, `${adapter}:${opened.id}`)
     );
     return { ok: true, value: work };
   };
