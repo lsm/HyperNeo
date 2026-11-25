@@ -39,7 +39,7 @@ export function resolveSender(env: Env): string | null {
 }
 
 export function takeSendFrom(args: string[]): { args: string[]; from: string | null } {
-  return args[0] === 'send' && args[2] === '--from' && args[3]?.trim()
+  return args[0] === 'send' && args[2] === '--from' && args[3]?.trim() && !args[3].startsWith('-')
     ? { args: [args[0], args[1], ...args.slice(4)], from: args[3].trim() }
     : { args, from: null };
 }

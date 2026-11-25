@@ -11,6 +11,7 @@ import {
   driverWorkCaller,
   withWorkGoal,
 } from '../../../../src/lib/neo/driver-work';
+import { sessionWorkerRef } from '../../../../src/lib/neo/worker-identity';
 
 const neo: OperationCaller = { source: 'internal', role: 'neo', sessionId: 'neo:own-root' };
 const place = { machine: 'laptop', folder: '/synthetic/repo', name: 'repo' };
@@ -109,6 +110,13 @@ describe('Neo external worker reply instructions', () => {
       for (const message of received) expect(message).toStartWith('Ship the fix.');
       expect(received[0]).toEndWith(line('neo:ask-owner', `${adapter}:worker`));
       expect(received[1]).toEndWith(line('neo:ask-owner'));
+    }
+  );
+
+  test.each(['claude-desktop', 'codex-desktop', 'copilot-cli', 'antigravity-cli', 'cursor-cli'])(
+    'a %s reply sender maps back to its worker',
+    (adapter) => {
+      expect(sessionWorkerRef(`${adapter}:w1`, false)).toEqual({ adapter, id: 'w1' });
     }
   );
 

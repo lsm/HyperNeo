@@ -56,6 +56,10 @@ describe('hyperneo send, question and build', () => {
     expect(
       takeSendFrom(['send', 'neo:root', '--from', 'copilot-cli:w1', '--kind', 'done', 'ok'])
     ).toEqual({ args: ['send', 'neo:root', '--kind', 'done', 'ok'], from: 'copilot-cli:w1' });
+    expect(takeSendFrom(['send', 'neo:root', '--from', '--kind', 'done', 'ok']).from).toBeNull();
+    expect(
+      planSessionCommand(['send', 'neo:root', '--from', '--kind', 'done', 'ok'], 'worker')
+    ).not.toHaveProperty('value');
     expect(takeSendFrom(['send', 'neo:root', 'hi', '--from', 'x'])).toEqual({
       args: ['send', 'neo:root', 'hi', '--from', 'x'],
       from: null,
