@@ -7,7 +7,8 @@ import type { SessionScheduleCadence } from '../../storage/repositories/session-
 import type { NeoPack } from '../neo/pack-contract.ts';
 import type { ScheduleSource, SessionScheduler } from '../scheduler/session-schedules.ts';
 import { choiceCard, openHumanCard } from '../neo/human-card.ts';
-import type { NeoQuestion } from '@hyperneo/shared/types/neo-ask';
+import { isHumanWorkDecision } from '../neo/proposal.ts';
+import type { NeoAsk, NeoQuestion } from '@hyperneo/shared/types/neo-ask';
 import { metricKey, readMetric, readPoint } from './session-goal-metric.ts';
 
 export class SessionGoalSchedules implements ScheduleSource {
@@ -152,28 +153,16 @@ export class SessionGoalSchedules implements ScheduleSource {
     const count = firstEffect < 0 ? reviews.length : firstEffect;
     this.goals.saveWakeSchedule(goal.id, { ...config, noEffectReviewCount: count });
     if (count < limit) return;
-    const neo = this.neoSession(goal.ownerSessionId);
-    if (!neo) throw new Error('Cannot ask the human without a Neo session');
-    const askId = crypto.randomUUID();
     const questionId = crypto.randomUUID();
     const text = `The goal "${goal.title}" had ${limit} reviews in a row without effect and is paused. Continue as is, stop it, or reply with what should change?`;
     const now = Date.now();
-    this.asks.openAsk({
-      id: askId,
-      goalId: goal.id,
-      sessionId: neo,
-      projectId: null,
-      originMessageId: null,
-      title: goal.title,
-      request: text,
-      createdAt: now,
-    });
     openHumanCard(
       this.asks,
       questionId,
-      askId,
+      this.reviewAsk(goal, text, now).id,
       {
         ...choiceCard(text, ['Continue as is', 'Stop the goal']),
+        todos: [],
         document: this.reviewContext(goal, reviews.slice(0, limit)),
       },
       now
@@ -185,6 +174,45 @@ export class SessionGoalSchedules implements ScheduleSource {
       escalationQuestionId: questionId,
     });
     this.goals.update(goal, { status: 'paused' }, now, (updated) => this.sync(updated));
+  }
+
+  private reviewAsk(goal: SessionGoal, request: string, now: number): NeoAsk {
+    const neo = this.neoSession(goal.ownerSessionId);
+    if (!neo) throw new Error('Cannot ask the human without a Neo session');
+    const asks = this.asks.listGoalAsks(goal.id).filter((ask) => ask.sessionId === neo);
+    return (
+      asks.find(
+        (ask) =>
+          ask.status === 'open' &&
+          !this.asks
+            .listQuestions(ask.id)
+            .some((question) => question.state === 'open' && isHumanWorkDecision(question))
+      ) ??
+      this.asks.openAsk({
+        id: crypto.randomUUID(),
+        goalId: goal.id,
+        sessionId: neo,
+        projectId: asks[0]?.projectId ?? null,
+        topic: asks[0]?.topic ?? null,
+        originMessageId: null,
+        title: goal.title,
+        request,
+        createdAt: now,
+      })
+    );
+  }
+
+  goalAskProblem(askId: string, owner: string): string | null {
+    const ask = this.asks.getAsk(askId);
+    if (!ask || ask.sessionId !== this.neoSession(owner))
+      return 'ask_not_found: no such ask of this Neo.';
+    if (ask.status !== 'open') return `ask_settled: this ask is ${ask.status}.`;
+    return ask.goalId ? 'ask_has_goal: this ask already belongs to a goal.' : null;
+  }
+
+  linkAsk(askId: string, goalId: string, owner: string): void {
+    if (this.goalAskProblem(askId, owner) || !this.asks.linkAskGoal(askId, goalId, Date.now()))
+      throw new Error('The ask changed before the goal was created');
   }
 
   private reviewContext(goal: SessionGoal, reviews: readonly GoalJournalEntry[]): string {
@@ -235,26 +263,12 @@ export class SessionGoalSchedules implements ScheduleSource {
       const question = this.reviewQuestion(goal);
       if (!question || question.state !== 'retired') return false;
       const config = this.goals.wakeSchedule(goal.id)!;
-      let ask = this.asks.getAsk(question.askId);
-      if (!ask || ask.status !== 'open') {
-        const neo = this.neoSession(goal.ownerSessionId);
-        if (!neo) throw new Error('Cannot ask the human without a Neo session');
-        ask = this.asks.openAsk({
-          id: crypto.randomUUID(),
-          goalId: goal.id,
-          sessionId: neo,
-          projectId: null,
-          originMessageId: null,
-          title: goal.title,
-          request: question.text,
-          createdAt: Date.now(),
-        });
-      }
+      const now = Date.now();
       const id = crypto.randomUUID();
       openHumanCard(
         this.asks,
         id,
-        ask.id,
+        this.reviewAsk(goal, question.text, now).id,
         {
           text: question.text,
           kind: question.kind,
@@ -263,8 +277,9 @@ export class SessionGoalSchedules implements ScheduleSource {
           noLabel: question.noLabel,
           yesLabel: question.yesLabel,
           document: question.document,
+          todos: [],
         },
-        Date.now()
+        now
       );
       this.goals.saveWakeSchedule(goal.id, { ...config, escalationQuestionId: id });
       return true;

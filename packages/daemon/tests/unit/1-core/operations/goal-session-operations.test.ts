@@ -127,11 +127,11 @@ describe('goal creation from an ask', () => {
     });
   const draft = { title: 'Grow', doneTest: 'Public' };
 
-  test('links the ask to the goal', async () => {
+  test.each([false, true])('links the ask to the goal (own session: %s)', async (ownSession) => {
     const { db, call } = setup();
     try {
       openAsk(db, 'ask');
-      const created = await call('goal.session.create', { ...draft, askId: 'ask' });
+      const created = await call('goal.session.create', { ...draft, askId: 'ask', ownSession });
       expect(created.accepted).toBe(true);
       expect(new NeoAskTodoRepository(db).getAsk('ask')?.goalId).toBe(created.goal.id);
     } finally {
