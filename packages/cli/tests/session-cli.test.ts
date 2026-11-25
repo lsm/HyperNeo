@@ -34,6 +34,7 @@ describe('hyperneo send, question and build', () => {
     for (const args of [
       ['send', 'neo:root', '--kind', 'done', '--from', 'copilot-cli:w1', 'shipped'],
       ['send', 'neo:root', 'shipped', '--from', 'copilot-cli:w1'],
+      ['send', '--from', 'copilot-cli:w1', 'neo:root', 'shipped'],
     ])
       expect(planSessionCommand(args, 'worker')).toHaveProperty('reason');
   });
