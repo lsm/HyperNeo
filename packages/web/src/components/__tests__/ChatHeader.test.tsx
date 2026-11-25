@@ -4,6 +4,7 @@ import type { Session } from '@hyperneo/shared';
 
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { applyLanguage } from '../../lib/i18n/index.ts';
 import { sessionStore } from '../../lib/session-store';
 import { contextPanelOpenSignal, rightPanelTargetSignal } from '../../lib/signals';
 import { connectionState } from '../../lib/state';
@@ -241,6 +242,18 @@ describe('ChatHeader', () => {
       sessionStore.activeSessionId.value = 'other';
       const other = render(<ChatHeader {...defaultProps} />);
       expect(openMenu(other.container).querySelector('button[title="Schedules"]')).toBeNull();
+    });
+
+    it('localizes the Schedules menu row', () => {
+      applyLanguage('zh-Hans');
+      try {
+        const { container } = render(<ChatHeader {...defaultProps} />);
+        const row = openMenu(container).querySelector('button[title="定时检查"]');
+
+        expect(row?.textContent).toBe('定时检查');
+      } finally {
+        applyLanguage('en');
+      }
     });
 
     it('toggles the schedules panel in the right panel from the menu', async () => {

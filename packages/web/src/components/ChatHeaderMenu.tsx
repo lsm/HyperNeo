@@ -1,4 +1,5 @@
 import type { ChatDisplayMode, SessionFeatures } from '@hyperneo/shared';
+import { t } from '../lib/i18n/index.ts';
 import { connectionState } from '../lib/state';
 import { toast } from '../lib/toast';
 import { copyToClipboard } from '../lib/utils.ts';
@@ -89,8 +90,8 @@ export function ChatHeaderMenu({
   const schedulesItems: DropdownMenuItem[] = onSchedulesClick
     ? [
         {
-          label: 'Schedules',
-          title: 'Schedules',
+          label: t('schedules.title'),
+          title: t('schedules.title'),
           icon: <ChatMenuGlyph name="schedules" />,
           trailing: schedulesOpen ? <ChatMenuGlyph name="check" /> : undefined,
           onClick: onSchedulesClick,
