@@ -888,7 +888,7 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
     }
   });
 
-  test('sends to another ask’s worker or a session the human named without compacting it', async () => {
+  test('sends to a session the human named without compacting it', async () => {
     const h = setup();
     try {
       await h.finishTodo(h.add(started));
@@ -899,6 +899,22 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
         { state: 'done', finishedAt: Date.now() },
         Date.now()
       );
+      expect(h.events).toEqual([`send ${worker.id}`]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('starts fresh for a worker from another ask', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      recordWorkerStarted(h.db, worker, {
+        startedBy: 'neo',
+        machine: 'laptop',
+        folder: h.folder(),
+        harness: worker.adapter,
+      });
       h.store.openAsk({
         id: 'other',
         projectId: null,
@@ -908,9 +924,15 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
         request: 'Other work',
         createdAt: 2,
       });
+      const fresh = { adapter: 'hyperneo', id: 'fresh' };
+      h.setOnStart(() => ({
+        ok: true,
+        value: { ref: fresh, receipt: { executionId: 'fresh', inputId: 'i' } },
+      }));
       const other = h.add({ verb: 'send', ref: worker }, null, 'other');
       await h.start(other.id);
-      expect(h.events).toEqual([`send ${worker.id}`, `send ${worker.id}`]);
+      expect(h.events).toEqual([]);
+      expect(h.sessions.readRef(other.id)).toEqual(fresh);
     } finally {
       h.db.close();
     }
