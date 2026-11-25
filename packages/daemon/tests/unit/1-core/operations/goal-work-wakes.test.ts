@@ -241,8 +241,11 @@ describe('goal work wakes', () => {
     expect(scheduler.repo.getBySource('goal', goal.id)?.status).toBe('paused');
   });
 
-  const goalAsk = (id: string, createdAt = 1) =>
-    new NeoAskTodoRepository(db).openAsk({
+  const goalAsk = (id: string) => {
+    db.exec(
+      "INSERT INTO neo_concerns (id,title,summary,context,revision,created_at,updated_at) VALUES ('synthetic-project','Guide','','',1,1,1)"
+    );
+    return new NeoAskTodoRepository(db).openAsk({
       id,
       projectId: 'synthetic-project',
       sessionId: 'neo:root',
@@ -250,8 +253,9 @@ describe('goal work wakes', () => {
       title: 'Grow the guide',
       topic: '研究',
       request: 'Grow the guide',
-      createdAt,
+      createdAt: 1,
     });
+  };
   const noEffect = (goalId: string, run = 1) =>
     call('goal.journal.append', {
       goalId,
