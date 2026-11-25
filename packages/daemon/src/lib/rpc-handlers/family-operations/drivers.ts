@@ -692,6 +692,12 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       )
     : null;
   if (antigravity) context.driverCleanup?.push(antigravity.close);
+  const cursor = cursorPath
+    ? createCursorDiscovery(cursorPath, homedir(), machine, (adapter) =>
+        gatewayFor(db()).call(workStartedSessionReads, 'startedFolders', adapter)
+      )
+    : null;
+  if (cursor) context.driverCleanup?.push(cursor.close);
   const cursorState = cursorDesktopStatePath(homedir());
   const cursorDesktop = createCursorDesktopDiscovery(
     (query) => context.deps.db.readCursorDesktopAsync({ statePath: cursorState, query }),
@@ -730,7 +736,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     }),
     ...codex(),
     ...(antigravity ? [antigravity] : []),
-    ...(cursorPath ? [createCursorDiscovery(cursorPath, homedir(), machine)] : []),
+    ...(cursor ? [cursor] : []),
     ...desktop,
     ...claudeCodeAdapters(
       searchChats,
