@@ -18,6 +18,9 @@ async function fixture(
     tokenFile: string;
     effects: string[];
     failRestart: () => void;
+    failStart: (value: boolean) => void;
+    loseUpstream: () => void;
+    stopManaged: () => void;
   }) => Promise<void>
 ) {
   const data = await mkdtemp('/tmp/hn-setup-');
@@ -26,6 +29,9 @@ async function fixture(
   let state: GlobalSettings['codexAppServerBridge'];
   let remote = false;
   let fail = false;
+  let failStart = false;
+  let running = true;
+  let loseUpstream = () => {};
   const effects: string[] = [];
   const gate = createCodexCutover(async () => true);
   const setup = createCodexSetup(
@@ -40,12 +46,14 @@ async function fixture(
       },
       async startManaged() {
         effects.push('start');
+        running = !failStart;
+        if (failStart) throw new Error('start failed');
       },
       async remoteEnabled() {
         return remote;
       },
       async managedRunning() {
-        return true;
+        return running;
       },
       async enableRemote() {
         remote = true;
@@ -55,7 +63,8 @@ async function fixture(
         effects.push('migrate');
         return [];
       },
-      async startBridge() {
+      async startBridge(_port, _token, onUnreachable) {
+        loseUpstream = () => onUnreachable?.();
         effects.push('bridge');
       },
       async close() {
@@ -84,6 +93,13 @@ async function fixture(
       failRestart: () => {
         fail = true;
       },
+      failStart: (value) => {
+        failStart = value;
+      },
+      loseUpstream: () => loseUpstream(),
+      stopManaged: () => {
+        running = false;
+      },
     });
   } finally {
     await setup.close();
@@ -111,7 +127,7 @@ test('setup preserves a distinct original URL across repeats and reuses the curr
     effects.length = 0;
     await setup.login();
     expect(environment() === current).toBe(true);
-    expect(effects).toEqual(['environment', 'start', 'bridge']);
+    expect(effects).toEqual(['environment', 'bridge', 'start']);
     await setup.manual({ undo: true });
     expect(environment()).toBe(original);
     expect(read()).toEqual({ enabled: false, decision: 'declined' });
@@ -221,5 +237,61 @@ test('approval runs the shared setup once and keeps it configured on later check
       'restart',
       'close',
     ]);
+  });
+});
+
+test('login opens the bridge even when the Codex app-server cannot start', async () => {
+  await fixture('ws://distinct.example/', async ({ setup, effects, failStart }) => {
+    await setup.manual({ noRemoteControl: true });
+    effects.length = 0;
+    failStart(true);
+    await setup.login();
+    expect(effects).toEqual(['environment', 'bridge', 'start']);
+  });
+});
+
+test('a lost Codex app-server starts once per outage and failed recovery waits before retrying', async () => {
+  await fixture('ws://distinct.example/', async ({ setup, effects, failStart, loseUpstream }) => {
+    expect(await setup.recover()).toBe(false);
+    expect(effects).toEqual([]);
+    await setup.manual({ noRemoteControl: true });
+    effects.length = 0;
+    loseUpstream();
+    expect(await Promise.all([setup.recover(), setup.recover()])).toEqual([true, true]);
+    expect(effects).toEqual(['start']);
+
+    vi.useFakeTimers();
+    try {
+      failStart(true);
+      expect(await setup.recover()).toBe(false);
+      expect(await setup.recover()).toBe(false);
+      expect(effects).toEqual(['start', 'start']);
+      failStart(false);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(await setup.recover()).toBe(true);
+      expect(effects).toEqual(['start', 'start', 'start']);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    await setup.manual({ undo: true });
+    effects.length = 0;
+    expect(await setup.recover()).toBe(false);
+    expect(effects).toEqual([]);
+  });
+});
+
+test('first use after a crash brings the app-server back instead of asking for setup', async () => {
+  await fixture('ws://distinct.example/', async ({ setup, read, effects, stopManaged }) => {
+    const open = vi.fn(async () => {});
+    setup.bindQuestion({ open, answer: () => undefined, retire() {} });
+    await setup.manual({ noRemoteControl: true });
+    effects.length = 0;
+    stopManaged();
+    setup.firstUse();
+    await vi.waitFor(() => expect(effects).toEqual(['start']));
+    await setup.close();
+    expect(open).not.toHaveBeenCalled();
+    expect(read()?.decision).toBeUndefined();
   });
 });

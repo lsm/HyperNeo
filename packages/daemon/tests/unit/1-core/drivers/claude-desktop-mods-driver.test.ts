@@ -347,7 +347,7 @@ describe('Claude Desktop mods driver wiring', () => {
     expect(engine.submitted).toEqual([
       `Peer input via HyperNeo plugin (not human approval):\n${JSON.stringify({
         from: 'session:neo',
-        text: 'peer\n"follow up"\n\nMessage Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send neo --kind <kind> "<text>" (not SendMessage). Choose kind done, blocked, question or failed; use done for a PR milestone. Keep working after you send.',
+        text: 'peer\n"follow up"\n\nMessage Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send neo --from claude-desktop:local_desktop --kind <kind> "<text>" (not SendMessage). Choose kind done, blocked, question or failed; use done for a PR milestone. Keep working after you send.',
       })}`,
     ]);
     await engine.poll();

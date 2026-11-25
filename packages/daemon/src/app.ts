@@ -3,6 +3,7 @@ import { NEO_FRONT_INFERENCE } from './lib/job-queue-constants.ts';
 import { NEO_DRIVER_REFRESH } from './lib/neo/driver-refresh.ts';
 import { createPeerPairRoute } from './routes/neo-peer.ts';
 import { collectDaemonScratch } from './lib/drivers/daemon-scratch.ts';
+import { setProviderRepository } from './lib/model-service.ts';
 import { createCodexSetupHost } from './lib/drivers/codex-setup-host.ts';
 import { createCodexSetup } from './lib/drivers/codex-setup.ts';
 import {
@@ -55,6 +56,7 @@ import {
 } from '@hyperneo/shared';
 import type { ProviderRecord } from '@hyperneo/shared';
 import type { Provider, ProviderCredentials } from '@hyperneo/shared/provider';
+import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import {
   createDaemonInternalEventBus,
@@ -420,6 +422,7 @@ export interface DaemonAppContext {
 }
 
 async function invalidateInFlightModelLoads(): Promise<void> {
+  setProviderRepository(null);
   try {
     const { clearModelsCache } = await import('./lib/model-service.ts');
     clearModelsCache();
@@ -511,6 +514,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const reactiveDb = createReactiveDatabase(db);
     startupTimer.start('database + auth initialize');
     await db.initialize(reactiveDb);
+    setProviderRepository(db.providers);
     if (process.env['NODE_ENV'] !== 'test') db.warmEmbedder();
     const cutOffSessionIds = db.listProcessingSessionIds();
     const interruptedTurns = await db.markRestartInterruptedTurns();
@@ -1025,8 +1029,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       },
       { subscriberName: 'session-external-events', namespaceId: SESSION_EVENT_SCOPE }
     );
+    const usesOxap = (sessionId: string) => isOxapHarness(db.getSession(sessionId)?.config.harness);
     const restartRecoveryDeps: RestartRecoveryDeps = {
       readEvidence: async (sessionId) => {
+        if (usesOxap(sessionId)) return null;
         await db.waitForSdkMessageColumns(sessionId);
         return db.getSDKMessageRepo().readRestartRecoveryEvidence(sessionId);
       },
@@ -1607,12 +1613,16 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         ),
     });
 
+    const { prepare: prepareSdkHumanSend } = humanSend;
     messageDeliveryProcessor.register(
       MESSAGE_DELIVERY,
       createMessageDeliveryHandler({
         jobQueue,
-        prepareHumanSend: humanSend.prepare,
-        watchHumanSend: humanSend.watch,
+        prepareHumanSend: async (sessionId) =>
+          usesOxap(sessionId) ? 'deliver' : prepareSdkHumanSend(sessionId),
+        watchHumanSend: (sessionId, uuid) => {
+          if (!usesOxap(sessionId)) humanSend.watch(sessionId, uuid);
+        },
         getSession: async (sessionId: string) => {
           const indexed = taskAgentManager?.getSubSession(sessionId);
           if (indexed && sessionManager?.getCachedSession(sessionId) === indexed) {

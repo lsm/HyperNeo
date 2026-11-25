@@ -206,12 +206,14 @@ top_level AS (
   LEFT JOIN active_delivery_retry ON active_delivery_retry.message_uuid = sdk_messages.sdk_uuid
   WHERE session_id = ?1
     AND parent_tool_use_id IS NULL
-    -- Task #862: surface ALL user-message delivery states (deferred / enqueued
+    -- Task #862: surface the in-flight user-message delivery states (enqueued
     -- / submitted / consumed / failed) so the UI can badge queued / processing
-    -- / retrying explicitly instead of inferring from system/init. Daemon-side
+    -- / retrying explicitly instead of inferring from system/init. Deferred
+    -- (next-turn) messages stay out until they are promoted. Daemon-side
     -- reads (SDKMessageRepository.getSDKMessages) keep the consumed/failed
     -- visibility filter, so prompt context / rewind are unaffected; only the
     -- web transcript feed widens.
+    AND (message_type != 'user' OR COALESCE(send_status, 'consumed') != 'deferred')
     AND message_subtype_norm NOT IN (${EXCLUDED_FROM_PAGINATION_SQL_LIST})
     AND (
       message_type != 'system'

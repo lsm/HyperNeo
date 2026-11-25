@@ -50,6 +50,7 @@ import { ObservedToolInventory } from './observed-tool-inventory.ts';
 import type { QueryLike } from './query-like.ts';
 import { createOxapQuery, type OxapQueryHub } from '../oxap/oxap-query.ts';
 import { OxapReopenDeliveryError, oxapReopenDeliveryFailure } from '../oxap/oxap-reopen.ts';
+import { OxapCodexLaunchError } from '../oxap/oxap-codex-login.ts';
 import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import { codexSessionRefusal, selectSessionEngine, type SessionEngine } from './session-engine.ts';
 import type { QueryOptionsBuilder } from './query-options-builder.ts';
@@ -366,6 +367,10 @@ export interface OxapQueryRuntime {
   openDirectorySupported: boolean;
   hub: OxapQueryHub | Promise<OxapQueryHub>;
   clear?(): Promise<void>;
+  commitThinking?<T extends { success: boolean }>(
+    level: string,
+    persist: () => Promise<T>
+  ): Promise<T>;
 }
 
 export interface QueryRunnerContext {
@@ -1671,15 +1676,17 @@ export class QueryRunner {
         );
         messageQueue.clear(cancelled ? undefined : failure);
         if (!cancelled && live()) {
-          if (failure instanceof OxapReopenDeliveryError) {
+          const launchFailure = failure instanceof OxapCodexLaunchError;
+          if (launchFailure || failure instanceof OxapReopenDeliveryError) {
             await this.failures.terminal(failure.message);
             if (!live()) return;
-            await this.displayErrorAsAssistantMessage(failure.message, { markAsError: true });
+            if (!launchFailure)
+              await this.displayErrorAsAssistantMessage(failure.message, { markAsError: true });
           }
           await errorManager.handleError(
             session.id,
             failure,
-            ErrorCategory.SESSION,
+            launchFailure ? ErrorCategory.VALIDATION : ErrorCategory.SESSION,
             failure.message,
             stateManager.getState(),
             { harness: engine },
@@ -2553,6 +2560,11 @@ export class QueryRunner {
       const live = () => !this.ctx.isCleaningUp() && (liveAttempt?.() ?? true);
       await this.failures.admit(live);
       const coordinator = !!neoCoordinatorBinding(this.ctx.db, session.id);
+      const prompt =
+        coordinator && message.uuid
+          ? this.ctx.db.getSDKMessageRepo?.().getDeliveryContent(session.id, message.uuid)
+          : null;
+      const ridesAlong = notifyOnYield && prompt?.shouldQuery === false;
       if (notifyOnYield && !coordinator)
         await messageQueue.onMessageYielded?.(message.uuid ?? '', Date.now());
       const queuedMessage = message as typeof message & { internal?: boolean };
@@ -2592,11 +2604,12 @@ export class QueryRunner {
         if (this._turnConsumedUserMessages.length > 32) {
           this._turnConsumedUserMessages.shift();
         }
-        await stateManager.setProcessing(
-          message.uuid ?? 'unknown',
-          'initializing',
-          this._turnConsumedUserMessages.map((entry) => entry.uuid)
-        );
+        if (!ridesAlong)
+          await stateManager.setProcessing(
+            message.uuid ?? 'unknown',
+            'initializing',
+            this._turnConsumedUserMessages.map((entry) => entry.uuid)
+          );
         if (!this.ctx.firstMessageReceived) {
           const generationMessages = this._consumedUserMessages.get(queryGeneration) ?? [];
           generationMessages.push({
@@ -2616,11 +2629,8 @@ export class QueryRunner {
       );
 
       startGuard?.();
-      questionInputs?.recordInput(queuedMessage);
-      if (humanInputs && message.uuid && neoCoordinatorBinding(this.ctx.db, session.id)) {
-        const prompt = this.ctx.db.getSDKMessageRepo().getDeliveryContent(session.id, message.uuid);
-        if (prompt?.inputKind === 'human') humanInputs.recordInput(queuedMessage);
-      }
+      if (!ridesAlong) questionInputs?.recordInput(queuedMessage);
+      if (humanInputs && prompt?.inputKind === 'human') humanInputs.recordInput(queuedMessage);
       if (this.turnEndedGeneration === queryGeneration)
         this.fedAfterTurnEnd.push({
           uuid: message.uuid ?? '',
@@ -2628,8 +2638,8 @@ export class QueryRunner {
           internal: isInternal,
         });
       yield this.retryPromptIdentity.outgoing(
-        message,
-        !!neoCoordinatorBinding(this.ctx.db, session.id)
+        ridesAlong ? { ...message, shouldQuery: false } : message,
+        coordinator
       );
       this.streamSilence = noteStreamFed(this.streamSilence, Date.now());
       onSent();

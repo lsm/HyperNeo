@@ -16,9 +16,16 @@ assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert.deepEqual(await checkOxapBinary(binary, { version, sha256 }), { ok: true });
 const workspacePath = join(run, 'workspace');
 const executable = join(run, 'adapter');
+const adapterHelp = `#!/bin/sh
+case "$*" in
+  "app-server --help") echo 'Usage: codex app-server [OPTIONS]' ;;
+  "--help") echo 'Usage: dsh [--profile] <name>' ;;
+  *) exit 1 ;;
+esac
+`;
 mkdirSync(workspacePath);
 mkdirSync(join(run, 'evidence'));
-copyFileSync(binary, executable);
+writeFileSync(executable, adapterHelp, { mode: 0o700 });
 copyFileSync('.claude/skills/verify/gh-stub.sh', join(run, 'bin/gh'));
 answerCodexProbeLocally();
 const downloads = serveLocalRelease(binary, version, join(run, 'release'));
@@ -98,7 +105,7 @@ try {
   await refuse('Wrong provider', codex, 'oxap-deepseek', /cannot run on oxap-deepseek/);
   await refuse('Unknown harness', codex, 'unknown', /Unknown session harness/);
   await refuse('Nested harness', { ...codex, harness: 'oxap-codex' }, undefined, /harness/);
-  await refuse('Explicit OXAP thinking', { ...codex, thinkingLevel: 'think16k' }, 'oxap-codex', /does not take a thinking level/);
+  await refuse('Unpublished OXAP thinking', { ...codex, thinkingLevel: 'think16k' }, 'oxap-codex', /does not publish support for this thinking level/);
   await refuse('Explicit OXAP restriction', { ...codex, permissionMode: 'plan' }, 'oxap-codex', /this restriction is not supported/);
 
   await refuse('Missing executable settings', deepseek, 'oxap-deepseek', /needs an absolute executable path/);
@@ -124,7 +131,7 @@ try {
   });
   assert.equal(app.db.listSessions().length, beforeClone);
   evidence.cloneRefusals.push('Executable removed');
-  copyFileSync(binary, executable);
+  writeFileSync(executable, adapterHelp, { mode: 0o700 });
   unlinkSync(app.settingsManager.getGlobalSettings().oxapHub!.path);
   await refuse('Installed hub removed', codex, 'oxap-codex', /OXAP hub is not installed/);
   assert.deepEqual(downloads, ['SHA256SUMS.txt', `${version}.tar.gz`]);

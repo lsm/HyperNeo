@@ -756,6 +756,7 @@ export class NeoAskTodoRepository {
       COALESCE((SELECT MAX(updated_at) FROM neo_todos WHERE ask_id = neo_asks.id), updated_at) AS since
       FROM neo_asks WHERE status = 'open'
       AND EXISTS (SELECT 1 FROM sessions WHERE sessions.id = neo_asks.session_id AND sessions.status = 'active')
+      AND NOT EXISTS (SELECT 1 FROM neo_goals WHERE neo_goals.id = neo_asks.goal_id AND neo_goals.status IN ('active', 'paused'))
       AND NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state IN ('todo', 'doing'))
       AND NOT EXISTS (SELECT 1 FROM neo_questions WHERE ask_id = neo_asks.id AND state = 'open'
         AND NOT ${NEO_ADVISORY_QUESTION('neo_questions')})

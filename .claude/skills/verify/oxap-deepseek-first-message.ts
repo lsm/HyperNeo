@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
@@ -18,7 +18,7 @@ import { answerCodexProbeLocally, serveLocalRelease } from './oxap-codex-provide
 const [binary, version, sha256, ...args] = process.argv.slice(2);
 const mode = args.length === 2 ? args[0] : 'first';
 const runArgument = args.at(-1)!;
-assert(['first', 'recovery', 'pending', 'flash', 'image', 'flash-web', 'pro-web', 'flash-recovery', 'sdk-default', 'locked-recovery', 'refused-reopen', 'first-open-retry'].includes(mode));
+assert(['first', 'recovery', 'pending', 'flash', 'image', 'flash-web', 'pro-web', 'flash-recovery', 'sdk-default', 'locked-recovery', 'refused-reopen', 'first-open-retry', 'no-replay'].includes(mode));
 const run = resolve(runArgument);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -27,6 +27,12 @@ assert.deepEqual(await checkOxapBinary(binary, { version, sha256 }), { ok: true 
 const workspace = join(run, 'workspace');
 const peer = join(run, 'dsh');
 mkdirSync(workspace);
+const nativePromptCount = join(workspace, 'verify-native-prompt-count');
+if (mode === 'no-replay') {
+  process.env.HYPERNEO_HUMAN_SEND_SILENCE_MS = '250';
+  process.env.HYPERNEO_SDK_STREAM_SILENCE_TIMEOUT_MS = '1500';
+  writeFileSync(nativePromptCount, '');
+}
 mkdirSync(join(run, 'evidence'));
 copyFileSync('.claude/skills/verify/oxap-deepseek-peer.py', peer);
 chmodSync(peer, 0o700);
@@ -198,6 +204,21 @@ try {
           ]
         : ['Synthetic DeepSeek reply']
   );
+  if (mode === 'no-replay') {
+    const snapshot = () => app.db.getDatabase().prepare(
+      `SELECT seq, timestamp, consumed_seq AS consumedSeq FROM sdk_messages
+       WHERE session_id = ? AND message_type = 'user' AND send_status = 'consumed'
+       ORDER BY seq`
+    ).all(sessionId);
+    const before = snapshot();
+    assert.equal(before.length, 1);
+    await Bun.sleep(3500);
+    const nativePrompts = readFileSync(nativePromptCount, 'utf8').length;
+    evidence.nativePrompts = nativePrompts;
+    assert.equal(nativePrompts, 1);
+    assert.deepEqual(snapshot(), before);
+    assert.deepEqual(errors, []);
+  }
   if (flash) {
     const switching = await hub.request<{ success: boolean; error: string }>('session.model.switch', {
       sessionId, provider: 'deepseek', model: 'deepseek-v4-pro',

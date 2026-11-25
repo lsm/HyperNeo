@@ -1227,7 +1227,7 @@ describe('SessionLifecycle', () => {
         lifecycle.create({
           config: { provider: 'anthropic-codex', model: 'gpt-5.5', thinkingLevel: 'think16k' },
         })
-      ).rejects.toThrow(/OXAP Codex does not take a thinking level/);
+      ).rejects.toThrow(/does not publish support for this thinking level/);
       expect(createdSessions).toHaveLength(0);
       mockDb.getGlobalSettings = settings({ thinkingLevel: 'think16k' }) as never;
       await lifecycle.create({ config: { provider: 'anthropic-codex', model: 'gpt-5.5' } });

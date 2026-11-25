@@ -11,11 +11,12 @@ import {
   driverWorkCaller,
   withWorkGoal,
 } from '../../../../src/lib/neo/driver-work';
+import { sessionWorkerRef } from '../../../../src/lib/neo/worker-identity';
 
 const neo: OperationCaller = { source: 'internal', role: 'neo', sessionId: 'neo:own-root' };
 const place = { machine: 'laptop', folder: '/synthetic/repo', name: 'repo' };
-const line = (id: string) =>
-  `Message Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send ${id} --kind <kind> "<text>" (not SendMessage). Choose kind done, blocked, question or failed; use done for a PR milestone. Keep working after you send.`;
+const line = (id: string, from?: string) =>
+  `Message Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send ${id}${from ? ` --from ${from}` : ''} --kind <kind> "<text>" (not SendMessage). Choose kind done, blocked, question or failed; use done for a PR milestone. Keep working after you send.`;
 
 function harness(adapter: string) {
   const received: string[] = [];
@@ -73,7 +74,7 @@ describe('Neo external worker reply instructions', () => {
     }
   });
 
-  test.each(['claude-code', 'claude-desktop', 'codex-desktop'])(
+  test.each(['claude-code', 'claude-desktop', 'codex-desktop', 'copilot-cli', 'antigravity-cli'])(
     'work sends and starts to %s append the sending Neo once',
     async (adapter) => {
       const { received, call } = harness(adapter);
@@ -84,11 +85,12 @@ describe('Neo external worker reply instructions', () => {
       });
       await call('work.start', { adapter, place, title: 'Build', message: 'Build it.' });
       await call('work.send', { ref: { adapter, id: 'worker' }, message: received[0] });
-      expect(received).toEqual(Array(3).fill(`Build it.\n\n${line('neo:own-root')}`));
+      const sent = `Build it.\n\n${line('neo:own-root', `${adapter}:worker`)}`;
+      expect(received).toEqual([sent, `Build it.\n\n${line('neo:own-root')}`, sent]);
     }
   );
 
-  test.each(['claude-code', 'claude-desktop', 'codex-desktop'])(
+  test.each(['claude-code', 'claude-desktop', 'codex-desktop', 'copilot-cli', 'antigravity-cli'])(
     'todo sends and starts to %s keep the ask owner as the reply destination',
     async (adapter) => {
       const { received, call } = harness(adapter);
@@ -105,22 +107,21 @@ describe('Neo external worker reply instructions', () => {
         );
       }
       expect(received).toHaveLength(2);
-      for (const message of received) {
-        expect(message).toStartWith('Ship the fix.');
-        expect(message).toEndWith(line('neo:ask-owner'));
-      }
+      for (const message of received) expect(message).toStartWith('Ship the fix.');
+      expect(received[0]).toEndWith(line('neo:ask-owner', `${adapter}:worker`));
+      expect(received[1]).toEndWith(line('neo:ask-owner'));
     }
   );
 
-  test('leaves humans, other workers and unsupported backend kinds unchanged', async () => {
-    for (const adapter of [
-      'claude-code',
-      'claude-desktop',
-      'codex-desktop',
-      'hyperneo',
-      'space',
-      'future',
-    ]) {
+  test.each(['claude-desktop', 'codex-desktop', 'copilot-cli', 'antigravity-cli', 'cursor-cli'])(
+    'a %s reply sender maps back to its worker',
+    (adapter) => {
+      expect(sessionWorkerRef(`${adapter}:w1`, false)).toEqual({ adapter, id: 'w1' });
+    }
+  );
+
+  test('leaves humans, other workers and HyperNeo SDK sessions unchanged', async () => {
+    for (const adapter of ['claude-code', 'codex-desktop', 'future', 'hyperneo', 'space']) {
       const { received, call } = harness(adapter);
       for (const caller of [
         { source: 'rpc' as const },
@@ -135,7 +136,7 @@ describe('Neo external worker reply instructions', () => {
           },
           caller
         );
-      if (!['claude-code', 'claude-desktop', 'codex-desktop'].includes(adapter))
+      if (['hyperneo', 'space'].includes(adapter))
         await call('work.send', { ref: { adapter, id: 'worker' }, message: 'Same text.' });
       expect(received.every((message) => message === 'Same text.')).toBe(true);
     }
@@ -144,7 +145,7 @@ describe('Neo external worker reply instructions', () => {
   test('queued Neo instructions also get the once-only reply line', async () => {
     const { received, call } = harness('codex-desktop');
     await call('work.queue', { ref: { adapter: 'codex-desktop', id: 'worker' }, message: 'Next.' });
-    expect(received).toEqual([`Next.\n\n${line('neo:own-root')}`]);
+    expect(received).toEqual([`Next.\n\n${line('neo:own-root', 'codex-desktop:worker')}`]);
   });
 
   test('remote start/send/queue retain their originating Neo and the complete 20,000-character instruction', async () => {
@@ -181,9 +182,11 @@ describe('Neo external worker reply instructions', () => {
       const result = await invokeOperation(registry, name, input, neo);
       expect(result).toMatchObject({ kind: 'completed', value: { ok: true } });
     }
-    expect(received).toEqual(
-      Array(3).fill(`${message}\n\n${line('daemon:origin::session:neo%3Aown-root')}`)
-    );
+    const home = 'daemon:origin::session:neo%3Aown-root';
+    expect(received).toEqual([
+      `${message}\n\n${line(home)}`,
+      ...Array(2).fill(`${message}\n\n${line(home, 'codex-desktop:worker')}`),
+    ]);
     expect(
       await invokeOperation(
         registry,

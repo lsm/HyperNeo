@@ -70,6 +70,8 @@ jobs:
       - uses: ./.github/actions/setup-bun
         with:
           bun-version: 1.4.4
+      - name: Check Windows dev sidecar layout with a synthetic build
+        run: bash packages/desktop/tests/dev-sidecar-layout.sh
       - name: Compare native process identity with the macOS SDK and ps
         working-directory: packages/desktop
         run: bun test tests/runtime-process-identity.test.ts
@@ -102,6 +104,7 @@ jobs:
             WorkerDrivers.test_missing_startup_paths_allow_desktop_setup_to_continue \
             WorkerDrivers.test_restart_retires_leftover_driver_before_serving_requests \
             WorkerDrivers.test_restart_leaves_reused_driver_pid_alone \
+            WorkerDrivers.test_restart_leaves_a_driver_pid_reused_by_another_user_alone \
             WorkerDrivers.test_restart_serves_requests_with_an_exited_driver_awaiting_reap
       - name: Test daemon child lifetime
         run: "cargo test --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml -- peer_tests:: leases::"

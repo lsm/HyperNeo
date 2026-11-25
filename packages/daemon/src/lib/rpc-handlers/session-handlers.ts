@@ -374,7 +374,8 @@ export function setupSessionHandlers(
       const locked = oxapModelSwitchRefusal(
         existing.config,
         existing.sdkSessionId,
-        updates.config?.model
+        updates.config?.model,
+        updates.config?.thinkingLevel
       );
       if (locked) throw new Error(locked);
     }
@@ -822,7 +823,8 @@ export function setupSessionHandlers(
     const result = await setSessionThinkingLevel(
       sessionManager,
       agentSession,
-      normalizeThinkingLevel(level)
+      normalizeThinkingLevel(level),
+      level
     );
     if (!result.success) throw new Error(result.error);
     return result;
@@ -933,6 +935,7 @@ export function setupSessionHandlers(
           autoCompactPercent: m.autoCompactPercent,
           thinkingModes: m.thinkingModes,
           effortLevels: m.effortLevels,
+          codexReasoning: m.codexReasoning,
           available: m.available !== false && !unavailable.has(m.provider ?? ''),
           type: 'model' as const,
         })),

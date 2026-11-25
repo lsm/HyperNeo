@@ -1,31 +1,36 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { retryClaudeDownload } from '../lib/api-helpers.ts';
 import { t } from '../lib/i18n/index.ts';
+import { ChatErrorMessage, type ChatErrorDetails } from './ChatErrorMessage.tsx';
 
 const DOWNLOAD_STILL_RUNNING = 'Claude Code is still downloading. Try again shortly.';
 
-export interface ErrorBannerAction {
+export interface ChatErrorRowAction {
   label: string;
   onClick: () => void;
 }
 
-export interface ErrorBannerProps {
+export interface ChatErrorRowProps {
   error: string;
   hasDetails?: boolean;
+  details?: ChatErrorDetails;
   onViewDetails?: () => void;
   onDismiss: () => void;
-  actions?: ErrorBannerAction[];
+  actions?: ChatErrorRowAction[];
   downloadFailure?: boolean;
+  alignEnd?: boolean;
 }
 
-export function ErrorBanner({
+export function ChatErrorRow({
   error,
   hasDetails = false,
+  details,
   onViewDetails,
   onDismiss,
   actions,
   downloadFailure = false,
-}: ErrorBannerProps) {
+  alignEnd = false,
+}: ChatErrorRowProps) {
   const [downloadError, setDownloadError] = useState(error);
   const [retrying, setRetrying] = useState(false);
   const pending = useRef(false);
@@ -55,56 +60,57 @@ export function ErrorBanner({
   const message = downloadFailure ? downloadMessage(downloadError) : error;
   return (
     <div
-      data-testid="error-banner"
-      class="flex-shrink-0 bg-surface border-t border-danger/20 px-4 py-3"
+      data-testid="chat-error-row"
+      class={`my-3 mr-4 w-fit max-w-[calc(100%-2rem)] rounded-xl border border-danger/30 bg-danger/5 px-3 py-2 ${alignEnd ? 'ml-auto' : 'ml-4'}`}
     >
-      <div class="max-w-4xl mx-auto w-full px-4 md:px-0 flex items-center justify-between gap-4">
-        <p class="text-sm text-danger flex-1">{message}</p>
-        <div class="flex items-center gap-2">
-          {downloadFailure && (
-            <button
-              type="button"
-              disabled={retrying}
-              onClick={() => void retryDownload()}
-              class="text-xs px-3 py-1 rounded-md bg-danger/20 hover:bg-danger/30 text-danger-soft transition-colors border border-danger/30 disabled:opacity-50"
-            >
-              {retrying ? t('download.retrying') : t('chat.retry')}
-            </button>
-          )}
-          {actions?.map((action) => (
-            <button
-              key={action.label}
-              onClick={action.onClick}
-              class="text-xs px-3 py-1 rounded-md bg-danger/20 hover:bg-danger/30 text-danger-soft hover:text-danger-soft transition-colors border border-danger/30"
-            >
-              {action.label}
-            </button>
-          ))}
-          {hasDetails && onViewDetails && (
-            <button
-              onClick={onViewDetails}
-              class="text-xs px-3 py-1 rounded-md bg-danger/20 hover:bg-danger/30 text-danger-soft hover:text-danger-soft transition-colors border border-danger/30"
-            >
-              View Details
-            </button>
-          )}
+      <div role="alert" class="text-sm text-danger">
+        <ChatErrorMessage message={message} details={downloadFailure ? undefined : details} />
+      </div>
+      <div class="mt-2 flex flex-wrap gap-2">
+        {downloadFailure && (
           <button
-            onClick={onDismiss}
-            class="text-danger hover:text-danger-soft transition-colors"
-            aria-label="Dismiss error"
+            type="button"
+            disabled={retrying}
+            onClick={() => void retryDownload()}
+            class="text-xs px-3 py-1 rounded-md bg-danger/20 hover:bg-danger/30 text-danger-soft transition-colors border border-danger/30 disabled:opacity-50"
           >
-            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-              <path
-                fill-rule="evenodd"
-                d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
-                clip-rule="evenodd"
-              />
-            </svg>
+            {retrying ? t('download.retrying') : t('chat.retry')}
           </button>
-        </div>
+        )}
+        {actions && <ChatErrorActions actions={actions} />}
+        {hasDetails && onViewDetails && (
+          <button
+            type="button"
+            onClick={onViewDetails}
+            class="text-xs px-3 py-1 rounded-md bg-danger/20 hover:bg-danger/30 text-danger-soft hover:text-danger-soft transition-colors border border-danger/30"
+          >
+            Details
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onDismiss}
+          class="rounded-md px-3 py-1 text-xs text-danger hover:bg-danger/10"
+          aria-label="Dismiss error"
+        >
+          Dismiss
+        </button>
       </div>
     </div>
   );
+}
+
+export function ChatErrorActions({ actions }: { actions: ChatErrorRowAction[] }) {
+  return actions.map((action) => (
+    <button
+      key={action.label}
+      type="button"
+      onClick={action.onClick}
+      class="text-xs px-3 py-1 rounded-md bg-danger/20 hover:bg-danger/30 text-danger-soft hover:text-danger-soft transition-colors border border-danger/30"
+    >
+      {action.label}
+    </button>
+  ));
 }
 
 function downloadMessage(message: string): string {

@@ -341,7 +341,11 @@ export class ModelSwitchHandler {
     );
   }
 
-  async invalidModel(newModel: string, newProvider: string): Promise<string | null> {
+  async invalidModel(
+    newModel: string,
+    newProvider: string,
+    thinkingLevel?: ThinkingLevel
+  ): Promise<string | null> {
     const { session, db } = this.ctx;
     const switched = decideSwitch(
       session.config,
@@ -349,7 +353,12 @@ export class ModelSwitchHandler {
       engineForProvider(newProvider, () => db.providers.getProviderByProviderId(newProvider))
     );
     if (switched !== true) return switched;
-    const locked = oxapModelSwitchRefusal(session.config, session.sdkSessionId, newModel);
+    const locked = oxapModelSwitchRefusal(
+      session.config,
+      session.sdkSessionId,
+      newModel,
+      thinkingLevel
+    );
     if (locked) return locked;
     const sessionApiKey =
       newProvider === session.config.provider ? session.config.providerConfig?.apiKey : undefined;
@@ -410,7 +419,11 @@ export class ModelSwitchHandler {
         throw new Error('Session has no provider configured');
       }
 
-      const invalid = await this.invalidModel(newModel, newProvider);
+      const invalid = await this.invalidModel(
+        newModel,
+        newProvider,
+        commit?.thinkingLevel ?? thinkingLevel
+      );
       if (invalid) {
         logger.error(invalid);
         return { success: false, model: session.config.model, error: invalid };

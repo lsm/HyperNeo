@@ -7,6 +7,7 @@ import {
   extractToolResultIsError,
   collectImages,
   messageTopLevelImages,
+  messageTopLevelText,
 } from '../../../../../src/lib/providers/anthropic-copilot/prompt';
 
 describe('formatAnthropicPrompt', () => {
@@ -453,5 +454,25 @@ describe('messageTopLevelImages', () => {
 
   it('returns empty for string content', () => {
     expect(messageTopLevelImages({ role: 'user', content: 'hi' })).toEqual([]);
+  });
+});
+
+describe('messageTopLevelText', () => {
+  it('joins top-level text blocks and skips tool results and images', () => {
+    expect(
+      messageTopLevelText({
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 't1', content: 'ignored' },
+          { type: 'text', text: 'first' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUJD' } },
+          { type: 'text', text: 'second' },
+        ],
+      })
+    ).toBe('first\nsecond');
+  });
+
+  it('returns string content as is', () => {
+    expect(messageTopLevelText({ role: 'user', content: 'hi' })).toBe('hi');
   });
 });

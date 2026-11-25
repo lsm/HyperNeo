@@ -241,6 +241,8 @@ impl Record {
             }
             // This lookup excludes zombies. An exited driver cannot send input while awaiting reap.
             Err(error) if error.raw_os_error() == Some(libc::ESRCH) => Ok(false),
+            // Only another user's process refuses this lookup, so the driver's PID was reused.
+            Err(error) if error.raw_os_error() == Some(libc::EPERM) => Ok(false),
             Err(error) => Err(error.into()),
         }
     }

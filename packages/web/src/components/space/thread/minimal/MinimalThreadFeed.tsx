@@ -1,4 +1,5 @@
 import { ChevronRightGlyph } from '../../../icons/common-glyphs.tsx';
+import { isApiErrorText, TranscriptErrorMessage } from '../../../ChatErrorMessage.tsx';
 import MarkdownRenderer from '../../../chat/MarkdownRenderer.tsx';
 import type { ParsedThreadRow } from '../space-task-thread-events';
 import type { ActiveTurnSummary } from '@hyperneo/shared';
@@ -456,25 +457,9 @@ function CompletedBody({
         data-has-error={turn.hasError || undefined}
       >
         <ReplacementBadge status={turn.replacementStatus} />
-        {turn.hasError ? (
-          <div class="flex items-center gap-2 text-danger text-sm font-medium mb-1">
-            <svg
-              class="w-4 h-4 shrink-0"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              aria-hidden="true"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-              />
-            </svg>
-            <span>API Error</span>
-          </div>
-        ) : null}
+        {turn.hasError && turn.lastMessage && isApiErrorText(turn.lastMessage) && (
+          <strong class="block text-sm font-semibold text-danger">API Error</strong>
+        )}
         {errorSummary ? (
           <div
             class="mb-2 flex items-start gap-1.5 text-xs text-danger-soft"
@@ -512,7 +497,9 @@ function CompletedBody({
                 : 'text-sm text-fg leading-relaxed [&_a]:text-accent'
             }
           >
-            {turn.fallback ? (
+            {turn.hasError && !isApiErrorText(turn.lastMessage) ? (
+              <TranscriptErrorMessage message={turn.lastMessage} />
+            ) : turn.fallback ? (
               <p class="whitespace-pre-wrap break-words">{turn.lastMessage}</p>
             ) : (
               <MarkdownRenderer content={turn.lastMessage} />

@@ -1,6 +1,9 @@
+import { execFile } from 'node:child_process';
 import { constants } from 'node:fs';
 import { access, stat } from 'node:fs/promises';
-import { isAbsolute } from 'node:path';
+import { homedir } from 'node:os';
+import { isAbsolute, join, resolve } from 'node:path';
+import { promisify } from 'node:util';
 import type { GlobalSettings, ProviderRecord } from '@hyperneo/shared';
 import {
   isOxapHarness,
@@ -10,6 +13,8 @@ import {
 } from '@hyperneo/shared/types/oxap-harnesses';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
+import { codexCommand } from '../drivers/codex-app-server.ts';
+import { findExecutable } from '../drivers/find-executable.ts';
 import { defineOperation, type OperationDefinition } from '../operations/registry.ts';
 import { withProviderLock } from '../rpc-handlers/provider-mutation-lock.ts';
 import type { OxapEngine, OxapEngineOptions } from './oxap-engine.ts';
@@ -50,6 +55,47 @@ async function isExecutableFile(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export async function detectOxapExecutable(harness: OxapHarnessId): Promise<string | undefined> {
+  const codex = harness === 'oxap-codex';
+  const name = codex ? 'codex' : 'dsh';
+  const command = codex ? codexCommand() : name;
+  for (const path of [
+    codex ? process.env.CODEX_CLI_PATH : undefined,
+    findExecutable(name),
+    join(homedir(), '.local', 'bin', name),
+    isAbsolute(command) ? command : undefined,
+  ]) {
+    if (path && (await isExecutableFile(resolve(path)))) return resolve(path);
+  }
+}
+
+const probeExecutable = promisify(execFile);
+
+async function checkExecutable(plan: Plan) {
+  const executable = plan.executable;
+  if (!executable) return { value: plan };
+  const { path, harness } = executable;
+  const codex = harness === 'oxap-codex';
+  const label = codex ? 'Codex CLI' : 'DeepSeek harness';
+  if (!(await isExecutableFile(path))) {
+    return { reason: `${label} path "${path}" must point to an executable file.` };
+  }
+  const args = codex ? ['app-server', '--help'] : ['--help'];
+  const signature = codex ? /Usage:\s+codex app-server\b/ : /Usage:\s+dsh\b/;
+  try {
+    const { stdout } = await probeExecutable(path, args, {
+      env: { PATH: process.env.PATH, HOME: process.env.HOME },
+      timeout: 3_000,
+      killSignal: 'SIGKILL',
+      maxBuffer: 64 * 1024,
+    });
+    if (signature.test(stdout)) return { value: plan };
+  } catch {}
+  return {
+    reason: `"${path}" did not respond as the ${label}. Enter the path to ${codex ? 'codex' : 'dsh'}.`,
+  };
 }
 
 export async function newSessionOxapRefusal(
@@ -116,7 +162,12 @@ function readBinary(input: Save, deps: OxapSettingsDeps) {
   return input.harness === 'sdk' ? installed : deps.install(installed);
 }
 
-type Plan = { id: string; configJson: string; next: Records };
+type Plan = {
+  id: string;
+  configJson: string;
+  next: Records;
+  executable?: { path: string; harness: OxapHarnessId };
+};
 
 function planSave(input: Save, records: ProviderRecord[]) {
   const record = records.find((entry) => entry.providerId === input.providerId);
@@ -143,7 +194,12 @@ function planSave(input: Save, records: ProviderRecord[]) {
   if (row) rest.harness = input.harness;
   const configJson = JSON.stringify(rest);
   const next = records.map((entry) => (entry === record ? { ...entry, configJson } : entry));
-  return { value: { id: record.id, configJson, next } };
+  const harness = row ? input.harness : saved?.harness;
+  const executable =
+    settings.executable && (harness === 'oxap-codex' || harness === 'oxap-deepseek')
+      ? { path: settings.executable, harness }
+      : undefined;
+  return { value: { id: record.id, configJson, next, executable } };
 }
 
 function checkHub(plan: Plan, keys: Record<string, string | undefined>) {
@@ -178,6 +234,7 @@ const saveSettings = (superpipe({})('oxap.settings.save') as PipelineAPI)
   .input(['input', 'deps'])
   .pipe((deps: OxapSettingsDeps) => deps.records(), 'deps', 'records')
   .pipe(planSave, ['input', 'records'], 'result:plan')
+  .pipe(checkExecutable, 'plan', 'result:plan')
   .pipe((plan: Plan, deps: OxapSettingsDeps) => readKeys(plan.next, deps), ['plan', 'deps'], 'keys')
   .pipe(checkHub, ['plan', 'keys'], 'result:plan')
   .pipe(readBinary, ['input', 'deps'], 'binary')

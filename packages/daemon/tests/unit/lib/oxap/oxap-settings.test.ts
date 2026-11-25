@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { GlobalSettings, ProviderRecord } from '@hyperneo/shared';
 import {
   createOxapSettingsOperations,
@@ -13,6 +16,12 @@ vi.mock('@hyperneo/shared/types/oxap-harnesses', async (importOriginal) =>
 );
 
 const binary = { path: '/synthetic/oxap', version: releaseName(), sha256: 'a'.repeat(64) };
+
+const directories: string[] = [];
+afterEach(() => {
+  for (const directory of directories.splice(0))
+    rmSync(directory, { recursive: true, force: true });
+});
 
 function host(
   options: { failWrite?: boolean; failRestart?: boolean; keys?: Record<string, string> } = {}
@@ -46,13 +55,17 @@ function host(
     stateDirectory: '/synthetic/state',
     environment: { HOME: '/synthetic/home' },
   };
+  const directory = mkdtempSync(join(tmpdir(), 'oxap-settings-'));
+  directories.push(directory);
+  const codex = join(directory, 'codex');
+  writeFileSync(codex, '#!/bin/sh\necho "Usage: codex app-server [OPTIONS]"\n', { mode: 0o700 });
   const [save] = createOxapSettingsOperations(deps);
   const run = (input: Record<string, unknown>) =>
     save.execute(input, { source: 'rpc' } as never) as Promise<{
       accepted: boolean;
       reason?: string;
     }>;
-  return { deps, records, install, restart, run };
+  return { deps, records, install, restart, run, codex, directory };
 }
 
 describe('oxap.settings.save', () => {
@@ -62,13 +75,13 @@ describe('oxap.settings.save', () => {
       await h.run({
         providerId: 'anthropic-codex',
         harness: 'oxap-codex',
-        settings: { executable: '/synthetic/codex' },
+        settings: { executable: h.codex },
       })
     ).toEqual({ accepted: true });
     expect(JSON.parse(h.records[0].configJson!)).toEqual({
       models: ['m'],
       harness: 'oxap-codex',
-      harnessSettings: { executable: '/synthetic/codex' },
+      harnessSettings: { executable: h.codex },
     });
     expect(h.install).toHaveBeenCalledOnce();
     expect(h.restart).toHaveBeenCalledOnce();
@@ -78,7 +91,7 @@ describe('oxap.settings.save', () => {
       identity: { version: releaseName(), sha256: 'a'.repeat(64) },
       stateDirectory: '/synthetic/state',
       hub: {
-        adapters: { 'anthropic-codex': { type: 'codex', executable: '/synthetic/codex' } },
+        adapters: { 'anthropic-codex': { type: 'codex', executable: h.codex } },
         environment: { HOME: '/synthetic/home' },
       },
     });
@@ -102,6 +115,29 @@ describe('oxap.settings.save', () => {
     expect(h.restart).not.toHaveBeenCalled();
   });
 
+  it('refuses missing, non-executable and wrong CLI paths without restarting', async () => {
+    const h = host();
+    const wrong = join(h.directory, 'oxap');
+    const nonExecutable = join(h.directory, 'not-executable');
+    writeFileSync(wrong, '#!/bin/sh\necho "Usage: oxap"\n', { mode: 0o700 });
+    writeFileSync(nonExecutable, '#!/bin/sh\n', { mode: 0o600 });
+    for (const [executable, reason] of [
+      [join(h.directory, 'missing'), 'must point to an executable file'],
+      [nonExecutable, 'must point to an executable file'],
+      [wrong, 'did not respond as the Codex CLI'],
+    ]) {
+      expect(
+        await h.run({
+          providerId: 'anthropic-codex',
+          harness: 'oxap-codex',
+          settings: { executable },
+        })
+      ).toEqual({ accepted: false, reason: expect.stringContaining(reason) });
+    }
+    expect(h.install).not.toHaveBeenCalled();
+    expect(h.restart).not.toHaveBeenCalled();
+  });
+
   it('refuses a provider whose stored config is unreadable, without writing or restarting', async () => {
     const h = host();
     h.records[0].configJson = '{';
@@ -109,7 +145,7 @@ describe('oxap.settings.save', () => {
       await h.run({
         providerId: 'anthropic-codex',
         harness: 'oxap-codex',
-        settings: { executable: '/c' },
+        settings: { executable: h.codex },
       })
     ).toEqual({ accepted: false, reason: 'anthropic-codex has an unreadable config' });
     expect(h.records[0].configJson).toBe('{');
@@ -151,7 +187,7 @@ describe('oxap.settings.save', () => {
       h.run({
         providerId: 'anthropic-codex',
         harness: 'oxap-codex',
-        settings: { executable: '/c' },
+        settings: { executable: h.codex },
       })
     ).rejects.toThrow('synthetic write failure');
     expect(h.records[0].configJson).toBe('{"models":["m"]}');
@@ -165,12 +201,12 @@ describe('oxap.settings.save', () => {
       h.run({
         providerId: 'anthropic-codex',
         harness: 'oxap-codex',
-        settings: { executable: '/c' },
+        settings: { executable: h.codex },
       })
     ).rejects.toThrow('synthetic close failure');
     expect(JSON.parse(h.records[0].configJson!).harness).toBe('oxap-codex');
     expect((await readHubOptions(h.deps)).hub.adapters['anthropic-codex']).toMatchObject({
-      executable: '/c',
+      executable: h.codex,
     });
   });
 
@@ -179,7 +215,7 @@ describe('oxap.settings.save', () => {
     await h.run({
       providerId: 'anthropic-codex',
       harness: 'oxap-codex',
-      settings: { executable: '/c' },
+      settings: { executable: h.codex },
     });
     h.install.mockClear();
     expect(await h.run({ providerId: 'anthropic-codex', harness: 'sdk' })).toEqual({
@@ -187,18 +223,22 @@ describe('oxap.settings.save', () => {
     });
     expect(JSON.parse(h.records[0].configJson!)).toEqual({
       models: ['m'],
-      harnessSettings: { executable: '/c' },
+      harnessSettings: { executable: h.codex },
+    });
+    const replacement = join(h.directory, 'replacement-codex');
+    writeFileSync(replacement, '#!/bin/sh\necho "Usage: codex app-server [OPTIONS]"\n', {
+      mode: 0o700,
     });
     expect(
       await h.run({
         providerId: 'anthropic-codex',
         harness: 'sdk',
-        settings: { executable: '/updated-codex' },
+        settings: { executable: replacement },
       })
     ).toEqual({ accepted: true });
     expect(h.install).not.toHaveBeenCalled();
     expect((await readHubOptions(h.deps)).hub.adapters).toMatchObject({
-      'anthropic-codex': { executable: '/updated-codex' },
+      'anthropic-codex': { executable: replacement },
     });
   });
 
@@ -225,7 +265,7 @@ describe('oxap.settings.save', () => {
     const saving = h.run({
       providerId: 'anthropic-codex',
       harness: 'oxap-codex',
-      settings: { executable: '/c' },
+      settings: { executable: h.codex },
     });
     await vi.waitFor(() => expect(h.install).toHaveBeenCalledOnce());
     expect(await withProviderLock(async () => 'provider edit ran')).toBe('provider edit ran');

@@ -95,15 +95,6 @@ function buildBackgroundTaskMap(
   return tasks;
 }
 
-export function extractBackgroundTasks(
-  messages: ChatMessage[],
-  toolInputsMap: Map<string, unknown>
-): BackgroundTask[] {
-  return [...buildBackgroundTaskMap(messages, toolInputsMap).values()]
-    .filter((task) => task.backgrounded || task.status === 'running' || task.status === 'paused')
-    .slice(-4);
-}
-
 export function extractRunningToolUseIds(messages: ChatMessage[]): Set<string> {
   const runningToolUseIds = new Set<string>();
 
