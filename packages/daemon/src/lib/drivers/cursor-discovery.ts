@@ -8,7 +8,7 @@ import type { FindQuery, PlaceGroup, WorkAdapter, WorkSummary } from './types.ts
 
 const ADAPTER = 'cursor-cli';
 const MAX_PAGES = 10;
-const DISCOVERY_TIMEOUT_MS = 15_000;
+const DISCOVERY_TIMEOUT_MS = 30_000;
 const InitializeResult = z.object({
   protocolVersion: z.literal(1),
   agentCapabilities: z.object({
@@ -47,7 +47,7 @@ async function listSessions(command: string, home: string, query: FindQuery) {
     cwd: home,
     env: buildSafeProcessEnv(),
     replaceEnv: true,
-    requestTimeoutMs: 5_000,
+    requestTimeoutMs: 15_000,
     onStderr: () => {},
   });
   async function request(method: string, params: Record<string, unknown>): Promise<unknown> {
