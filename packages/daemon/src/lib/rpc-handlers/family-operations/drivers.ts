@@ -545,7 +545,7 @@ function codexDesktopAdapters(
           recoverAppServer
         ),
       bootstrapServer: () => startCodexBootstrapServer(),
-      prepareDesktopProject: (folder) => ensureCodexDesktopProject(folder, codexHome, spawnProcess),
+      prepareDesktopProject: ensureCodexDesktopProject,
       startDesktopTurn: (threadId, request) =>
         startCodexDesktopTurn(join(codexHome, 'ipc', 'ipc.sock'), spawnProcess, threadId, request),
       folderExists: existsSync,
