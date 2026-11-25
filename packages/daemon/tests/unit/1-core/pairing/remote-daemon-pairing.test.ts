@@ -174,6 +174,14 @@ describe('attaching a daemon with a pairing code', () => {
     await expect(daemons.probe(remote.url)).resolves.toBeUndefined();
   });
 
+  test('testing uses a saved credential even when another attachment shares the address', async () => {
+    await invokeOperation(operations, 'daemon.attach', { daemonId: 'a', url: remote.url }, human);
+    const made = remote.devices.createCode('daemon', null, true, Date.now());
+    await attach({ code: made.code });
+    await expect(daemons.probe(remote.url)).resolves.toBeUndefined();
+    daemons.forget('a');
+  });
+
   test('a wrong code is refused and leaves nothing attached or stored', async () => {
     expect(await attach({ code: 'AAAAAAAAAA' })).toMatchObject({
       kind: 'completed',
