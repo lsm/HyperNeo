@@ -47,7 +47,11 @@ for (const phase of ['initial', 'reopen']) {
       const result = await call('neo.todo.remove', { todoId: todo.id, replacedBy: 'missing', reason: 'Superseded' }, 'replacement_missing');
       assert.equal(result.todo.state, 'removed'); assert.equal(result.todo.replacedBy, null); removed = todo.id;
       store.settleAsk(ask, 'dropped', 'Synthetic drop', 3);
-      await call('neo.todo.add', { after: [], askId: ask.id, title: 'Late work', check: { pack: 'core', kind: 'evidence', params: { artifact: 'synthetic-missing' } } }, 'ask_settled');
+      const late = await handler({ name: 'neo.todo.add', input: { after: [], askId: ask.id, title: 'Late work', check: { pack: 'core', kind: 'evidence', params: { path: '/private/tmp/synthetic-missing' } } } });
+      evidence.push({ phase, name: 'neo.todo.add', reply: late });
+      const refused = JSON.parse(late.content[0].text);
+      assert.equal(refused.ok, false, JSON.stringify(refused));
+      assert.match(refused.reason, /^ask_settled: this ask is dropped; the todo was not added\..*neo\.ask\.propose/);
       await call('neo.todo.continue', { todoId: todo.id, message: 'Late follow-up' }, 'ask_settled');
       assert.equal(store.listTodos(ask.id).length, 1);
     }
