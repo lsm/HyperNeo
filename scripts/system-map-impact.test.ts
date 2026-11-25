@@ -69,17 +69,31 @@ function repository(root: string) {
       }
     }
     const head = commit('PR head');
-    const merge = git('commit-tree', git('write-tree'), '-p', base, '-p', head, '-m', 'PR merge');
-    return { head, merge };
+    return { head };
   }
 
-  function check(head: string, changes: string[], body: string, labels: string[] = []) {
+  function advance(head: string, path: string, source: string) {
+    git('checkout', '-q', '--detach', base);
+    write(path, source);
+    git('add', '--', path);
+    const tip = commit('Dev advances');
+    git('checkout', '-q', '--detach', head);
+    return tip;
+  }
+
+  function check(
+    head: string,
+    changes: string[],
+    body: string,
+    labels: string[] = [],
+    target = base
+  ) {
     write('paths', `${changes.join('\0')}\0`);
     write(
       'event.json',
       JSON.stringify({
         pull_request: {
-          base: { sha: base },
+          base: { sha: target },
           head: { sha: head },
           body,
           labels: labels.map((name) => ({ name })),
@@ -89,7 +103,7 @@ function repository(root: string) {
     return spawn([process.execPath, cli, '--check', 'event.json', 'paths']);
   }
 
-  return { spawn, write, git, base, change, check };
+  return { spawn, write, git, base, change, advance, check };
 }
 
 function block(head: string, base: string, read: string[], entries: unknown[] = [], version = 1) {
@@ -103,18 +117,29 @@ function block(head: string, base: string, read: string[], entries: unknown[] = 
 
 const reason = (path: string) => ({ path, reason: 'Read the listener contract.' });
 
-test('the saved merge diff is NUL-delimited and rejects a different first parent', () => {
-  fixture(({ spawn, git, base, change }) => {
+test('the saved diff is NUL-delimited and covers only the branch since its fork point', () => {
+  fixture(({ spawn, change, advance }) => {
     const path = 'docs/a\nname.md';
-    const { head, merge } = change({ [path]: 'docs' });
-    git('checkout', '--detach', merge);
-    const result = spawn(['bash', diffScript, base, merge]);
+    const { head } = change({ [path]: 'docs' });
+    const tip = advance(head, 'docs/dev.md', 'dev');
+    const result = spawn(['bash', diffScript, tip, head]);
     expect(result.exitCode).toBe(0);
     expect(result.stdout.toString()).toBe(`${path}\0`);
-    const wrongBase = spawn(['bash', diffScript, head, merge]);
-    expect(wrongBase.exitCode).toBe(1);
-    expect(wrongBase.stderr.toString()).toContain('first parent');
-    expect(wrongBase.stdout.length).toBe(0);
+  });
+});
+
+test('a dev push after the fork point does not change the required block', () => {
+  fixture(({ spawn, base, change, advance, check }) => {
+    const { head } = change({ [owner]: "publish('ci.kept');" });
+    const good = block(head, base, ['impact'], [reason(peer)]);
+    const tip = advance(head, 'packages/example/src/other.ts', "subscribe('ci.removed');");
+    const printed = spawn([process.execPath, cli, '--print', tip]);
+    expect(printed.exitCode, printed.stderr.toString()).toBe(0);
+    expect(printed.stdout.toString().trim()).toBe(
+      block(head, base, ['impact'], [{ path: peer, reason: '' }])
+    );
+    const r = check(head, [owner], good, [], tip);
+    expect(r.exitCode, r.stderr.toString()).toBe(0);
   });
 });
 
