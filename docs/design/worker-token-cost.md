@@ -24,7 +24,7 @@ model's own window stays the only limit there.
 - So is one whose worker belongs to another ask, was already released, or still holds
   another unfinished todo.
 - A compaction that fails or is not confirmed is logged and the todo is sent anyway.
-- Confirmation waits 60 s. Of 33 compactions with their own Codex turn, the median took 49 s
+- Most adapters wait 60 s for confirmation. Of 33 compactions with their own Codex turn, the median took 49 s
   and the longest 80 s; 8 took longer than 60 s, so a compaction that worked is reported as
   not confirmed.
 - No success is recorded, so coverage cannot be measured.
@@ -60,8 +60,9 @@ started on the default branch by guess.
 at the end starts new. A role's own worker on this todo and a worker shared between roles of
 this todo are the same job and are not affected.
 
-Compaction waits up to 180 s for confirmation, in both Codex routes and for a HyperNeo
-session.
+Every adapter's `compact` waits up to 180 s for confirmation, from one shared constant: both
+Codex routes, HyperNeo, Copilot and Copilot Desktop (60 s today), and Antigravity (95 s, with
+its CLI's own 90 s print limit raised to match).
 
 **Record.** The todo's core fact `worker_reuse`: the worker, `compacted` or `fresh`, and why
 (`other_ask`, `released`, `other_todo`, `cannot_compact`, `not_confirmed`). Nothing reads it
