@@ -515,6 +515,8 @@ export interface ClaudeTranscriptState extends ClaudeRuntimeIdentity {
 export interface ClaudeTranscriptEntry {
   uuid?: unknown;
   type?: unknown;
+  sessionId?: unknown;
+  permissionMode?: unknown;
   isSidechain?: unknown;
   isCompactSummary?: unknown;
   timestamp?: unknown;
@@ -1165,6 +1167,23 @@ async function readCurrentDesktopReceiver(
   );
 }
 
+async function readClaudeTranscriptMode(path: string | null, sessionId: string) {
+  if (!path) return null;
+  const tail = await readTailLines(path, TRANSCRIPT_TAIL_BYTES).catch(() => null);
+  const turn = tail?.lines
+    .map(parseClaudeEntry)
+    .findLast(
+      (entry) =>
+        entry?.type === 'user' &&
+        entry.sessionId === sessionId &&
+        !entry.isSidechain &&
+        !entry.isCompactSummary &&
+        !entry.isMeta
+    );
+  const mode = turn?.permissionMode;
+  return typeof mode === 'string' && 'value' in claudeReceiverClass(mode) ? mode : null;
+}
+
 async function sendOwnedClaudeMessage(
   record: ClaudeDesktopRecord & { cliSessionId: string },
   liveSessions: readonly ClaudeLiveSession[],
@@ -1224,11 +1243,12 @@ async function sendOwnedClaudeMessage(
     );
   const receiverMode =
     (desktop
-      ? await readClaudeReceiverMode(
+      ? ((await readClaudeTranscriptMode(path, record.cliSessionId)) ??
+        (await readClaudeReceiverMode(
           record.cliSessionId,
           deps.liveSessions,
           deps.listProcesses ?? listProcesses
-        )
+        )))
       : null) ??
     current.permissionMode ??
     'default';

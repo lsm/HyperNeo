@@ -99,8 +99,9 @@ try {
   assert.equal(events().filter(e => e.kind === 'relay').length, 2, 'Exactly one relay per send; no loop');
   assert.equal(frames.length, remote ? 0 : 2, 'Only the local case has a direct reply route');
   assert.equal(readFileSync(recordPath, 'utf8'), original, 'Never rewrite Desktop metadata');
-  observed.push({ result: 'pass', liveMode: 'bypassPermissions', storedMode: 'auto', directAttempts: frames.length, relays: 2, received: 1 });
-  console.log('PASS: held direct send, live-mode retry delivered exactly once, second refusal surfaced without looping');
+  const counts = { directAttempts: frames.length, relays: 2, received: 1 };
+  observed.push({ result: 'pass', remote, liveMode: 'bypassPermissions', storedMode: 'auto', ...counts });
+  console.log(`PASS: ${remote ? 'transcript mode after remote inbox refusal' : 'launch mode after direct hold'}, ${JSON.stringify(counts)}`);
 } finally {
   ws?.close();
   await app?.cleanup();
