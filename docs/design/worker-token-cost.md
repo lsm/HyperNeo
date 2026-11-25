@@ -46,6 +46,16 @@ worker is added to `excludeRefs`. If the record has no folder or the start is re
 todo fails to start as any start does; it is not sent to the old worker. Neo is told once
 through the existing `todo.line_moved` note, so it stops aiming at that worker.
 
+The checkout comes from this todo, never from the old worker's earlier todo. `send` targets
+get two optional fields, `preparationParameters` and `sandbox`: Neo may set them, and
+`queueOn`, which turns a waiting `start` into a `send`, copies them (`{}` when the `start` had
+none) instead of dropping them. The replacement `start` uses exactly these. When a
+preparation would run (the pack has `prepareExecution` and the sandbox is on for this start,
+or the old worker's record has a preparation) and the target carries no
+`preparationParameters`, nothing starts and nothing is sent: the todo is blocked, and Neo is
+asked to name the target or PR, head and prerequisite commits in a `start`. No new worker is
+started on the default branch by guess.
+
 *Fresh* in `reuseIdleWorker` drops the candidate, releases its claim and tries the next, and
 at the end starts new. A role's own worker on this todo and a worker shared between roles of
 this todo are the same job and are not affected.
@@ -121,7 +131,10 @@ Two PRs from `dev`, no migration, no new setting.
    worker and sends nothing to the old one; unconfirmed compaction starts a new worker; a
    later round, a human-named session and a session the daemon did not start are sent
    unchanged; a sandboxed worker's replacement is sandboxed; the start does not pick the old
-   worker again. A week after release, read `worker_reuse` and re-run the same cost numbers
+   worker again. With a real repository: a queued pinned review keeps its PR, exact head and
+   prerequisite commits through the replacement, and the new checkout is at that head; a moved
+   head or a missing prerequisite refuses; a `send` with no parameters where a preparation
+   would run is blocked and creates no checkout. A week after release, read `worker_reuse` and re-run the same cost numbers
    and review rounds per PR; revert if review rounds rise.
 2. The notices: `planCodingPrNudge` skips the owner reminder for the two states and keeps the
    escalation; `notify` marks the per-owner receipt and `deliverCodingPrEvents` reads it. Tests
