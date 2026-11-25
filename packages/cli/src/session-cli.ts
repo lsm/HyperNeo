@@ -34,6 +34,7 @@ export function resolveSender(env: Env): string | null {
   if (env.CODEX_THREAD_ID) return `codex-desktop:${env.CODEX_THREAD_ID}`;
   if (env.CLAUDE_CODE_SESSION_ID) return `claude-code:${env.CLAUDE_CODE_SESSION_ID}`;
   if (env.COPILOT_AGENT_SESSION_ID) return `copilot-cli:${env.COPILOT_AGENT_SESSION_ID}`;
+  if (env.CURSOR_CONVERSATION_ID) return `cursor-cli:${env.CURSOR_CONVERSATION_ID}`;
   return null;
 }
 
@@ -153,7 +154,7 @@ export async function runSessionCommand(args: string[], env: Env = process.env):
     (['pair', 'devices', 'reserve-restart', 'codex-setup'].includes(args[0]) ? 'cli' : null);
   if (!sender) {
     console.error(
-      'hyperneo send: no sender. Pass --from <session-id>, or run it inside a HyperNeo, Codex or Claude Code session (HYPERNEO_SESSION_ID, CODEX_THREAD_ID, CLAUDE_CODE_SESSION_ID or COPILOT_AGENT_SESSION_ID).'
+      'hyperneo send: no sender. Pass --from <session-id>, or run it inside a HyperNeo, Codex, Claude Code, Copilot or Cursor session (HYPERNEO_SESSION_ID, CODEX_THREAD_ID, CLAUDE_CODE_SESSION_ID, COPILOT_AGENT_SESSION_ID or CURSOR_CONVERSATION_ID).'
     );
     return 1;
   }

@@ -49,6 +49,7 @@ describe('hyperneo send, question and build', () => {
     );
     expect(resolveSender({ CLAUDE_CODE_SESSION_ID: 'c1' })).toBe('claude-code:c1');
     expect(resolveSender({ COPILOT_AGENT_SESSION_ID: 'p1' })).toBe('copilot-cli:p1');
+    expect(resolveSender({ CURSOR_CONVERSATION_ID: 'u1' })).toBe('cursor-cli:u1');
   });
 
   test('send --from names the sender ahead of any session variable', () => {
