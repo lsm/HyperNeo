@@ -50,8 +50,11 @@ routes or line rules, line selection is unchanged.
 with the result: `estimate: {files, lines, testLines, by}` for a kind that changes files,
 `{steps, by}` for the others. `NeoWorkKind` says which. A review needs none: its size is the
 size of the pull request, known before it starts. `by` is `design` or `neo`.
-It is refused once the todo has a row in `neo_todo_roles`, so it is never fitted to the result.
-The start time cannot be the test: a retry or a move to another worker clears it. It is asked
+It is refused once the todo has a row in `neo_todo_roles` or a start attempt has been
+recorded in `work_delivery_inputs` before calling the driver. Ensure every todo start has
+that record. It survives a retry, adoption and move,
+including an uncertain start, so the estimate cannot be fitted to work already done. The
+start time cannot be the test: a retry or a move to another worker clears it. It is asked
 together with the kind and needs no model call of its own.
 
 **Where a good estimate comes from.** The change plan of a design gives every PR a line
@@ -111,6 +114,9 @@ only started and reused workers get a row; 225 of 997 bound todos of one week ha
   turn before every row belong to the first row's todo: when `work_started_sessions` says that
   todo started the worker. Turns of an existing session before it was adopted or sent to
   belong to no todo.
+- An uncertain start may have opened a worker without returning its ref. If recovery proves
+  which worker the todo started, record that start and its role so its earlier turns can be
+  attributed. Do not infer that an existing session was started by the todo.
 
 When a turn is recorded no longer matters, so there is no order to guarantee. A reviewer's
 turns count for the todo under its own role.
@@ -152,19 +158,22 @@ context a todo adds by itself (`peak - first`) is recorded, to see work that was
 
 Six PRs from `dev`, in order, failing tests first. System map read for the planned files.
 
-1. **Binding history.** The rows for `send`, `adopt` and follow-ups, and the pure decision from
-   rows and turns to a todo. Tests: a turn recorded after `reopen`, after a redispatch, after a
+1. **Binding history.** Record each todo start in `work_delivery_inputs` before calling the
+   driver. Add the rows for `send`, `adopt` and follow-ups, and the pure decision from rows and
+   turns to a todo. Tests: a turn recorded after `reopen`, after a redispatch, after a
    retry and after a restart keeps its todo; a failed delivery removes only its own row;
    a failed repeated follow-up preserves the earlier row, including after restart; a repeated
    follow-up adds none; another todo's row inside a turn gives no todo; a started worker's turn
    before its row has its todo, an adopted or sent-to session's earlier turn has none; role
-   lookups for reviewers are unchanged.
+   lookups for reviewers are unchanged; an uncertain start recovered after restart records
+   a proven worker, while an unproven session keeps its earlier turns unattributed.
    Estimate: 5 files, 90 lines, 180 test lines.
 2. **Kind and estimate.** Core kinds, the checks on the two operations, the fact, the Neo tool
    text, and the estimate line in `AGENTS.md` for designs. Tests: missing or unknown kind is
    refused; a pack's kind is accepted only while the pack is on; an estimate after the first
    worker is refused, for `start`, `send` and `adopt`, also when a retry or a move cleared the
-   start; a daemon-made todo without one is accepted; a todo with a kind matches the saved
+   start; an uncertain start freezes the estimate through restart, adoption and move; a
+   daemon-made todo without one is accepted; a todo with a kind matches the saved
    rules of that kind, and one without keeps today's fallbacks.
    Estimate: 8 files, 130 lines, 150 test lines.
 3. **Turn usage, Codex, and the column.** Migration and `usage` on `WorkTurnFact`. Tests on real
@@ -190,6 +199,7 @@ own records.
 
 ## Limits
 
+- An uncertain start with no proven worker leaves its turns unattributed and its usage missing.
 - A turn shared by two todos of one worker has no todo. A notice about an earlier todo, sent
   after its worker took another, counts for the newer one. Both get rare once a new todo gets
   a clean worker.
