@@ -63,11 +63,11 @@ a URL, a scope set and, where the vendor requires it, a client ID.
    longer matches. The bounded fetch (item 7) is the last check: it refuses any
    request carrying a code, verifier, refresh token or client secret unless it
    goes to the bound token endpoint. It also refuses any request carrying the
-   bearer unless it goes to the row's URL.
+   bearer unless it goes to the preset's URL.
    **Every request goes to a pinned origin.** During discovery the SDK fetches
    the server a metadata document names before `saveDiscoveryState` can refuse
    it, and a 401's `resource_metadata` URL when the binding holds no resource
-   metadata. So the preset also fixes the allowed HTTPS origins: the row's URL,
+   metadata. So the preset also fixes the allowed HTTPS origins: its own URL,
    the issuer, and the token and registration endpoints. The bounded fetch
    refuses any other origin before connecting. It never follows a redirect itself, so each hop
    is checked too. No IP filter is needed: the hostnames are the vendor's and are
@@ -163,10 +163,11 @@ a URL, a scope set and, where the vendor requires it, a client ID.
    vault bundle is keyed by row ID, so a row deleted without teardown would
    orphan it. One human-only remove operation does the Disconnect steps above,
    erases the bundle, and only then deletes the row. If the daemon stops between
-   the two steps, the row is left without tokens and shows Reconnect needed. The
+   the two steps, the row is left inactive without tokens and shows disconnected. The
    `mcp.registry.delete` RPC routes an OAuth row to that operation. A change to
    an OAuth row's `url`, `sourceType` or `auth`, through `mcp.registry.update`,
-   also disconnects first, and a change away from `http` also clears `auth`. The
+   also disconnects first, and a change away from `http` also clears `auth`.
+   Connect and the provider refuse a row whose URL is not the preset's. The
    registry repository's plain `delete`, and any plain `update` of `url`,
    `sourceType` or `auth`, refuses a row with `auth` set. Only the remove
    and replace operations use the separate repository method that may touch
@@ -193,7 +194,7 @@ a URL, a scope set and, where the vendor requires it, a client ID.
    tool catalog (tool count and description and schema bytes, refusing a list
    over the cap) and each tool result (items and bytes, truncated with an
    explicit marker), as [connections](connectors.md) requires for every tool.
-   Before a result reaches a session, the proxy replaces the grant's access
+   Before a result is truncated or reaches a session, the proxy replaces the grant's access
    token, refresh token and client secret with `[redacted]`, as
    [Google HTTP][google-http] does, and in object keys too. It refuses a catalog
    that contains any of them in a tool name, description or schema, because a
@@ -264,8 +265,8 @@ and Slack's token reply (`ok`, comma-separated `authed_user.scope`,
 | Order | Slice | Proof against the fake server |
 | --- | --- | --- |
 | 1 | Fake server fixture; vault MCP address; bounded, origin-pinned fetch; vault-backed `OAuthClientProvider` with the scope maximum, its binding and generation passed in | `auth()` completes discovery, DCR and PKCE; the bundle is in the vault under the MCP address, survives a restart, and is absent from DB rows and registry reads. Two servers, and two instances, cannot read each other's bundles. With all scopes advertised, the authorize request carries only the maximum. A grant wider than the maximum is not stored, including a Slack-shaped reply whose over-broad scopes are only in `authed_user.scope`. A Slack `ok: false` reply fails as a login error. A 401 that points at the second authorization server sends nothing to it: no refresh token, no client secret, no code. Metadata, a challenge or a redirect naming an unpinned origin sends no request there. A refresh reply without `scope` keeps the prior scopes. Oversized metadata or token bodies fail with `response_too_large`. |
-| 2 | `auth` column, preset table (test preset only), human-only connect, reconnect and disconnect | RPC connect reaches a healthy state. Wrong state and replay are refused. A Slack `invalid_refresh_token` gives Reconnect needed with no retry. A dropped connection, a plain 429, a 5xx, a malformed reply and a Slack `ratelimited` each keep the grant, back off, report the item 7 reason and record no authorize request, run through the real SDK. The Slack shape works with a pre-registered client and secret. A login callback or refresh response delayed until after disconnect leaves the vault empty and health disconnected. If the vault erase fails, or the daemon restarts between the tombstone and the erase, the old bundle is never served. Reconnect on a healthy grant opens consent instead of refreshing. The old grant keeps working until the new one commits, and a cancelled reconnect leaves it unchanged. A restart between the bundle write and the row write shows Reconnect needed and admits neither grant. Changing `sourceType` away from `http` disconnects first and clears `auth`. Setting `auth` on a non-`http` row is refused. Deleting the row through `mcp.registry.delete`, or changing its URL, while a token save is delayed leaves no bundle under that row ID. The import service cannot delete or retarget an OAuth row. |
-| 3 | Daemon-held client and in-process tool proxy, wired in query options for OAuth rows | A real session lists and calls the fake read tool. A running session gains the tools on connect and loses them on disconnect without a restart. Session config has no `Authorization`. An expired token refreshes once under concurrent calls. `invalid_grant` gives Reconnect needed and removes the tools. A write tool call ends with zero mutations on the fake. A write-scope challenge during a call records no new authorize request. A call on an existing proxy after disconnect, row deletion or a URL change is refused with no request reaching the fake. An oversized catalog is refused, and so is one echoing the bearer in a tool name, description or schema key. An oversized result arrives truncated with the marker, and an oversized response or SSE event fails with `response_too_large`. A bearer echoed in a result or an error reaches the session and logs only as `[redacted]` or a reason code. |
+| 2 | `auth` column, preset table (test preset only), human-only connect, reconnect and disconnect | RPC connect reaches a healthy state. Wrong state and replay are refused. A Slack `invalid_refresh_token` gives Reconnect needed with no retry. A dropped connection, a plain 429, a 5xx, a malformed reply and a Slack `ratelimited` each keep the grant, back off, report the item 7 reason and record no authorize request, run through the real SDK. The Slack shape works with a pre-registered client and secret. A login callback or refresh response delayed until after disconnect leaves the vault empty and health disconnected. If the vault erase fails, or the daemon restarts between the tombstone and the erase, the old bundle is never served. Reconnect on a healthy grant opens consent instead of refreshing. The old grant keeps working until the new one commits, and a cancelled reconnect leaves it unchanged. A restart between the bundle write and the row write shows Reconnect needed and admits neither grant. Changing `sourceType` away from `http` disconnects first and clears `auth`. Setting `auth` on a non-`http` row is refused. Connect on a row whose URL is not the preset's is refused, and no request reaches that URL. A stop between the erase and the row delete shows disconnected. Deleting the row through `mcp.registry.delete`, or changing its URL, while a token save is delayed leaves no bundle under that row ID. The import service cannot delete or retarget an OAuth row. |
+| 3 | Daemon-held client and in-process tool proxy, wired in query options for OAuth rows | A real session lists and calls the fake read tool. A running session gains the tools on connect and loses them on disconnect without a restart. Session config has no `Authorization`. An expired token refreshes once under concurrent calls. `invalid_grant` gives Reconnect needed and removes the tools. A write tool call ends with zero mutations on the fake. A write-scope challenge during a call records no new authorize request. A call on an existing proxy after disconnect, row deletion or a URL change is refused with no request reaching the fake. An oversized catalog is refused, and so is one echoing the bearer in a tool name, description or schema key. An oversized result arrives truncated with the marker, with no fragment of a bearer that straddles the cut, and an oversized response or SSE event fails with `response_too_large`. A bearer echoed in a result or an error reaches the session and logs only as `[redacted]` or a reason code. |
 | 4 | Connect, reconnect and health on the MCP server row in Settings | An isolated browser clicks Connect through the fake consent, and the state stays after reload, with screenshots. |
 | 5 | Jira, Slack and Basecamp presets (URL, read scopes, client needs) | Each preset produces the expected authorize URL and read-only scopes against the fake server. The real sign-in per vendor is the human step above. |
 
