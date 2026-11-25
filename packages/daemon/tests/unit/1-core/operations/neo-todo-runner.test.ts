@@ -4239,6 +4239,31 @@ describe('a todo for a busy worker', () => {
     }
   });
 
+  test('keeps a queued review checkout when its worker must be replaced', () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      const preparationParameters = {
+        pullRequest: 7,
+        head: 'a'.repeat(40),
+        prerequisiteCommits: ['b'.repeat(40)],
+      };
+      const target = { verb: 'start', adapter: 'hyperneo', preparationParameters, sandbox: true };
+      h.db
+        .prepare('UPDATE neo_todo_sessions SET target = ? WHERE todo_id = ?')
+        .run(JSON.stringify(target), todo.id);
+      h.sessions.queueOn(todo.id, ref, 'Review the change.');
+      expect(h.sessions.get(todo.id)).toMatchObject({
+        verb: 'send',
+        ref,
+        preparationParameters,
+        sandbox: true,
+      });
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('a todo counts as on its worker only while it is open there', () => {
     const h = setup();
     try {
