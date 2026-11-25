@@ -18,7 +18,7 @@ import type {
 } from './types.ts';
 import { reject } from './work-operations.ts';
 
-const START_TIMEOUT_MS = 15_000;
+const START_TIMEOUT_MS = 30_000;
 const STOP_TIMEOUT_MS = 10_000;
 const TURN_TIMEOUT_MINUTES = 60;
 const RETAINED_TURNS = 100;
