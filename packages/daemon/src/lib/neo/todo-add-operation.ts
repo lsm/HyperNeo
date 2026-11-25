@@ -33,6 +33,20 @@ export const DESKTOP_CONTROL_REFUSAL = {
     'desktop_control_requires_permission: Leave desktopControl out. A todo uses only the apps in its own desktopApps; call desktop.access.request {app} first so the Mac asks the human for that app.',
 };
 
+export function requireNeoTodoAddAsk(
+  ask: NeoAsk | null
+): { value: NeoAsk } | { reason: { ok: false; reason: string } } {
+  if (!ask) return { reason: { ok: false, reason: 'not_found: no such ask.' } };
+  if (ask.status !== 'open')
+    return {
+      reason: {
+        ok: false,
+        reason: `ask_settled: this ask is ${ask.status}; the todo was not added. Pass the human message input without askId to open a new ask, or use neo.ask.propose.`,
+      },
+    };
+  return { value: ask };
+}
+
 export async function neoTodoDesktopScope(
   bundleIds: readonly string[],
   ask: NeoAsk,
@@ -115,20 +129,10 @@ export function wireNeoTodoAdd(
       'binding'
     )
     .pipe(
-      async (binding: Awaited<ReturnType<typeof resolveNeoInputAsk>>) => {
-        if ('reason' in binding) return binding;
-        const ask = await store.read('getAsk', binding.value.askId);
-        return ask && ask.status !== 'open'
-          ? {
-              reason: {
-                ok: true as const,
-                records: [`ask_settled: this ask is ${ask.status}; no change was made.`],
-              },
-            }
-          : ask
-            ? { value: ask }
-            : { reason: { ok: false as const, reason: 'not_found: no such ask.' } };
-      },
+      async (binding: Awaited<ReturnType<typeof resolveNeoInputAsk>>) =>
+        'reason' in binding
+          ? binding
+          : requireNeoTodoAddAsk(await store.read('getAsk', binding.value.askId)),
       'binding',
       'result:outcome'
     )

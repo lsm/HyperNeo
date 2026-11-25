@@ -57,8 +57,8 @@ for (const phase of ['initial', 'reopen']) {
     }
     assert.equal(store.getTodo(removed)?.state, 'removed');
     const audits = db.prepare('SELECT operation,reason,accepted FROM operation_refusals ORDER BY id').all();
-    assert.equal(audits.length, 4); assert(audits.every((audit) => (audit as { accepted: number }).accepted === 1));
+    assert.equal(audits.length, 4); assert.deepEqual(audits.map((audit) => (audit as { accepted: number }).accepted), [1, 1, 0, 1]);
     evidence.push({ phase, audits, todos: store.listTodos('ask'), questions: store.listQuestions('ask') });
   } finally { await gatewayFor(db).close(); db.close(); writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2)); }
 }
-console.log('PASS: tool-visible no-op/removal records, untouched cards, and five accepted audit records survive DB reopen.');
+console.log('PASS: tool-visible no-op/removal records, untouched cards, and three accepted audit records and one refusal survive DB reopen.');
