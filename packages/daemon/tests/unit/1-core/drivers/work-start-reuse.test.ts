@@ -238,8 +238,20 @@ describe('work.start session reuse preference', () => {
     }
   );
 
-  test.each([true, false, 'throws'] as const)(
-    'compacts the matter’s own worker before reusing it (%s)',
+  test('compacts the matter’s own worker before reusing it', async () => {
+    const own = 'compacted';
+    const run = harness([{ id: own, status: 'done' }], [own], {
+      adapter: 'claude-desktop',
+      reuse: 'long_lived',
+      sameAsk: [own],
+      compact: true,
+    });
+    expect((await run.start(neo, false, { todoId: 'next' })).value?.reused).toBe(true);
+    expect(run.events).toEqual([`compact ${own}`, `send ${own}`]);
+  });
+
+  test.each([false, 'throws', undefined] as const)(
+    'starts fresh when compaction cannot be confirmed (%s)',
     async (compact) => {
       const own = `compacted-${compact}`;
       const run = harness([{ id: own, status: 'done' }], [own], {
@@ -248,8 +260,8 @@ describe('work.start session reuse preference', () => {
         sameAsk: [own],
         compact,
       });
-      expect((await run.start(neo, false, { todoId: 'next' })).value?.reused).toBe(true);
-      expect(run.events).toEqual([`compact ${own}`, `send ${own}`]);
+      expect((await run.start(neo, false, { todoId: 'next' })).value?.ref.id).toBe('fresh');
+      expect(run.sent).toEqual([]);
     }
   );
 
