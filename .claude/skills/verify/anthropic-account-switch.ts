@@ -42,7 +42,7 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({
     const token = options.env.CLAUDE_CODE_OAUTH_TOKEN;
     const account =
       token === 'fixture-inherited-login' ? 'system' :
-      token === 'fixture-access-replacement' ? 'replacement' : 'unknown';
+      token === 'fixture-access-replacement' || token === 'fixture-access-rotated' ? 'replacement' : 'unknown';
     const held = Promise.withResolvers<void>();
     return {
       async *[Symbol.asyncIterator]() {
@@ -50,12 +50,15 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({
         const sessionId = options.resume ?? crypto.randomUUID();
         started.push({ account, resume: options.resume, sessionId });
         const feed = prompt[Symbol.asyncIterator]();
-        const input = await feed.next();
-        void feed.next().catch(() => {});
+        let next = feed.next();
         const file = getSDKSessionFilePath(options.cwd, sessionId);
         mkdirSync(resolve(file, '..'), { recursive: true });
-        appendFileSync(file, JSON.stringify({ ...input.value, parentUuid: null }) + '\n');
-        yield {
+        while (true) {
+          const input = await Promise.race([next, held.promise]);
+          if (!input || input.done) return;
+          next = feed.next();
+          appendFileSync(file, JSON.stringify({ ...input.value, parentUuid: null }) + '\n');
+          yield {
           type: 'system', subtype: 'init', session_id: sessionId, uuid: crypto.randomUUID(),
           cwd: options.cwd, model: 'haiku', tools: [], mcp_servers: [], slash_commands: [],
         };
@@ -64,8 +67,8 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({
           result: `Answered using ${account}`, is_error: false, num_turns: 1,
           duration_ms: 1, duration_api_ms: 1, total_cost_usd: 0, permission_denials: [],
           usage: { input_tokens: 1, output_tokens: 1 }, modelUsage: {},
-        };
-        await held.promise;
+          };
+        }
       },
       supportedModels: async () => [],
       supportedCommands: async () => [],
@@ -88,9 +91,9 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({
 }));
 const { createDaemonApp } = await import('../../../packages/daemon/src/app.ts');
 
-function tokenResponse(account: string) {
+function tokenResponse(account: string, access = account) {
   return Response.json({
-    access_token: `fixture-access-${account}`,
+    access_token: `fixture-access-${access}`,
     refresh_token: `fixture-refresh-${account}`,
     expires_in: 3600,
     account: { uuid: account, email_address: `${account}@example.test` },
@@ -105,6 +108,8 @@ const fetchToken: typeof fetch = async (url, init) => {
   requests++;
   const { grant_type: grantType } = JSON.parse(String(init?.body));
   if (grantType === 'refresh_token') {
+    if (process.argv.includes('--restart-owned')) return new Response(null, { status: 503 });
+    if (requests === 3) return tokenResponse('replacement', 'rotated');
     refreshStarted.resolve();
     return refreshResponse.promise;
   }
@@ -142,7 +147,7 @@ const readUsage = () => hub.request<ProviderUsageResult>('operation.invoke', {
   name: 'settings.provider.usage',
   input: payload,
 });
-async function sendAndRead(sessionId: string, account: string) {
+async function sendAndRead(sessionId: string, account: string, count = 1) {
   await hub.request('message.send', { sessionId, content: `Check ${account} login.` });
   const deadline = Date.now() + 20_000;
   let messageTypes: string[] = [];
@@ -151,7 +156,7 @@ async function sendAndRead(sessionId: string, account: string) {
       'message.sdkMessages', { sessionId }
     );
     messageTypes = sdkMessages.map(({ type }) => type);
-    if (sdkMessages.some((message) => message.type === 'result' && message.result === `Answered using ${account}`)) return;
+    if (sdkMessages.filter((message) => message.type === 'result' && message.result === `Answered using ${account}`).length >= count) return;
     await Bun.sleep(50);
   }
   assert.fail(`The session did not answer using ${account}; launches=${started.map((entry) => entry.account)} messages=${messageTypes}`);
@@ -161,20 +166,27 @@ async function checkRestart() {
   await transport.initialize();
   const status = await readAuth();
   assert.equal(status?.credentialSource, 'hyperneo');
-  if (restartMode === '--restart-owned') {
+  if (restartMode !== '--restart-signed-out') {
     assert.equal(status?.isAuthenticated, true);
     assert.equal(status.user?.email, 'replacement@example.test');
     assert(
-      provider.buildSdkConfig().envVars.CLAUDE_CODE_OAUTH_TOKEN === 'fixture-access-replacement',
+      provider.buildSdkConfig().envVars.CLAUDE_CODE_OAUTH_TOKEN === 'fixture-access-rotated',
       'SDK launches must use the saved Settings login after restart'
     );
+    if (restartMode === '--restart-owned') {
+      const retry = await hub.request<{ success: boolean }>('auth.refresh', payload);
+      assert.equal(retry.success, false);
+      assert.equal(requests, 1);
+      console.log('PASS refreshFailed=true');
+      return;
+    }
     assert((await hub.request<ProviderLogoutResponse>('auth.logout', payload)).success);
     const manager = ProviderCredentialManager.create(app.db.getDatabase(), {});
     await manager.getCredentialStore().set(
       credentialService('anthropic'), 'default',
       JSON.stringify({ type: 'oauth', accessToken: 'fixture-stale-legacy-login' })
     );
-    console.log('PASS restartedWithSettingsLogin=true');
+    console.log('PASS restartedWithSettingsLoginAfterFailedRefresh=true');
   } else {
     assert.equal(status?.isAuthenticated, false);
     assert.equal(status.user?.email, undefined);
@@ -321,8 +333,13 @@ async function checkSwitch() {
   const persisted = await manager.getCredentials('anthropic');
   const persistedAccount = persisted?.raw?.account as { uuid?: string } | undefined;
   assert.equal(persistedAccount?.uuid, 'replacement');
-  assert.equal(requests, 2);
-  console.log('PASS requests=2 replacementAccountRetained=true persistedAccountMatches=true usageSwitched=true');
+  const rotated = await hub.request<{ success: boolean }>('auth.refresh', payload);
+  assert(rotated.success);
+  assert(provider.buildSdkConfig().envVars.CLAUDE_CODE_OAUTH_TOKEN === 'fixture-access-rotated');
+  await sendAndRead(sessionId, 'replacement', 2);
+  assert.equal(started.length, 2, 'A token rotation must keep the live SDK process');
+  assert.equal(requests, 3);
+  console.log('PASS requests=3 replacementAccountRetained=true persistedAccountMatches=true usageSwitched=true sdkRetainedOnRefresh=true');
   if (process.argv.includes('--web')) await checkSettings();
 }
 
@@ -336,7 +353,7 @@ try {
   await app.cleanup();
 }
 if (!restartMode) {
-  for (const mode of ['--restart-owned', '--restart-signed-out']) {
+  for (const mode of ['--restart-owned', '--restart-after-failed-refresh', '--restart-signed-out']) {
     const child = Bun.spawn([process.execPath, import.meta.path, mode, run], {
       stdout: 'inherit',
       stderr: 'inherit',
