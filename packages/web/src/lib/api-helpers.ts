@@ -191,9 +191,12 @@ export async function refreshProvider(providerId: string): Promise<ProviderRefre
 export type ListedProvider = ProviderRecord & {
   available: boolean;
   readyHarnesses?: OxapHarnessId[];
+  detectedHarnessExecutable?: string;
 };
 
-export async function listProviders(options?: { forNewSession: true }): Promise<{
+export async function listProviders(
+  options?: { forNewSession: true } | { forSettings: true }
+): Promise<{
   providers: ListedProvider[];
 }> {
   return await getHubOrThrow().request<{ providers: ListedProvider[] }>('providers.list', options);

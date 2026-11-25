@@ -90,7 +90,7 @@ try {
     const resumed = calls().find(call => call.method === 'session.resume');
     assert.equal(resumed.params.sessionId, work.ref.id);
     assert.equal(resumed.params.continuePendingWork, false);
-    assert.deepEqual(resumed.params.availableTools, []);
+    assert.deepEqual(resumed.params.availableTools, ['bash']);
   }
   if (mode === 'queue' || mode === 'all') {
     const work = await start('serial:first');

@@ -137,7 +137,7 @@ function main(args: string[]): number {
       ? undefined
       : JSON.parse(readFileSync(input, 'utf8')).pull_request;
     if (!print && !pr) throw new Error('expected a pull request event');
-    const base =
+    const target =
       pr?.base.sha ??
       run([
         'git',
@@ -146,6 +146,7 @@ function main(args: string[]): number {
         '--end-of-options',
         `${input ?? 'origin/dev'}^{commit}`,
       ]).trim();
+    const base = run(['git', 'merge-base', target, head]).trim();
     if (!sha.test(base) || !sha.test(head) || (pr && head !== pr.head.sha)) {
       throw new Error('checkout does not match the event SHAs');
     }
@@ -153,16 +154,7 @@ function main(args: string[]): number {
       throw new Error('tracked files differ from HEAD');
     }
     const pathList = print
-      ? run([
-          'git',
-          'diff',
-          '--name-only',
-          '--no-renames',
-          '-z',
-          base,
-          run(['git', 'merge-tree', '--write-tree', base, head]).trim(),
-          '--',
-        ])
+      ? run(['git', 'diff', '--name-only', '--no-renames', '-z', base, head, '--'])
       : readFileSync(diff, 'utf8');
     if (pathList && !pathList.endsWith('\0')) throw new Error('expected a NUL-terminated diff');
     const paths = pathList.split('\0').filter(Boolean);

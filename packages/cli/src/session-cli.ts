@@ -33,7 +33,15 @@ export function resolveSender(env: Env): string | null {
   if (env.HYPERNEO_SESSION_ID) return env.HYPERNEO_SESSION_ID;
   if (env.CODEX_THREAD_ID) return `codex-desktop:${env.CODEX_THREAD_ID}`;
   if (env.CLAUDE_CODE_SESSION_ID) return `claude-code:${env.CLAUDE_CODE_SESSION_ID}`;
+  if (env.COPILOT_AGENT_SESSION_ID) return `copilot-cli:${env.COPILOT_AGENT_SESSION_ID}`;
+  if (env.CURSOR_CONVERSATION_ID) return `cursor-cli:${env.CURSOR_CONVERSATION_ID}`;
   return null;
+}
+
+export function takeSendFrom(args: string[]): { args: string[]; from: string | null } {
+  return args[0] === 'send' && args[2] === '--from' && args[3]?.trim() && !args[3].startsWith('-')
+    ? { args: [args[0], args[1], ...args.slice(4)], from: args[3].trim() }
+    : { args, from: null };
 }
 
 export function planSessionCommand(
@@ -41,6 +49,8 @@ export function planSessionCommand(
   sender: string
 ): { value: { name: string; input: unknown } } | { reason: string } {
   const [command, target, ...rest] = args;
+  if (command === 'send' && (target === '--from' || rest.includes('--from')))
+    return { reason: SESSION_CLI_USAGE };
   if (command === 'send' && target && rest[0] === '--kind') {
     const kind = WORKER_REPORT_KINDS.find((value) => value === rest[1]);
     const text = rest.slice(2).join(' ');
@@ -138,12 +148,15 @@ export async function runSessionCommand(args: string[], env: Env = process.env):
     console.error('Codex setup requires macOS.');
     return 1;
   }
+  const explicit = takeSendFrom(args);
+  args = explicit.args;
   const sender =
+    explicit.from ??
     resolveSender(env) ??
     (['pair', 'devices', 'reserve-restart', 'codex-setup'].includes(args[0]) ? 'cli' : null);
   if (!sender) {
     console.error(
-      'hyperneo send: no sender. Run it inside a HyperNeo, Codex or Claude Code session (HYPERNEO_SESSION_ID, CODEX_THREAD_ID or CLAUDE_CODE_SESSION_ID).'
+      'hyperneo send: no sender. Pass --from <session-id>, or run it inside a HyperNeo, Codex, Claude Code, Copilot or Cursor session (HYPERNEO_SESSION_ID, CODEX_THREAD_ID, CLAUDE_CODE_SESSION_ID, COPILOT_AGENT_SESSION_ID or CURSOR_CONVERSATION_ID).'
     );
     return 1;
   }

@@ -122,6 +122,8 @@ export function codexCommand() {
   );
 }
 
+export class CodexBootstrapError extends Error {}
+
 export async function startCodexBootstrapServer(
   command = codexCommand(),
   onNotification?: (notification: JsonRpcNotification) => void,
@@ -130,6 +132,8 @@ export async function startCodexBootstrapServer(
   let endInput = () => {};
   let resolveExit = () => {};
   let closing: Promise<void> | undefined;
+  let startupStderr = '';
+  let initialized = false;
   const exited = new Promise<void>((resolve) => {
     resolveExit = resolve;
   });
@@ -138,6 +142,10 @@ export async function startCodexBootstrapServer(
     command,
     args: ['app-server', '--listen', 'stdio://'],
     requestTimeoutMs: CALL_TIMEOUT_MS,
+    onStderr: (text) => {
+      if (initialized) log.warn('Codex app-server stderr:', text.trimEnd());
+      else startupStderr = (startupStderr + text).trimStart().slice(0, 4096);
+    },
     onNotification: (notification) => {
       onNotification?.(notification);
       for (const listener of listeners) listener(notification);
@@ -183,10 +191,18 @@ export async function startCodexBootstrapServer(
       capabilities: { experimentalApi: true },
     });
     transport.sendNotification('initialized', {});
+    initialized = true;
     return server;
   } catch (error) {
     await server.close();
-    throw error;
+    const diagnostic = startupStderr.split(/\r?\n/, 1)[0]?.trim().slice(0, 640);
+    const reason = error instanceof Error ? error.message : String(error);
+    const detail =
+      diagnostic ||
+      (reason === 'JSON-RPC process exited' ? 'The process exited before responding.' : reason);
+    throw new CodexBootstrapError(`Could not start Codex CLI at "${command}". ${detail}`, {
+      cause: error,
+    });
   }
 }
 

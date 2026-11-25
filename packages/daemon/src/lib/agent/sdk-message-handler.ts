@@ -1,5 +1,6 @@
 import type { ContextInfo, MessageHub, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
+import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import type {
   SDKCompactBoundaryMessage,
   SDKMessage,
@@ -787,14 +788,14 @@ export class SDKMessageHandler {
       })
       .catch(() => {});
 
-    const jobQueue = db.getJobQueueRepo?.();
-    if (jobQueue?.hasActiveDeliveryJob(session.id, messageId)) {
+    const oxapAccepted = isOxapHarness(session.config.harness);
+    if (!oxapAccepted && db.getJobQueueRepo?.()?.hasActiveDeliveryJob(session.id, messageId)) {
       return;
     }
 
     await this.withDbChangeBatch(async () => {
       await db.updateMessageStatus([enqueuedMessage.dbId], 'consumed');
-      await db.updateMessageTimestamp(enqueuedMessage.dbId, consumedAt);
+      if (!oxapAccepted) await db.updateMessageTimestamp(enqueuedMessage.dbId, consumedAt);
     });
 
     internalEventBus

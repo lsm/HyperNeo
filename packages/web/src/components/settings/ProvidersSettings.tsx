@@ -5,16 +5,12 @@ import { ChevronDownGlyph } from '../icons/common-glyphs.tsx';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useSignalEffect } from '@preact/signals';
 import { GLOBAL_SYSTEM_SNAPSHOT_REQUEST, STATE_CHANNELS } from '@hyperneo/shared';
-import type {
-  ProviderRecord,
-  CredentialStoreStatus,
-  GlobalSystemSnapshot,
-  GlobalSettings,
-} from '@hyperneo/shared';
+import type { CredentialStoreStatus, GlobalSystemSnapshot, GlobalSettings } from '@hyperneo/shared';
 import type { ProviderAuthStatus, CuratedModel } from '@hyperneo/shared/provider';
 import {
   updateGlobalSettings,
   listProviders,
+  type ListedProvider,
   deleteProvider,
   updateProvider,
   setDefaultProvider,
@@ -45,8 +41,7 @@ import {
 } from './CustomEndpointEditor.tsx';
 import { useFetchModels } from './useFetchModels.ts';
 
-interface EnrichedProvider extends ProviderRecord {
-  available: boolean;
+interface EnrichedProvider extends ListedProvider {
   authStatus?: ProviderAuthStatus;
 }
 
@@ -255,7 +250,7 @@ export function ProvidersSettings() {
       await connectionManager.onConnected(CONNECTION_GATE_TIMEOUT_MS);
       if (generation !== loadGenerationRef.current) return;
       const [{ providers: records }, authResponse] = await Promise.all([
-        listProviders(),
+        listProviders({ forSettings: true }),
         listProviderAuthStatus().catch((_err) => {
           toast.warning('Auth status unavailable — showing cached state');
           return null;
@@ -988,7 +983,8 @@ export function ProvidersSettings() {
                 );
                 const draft = harnessDrafts[provider.id] ?? {
                   harness: config.harness ?? 'sdk',
-                  executable: config.harnessSettings?.executable ?? '',
+                  executable:
+                    config.harnessSettings?.executable || provider.detectedHarnessExecutable || '',
                 };
                 const selectedOxap = isOxapHarness(draft.harness)
                   ? oxapHarness(draft.harness)
@@ -998,6 +994,10 @@ export function ProvidersSettings() {
                   (config.harnessSettings?.executable ? eligible[0]?.[1] : undefined);
                 const hasExecutableField =
                   executableHarness?.settings.includes('executable') ?? false;
+                const codexExecutable = executableHarness?.adapter === 'codex';
+                const executableLabel = codexExecutable
+                  ? 'Codex CLI path'
+                  : 'DeepSeek harness path';
                 const installedHub = hubBinary ?? globalSettings.value?.oxapHub;
                 const isExpanded = expandedId === provider.id;
                 const isPending = pendingId === provider.id;
@@ -1159,10 +1159,10 @@ export function ProvidersSettings() {
                             </label>
                             {hasExecutableField && executableHarness && (
                               <label class="block text-sm">
-                                Client executable
+                                {executableLabel}
                                 <input
-                                  aria-label="Client executable"
-                                  placeholder={`Absolute path to ${executableHarness.label} executable`}
+                                  aria-label={executableLabel}
+                                  placeholder={`Absolute path to ${codexExecutable ? 'codex' : 'dsh'}`}
                                   value={draft.executable}
                                   onInput={(e) =>
                                     setHarnessDrafts((prev) => ({
@@ -1176,7 +1176,8 @@ export function ProvidersSettings() {
                                   class="block w-full bg-bg border border-line rounded px-2 py-1.5"
                                 />
                                 <span class="block text-xs text-fg-muted">
-                                  An absolute path is required.
+                                  Use the absolute path returned by{' '}
+                                  <code>which {codexExecutable ? 'codex' : 'dsh'}</code>.
                                 </span>
                               </label>
                             )}

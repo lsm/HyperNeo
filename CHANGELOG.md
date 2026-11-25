@@ -4,6 +4,12 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.63.1] - 2026-11-25
+
+- Let the Claude inbox accept senders on an attached daemon (#11693).
+- Let Antigravity workers run the `hyperneo send` reply command (#11698).
+- API: v0.63.0 -> v0.63.1: 0 breaking, 0 risky, 0 safe changes.
+
 ## [0.63.0] - 2026-11-24
 
 - Compact a reused worker before its next todo (#11652). Let Neo change a worker's runtime settings (#11634).

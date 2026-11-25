@@ -50,6 +50,7 @@ import { ObservedToolInventory } from './observed-tool-inventory.ts';
 import type { QueryLike } from './query-like.ts';
 import { createOxapQuery, type OxapQueryHub } from '../oxap/oxap-query.ts';
 import { OxapReopenDeliveryError, oxapReopenDeliveryFailure } from '../oxap/oxap-reopen.ts';
+import { OxapCodexLaunchError } from '../oxap/oxap-codex-login.ts';
 import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import { codexSessionRefusal, selectSessionEngine, type SessionEngine } from './session-engine.ts';
 import type { QueryOptionsBuilder } from './query-options-builder.ts';
@@ -1671,15 +1672,17 @@ export class QueryRunner {
         );
         messageQueue.clear(cancelled ? undefined : failure);
         if (!cancelled && live()) {
-          if (failure instanceof OxapReopenDeliveryError) {
+          const launchFailure = failure instanceof OxapCodexLaunchError;
+          if (launchFailure || failure instanceof OxapReopenDeliveryError) {
             await this.failures.terminal(failure.message);
             if (!live()) return;
-            await this.displayErrorAsAssistantMessage(failure.message, { markAsError: true });
+            if (!launchFailure)
+              await this.displayErrorAsAssistantMessage(failure.message, { markAsError: true });
           }
           await errorManager.handleError(
             session.id,
             failure,
-            ErrorCategory.SESSION,
+            launchFailure ? ErrorCategory.VALIDATION : ErrorCategory.SESSION,
             failure.message,
             stateManager.getState(),
             { harness: engine },

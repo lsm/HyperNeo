@@ -13,6 +13,7 @@ import {
   replyMessageBodyLength,
   REPLY_ORIGIN_MAX,
   withReplyLine,
+  withReplySender,
 } from '../messaging/session-reply.ts';
 import {
   defineOperation,
@@ -533,11 +534,7 @@ export function workReplyInput<
   T extends StartInput | SendInput | z.infer<typeof WithdrawWorkInputSchema>,
 >(input: T, from: string, caller: OperationCaller, deps: WorkVerbDeps): T {
   const adapter = 'adapter' in input ? input.adapter : input.ref.adapter;
-  if (
-    !('message' in input) ||
-    caller.role !== 'neo' ||
-    !['claude-code', 'claude-desktop', 'codex-desktop'].includes(adapter)
-  )
+  if (!('message' in input) || caller.role !== 'neo' || ['hyperneo', 'space'].includes(adapter))
     return input;
   const remote = 'place' in input ? input.place.daemon : input.ref.daemon;
   return {
@@ -545,7 +542,8 @@ export function workReplyInput<
     message: withReplyLine(
       input.message,
       remote ? qualifyRemoteOrigin(from, deps.daemonName) : from,
-      'cli'
+      'cli',
+      'ref' in input ? `${adapter}:${input.ref.id}` : undefined
     ),
   };
 }
@@ -982,13 +980,14 @@ export async function reuseIdleWorker(
         continue;
       }
     }
+    const addressed = withReplySender(input.message, from, `${adapter.id}:${work.ref.id}`);
     const message = input.provenance
-      ? withWorkerProvenance(input.message, {
+      ? withWorkerProvenance(addressed, {
           model: identity?.model ?? null,
           effort: identity?.effort ?? null,
           harness: adapter.id,
         })
-      : input.message;
+      : addressed;
     const claimed = deps.claimWorker
       ? await deps
           .claimWorker(

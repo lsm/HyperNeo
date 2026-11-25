@@ -1,12 +1,12 @@
 import { GOAL_SESSION_CYCLE, NEO_GOAL_CYCLE } from '@hyperneo/prompts';
 import { createHash } from 'node:crypto';
-import type { SessionGoal } from '@hyperneo/shared/types/session-goal';
+import type { GoalJournalEntry, SessionGoal } from '@hyperneo/shared/types/session-goal';
 import type { SessionGoalRepository } from '../../storage/repositories/session-goal-repository.ts';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { SessionScheduleCadence } from '../../storage/repositories/session-schedule-repository.ts';
 import type { NeoPack } from '../neo/pack-contract.ts';
 import type { ScheduleSource, SessionScheduler } from '../scheduler/session-schedules.ts';
-import { openHumanCard } from '../neo/human-card.ts';
+import { choiceCard, openHumanCard } from '../neo/human-card.ts';
 import type { NeoQuestion } from '@hyperneo/shared/types/neo-ask';
 import { metricKey, readMetric, readPoint } from './session-goal-metric.ts';
 
@@ -147,16 +147,16 @@ export class SessionGoalSchedules implements ScheduleSource {
     const config = this.goals.wakeSchedule(goal.id);
     if (!config) return;
     const limit = config.noEffectReviewLimit ?? 3;
-    const effects = this.goals.recentReviewEffects(goal.id, config.escalationReviewId, 100);
-    const firstEffect = effects.findIndex(({ effect }) => effect !== 'no');
-    const count = firstEffect < 0 ? effects.length : firstEffect;
+    const reviews = this.goals.listJournal(goal.id, null, 100, config.escalationReviewId ?? null);
+    const firstEffect = reviews.findIndex(({ effect }) => effect !== 'no');
+    const count = firstEffect < 0 ? reviews.length : firstEffect;
     this.goals.saveWakeSchedule(goal.id, { ...config, noEffectReviewCount: count });
     if (count < limit) return;
     const neo = this.neoSession(goal.ownerSessionId);
     if (!neo) throw new Error('Cannot ask the human without a Neo session');
     const askId = crypto.randomUUID();
     const questionId = crypto.randomUUID();
-    const text = `The goal "${goal.title}" had ${limit} reviews without effect. What should change, or should it stop?`;
+    const text = `The goal "${goal.title}" had ${limit} reviews in a row without effect and is paused. Continue as is, stop it, or reply with what should change?`;
     const now = Date.now();
     this.asks.openAsk({
       id: askId,
@@ -172,16 +172,47 @@ export class SessionGoalSchedules implements ScheduleSource {
       this.asks,
       questionId,
       askId,
-      { text, kind: 'reply', options: null, multiple: false, noLabel: null, yesLabel: null },
+      {
+        ...choiceCard(text, ['Continue as is', 'Stop the goal']),
+        document: this.reviewContext(goal, reviews.slice(0, limit)),
+      },
       now
     );
     this.goals.saveWakeSchedule(goal.id, {
       ...config,
       noEffectReviewCount: count,
-      escalationReviewId: effects[0]!.id,
+      escalationReviewId: reviews[0]!.id,
       escalationQuestionId: questionId,
     });
     this.goals.update(goal, { status: 'paused' }, now, (updated) => this.sync(updated));
+  }
+
+  private reviewContext(goal: SessionGoal, reviews: readonly GoalJournalEntry[]): string {
+    const metric = readMetric(goal);
+    const latest = reviews.map(readPoint).find((point) => point !== null);
+    const inFlight = this.asks
+      .listTodosForAsks(this.asks.listGoalAsks(goal.id).map((ask) => ask.id))
+      .filter((todo) => todo.state !== 'done' && todo.state !== 'removed');
+    return [
+      ...(metric
+        ? [
+            `Metric: ${metric.name}; baseline ${metric.baseline}, latest ${latest?.value ?? 'not measured'}, target ${metric.target} (${metric.direction}).`,
+            '',
+          ]
+        : []),
+      'Recent reviews, newest first:',
+      ...reviews.map((entry) => {
+        const point = readPoint(entry);
+        return `- ${entry.done}${point ? ` (measured ${point.value})` : ''}`;
+      }),
+      '',
+      'In flight:',
+      ...(inFlight.length
+        ? inFlight.map((todo) => `- ${todo.title}: ${todo.state}`)
+        : ['- Nothing open.']),
+      '',
+      'A review counts as no effect when its reviewer saw none, even if a fix from that period is not measurable yet.',
+    ].join('\n');
   }
 
   requireAnsweredReview(goal: SessionGoal): boolean {
@@ -226,11 +257,12 @@ export class SessionGoalSchedules implements ScheduleSource {
         ask.id,
         {
           text: question.text,
-          kind: 'reply',
-          options: null,
-          multiple: false,
-          noLabel: null,
-          yesLabel: null,
+          kind: question.kind,
+          options: question.options,
+          multiple: question.multiple,
+          noLabel: question.noLabel,
+          yesLabel: question.yesLabel,
+          document: question.document,
         },
         Date.now()
       );

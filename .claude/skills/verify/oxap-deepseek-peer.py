@@ -9,6 +9,10 @@ def emit(**frame):
     print(json.dumps({"jsonrpc": "2.0", **frame}), flush=True)
 
 
+if sys.argv[1:] == ['--help']:
+    print('Usage: dsh [--profile] <name> [options]')
+    sys.exit(0)
+
 assert sys.argv[1:] == ['--profile', 'sdk']
 assert os.environ.get('DEEPSEEK_API_KEY') == 'synthetic-deepseek-proof'
 
@@ -47,6 +51,9 @@ for line in sys.stdin:
         else:
             emit(id=request["id"], result={})
     elif method == "session/prompt":
+        if os.path.exists("verify-native-prompt-count"):
+            with open("verify-native-prompt-count", "a") as counter:
+                counter.write("1")
         session_id = request["params"]["sessionId"]
         if use_lease and lease is None:
             assert acquire_lease(session_id)

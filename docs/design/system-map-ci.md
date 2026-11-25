@@ -64,7 +64,7 @@ The tool has four levels; none is a general function call graph.
 
 Use one lightweight `System map` workflow, registered with the existing CI gate and reusing `scripts/system-map.ts` and `test:system-map`. Keep the main CI workflow's triggers unchanged: body and label events rerun only this check, not the test suites. Add no external service or PR-comment bot.
 
-On a PR event, checkout the event's merge commit, fetch the event's exact `base.sha`, and save `git diff --name-only --no-renames -z <base.sha> <merge.sha>`. Assert that the merge commit's first parent is that same SHA; never read the moving `dev` tip. Then fetch `refs/pull/<n>/head`, check out the exact PR head, install locked dependencies, and run `scripts/system-map-impact.ts`. The wrapper loads the base tree with `git show`, the head tree from the checkout, and reuses `isSource`, `impact`, and `formatImpact` for both maps. It also runs full `map` on the head.
+On a PR event, check out the exact PR head, fetch the event's `base.sha` and `refs/pull/<n>/head` with enough history to find their merge base (the branch's fork point), and save `git diff --name-only --no-renames -z <fork> <head>` with `scripts/system-map-diff.sh` read from `base.sha`, so a branch older than the workflow still runs the matching script. The check compares the branch only with its own fork point, never with the moving `dev` tip, so a `dev` push after the fork point cannot change the result. Then install locked dependencies and run `scripts/system-map-impact.ts`. The wrapper loads the fork-point tree with `git show`, the head tree from the checkout, and reuses `isSource`, `impact`, and `formatImpact` for both maps. It also runs full `map` on the head.
 
 The required set is the sorted union of head `Impact.owned[].peers[]`, head `known: false` paths, and base peers for every owned `(kind, name, role)` removed from the corresponding head file. The saved diff is filtered through `isSource` before either impact call, so the `known: false` arm is solely deleted mapped sources; tests, scripts, native files, and documents never enter the plan. The last arm covers deleted files and definitions removed from files that remain. Importers and nearby table/event lists stay informational. Analyzer or diff failure fails the step; neither can become an empty pass.
 
@@ -79,7 +79,7 @@ Every PR has one attestation block. Code needs `impact`, plus `map` when it has 
 ```
 ````
 
-`where` and `routes` may also appear in `read`. CI validates required claims, the current head, and one non-empty reason per required path. The block's `base` is informational: a `dev` push changes the base without changing the PR, so a base mismatch alone never fails the check. It rejects missing, extra, or duplicate paths, empty reasons, and unknown versions. `--print` generates the local block; CI prints its exact required block in a collapsed log with the full reports. No PR comment is created.
+`where` and `routes` may also appear in `read`. CI validates required claims, the current head, and one non-empty reason per required path. The block's `base` is the fork point and is informational: a base mismatch alone never fails the check. It rejects missing, extra, or duplicate paths, empty reasons, and unknown versions. `--print` generates the local block; CI prints its exact required block in a collapsed log with the full reports. No PR comment is created.
 
 A validation failure produces one error: `System map check failed: <read/path/reason counts>; head <current|stale>. Run system-map-impact.ts --print and use the collapsed CI report and replacement block; author read entries are claims.` Analyzer failures instead report the command and head that failed.
 
@@ -89,7 +89,7 @@ The workflow triggers on `opened`, `synchronize`, `reopened`, `edited`, `labeled
 
 ### Limits
 
-The required `System map` status is the only merge gate; there is no daemon or merge-wrapper change. GitHub's required-status setting plus **Require branches to be up to date before merging** covers most stale-base cases. A base push after the last run can still leave an older result until another PR event, but it no longer invalidates the attestation, and a body edit or label change can race the merge. Direct GitHub merges receive those branch protections, but a required CI check cannot make those windows atomic or prove that an author read the output.
+The required `System map` status is the only merge gate; there is no daemon or merge-wrapper change. `dev` does not require branches to be up to date before merging, and the check does not need it: it reads only the branch since its fork point, so a `dev` push neither reruns nor invalidates it. It also cannot see a peer that `dev` added after the fork point; a rebase brings that peer into the next run. A body edit or label change can race the merge. Direct GitHub merges receive those branch protections, but a required CI check cannot make those windows atomic or prove that an author read the output.
 
 ### What CI proves
 
@@ -97,6 +97,6 @@ The CI log proves that `map` and base/head `impact` completed at the recorded SH
 
 A false positive gets a reason explaining the wrong link. Missing links still need human feedback. Replace routine #10836 comments with the CI log and body block; keep that issue for missed/wrong links and runtime problems.
 
-Implementation tests cover the exact-base assertion, peer de-duplication, removed-definition peers, deleted sources, ignored importers, every category's attestation, body-validation failures, the revert path-only waiver, label revalidation, and fail-closed analyzer errors in the existing `test:system-map` leg.
+Implementation tests cover the fork-point diff, a `dev` push that leaves the block unchanged, peer de-duplication, removed-definition peers, deleted sources, ignored importers, every category's attestation, body-validation failures, the revert path-only waiver, label revalidation, and fail-closed analyzer errors in the existing `test:system-map` leg.
 
 **Question for the human:** is a general function call graph wanted later? This design deliberately does not add one.
