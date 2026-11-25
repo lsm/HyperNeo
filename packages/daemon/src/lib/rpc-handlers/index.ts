@@ -25,6 +25,8 @@ import type { createCodexSetup } from '../drivers/codex-setup.ts';
 import { sharedLiveSessions } from '../drivers/claude-desktop-adapter.ts';
 import { spawnProcess } from '../runtime-spawn/index.ts';
 import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
+import { createRemoteSendForwarder } from '../remote-daemons/forward-send.ts';
+import { remoteDaemons } from '../remote-daemons/registry.ts';
 import { join, resolve } from 'node:path';
 import { collectFamilyOperations, type FamilyOperationContext } from './family-operations/index.ts';
 import type { SpaceRpc, SpaceRpcFactory } from './space-rpc.ts';
@@ -427,7 +429,9 @@ export async function setupRPCHandlers<SpaceServices = never>(
       const session = deps.sessionManager.getSessionFromDB(sessionId);
       return !!session && !['archived', 'ended'].includes(session.status);
     },
+    hasRemoteDaemon: (daemonId) => remoteDaemons.list().some((d) => d.daemonId === daemonId),
     handoff: (args) => handoffPromptToMailbox({ ...args, jobQueue: deps.jobQueue }),
+    forwardRemote: createRemoteSendForwarder(remoteDaemons),
     onError: (error) => log.warn('Claude inbox reply could not be persisted', error),
   });
   void claudeInbox.listen().catch((error) => log.warn('Claude reply inbox not reopened', error));
