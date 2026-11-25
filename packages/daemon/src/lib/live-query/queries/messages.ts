@@ -212,6 +212,7 @@ top_level AS (
     -- reads (SDKMessageRepository.getSDKMessages) keep the consumed/failed
     -- visibility filter, so prompt context / rewind are unaffected; only the
     -- web transcript feed widens.
+    AND (message_type != 'user' OR COALESCE(send_status, 'consumed') != 'deferred')
     AND message_subtype_norm NOT IN (${EXCLUDED_FROM_PAGINATION_SQL_LIST})
     AND (
       message_type != 'system'

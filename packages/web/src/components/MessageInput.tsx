@@ -856,9 +856,7 @@ export default function MessageInput({
   }, []);
 
   const agentWorking = isProcessing ?? isAgentWorking.value;
-  const [queuedForCurrentTurn, setQueuedForCurrentTurn] = useState<QueuePreviewMessage[]>([]);
   const [queuedForNextTurn, setQueuedForNextTurn] = useState<QueuePreviewMessage[]>([]);
-  const [queuedCurrentTurnTotal, setQueuedCurrentTurnTotal] = useState<number | undefined>();
   const [queuedNextTurnTotal, setQueuedNextTurnTotal] = useState<number | undefined>();
 
   const syncMessagesContainerPadding = useCallback(() => {
@@ -899,21 +897,11 @@ export default function MessageInput({
     const refreshSeq = queueRefreshSeqRef.current + 1;
     queueRefreshSeqRef.current = refreshSeq;
     try {
-      const [enqueuedResponse, deferredResponse] = (await Promise.all([
-        hub.request('session.messages.byStatus', {
-          sessionId: targetSessionId,
-          status: 'enqueued',
-          limit: QUEUE_FETCH_LIMIT,
-        }),
-        hub.request('session.messages.byStatus', {
-          sessionId: targetSessionId,
-          status: 'deferred',
-          limit: QUEUE_FETCH_LIMIT,
-        }),
-      ])) as [
-        { messages?: QueuePreviewMessage[]; total?: number },
-        { messages?: QueuePreviewMessage[]; total?: number },
-      ];
+      const deferredResponse = (await hub.request('session.messages.byStatus', {
+        sessionId: targetSessionId,
+        status: 'deferred',
+        limit: QUEUE_FETCH_LIMIT,
+      })) as { messages?: QueuePreviewMessage[]; total?: number };
       if (sessionIdRef.current !== targetSessionId) {
         return;
       }
@@ -921,9 +909,7 @@ export default function MessageInput({
         return;
       }
       queueRefreshAppliedSeqRef.current = refreshSeq;
-      setQueuedForCurrentTurn(enqueuedResponse.messages ?? []);
       setQueuedForNextTurn(deferredResponse.messages ?? []);
-      setQueuedCurrentTurnTotal(enqueuedResponse.total);
       setQueuedNextTurnTotal(deferredResponse.total);
     } catch {}
   }, [sessionId]);
@@ -935,9 +921,6 @@ export default function MessageInput({
         return;
       }
 
-      setQueuedForCurrentTurn((messages) =>
-        messages.filter((message) => message.dbId !== queued.dbId)
-      );
       setQueuedForNextTurn((messages) =>
         messages.filter((message) => message.dbId !== queued.dbId)
       );
@@ -974,42 +957,9 @@ export default function MessageInput({
       setQueuedForNextTurn((messages) =>
         messages.filter((message) => message.dbId !== queued.dbId)
       );
-      setQueuedForCurrentTurn((messages) =>
-        messages.some((message) => message.dbId === queued.dbId)
-          ? messages
-          : [...messages, { ...queued, status: 'enqueued' }]
-      );
 
       try {
         await hub.request('session.messages.promotePending', {
-          sessionId,
-          messageDbId: queued.dbId,
-        });
-      } finally {
-        await refreshQueuedMessages();
-      }
-    },
-    [refreshQueuedMessages, sessionId]
-  );
-
-  const handleDeferQueuedMessage = useCallback(
-    async (queued: QueuePreviewMessage) => {
-      const hub = connectionManager.getHubIfConnected();
-      if (!hub) {
-        return;
-      }
-
-      setQueuedForCurrentTurn((messages) =>
-        messages.filter((message) => message.dbId !== queued.dbId)
-      );
-      setQueuedForNextTurn((messages) =>
-        messages.some((message) => message.dbId === queued.dbId)
-          ? messages
-          : [...messages, { ...queued, status: 'deferred' }]
-      );
-
-      try {
-        await hub.request('session.messages.deferPending', {
           sessionId,
           messageDbId: queued.dbId,
         });
@@ -1029,7 +979,6 @@ export default function MessageInput({
   }, [
     syncMessagesContainerPadding,
     attachments.length,
-    queuedForCurrentTurn.length,
     queuedForNextTurn.length,
     pendingVoiceEntries.length,
   ]);
@@ -1039,9 +988,7 @@ export default function MessageInput({
   }, [refreshQueuedMessages]);
 
   useEffect(() => {
-    setQueuedForCurrentTurn([]);
     setQueuedForNextTurn([]);
-    setQueuedCurrentTurnTotal(undefined);
     setQueuedNextTurnTotal(undefined);
   }, [sessionId]);
 
@@ -1073,8 +1020,7 @@ export default function MessageInput({
   }, [sessionId, refreshQueuedMessages, connectionState.value]);
 
   useEffect(() => {
-    if (!agentWorking && queuedForCurrentTurn.length === 0 && queuedForNextTurn.length === 0)
-      return;
+    if (!agentWorking && queuedForNextTurn.length === 0) return;
     const timer = setInterval(() => {
       if (document.hidden) {
         return;
@@ -1082,7 +1028,7 @@ export default function MessageInput({
       void refreshQueuedMessages();
     }, QUEUE_FALLBACK_POLL_MS);
     return () => clearInterval(timer);
-  }, [agentWorking, queuedForCurrentTurn.length, queuedForNextTurn.length, refreshQueuedMessages]);
+  }, [agentWorking, queuedForNextTurn.length, refreshQueuedMessages]);
 
   const handleTextareaHeightChange = useCallback(
     (_heightPx: number) => {
@@ -1131,12 +1077,7 @@ export default function MessageInput({
             return;
           }
 
-          if (
-            agentWorking ||
-            deliveryMode === 'defer' ||
-            queuedForCurrentTurn.length > 0 ||
-            queuedForNextTurn.length > 0
-          ) {
+          if (agentWorking || deliveryMode === 'defer' || queuedForNextTurn.length > 0) {
             await refreshQueuedMessages();
           }
         } finally {
@@ -1156,7 +1097,6 @@ export default function MessageInput({
       onSend,
       holdDraftAdoption,
       agentWorking,
-      queuedForCurrentTurn.length,
       queuedForNextTurn.length,
       refreshQueuedMessages,
       isTranscribing,
@@ -1273,29 +1213,23 @@ export default function MessageInput({
             </div>
           )}
 
-          {(queuedForCurrentTurn.length > 0 || queuedForNextTurn.length > 0 || pendingModelName) &&
-            !disabled && (
-              <QueuePreviewTray
-                pendingModel={pendingModelName}
-                onCancelPendingModel={() => {
-                  void handleCancelPendingModel();
-                }}
-                currentTurnMessages={queuedForCurrentTurn}
-                nextTurnMessages={queuedForNextTurn}
-                currentTurnTotal={queuedCurrentTurnTotal}
-                nextTurnTotal={queuedNextTurnTotal}
-                className="mb-2 sm:ml-[58px]"
-                onDeferMessage={(queued) => {
-                  void handleDeferQueuedMessage(queued);
-                }}
-                onPromoteMessage={(queued) => {
-                  void handlePromoteQueuedMessage(queued);
-                }}
-                onRemoveMessage={(queued) => {
-                  void handleRemoveQueuedMessage(queued);
-                }}
-              />
-            )}
+          {(queuedForNextTurn.length > 0 || pendingModelName) && !disabled && (
+            <QueuePreviewTray
+              pendingModel={pendingModelName}
+              onCancelPendingModel={() => {
+                void handleCancelPendingModel();
+              }}
+              nextTurnMessages={queuedForNextTurn}
+              nextTurnTotal={queuedNextTurnTotal}
+              className="mb-2 sm:ml-[58px]"
+              onPromoteMessage={(queued) => {
+                void handlePromoteQueuedMessage(queued);
+              }}
+              onRemoveMessage={(queued) => {
+                void handleRemoveQueuedMessage(queued);
+              }}
+            />
+          )}
 
           {pendingVoiceEntries.length > 0 && !disabled && (
             <PendingVoiceAudioTray
