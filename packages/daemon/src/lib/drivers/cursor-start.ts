@@ -5,6 +5,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { JsonRpcRequestTimeoutError, ProcessJsonRpcTransport } from '../process-json-rpc.ts';
 import { buildSafeProcessEnv } from '../safe-process-env.ts';
+import { replyCommandPermission } from './reply-command-permission.ts';
 import { selectLocalStartFolder } from './start-folder.ts';
 import type {
   Rejected,
@@ -46,7 +47,6 @@ const ToolCall = z.object({
     rawInput: z.object({ command: z.string() }),
   }),
 });
-const REPLY_COMMAND = /^hyperneo send [^;&|`$<>(){}\\\r\n]+$/;
 const Completion = z.object({ stopReason: z.string() });
 type Gate<Value> = { value: Value } | { reason: Rejected };
 type Receipt = NonNullable<WorkDelivery['receipt']>;
@@ -54,11 +54,10 @@ type StopResult = Result<{ stopped: boolean }>;
 
 export function cursorPermissionOutcome(params: unknown, commands: ReadonlyMap<string, string>) {
   const request = Permission.safeParse(params).data;
-  const allow = request?.options.find(({ kind }) => kind === 'allow_once');
-  const command = request ? commands.get(request.toolCall.toolCallId) : undefined;
-  return allow && command && REPLY_COMMAND.test(command)
-    ? { outcome: { outcome: 'selected', optionId: allow.optionId } }
-    : { outcome: { outcome: 'cancelled' } };
+  return replyCommandPermission(
+    request?.options ?? [],
+    request ? commands.get(request.toolCall.toolCallId) : undefined
+  );
 }
 
 async function within<T>(pending: Promise<T>, ms: number, detail: string): Promise<T> {

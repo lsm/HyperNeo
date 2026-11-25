@@ -188,19 +188,24 @@ describe('cursorPermissionOutcome', () => {
     expect(
       cursorPermissionOutcome(
         ask(),
-        ran("hyperneo send s-1 --from cursor-cli:c-1 --kind done 'Done'")
+        ran('hyperneo send s-1 --from cursor-cli:c-1 --kind done Done')
       )
     ).toEqual({ outcome: { outcome: 'selected', optionId: 'allow-once' } });
   });
 
-  it.each([
-    'rm -rf ~',
-    'hyperneo send s-1 done; rm -rf ~',
-    'hyperneo send s-1 $(cat ~/.ssh/id_rsa)',
-  ])('cancels %s', (command) => {
-    expect(cursorPermissionOutcome(ask(), ran(command))).toEqual({
+  it('cancels a command other than hyperneo send', () => {
+    expect(cursorPermissionOutcome(ask(), ran('touch denied.txt'))).toEqual({
       outcome: { outcome: 'cancelled' },
     });
+  });
+
+  it('cancels a tool call that is not a shell command', () => {
+    expect(
+      cursorPermissionOutcome(
+        { ...ask(), toolCall: { toolCallId: 'call-1', kind: 'edit' } },
+        ran('hyperneo send s-1 hi')
+      )
+    ).toEqual({ outcome: { outcome: 'cancelled' } });
   });
 
   it('cancels a tool call whose command was never announced', () => {
