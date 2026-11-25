@@ -26,7 +26,33 @@ describe('replyCommandPermission', () => {
     'hyperneo send session:abc --kind done "R&D > done; (ok) | {x}"',
     `hyperneo send session:abc --kind done 'it'"'"'s done'`,
   ])('allows quoted reply text %j', (command) => {
-    expect(replyCommandPermission(options, command)).toEqual(allowed);
+    expect(replyCommandPermission(options, command, 'darwin')).toEqual(allowed);
+  });
+
+  it('allows a backslash-escaped quote outside quotes', () => {
+    expect(
+      replyCommandPermission(options, "hyperneo send 'odd'\\''id' --kind done ok", 'darwin')
+    ).toEqual(allowed);
+  });
+
+  it.each([
+    "hyperneo send session:abc --kind done 'done & evil'",
+    'hyperneo send session:abc --kind done "done & evil"',
+    'hyperneo send session:abc --kind done 100%PATH%',
+    'hyperneo send session:abc --kind done a^&b',
+    'hyperneo send session:abc --kind done hi & evil',
+  ])('cancels %j on Windows, where cmd.exe has no single quotes', (command) => {
+    expect(replyCommandPermission(options, command, 'win32')).toEqual(cancelled);
+  });
+
+  it('allows a plain unquoted reply on Windows', () => {
+    expect(
+      replyCommandPermission(
+        options,
+        'hyperneo send session:abc --kind done All checks passed.',
+        'win32'
+      )
+    ).toEqual(allowed);
   });
 
   it.each([
@@ -47,7 +73,7 @@ describe('replyCommandPermission', () => {
     'HYPERNEO_SESSION_DOOR=/x hyperneo send session:abc hi',
     '/usr/local/bin/hyperneo send session:abc hi',
   ])('cancels %j', (command) => {
-    expect(replyCommandPermission(options, command)).toEqual(cancelled);
+    expect(replyCommandPermission(options, command, 'darwin')).toEqual(cancelled);
   });
 
   it('tells a reply command apart for drivers with their own permission shape', () => {
