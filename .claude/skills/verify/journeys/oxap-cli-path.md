@@ -13,10 +13,11 @@ On desktop and a touch phone viewport, select OXAP Codex in Provider Settings.
 The Codex CLI field should show the detected fake Codex path. Trying to save a
 fake OXAP executable should show a refusal. The journey then saves a working
 fake Codex path and replaces the program on disk with the fake OXAP executable.
-A fresh send on each viewport should show the saved path, the first stderr line
-and the Settings pointer in the existing chat. The evidence directory contains
-the field and chat screenshots from both viewports. Each send must show a
-failed message with a manual Retry button and no retry countdown. The journey
+A fresh send on each viewport should show one inline error with the saved path,
+the first stderr line and the Settings pointer, including after reload. The
+evidence directory contains the field and chat screenshots from both viewports.
+Each send must show a failed message with a manual Retry button and no retry
+countdown. The journey
 also removes a previously saved executable and checks that both kinds of failure
 produce one diagnostic per send and leave the delivery with zero automatic
 retries. After saving a working path, retrying the original message must get a

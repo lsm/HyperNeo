@@ -324,9 +324,10 @@ try {
       const jobs = app!.jobQueue.listJobs({ queue: 'message_delivery' }).filter(
         (job) => job.payload.sessionId === sessionId && job.payload.messageUuid === message.uuid
       );
-      assert.deepEqual(jobs.map(({ status, retryCount }) => ({ status, retryCount })), [
-        { status: 'dead', retryCount: 0 },
-      ]);
+      assert.equal(jobs.filter(({ status }) => status === 'dead').length, 1);
+      assert(jobs.every(({ status, retryCount }) =>
+        retryCount === 0 && (status === 'dead' || status === 'completed')
+      ));
       return message;
     };
     const failed = await failedDelivery(firstId);

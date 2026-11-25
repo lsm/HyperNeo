@@ -63,6 +63,9 @@ try {
         assert.equal(await title.count(), 1);
         await cause.scrollIntoViewIfNeeded();
         await screen('chat-error');
+        await page.reload();
+        await cause.waitFor({ timeout: 20_000 });
+        assert.equal(await title.count(), 1);
       }
       count++;
     } catch (error) {

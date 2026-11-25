@@ -1676,7 +1676,8 @@ export class QueryRunner {
           if (launchFailure || failure instanceof OxapReopenDeliveryError) {
             await this.failures.terminal(failure.message);
             if (!live()) return;
-            await this.displayErrorAsAssistantMessage(failure.message, { markAsError: true });
+            if (!launchFailure)
+              await this.displayErrorAsAssistantMessage(failure.message, { markAsError: true });
           }
           await errorManager.handleError(
             session.id,
