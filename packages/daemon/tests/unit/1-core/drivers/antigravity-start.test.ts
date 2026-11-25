@@ -5,7 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAntigravityStart } from '../../../../src/lib/drivers/antigravity-start.ts';
 import { JsonRpcRequestTimeoutError } from '../../../../src/lib/process-json-rpc.ts';
 
-const peer = vi.hoisted(() => ({ created: vi.fn(), request: vi.fn(), close: vi.fn() }));
+const peer = vi.hoisted(() => ({
+  created: vi.fn(),
+  request: vi.fn(),
+  respond: vi.fn(),
+  close: vi.fn(),
+}));
 vi.mock('../../../../src/lib/process-json-rpc.ts', async (original) => ({
   ...(await original<typeof import('../../../../src/lib/process-json-rpc.ts')>()),
   ProcessJsonRpcTransport: class {
@@ -13,6 +18,7 @@ vi.mock('../../../../src/lib/process-json-rpc.ts', async (original) => ({
       peer.created(options);
     }
     sendRequest = peer.request;
+    sendResponse = peer.respond;
     close = peer.close;
   },
 }));
@@ -109,5 +115,27 @@ describe('createAntigravityStart.start', () => {
       'disconnected during the turn'
     );
     expect(peer.close).toHaveBeenCalledOnce();
+  });
+
+  it('answers permission requests through the reply-command gate', async () => {
+    peer.request.mockReturnValueOnce(new Promise(() => {}));
+    expect(await start(driver, folder)).toMatchObject({ ok: true });
+    const { onRequest } = peer.created.mock.calls[0][0];
+    const permission = (CommandLine: string) => ({
+      toolCall: { kind: 'execute', rawInput: { CommandLine } },
+      options: [{ optionId: 'allow', kind: 'allow_once' }],
+    });
+
+    onRequest({
+      id: 7,
+      method: 'session/request_permission',
+      params: permission('hyperneo send session:a hi'),
+    });
+    onRequest({ id: 8, method: 'session/request_permission', params: permission('rm -rf ~') });
+
+    expect(peer.respond).toHaveBeenCalledWith(7, {
+      outcome: { outcome: 'selected', optionId: 'allow' },
+    });
+    expect(peer.respond).toHaveBeenCalledWith(8, { outcome: { outcome: 'cancelled' } });
   });
 });
