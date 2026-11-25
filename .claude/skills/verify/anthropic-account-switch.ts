@@ -133,18 +133,16 @@ try {
     refreshToken: 'fixture-refresh-original',
     raw: { account: { uuid: 'original', email_address: 'original@example.test' } },
   };
-  provider.setCredentials(original);
   registry.unregister('anthropic');
   registry.register(provider);
   app.db.providers.createProvider({
     providerId: 'anthropic',
     displayName: 'Anthropic',
     kind: 'built_in',
-    authType: 'oauth',
+    authType: 'api_key',
     isEnabled: true,
   });
   const manager = ProviderCredentialManager.create(app.db.getDatabase(), {});
-  await manager.storeOAuthTokens('anthropic', original);
   await transport.initialize();
 
   const payload = { providerId: 'anthropic' };
@@ -153,6 +151,13 @@ try {
       ({ id }) => id === 'anthropic'
     );
   const account = async () => (await readAuth())?.user?.email;
+
+  const inherited = await readAuth();
+  assert(inherited?.isAuthenticated, 'The system login must be available before Settings login');
+  assert.equal(inherited.credentialSource, 'inherited');
+  assert.equal(inherited.method, 'oauth', 'The system subscription must be reported as OAuth');
+  provider.setCredentials(original);
+  await manager.storeOAuthTokens('anthropic', original);
 
   const refreshing = hub.request('auth.refresh', payload);
   await refreshStarted.promise;
