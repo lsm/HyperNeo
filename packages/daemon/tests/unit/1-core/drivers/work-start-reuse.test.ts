@@ -44,7 +44,7 @@ function harness(
     reuse?: 'long_lived' | 'per_ask' | 'per_todo';
     sameAsk?: string[];
     reconfigure?: 'applies' | 'refused' | 'unchanged';
-    compact?: boolean | 'throws';
+    compact?: boolean | 'throws' | 'unconfirmed';
     copilotClients?: WorkAdapter['copilotClients'];
   },
   history?: ReadonlyMap<string, { sameAskAt: number | null; settledAt: number | null }>,
@@ -149,6 +149,7 @@ function harness(
         : async (ref) => {
             events.push(`compact ${ref.id}`);
             if (config.compact === 'throws') throw new Error('Synthetic compaction failure');
+            if (config.compact === 'unconfirmed') return { ok: true, value: { compacted: false } };
             return config.compact
               ? { ok: true, value: { compacted: true } }
               : { ok: false, reason: 'busy', detail: 'Synthetic refusal' };
@@ -250,7 +251,7 @@ describe('work.start session reuse preference', () => {
     expect(run.events).toEqual([`compact ${own}`, `send ${own}`]);
   });
 
-  test.each([false, 'throws', undefined] as const)(
+  test.each([false, 'throws', 'unconfirmed', undefined] as const)(
     'starts fresh when compaction cannot be confirmed (%s)',
     async (compact) => {
       const own = `compacted-${compact}`;
