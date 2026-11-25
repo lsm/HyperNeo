@@ -982,6 +982,32 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
     }
   });
 
+  test('clears the old worker wait reason when starting a replacement', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      recordWorkerStarted(h.db, worker, {
+        startedBy: 'neo',
+        machine: 'laptop',
+        folder: h.folder(),
+        harness: worker.adapter,
+      });
+      h.setCompact(undefined);
+      const fresh = { adapter: 'hyperneo', id: 'fresh' };
+      h.setOnStart(() => ({
+        ok: true,
+        value: { ref: fresh, receipt: { executionId: 'fresh', inputId: 'i' } },
+      }));
+      const next = h.add({ verb: 'send', ref: worker });
+      h.store.updateTodo(next, { reason: 'Waiting for worker hyperneo:worker-1.' }, Date.now());
+      await h.start(next.id);
+      expect(h.sessions.readRef(next.id)).toEqual(fresh);
+      expect(h.store.getTodo(next.id)).toMatchObject({ state: 'doing', reason: null });
+    } finally {
+      h.db.close();
+    }
+  });
+
   test.each(['doing', 'blocked'] as const)(
     'starts fresh when the worker holds another %s todo',
     async (state) => {
