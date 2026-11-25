@@ -1,6 +1,8 @@
 const commands = {
   'codex-setup':
     '  hyperneo codex-setup [--undo | --no-remote-control]  Configure the shared Codex app server on macOS',
+  service: `  hyperneo service install [--host <addr>] [--port <port>]
+                                      Run the daemon as a macOS login service (launchd); also uninstall, status`,
   'reserve-restart':
     '  hyperneo reserve-restart            Reserve an idle daemon restart for 15 seconds on the paired local session socket',
   'desktop-mcp':

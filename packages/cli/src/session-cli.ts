@@ -144,6 +144,14 @@ export async function runSessionCommand(args: string[], env: Env = process.env):
     return 0;
   }
   if (args[0] === 'read') return readCard(args.slice(1), env.HYPERNEO_DATA_DIR);
+  if (args[0] === 'service') {
+    if (process.platform !== 'darwin') {
+      console.error('hyperneo service requires macOS.');
+      return 1;
+    }
+    const { runService } = await import('./service-cli.ts');
+    return runService(args.slice(1));
+  }
   if (args[0] === 'codex-setup' && process.platform !== 'darwin') {
     console.error('Codex setup requires macOS.');
     return 1;
