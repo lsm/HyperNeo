@@ -13,7 +13,7 @@ export function replyMessageBodyLength(message: string): number {
   return at >= 0 &&
     message.endsWith(CLI_SUFFIX) &&
     argumentLength > 0 &&
-    argumentLength <= REPLY_ORIGIN_MAX * 4 + 2
+    argumentLength <= REPLY_ORIGIN_MAX * 8 + 16
     ? at
     : message.length;
 }
@@ -21,19 +21,31 @@ export function replyMessageBodyLength(message: string): number {
 export function withReplyLine(
   message: string,
   from: string,
-  format: 'mcp' | 'cli' = 'mcp'
+  format: 'mcp' | 'cli' = 'mcp',
+  sender?: string
 ): string {
-  const sender = parseAddress(from);
+  const origin = parseAddress(from);
   const replyTo =
-    sender?.kind === 'session' ? sender.sessionId : parseRemoteAddress(from) ? from : null;
+    origin?.kind === 'session' ? origin.sessionId : parseRemoteAddress(from) ? from : null;
   if (!replyTo) return message;
   if (format === 'mcp')
     return `${message}\n\nReport milestones with ${sessionReplyCall(replyTo)}, choosing kind done, blocked, question or failed; use done for a PR milestone. Use this operation, not SendMessage.`;
-  const argument = /^[A-Za-z0-9_:./%-]+$/.test(replyTo)
-    ? replyTo
-    : `'${replyTo.replaceAll("'", "'\\''")}'`;
+  const argument = sender
+    ? `${shellArgument(replyTo)} --from ${shellArgument(sender)}`
+    : shellArgument(replyTo);
   const line = `${CLI_PREFIX}${argument}${CLI_SUFFIX}`;
   return message.includes(line) ? message : `${message}\n\n${line}`;
+}
+
+export function withReplySender(message: string, from: string, sender: string): string {
+  const body = replyMessageBodyLength(message);
+  return body === message.length
+    ? message
+    : withReplyLine(message.slice(0, body), from, 'cli', sender);
+}
+
+function shellArgument(value: string): string {
+  return /^[A-Za-z0-9_:./%-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 export function sessionReplyCall(sessionId: string): string {

@@ -510,6 +510,13 @@ describe('work.start reuses an idle worker', () => {
     expect(run.started).toEqual([]);
   });
 
+  test('tells a reused worker its own id in the reply line', async () => {
+    const run = harness([{ id: 'reply-idle', status: 'done' }], ['reply-idle']);
+    expect((await run.start(neo, true)).value?.reused).toBe(true);
+    expect(run.messages[0]).toContain('hyperneo send neo --from claude-desktop:reply-idle --kind');
+    expect(run.messages[0].split('hyperneo send ')).toHaveLength(2);
+  });
+
   test('refreshes identity before delivering a new todo to a reused worker', async () => {
     const run = harness([{ id: 'provenance-idle', status: 'done' }], ['provenance-idle']);
     expect((await run.start(neo, true)).value?.reused).toBe(true);
