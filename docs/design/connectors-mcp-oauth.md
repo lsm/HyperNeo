@@ -18,7 +18,7 @@ a URL, a scope set and, where the vendor requires it, a client ID.
 - The Google connection already has what we need: a namespaced [vault][vault] over
   `CredentialStore`, single-flight [refresh][access], and a loopback PKCE
   [login][login]. The daemon already depends on `@modelcontextprotocol/sdk`
-  1.30.0. Its client `auth()` does protected-resource and authorization-server
+  1.32.2. Its client `auth()` does protected-resource and authorization-server
   discovery, dynamic registration (DCR), client ID metadata documents (CIMD),
   PKCE S256, RFC 8707 `resource`, and refresh, all through an
   `OAuthClientProvider` interface.
@@ -52,9 +52,10 @@ a URL, a scope set and, where the vendor requires it, a client ID.
    prefers pre-registered `clientId`, then CIMD, then DCR. Connect is a
    human-only operation that returns the authorize URL; a session never starts it.
    **Credentials are bound to one issuer.** Without cached discovery state, the
-   SDK follows any `resource_metadata` a 401 names. It sends the stored refresh
-   token and client secret to that server's token endpoint before
-   `redirectToAuthorization` is reached. So connect refuses an issuer other than
+   SDK follows any `resource_metadata` a 401 names. It withholds stored
+   credentials from that server only if they carry the `issuer` stamp it adds on
+   save. Without the stamp it sends the refresh token and client secret to that
+   server's token endpoint before `redirectToAuthorization` is reached. So connect refuses an issuer other than
    the preset's and stores the binding in the bundle. Outside a connect attempt,
    the provider's `discoveryState()` returns that stored binding, so the SDK
    skips discovery. `saveDiscoveryState` throws on a different issuer, and the
