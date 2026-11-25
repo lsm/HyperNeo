@@ -1068,6 +1068,19 @@ export function ProvidersSettings() {
                         <div class="text-xs text-fg-faint font-mono mt-0.5">
                           {provider.providerId}
                         </div>
+                        {provider.providerId === 'anthropic' &&
+                          auth?.method === 'oauth' &&
+                          auth.user?.email && (
+                            <div class="text-xs text-fg-muted mt-0.5 break-all">
+                              Signed in as {auth.user.email}
+                            </div>
+                          )}
+                        {auth?.credentialSource && (
+                          <div class="text-xs text-fg-muted mt-0.5">
+                            Credential source:{' '}
+                            {auth.credentialSource === 'hyperneo' ? 'HyperNeo' : 'Inherited'}
+                          </div>
+                        )}
                       </div>
 
                       <div class="flex items-center gap-2 flex-shrink-0">
