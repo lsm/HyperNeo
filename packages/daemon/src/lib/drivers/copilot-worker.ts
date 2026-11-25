@@ -5,7 +5,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { isAbsolute } from 'node:path';
 import { buildSafeProcessEnv } from '../safe-process-env.ts';
 import { workStartConfiguration } from './start-configuration.ts';
-import { isHyperneoSendCommand } from './hyperneo-send-command.ts';
+import { isReplyCommand } from './reply-command-permission.ts';
 import type { WorkDelivery } from './types.ts';
 export class CopilotModelUnavailableError extends Error {}
 export class CopilotEffortUnavailableError extends Error {}
@@ -50,7 +50,7 @@ const sendsReply = (request: unknown) =>
   request.kind === 'shell' &&
   'fullCommandText' in request &&
   typeof request.fullCommandText === 'string' &&
-  isHyperneoSendCommand(request.fullCommandText);
+  isReplyCommand(request.fullCommandText);
 
 function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
   const next = structuredClone(state);
