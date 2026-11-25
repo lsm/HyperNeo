@@ -41,9 +41,10 @@ could not be read is absent, never 0. Failed and removed todos have accounts too
 `coding.verify`; other packs add theirs through `workKinds`. `neo.todo.add` and
 `neo.ask.propose` refuse a todo with an instruction and no known kind, and list the kinds.
 Todos the daemon makes itself may have none and count as missing. Saved `routes` and line
-rules already read this field (`model-lines.md`). A todo that previously had no kind matched
-`general`; giving it a specific kind can make it match a different saved rule or none. With no
-saved routes or line rules, line selection is unchanged.
+rules already read this field (`model-lines.md`). Today a todo without a kind counts as
+`coding.write` when coding picks its line and as `general` when a held line is moved. Its real
+kind can match another saved rule or none, which is what the human's rule says. With no saved
+routes or line rules, line selection is unchanged.
 
 **Estimate.** Not "easy" or "hard", which nobody can check, but numbers that can be compared
 with the result: `estimate: {files, lines, testLines, by}` for a kind that changes files,
@@ -163,8 +164,8 @@ Six PRs from `dev`, in order, failing tests first. System map read for the plann
    text, and the estimate line in `AGENTS.md` for designs. Tests: missing or unknown kind is
    refused; a pack's kind is accepted only while the pack is on; an estimate after the first
    worker is refused, for `start`, `send` and `adopt`, also when a retry or a move cleared the
-   start; a daemon-made todo without one is accepted; a new specific kind uses the existing
-   saved routing rules rather than matching `general` as an absent kind did.
+   start; a daemon-made todo without one is accepted; a todo with a kind matches the saved
+   rules of that kind, and one without keeps today's fallbacks.
    Estimate: 8 files, 130 lines, 150 test lines.
 3. **Turn usage, Codex, and the column.** Migration and `usage` on `WorkTurnFact`. Tests on real
    rollout shapes: cached input is not counted twice; a turn read in two parts has one total;
