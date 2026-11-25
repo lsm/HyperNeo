@@ -8,10 +8,12 @@ TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evid
 
 The production MCP door must return ok true with records for retrying a
 nonretryable todo, continuing unstarted work, an invalid replacement, and
-operations on a settled ask. A no-op leaves todos and human cards
+editing, continuing or removing a todo on a settled ask. Adding a todo to a
+settled ask returns ok false with an ask_settled reason that names the next
+step. A no-op leaves todos and human cards
 unchanged and dispatches no worker. Removal with a missing replacement still
 removes the todo with its reason, without storing a dangling link. The migrated
-operation audit stores five accepted records, preserved after DB reopen.
+operation audit stores three accepted records and one refusal, preserved after DB reopen.
 The baseline fails on the first not_retryable refusal. Save observed.json and
 proof.log; the wrapper immediately removes synthetic data.
 

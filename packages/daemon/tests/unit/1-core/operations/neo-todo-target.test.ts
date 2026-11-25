@@ -236,8 +236,8 @@ describe('todo target identity at the MCP add door', () => {
     });
     try {
       const result = await f.add({ verb: 'send', ref: { adapter: 'hyperneo', id: full } });
-      expect(result.ok).toBe(true);
-      expect(result.records[0]).toMatch(/^ask_settled:/);
+      expect(result.ok).toBe(false);
+      expect(result.reason).toMatch(/^ask_settled:/);
       expect(f.todos.listTodos('ask')).toEqual([]);
     } finally {
       f.db.close();

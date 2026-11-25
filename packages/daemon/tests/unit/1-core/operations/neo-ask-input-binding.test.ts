@@ -467,6 +467,24 @@ describe('neo ask binding from human input', () => {
     }
   });
 
+  test('a reply to a question on a settled ask is told to propose, not to pass input again', async () => {
+    const f = setup();
+    try {
+      const asked = await f.ask({ askId: f.slow.id });
+      if (!asked.ok) throw new Error(asked.reason);
+      const input = f.human('Use the index', { kind: 'question', id: asked.question.id });
+      f.store.settleAsk(f.slow, 'done', 'Finished', 2);
+      expect(await f.add({ input })).toEqual({
+        ok: false,
+        reason:
+          'ask_settled: this ask is done; the todo was not added. Use neo.ask.propose with a new title.',
+      });
+      expect(f.store.listTodos(f.slow.id)).toEqual([]);
+    } finally {
+      f.db.close();
+    }
+  });
+
   test('a reply to a Neo message tied to an ask binds to that ask', async () => {
     const f = setup();
     try {
