@@ -1,3 +1,4 @@
+import { accessSync, constants } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -94,6 +95,18 @@ interface ServiceDeps {
   print(text: string): void;
   write(path: string, text: string): Promise<void>;
   remove(path: string): Promise<void>;
+  sleep(ms: number): Promise<void>;
+}
+
+export function stableBun(execPath: string, path: string | undefined): string {
+  for (const dir of (path ?? '').split(':')) {
+    if (!dir) continue;
+    try {
+      accessSync(join(dir, 'bun'), constants.X_OK);
+      return join(dir, 'bun');
+    } catch {}
+  }
+  return execPath;
 }
 
 const defaultDeps = (): ServiceDeps => ({
@@ -110,6 +123,7 @@ const defaultDeps = (): ServiceDeps => ({
     await writeFile(path, text, { mode: 0o644 });
   },
   remove: (path) => rm(path, { force: true }),
+  sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
 });
 
 async function launchctl(deps: ServiceDeps, args: string[]) {
@@ -141,12 +155,18 @@ export async function runService(
     return code === 0 ? 0 : 1;
   }
   await launchctl(deps, ['bootout', target]);
+  for (let i = 0; i < 50 && (await launchctl(deps, ['print', target])).code === 0; i++)
+    await deps.sleep(200);
   if (plan.action === 'uninstall') {
     await deps.remove(plistPath);
     deps.print(`Removed ${SERVICE_LABEL}.`);
     return 0;
   }
-  const { program, env } = serviceProgram(deps.execPath, deps.moduleUrl, deps.mainPath);
+  const { program, env } = serviceProgram(
+    deps.moduleUrl.includes('/$bunfs/root/') ? deps.execPath : stableBun(deps.execPath, deps.path),
+    deps.moduleUrl,
+    deps.mainPath
+  );
   const flags = [
     ...(plan.host ? ['--host', plan.host] : []),
     ...(plan.port ? ['--port', plan.port] : []),

@@ -1,4 +1,7 @@
 import { describe, expect, test } from 'bun:test';
+import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { SpawnFn } from '@hyperneo/daemon/lib/runtime-spawn';
 import {
   SERVICE_LABEL,
@@ -6,18 +9,23 @@ import {
   runService,
   servicePlist,
   serviceProgram,
+  stableBun,
 } from '../src/service-cli';
 
 const PLIST = `/Users/owner/Library/LaunchAgents/${SERVICE_LABEL}.plist`;
 
-function harness(results: Record<string, { code: number; text?: string }> = {}) {
+type Result = { code: number; text?: string };
+
+function harness(results: Record<string, Result | Result[]> = {}) {
   const calls: string[][] = [];
+  const slept: number[] = [];
   const written: Record<string, string> = {};
   const removed: string[] = [];
   const printed: string[] = [];
   const spawn: SpawnFn = (args) => {
     calls.push(args);
-    const result = results[args[1] ?? ''] ?? { code: 0 };
+    const planned = results[args[1] ?? ''];
+    const result = (Array.isArray(planned) ? planned.shift() : planned) ?? { code: 0 };
     return {
       exited: Promise.resolve(result.code),
       exitCode: result.code,
@@ -41,8 +49,11 @@ function harness(results: Record<string, { code: number; text?: string }> = {}) 
     remove: async (path: string) => {
       removed.push(path);
     },
+    sleep: async (ms: number) => {
+      slept.push(ms);
+    },
   };
-  return { deps, calls, written, removed, printed };
+  return { deps, calls, written, removed, printed, slept };
 }
 
 describe('planService', () => {
@@ -89,6 +100,21 @@ describe('serviceProgram', () => {
   });
 });
 
+describe('stableBun', () => {
+  test('prefers the bun on PATH over a versioned install path', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'service-bun-'));
+    writeFileSync(join(dir, 'bun'), '');
+    chmodSync(join(dir, 'bun'), 0o755);
+    expect(stableBun('/opt/homebrew/Cellar/bun/1.4.5/bin/bun', `/missing:${dir}`)).toBe(
+      join(dir, 'bun')
+    );
+  });
+
+  test('falls back to the running bun when PATH has none', () => {
+    expect(stableBun('/x/bun', '/missing')).toBe('/x/bun');
+  });
+});
+
 describe('servicePlist', () => {
   test('keeps the daemon alive and escapes XML', () => {
     const plist = servicePlist({
@@ -108,10 +134,11 @@ describe('servicePlist', () => {
 
 describe('runService', () => {
   test('install writes the plist and bootstraps it after booting out the old one', async () => {
-    const h = harness();
+    const h = harness({ print: { code: 113 } });
     expect(await runService(['install', '--host', '0.0.0.0'], h.deps)).toBe(0);
     expect(h.calls).toEqual([
       ['/bin/launchctl', 'bootout', `gui/501/${SERVICE_LABEL}`],
+      ['/bin/launchctl', 'print', `gui/501/${SERVICE_LABEL}`],
       ['/bin/launchctl', 'bootstrap', 'gui/501', PLIST],
     ]);
     const plist = h.written[PLIST] ?? '';
@@ -123,16 +150,26 @@ describe('runService', () => {
     expect(plist).toContain('<key>WorkingDirectory</key>\n  <string>/src/hyperneo</string>');
   });
 
+  test('install waits until the old service is gone before bootstrapping', async () => {
+    const h = harness({ print: [{ code: 0 }, { code: 0 }, { code: 113 }] });
+    expect(await runService(['install'], h.deps)).toBe(0);
+    expect(h.slept).toEqual([200, 200]);
+    expect(h.calls.at(-1)).toEqual(['/bin/launchctl', 'bootstrap', 'gui/501', PLIST]);
+  });
+
   test('install reports a failed bootstrap', async () => {
-    const h = harness({ bootstrap: { code: 5, text: 'Input/output error' } });
+    const h = harness({ print: { code: 113 }, bootstrap: { code: 5, text: 'Input/output error' } });
     expect(await runService(['install'], h.deps)).toBe(1);
     expect(h.printed.join('\n')).toContain('Input/output error');
   });
 
   test('uninstall boots out and removes the plist', async () => {
-    const h = harness();
+    const h = harness({ print: { code: 113 } });
     expect(await runService(['uninstall'], h.deps)).toBe(0);
-    expect(h.calls).toEqual([['/bin/launchctl', 'bootout', `gui/501/${SERVICE_LABEL}`]]);
+    expect(h.calls).toEqual([
+      ['/bin/launchctl', 'bootout', `gui/501/${SERVICE_LABEL}`],
+      ['/bin/launchctl', 'print', `gui/501/${SERVICE_LABEL}`],
+    ]);
     expect(h.removed).toEqual([PLIST]);
   });
 
