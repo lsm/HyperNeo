@@ -1,4 +1,3 @@
-import type { ComponentChildren } from 'preact';
 import {
   isOxapHarness,
   isOxapModelLocked,
@@ -184,7 +183,6 @@ export async function sendChatContainerMessage({
 }
 
 interface ChatContainerProps {
-  headerExtra?: ComponentChildren;
   sessionId: string;
   readonly?: boolean;
   onBack?: () => void;
@@ -204,7 +202,6 @@ const RETURN_TO_PARENT_PROMPT =
   'Wrap up now: invoke the operation session.clone.return with a concise summary of what you learned and what is left, so your parent session can continue from it.';
 
 export default function ChatContainer({
-  headerExtra,
   sessionId,
   readonly = false,
   onBack,
@@ -1181,8 +1178,6 @@ export default function ChatContainer({
         displayMode={displayMode}
         onDisplayModeChange={handleDisplayModeChange}
       />
-
-      {headerExtra}
 
       {!readonly && /^[A-Za-z0-9_-]{1,64}$/.test(sessionId) && (
         <DesktopControl worker={sessionId} class="border-b border-line px-4 py-2" />
