@@ -7,7 +7,6 @@ import { QueuePreviewTray, type QueuePreviewMessage } from './components/QueuePr
 interface PreviewScenario {
   title: string;
   caption: string;
-  currentTurnMessages: QueuePreviewMessage[];
   nextTurnMessages: QueuePreviewMessage[];
   initialContent: string;
   working: boolean;
@@ -17,7 +16,7 @@ const baseTime = Date.now();
 
 function makeMessage(
   id: string,
-  status: 'enqueued' | 'deferred',
+  status: 'deferred',
   text: string,
   offsetMs: number
 ): QueuePreviewMessage {
@@ -34,17 +33,13 @@ const scenarios: PreviewScenario[] = [
   {
     title: 'Idle composer',
     caption: 'No queued messages, normal send action.',
-    currentTurnMessages: [],
     nextTurnMessages: [],
     initialContent: 'Can you summarize this branch before we ship it?',
     working: false,
   },
   {
     title: 'Steer current turn',
-    caption: 'A message already queued for the running turn.',
-    currentTurnMessages: [
-      makeMessage('now-1', 'enqueued', 'Also inspect the queue persistence path.', 1000),
-    ],
+    caption: 'Steered messages go straight to the transcript, so nothing shows above the composer.',
     nextTurnMessages: [],
     initialContent: 'Mention the frontend regression first.',
     working: true,
@@ -52,7 +47,6 @@ const scenarios: PreviewScenario[] = [
   {
     title: 'Deferred next turn',
     caption: 'A message waiting until the agent becomes idle.',
-    currentTurnMessages: [],
     nextTurnMessages: [
       makeMessage(
         'next-1',
@@ -65,18 +59,8 @@ const scenarios: PreviewScenario[] = [
     working: true,
   },
   {
-    title: 'Mixed queue',
-    caption: 'Both groups populated, with every pending row visible.',
-    currentTurnMessages: [
-      makeMessage(
-        'now-2',
-        'enqueued',
-        'Patch the composer labels while the agent is still running.',
-        3000
-      ),
-      makeMessage('now-3', 'enqueued', 'Keep the current response concise and actionable.', 4000),
-      makeMessage('now-4', 'enqueued', 'Do not discard the draft if send fails.', 5000),
-    ],
+    title: 'Several Next messages',
+    caption: 'Several Next messages waiting, with every pending row visible.',
     nextTurnMessages: [
       makeMessage('next-2', 'deferred', 'Then run the web typecheck.', 6000),
       makeMessage(
@@ -94,14 +78,6 @@ const scenarios: PreviewScenario[] = [
   {
     title: 'Multiline busy composer',
     caption: 'Button placement when the textarea grows.',
-    currentTurnMessages: [
-      makeMessage(
-        'now-5',
-        'enqueued',
-        'Use the existing design tokens and avoid a new surface style.',
-        10000
-      ),
-    ],
     nextTurnMessages: [
       makeMessage('next-6', 'deferred', 'Follow up with UX notes after implementation.', 11000),
     ],
@@ -113,7 +89,6 @@ const scenarios: PreviewScenario[] = [
 
 function ScenarioCard({ scenario }: { scenario: PreviewScenario }) {
   const [content, setContent] = useState(scenario.initialContent);
-  const [currentTurnMessages, setCurrentTurnMessages] = useState(scenario.currentTurnMessages);
   const [nextTurnMessages, setNextTurnMessages] = useState(scenario.nextTurnMessages);
 
   return (
@@ -134,25 +109,14 @@ function ScenarioCard({ scenario }: { scenario: PreviewScenario }) {
         </span>
       </div>
       <QueuePreviewTray
-        currentTurnMessages={currentTurnMessages}
         nextTurnMessages={nextTurnMessages}
         className="mb-2"
-        onDeferMessage={(queued) => {
-          setCurrentTurnMessages((messages) =>
-            messages.filter((message) => message.dbId !== queued.dbId)
-          );
-          setNextTurnMessages((messages) => [...messages, { ...queued, status: 'deferred' }]);
-        }}
         onPromoteMessage={(queued) => {
           setNextTurnMessages((messages) =>
             messages.filter((message) => message.dbId !== queued.dbId)
           );
-          setCurrentTurnMessages((messages) => [...messages, { ...queued, status: 'enqueued' }]);
         }}
         onRemoveMessage={(queued) => {
-          setCurrentTurnMessages((messages) =>
-            messages.filter((message) => message.dbId !== queued.dbId)
-          );
           setNextTurnMessages((messages) =>
             messages.filter((message) => message.dbId !== queued.dbId)
           );

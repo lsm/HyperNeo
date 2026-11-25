@@ -17,18 +17,14 @@ describe('QueuePreviewTray — inline cap + full-queue modal', () => {
   afterEach(cleanup);
 
   it('renders all messages when a group has three or fewer (no more button)', () => {
-    const { container } = render(
-      <QueuePreviewTray currentTurnMessages={[]} nextTurnMessages={makeMessages(3, 'next')} />
-    );
+    const { container } = render(<QueuePreviewTray nextTurnMessages={makeMessages(3, 'next')} />);
     const rows = container.querySelectorAll('[data-testid="queued-next-turn-bubble"] > div');
     expect(rows.length).toBe(3);
     expect(container.querySelector('[data-testid="queued-show-all"]')).toBeNull();
   });
 
   it('caps the inline preview at three and shows a +N more button', () => {
-    const { container } = render(
-      <QueuePreviewTray currentTurnMessages={[]} nextTurnMessages={makeMessages(20, 'next')} />
-    );
+    const { container } = render(<QueuePreviewTray nextTurnMessages={makeMessages(20, 'next')} />);
     const rows = container.querySelectorAll('[data-testid="queued-next-turn-bubble"] > div');
     expect(rows.length).toBe(3);
     const more = container.querySelector('[data-testid="queued-show-all"]');
@@ -39,11 +35,7 @@ describe('QueuePreviewTray — inline cap + full-queue modal', () => {
     const onRemove = vi.fn();
     const messages = makeMessages(5, 'next');
     const { container } = render(
-      <QueuePreviewTray
-        currentTurnMessages={[]}
-        nextTurnMessages={messages}
-        onRemoveMessage={onRemove}
-      />
+      <QueuePreviewTray nextTurnMessages={messages} onRemoveMessage={onRemove} />
     );
     fireEvent.click(container.querySelector('[data-testid="queued-show-all"]')!);
 
@@ -59,9 +51,7 @@ describe('QueuePreviewTray — inline cap + full-queue modal', () => {
 
   it('paginates the modal list at ten items per page', () => {
     const messages = makeMessages(25, 'next');
-    const { container } = render(
-      <QueuePreviewTray currentTurnMessages={[]} nextTurnMessages={messages} />
-    );
+    const { container } = render(<QueuePreviewTray nextTurnMessages={messages} />);
     fireEvent.click(container.querySelector('[data-testid="queued-show-all"]')!);
 
     const modalList = document.body.querySelector('[data-testid="queued-modal-list"]')!;
@@ -99,20 +89,6 @@ describe('QueuePreviewTray — inline cap + full-queue modal', () => {
         .hasAttribute('disabled')
     ).toBe(true);
   });
-
-  it('paginates the Steer group independently of Next', () => {
-    const { container } = render(
-      <QueuePreviewTray
-        currentTurnMessages={makeMessages(12, 'steer')}
-        nextTurnMessages={makeMessages(4, 'next')}
-      />
-    );
-    expect(container.querySelectorAll('[data-testid="queued-show-all"]').length).toBe(2);
-    fireEvent.click(container.querySelectorAll('[data-testid="queued-show-all"]')[0]);
-    expect(
-      document.body.querySelector('[data-testid="queued-modal-page-label"]')?.textContent
-    ).toBe('Page 1 of 2');
-  });
 });
 
 describe('QueuePreviewTray — review round 2 fixes', () => {
@@ -120,30 +96,19 @@ describe('QueuePreviewTray — review round 2 fixes', () => {
 
   it('does not reopen the modal when its queue refills after emptying', () => {
     const { container, rerender } = render(
-      <QueuePreviewTray currentTurnMessages={[]} nextTurnMessages={makeMessages(5, 'next')} />
+      <QueuePreviewTray nextTurnMessages={makeMessages(5, 'next')} />
     );
     fireEvent.click(container.querySelector('[data-testid="queued-show-all"]')!);
     expect(document.body.querySelector('[data-testid="queued-modal-list"]')).toBeTruthy();
 
-    rerender(
-      <QueuePreviewTray currentTurnMessages={makeMessages(2, 'steer')} nextTurnMessages={[]} />
-    );
-    rerender(
-      <QueuePreviewTray
-        currentTurnMessages={makeMessages(2, 'steer')}
-        nextTurnMessages={makeMessages(1, 'next')}
-      />
-    );
+    rerender(<QueuePreviewTray nextTurnMessages={[]} pendingModel="Opus 5.5" />);
+    rerender(<QueuePreviewTray nextTurnMessages={makeMessages(1, 'next')} />);
     expect(document.body.querySelector('[data-testid="queued-modal-list"]')).toBeNull();
   });
 
   it('flags not-loaded messages when the server total exceeds the loaded list', () => {
     const { container } = render(
-      <QueuePreviewTray
-        currentTurnMessages={[]}
-        nextTurnMessages={makeMessages(5, 'next')}
-        nextTurnTotal={1200}
-      />
+      <QueuePreviewTray nextTurnMessages={makeMessages(5, 'next')} nextTurnTotal={1200} />
     );
     fireEvent.click(container.querySelector('[data-testid="queued-show-all"]')!);
     expect(
@@ -158,27 +123,21 @@ describe('QueuePreviewTray — pending model row', () => {
 
   it('shows the pending model with no queued messages', () => {
     const { getByTestId } = render(
-      <QueuePreviewTray currentTurnMessages={[]} nextTurnMessages={[]} pendingModel="Sonnet 5.5" />
+      <QueuePreviewTray nextTurnMessages={[]} pendingModel="Sonnet 5.5" />
     );
     expect(getByTestId('queued-pending-model').textContent).toContain('Sonnet 5.5');
   });
 
   it('sits below the Next messages and is absent without a pending switch', () => {
     const withModel = render(
-      <QueuePreviewTray
-        currentTurnMessages={[]}
-        nextTurnMessages={makeMessages(1, 'next')}
-        pendingModel="Opus 5.5"
-      />
+      <QueuePreviewTray nextTurnMessages={makeMessages(1, 'next')} pendingModel="Opus 5.5" />
     );
     const overlay = withModel.getByTestId('queue-overlay');
     const next = overlay.querySelector('[data-testid="queued-next-turn-bubble"]')!;
     const model = overlay.querySelector('[data-testid="queued-pending-model"]')!;
     expect(next.compareDocumentPosition(model) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     cleanup();
-    const without = render(
-      <QueuePreviewTray currentTurnMessages={[]} nextTurnMessages={makeMessages(1, 'next')} />
-    );
+    const without = render(<QueuePreviewTray nextTurnMessages={makeMessages(1, 'next')} />);
     expect(without.queryByTestId('queued-pending-model')).toBeNull();
   });
 
@@ -186,7 +145,6 @@ describe('QueuePreviewTray — pending model row', () => {
     const onCancel = vi.fn();
     const { getByTestId } = render(
       <QueuePreviewTray
-        currentTurnMessages={[]}
         nextTurnMessages={[]}
         pendingModel="Opus 5.5"
         onCancelPendingModel={onCancel}

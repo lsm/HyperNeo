@@ -1,4 +1,3 @@
-import { SessionSchedules } from '../components/SessionSchedules.tsx';
 import { lazy, Suspense } from 'preact/compat';
 import { useEffect } from 'preact/hooks';
 import { currentSessionIdSignal, navSectionSignal, settingsSectionSignal } from '../lib/signals.ts';
@@ -142,11 +141,7 @@ export default function MainContent() {
     if (sessionId) {
       return (
         <Suspense fallback={lazyFallback}>
-          <ChatContainer
-            key={sessionId}
-            sessionId={sessionId}
-            headerExtra={<SessionSchedules sessionId={sessionId} />}
-          />
+          <ChatContainer key={sessionId} sessionId={sessionId} />
         </Suspense>
       );
     }

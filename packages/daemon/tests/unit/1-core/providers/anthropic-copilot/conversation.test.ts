@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import type { CopilotClient, CopilotSession } from '@github/copilot-sdk';
-import { ConversationManager } from '../../../../../src/lib/providers/anthropic-copilot/conversation';
+import {
+  ConversationManager,
+  attachUserImagesToToolResults,
+} from '../../../../../src/lib/providers/anthropic-copilot/conversation';
 import type { ActiveConversation } from '../../../../../src/lib/providers/anthropic-copilot/conversation';
 import type {
   AnthropicMessage,
@@ -361,5 +364,37 @@ describe('ConversationManager.shutdown', () => {
   it('is safe to call when no conversations are active', async () => {
     const manager = new ConversationManager();
     await expect(manager.shutdown()).resolves.toBeUndefined();
+  });
+});
+
+describe('attachUserImagesToToolResults', () => {
+  const image = { data: 'QUJD', mediaType: 'image/png', bytes: 3 };
+  const toolImage = { data: 'REVG', mediaType: 'image/png', bytes: 3 };
+
+  it('appends user images and text to the last tool result, newest images last', () => {
+    const out = attachUserImagesToToolResults(
+      [
+        { toolUseId: 'a', result: 'first' },
+        { toolUseId: 'b', result: 'second', images: [toolImage] },
+      ],
+      'what is this?',
+      [image]
+    );
+    expect(out[0]).toEqual({ toolUseId: 'a', result: 'first' });
+    expect(out[1]).toEqual({
+      toolUseId: 'b',
+      result: 'second\n\n[User]: what is this?',
+      images: [toolImage, image],
+    });
+  });
+
+  it('keeps the tool result text untouched when there is no user text', () => {
+    const out = attachUserImagesToToolResults([{ toolUseId: 'a', result: 'ok' }], '', [image]);
+    expect(out).toEqual([{ toolUseId: 'a', result: 'ok', images: [image] }]);
+  });
+
+  it('returns the results unchanged when there are no user images', () => {
+    const results = [{ toolUseId: 'a', result: 'ok' }];
+    expect(attachUserImagesToToolResults(results, 'ignored text', [])).toBe(results);
   });
 });

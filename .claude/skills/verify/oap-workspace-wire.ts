@@ -245,10 +245,13 @@ try {
   let gateCalls = 0;
   gate.acquire = (...args) => { gateCalls++; return acquire(...args); };
   const errors: string[] = [];
-  app.internalEventBus.subscribe('session.errorObserved', ({ details }) => {
-    const error = details as { userMessage?: string } | undefined;
-    if (error?.userMessage) errors.push(error.userMessage);
-  }, { subscriberName: 'oap-workspace-wire-proof' });
+  const observeErrors = (daemon: NonNullable<typeof app>) => {
+    daemon.internalEventBus.subscribe('session.errorObserved', ({ details }) => {
+      const error = details as { userMessage?: string } | undefined;
+      if (error?.userMessage) errors.push(error.userMessage);
+    }, { subscriberName: 'oap-workspace-wire-proof' });
+  };
+  observeErrors(app);
   let hub = new MessageHub({ defaultSessionId: 'global' });
   transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false, createSocket: createLocalSocket });
   hub.registerTransport(transport);
@@ -413,6 +416,7 @@ try {
     await transport.close();
     await app.cleanup();
     app = await createDaemonApp({ config: { ...config, disableWorktrees: true, disableGoalProcessing: true }, verbose: false });
+    observeErrors(app);
     hub = new MessageHub({ defaultSessionId: 'global' });
     transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false, createSocket: createLocalSocket });
     hub.registerTransport(transport);

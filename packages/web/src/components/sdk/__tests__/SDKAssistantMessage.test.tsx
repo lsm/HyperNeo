@@ -192,14 +192,16 @@ function createAgentToolMessage(): Extract<SDKMessage, { type: 'assistant' }> {
   } as unknown as Extract<SDKMessage, { type: 'assistant' }>;
 }
 
-function createErrorMessage(): Extract<SDKMessage, { type: 'assistant' }> {
+function createErrorMessage(
+  text = 'An error occurred'
+): Extract<SDKMessage, { type: 'assistant' }> {
   return {
     type: 'assistant',
     message: {
       id: 'msg_test',
       type: 'message',
       role: 'assistant',
-      content: [{ type: 'text', text: 'An error occurred' }],
+      content: [{ type: 'text', text }],
       model: 'claude-3-5-sonnet-20241022',
       stop_reason: 'end_turn',
       stop_sequence: null,
@@ -485,14 +487,29 @@ describe('SDKAssistantMessage', () => {
     });
 
     it('should show API Error label', () => {
-      const message = createErrorMessage();
+      const message = createErrorMessage('API Error: 529 overloaded');
       const { container } = render(<SDKAssistantMessage message={message} />);
 
       expect(container.textContent).toContain('API Error');
     });
 
+    it('names a Codex start failure and keeps the full diagnostic in Details', () => {
+      const diagnostic =
+        'Could not start Codex CLI at "/example/tools/oxap". Usage: oxap [OPTIONS] <COMMAND>. Check the Codex CLI path in Settings → Providers.';
+      const { container, getByText, queryByText } = render(
+        <SDKAssistantMessage message={createErrorMessage(diagnostic)} />
+      );
+
+      expect(getByText('Could not start Codex CLI', { selector: 'strong' })).toBeTruthy();
+      expect(getByText(/Usage: oxap/, { selector: 'p' })).toBeTruthy();
+      expect(queryByText('API Error', { exact: true })).toBeNull();
+      expect(container.querySelector('details')?.open).toBe(false);
+      expect(getByText('Details', { selector: 'summary' })).toBeTruthy();
+      expect(container.querySelector('pre')?.textContent).toBe(diagnostic);
+    });
+
     it('shows a stopped failure episode inside the card with its raw error collapsed', () => {
-      const message = createErrorMessage();
+      const message = createErrorMessage('API Error: 529 overloaded');
       const { container } = render(
         <SDKAssistantMessage
           message={message}

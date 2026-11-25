@@ -37,20 +37,27 @@ try {
   const todo = store.addTodo('synthetic-todo', 'synthetic-ask', { title: 'Deploy', doneWhen: 'Deployed', instruction: 'Deploy it', check: null, named: null }, 1);
   const card = store.askQuestion('synthetic-card', 'synthetic-ask', { text: 'Where should it deploy?', kind: 'choice', options: ['Staging', 'Production'], multiple: false, noLabel: null, yesLabel: null, todoId: todo.id }, 2);
   const needsYou = async () => (await rpc('neo.snapshot', {})).needsYou;
+  const askState = async () =>
+    (await rpc('neo.snapshot', {})).todoAsks.find(
+      (entry: { ask: { id: string } }) => entry.ask.id === 'synthetic-ask'
+    )?.state;
   const hold = (held: boolean, requestId: string = crypto.randomUUID()) => rpc('neo.question.hold', { questionId: card.id, held, requestId });
   assert.equal(await needsYou(), 1, 'an open card needs the human');
+  assert.equal(await askState(), 'waiting', 'an open card puts the ask in waiting');
   const first = crypto.randomUUID();
   const held = await hold(true, first);
   assert.equal(held.ok, true, JSON.stringify(held));
   assert.equal(typeof held.question.heldAt, 'number');
   assert.equal((await hold(true)).question.heldAt, held.question.heldAt, 'holding again changes nothing');
   assert.equal(await needsYou(), 0, 'an ask whose only card is held does not need the human');
+  assert.equal(await askState(), 'todo', 'an ask whose only card is held leaves the waiting list');
   assert.equal((await rpc('neo.question.get', { questionId: card.id })).question.heldAt, held.question.heldAt);
   const back = await hold(false);
   assert.equal(back.question.heldAt, undefined);
   assert.equal((await hold(false)).question.heldAt, undefined, 'taking back again changes nothing');
   assert.equal((await hold(true, first)).question.heldAt, undefined, 'a replayed hold after the take-back changes nothing');
   assert.equal(await needsYou(), 1, 'a card taken back needs the human again');
+  assert.equal(await askState(), 'waiting', 'a card taken back puts the ask in waiting again');
   await hold(true);
   const answered = await rpc('neo.question.answer', { questionId: card.id, answer: 'Staging' });
   assert.equal(answered.ok, true, JSON.stringify(answered));
@@ -60,7 +67,7 @@ try {
   assert.equal(refused.ok, false);
   assert.match(refused.reason, /^question_closed:/);
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ receipts }, null, 2));
-  console.log('PASS: hold and take back over RPC, repeatable; a replayed hold is ignored; held card drops needsYou to 0; answer clears the hold; an answered card cannot be held');
+  console.log('PASS: hold and take back over RPC, repeatable; a replayed hold is ignored; held card drops needsYou to 0 and the ask leaves waiting; take-back restores both; answer clears the hold; an answered card cannot be held');
 } finally {
   await app.cleanup();
   writeFileSync(join(run, 'evidence/cleanup.json'), JSON.stringify({ stopped: true }));

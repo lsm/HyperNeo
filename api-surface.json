@@ -24114,6 +24114,14 @@
                           "minLength": 1,
                           "type": "string"
                         },
+                        "copilotClient": {
+                          "enum": [
+                            "auto",
+                            "desktop",
+                            "cli"
+                          ],
+                          "type": "string"
+                        },
                         "createFolder": {
                           "type": "boolean"
                         },
@@ -42214,6 +42222,14 @@
                     "minLength": 1,
                     "type": "string"
                   },
+                  "copilotClient": {
+                    "enum": [
+                      "auto",
+                      "desktop",
+                      "cli"
+                    ],
+                    "type": "string"
+                  },
                   "createFolder": {
                     "type": "boolean"
                   },
@@ -43726,6 +43742,14 @@
                   "adapter": {
                     "maxLength": 80,
                     "minLength": 1,
+                    "type": "string"
+                  },
+                  "copilotClient": {
+                    "enum": [
+                      "auto",
+                      "desktop",
+                      "cli"
+                    ],
                     "type": "string"
                   },
                   "createFolder": {
@@ -57180,6 +57204,19 @@
                       },
                       "type": "array"
                     },
+                    "copilotClients": {
+                      "items": {
+                        "enum": [
+                          "desktop",
+                          "cli"
+                        ],
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "displayName": {
+                      "type": "string"
+                    },
                     "health": {
                       "additionalProperties": false,
                       "properties": {
@@ -57562,6 +57599,13 @@
                       "busy": {
                         "const": true,
                         "type": "boolean"
+                      },
+                      "copilotClient": {
+                        "enum": [
+                          "desktop",
+                          "cli"
+                        ],
+                        "type": "string"
                       },
                       "desktopUI": {
                         "additionalProperties": false,
@@ -59441,6 +59485,14 @@
             "minLength": 1,
             "type": "string"
           },
+          "copilotClient": {
+            "enum": [
+              "auto",
+              "desktop",
+              "cli"
+            ],
+            "type": "string"
+          },
           "createFolder": {
             "type": "boolean"
           },
@@ -59632,6 +59684,13 @@
                   "busy": {
                     "const": true,
                     "type": "boolean"
+                  },
+                  "copilotClient": {
+                    "enum": [
+                      "desktop",
+                      "cli"
+                    ],
+                    "type": "string"
                   },
                   "desktopUI": {
                     "additionalProperties": false,
@@ -60079,6 +60138,13 @@
                   "busy": {
                     "const": true,
                     "type": "boolean"
+                  },
+                  "copilotClient": {
+                    "enum": [
+                      "desktop",
+                      "cli"
+                    ],
+                    "type": "string"
                   },
                   "desktopUI": {
                     "additionalProperties": false,

@@ -1,5 +1,6 @@
 import { neoToolDescription } from '@hyperneo/prompts';
 import type { WorkerInput } from '../../storage/repositories/worker-input-worker.ts';
+import { compactBeforeReuse } from './worker-compaction.ts';
 import { withWorkerProvenance } from './worker-provenance.ts';
 import type { DriverHealth } from '@hyperneo/shared/types/settings';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
@@ -30,6 +31,10 @@ import {
   type WorkerReuseFacts,
 } from './worker-reuse.ts';
 import {
+  COPILOT_ADAPTER_ID,
+  COPILOT_DESKTOP_UNAVAILABLE,
+  CopilotClientSchema,
+  CopilotStartClientSchema,
   PlaceSchema,
   WorkDetailSchema,
   WorkDeliverySchema,
@@ -59,7 +64,7 @@ type RoutedVerb =
   | 'stop'
   | 'archive';
 type Route<Verb extends RoutedVerb> =
-  | { daemon: string }
+  | { daemon: string; verifiedCopilotStart?: true }
   | {
       local: NonNullable<WorkAdapter[Verb]>;
       supportsStartEffort?: boolean;
@@ -118,6 +123,7 @@ export interface WorkVerbDeps {
     perRoundFields: readonly string[];
   }>;
   markUnusable?: (ref: WorkRef, reason: string) => void | Promise<void>;
+  warn?: (message: string, error: unknown) => void;
   claimWorker?: (
     ref: WorkRef,
     todoId?: string,
@@ -199,6 +205,7 @@ export const StartWorkInputSchema = z.object({
     .optional()
     .describe('Role on the todo: do, review, verify or check. Defaults to do.'),
   adapter: z.string().min(1),
+  copilotClient: CopilotStartClientSchema.optional(),
   place: PlaceSchema.optional(),
   title: z.string().trim().min(1).max(200),
   sessionTitle: z
@@ -324,6 +331,8 @@ export const WorkAdaptersResultSchema = workResultSchema(
   z.array(
     z.object({
       id: z.string(),
+      displayName: z.string().optional(),
+      copilotClients: z.array(CopilotClientSchema).optional(),
       capabilities: z.array(RoutedCapabilitySchema),
       steerBehavior: z.literal('best_effort').optional(),
       health: WorkDriverHealthSchema.optional(),
@@ -582,7 +591,7 @@ export function pickRoute<Verb extends RoutedVerb>(
 }
 
 function admitRemoteStartModel(route: Route<'start'>, input: StartInput): Gate<Route<'start'>> {
-  return input.model !== undefined && 'daemon' in route
+  return input.model !== undefined && 'daemon' in route && !route.verifiedCopilotStart
     ? {
         reason: reject(
           'unsupported_model',
@@ -593,7 +602,8 @@ function admitRemoteStartModel(route: Route<'start'>, input: StartInput): Gate<R
 }
 
 export function admitStartEffort(route: Route<'start'>, input: StartInput): Gate<Route<'start'>> {
-  return input.effort === undefined || ('local' in route && route.supportsStartEffort === true)
+  return input.effort === undefined ||
+    ('local' in route ? route.supportsStartEffort === true : route.verifiedCopilotStart)
     ? { value: route }
     : {
         reason: reject(
@@ -651,11 +661,49 @@ export function annotateUnreachable(rejected: Rejected, hint: string): Rejected 
 }
 
 export function routeStart(input: StartInput, deps: WorkVerbDeps): Gate<Route<'start'>> {
-  return pickRoute(
+  if (input.copilotClient !== undefined && input.adapter !== COPILOT_ADAPTER_ID)
+    return {
+      reason: reject('unsupported', 'Client selection is only available for Copilot.', true),
+    };
+  const route = pickRoute(
     'start',
     { adapter: input.adapter, daemon: input.place.daemon },
     deps.adapters()
   );
+  if ('reason' in route && input.copilotClient === 'desktop')
+    return { reason: reject('unreachable', COPILOT_DESKTOP_UNAVAILABLE, true) };
+  return route;
+}
+
+async function admitRemoteCopilotStart(
+  route: Route<'start'>,
+  input: StartInput,
+  deps: WorkVerbDeps
+): Promise<Gate<Route<'start'>>> {
+  if (!('daemon' in route) || !input.copilotClient || input.copilotClient === 'auto')
+    return { value: route };
+  const catalog = await listWorkAdapters(route.daemon, deps);
+  if (!catalog.ok) return { reason: { ...catalog, notSent: true } };
+  const choices = catalog.value.find(({ id }) => id === COPILOT_ADAPTER_ID)?.copilotClients;
+  if (!choices)
+    return {
+      reason: reject(
+        'unsupported',
+        'The selected HyperNeo server cannot verify Copilot client selection.',
+        true
+      ),
+    };
+  if (!choices.includes(input.copilotClient))
+    return {
+      reason: reject(
+        'unreachable',
+        input.copilotClient === 'desktop'
+          ? COPILOT_DESKTOP_UNAVAILABLE
+          : 'Copilot CLI is unavailable on the selected machine.',
+        true
+      ),
+    };
+  return { value: { ...route, verifiedCopilotStart: true } };
 }
 
 export async function startWork(
@@ -751,7 +799,8 @@ export async function reuseIdleWorker(
     !folder ||
     !requestedAdapter?.send ||
     ((input.model || input.effort) && !requestedAdapter.resolveStartConfiguration) ||
-    input.createFolder
+    input.createFolder ||
+    (input.copilotClient !== undefined && input.copilotClient !== 'auto')
   )
     return null;
   const todoId = ownedTodoId(input, caller, deps);
@@ -811,6 +860,7 @@ export async function reuseIdleWorker(
     !(policy?.mode === 'per_ask' && policy.sameAsk.length)
   )
     return null;
+  const sameAsk = (id: string) => !!policy?.sameAsk.includes(id);
   const configured =
     input.model || input.effort ? await adapter.resolveStartConfiguration!(input) : null;
   if ((input.model || input.effort) && !configured) return null;
@@ -831,9 +881,7 @@ export async function reuseIdleWorker(
       (prior
         ? work.ref.id === prior.id
         : (!!free?.has(work.ref.id) || canShare(work.ref.id)) &&
-          (canShare(work.ref.id) ||
-            policy?.mode !== 'per_ask' ||
-            policy.sameAsk.includes(work.ref.id)) &&
+          (canShare(work.ref.id) || !policy || sameAsk(work.ref.id)) &&
           !context?.roles.some(
             (row) =>
               row.adapter === work.ref.adapter &&
@@ -963,6 +1011,20 @@ export async function reuseIdleWorker(
         return reject('worker_busy', WORKER_BUSY_DETAIL[queued], true);
       }
       continue;
+    }
+    await compactBeforeReuse(
+      {
+        ref: work.ref,
+        sameAsk: sameAsk(work.ref.id) && prior?.id !== work.ref.id && !canShare(work.ref.id),
+        compact: adapter.compact,
+      },
+      caller,
+      deps.warn ?? (() => {})
+    );
+    if (todoId && caller.sessionId && deps.isOpenTodo?.(todoId, caller.sessionId) === false) {
+      reuseHolds.delete(key);
+      await deps.unclaimWorker?.(todoId, work.ref, input.role);
+      return reject('todo_required', 'This todo closed before its worker was messaged.', true);
     }
     const sent = await adapter.send!(work.ref, message, { from, caller }).catch(
       (error: unknown) => {
@@ -1173,6 +1235,7 @@ const runStartWork = (superpipe({})('work.start') as PipelineAPI)
   .pipe((resolved: StartInput) => resolved, 'outcome', 'input')
   .pipe(routeStart, ['input', 'deps'], 'result:outcome')
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
+  .pipe(admitRemoteCopilotStart, ['outcome', 'input', 'deps'], 'result:outcome')
   .pipe(admitRemoteStartModel, ['outcome', 'input'], 'result:outcome')
   .pipe(admitStartEffort, ['outcome', 'input'], 'result:outcome')
   .pipe(
@@ -1517,6 +1580,9 @@ async function listWorkAdapters(
       return {
         id,
         capabilities,
+        ...(id === COPILOT_ADAPTER_ID
+          ? { displayName: 'Copilot', copilotClients: [...(adapter?.copilotClients ?? [])] }
+          : {}),
         ...(adapter?.steerBehavior && capabilities.includes('steer')
           ? { steerBehavior: adapter.steerBehavior }
           : {}),

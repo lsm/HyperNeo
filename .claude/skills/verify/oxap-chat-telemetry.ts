@@ -9,8 +9,11 @@ import { createLocalSocket, readLocalCredential } from '../../../packages/daemon
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 import { OXAP_CODEX_MODEL, oxapCodexProvider, serveLocalRelease } from './oxap-codex-provider.ts';
+import { verifyHubLossToast } from './oxap-hub-loss-toast.ts';
 
-const [oxap, version, codex, codexHome, run] = process.argv.slice(2);
+const [oxap, version, codex, codexHome] = process.argv.slice(2);
+const run = process.argv.at(-1)!;
+const hubLoss = process.argv[6] === 'hub-loss';
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -24,6 +27,7 @@ chmodSync(join(run, 'bin/gh'), 0o700);
 const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 writeFileSync(codexEntrypoint, `#!/bin/sh
 unset CODEX_HOME
+${hubLoss ? `printf '%s\\n' ${quote('Disposable Codex diagnostic line. '.repeat(220))} >&2` : ''}
 HOME=${quote(codexHome)} exec ${quote(codex)} "$@"
 `, { mode: 0o700 });
 serveLocalRelease(oxap, version, join(run, 'release'));
@@ -60,7 +64,7 @@ const web = Bun.serve({
     return new Response(Bun.file(join(root, 'index.html')));
   },
 });
-try {
+async function verify() {
   assert(![8399, 8499].includes(app.server.port));
   assert(![8399, 8499].includes(web.port));
   const hub = new MessageHub({ defaultSessionId: 'global' });
@@ -88,6 +92,10 @@ try {
       chatDisplayMode: 'full',
     },
   });
+  if (hubLoss) {
+    await verifyHubLossToast({ port: web.port, sessionId, run });
+    return;
+  }
   const rows = () => app.db.getSDKMessages(sessionId, 100).messages;
   const prompt = 'Reply with exactly OXAP-TELEMETRY-OK. Do not use any tools.';
   const errors: string[] = [];
@@ -172,6 +180,10 @@ try {
   } finally {
     await browser.close();
   }
+}
+
+try {
+  await verify();
 } finally {
   await web.stop(true);
   await transport.close();

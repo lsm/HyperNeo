@@ -3,11 +3,16 @@ import {
   type ClaudeInboxRoutes,
   createClaudeInboxConversations,
 } from './claude-inbox-conversations.ts';
-import { requireClaudeReplyDestination, submitClaudeInboxMessage } from './claude-inbox-submit.ts';
+import {
+  requireClaudeInboxReplyDestination,
+  submitClaudeInboxMessage,
+} from './claude-inbox-submit.ts';
 import type { ClaudeInboxEvent, ClaudeInboxSubmission } from './claude-inbox.ts';
 import { readClaudeSenderSession } from './claude-inbox-endpoint.ts';
 import type { ClaudeLiveSession } from './claude-desktop-adapter.ts';
 import type { MailboxHandoffArgs, MailboxHandoffOutcome } from '../mailbox/handoff.ts';
+import { parseRemoteAddress } from '../mailbox/address.ts';
+import type { RemoteSendForwarder } from '../messaging/message-send.ts';
 import type { Rejected, WorkCallContext } from './types.ts';
 
 type InboxHandoff = Omit<MailboxHandoffArgs, 'jobQueue'>;
@@ -18,7 +23,9 @@ interface ClaudeInboxDriverDeps {
   registrationsDir: string;
   liveSessions(): Promise<readonly ClaudeLiveSession[]>;
   hasSession(sessionId: string): boolean;
+  hasRemoteDaemon(daemonId: string): boolean;
   handoff(args: InboxHandoff): Promise<MailboxHandoffOutcome>;
+  forwardRemote: RemoteSendForwarder;
   onError(error: unknown): void;
   open?: Parameters<typeof createClaudeInboxConversations>[0]['open'];
 }
@@ -43,15 +50,31 @@ function claudeInboxReply(event: ClaudeInboxEvent, to: string): InboxHandoff {
   };
 }
 
+function replyText(args: InboxHandoff): string {
+  const content = args.message.message.content;
+  return typeof content === 'string' ? content : JSON.stringify(content);
+}
+
 async function persistClaudeInboxReply(args: InboxHandoff, deps: ClaudeInboxDriverDeps) {
-  const outcome = await deps.handoff(args);
+  const remote = parseRemoteAddress(args.to);
+  const outcome = remote
+    ? await deps.forwardRemote(
+        remote,
+        {
+          sessionId: remote.sessionId,
+          message: { ...args.message, message: { role: 'user', content: replyText(args) } },
+          idempotencyKey: args.messageUuid,
+        },
+        args.origin
+      )
+    : await deps.handoff(args);
   if (outcome.kind === 'rejected') throw new Error(outcome.reason);
   return outcome;
 }
 
 const receiveClaudeInboxReply = (superpipe({})('receive-claude-inbox-reply') as PipelineAPI)
   .input(['destination', 'event', 'deps'])
-  .pipe(requireClaudeReplyDestination, ['destination', 'deps'], 'result:outcome')
+  .pipe(requireClaudeInboxReplyDestination, ['destination', 'deps'], 'result:outcome')
   .pipe(claudeInboxReply, ['event', 'outcome'], 'message')
   .pipe(persistClaudeInboxReply, ['message', 'deps'], 'outcome')
   .endAsync('outcome') as (
@@ -73,7 +96,7 @@ export function createClaudeInboxDriver(deps: ClaudeInboxDriverDeps) {
     },
   });
   return {
-    admit: (context: WorkCallContext) => requireClaudeReplyDestination(context, deps),
+    admit: (context: WorkCallContext) => requireClaudeInboxReplyDestination(context, deps),
     send(
       sessionId: string,
       text: string,

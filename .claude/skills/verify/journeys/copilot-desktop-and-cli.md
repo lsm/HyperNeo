@@ -12,7 +12,12 @@ Repeat for `desktop` and `cli`. Each run starts the real daemon and invokes
 its public operations. The standalone Desktop state and transcripts are
 synthetic. The CLI uses the pinned SDK with the framed-protocol fixture.
 
-A single Copilot adapter should appear in each mode. When both discovery
+A single adapter named Copilot should appear in each mode with the available
+start clients. An explicit Desktop selection must report disconnection without
+sending a CLI prompt. With a Desktop peer attached, an explicit CLI selection
+must reach the CLI without calling the peer, or report that the CLI is missing.
+Automatic starts report the actual client and prefer the available Desktop
+peer. When both discovery
 sources contain the same identity, the Desktop title, workspace link, and saved
 status win. Verify Desktop history, exact input lookup, and settled turn facts.
 The daemon must refuse sends to a Desktop-owned session and preserve the App
@@ -41,22 +46,25 @@ read window and confirm the next completed turn is still returned. In `both`
 mode, search for a Desktop session whose title and workspace name are missing.
 
 Use `control` and `both-control` with the same command to attach a synthetic
-authenticated Desktop peer. Start work through HyperNeo with a model and effort.
+authenticated Desktop peer. `control` uses the App 1.5 repository protocol.
+`both-control` closes the repository probe and confirms the legacy App 1.4
+protocol with a project-list reply. Check the probe happens before either creation command.
+Start work through HyperNeo with a model and effort.
 Check an App settings mismatch prevents the initial prompt, and the accepted
 settings come back from the stored session. Submit and withdraw one queued message, stop
 the initial turn, send a follow-up, read its reply with the receipt, then
-rename and archive the same work. In dual mode, the startup reference must
-come from the Desktop peer. Neo's driver refresh must record compaction for
-the idle Desktop worker after the matching attempt completes. An unrelated
-completion must leave the original reply intact and must not count as
-compaction. The local channel also requires the OS listener
+rename and archive the same work. In dual mode, a fresh Auto start must use
+the Desktop peer and an Auto follow-up must reuse its available CLI worker.
+Neo's driver refresh must compact the idle
+Desktop worker once before it sends the next todo of the same ask. An unrelated
+completion must not count as compaction. The local channel also requires the OS listener
 to belong to the advertised PID before authenticating. The focused daemon
 tests cover stale advertisements, uncorrelated errors, uncertain sends and
 the pre-dispatch-only CLI fallback.
 
 Repeat with `compact-failure` and `compact-refused`. A failed completion or a
-refusal to queue must each record one failed attempt and a retry delay. The
-peer must receive one command and the prior reply must remain readable.
+refusal to queue must each still send the next todo. The peer must receive one
+compaction command.
 
 The peer proves routing and receipt handling in an isolated daemon. With
 separate approval to use the signed-in macOS App's local connection credential
@@ -70,13 +78,16 @@ The proof creates a disposable local folder and one App session without a
 daemon. It checks the effective model and effort in the runtime's start
 event, stops a live turn, confirms that a withdrawn input did not run, reads
 the follow-up by its receipt, and archives the session with the folder retained.
-The script emits action results and the requested settings.
+Use a model and effort available to the App's signed-in account. The script
+emits action results and the requested settings.
+Use `--attended --defaults` for a lifecycle run on an account without a model
+and effort pair to select. That run makes no assertion about explicit settings.
 Append `compact` to exercise manual compaction and confirm that the App
 journal records it as applied before the test session is archived.
 
 The CLI also exposes start, send, queue, withdraw, stop, rename, and archive
-for daemon-owned sessions. Neo can compact an idle owned CLI worker kept for
-reuse. In `cli` mode, start with an explicit model and `high` reasoning
+for daemon-owned sessions. Neo compacts an idle owned CLI worker before
+reusing it for the same ask. In `cli` mode, start with an explicit model and `high` reasoning
 effort. Verify the SDK confirms both before the first prompt, and that start
 and status report the applied effort. Unsupported effort and a runtime
 configuration mismatch both prevent prompt delivery.

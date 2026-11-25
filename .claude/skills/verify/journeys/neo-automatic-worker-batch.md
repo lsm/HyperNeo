@@ -13,7 +13,8 @@ finish before the helper sends the later whitespace-sensitive human message.
 Observe a separately labelled worker SDK input and public row before that human
 ask, ordered complete notes, preserved delivered images, bounded public rows and
 snapshots, and the same complete handoff reference in the oversized model and
-public disclosure. The first implementation's hidden metadata fails these checks.
+public disclosure. A batch released with a wake or a human message must add no
+model turn of its own (batchAddsNoTurn); only the timer release gets one. The first implementation's hidden metadata fails these checks.
 
 Use the headless/fallback procedure in neo-human-worker-batch.md. On a locked Mac,
 never open a GUI browser. If headless is unavailable, do not retry another route;

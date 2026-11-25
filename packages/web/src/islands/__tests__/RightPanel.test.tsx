@@ -1,6 +1,7 @@
 import { signal, type Signal } from '@preact/signals';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { applyLanguage } from '../../lib/i18n/index.ts';
 
 vi.mock('../../lib/session-store', () => ({
   sessionStore: {
@@ -12,9 +13,9 @@ vi.mock('../../lib/session-store', () => ({
   },
 }));
 
-vi.mock('../SessionInspector', () => ({
-  SessionInspector: (props: { sessionId: string }) => (
-    <div data-testid="session-inspector" data-session-id={props.sessionId} />
+vi.mock('../../components/SessionSchedules.tsx', () => ({
+  SessionSchedules: (props: { sessionId: string }) => (
+    <div data-testid="session-schedules" data-session-id={props.sessionId} />
   ),
 }));
 
@@ -203,7 +204,7 @@ describe('RightPanelToggle', () => {
   });
 });
 
-describe('RightPanelToggle and inspector target', () => {
+describe('RightPanelToggle and schedules target', () => {
   const mockSession = (id: string | null, info: Session | null, loaded = true) => {
     sessionStore.activeSessionId.value = id;
     (sessionStore.sessionState as unknown as Signal<unknown>).value = loaded
@@ -228,22 +229,40 @@ describe('RightPanelToggle and inspector target', () => {
     mockSession(null, null);
   });
 
-  it('shows no floating toggle for a chat; the header info button owns the inspector', () => {
+  it('shows no floating toggle for a chat; the header Schedules button owns the panel', () => {
     mockSession('s1', { id: 's1', workspacePath: '/repo' } as unknown as Session);
     const { container } = render(<RightPanelToggle />);
     expect(container.querySelector('button')).toBeNull();
   });
 
-  it('renders the session inspector for an inspector target', async () => {
+  it('renders the schedules list for a schedules target', async () => {
     mockSession('s1', { id: 's1', workspacePath: '/repo' } as unknown as Session);
-    rightPanelTargetSignal.value = { type: 'inspector', sessionId: 's1' };
+    rightPanelTargetSignal.value = { type: 'schedules', sessionId: 's1' };
     render(<RightPanel />);
-    await waitFor(() => expect(screen.getByTestId('session-inspector')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('session-schedules')).toBeTruthy());
+    expect(screen.getByTestId('schedules-panel').textContent).toContain('Schedules');
   });
 
-  it('closes the inspector when the active session changes', async () => {
+  it('localizes the schedules panel header and close button', async () => {
     mockSession('s1', { id: 's1', workspacePath: '/repo' } as unknown as Session);
-    rightPanelTargetSignal.value = { type: 'inspector', sessionId: 's1' };
+    applyLanguage('zh-Hans');
+    try {
+      rightPanelTargetSignal.value = { type: 'schedules', sessionId: 's1' };
+      render(<RightPanel />);
+      await waitFor(() => expect(screen.getByTestId('schedules-panel')).toBeTruthy());
+
+      expect(screen.getByTestId('schedules-panel').textContent).toContain('定时检查');
+      expect(screen.getByTestId('schedules-panel-close').getAttribute('title')).toBe(
+        '关闭定时检查'
+      );
+    } finally {
+      applyLanguage('en');
+    }
+  });
+
+  it('closes the schedules panel when the active session changes', async () => {
+    mockSession('s1', { id: 's1', workspacePath: '/repo' } as unknown as Session);
+    rightPanelTargetSignal.value = { type: 'schedules', sessionId: 's1' };
     render(<RightPanelToggle />);
     mockSession('s2', { id: 's2', workspacePath: '/repo' } as unknown as Session);
     await waitFor(() => expect(rightPanelTargetSignal.value).toBeNull());
