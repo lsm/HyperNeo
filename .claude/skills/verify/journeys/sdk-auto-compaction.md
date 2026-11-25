@@ -17,7 +17,9 @@ in finally. No live daemon, port 8399 or real database is used.
 The fake model requests two real Read tool calls, reporting usage below and then
 above a configured 60% context threshold (90% for Opus). The second response is held past the
 old daemon's usage-cache interval; four human inputs queue during that call.
-The SDK must emit an automatic compact_boundary and finish the same task. Both
+The mock recognizes the SDK’s summary prompt even when the request still lists
+Read. It returns a tagged summary. The SDK must emit an automatic
+compact_boundary and finish the same task. Both
 tool receipts must succeed, with no user-rejected tool result. Each human input
 must retain one consumed durable row under its original id, and all four queued
 markers must reach an actual model request without another send or restart.

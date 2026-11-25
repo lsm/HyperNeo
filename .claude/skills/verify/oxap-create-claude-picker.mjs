@@ -26,7 +26,7 @@ try {
   await page.goto(`${base}/sessions`);
   await page.getByRole('button', { name: 'Choose model, client and thinking' })
     .and(page.locator('[aria-description="Client: OXAP Codex"]')).click();
-  await page.getByRole('button', { name: /^Model,/ }).click();
+  await page.getByRole('button', { name: /^Model & thinking,/ }).click();
   const newMenu = page.getByRole('group', { name: 'Models', exact: true });
   await newMenu.getByRole('button', { name: alternateName }).waitFor();
   await newMenu.screenshot({ path: join(output, 'new-chat-picker.png') });

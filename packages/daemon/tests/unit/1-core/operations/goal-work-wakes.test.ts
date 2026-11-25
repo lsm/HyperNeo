@@ -4,6 +4,7 @@ import { SessionGoalSchedules } from '../../../../src/lib/goals/session-goal-sch
 import { SessionScheduler } from '../../../../src/lib/scheduler/session-schedules.ts';
 import { createSessionScheduleFire } from '../../../../src/lib/scheduler/session-schedule-fire.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
+import { proposalQuestionId } from '../../../../src/lib/neo/proposal.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { SessionGoalRepository } from '../../../../src/storage/repositories/session-goal-repository.ts';
@@ -238,6 +239,101 @@ describe('goal work wakes', () => {
       worked: 'Explore',
     });
     expect(scheduler.repo.getBySource('goal', goal.id)?.status).toBe('paused');
+  });
+
+  const goalAsk = (id: string) => {
+    db.exec(
+      "INSERT INTO neo_concerns (id,title,summary,context,revision,created_at,updated_at) VALUES ('synthetic-project','Guide','','',1,1,1)"
+    );
+    return new NeoAskTodoRepository(db).openAsk({
+      id,
+      projectId: 'synthetic-project',
+      sessionId: 'neo:root',
+      originMessageId: null,
+      title: 'Grow the guide',
+      topic: '研究',
+      request: 'Grow the guide',
+      createdAt: 1,
+    });
+  };
+  const noEffect = (goalId: string, run = 1) =>
+    call('goal.journal.append', {
+      goalId,
+      runId: `goal-review:synthetic:${run}`,
+      done: 'Reviewed',
+      effect: 'no',
+      worked: 'Explore',
+    });
+  const openCards = (askId: string) =>
+    new NeoAskTodoRepository(db).listQuestions(askId).filter(({ state }) => state === 'open');
+
+  test('the no-effect question goes on the ask that created the goal and holds none of its work', async () => {
+    const asks = new NeoAskTodoRepository(db);
+    const ask = goalAsk('goal-ask');
+    asks.addTodo(
+      'queued',
+      ask.id,
+      { title: 'Draft', doneWhen: 'Drafted', check: null, instruction: 'Draft', named: null },
+      1
+    );
+    const goal = await create({ askId: ask.id, noEffectReviewLimit: 1 });
+    await noEffect(goal.id);
+    expect(asks.listGoalAsks(goal.id).map(({ id }) => id)).toEqual([ask.id]);
+    expect(openCards(ask.id)).toEqual([
+      expect.objectContaining({ options: ['Continue as is', 'Stop the goal'], todos: [] }),
+    ]);
+  });
+
+  test('with the goal ask settled, the question opens a new ask with its topic and project', async () => {
+    const asks = new NeoAskTodoRepository(db);
+    const ask = goalAsk('goal-ask');
+    const goal = await create({ askId: ask.id, noEffectReviewLimit: 1 });
+    asks.settleAsk(asks.getAsk(ask.id)!, 'done', 'Closed', now);
+    await noEffect(goal.id);
+    const opened = asks.listGoalAsks(goal.id).find(({ id }) => id !== ask.id)!;
+    expect(opened).toMatchObject({
+      status: 'open',
+      topic: '研究',
+      projectId: 'synthetic-project',
+    });
+    expect(openCards(opened.id)).toHaveLength(1);
+    expect(openCards(ask.id)).toEqual([]);
+  });
+
+  test('the question does not join a goal ask whose proposal the human has not answered', async () => {
+    const asks = new NeoAskTodoRepository(db);
+    const ask = goalAsk('goal-ask');
+    const goal = await create({ askId: ask.id, noEffectReviewLimit: 1 });
+    const proposal = proposalQuestionId(ask.id);
+    asks.askQuestion(
+      proposal,
+      ask.id,
+      {
+        text: 'Start it?',
+        kind: 'yesno',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+      },
+      now
+    );
+    await noEffect(goal.id);
+    expect(openCards(ask.id).map(({ id }) => id)).toEqual([proposal]);
+    const opened = asks.listGoalAsks(goal.id).filter(({ id }) => id !== ask.id);
+    expect(opened).toHaveLength(1);
+    expect(openCards(opened[0]!.id)).toHaveLength(1);
+  });
+
+  test('a retired question reopens on the goal ask', async () => {
+    const asks = new NeoAskTodoRepository(db);
+    const ask = goalAsk('goal-ask');
+    const goal = await create({ askId: ask.id, noEffectReviewLimit: 1 });
+    await noEffect(goal.id);
+    asks.retireQuestion(openCards(ask.id)[0]!, 'No longer current', null, now);
+    await call('goal.session.update', { goalId: goal.id, status: 'active' });
+    expect(asks.listGoalAsks(goal.id).map(({ id }) => id)).toEqual([ask.id]);
+    expect(openCards(ask.id)).toEqual([expect.objectContaining({ todos: [] })]);
   });
 
   test('a failed human question rolls back the review and keeps the schedules active', async () => {

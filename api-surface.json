@@ -18064,6 +18064,11 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "askId": {
+            "description": "Open ask that created the goal; its review cards appear there.",
+            "minLength": 1,
+            "type": "string"
+          },
           "cadence": {
             "default": {
               "everyMs": 3600000,
@@ -39001,7 +39006,6 @@
           }
         },
         "required": [
-          "askId",
           "requestId"
         ],
         "type": "object"
@@ -47339,7 +47343,6 @@
           }
         },
         "required": [
-          "askId",
           "requestId"
         ],
         "type": "object"

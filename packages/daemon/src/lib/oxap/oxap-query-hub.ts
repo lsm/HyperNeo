@@ -100,6 +100,22 @@ const prepareSubmit = (superpipe({})('oap.query.submit') as PipelineAPI)
   images: boolean
 ) => ReturnType<typeof submitParameters>;
 
+export async function updateOxapReasoning(client: OxapHubClient, sessionId: string, level: string) {
+  const response = (await client.request('settings', {
+    session_id: sessionId,
+    request: envelope(generateUUID(), 'session.settings.update.request', sessionId, {
+      session_id: sessionId,
+      reasoning_level: level,
+    }),
+  })) as { type?: unknown; payload?: { session_id?: unknown; reasoning_level?: unknown } };
+  if (
+    response?.type !== 'session.settings.update.response' ||
+    response.payload?.session_id !== sessionId ||
+    response.payload.reasoning_level !== level
+  )
+    throw new Error('OXAP did not confirm the selected thinking level');
+}
+
 async function bindDeepSeekModel(client: OxapHubClient, sessionId: string, modelId: string) {
   const response = (await client.request('session.model.switch', {
     session_id: sessionId,

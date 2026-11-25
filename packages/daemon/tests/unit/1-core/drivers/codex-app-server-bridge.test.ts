@@ -102,6 +102,17 @@ describe('startCodexAppServerBridge', () => {
     }
   });
 
+  test('reports an unreachable app-server and keeps serving', async () => {
+    const unreachable = vi.fn();
+    stop = await startCodexAppServerBridge(port, () => Buffer.from(token), unreachable);
+    for (const times of [1, 2]) {
+      const client = dial(`/rpc?token=${token}`);
+      await expect(once(client, 'open')).rejects.toBeDefined();
+      client.terminate();
+      await vi.waitFor(() => expect(unreachable).toHaveBeenCalledTimes(times));
+    }
+  });
+
   test.each(['file', 'directory'] as const)('refuses a symlinked token %s', async (kind) => {
     const target = join(root, 'target');
     if (kind === 'file') {

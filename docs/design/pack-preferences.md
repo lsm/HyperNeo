@@ -287,8 +287,8 @@ The qlark#19 prevention comes first: stored settings and this install's answers 
 
 
 **Persistence prerequisite ([#7892](https://github.com/lsm/HyperNeo/issues/7892),
-scheduled immediately after slice 3).** `pack.preferences.ask` takes an ask id,
-a retry request id and typed setting values. It validates them, generates the
+scheduled immediately after slice 3).** `pack.preferences.ask` takes
+a retry request id and typed setting values, and opens the card on its own ask. It validates them, generates the
 question text showing the exact values, and atomically stores the question with
 its immutable proposal. The human's yes applies only those stored values through
 the trusted question-answer path; `pack.preferences.applyAnswer` retries by

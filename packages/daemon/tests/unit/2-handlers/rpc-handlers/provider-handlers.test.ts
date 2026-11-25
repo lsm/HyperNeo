@@ -118,6 +118,7 @@ function createMockCredentialManager(): ProviderCredentialManager {
     storeOAuthTokens: mock(async (providerId: string, tokens: object) => {
       store.set(providerId, JSON.stringify(tokens));
     }),
+    hasAnthropicSettingsLogin: mock(async () => false),
     getCredentials: mock(async (providerId: string) => {
       const raw = store.get(providerId);
       if (!raw) return null;

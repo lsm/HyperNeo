@@ -47,14 +47,18 @@ for (const phase of ['initial', 'reopen']) {
       const result = await call('neo.todo.remove', { todoId: todo.id, replacedBy: 'missing', reason: 'Superseded' }, 'replacement_missing');
       assert.equal(result.todo.state, 'removed'); assert.equal(result.todo.replacedBy, null); removed = todo.id;
       store.settleAsk(ask, 'dropped', 'Synthetic drop', 3);
-      await call('neo.todo.add', { after: [], askId: ask.id, title: 'Late work', check: { pack: 'core', kind: 'evidence', params: { artifact: 'synthetic-missing' } } }, 'ask_settled');
+      const late = await handler({ name: 'neo.todo.add', input: { after: [], askId: ask.id, title: 'Late work', check: { pack: 'core', kind: 'evidence', params: { path: '/private/tmp/synthetic-missing' } } } });
+      evidence.push({ phase, name: 'neo.todo.add', reply: late });
+      const refused = JSON.parse(late.content[0].text);
+      assert.equal(refused.ok, false, JSON.stringify(refused));
+      assert.match(refused.reason, /^ask_settled: this ask is dropped; the todo was not added\..*neo\.ask\.propose/);
       await call('neo.todo.continue', { todoId: todo.id, message: 'Late follow-up' }, 'ask_settled');
       assert.equal(store.listTodos(ask.id).length, 1);
     }
     assert.equal(store.getTodo(removed)?.state, 'removed');
     const audits = db.prepare('SELECT operation,reason,accepted FROM operation_refusals ORDER BY id').all();
-    assert.equal(audits.length, 4); assert(audits.every((audit) => (audit as { accepted: number }).accepted === 1));
+    assert.equal(audits.length, 4); assert.deepEqual(audits.map((audit) => (audit as { accepted: number }).accepted), [1, 1, 0, 1]);
     evidence.push({ phase, audits, todos: store.listTodos('ask'), questions: store.listQuestions('ask') });
   } finally { await gatewayFor(db).close(); db.close(); writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2)); }
 }
-console.log('PASS: tool-visible no-op/removal records, untouched cards, and five accepted audit records survive DB reopen.');
+console.log('PASS: tool-visible no-op/removal records, untouched cards, and three accepted audit records and one refusal survive DB reopen.');

@@ -104,7 +104,8 @@ export function readCodexBridgeToken(repair = false) {
 
 export async function startCodexAppServerBridge(
   port = CODEX_BRIDGE_PORT,
-  currentToken?: () => Buffer
+  currentToken?: () => Buffer,
+  onUnreachable?: () => void
 ): Promise<() => Promise<void>> {
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error('Set a valid Codex bridge port before restarting HyperNeo.');
@@ -126,7 +127,10 @@ export async function startCodexAppServerBridge(
     const upstream = connect(upstreamPath);
     socket.once('error', () => upstream.destroy());
     socket.once('close', () => upstream.destroy());
-    upstream.once('error', () => socket.destroy());
+    upstream.once('error', () => {
+      socket.destroy();
+      onUnreachable?.();
+    });
     upstream.once('close', () => socket.end());
     const headers = Object.entries(request.headers)
       .flatMap(([name, values]) => [values].flat().map((value) => `${name}: ${value}`))

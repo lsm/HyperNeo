@@ -30,7 +30,8 @@ no start card.
 An injected writer failure must reject with unchanged public state and no main
 fallback. The cached-statement canary must fail before measurement; require zero
 target main SQL throughout the built-in public todo-add calls. Ask-open must
-call the same writer; a settled split parent refuses new todos while its open
+call the same writer; adding to a settled ask returns ok false with the next
+step, and a settled split parent refuses new todos while its open
 children keep them visible. Its other family/creation/routing reads remain on
 main and are outside this slice's SQL claim. Custom callback policies remain an
 explicit unported route selected by pack identity, never a fallback after

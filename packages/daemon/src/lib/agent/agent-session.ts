@@ -38,7 +38,7 @@ import type {
 import { generateUUID, DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
 import type { McpSetServersResult } from '@hyperneo/shared/sdk';
 import type { SessionToolInventory } from '@hyperneo/shared/types/observed-tool-inventory';
-import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
+import { isOxapHarness, oxapCodexReasoning } from '@hyperneo/shared/types/oxap-harnesses';
 import { sdkFallbackProviders } from './session-engine.ts';
 import type { Database } from '../../storage/database.ts';
 import type { SDKTranscriptCheck } from '../sdk-session-file-manager.ts';
@@ -1282,6 +1282,10 @@ export class AgentSession
     await this.lifecycleManager.ensureQueryStarted(signal);
   }
 
+  hasStaleAnthropicQuery(): boolean {
+    return this.queryRunner instanceof QueryRunner && this.queryRunner.hasStaleAnthropicQuery();
+  }
+
   async startQueryAndEnqueue(
     messageId: string,
     messageContent: string | MessageContent[],
@@ -1882,7 +1886,12 @@ export class AgentSession
           : nonInterrupting
             ? [true]
             : [];
-    const result = await this.modelSwitchHandler.switchModel(newModel, newProvider, ...args);
+    const switchModel = () => this.modelSwitchHandler.switchModel(newModel, newProvider, ...args);
+    const effort = commit?.thinkingLevel ?? thinkingLevel;
+    const result =
+      effort === undefined
+        ? await switchModel()
+        : await this.commitThinkingLevel(effort, switchModel);
     if (result.success) {
       if (thinkingLevel !== undefined) await this.applyThinkingLevel();
       await this.rateLimitWatchdog.forgetModelLimits();
@@ -1925,7 +1934,7 @@ export class AgentSession
     provider: string,
     thinkingLevel?: ThinkingLevel
   ): Promise<{ success: boolean; model: string; error?: string; pending?: PendingModelSwitch }> {
-    const invalid = await this.modelSwitchHandler.invalidModel(model, provider);
+    const invalid = await this.modelSwitchHandler.invalidModel(model, provider, thinkingLevel);
     if (invalid) {
       await this.applyPendingModelSwitch();
       return { success: false, model: this.session.config.model, error: invalid };
@@ -2000,7 +2009,18 @@ export class AgentSession
     return this.sdkRuntimeConfig.setMaxThinkingTokens(tokens);
   }
 
+  commitThinkingLevel<T extends { success: boolean }>(
+    level: ThinkingLevel,
+    persist: () => Promise<T>
+  ): Promise<T> {
+    const reasoning = oxapCodexReasoning(level);
+    return this.session.config.harness === 'oxap-codex' && reasoning && this.oxap?.commitThinking
+      ? this.oxap.commitThinking(reasoning, persist)
+      : persist();
+  }
+
   async applyThinkingLevel(): Promise<void> {
+    if (isOxapHarness(this.session.config.harness)) return;
     const level = this.optionsBuilder.getEffectiveThinkingLevel();
     getProviderRegistry()
       .get(this.session.config.provider ?? '')
@@ -3426,7 +3446,7 @@ export class AgentSession
               return { outcome: 'blocked', retryAt: Date.now() + LOGIN_HOLD_PARK_MS };
           }
 
-          if (!this.messageQueue.isRunning()) {
+          if (!this.messageQueue.isRunning() || this.hasStaleAnthropicQuery()) {
             const startResult = await this.lifecycleManager.ensureQueryStarted(signal);
             if (startResult === 'blocked') {
               return {

@@ -1,5 +1,6 @@
 import type { Session, ThinkingLevel } from '@hyperneo/shared';
-import { THINKING_OPTIONS } from '@hyperneo/shared';
+import { oxapThinkingOptions } from '@hyperneo/shared/types/oxap-harnesses';
+import { findInModels, getAvailableModels } from '../model-service.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { AgentSession } from '../agent/agent-session.ts';
@@ -113,7 +114,15 @@ function projectRuntimeSettings(
     model: session.config?.model ?? null,
     provider,
     thinkingLevel: session.config?.thinkingLevel ?? null,
-    thinkingOptions: provider ? THINKING_OPTIONS : [],
+    thinkingOptions: provider
+      ? oxapThinkingOptions(
+          session.config.harness,
+          findInModels(
+            getAvailableModels().filter((model) => model.provider === provider),
+            session.config.model
+          )
+        )
+      : [],
   };
 }
 

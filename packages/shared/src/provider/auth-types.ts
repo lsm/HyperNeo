@@ -1,10 +1,11 @@
-import type { ProviderFailureErrorKind } from './types.js';
+import type { ProviderAuthStatusInfo, ProviderFailureErrorKind } from './types.js';
 
 export interface ProviderAuthStatus {
   id: string;
   displayName: string;
   isAuthenticated: boolean;
   method?: 'api_key' | 'oauth';
+  credentialSource?: ProviderAuthStatusInfo['credentialSource'];
   expiresAt?: number;
   needsRefresh?: boolean;
   user?: {

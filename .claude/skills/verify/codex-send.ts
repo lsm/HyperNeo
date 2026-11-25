@@ -110,7 +110,7 @@ if (action === 'prepare') {
       spawn: spawnProcess,
       appServer,
       bootstrapServer: appServer,
-      prepareDesktopProject: (folder) => ensureCodexDesktopProject(folder, home, spawnProcess),
+      prepareDesktopProject: ensureCodexDesktopProject,
       startDesktopTurn: (id: string, request: Record<string, unknown>) =>
         startCodexDesktopTurn(socket, spawnProcess, id, request),
       folderExists: () => true,
