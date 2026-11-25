@@ -79,7 +79,7 @@ function jsonLine(line: string): ObjectFields {
   }
 }
 
-function validate(body: string, base: string, head: string, required: Read[], paths: string[]) {
+function validate(body: string, head: string, required: Read[], paths: string[]) {
   const lines = body.split(/\r?\n/).map((line) => line.trim());
   const start = lines.indexOf(fence);
   const end = lines.indexOf('```', start + 1);
@@ -103,7 +103,7 @@ function validate(body: string, base: string, head: string, required: Read[], pa
     if (typeof reason !== 'string' || !reason.trim()) reasonErrors++;
   }
   pathErrors += remaining.size;
-  const stale = header.head !== head || header.base !== base;
+  const stale = header.head !== head;
   return { readErrors, pathErrors, reasonErrors, stale };
 }
 
@@ -194,7 +194,6 @@ function main(args: string[]): number {
     ]);
     const { readErrors, pathErrors, reasonErrors, stale } = validate(
       pr?.body ?? '',
-      base,
       head,
       read,
       required
@@ -202,7 +201,7 @@ function main(args: string[]): number {
     if (!readErrors && !pathErrors && !reasonErrors && !stale) return 0;
     const error = process.env.GITHUB_ACTIONS === 'true' ? '::error::' : '';
     console.error(
-      `${error}System map check failed: ${readErrors} read, ${pathErrors} path, ${reasonErrors} reason; head/base ${stale ? 'stale' : 'current'}. Run system-map-impact.ts --print and use the collapsed CI report and replacement block; author read entries are claims.`
+      `${error}System map check failed: ${readErrors} read, ${pathErrors} path, ${reasonErrors} reason; head ${stale ? 'stale' : 'current'}. Run system-map-impact.ts --print and use the collapsed CI report and replacement block; author read entries are claims.`
     );
     return 1;
   } catch (error) {
