@@ -4,7 +4,12 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
-import { planSessionCommand, resolveSender, runSessionCommand } from '../src/session-cli';
+import {
+  planSessionCommand,
+  resolveSender,
+  runSessionCommand,
+  takeSendFrom,
+} from '../src/session-cli';
 
 describe('hyperneo send, question and build', () => {
   test('send --kind submits a structured report without inspecting the text', () => {
@@ -31,7 +36,7 @@ describe('hyperneo send, question and build', () => {
     });
     expect(planSessionCommand(['devices', 'reset-human', 'extra'], 'cli')).toHaveProperty('reason');
   });
-  test('the sender is the HyperNeo session first, then the Codex thread, then Claude Code', () => {
+  test('the sender is the HyperNeo session first, then the Codex thread, then Claude Code, then Copilot', () => {
     expect(
       resolveSender({
         HYPERNEO_SESSION_ID: 's1',
@@ -43,6 +48,17 @@ describe('hyperneo send, question and build', () => {
       'codex-desktop:t1'
     );
     expect(resolveSender({ CLAUDE_CODE_SESSION_ID: 'c1' })).toBe('claude-code:c1');
+    expect(resolveSender({ COPILOT_AGENT_SESSION_ID: 'p1' })).toBe('copilot-cli:p1');
+  });
+
+  test('send --from names the sender ahead of any session variable', () => {
+    expect(
+      takeSendFrom(['send', 'neo:root', '--from', 'copilot-cli:w1', '--kind', 'done', 'ok'])
+    ).toEqual({ args: ['send', 'neo:root', '--kind', 'done', 'ok'], from: 'copilot-cli:w1' });
+    expect(takeSendFrom(['send', 'neo:root', 'hi', '--from', 'x'])).toEqual({
+      args: ['send', 'neo:root', 'hi', '--from', 'x'],
+      from: null,
+    });
   });
 
   test('with no sender variable it fails with a clear error and sends nothing', async () => {

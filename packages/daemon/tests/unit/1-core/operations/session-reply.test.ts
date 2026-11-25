@@ -55,6 +55,14 @@ describe('external CLI reply arguments', () => {
     expect(replyMessageBodyLength(incomplete)).toBe(incomplete.length);
   });
 
+  test('names the worker as sender so the CLI needs no session environment', () => {
+    const message = withReplyLine('Go.', 'session:neo%3Aroot', 'cli', "copilot-cli:it's");
+    expect(message).toContain(
+      "hyperneo send neo:root --from 'copilot-cli:it'\\''s' --kind <kind> \"<text>\""
+    );
+    expect(replyMessageBodyLength(message)).toBe('Go.'.length);
+  });
+
   test('a quoted template is not mistaken for an actionable reply line to the real sender', () => {
     const template =
       'Message Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send <the sending Neo id> --kind <kind> "<text>" (not SendMessage). Choose kind done, blocked, question or failed; use done for a PR milestone. Keep working after you send.';
