@@ -8,6 +8,8 @@ import { createWorkVerbOperations } from '../../../packages/daemon/src/lib/drive
 import type { WorkAdapter, WorkSummary } from '../../../packages/daemon/src/lib/drivers/types.ts';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
+import { gatewayFor } from '../../../packages/daemon/src/storage/db-gateway/db-gateway.ts';
+import { neoAskInputReads } from '../../../packages/daemon/src/storage/repositories/neo-ask-input-worker.ts';
 import { readReusableWorkers, recordWorkerStarted } from '../../../packages/daemon/src/storage/repositories/work-started-sessions-worker.ts';
 import { packWorkerStartFixture } from '../../../packages/daemon/tests/unit/helpers/pack-worker-start.ts';
 
@@ -39,6 +41,11 @@ try {
   const registry = createOperationRegistry(createWorkVerbOperations({
     adapters: () => [adapter], remote: { list: () => [], invoke: async () => ({}) }, daemonName: 'fixture',
     freeWorkers: (id, todoId, sessionId) => readReusableWorkers(db, id, todoId, sessionId),
+    reusePolicy: async (id, todoId, caller) => {
+      const facts = await gatewayFor(db).call(neoAskInputReads, 'sessionReuseFacts', id, todoId!, caller.sessionId!);
+      assert(facts);
+      return { mode: 'long_lived', sameAsk: facts.sameAsk };
+    },
     recordStarted: ref => recordWorkerStarted(db, ref),
     startPlace: input => ({ value: { ...input, place } }),
   }));
@@ -95,16 +102,16 @@ try {
   world.store.settleAsk(world.store.getAsk(recentAsk)!, 'done', 'Observed', 200);
   const newAsk = await open();
   candidates = ['borrow-recent', 'borrow-oldest'].map(worker);
-  await start(newAsk, 'Borrow oldest', 'borrow-oldest');
+  await start(newAsk, 'New matter', 'fresh-0');
 
   const unavailableAsk = await open();
   await bind(unavailableAsk, 'no-free-worker', 90);
   busy.add('no-free-worker');
   candidates = [worker('no-free-worker')];
-  await start(unavailableAsk, 'No idle worker', 'fresh-0');
-  assert.deepEqual(fresh, ['fresh-0']);
+  await start(unavailableAsk, 'No idle worker', 'fresh-1');
+  assert.deepEqual(fresh, ['fresh-0', 'fresh-1']);
   assert(!sent.includes('review-author'));
-  process.stdout.write('PASS: core todo starts prefer ask affinity, refresh busy workers, respect pack exclusions, borrow oldest settled ask, and start fresh when needed\n');
+  process.stdout.write('PASS: core todo starts prefer ask affinity, refresh busy workers, respect pack exclusions, and start fresh for a new ask or when no worker is idle\n');
 } finally {
   writeFileSync(join(run, 'evidence/ask-worker-affinity.json'), JSON.stringify(cases, null, 2));
   await app.cleanup();

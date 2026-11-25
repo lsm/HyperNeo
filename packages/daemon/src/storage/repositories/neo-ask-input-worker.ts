@@ -48,7 +48,6 @@ export function releaseReuseFacts(
   mode: (typeof SESSION_REUSE_VALUES)[number];
   askOpen: boolean;
   hasFolder: boolean;
-  newerFree: boolean;
 } | null {
   const row = readReleaseReuseRow(db, todoId);
   if (!row) return null;
@@ -60,7 +59,6 @@ export function releaseReuseFacts(
     mode: SESSION_REUSE_VALUES.find((value) => value === saved) ?? 'long_lived',
     askOpen: row.askOpen === 1,
     hasFolder: row.hasFolder === 1,
-    newerFree: row.newerFree === 1,
   };
 }
 

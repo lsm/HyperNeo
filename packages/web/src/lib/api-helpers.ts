@@ -20,8 +20,6 @@ import type {
   WorkspaceAddResponse,
   WorkspaceRemoveResponse,
   GitBranchesResponse,
-  GitSessionStatusResponse,
-  GitFileDiffResponse,
   ProviderRecord,
   CreateProviderParams,
   UpdateProviderParams,
@@ -451,30 +449,6 @@ export async function removeWorkspaceFromHistory(path: string): Promise<boolean>
 export async function getGitBranches(path: string): Promise<GitBranchesResponse> {
   const hub = getHubOrThrow();
   return await hub.request<GitBranchesResponse>('git.branches', { path });
-}
-
-export async function getGitSessionStatus(
-  sessionId: string,
-  includeGitHub = true
-): Promise<GitSessionStatusResponse> {
-  const hub = getHubOrThrow();
-  return await hub.request<GitSessionStatusResponse>(
-    'git.sessionStatus',
-    { sessionId, includeGitHub },
-    { timeout: 25_000 }
-  );
-}
-
-export async function getGitFileDiff(
-  sessionId: string,
-  path: string
-): Promise<GitFileDiffResponse> {
-  const hub = getHubOrThrow();
-  return await hub.request<GitFileDiffResponse>(
-    'git.fileDiff',
-    { sessionId, path },
-    { timeout: 20_000 }
-  );
 }
 
 export async function setSessionWorkspace(

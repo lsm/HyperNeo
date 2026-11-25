@@ -261,7 +261,7 @@ describe('messages.bySession — SQL behavior', () => {
     expect(rows[0].uuid).toBe('u1');
   });
 
-  test('surfaces every user-message delivery state (queued/processing/delivered/failed)', () => {
+  test('surfaces the steer delivery states (queued/processing/delivered/failed) but not deferred next-turn messages', () => {
     insertSdkMessage(db, {
       id: 'm-consumed',
       sessionId: 's1',
@@ -305,9 +305,8 @@ describe('messages.bySession — SQL behavior', () => {
 
     const rows = query(db, 's1', 100);
     const byUuid = new Map(rows.map((r) => [r.uuid as string, r]));
-    expect([...byUuid.keys()].sort()).toEqual(['u1', 'u2', 'u3', 'u4', 'u5']);
+    expect([...byUuid.keys()].sort()).toEqual(['u1', 'u3', 'u4', 'u5']);
     expect(byUuid.get('u1')!.deliveryStatus).toBe('delivered');
-    expect(byUuid.get('u2')!.deliveryStatus).toBe('queued');
     expect(byUuid.get('u3')!.deliveryStatus).toBe('queued');
     expect(byUuid.get('u5')!.deliveryStatus).toBe('processing');
     expect(byUuid.get('u4')!.deliveryStatus).toBe('failed');

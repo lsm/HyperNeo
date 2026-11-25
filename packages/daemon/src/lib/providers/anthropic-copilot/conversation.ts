@@ -27,6 +27,24 @@ export interface ToolResult {
   images?: BridgeImage[];
 }
 
+export function attachUserImagesToToolResults(
+  toolResults: ToolResult[],
+  text: string,
+  images: BridgeImage[]
+): ToolResult[] {
+  if (images.length === 0 || toolResults.length === 0) return toolResults;
+  const last = toolResults.length - 1;
+  return toolResults.map((r, i) =>
+    i === last
+      ? {
+          ...r,
+          result: text ? [r.result, `[User]: ${text}`].filter(Boolean).join('\n\n') : r.result,
+          images: [...(r.images ?? []), ...images],
+        }
+      : r
+  );
+}
+
 export class ConversationManager {
   private byToolCallId = new Map<string, ActiveConversation>();
   private cleanupTimers = new Map<ActiveConversation, ReturnType<typeof setTimeout>>();

@@ -43,38 +43,6 @@ export function recordStartedWork(
   );
 }
 
-export type WorkCompactionFailure = { count: number; attemptedAt: number; retryAt: number };
-
-export function readWorkCompaction(db: BunDatabase, ref: StartedWork) {
-  const row = db
-    .prepare(
-      `SELECT compacted_at AS at, (
-         SELECT value_json FROM pack_facts WHERE pack = 'core' AND key = 'compaction_failure'
-           AND json_extract(value_json, '$.worker.adapter') = ?1
-           AND json_extract(value_json, '$.worker.id') = ?2
-         ORDER BY json_extract(value_json, '$.attemptedAt') DESC, todo_id DESC LIMIT 1
-       ) AS failure FROM work_started_sessions WHERE adapter = ?1 AND id = ?2`
-    )
-    .get(ref.adapter, ref.id) as { at: number | null; failure: string | null } | null;
-  const compactedAt = row?.at ?? null;
-  const failure = row?.failure ? (JSON.parse(row.failure) as WorkCompactionFailure) : null;
-  const lateCompactedAt =
-    ref.adapter === 'hyperneo' &&
-    failure &&
-    (compactedAt === null || failure.attemptedAt > compactedAt) &&
-    db
-      .prepare(
-        `SELECT 1 FROM sdk_messages
-         WHERE session_id = ? AND timestamp >= ? AND message_type = 'result'
-           AND message_subtype = 'success' AND parent_tool_use_id IS NULL
-           AND internal_compaction_turn = 1 LIMIT 1`
-      )
-      .get(ref.id, new Date(failure.attemptedAt).toISOString())
-      ? failure.attemptedAt
-      : null;
-  return { compactedAt, failure, lateCompactedAt };
-}
-
 export function recordWorkerStarted(
   db: BunDatabase,
   ref: StartedWork,
@@ -438,16 +406,6 @@ class WorkStartedSessionWrites {
     if (directory) forgetWorkGone(this.db, directory);
   }
 
-  recordCompacted(ref: StartedWork, at: number): void {
-    this.db
-      .prepare(
-        `UPDATE work_started_sessions SET compacted_at = ?1
-       WHERE adapter = ?2 AND id = ?3 AND kind = 'worker'
-         AND (compacted_at IS NULL OR compacted_at < ?1)`
-      )
-      .run(at, ref.adapter, ref.id);
-  }
-
   markUnusable(ref: StartedWork, reason?: string): void {
     markWorkUnusable(this.db, ref, reason);
   }
@@ -475,43 +433,25 @@ export const workStartedSessionWrites = defineRepositoryOp(
   'work.startedSessionWrites',
   'write',
   WorkStartedSessionWrites,
-  ['recordStarted', 'markUnusable', 'recordArchived', 'recordCompacted']
+  ['recordStarted', 'markUnusable', 'recordArchived']
 );
 
 export function readReleaseReuseRow(db: BunDatabase, todoId: string) {
-  const row = db
+  return db
     .prepare(
-      `WITH uses AS (
-           SELECT json_extract(o.ref, '$.adapter') AS adapter, json_extract(o.ref, '$.id') AS id,
-             MAX(COALESCE(ot.finished_at, ot.updated_at)) AS usedAt,
-             MAX(json_extract(o.target, '$.place.folder')) AS folder,
-             MAX(ot.state IN ('todo', 'doing', 'blocked')) AS live
-           FROM neo_todo_sessions o JOIN neo_todos ot ON ot.id = o.todo_id
-           JOIN work_started_sessions w ON w.adapter = json_extract(o.ref, '$.adapter')
-             AND w.id = json_extract(o.ref, '$.id') AND w.kind = 'worker' AND w.released_at IS NULL
-           WHERE o.ref IS NOT NULL AND json_extract(o.ref, '$.daemon') IS NULL
-           GROUP BY 1, 2
-         )
-         SELECT a.status = 'open' AS askOpen, a.project_id AS projectId,
-           (SELECT mine.folder FROM uses mine WHERE mine.adapter = json_extract(s.ref, '$.adapter')
-             AND mine.id = json_extract(s.ref, '$.id')) IS NOT NULL AS hasFolder,
-           EXISTS (SELECT 1 FROM uses mine JOIN uses other
-               ON other.adapter = mine.adapter AND other.id <> mine.id AND other.folder = mine.folder
-             WHERE mine.adapter = json_extract(s.ref, '$.adapter') AND mine.id = json_extract(s.ref, '$.id')
-               AND NOT other.live
-               AND (other.usedAt > mine.usedAt OR (other.usedAt = mine.usedAt AND other.id > mine.id))
-           ) AS newerFree
+      `SELECT a.status = 'open' AS askOpen, a.project_id AS projectId,
+           EXISTS (SELECT 1 FROM neo_todo_sessions o
+             JOIN work_started_sessions w ON w.adapter = json_extract(o.ref, '$.adapter')
+               AND w.id = json_extract(o.ref, '$.id') AND w.kind = 'worker' AND w.released_at IS NULL
+             WHERE json_extract(o.ref, '$.adapter') = json_extract(s.ref, '$.adapter')
+               AND json_extract(o.ref, '$.id') = json_extract(s.ref, '$.id')
+               AND json_extract(o.ref, '$.daemon') IS NULL
+               AND json_extract(o.target, '$.place.folder') IS NOT NULL) AS hasFolder
          FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
          JOIN neo_asks a ON a.id = t.ask_id
          WHERE s.todo_id = ?`
     )
-    .get(todoId) as {
-    askOpen: number;
-    projectId: string | null;
-    hasFolder: number;
-    newerFree: number;
-  } | null;
-  return row;
+    .get(todoId) as { askOpen: number; projectId: string | null; hasFolder: number } | null;
 }
 
 export function readWorkerOwnershipRows(db: BunDatabase) {

@@ -7,7 +7,7 @@ import { WebSocketServer } from 'ws';
 import type { Result, WorkDetail, WorkStarted, WorkDelivery } from '../../../packages/daemon/src/lib/drivers/types.ts';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 
-export async function startCopilotDesktopPeer(home: string, state: string, compaction: 'applied' | 'failed' | 'refused' = 'applied') {
+export async function startCopilotDesktopPeer(home: string, state: string, compaction: 'applied' | 'failed' | 'refused' = 'applied', legacy = false) {
   const dir = join(home, '.copilot/run');
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const secret = randomUUID();
@@ -45,17 +45,30 @@ export async function startCopilotDesktopPeer(home: string, state: string, compa
   let kickoff = true;
   let path: string;
   let title: string;
+  const startCommand = legacy ? 'create_project_from_path' : 'create_repository_from_path';
   server.on('connection', (peer) => peer.on('message', (raw) => {
     const message = JSON.parse(raw.toString());
     const reply = (type: string, fields: object = {}) => peer.send(JSON.stringify({ type, session_id: ref.id, request_id: message.request_id, ...fields }));
     messages.push(message.type);
     switch (message.type) {
-      case 'create_project_from_path':
+      case 'list_repositories':
+        return legacy
+          ? peer.close()
+          : reply('repository_list', { repositories: [] });
+      case 'list_projects':
+        assert(legacy);
+        return reply('project_list', { projects: [] });
+      case 'create_repository_from_path':
+      case 'create_project_from_path': {
+        assert.equal(message.type, startCommand);
         path = message.path;
         db.prepare('INSERT OR IGNORE INTO projects VALUES (?, ?, ?)').run(project, 'Disposable project', path);
-        return reply('project_created', { project: { id: project } });
+        return legacy
+          ? reply('project_created', { project: { id: project } })
+          : reply('repository_created', { repository: { id: project } });
+      }
       case 'create_folder_workspace':
-        assert.equal(message.project_id, project);
+        assert.equal(legacy ? message.project_id : message.repository_id, project);
         assert.equal(message.kickoff_prompt, undefined);
         title = message.name;
         return reply('workspace_created', { workspace: { id: workspace, displayPath: path } });
@@ -137,6 +150,7 @@ export async function startCopilotDesktopPeer(home: string, state: string, compa
     }
   }));
   return {
+    startCommand,
     messages,
     ref,
     async close() {
@@ -151,6 +165,7 @@ export async function verifyCopilotDesktopControl(
   rpc: <T>(name: string, input: object) => Promise<T>,
   run: string,
   peer: Awaited<ReturnType<typeof startCopilotDesktopPeer>>,
+  copilotClient: 'auto' | 'desktop',
   verifyCompaction: (work: WorkStarted) => Promise<void>
 ) {
   const folder = join(run, 'desktop-workspace');
@@ -160,11 +175,16 @@ export async function verifyCopilotDesktopControl(
     place: { machine: hostname(), folder: realpathSync(folder), name: 'Fixture' },
     title: 'Desktop work', model: 'desktop-model', effort: 'high', message: 'Initial prompt',
   };
-  const bad = await rpc<Result<WorkStarted>>('work.start', { ...request, effort: 'low' });
+  const bad = await rpc<Result<WorkStarted>>('work.start', { ...request, copilotClient: 'desktop', effort: 'low' });
   assert(!bad.ok && bad.reason === 'unreachable' && !bad.notSent, JSON.stringify(bad));
+  const expectedStartup = peer.startCommand === 'create_project_from_path'
+    ? ['list_repositories', 'list_projects', peer.startCommand]
+    : ['list_repositories', peer.startCommand];
+  assert.deepEqual(peer.messages.slice(0, expectedStartup.length), expectedStartup);
   assert(!peer.messages.includes('send_message'));
-  const started = await rpc<Result<WorkStarted>>('work.start', request);
+  const started = await rpc<Result<WorkStarted>>('work.start', { ...request, copilotClient });
   assert(started.ok, JSON.stringify(started));
+  assert.equal(started.value.copilotClient, 'desktop');
   const { ref } = started.value;
   assert.deepEqual(ref, peer.ref);
   assert.equal(started.value.model, request.model);

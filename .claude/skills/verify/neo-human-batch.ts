@@ -1,4 +1,5 @@
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { strict as assert } from 'node:assert';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -52,7 +53,7 @@ QueryOptionsBuilder.prototype.build = async function (...args) {
 };
 const app = await createDaemonApp({ config: { ...getConfig({ host: '127.0.0.1', port: 0, dbPath: join(run, 'data/daemon.db') }), disableWorktrees: true, disableGoalProcessing: true }, verbose: false });
 const hub = new MessageHub({ defaultSessionId: 'global' });
-const transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
+const transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false, createSocket: url => createLocalSocket(url, join(run, 'data/local-rpc.credential')) });
 hub.registerTransport(transport);
 
 const dist = resolve('packages/web/dist');
@@ -86,6 +87,7 @@ try {
   const imageData = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6kXcAAAAASUVORK5CYII=';
   for (const large of [false, true]) {
     const tag = large ? 'large' : 'small';
+    const turnsBefore = modelTurns;
     const notes = Array.from({ length: large ? 35 : 2 }, (_, index) => `${tag} worker note ${String(index).padStart(2, '0')} ${large ? 'x'.repeat(2048) : ''}`);
     const noteIds: string[] = [];
     for (const [index, text] of notes.entries()) {
@@ -159,7 +161,8 @@ try {
       let previous = -1;
       allWorkerNotesInFile = notes.every((note) => { const at = restored.indexOf(note); const next = at > previous; previous = at; return next; });
     }
-    observed.push({ size: tag, separateTranscriptInput: !!batch, humanDeliveryUnchanged: sameHuman, humanInlineAtModel: inlineAtModel, workerFileExcludesHuman, allWorkerNotesInFile, publicBatchBeforeHuman: batchAt >= 0 && batchAt < humanAt, publicSystemLabel: batchAt >= 0 && page.items[batchAt].message?.fromName === 'System-forwarded worker messages', publicBatchKind: batchAt >= 0 && page.items[batchAt].message?.kind === 'worker-batch' });
+    const batchAddsNoTurn = modelTurns - turnsBefore === (process.argv.includes('--automatic') ? 2 : 1);
+    observed.push({ size: tag, batchAddsNoTurn, separateTranscriptInput: !!batch, humanDeliveryUnchanged: sameHuman, humanInlineAtModel: inlineAtModel, workerFileExcludesHuman, allWorkerNotesInFile, publicBatchBeforeHuman: batchAt >= 0 && batchAt < humanAt, publicSystemLabel: batchAt >= 0 && page.items[batchAt].message?.fromName === 'System-forwarded worker messages', publicBatchKind: batchAt >= 0 && page.items[batchAt].message?.kind === 'worker-batch' });
     const snapshot = await hub.request<{sessionMessages?:{messageId:string;text:string;kind:string}[]}>('operation.invoke', { name: 'neo.snapshot', input: {} });
     const snapshotBatch = snapshot.sessionMessages?.find((message) => message.messageId === batch?.uuid);
     const persisted = app.db.getDatabase().prepare('SELECT text FROM neo_session_messages WHERE message_id=?').get(batch?.uuid ?? '') as {text:string} | null;

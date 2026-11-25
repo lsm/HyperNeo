@@ -13,6 +13,7 @@ import { isAnthropicRequest, type AnthropicMessage, type AnthropicRequest } from
 import {
   collectImages,
   messageTopLevelImages,
+  messageTopLevelText,
   formatAnthropicPrompt,
   extractSystemText,
   extractToolResultIds,
@@ -259,15 +260,6 @@ async function handleMessages(
         );
         return;
       }
-      if (pendingImages.length > 0) {
-        sendJsonError(
-          out,
-          400,
-          'invalid_request_error',
-          'Image blocks outside tool_result content cannot be forwarded while a tool call is pending'
-        );
-        return;
-      }
       try {
         collectImages(body.messages);
       } catch (err) {
@@ -279,7 +271,7 @@ async function handleMessages(
         );
         return;
       }
-      const deliveredImages = toolResults.flatMap((r) => r.images ?? []);
+      const deliveredImages = [...toolResults.flatMap((r) => r.images ?? []), ...pendingImages];
       const fit = await visionGate(body.model, deliveredImages);
       if ('error' in fit) {
         sendJsonError(out, 400, 'invalid_request_error', fit.error);
@@ -293,6 +285,20 @@ async function handleMessages(
         const notes = Array.from({ length: drop }, () => omittedImageText(fit.limit));
         return { ...r, result: [r.result, ...notes].join('\n'), images: r.images?.slice(drop) };
       });
+      const keptUserImages = pendingImages.slice(skip);
+      const userInput = keptUserImages.length
+        ? {
+            text: [
+              lastMessage ? messageTopLevelText(lastMessage) : '',
+              ...Array.from({ length: pendingImages.length - keptUserImages.length }, () =>
+                omittedImageText(fit.limit)
+              ),
+            ]
+              .filter(Boolean)
+              .join('\n'),
+            images: keptUserImages,
+          }
+        : undefined;
       const usageKey = requestUsageKey(req, cwd, body.model);
       manager.acknowledgeContinuation(
         conv,
@@ -312,7 +318,8 @@ async function handleMessages(
             store: contextUsageStore,
             requestKey: usageKey,
             outputTokenLimit: body.max_tokens,
-          }
+          },
+          userInput
         );
         if (outcome.kind === 'completed') {
           manager.cleanupConversation(conv);

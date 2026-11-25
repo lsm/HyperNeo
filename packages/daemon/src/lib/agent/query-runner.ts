@@ -2557,6 +2557,11 @@ export class QueryRunner {
       const live = () => !this.ctx.isCleaningUp() && (liveAttempt?.() ?? true);
       await this.failures.admit(live);
       const coordinator = !!neoCoordinatorBinding(this.ctx.db, session.id);
+      const prompt =
+        coordinator && message.uuid
+          ? this.ctx.db.getSDKMessageRepo?.().getDeliveryContent(session.id, message.uuid)
+          : null;
+      const ridesAlong = notifyOnYield && prompt?.shouldQuery === false;
       if (notifyOnYield && !coordinator)
         await messageQueue.onMessageYielded?.(message.uuid ?? '', Date.now());
       const queuedMessage = message as typeof message & { internal?: boolean };
@@ -2596,11 +2601,12 @@ export class QueryRunner {
         if (this._turnConsumedUserMessages.length > 32) {
           this._turnConsumedUserMessages.shift();
         }
-        await stateManager.setProcessing(
-          message.uuid ?? 'unknown',
-          'initializing',
-          this._turnConsumedUserMessages.map((entry) => entry.uuid)
-        );
+        if (!ridesAlong)
+          await stateManager.setProcessing(
+            message.uuid ?? 'unknown',
+            'initializing',
+            this._turnConsumedUserMessages.map((entry) => entry.uuid)
+          );
         if (!this.ctx.firstMessageReceived) {
           const generationMessages = this._consumedUserMessages.get(queryGeneration) ?? [];
           generationMessages.push({
@@ -2620,11 +2626,8 @@ export class QueryRunner {
       );
 
       startGuard?.();
-      questionInputs?.recordInput(queuedMessage);
-      if (humanInputs && message.uuid && neoCoordinatorBinding(this.ctx.db, session.id)) {
-        const prompt = this.ctx.db.getSDKMessageRepo().getDeliveryContent(session.id, message.uuid);
-        if (prompt?.inputKind === 'human') humanInputs.recordInput(queuedMessage);
-      }
+      if (!ridesAlong) questionInputs?.recordInput(queuedMessage);
+      if (humanInputs && prompt?.inputKind === 'human') humanInputs.recordInput(queuedMessage);
       if (this.turnEndedGeneration === queryGeneration)
         this.fedAfterTurnEnd.push({
           uuid: message.uuid ?? '',
@@ -2632,8 +2635,8 @@ export class QueryRunner {
           internal: isInternal,
         });
       yield this.retryPromptIdentity.outgoing(
-        message,
-        !!neoCoordinatorBinding(this.ctx.db, session.id)
+        ridesAlong ? { ...message, shouldQuery: false } : message,
+        coordinator
       );
       this.streamSilence = noteStreamFed(this.streamSilence, Date.now());
       onSent();
