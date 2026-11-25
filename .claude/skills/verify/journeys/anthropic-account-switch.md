@@ -11,15 +11,14 @@ bash .claude/skills/verify/resource-check.sh && \
   .claude/skills/verify/anthropic-account-switch.ts verify
 ```
 
-The proof prints `PASS requests=2 replacementAccountRetained=true
-persistedAccountMatches=true` when the replacement identity remains visible to
-Settings and is persisted after the old response completes.
+The proof prints `PASS requests=3` with the replacement account retained and
+the SDK process reused after rotation.
 The proof checks the Claude Code account and subscription usage before sign-in
 and the replacement account and usage after sign-in. A second turn resumes the
 same SDK conversation under the replacement login. Logout leaves the provider
 signed out with a Claude Code login still present.
-Two fresh daemon processes check that the Settings login persists after
-restart and that logout stays in effect after restart with a stale legacy
+Fresh daemon processes check that a failed refresh preserves the Settings
+login after restart and that logout stays in effect with a stale legacy
 credential still in storage. The signed-out restart also checks usage through
 the Settings operation and confirms that SDK launches require login.
 

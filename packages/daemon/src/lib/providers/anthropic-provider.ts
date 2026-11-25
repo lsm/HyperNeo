@@ -89,6 +89,7 @@ export class AnthropicProvider implements Provider {
   private credentials: ProviderCredentials | null = null;
   private requiresOwnLogin = false;
   private credentialsVersion = 0;
+  private loginGeneration = 0;
   private credentialSignature: string | undefined;
   private inheritedAccountEmail: Promise<string | undefined> | undefined;
   private readonly credentialListeners = new Set<
@@ -111,9 +112,14 @@ export class AnthropicProvider implements Provider {
 
   setCredentials(credentials: ProviderCredentials): void {
     if (credentials.type === 'oauth') this.requireOwnLogin();
+    this.applyCredentials(credentials, true);
+  }
+
+  private applyCredentials(credentials: ProviderCredentials, startsLogin = false): void {
     const signature = JSON.stringify(credentials);
     if (signature !== this.credentialSignature) {
       this.credentialsVersion++;
+      if (startsLogin) this.loginGeneration++;
       this.clearModelCache();
     }
     this.credentialSignature = signature;
@@ -123,6 +129,7 @@ export class AnthropicProvider implements Provider {
   requireOwnLogin(): void {
     if (this.requiresOwnLogin) return;
     this.requiresOwnLogin = true;
+    this.loginGeneration++;
     this.credentialsVersion++;
     this.clearModelCache();
   }
@@ -133,6 +140,10 @@ export class AnthropicProvider implements Provider {
 
   get credentialVersion(): number {
     return this.credentialsVersion;
+  }
+
+  get sdkLoginGeneration(): number {
+    return this.loginGeneration;
   }
 
   get ownsLogin(): boolean {
@@ -298,7 +309,7 @@ export class AnthropicProvider implements Provider {
       const outcome = result.definitive ? 'definitive' : 'transient';
       return result.oauthError ? { outcome, oauthError: result.oauthError } : outcome;
     }
-    this.setCredentials(this.toClaudeSubscriptionCredentials(result.token, credentials));
+    this.applyCredentials(this.toClaudeSubscriptionCredentials(result.token, credentials));
     return 'refreshed';
   }
 
@@ -308,6 +319,7 @@ export class AnthropicProvider implements Provider {
     if (this.credentials !== null) {
       this.credentials = null;
       this.credentialSignature = undefined;
+      this.loginGeneration++;
       this.credentialsVersion++;
       this.clearModelCache();
     }

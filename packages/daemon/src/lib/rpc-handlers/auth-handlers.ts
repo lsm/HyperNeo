@@ -512,9 +512,12 @@ export function setupAuthHandlers(
           let cleanupError: unknown;
           let remaining: ProviderCredentials | null | undefined;
           try {
-            await removeCredentialsOrKeychainError(credentialManager, providerId);
+            const isAnthropic = provider instanceof AnthropicProvider;
+            if (!isAnthropic) {
+              await removeCredentialsOrKeychainError(credentialManager, providerId);
+            }
             remaining = await provider.getCredentials?.();
-            if (remaining?.type === 'oauth') {
+            if (!isAnthropic && remaining?.type === 'oauth') {
               await credentialManager?.storeOAuthTokens(providerId, remaining);
             }
           } catch (error) {

@@ -1223,10 +1223,10 @@ export class QueryRunner {
         this.anthropicQueryIsStale = undefined;
         if (provider instanceof AnthropicProvider) {
           const launchedProvider = provider;
-          const version = launchedProvider.credentialVersion;
+          const generation = launchedProvider.sdkLoginGeneration;
           this.anthropicQueryIsStale = () =>
             providerRegistry.get('anthropic') !== launchedProvider ||
-            launchedProvider.credentialVersion !== version;
+            launchedProvider.sdkLoginGeneration !== generation;
         }
       }
 
