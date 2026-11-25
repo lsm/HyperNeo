@@ -164,7 +164,7 @@ describe('work.start reuses only sessions the daemon started', () => {
     expect(h.sent).toEqual([]);
   });
 
-  test('a free session that work.start started is reused', async () => {
+  test('starts fresh when the free worker cannot compact', async () => {
     const h = setup();
     h.todo('first', 'todo');
     const worker = await h.start('first');
@@ -172,8 +172,8 @@ describe('work.start reuses only sessions the daemon started', () => {
     h.idle.push(worker);
     h.todo('build', 'todo');
 
-    expect(await h.start('build')).toBe(worker);
-    expect(h.sent).toEqual([worker]);
+    expect(await h.start('build')).toBe('fresh-2');
+    expect(h.sent).toEqual([]);
   });
 
   test('reuses a prepared reviewer for a new head but not a different stable preparation', async () => {

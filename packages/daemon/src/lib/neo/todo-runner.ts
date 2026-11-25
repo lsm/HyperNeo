@@ -744,8 +744,10 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     if (todo?.state !== 'todo' || todo.startedAt !== null || target?.verb !== 'send')
       return { value: null };
     const clean = await sessions.read('cleanWorkerFacts', todoId);
-    if (clean?.record && !clean.sameTodo && !clean.named && !target.ref.daemon)
+    if (clean?.record && !clean.sameTodo && !clean.named && !target.ref.daemon) {
+      await recordWaits({ waits: [{ id: todoId, reason: null }] }, Date.now());
       return { value: null };
+    }
     const worker = neoWorkerKey(target.ref);
     const facts = await readQueueFacts();
     const candidate = { id: todoId, worker, ref: target.ref };

@@ -181,7 +181,7 @@ describe('createNeoTodoRunner asks the todo pack for its worker target', () => {
     expect(w.dispatched()).toEqual([
       { name: 'work.send', input: expect.objectContaining({ ref: backend, todoId: id }) },
     ]);
-    expect(w.sessions.get(id)).toEqual({ verb: 'send', ref: backend });
+    expect(w.sessions.get(id)).toEqual({ verb: 'send', ref: backend, preparationParameters: {} });
     expect(w.sessions.readRef(id)).toEqual(backend);
     expect(w.store.getTodo(id)?.state).toBe('doing');
   });
@@ -260,7 +260,7 @@ describe('createNeoTodoRunner asks the todo pack for its worker target', () => {
     expect(w.dispatched()).toEqual([]);
     expect(w.store.getTodo(id)).toMatchObject({ state: 'todo' });
     expect(w.store.getTodo(id)?.reason).toContain(needed);
-    expect(w.sessions.get(id)).toEqual({ verb: 'send', ref: backend });
+    expect(w.sessions.get(id)).toEqual({ verb: 'send', ref: backend, preparationParameters: {} });
   });
 
   test('a todo of another pack is not asked', async () => {

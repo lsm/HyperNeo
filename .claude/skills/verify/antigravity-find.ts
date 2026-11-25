@@ -5,6 +5,10 @@ import { isAbsolute, join } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
+import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
+import { gatewayFor } from '../../../packages/daemon/src/storage/db-gateway/db-gateway.ts';
+import { createNeoTodoRunner } from '../../../packages/daemon/src/lib/neo/todo-runner.ts';
+import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
 import type { FindWorkResultSchema } from '../../../packages/daemon/src/lib/drivers/find-operation.ts';
 import type { ReadWorkResultSchema } from '../../../packages/daemon/src/lib/drivers/read-operation.ts';
 import type { Result, WorkDelivery, WorkDetail, WorkStarted } from '../../../packages/daemon/src/lib/drivers/types.ts';
@@ -31,7 +35,8 @@ const resumeFixture = mode === 'resume' || lateBatch || lateClose || stopFixture
 const longHistory = mode === 'history-long';
 const historyFixture = mode === 'history' || longHistory;
 const compactUnconfirmed = mode === 'compact-unconfirmed';
-const compactFixture = mode === 'compact' || compactUnconfirmed;
+const busyReplacement = mode === 'busy-replacement';
+const compactFixture = mode === 'compact' || compactUnconfirmed || busyReplacement;
 const configUnsupported = mode === 'config-unsupported';
 const configUnconfirmed = mode === 'config-unconfirmed';
 const configFixture = mode === 'config' || configUnsupported || configUnconfirmed;
@@ -122,7 +127,7 @@ for await (const line of createInterface({input: process.stdin})) {
   ]}});
   else if (method === 'session/new') {
     assert.deepEqual(params,{cwd:${JSON.stringify(workspaceRoot)},mcpServers:[]});
-    if (${compactUnconfirmed} && existsSync(${JSON.stringify(releaseCompaction)})) {
+    if (${compactUnconfirmed || busyReplacement} && existsSync(${JSON.stringify(releaseCompaction)})) {
       sessionId = 'owned-2';
       replacement = true;
     }
@@ -453,6 +458,30 @@ try {
         new NeoRepository(db).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
         const countCompactions = () => (readFileSync(journal, 'utf8').match(/"method":"compact"/g) ?? []).length;
         const delivered = queueNextTodo(db, started.value, root);
+        if (busyReplacement) {
+          const todos = new NeoAskTodoRepository(db);
+          const sessions = new NeoTodoSessionRepository(db);
+          const held = todos.addTodo('compact-held', 'compact-ask', { title: 'Held', doneWhen: 'Synthetic', check: null, instruction: 'Synthetic', named: null }, Date.now());
+          sessions.create(held.id, { verb: 'send', ref: started.value.ref });
+          sessions.recordRef(held.id, started.value.ref);
+          todos.updateTodo(held, { state: 'doing', startedAt: Date.now() }, Date.now());
+          const next = todos.getTodo('compact-next')!;
+          todos.updateTodo(next, { reason: 'Waiting for worker antigravity-cli:owned-1.' }, Date.now());
+          writeFileSync(releaseCompaction, '');
+          const runner = createNeoTodoRunner({
+            limits: () => ({ running: 99, perGroup: 99 }),
+            write: gatewayFor(db).run.bind(gatewayFor(db)), store: todos, sessions,
+            invoke: (caller, name, input) => invokeOperation(app.sessionManager.getOperationRegistry(), name, input, caller),
+            workerCompact: () => undefined, packs: () => [], tell: async () => {}, attend: async () => {}, changed: () => {},
+          });
+          await runner.start('compact-next');
+          const deadline = Date.now() + 5_000;
+          while (!delivered() && Date.now() < deadline) await Bun.sleep(25);
+          assert(delivered(), 'A new worker must take the waiting todo');
+          assert.equal(sessions.readRef('compact-next')?.id, 'owned-2');
+          assert.equal(todos.getTodo('compact-next')?.reason, null);
+          results.busyReplacement = { fresh: true, waitReasonCleared: true };
+        } else {
         const startDeadline = Date.now() + 5_000;
         while (!countCompactions() && Date.now() < startDeadline) await Bun.sleep(25);
         assert.equal(countCompactions(), 1, 'Reuse runs one native compaction before the next todo');
@@ -471,6 +500,7 @@ try {
         }
         assert.equal(countCompactions(), 1);
         results.compaction = { unconfirmed: compactUnconfirmed, attempts: countCompactions() };
+        }
       }
       if (historyFixture) {
         const read = (options: object) => rpc<z.infer<typeof ReadWorkResultSchema>>('work.read', {
