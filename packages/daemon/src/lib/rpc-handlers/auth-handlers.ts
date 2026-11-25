@@ -113,6 +113,18 @@ async function lockedClearCacheAndNotifyProvidersChanged(
   );
 }
 
+function serializeProviderLogout(
+  logout: (
+    request: ProviderLogoutRequest,
+    clear: typeof clearCacheAndNotifyProvidersChanged
+  ) => Promise<ProviderLogoutResponse>
+) {
+  return (request: ProviderLogoutRequest) =>
+    request.providerId === 'anthropic'
+      ? withProviderLock(() => logout(request, clearCacheAndNotifyProvidersChanged))
+      : logout(request, lockedClearCacheAndNotifyProvidersChanged);
+}
+
 async function removeCredentialsOrKeychainError(
   credentialManager: ProviderCredentialManager | undefined,
   providerId: string,
@@ -313,7 +325,7 @@ export function setupAuthHandlers(
               providerId,
               displayName: provider.displayName,
               kind: 'built_in',
-              authType: 'oauth',
+              authType: 'none',
               isEnabled: true,
             });
           }
@@ -325,7 +337,10 @@ export function setupAuthHandlers(
         };
         const anthropic = provider instanceof AnthropicProvider;
         const result = anthropic
-          ? await provider.submitOAuthCallback(callbackInput, persist)
+          ? await provider.submitOAuthCallback(callbackInput, {
+              write: persist,
+              serialize: withProviderLock,
+            })
           : await provider.submitOAuthCallback(callbackInput);
         if (!result.ok) return { success: false, error: result.error };
         const credentials = await provider.getCredentials?.();
@@ -351,7 +366,7 @@ export function setupAuthHandlers(
 
   messageHub.onRequest(
     'auth.logout',
-    async (req: ProviderLogoutRequest): Promise<ProviderLogoutResponse> => {
+    serializeProviderLogout(async (req, clear) => {
       const { providerId } = req;
       const registry = getProviderRegistry();
 
@@ -396,11 +411,7 @@ export function setupAuthHandlers(
             }
           }
           try {
-            await lockedClearCacheAndNotifyProvidersChanged(
-              internalEventBus,
-              providerId,
-              providerRepo
-            );
+            await clear(internalEventBus, providerId, providerRepo);
           } catch {}
           log.error(`Logout failed for ${providerId}:`, readError);
           return {
@@ -430,11 +441,7 @@ export function setupAuthHandlers(
           provider.setCredentials({ type: 'api_key', apiKey: '' });
         }
         try {
-          await lockedClearCacheAndNotifyProvidersChanged(
-            internalEventBus,
-            providerId,
-            providerRepo
-          );
+          await clear(internalEventBus, providerId, providerRepo);
         } catch {}
         return { success: true };
       } catch (error) {
@@ -455,12 +462,7 @@ export function setupAuthHandlers(
           credentialIdentity(storedCredentials) !== credentialIdentity(remainingCredentials);
         if (identityChanged) {
           try {
-            await lockedClearCacheAndNotifyProvidersChanged(
-              internalEventBus,
-              providerId,
-              providerRepo,
-              identityChanged
-            );
+            await clear(internalEventBus, providerId, providerRepo, identityChanged);
           } catch {}
         }
         log.error(`Logout failed for ${providerId}:`, error);
@@ -469,7 +471,7 @@ export function setupAuthHandlers(
           error: error instanceof Error ? error.message : 'Logout failed',
         };
       }
-    }
+    })
   );
 
   messageHub.onRequest(

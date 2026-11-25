@@ -64,13 +64,17 @@ export class ProviderCredentialManager {
 
   async storeApiKey(providerId: string, apiKey: string): Promise<void> {
     const credentials: ProviderCredentials = { type: 'api_key', apiKey };
-    const owned = providerId === 'anthropic' && (await this.hasAnthropicSettingsLogin());
-    await (owned ? this.localStore! : this.store).set(
-      credentialService(providerId),
-      owned ? ANTHROPIC_SETTINGS_ACCOUNT : DEFAULT_ACCOUNT,
-      JSON.stringify(credentials)
-    );
-    await this.updateProviderAuth(providerId, 'api_key', 'healthy');
+    const write = async () => {
+      const owned = providerId === 'anthropic' && (await this.hasAnthropicSettingsLogin());
+      await (owned ? this.localStore! : this.store).set(
+        credentialService(providerId),
+        owned ? ANTHROPIC_SETTINGS_ACCOUNT : DEFAULT_ACCOUNT,
+        JSON.stringify(credentials)
+      );
+      await this.updateProviderAuth(providerId, 'api_key', 'healthy');
+    };
+    if (providerId === 'anthropic') await this.writeAnthropicLogin(write);
+    else await write();
     this.afterCredentialWrite(providerId);
   }
 
@@ -83,12 +87,17 @@ export class ProviderCredentialManager {
     if (providerId === 'anthropic' && this.localStore) {
       const store = this.localStore;
       const written = await this.writeAnthropicLogin(async () => {
-        if ((await this.readAnthropicSettingsLogin()) === 'null' && !options?.login) return false;
-        await store.set(
-          credentialService(providerId),
-          ANTHROPIC_SETTINGS_ACCOUNT,
-          JSON.stringify(credentials)
-        );
+        const previous = await this.readAnthropicSettingsLogin();
+        if (previous === 'null' && !options?.login) return false;
+        const service = credentialService(providerId);
+        await store.set(service, ANTHROPIC_SETTINGS_ACCOUNT, JSON.stringify(credentials));
+        try {
+          await this.updateProviderAuth(providerId, 'oauth', 'healthy');
+        } catch (error) {
+          if (previous == null) await store.delete(service, ANTHROPIC_SETTINGS_ACCOUNT);
+          else await store.set(service, ANTHROPIC_SETTINGS_ACCOUNT, previous);
+          throw error;
+        }
         return true;
       });
       if (!written) return;
@@ -98,8 +107,8 @@ export class ProviderCredentialManager {
         DEFAULT_ACCOUNT,
         JSON.stringify(credentials)
       );
+      await this.updateProviderAuth(providerId, 'oauth', 'healthy');
     }
-    await this.updateProviderAuth(providerId, 'oauth', 'healthy');
     this.afterCredentialWrite(providerId);
   }
 

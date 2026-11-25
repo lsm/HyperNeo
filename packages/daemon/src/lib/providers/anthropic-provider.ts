@@ -101,6 +101,7 @@ export class AnthropicProvider implements Provider {
     authUrl: string;
     completed: boolean;
     submitting: boolean;
+    committing: boolean;
     finish: ((error?: Error) => void) | null;
   } | null = null;
 
@@ -184,6 +185,7 @@ export class AnthropicProvider implements Provider {
       }),
       completed: false,
       submitting: false,
+      committing: false,
       finish: null as ((error?: Error) => void) | null,
     };
     this.activeOAuthFlow = flow;
@@ -204,7 +206,7 @@ export class AnthropicProvider implements Provider {
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        flow.finish?.(new Error('OAuth flow timed out'));
+        if (!flow.committing) flow.finish?.(new Error('OAuth flow timed out'));
       }, OAUTH_FLOW_TIMEOUT_MS);
       flow.finish = (error?: Error) => {
         clearTimeout(timer);
@@ -224,7 +226,10 @@ export class AnthropicProvider implements Provider {
 
   async submitOAuthCallback(
     callbackInput: string,
-    persist?: (credentials: ProviderCredentials) => Promise<void>
+    persist?: {
+      write: (credentials: ProviderCredentials) => Promise<void>;
+      serialize: (commit: () => Promise<boolean>) => Promise<boolean>;
+    }
   ): Promise<{ ok: true } | { ok: false; error: string }> {
     const flow = this.activeOAuthFlow;
     if (!flow || flow.completed) {
@@ -233,6 +238,7 @@ export class AnthropicProvider implements Provider {
         error: 'No active OAuth login flow. Start the login again and paste the code.',
       };
     }
+    if (flow.submitting) return { ok: false, error: 'Login is already being completed.' };
     const parsed = parseClaudeSubscriptionCallback(callbackInput);
     if (!parsed) {
       return {
@@ -251,7 +257,6 @@ export class AnthropicProvider implements Provider {
           'The pasted code does not match the current login flow. Restart the login and paste the new code.',
       };
     }
-    if (flow.submitting) return { ok: false, error: 'Login is already being completed.' };
     flow.submitting = true;
     try {
       const tokens = await exchangeClaudeSubscriptionCode({
@@ -261,16 +266,19 @@ export class AnthropicProvider implements Provider {
         redirectUri: CLAUDE_SUBSCRIPTION_OAUTH_CONFIG.manualRedirectUrl,
         fetchImpl: this.fetchImpl,
       });
-      if (this.activeOAuthFlow !== flow) return { ok: false, error: 'Login was cancelled.' };
       const credentials = this.toClaudeSubscriptionCredentials(tokens, null);
-      if (persist) {
-        await persist(credentials);
-        if (this.activeOAuthFlow !== flow) return { ok: false, error: 'Login was cancelled.' };
-      }
-      this.setCredentials(credentials);
-      this.notifyCredentialsChanged(credentials);
-      flow.finish?.();
-      return { ok: true };
+      const commit = async () => {
+        if (this.activeOAuthFlow !== flow) return false;
+        flow.committing = true;
+        await persist?.write(credentials);
+        this.setCredentials(credentials);
+        this.notifyCredentialsChanged(credentials);
+        flow.finish?.();
+        return true;
+      };
+      return (persist ? await persist.serialize(commit) : await commit())
+        ? { ok: true }
+        : { ok: false, error: 'Login was cancelled.' };
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Token exchange failed';
       flow.finish?.(error instanceof Error ? error : new Error(message));
@@ -356,12 +364,16 @@ export class AnthropicProvider implements Provider {
       !this.requiresOwnLogin &&
       !this.credentials &&
       this.selectedCredential()?.key === 'CLAUDE_CODE_OAUTH_TOKEN';
-    const inheritedEmail = inherited
-      ? await (this.inheritedAccountEmail ??= this.readControlQuery(async (query) => {
+    const lookup = inherited
+      ? (this.inheritedAccountEmail ??= this.readControlQuery(async (query) => {
           const account = await query.accountInfo();
           return account.email;
         }, ACCOUNT_QUERY_TIMEOUT_MS).catch(() => undefined))
       : undefined;
+    const inheritedEmail = await lookup;
+    if (!inheritedEmail && this.inheritedAccountEmail === lookup) {
+      this.inheritedAccountEmail = undefined;
+    }
     return providerEnvCoordinator.runWithLease('anthropic.isAvailable', () => {
       const selected = this.selectedCredential();
       const credentials = this.credentials;

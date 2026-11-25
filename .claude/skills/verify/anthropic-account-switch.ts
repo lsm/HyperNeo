@@ -153,6 +153,42 @@ const readUsage = () => hub.request<ProviderUsageResult>('operation.invoke', {
   name: 'settings.provider.usage',
   input: payload,
 });
+async function beginLogin() {
+  const login = await hub.request<ProviderAuthResponse>('auth.login', payload);
+  assert(login.success && login.authUrl);
+  const state = new URL(login.authUrl).searchParams.get('state');
+  assert(state);
+  return () => hub.request<ProviderCallbackRelayResponse>('auth.submitCallback', {
+    ...payload,
+    callbackInput: `replacement-code#${state}`,
+  });
+}
+
+async function checkLogoutDuringLogin() {
+  const storing = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const save = ProviderCredentialManager.prototype.storeOAuthTokens;
+  ProviderCredentialManager.prototype.storeOAuthTokens = async function (...args) {
+    storing.resolve();
+    await release.promise;
+    return save.apply(this, args);
+  };
+  try {
+    const submit = await beginLogin();
+    const callback = submit();
+    await storing.promise;
+    const logout = hub.request<ProviderLogoutResponse>('auth.logout', payload);
+    await readAuth();
+    release.resolve();
+    assert((await callback).success, 'A commit already in progress must complete before logout');
+    assert((await logout).success);
+    assert.equal((await readAuth())?.isAuthenticated, false);
+  } finally {
+    release.resolve();
+    ProviderCredentialManager.prototype.storeOAuthTokens = save;
+  }
+  console.log('PASS logoutAfterLoginCommit=true');
+}
 async function sendAndRead(sessionId: string, account: string, count = 1) {
   await hub.request('message.send', { sessionId, content: `Check ${account} login.` });
   const deadline = Date.now() + 20_000;
@@ -186,7 +222,7 @@ async function checkRestart() {
       console.log('PASS refreshFailed=true');
       return;
     }
-    assert((await hub.request<ProviderLogoutResponse>('auth.logout', payload)).success);
+    await checkLogoutDuringLogin();
     const manager = ProviderCredentialManager.create(app.db.getDatabase(), {});
     await manager.getCredentialStore().set(
       credentialService('anthropic'), 'default',
@@ -272,15 +308,23 @@ async function checkSwitch() {
   registry.register(provider);
   const manager = ProviderCredentialManager.create(app.db.getDatabase(), {});
   await transport.initialize();
-  await hub.request('providers.create', {
-    params: {
-      providerId: 'anthropic',
-      displayName: 'Anthropic',
-      kind: 'built_in',
-      authType: 'oauth',
-      isEnabled: true,
-    },
-  });
+  const save = ProviderCredentialManager.prototype.storeOAuthTokens;
+  ProviderCredentialManager.prototype.storeOAuthTokens = async () => {
+    throw new Error('Synthetic credential write failure');
+  };
+  try {
+    const submit = await beginLogin();
+    assert.equal((await submit()).success, false);
+    const { providers } = await hub.request<{ providers: { providerId: string; authType: string }[] }>(
+      'providers.list', {}
+    );
+    assert.equal(providers.find((row) => row.providerId === 'anthropic')?.authType, 'none');
+    assert.equal(await manager.hasAnthropicSettingsLogin(), false);
+  } finally {
+    ProviderCredentialManager.prototype.storeOAuthTokens = save;
+  }
+  assert.equal(requests, 1);
+  requests = 0;
 
   const account = async () => (await readAuth())?.user?.email;
 
@@ -309,16 +353,8 @@ async function checkSwitch() {
   assert((await hub.request<ProviderLogoutResponse>('auth.logout', payload)).success);
   assert.equal(await account(), undefined);
   assert.equal((await readAuth())?.isAuthenticated, false);
-  const login = await hub.request<ProviderAuthResponse>('auth.login', payload);
-  assert(login.success && login.authUrl);
-  const state = new URL(login.authUrl).searchParams.get('state');
-  assert(state);
-  assert(
-    (await hub.request<ProviderCallbackRelayResponse>('auth.submitCallback', {
-      ...payload,
-      callbackInput: `replacement-code#${state}`,
-    })).success
-  );
+  const submit = await beginLogin();
+  assert((await submit()).success);
   assert.equal(await account(), 'replacement@example.test');
   assert.equal((await readAuth())?.credentialSource, 'hyperneo');
   const ownedUsage = await readUsage();
