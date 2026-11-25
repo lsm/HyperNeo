@@ -114,20 +114,13 @@ export function createCursorStart(
 
   const admitStart = (request: StartRequest): Gate<StartRequest> =>
     closing
-      ? {
-          reason: reject('unreachable', 'The Cursor CLI driver is shutting down.', true),
-        }
+      ? { reason: reject('unreachable', 'The Cursor CLI driver is shutting down.', true) }
       : { value: request };
 
   const selectFolder = (request: StartRequest): Gate<string> => {
     const selected = selectLocalStartFolder(
       request,
-      {
-        machine,
-        homeDir: homedir(),
-        folderExists: existsSync,
-        makeFolder: mkdirSync,
-      },
+      { machine, homeDir: homedir(), folderExists: existsSync, makeFolder: mkdirSync },
       'Cursor CLI needs a local workspace.'
     );
     if ('reason' in selected) return { reason: { ...selected.reason, notSent: true } };
@@ -159,11 +152,7 @@ export function createCursorStart(
       onRequest: ({ id, method, params }) => {
         if (method === 'session/request_permission')
           transport.sendResponse(id, cursorPermissionOutcome(params));
-        else
-          transport.sendErrorResponse(id, {
-            code: -32601,
-            message: 'Method not supported',
-          });
+        else transport.sendErrorResponse(id, { code: -32601, message: 'Method not supported' });
       },
       onNotification: ({ method, params }) => {
         if (method !== 'session/update') return;
@@ -254,11 +243,7 @@ export function createCursorStart(
                       state: 'observed' as const,
                       transcriptState: 'completed' as const,
                       exchange: [
-                        {
-                          at: work.lastActivityAt,
-                          role: 'user' as const,
-                          text: message,
-                        },
+                        { at: work.lastActivityAt, role: 'user' as const, text: message },
                         ...(reply ? [{ at, role: 'agent' as const, text: reply }] : []),
                       ],
                       exchangeCut: reply.length === MAX_REPLY_CHARS,
@@ -350,9 +335,7 @@ export function createCursorStart(
     const cwd = ref.adapter === adapter ? await readOwnedFolder(ref.id) : undefined;
     return cwd
       ? { value: cwd }
-      : {
-          reason: reject('not_started_by_us', 'Choose a session started by HyperNeo.', true),
-        };
+      : { reason: reject('not_started_by_us', 'Choose a session started by HyperNeo.', true) };
   };
 
   const resume = async (
@@ -379,10 +362,7 @@ export function createCursorStart(
         place: { machine, name: basename(cwd) || cwd },
       };
       launchTurn(opened.value, target, message, receipt);
-      return {
-        ok: true,
-        value: { delivered: false, unconfirmed: true, receipt },
-      };
+      return { ok: true, value: { delivered: false, unconfirmed: true, receipt } };
     } finally {
       reserved.delete(id);
     }
@@ -435,10 +415,7 @@ export function createCursorStart(
       (evidence?.receipt.inputId !== receipt.inputId ||
         evidence.receipt.executionId !== receipt.executionId)
     )
-      return {
-        ok: true,
-        value: { ...work, inputEvidence: { receipt, state: 'unavailable' } },
-      };
+      return { ok: true, value: { ...work, inputEvidence: { receipt, state: 'unavailable' } } };
     return { ok: true, value: work };
   };
 
