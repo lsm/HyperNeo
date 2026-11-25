@@ -21,7 +21,7 @@ Steps 2 and 3 get their own designs after a week of data.
 
 | Fact | Where |
 |---|---|
-| who did it: harness, model, effort, role | `neo_todo_roles`; recorded today for started workers, extended here |
+| who did it: harness, model, effort, role | `neo_todo_sessions`, `neo_todo_roles`; recorded today |
 | kind of work | `named.workKind`; exists, rarely filled |
 | estimated size | new core fact `estimate` |
 | tokens, rounds, context, time | new `usage` on `work_turns` |
@@ -50,12 +50,10 @@ routes or line rules, line selection is unchanged.
 with the result: `estimate: {files, lines, testLines, by}` for a kind that changes files,
 `{steps, by}` for the others. `NeoWorkKind` says which. A review needs none: its size is the
 size of the pull request, known before it starts. `by` is `design` or `neo`.
-It is refused once the todo has a row in `neo_todo_roles` or a start attempt has been
-recorded in `work_delivery_inputs` before calling the driver. Ensure every todo start has
-that record. It survives a retry, adoption and move,
-including an uncertain start, so the estimate cannot be fitted to work already done. The
-estimate check and write are one atomic step, serialized with recording the start attempt. The
-start time cannot be the test: a retry or a move to another worker clears it. It is asked
+It is refused once the todo has a row in `work_delivery_inputs`, which is written before the
+driver is called and is kept through a retry, a move and an uncertain start, or once it is
+bound to an adopted session. The start time cannot be the test: a retry or a move clears it.
+The check and the write are one statement, so a start cannot come between them. It is asked
 together with the kind and needs no model call of its own.
 
 **Where a good estimate comes from.** The change plan of a design gives every PR a line
@@ -99,27 +97,21 @@ This differs from `work_turns.complete`, which describes whether the turn was fu
 
 **Which todo a turn belongs to** is not stored with the turn, because a turn can be recorded
 after its todo has moved and the binding in `neo_todo_sessions` is gone (`reopen`, redispatch,
-retry). It is read from a history that those do not touch. `neo_todo_roles` keeps one row per
-todo, worker and delivery, and removes one only when the delivery it was written for failed. Today
-only started and reused workers get a row; 225 of 997 bound todos of one week have none. So:
+retry). It is read from `work_delivery_inputs`, which those do not touch: one row for every
+start and send, with the todo, the worker and the time. Nothing new is written. Coding already
+reads it for pull requests (`codingTurnTodos`); that decision moves to core with two more steps:
 
-- A `send`, an `adopt` and a follow-up to an earlier todo add a row too, using the worker's
-  assigned role for that todo. A reviewer follow-up keeps the reviewer role; a new ordinary
-  worker uses `do`. Add no row when the worker's newest row already has that todo and role.
-- A row for a known worker is written before the message is delivered, as `claimTodoWorker`
-  does. A failed delivery removes only the row it wrote; if it reused an existing row,
-  that row stays. The delivery keeps enough information to make the same decision after
-  a crash and retry.
-- The daemon assigns a monotonic sequence to binding rows and start attempts. Each start
-  attempt gets its sequence before the driver is called. An uncertain start recovered later
-  uses its original attempt's sequence, even if another todo adopted the worker in between.
-- Attribute a turn only when daemon-side evidence, such as a delivery receipt or session id
-  tied to the binding, proves which binding it belongs to. Use the sequence to order bindings;
-  never compare harness-log timestamps with daemon timestamps. A turn with no proven binding,
-  or evidence of more than one todo in the turn, is unattributed and counted as uncertain.
-  Do not infer that a todo started an existing session merely because it was later adopted.
+1. The todo whose delivery receipt names an input of the turn. Two such todos: none.
+2. Otherwise the todo of the worker's newest delivered row accepted before the turn started,
+   or of an adoption (`boundAt`) if that is newer.
+3. Before any of those, the todo that started the worker (`work_started_sessions`). Turns of an
+   adopted session before its adoption have none.
 
-When a turn is recorded no longer matters. A reviewer's turns count under its own role.
+Measured on 3677 turns of one week: 962 have a receipt, 3 of them of two todos. For the other
+959 the time rule alone gives the same todo 954 times. All 2715 without a receipt get a todo.
+All 987 started or sent todos of that week have a row. The worker and the daemon run on one
+machine and share its clock. The role is the worker's newest one for that todo in
+`neo_todo_roles`, else `do`.
 
 | Adapter | Source |
 |---|---|
@@ -146,7 +138,7 @@ A new optional pack hook returns, for a list of todos, `{files, lines, testLines
 ## 4. Reading
 
 One read operation, `neo.todo.accounts {since, until}`, returns the rows and the share of
-recorded worker turns in that interval with no proven todo. Neo may call it.
+recorded worker turns in that interval with no todo. Neo may call it.
 Step 2 is its first consumer; until then it proves that the records are complete.
 
 ## Not in this step
@@ -159,24 +151,18 @@ context a todo adds by itself (`peak - first`) is recorded, to see work that was
 
 Six PRs from `dev`, in order, failing tests first. System map read for the planned files.
 
-1. **Binding history.** Record each todo start in `work_delivery_inputs` before calling the
-   driver. Add the rows for `send`, `adopt` and follow-ups, and the pure decision from rows and
-   turns to a todo. Tests: a turn recorded after `reopen`, after a redispatch, after a
-   retry and after a restart keeps its todo; a failed delivery removes only its own row;
-   a failed repeated follow-up preserves the earlier row, including after restart; a repeated
-   follow-up adds none; a turn with evidence of multiple todos is unattributed; a reviewer
-   follow-up preserves its role for attribution, claim and unclaim; recovery after a later
-   adoption uses the original start attempt's sequence; unproven turns stay unattributed;
-   skewed or backwards timestamps do not change attribution.
+1. **Turn to todo.** The decision in core; coding uses it and keeps its stricter reading of an
+   uncertain turn. Tests: a turn recorded after `reopen`, a redispatch, a retry and a restart
+   keeps its todo; a failed delivery gives nothing; a receipt beats the time; two todos in one
+   turn give none; a started worker's first turn, which begins before its receipt; an adopted
+   session's earlier turns have none; a reviewer keeps its role.
    Estimate: 5 files, 90 lines, 180 test lines.
 2. **Kind and estimate.** Core kinds, the checks on the two operations, the fact, the Neo tool
    text, and the estimate line in `AGENTS.md` for designs. Tests: missing or unknown kind is
    refused; a pack's kind is accepted only while the pack is on; an estimate after the first
    worker is refused, for `start`, `send` and `adopt`, also when a retry or a move cleared the
-   start; an uncertain start freezes the estimate through restart, adoption and move; concurrent
-   estimate edits and start attempts cannot commit an edit after the attempt is recorded; a
-   daemon-made todo without one is accepted; a todo with a kind matches the saved
-   rules of that kind, and one without keeps today's fallbacks.
+   start and after an uncertain start; a daemon-made todo without one is accepted; a todo with
+   a kind matches the saved rules of that kind, and one without keeps today's fallbacks.
    Estimate: 8 files, 130 lines, 150 test lines.
 3. **Turn usage, Codex, and the column.** Migration and `usage` on `WorkTurnFact`. Tests on real
    rollout shapes: cached input is not counted twice; a turn read in two parts has one total;
@@ -196,13 +182,12 @@ Six PRs from `dev`, in order, failing tests first. System map read for the plann
 **Done when**, one week after the last PR: at least 95% of finished todos that had a worker of
 the three adapters have kind and an estimate when required (or the reviewed PR's size for a
 review); at least 95% have complete usage. Turns with omitted subagent cost count as incomplete,
-not zero. The read reports the share of turns that are unattributed; coverage of the 95%
-target is measured, not assumed. For 20 todos with complete usage, picked at random, the
-totals match the harness's own records.
+not zero. The share of unattributed turns is below 5%. For 20 todos with complete usage, picked
+at random, the totals match the harness's own records.
 
 ## Limits
 
-- An uncertain start with no proven worker leaves its turns unattributed and its usage missing.
-- A turn with no proven binding, or shared by two todos, has no todo. Its usage is uncertain.
+- A turn of two todos has none, and so has an uncertain start whose worker was never found. A
+  turn the human starts in a worker counts for that worker's newest todo.
 - Work Neo does in its own conversation has no todo and no account.
 - A worker on another daemon is recorded by that daemon.
