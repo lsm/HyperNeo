@@ -13,6 +13,7 @@ import {
   replyMessageBodyLength,
   REPLY_ORIGIN_MAX,
   withReplyLine,
+  withReplySender,
 } from '../messaging/session-reply.ts';
 import {
   defineOperation,
@@ -979,13 +980,14 @@ export async function reuseIdleWorker(
         continue;
       }
     }
+    const addressed = withReplySender(input.message, from, `${adapter.id}:${work.ref.id}`);
     const message = input.provenance
-      ? withWorkerProvenance(input.message, {
+      ? withWorkerProvenance(addressed, {
           model: identity?.model ?? null,
           effort: identity?.effort ?? null,
           harness: adapter.id,
         })
-      : input.message;
+      : addressed;
     const claimed = deps.claimWorker
       ? await deps
           .claimWorker(

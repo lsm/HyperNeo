@@ -4,6 +4,7 @@ import {
   createSendMessageRedirectHook,
   replyMessageBodyLength,
   withReplyLine,
+  withReplySender,
 } from '../../../../src/lib/messaging/session-reply';
 
 const hook = createSendMessageRedirectHook((id) => id === 'neo:root');
@@ -61,6 +62,13 @@ describe('external CLI reply arguments', () => {
       "hyperneo send neo:root --from 'copilot-cli:it'\\''s' --kind <kind> \"<text>\""
     );
     expect(replyMessageBodyLength(message)).toBe('Go.'.length);
+  });
+
+  test('swaps a start reply line for one that names the worker', () => {
+    const start = withReplyLine('Go.', 'session:neo%3Aroot', 'cli');
+    const sent = withReplySender(start, 'session:neo%3Aroot', 'antigravity-cli:w1');
+    expect(sent).toBe(withReplyLine('Go.', 'session:neo%3Aroot', 'cli', 'antigravity-cli:w1'));
+    expect(withReplySender('Human.', 'session:neo%3Aroot', 'antigravity-cli:w1')).toBe('Human.');
   });
 
   test('a quoted template is not mistaken for an actionable reply line to the real sender', () => {

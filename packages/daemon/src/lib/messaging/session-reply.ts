@@ -37,6 +37,13 @@ export function withReplyLine(
   return message.includes(line) ? message : `${message}\n\n${line}`;
 }
 
+export function withReplySender(message: string, from: string, sender: string): string {
+  const body = replyMessageBodyLength(message);
+  return body === message.length
+    ? message
+    : withReplyLine(message.slice(0, body), from, 'cli', sender);
+}
+
 function shellArgument(value: string): string {
   return /^[A-Za-z0-9_:./%-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
 }

@@ -49,6 +49,7 @@ export function planSessionCommand(
   sender: string
 ): { value: { name: string; input: unknown } } | { reason: string } {
   const [command, target, ...rest] = args;
+  if (command === 'send' && rest.includes('--from')) return { reason: SESSION_CLI_USAGE };
   if (command === 'send' && target && rest[0] === '--kind') {
     const kind = WORKER_REPORT_KINDS.find((value) => value === rest[1]);
     const text = rest.slice(2).join(' ');
