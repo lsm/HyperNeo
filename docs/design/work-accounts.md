@@ -99,9 +99,12 @@ only started and reused workers get a row; 225 of 997 bound todos of one week ha
   worker's newest row is already that todo's.
 - A row for a known worker is written before the message is delivered, as `claimTodoWorker`
   does. After a crash in between, the delivery is retried or fails and removes the row.
-- A turn belongs to the todo of the worker's newest row at or before the turn's start. A new
-  worker's first turn can start before its first row is written, so with none it is the first
-  row. With another todo's row inside the turn it belongs to no todo.
+- A turn belongs to the todo of the worker's newest row at or before the turn's start.
+  With another todo's row inside the turn it belongs to no todo.
+- A started worker's first turn can begin before its first row is written. Only then does a
+  turn before every row belong to the first row's todo: when `work_started_sessions` says that
+  todo started the worker. Turns of an existing session before it was adopted or sent to
+  belong to no todo.
 
 When a turn is recorded no longer matters, so there is no order to guarantee. A reviewer's
 turns count for the todo under its own role.
@@ -143,18 +146,19 @@ context a todo adds by itself (`peak - first`) is recorded, to see work that was
 
 Six PRs from `dev`, in order, failing tests first. System map read for the planned files.
 
-1. **Kind and estimate.** Core kinds, the checks on the two operations, the fact, the Neo tool
-   text, and the estimate line in `AGENTS.md` for designs. Tests: missing or unknown kind is
-   refused; a pack's kind is accepted only while the pack is on; an estimate after the first
-   worker is refused, also when a retry or a move cleared the start; a daemon-made todo without
-   one is accepted.
-   Estimate: 8 files, 130 lines, 150 test lines.
-2. **Binding history.** The rows for `send`, `adopt` and follow-ups, and the pure decision from
+1. **Binding history.** The rows for `send`, `adopt` and follow-ups, and the pure decision from
    rows and turns to a todo. Tests: a turn recorded after `reopen`, after a redispatch, after a
    retry and after a restart keeps its todo; a failed delivery leaves no row; a repeated
-   follow-up adds none; a row inside a turn gives no todo; role lookups for reviewers are
-   unchanged.
+   follow-up adds none; another todo's row inside a turn gives no todo; a started worker's turn
+   before its row has its todo, an adopted or sent-to session's earlier turn has none; role
+   lookups for reviewers are unchanged.
    Estimate: 5 files, 90 lines, 180 test lines.
+2. **Kind and estimate.** Core kinds, the checks on the two operations, the fact, the Neo tool
+   text, and the estimate line in `AGENTS.md` for designs. Tests: missing or unknown kind is
+   refused; a pack's kind is accepted only while the pack is on; an estimate after the first
+   worker is refused, for `start`, `send` and `adopt`, also when a retry or a move cleared the
+   start; a daemon-made todo without one is accepted.
+   Estimate: 8 files, 130 lines, 150 test lines.
 3. **Turn usage, Codex, and the column.** Migration and `usage` on `WorkTurnFact`. Tests on real
    rollout shapes: cached input is not counted twice; a turn read in two parts has one total;
    an old row has no usage.
