@@ -149,7 +149,12 @@ export class RemoteDaemonRegistry {
   }
 
   async probe(url: string): Promise<void> {
-    const attempt = this.createAttempt(url, null);
+    const credential =
+      [...this.urls]
+        .filter(([, attached]) => attached === url)
+        .map(([daemonId]) => this.secrets?.credentialFor(daemonId, url) ?? null)
+        .find((saved) => saved !== null) ?? null;
+    const attempt = this.createAttempt(url, credential);
     try {
       const connection = await attempt.connection;
       await connection.hub.request(

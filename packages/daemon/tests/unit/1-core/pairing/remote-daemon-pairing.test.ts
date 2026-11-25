@@ -46,6 +46,13 @@ async function startPairableDaemon() {
       resultSchema: z.object({ kind: z.string().nullable() }),
       execute: async (_input, caller: OperationCaller) => ({ kind: caller.device?.kind ?? null }),
     }),
+    defineOperation({
+      name: 'operations.list',
+      description: 'Answer the reachability probe',
+      inputSchema: z.object({}),
+      resultSchema: z.object({}),
+      execute: async () => ({}),
+    }),
   ]);
   const router = new MessageHubRouter({
     logger: { error: () => {}, warn: () => {}, log: () => {} },
@@ -158,6 +165,21 @@ describe('attaching a daemon with a pairing code', () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
     expect(remote.clientCount()).toBe(0);
     await expect(daemons.invoke('b', 'work.status', {})).rejects.toThrow();
+  });
+
+  test('testing an attached address uses its saved pairing credential', async () => {
+    await expect(daemons.probe(remote.url)).rejects.toThrow();
+    const made = remote.devices.createCode('daemon', null, true, Date.now());
+    await attach({ code: made.code });
+    await expect(daemons.probe(remote.url)).resolves.toBeUndefined();
+  });
+
+  test('testing uses a saved credential even when another attachment shares the address', async () => {
+    await invokeOperation(operations, 'daemon.attach', { daemonId: 'a', url: remote.url }, human);
+    const made = remote.devices.createCode('daemon', null, true, Date.now());
+    await attach({ code: made.code });
+    await expect(daemons.probe(remote.url)).resolves.toBeUndefined();
+    daemons.forget('a');
   });
 
   test('a wrong code is refused and leaves nothing attached or stored', async () => {
