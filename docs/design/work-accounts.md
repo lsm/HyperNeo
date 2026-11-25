@@ -100,7 +100,7 @@ This differs from `work_turns.complete`, which describes whether the turn was fu
 **Which todo a turn belongs to** is not stored with the turn, because a turn can be recorded
 after its todo has moved and the binding in `neo_todo_sessions` is gone (`reopen`, redispatch,
 retry). It is read from a history that those do not touch. `neo_todo_roles` keeps one row per
-todo, worker and time, and removes one only when the delivery it was written for failed. Today
+todo, worker and delivery, and removes one only when the delivery it was written for failed. Today
 only started and reused workers get a row; 225 of 997 bound todos of one week have none. So:
 
 - A `send`, an `adopt` and a follow-up to an earlier todo add a row too, using the worker's
@@ -110,18 +110,16 @@ only started and reused workers get a row; 225 of 997 bound todos of one week ha
   does. A failed delivery removes only the row it wrote; if it reused an existing row,
   that row stays. The delivery keeps enough information to make the same decision after
   a crash and retry.
-- A turn belongs to the todo of the worker's newest row at or before the turn's start.
-  With another todo's row inside the turn it belongs to no todo.
-- A started worker's first turn can begin before its first row is written. Only then does a
-  turn before every row belong to the first row's todo: when `work_started_sessions` says that
-  todo started the worker. Turns of an existing session before it was adopted or sent to
-  belong to no todo.
-- An uncertain start may have opened a worker without returning its ref. If recovery proves
-  which worker the todo started, record that start and its role so its earlier turns can be
-  attributed. Do not infer that an existing session was started by the todo.
+- The daemon assigns a monotonic sequence to binding rows and start attempts. Each start
+  attempt gets its sequence before the driver is called. An uncertain start recovered later
+  uses its original attempt's sequence, even if another todo adopted the worker in between.
+- Attribute a turn only when daemon-side evidence, such as a delivery receipt or session id
+  tied to the binding, proves which binding it belongs to. Use the sequence to order bindings;
+  never compare harness-log timestamps with daemon timestamps. A turn with no proven binding,
+  or evidence of more than one todo in the turn, is unattributed and counted as uncertain.
+  Do not infer that a todo started an existing session merely because it was later adopted.
 
-When a turn is recorded no longer matters, so there is no order to guarantee. A reviewer's
-turns count for the todo under its own role.
+When a turn is recorded no longer matters. A reviewer's turns count under its own role.
 
 | Adapter | Source |
 |---|---|
@@ -147,7 +145,8 @@ A new optional pack hook returns, for a list of todos, `{files, lines, testLines
 
 ## 4. Reading
 
-One read operation, `neo.todo.accounts {since, until}`, returns the rows. Neo may call it.
+One read operation, `neo.todo.accounts {since, until}`, returns the rows and the share of
+recorded worker turns in that interval with no proven todo. Neo may call it.
 Step 2 is its first consumer; until then it proves that the records are complete.
 
 ## Not in this step
@@ -165,11 +164,10 @@ Six PRs from `dev`, in order, failing tests first. System map read for the plann
    turns to a todo. Tests: a turn recorded after `reopen`, after a redispatch, after a
    retry and after a restart keeps its todo; a failed delivery removes only its own row;
    a failed repeated follow-up preserves the earlier row, including after restart; a repeated
-   follow-up adds none; another todo's row inside a turn gives no todo; a started worker's turn
-   before its row has its todo, an adopted or sent-to session's earlier turn has none; a
-   reviewer follow-up preserves its role for attribution, claim and unclaim; an uncertain start
-   recovered after restart records a proven worker, while an unproven session keeps its earlier
-   turns unattributed.
+   follow-up adds none; a turn with evidence of multiple todos is unattributed; a reviewer
+   follow-up preserves its role for attribution, claim and unclaim; recovery after a later
+   adoption uses the original start attempt's sequence; unproven turns stay unattributed;
+   skewed or backwards timestamps do not change attribution.
    Estimate: 5 files, 90 lines, 180 test lines.
 2. **Kind and estimate.** Core kinds, the checks on the two operations, the fact, the Neo tool
    text, and the estimate line in `AGENTS.md` for designs. Tests: missing or unknown kind is
@@ -198,14 +196,13 @@ Six PRs from `dev`, in order, failing tests first. System map read for the plann
 **Done when**, one week after the last PR: at least 95% of finished todos that had a worker of
 the three adapters have kind and an estimate when required (or the reviewed PR's size for a
 review); at least 95% have complete usage. Turns with omitted subagent cost count as incomplete,
-not zero. For 20 todos with complete usage, picked at random, the totals match the harness's
-own records.
+not zero. The read reports the share of turns that are unattributed; coverage of the 95%
+target is measured, not assumed. For 20 todos with complete usage, picked at random, the
+totals match the harness's own records.
 
 ## Limits
 
 - An uncertain start with no proven worker leaves its turns unattributed and its usage missing.
-- A turn shared by two todos of one worker has no todo. A notice about an earlier todo, sent
-  after its worker took another, counts for the newer one. Both get rare once a new todo gets
-  a clean worker.
+- A turn with no proven binding, or shared by two todos, has no todo. Its usage is uncertain.
 - Work Neo does in its own conversation has no todo and no account.
 - A worker on another daemon is recorded by that daemon.
