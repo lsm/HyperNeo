@@ -531,13 +531,13 @@ describe('AnthropicProvider', () => {
       expect(config.envVars.ANTHROPIC_API_KEY).toBe('');
     });
 
-    it('should leave ambient env untouched when no credential is stored', () => {
+    it('selects the inherited subscription when no credential is stored', () => {
       process.env.CLAUDE_CODE_OAUTH_TOKEN = 'ambient-oauth-token';
       const providerWithoutStored = new AnthropicProvider();
 
       const config = providerWithoutStored.buildSdkConfig('default');
 
-      expect(config.envVars).toEqual({});
+      expect(config.envVars.CLAUDE_CODE_OAUTH_TOKEN).toBe('ambient-oauth-token');
     });
   });
 

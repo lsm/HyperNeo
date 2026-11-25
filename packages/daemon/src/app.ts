@@ -132,6 +132,7 @@ import { KeychainUnavailableError } from './lib/credentials/credential-store.js'
 import { sameCredentialIdentity } from './lib/credentials/credential-identity.js';
 import { stripPersistedDiscovery } from './lib/providers/discovery-refresh-pipeline.js';
 import { syncAllProviders } from './lib/providers/provider-sync.js';
+import { AnthropicProvider } from './lib/providers/anthropic-provider.ts';
 import {
   clearProviderFailureRecords,
   subscribeProviderFailureChanges,
@@ -309,6 +310,20 @@ export async function applyStoredProviderCredentials(
 ): Promise<void> {
   for (const provider of providers) {
     try {
+      if (provider instanceof AnthropicProvider) {
+        if (
+          db.providers.getProviderByProviderId(provider.id)?.authType === 'oauth' ||
+          (await credentialManager.hasAnthropicSettingsLogin())
+        ) {
+          provider.requireOwnLogin();
+        }
+        const version = provider.credentialVersion;
+        const credentials = await credentialManager.getCredentials(provider.id);
+        if (credentials && version === provider.credentialVersion && !provider.getCredentials()) {
+          provider.setCredentials(credentials);
+        }
+        continue;
+      }
       const providerCredentials = await provider.getCredentials?.();
       if (providerCredentials?.type === 'oauth' || providerCredentials?.type === 'api_key') {
         await runReconcilePersistedDiscovery({
@@ -690,10 +705,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       logError('[Daemon] Provider sync failed (non-fatal):', err);
     }
 
-    const authStatus = await authManager.getAuthStatus();
     const anthropicProvider = providerRegistry.get('anthropic');
-    const hasAnthropicAuth =
-      authStatus.isAuthenticated || (anthropicProvider?.isAvailable() ?? false);
+    const hasAnthropicAuth = anthropicProvider?.isAvailable() ?? false;
 
     if (hasAnthropicAuth) {
       void import('./lib/model-service.ts')
@@ -943,32 +956,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     let gitHubService: GitHubService | null = null;
     const shouldEnableGitHub = config.githubWebhookSecret || getGitHubPollingIntervalSeconds() > 0;
 
-    if (hasAnthropicAuth) {
-      const storedCredentials = await anthropicProvider?.getCredentials?.();
-      const apiKey =
-        config.anthropicApiKey ||
-        config.claudeCodeOAuthToken ||
-        config.anthropicAuthToken ||
-        (storedCredentials?.type === 'api_key' ? storedCredentials.apiKey : undefined) ||
-        (storedCredentials?.type === 'oauth' ? storedCredentials.accessToken : undefined);
-      const apiKeyType: 'api_key' | 'oauth' | undefined =
-        storedCredentials?.type === 'api_key'
-          ? 'api_key'
-          : storedCredentials?.type === 'oauth'
-            ? 'oauth'
-            : apiKey === config.claudeCodeOAuthToken || apiKey === config.anthropicAuthToken
-              ? 'oauth'
-              : apiKey === config.anthropicApiKey
-                ? 'api_key'
-                : undefined;
-
-      if (apiKey) {
+    if (anthropicProvider instanceof AnthropicProvider) {
+      const sdkEnv = () =>
+        anthropicProvider.isAvailable() ? anthropicProvider.buildSdkConfig().envVars : null;
+      if (hasAnthropicAuth) {
         gitHubService = createGitHubService({
           db,
           internalEventBus,
           config,
-          apiKey,
-          apiKeyType,
+          sdkEnv,
           githubToken: process.env.GITHUB_TOKEN,
           collectPollPage: collectGitHubPollPage,
           jobQueue,

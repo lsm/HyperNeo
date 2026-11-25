@@ -103,6 +103,31 @@ describe('AnthropicProvider.getUsage', () => {
     expect(calls.usage).toBe(0);
   });
 
+  it('loads subscription usage from the same system login as SDK launches until Settings takes ownership', async () => {
+    const system = 'synthetic-system-subscription';
+    const readings: string[] = [];
+    mockSdk(
+      async () => controlResponse(),
+      (env) => {
+        readings.push(
+          env.CLAUDE_CODE_OAUTH_TOKEN === system
+            ? 'system'
+            : env.CLAUDE_CODE_OAUTH_TOKEN === subscription.accessToken
+              ? 'settings'
+              : 'unexpected'
+        );
+      }
+    );
+    const instance = new AnthropicProvider({ CLAUDE_CODE_OAUTH_TOKEN: system });
+    expect(instance.buildSdkConfig().envVars.CLAUDE_CODE_OAUTH_TOKEN === system).toBe(true);
+    expect((await instance.getUsage()).supported).toBe(true);
+    instance.setCredentials(subscription);
+    expect((await instance.getUsage()).supported).toBe(true);
+    await instance.logout();
+    expect((await instance.getUsage()).supported).toBe(false);
+    expect(readings).toEqual(['system', 'settings']);
+  });
+
   it('uses the configured subscription when an inherited bearer is present', async () => {
     let usesSelectedCredential = false;
     let freshProfile = false;

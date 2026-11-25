@@ -39,11 +39,16 @@ const logger = new Logger('anthropic-provider');
 
 const OAUTH_FLOW_TIMEOUT_MS = 5 * 60 * 1000;
 const USAGE_QUERY_TIMEOUT_MS = 20_000;
+const ACCOUNT_QUERY_TIMEOUT_MS = 5_000;
 const OAUTH_REFRESH_WINDOW_MS = 10 * 60 * 1000;
 
-const STORED_CREDENTIAL_ENV_KEYS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'] as const;
+const CREDENTIAL_ENV_KEYS = [
+  'ANTHROPIC_API_KEY',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'ANTHROPIC_AUTH_TOKEN',
+] as const;
 
-type StoredCredentialEnvKey = (typeof STORED_CREDENTIAL_ENV_KEYS)[number];
+type CredentialEnvKey = (typeof CREDENTIAL_ENV_KEYS)[number];
 
 interface SdkModelRow {
   value: string;
@@ -84,7 +89,9 @@ export class AnthropicProvider implements Provider {
   private credentials: ProviderCredentials | null = null;
   private requiresOwnLogin = false;
   private credentialsVersion = 0;
+  private loginGeneration = 0;
   private credentialSignature: string | undefined;
+  private inheritedAccountEmail: Promise<string | undefined> | undefined;
   private readonly credentialListeners = new Set<
     (credentials: ProviderCredentials) => void | Promise<void>
   >();
@@ -93,6 +100,8 @@ export class AnthropicProvider implements Provider {
     verifier: string;
     authUrl: string;
     completed: boolean;
+    submitting: boolean;
+    committing: boolean;
     finish: ((error?: Error) => void) | null;
   } | null = null;
 
@@ -104,9 +113,14 @@ export class AnthropicProvider implements Provider {
 
   setCredentials(credentials: ProviderCredentials): void {
     if (credentials.type === 'oauth') this.requireOwnLogin();
+    this.applyCredentials(credentials, true);
+  }
+
+  private applyCredentials(credentials: ProviderCredentials, startsLogin = false): void {
     const signature = JSON.stringify(credentials);
     if (signature !== this.credentialSignature) {
       this.credentialsVersion++;
+      if (startsLogin) this.loginGeneration++;
       this.clearModelCache();
     }
     this.credentialSignature = signature;
@@ -114,11 +128,27 @@ export class AnthropicProvider implements Provider {
   }
 
   requireOwnLogin(): void {
+    if (this.requiresOwnLogin) return;
     this.requiresOwnLogin = true;
+    this.loginGeneration++;
+    this.credentialsVersion++;
+    this.clearModelCache();
   }
 
   getCredentials(): ProviderCredentials | null {
     return this.credentials;
+  }
+
+  get credentialVersion(): number {
+    return this.credentialsVersion;
+  }
+
+  get sdkLoginGeneration(): number {
+    return this.loginGeneration;
+  }
+
+  get ownsLogin(): boolean {
+    return this.requiresOwnLogin;
   }
 
   onCredentialsChanged(
@@ -154,6 +184,8 @@ export class AnthropicProvider implements Provider {
         redirectUri: CLAUDE_SUBSCRIPTION_OAUTH_CONFIG.manualRedirectUrl,
       }),
       completed: false,
+      submitting: false,
+      committing: false,
       finish: null as ((error?: Error) => void) | null,
     };
     this.activeOAuthFlow = flow;
@@ -174,7 +206,7 @@ export class AnthropicProvider implements Provider {
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        flow.finish?.(new Error('OAuth flow timed out'));
+        if (!flow.committing) flow.finish?.(new Error('OAuth flow timed out'));
       }, OAUTH_FLOW_TIMEOUT_MS);
       flow.finish = (error?: Error) => {
         clearTimeout(timer);
@@ -193,7 +225,11 @@ export class AnthropicProvider implements Provider {
   }
 
   async submitOAuthCallback(
-    callbackInput: string
+    callbackInput: string,
+    persist?: {
+      write: (credentials: ProviderCredentials) => Promise<void>;
+      serialize: (commit: () => Promise<boolean>) => Promise<boolean>;
+    }
   ): Promise<{ ok: true } | { ok: false; error: string }> {
     const flow = this.activeOAuthFlow;
     if (!flow || flow.completed) {
@@ -202,6 +238,7 @@ export class AnthropicProvider implements Provider {
         error: 'No active OAuth login flow. Start the login again and paste the code.',
       };
     }
+    if (flow.submitting) return { ok: false, error: 'Login is already being completed.' };
     const parsed = parseClaudeSubscriptionCallback(callbackInput);
     if (!parsed) {
       return {
@@ -220,6 +257,7 @@ export class AnthropicProvider implements Provider {
           'The pasted code does not match the current login flow. Restart the login and paste the new code.',
       };
     }
+    flow.submitting = true;
     try {
       const tokens = await exchangeClaudeSubscriptionCode({
         code: parsed.code,
@@ -228,12 +266,19 @@ export class AnthropicProvider implements Provider {
         redirectUri: CLAUDE_SUBSCRIPTION_OAUTH_CONFIG.manualRedirectUrl,
         fetchImpl: this.fetchImpl,
       });
-      if (this.activeOAuthFlow !== flow) return { ok: false, error: 'Login was cancelled.' };
       const credentials = this.toClaudeSubscriptionCredentials(tokens, null);
-      this.setCredentials(credentials);
-      this.notifyCredentialsChanged(credentials);
-      flow.finish?.();
-      return { ok: true };
+      const commit = async () => {
+        if (this.activeOAuthFlow !== flow) return false;
+        flow.committing = true;
+        await persist?.write(credentials);
+        this.setCredentials(credentials);
+        this.notifyCredentialsChanged(credentials);
+        flow.finish?.();
+        return true;
+      };
+      return (persist ? await persist.serialize(commit) : await commit())
+        ? { ok: true }
+        : { ok: false, error: 'Login was cancelled.' };
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Token exchange failed';
       flow.finish?.(error instanceof Error ? error : new Error(message));
@@ -272,7 +317,7 @@ export class AnthropicProvider implements Provider {
       const outcome = result.definitive ? 'definitive' : 'transient';
       return result.oauthError ? { outcome, oauthError: result.oauthError } : outcome;
     }
-    this.setCredentials(this.toClaudeSubscriptionCredentials(result.token, credentials));
+    this.applyCredentials(this.toClaudeSubscriptionCredentials(result.token, credentials));
     return 'refreshed';
   }
 
@@ -282,6 +327,7 @@ export class AnthropicProvider implements Provider {
     if (this.credentials !== null) {
       this.credentials = null;
       this.credentialSignature = undefined;
+      this.loginGeneration++;
       this.credentialsVersion++;
       this.clearModelCache();
     }
@@ -291,7 +337,7 @@ export class AnthropicProvider implements Provider {
     return !!this.getApiKey();
   }
 
-  private storedCredentialEnvVar(): { key: StoredCredentialEnvKey; value: string } | null {
+  private selectedCredential(): { key: CredentialEnvKey; value: string } | null {
     const credentials = this.credentials;
     if (credentials?.type === 'api_key' && credentials.apiKey) {
       return { key: 'ANTHROPIC_API_KEY', value: credentials.apiKey };
@@ -299,39 +345,62 @@ export class AnthropicProvider implements Provider {
     if (credentials?.type === 'oauth' && credentials.accessToken) {
       return { key: 'CLAUDE_CODE_OAUTH_TOKEN', value: credentials.accessToken };
     }
+    if (!this.requiresOwnLogin) {
+      for (const key of CREDENTIAL_ENV_KEYS) {
+        const value = this.env[key];
+        if (value) return { key, value };
+      }
+    }
     return null;
   }
 
   getApiKey(): string | undefined {
-    const stored = this.storedCredentialEnvVar()?.value;
-    if (stored || this.requiresOwnLogin) return stored;
-    return (
-      this.env.ANTHROPIC_API_KEY ||
-      this.env.CLAUDE_CODE_OAUTH_TOKEN ||
-      this.env.ANTHROPIC_AUTH_TOKEN
-    );
+    return this.selectedCredential()?.value;
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
+    const version = this.credentialsVersion;
+    const inherited =
+      !this.requiresOwnLogin &&
+      !this.credentials &&
+      this.selectedCredential()?.key === 'CLAUDE_CODE_OAUTH_TOKEN';
+    const lookup = inherited
+      ? (this.inheritedAccountEmail ??= this.readControlQuery(async (query) => {
+          const account = await query.accountInfo();
+          return account.email;
+        }, ACCOUNT_QUERY_TIMEOUT_MS).catch(() => undefined))
+      : undefined;
+    const inheritedEmail = await lookup;
+    if (!inheritedEmail && this.inheritedAccountEmail === lookup) {
+      this.inheritedAccountEmail = undefined;
+    }
     return providerEnvCoordinator.runWithLease('anthropic.isAvailable', () => {
-      const apiKey = this.getApiKey();
+      const selected = this.selectedCredential();
       const credentials = this.credentials;
       const expiresAt = credentials?.type === 'oauth' ? credentials.expiresAt : undefined;
       const needsRefresh =
         typeof expiresAt === 'number' && expiresAt - Date.now() <= OAUTH_REFRESH_WINDOW_MS;
-      const account = readAccountEmail(credentials);
+      const account =
+        readAccountEmail(credentials) ??
+        (version === this.credentialsVersion ? inheritedEmail : undefined);
       return applyRecordedFailureToAuthStatus(this.id, {
-        isAuthenticated: !!apiKey,
-        method: credentials?.type ?? 'api_key',
+        isAuthenticated: !!selected,
+        method:
+          credentials?.type ??
+          (selected?.key === 'CLAUDE_CODE_OAUTH_TOKEN' || this.requiresOwnLogin
+            ? 'oauth'
+            : 'api_key'),
         credentialSource:
-          credentials || this.requiresOwnLogin ? 'hyperneo' : apiKey ? 'inherited' : undefined,
+          credentials || this.requiresOwnLogin ? 'hyperneo' : selected ? 'inherited' : undefined,
         credentialVersion: this.credentialsVersion,
         expiresAt,
         needsRefresh: needsRefresh || undefined,
         user: account ? { email: account } : undefined,
-        error: apiKey
+        error: selected
           ? undefined
-          : 'Set ANTHROPIC_API_KEY, inherit Claude Code credentials, or log in with a Claude subscription.',
+          : this.requiresOwnLogin
+            ? 'Sign in to Anthropic in HyperNeo Settings.'
+            : 'Set ANTHROPIC_API_KEY, inherit Claude Code credentials, or log in with a Claude subscription.',
       });
     });
   }
@@ -372,8 +441,10 @@ export class AnthropicProvider implements Provider {
 
   async getUsage(): Promise<ProviderUsageResult> {
     const version = this.credentialsVersion;
-    if (this.storedCredentialEnvVar()?.key === 'CLAUDE_CODE_OAUTH_TOKEN') {
-      const response = await this.readControlUsage().catch(() => null);
+    if (this.selectedCredential()?.key === 'CLAUDE_CODE_OAUTH_TOKEN') {
+      const response = (await this.readControlQuery((query) =>
+        query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true })
+      ).catch(() => null)) as SDKControlGetUsageResponse | null;
       const windows = usageWindowsFromControl(response);
       if (windows && version === this.credentialsVersion) {
         return { supported: true, provider: this.id, windows };
@@ -382,7 +453,12 @@ export class AnthropicProvider implements Provider {
     return { supported: false, provider: this.id, reason: 'not_supported' };
   }
 
-  private async readControlUsage(): Promise<SDKControlGetUsageResponse> {
+  private async readControlQuery<T>(
+    read: (
+      query: ReturnType<typeof import('@anthropic-ai/claude-agent-sdk')['query']>
+    ) => Promise<T>,
+    timeout = USAGE_QUERY_TIMEOUT_MS
+  ): Promise<T> {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     const env: Record<string, string | undefined> = { ...this.env };
     for (const [key, value] of Object.entries(this.buildSdkConfig().envVars)) {
@@ -405,17 +481,12 @@ export class AnthropicProvider implements Provider {
         },
       });
       try {
-        return (await Promise.race([
-          sdkQuery.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({
-            skipBehaviors: true,
-          }),
+        return await Promise.race([
+          read(sdkQuery),
           new Promise<never>((_, reject) => {
-            setTimeout(
-              () => reject(new Error('SDK usage load timeout')),
-              USAGE_QUERY_TIMEOUT_MS
-            ).unref();
+            setTimeout(() => reject(new Error('SDK control request timeout')), timeout).unref();
           }),
-        ])) as SDKControlGetUsageResponse;
+        ]);
       } finally {
         sdkQuery.close();
       }
@@ -546,15 +617,15 @@ export class AnthropicProvider implements Provider {
 
   buildSdkConfig(): ProviderSdkConfig {
     const envVars: Record<string, string> = {};
-    const stored = this.storedCredentialEnvVar();
-    if (!stored && this.requiresOwnLogin)
+    const selected = this.selectedCredential();
+    if (!selected && this.requiresOwnLogin)
       throw new Error('Sign in to Anthropic in HyperNeo Settings.');
-    if (stored) {
-      envVars[stored.key] = stored.value;
-      if (stored.key === 'CLAUDE_CODE_OAUTH_TOKEN') envVars.ANTHROPIC_AUTH_TOKEN = '';
-      const ambient = STORED_CREDENTIAL_ENV_KEYS.find((key) => key !== stored.key);
-      if (ambient && this.env[ambient]) {
-        envVars[ambient] = '';
+    if (selected) {
+      envVars[selected.key] = selected.value;
+      for (const key of CREDENTIAL_ENV_KEYS) {
+        if (key !== selected.key && (selected.key === 'CLAUDE_CODE_OAUTH_TOKEN' || this.env[key])) {
+          envVars[key] = '';
+        }
       }
     }
 
