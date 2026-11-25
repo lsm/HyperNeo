@@ -4,6 +4,7 @@ import { basename, isAbsolute } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { JsonRpcRequestTimeoutError, ProcessJsonRpcTransport } from '../process-json-rpc.ts';
+import { withOwnReplySender } from '../messaging/session-reply.ts';
 import { buildSafeProcessEnv } from '../safe-process-env.ts';
 import { compactAntigravity } from './antigravity-compact.ts';
 import { antigravityPermissionOutcome } from './antigravity-permission.ts';
@@ -412,7 +413,7 @@ export function createAntigravityStart(
       const work = launchTurn(
         configured.value,
         { title: request.sessionTitle ?? request.title, place: request.place },
-        request.message
+        withOwnReplySender(request.message, `${adapter}:${id}`)
       );
       return { ok: true, value: work };
     } finally {

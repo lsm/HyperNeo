@@ -44,6 +44,16 @@ export function withReplySender(message: string, from: string, sender: string): 
     : withReplyLine(message.slice(0, body), from, 'cli', sender);
 }
 
+export function withOwnReplySender(message: string, sender: string): string {
+  const body = replyMessageBodyLength(message);
+  if (body === message.length) return message;
+  const end = message.length - CLI_SUFFIX.length;
+  const argument = message.slice(body + 2 + CLI_PREFIX.length, end);
+  return argument.includes(' --from ')
+    ? message
+    : `${message.slice(0, end)} --from ${shellArgument(sender)}${CLI_SUFFIX}`;
+}
+
 function shellArgument(value: string): string {
   return /^[A-Za-z0-9_:./%-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
 }
