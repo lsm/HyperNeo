@@ -98,7 +98,9 @@ only started and reused workers get a row; 225 of 997 bound todos of one week ha
 - A `send`, an `adopt` and a follow-up to an earlier todo add a `do` row too, unless the
   worker's newest row is already that todo's.
 - A row for a known worker is written before the message is delivered, as `claimTodoWorker`
-  does. After a crash in between, the delivery is retried or fails and removes the row.
+  does. A failed delivery removes only the row it wrote; if it reused an existing row,
+  that row stays. The delivery keeps enough information to make the same decision after
+  a crash and retry.
 - A turn belongs to the todo of the worker's newest row at or before the turn's start.
   With another todo's row inside the turn it belongs to no todo.
 - A started worker's first turn can begin before its first row is written. Only then does a
@@ -148,7 +150,8 @@ Six PRs from `dev`, in order, failing tests first. System map read for the plann
 
 1. **Binding history.** The rows for `send`, `adopt` and follow-ups, and the pure decision from
    rows and turns to a todo. Tests: a turn recorded after `reopen`, after a redispatch, after a
-   retry and after a restart keeps its todo; a failed delivery leaves no row; a repeated
+   retry and after a restart keeps its todo; a failed delivery removes only its own row;
+   a failed repeated follow-up preserves the earlier row, including after restart; a repeated
    follow-up adds none; another todo's row inside a turn gives no todo; a started worker's turn
    before its row has its todo, an adopted or sent-to session's earlier turn has none; role
    lookups for reviewers are unchanged.
