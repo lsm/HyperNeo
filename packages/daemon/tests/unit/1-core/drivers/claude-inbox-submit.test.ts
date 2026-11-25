@@ -75,6 +75,7 @@ describe('owner-verified Claude inbox submission', () => {
         return [live];
       },
       hasSession: (id) => id === 'neo:root',
+      hasRemoteDaemon: (id) => id === 'home',
       write: async (...args) => {
         writes.push(args);
         return { written: true };
