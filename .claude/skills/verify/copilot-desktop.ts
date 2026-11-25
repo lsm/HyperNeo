@@ -1,13 +1,16 @@
 import { strict as assert } from 'node:assert';
-import { appendFileSync, chmodSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
+import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
 import type { FindWorkResultSchema } from '../../../packages/daemon/src/lib/drivers/find-operation.ts';
 import type { Result, WorkDelivery, WorkDetail, WorkStarted, WorkTurnFact } from '../../../packages/daemon/src/lib/drivers/types.ts';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
+import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
+import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import { queueNextTodo } from './worker-reuse-todo.ts';
 import { copilotFolder, copilotSession, prepareCopilotFixture } from '../../../packages/daemon/tests/helpers/copilot-fixture.ts';
 import type { z } from 'zod';
@@ -25,7 +28,7 @@ const cli = !['desktop', 'control', 'compact-failure', 'compact-refused'].includ
 const desktop = mode !== 'cli';
 writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
 if (cli) {
-  prepareCopilotFixture(run);
+  prepareCopilotFixture(run, mode === 'both-control' ? ['--durable-inputs'] : []);
   process.env.COPILOT_CLI_PATH = join(run, 'bin/copilot');
   if (mode === 'cli-failure') writeFileSync(join(home, 'copilot-list-failure'), '');
 }
@@ -67,12 +70,12 @@ if (desktop) {
 const before = desktop ? readFileSync(state) : null;
 const compaction = mode === 'compact-failure' ? 'failed' : mode === 'compact-refused' ? 'refused' : 'applied';
 const peer = ['control', 'both-control', 'compact-failure', 'compact-refused'].includes(mode)
-  ? await startCopilotDesktopPeer(home, state, compaction)
+  ? await startCopilotDesktopPeer(home, state, compaction, mode === 'both-control')
   : undefined;
 globalThis.fetch = (() => { throw new Error('External HTTP disabled'); }) as typeof fetch;
 process.chdir(run);
 const app = await createDaemonApp({
-  config: getConfig({ port, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }),
+  config: getConfig({ port, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db'), workspaceRoot: join(run, 'forced-cli') }),
   verbose: false,
 });
 let socket: WebSocket | undefined;
@@ -103,15 +106,57 @@ try {
     });
   }
   const adapter = 'copilot-cli';
-  const registered = await rpc<Result<{ id: string; capabilities: string[]; steerBehavior?: string }[]>>('work.adapters', {});
+  const registered = await rpc<Result<{ id: string; displayName?: string; copilotClients?: string[]; capabilities: string[]; steerBehavior?: string }[]>>('work.adapters', {});
   assert(registered.ok);
   const listed = registered.value.filter((entry) => entry.id.startsWith('copilot-'));
   assert.equal(listed.length, 1);
   assert.equal(listed[0].id, adapter);
+  assert.equal(listed[0].displayName, 'Copilot');
+  assert.deepEqual(listed[0].copilotClients, [...(peer ? ['desktop'] : []), ...(cli ? ['cli'] : [])]);
   assert.equal(listed[0].capabilities.includes('start'), cli || !!peer);
   assert.equal(listed[0].capabilities.includes('steer'), cli || !!peer);
   if (peer) {
-    await verifyCopilotDesktopControl(rpc, run, peer, async (work) => {
+    const folder = join(run, 'forced-cli');
+    mkdirSync(folder);
+    const messageCount = peer.messages.length;
+    const forced = await rpc<Result<WorkStarted>>('work.start', {
+      adapter, copilotClient: 'cli', title: 'Explicit CLI', model: 'synthetic-model', message: 'settled',
+      place: { machine: hostname(), folder, name: 'Fixture' },
+    });
+    assert.equal(peer.messages.length, messageCount);
+    if (cli) {
+      assert(forced.ok && forced.value.copilotClient === 'cli', JSON.stringify(forced));
+      assert(forced.value.receipt);
+      let idle = false;
+      for (let attempt = 0; !idle && attempt < 50; attempt++) {
+        const status = await rpc<Result<WorkDetail>>('work.status', { ref: forced.value.ref, receipt: forced.value.receipt });
+        idle = status.ok && status.value.status === 'done' && !!status.value.lastReply;
+        if (!idle) await Bun.sleep(100);
+      }
+      assert(idle, 'the CLI worker must be idle before the follow-up');
+      const now = Date.now();
+      const db = app.db.getDatabase();
+      db.prepare("INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at) VALUES ('core', 'global', '', 'sessionReuse', ?, 'human', ?)").run(JSON.stringify('per_ask'), now);
+      const asks = new NeoAskTodoRepository(db);
+      const workers = new NeoTodoSessionRepository(db);
+      const sessionId = 'cli-reuse-neo';
+      const askId = 'cli-reuse-ask';
+      asks.openAsk({ id: askId, projectId: null, sessionId, originMessageId: null, title: 'Reuse CLI worker', request: 'Run the fixture', createdAt: now });
+      for (const id of ['cli-reuse-first', 'cli-reuse-next']) {
+        asks.addTodo(id, askId, { title: id, doneWhen: 'Settled', check: null, instruction: id, named: null }, now);
+      }
+      workers.bind('cli-reuse-first', forced.value.ref, now);
+      asks.updateTodo(asks.getTodo('cli-reuse-first')!, { state: 'done', finishedAt: now }, now);
+      const outcome = await invokeOperation(app.sessionManager.getOperationRegistry(), 'work.start', {
+        adapter, title: 'Continue CLI', message: 'settled', place: forced.value.place, todoId: 'cli-reuse-next',
+      }, { source: 'internal', role: 'neo', sessionId });
+      assert(outcome.kind === 'completed', JSON.stringify(outcome));
+      const reused = outcome.value as Result<WorkStarted>;
+      assert(reused.ok && reused.value.reused && reused.value.ref.id === forced.value.ref.id, JSON.stringify(reused));
+      assert.equal(peer.messages.length, messageCount);
+      console.log('PASS Auto preserved the prior CLI worker while Desktop was available.');
+    } else assert(!forced.ok && forced.notSent && /CLI is unavailable/.test(forced.detail));
+    await verifyCopilotDesktopControl(rpc, run, peer, cli ? 'auto' : 'desktop', async (work) => {
       const delivered = queueNextTodo(app.db.getDatabase(), work, 'fixture-neo');
       for (let attempt = 0; !delivered() && attempt < 240; attempt++) await Bun.sleep(50);
       assert(delivered(), 'the next todo must reach the worker whether or not compaction succeeds');
@@ -219,9 +264,13 @@ try {
       model: 'synthetic-model',
       message: 'hold',
     };
+    const desktopOnly = await rpc<Result<WorkStarted>>('work.start', { ...request, copilotClient: 'desktop' });
+    assert(!desktopOnly.ok && desktopOnly.notSent && /Copilot Desktop is unavailable/.test(desktopOnly.detail), JSON.stringify(desktopOnly));
+    assert(!existsSync(join(folder, 'calls.jsonl')));
     const effort = { ...request, model: 'synthetic-effort-model', effort: 'high' };
     const start = await rpc<Result<WorkStarted>>('work.start', mode === 'cli' ? effort : request);
     assert(start.ok, JSON.stringify(start));
+    assert.equal(start.value.copilotClient, 'cli');
     const { ref } = start.value;
     if (mode === 'cli') {
       assert.equal(start.value.model, effort.model);

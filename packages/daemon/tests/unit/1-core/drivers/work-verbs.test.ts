@@ -106,6 +106,58 @@ describe('work verb operations', () => {
     }
   });
 
+  test.each(['legacy', 'cli-only', 'both'] as const)(
+    'starts on a remote Desktop only when the server advertises that choice (%s)',
+    async (availability) => {
+      const copilotClients =
+        availability === 'legacy'
+          ? undefined
+          : availability === 'cli-only'
+            ? ['cli']
+            : ['desktop', 'cli'];
+      const forwarded: { name: string; input: unknown }[] = [];
+      const remote: Invoke = async (_daemon, name, input) => {
+        forwarded.push({ name, input });
+        return name === 'work.adapters'
+          ? { ok: true, value: [{ id: 'copilot-cli', capabilities: ['start'], copilotClients }] }
+          : {
+              ok: true,
+              value: { ...summary('copilot-cli', 'desktop-session'), copilotClient: 'desktop' },
+            };
+      };
+      const result = await call(
+        'work.start',
+        {
+          adapter: 'copilot-cli',
+          copilotClient: 'desktop',
+          place: { ...place, daemon: 'laptop' },
+          title: 'Copilot work',
+          message: 'Start here',
+          model: 'gpt-5.4',
+          effort: 'high',
+        },
+        remote
+      );
+      if (copilotClients?.includes('desktop')) {
+        expect(result).toMatchObject({
+          ok: true,
+          value: { copilotClient: 'desktop', ref: { daemon: 'laptop' } },
+        });
+        expect(forwarded[1]).toMatchObject({
+          name: 'work.start',
+          input: { copilotClient: 'desktop', model: 'gpt-5.4', effort: 'high' },
+        });
+      } else {
+        expect(result).toMatchObject({
+          ok: false,
+          notSent: true,
+          reason: copilotClients ? 'unreachable' : 'unsupported',
+        });
+        expect(forwarded.map(({ name }) => name)).toEqual(['work.adapters']);
+      }
+    }
+  );
+
   test.each(['before-connect', 'after-dispatch'] as const)(
     'remote work.send preserves certainty for a failure %s',
     async (phase) => {
@@ -369,6 +421,8 @@ describe('work verb operations', () => {
       value: [
         {
           id: 'copilot-cli',
+          displayName: 'Copilot',
+          copilotClients: [],
           capabilities: ['find', 'status', 'turns'],
           unsupportedCapabilities: expect.objectContaining({ steer: expect.any(String) }),
         },
