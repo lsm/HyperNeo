@@ -189,6 +189,7 @@ export class OAuthRefreshScheduler {
     } catch {
       result = 'transient';
     }
+    if (result === 'superseded') return 'skipped';
     if ((this.credentialWrites.get(provider.id) ?? 0) !== writes) return 'transient';
     const outcome: TokenRefreshOutcome = typeof result === 'string' ? result : result.outcome;
 

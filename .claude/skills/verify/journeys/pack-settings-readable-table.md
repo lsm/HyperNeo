@@ -20,12 +20,14 @@ It opens Neo through real WebSocket RPC and proposes settings through Neo's MCP
 operation adapter. For English and Chinese, the real `/neo` card must render two
 repo headings and two Setting/Value tables at desktop 1280 and mobile 390 widths.
 Enum names are translated, while bot logins and path patterns remain literal,
-including pipes, backticks and backslashes. The mobile `A Apply these settings` option
+including pipes, backticks and backslashes. The mobile `Apply these settings` option
 records that option and applies exactly the stored `values_json` with human provenance.
+The helper pairs the browser first. After the answer the card moves to
+recent results as done, because its own ask has settled.
 Changing language and retrying a pending request must keep its original text.
 
 Evidence is `evidence/observed.json`, `table-{en,zh-Hans}.json` and four matching
-screenshots. Inspect the screenshots. The test-first reproduction shows raw JSON,
+screenshots, plus `answered-{en,zh-Hans}.png`. Inspect the screenshots. The test-first reproduction shows raw JSON,
 zero tables and fails the same render assertion. This proves daemon-owned text,
 actual Markdown rendering and approval binding, not live model behavior.
 

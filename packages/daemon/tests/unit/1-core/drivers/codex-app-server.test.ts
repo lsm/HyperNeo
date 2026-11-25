@@ -11,7 +11,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocketServer } from 'ws';
 import {
+  CodexConnectError,
   codexConnectError,
+  connectRecoveredCodexAppServer,
   connectCodexAppServer,
   startCodexBootstrapServer,
 } from '../../../../src/lib/drivers/codex-app-server';
@@ -230,7 +232,7 @@ describe('connectCodexAppServer', () => {
       () => null,
       (error: unknown) => error
     );
-    expect(failure).toBeInstanceOf(Error);
+    expect(failure).toBeInstanceOf(CodexConnectError);
     expect((failure as Error).message).toContain(link);
     expect((failure as Error).message).toContain(
       `points to ${join(dir, 'deleted-by-tmp-cleanup')}, which no longer exists`
@@ -328,6 +330,40 @@ lines.on('close', () => {
         (message: { method: string }) => message.method
       )
     ).toEqual(['initialize']);
+  });
+});
+
+describe('connectRecoveredCodexAppServer', () => {
+  test('recovers an unreachable app-server once and leaves other failures alone', async () => {
+    const running = { call: async () => ({}), close: () => {} };
+    const down = new CodexConnectError('down');
+    let failures: Error[] = [];
+    let recoveries = 0;
+    const connect = () =>
+      connectRecoveredCodexAppServer(
+        async () => {
+          const failure = failures.shift();
+          if (failure) throw failure;
+          return running;
+        },
+        async () => {
+          recoveries++;
+          return recoveries < 3;
+        }
+      );
+    expect(await connect()).toBe(running);
+    expect(recoveries).toBe(0);
+    failures = [down];
+    expect(await connect()).toBe(running);
+    failures = [down, down];
+    await expect(connect()).rejects.toBe(down);
+    expect(recoveries).toBe(2);
+    failures = [down];
+    await expect(connect()).rejects.toBe(down);
+    expect(recoveries).toBe(3);
+    failures = [new Error('initialize failed')];
+    await expect(connect()).rejects.toThrow('initialize failed');
+    expect(recoveries).toBe(3);
   });
 });
 

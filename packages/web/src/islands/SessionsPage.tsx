@@ -3,6 +3,8 @@ import { normalizeThinkingLevel } from '@hyperneo/shared';
 import {
   isOxapHarness,
   oxapHarness,
+  oxapCodexDefaultThinking,
+  oxapThinkingOptions,
   oxapHarnessesForProvider,
   type OxapHarnessId,
 } from '@hyperneo/shared/types/oxap-harnesses';
@@ -168,8 +170,6 @@ export function SessionsPage() {
   const [harnessChoice, setHarnessChoice] = useState<{ provider: string; id: NewChatHarness }>();
   const [sandboxChoice, setSandboxChoice] = useState<boolean | null>(initialSelection.sandbox);
   const sandbox = sandboxChoice ?? globalSettings.value?.sandbox?.enabled ?? false;
-  const thinkingLevel =
-    selectedThinking ?? normalizeThinkingLevel(globalSettings.value?.thinkingLevel);
 
   const canCreate = connectionState.value === 'connected';
   const waitingForProjectGit = project !== null && gitLoading;
@@ -207,7 +207,15 @@ export function SessionsPage() {
   const ready = (id: OxapHarnessId) => provider?.readyHarnesses?.includes(id) === true;
   const harnessUnavailable = isOxapHarness(harness) && !ready(harness);
   const harnessLabel = engine?.label ?? 'Claude Code';
-  const thinkingAllowed = !engine || engine.thinking;
+  const thinkingOptions = oxapThinkingOptions(harness, activeModelInfo);
+  const supportedThinking = thinkingOptions.some(({ value }) => value === selectedThinking)
+    ? selectedThinking
+    : null;
+  const thinkingLevel =
+    supportedThinking ??
+    (harness === 'oxap-codex'
+      ? (oxapCodexDefaultThinking(activeModelInfo) ?? 'off')
+      : normalizeThinkingLevel(globalSettings.value?.thinkingLevel));
   const chooseHarness = (id: NewChatHarness) => {
     if (providerId)
       setHarnessChoice(id === defaultHarness ? undefined : { provider: providerId, id });
@@ -436,8 +444,8 @@ export function SessionsPage() {
         req.config = { provider: providerId as Provider };
         if (activeModelInfo) req.config.model = activeModelInfo.id;
       }
-      if (selectedThinking && thinkingAllowed) {
-        req.config = { ...req.config, thinkingLevel: selectedThinking };
+      if (supportedThinking) {
+        req.config = { ...req.config, thinkingLevel: supportedThinking };
       }
       if (!isOxap && sandboxChoice !== null) {
         req.config = { ...req.config, sandbox: { enabled: sandboxChoice } };
@@ -537,7 +545,8 @@ export function SessionsPage() {
                   availableModels={availableModels}
                   loading={modelLoading}
                   thinkingLevel={thinkingLevel}
-                  showThinking={thinkingAllowed}
+                  thinkingOptions={thinkingOptions}
+                  showCodexUltraNote={harness === 'oxap-codex'}
                   onSelectThinking={setSelectedThinking}
                   onReload={() => void reloadModels()}
                   onSelectModel={(model) => {

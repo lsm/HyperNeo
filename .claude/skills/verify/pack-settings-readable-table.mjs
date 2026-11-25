@@ -4,13 +4,20 @@ import { createRequire } from 'node:module';
 import { revealAsk } from './queue-ask.mjs';
 const [port, run] = process.argv.slice(2);
 assert(port && run && port !== '8399');
-const { askId, question, language } = JSON.parse(readFileSync(`${run}/fixture.json`, 'utf8'));
+const { code, askId, question, language } = JSON.parse(readFileSync(`${run}/fixture.json`, 'utf8'));
 const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, executablePath: process.env.VERIFY_BROWSER });
 const observations = [];
 try {
+  const context = await browser.newContext();
+  const pairing = await context.newPage();
+  await pairing.goto(`http://127.0.0.1:${port}/pair#${code}`);
+  await pairing.getByRole('button', { name: 'Pair this browser' }).click();
+  await pairing.getByText('This browser is paired.').waitFor({ timeout: 10000 });
+  await pairing.close();
   for (const width of [1280, 390]) {
-    const page = await browser.newPage({ viewport: { width, height: 1100 } });
+    const page = await context.newPage();
+    await page.setViewportSize({ width, height: 1100 });
     await page.goto(`http://127.0.0.1:${port}/neo`);
     if (width === 390) await page.getByRole('button', { name: /^(Your work|你的事)/ }).click();
     const card = await revealAsk(page, askId);
@@ -40,9 +47,9 @@ try {
     const bounds = await body.boundingBox();
     assert(bounds.x >= 0 && bounds.x + bounds.width <= width + 1);
     if (width === 390) {
-      await body.getByRole('button', { name: `A ${question.options[0]}`, exact: true }).click();
-      await card.locator('[data-ask-details-toggle]').click();
-      await card.locator(`[id="neo-ref-question-${question.id}"]`).waitFor();
+      await body.getByRole('button', { name: question.options[0], exact: true }).click();
+      await body.waitFor({ state: 'hidden' });
+      await page.screenshot({ path: `${run}/evidence/answered-${language}.png`, fullPage: true });
     }
     await page.close();
   }

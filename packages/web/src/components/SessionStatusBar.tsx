@@ -1,5 +1,9 @@
 import type { ContextInfo, ModelInfo, SessionConfig, ThinkingLevel } from '@hyperneo/shared';
-import { isOxapHarness, oxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
+import {
+  isOxapHarness,
+  oxapCodexDefaultThinking,
+  oxapThinkingOptions,
+} from '@hyperneo/shared/types/oxap-harnesses';
 import { useSignalEffect } from '@preact/signals';
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { useMessageHub } from '../hooks';
@@ -7,6 +11,7 @@ import { type ConnectionState, connectionState } from '../lib/state.ts';
 import ConnectionStatus from './ConnectionStatus.tsx';
 import ContextUsageBar from './ContextUsageBar.tsx';
 import { ModelPicker } from './ModelPicker.tsx';
+import { toast } from '../lib/toast.ts';
 import { ContentContainer } from './ui/ContentContainer.tsx';
 
 interface SessionStatusBarProps {
@@ -62,13 +67,29 @@ export default function SessionStatusBar({
 
   const { callIfConnected } = useMessageHub();
 
-  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(thinkingLevelProp || 'off');
-  useEffect(() => {
-    setThinkingLevel(thinkingLevelProp || 'off');
-  }, [thinkingLevelProp]);
+  const defaultThinking =
+    (harness === 'oxap-codex' && oxapCodexDefaultThinking(currentModelInfo)) || 'off';
+  const options = oxapThinkingOptions(harness, currentModelInfo);
+  const currentThinking = options.some(({ value }) => value === thinkingLevelProp)
+    ? (thinkingLevelProp ?? defaultThinking)
+    : defaultThinking;
+  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(currentThinking);
+  useEffect(() => setThinkingLevel(currentThinking), [currentThinking]);
 
   const handleThinkingLevelChange = useCallback(
     async (level: ThinkingLevel) => {
+      if (harness === 'oxap-codex') {
+        try {
+          const result = await callIfConnected<{ success: boolean }>('session.thinking.set', {
+            sessionId: _sessionId,
+            level,
+          });
+          if (result?.success) setThinkingLevel(level);
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : String(error));
+        }
+        return;
+      }
       setThinkingLevel(level);
       if (onThinkingLevelChange) {
         await onThinkingLevelChange(level);
@@ -79,7 +100,7 @@ export default function SessionStatusBar({
         level,
       });
     },
-    [_sessionId, callIfConnected, onThinkingLevelChange]
+    [_sessionId, callIfConnected, harness, onThinkingLevelChange]
   );
 
   return (
@@ -105,7 +126,7 @@ export default function SessionStatusBar({
           disabled={modelLocked || modelSwitching || coordinatorSwitching || isRecovering}
           busy={modelSwitching}
           thinkingLevel={thinkingLevel}
-          showThinking={!isOxapHarness(harness) || oxapHarness(harness).thinking}
+          thinkingOptions={options}
           onSelectModel={(model) => void onModelSwitch(model)}
           onSelectThinking={(level) => void handleThinkingLevelChange(level)}
         />

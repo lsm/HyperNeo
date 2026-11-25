@@ -3,7 +3,6 @@ import { workerOwnershipFacts } from '../repositories/worker-ownership-read-work
 import { workerInputReads, workerInputWrites } from '../repositories/worker-input-worker.ts';
 import { neoFrontReads } from '../repositories/neo-front-read-worker.ts';
 import { sessionGoalReviewReads } from '../repositories/session-goal-review-read-worker.ts';
-import { anthropicRateLimitEventsRead } from '../repositories/anthropic-usage-read.ts';
 import {
   neoFrontDeliveryWrites,
   neoFrontInputWrites,
@@ -259,7 +258,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     sessionGoalReviewReads,
     workerOwnershipFacts,
     workerOwnershipWrites,
-    anthropicRateLimitEventsRead,
     neoAskSettlementReads,
     neoAskSettlementWrites,
     neoAskTurnedSettleReads,

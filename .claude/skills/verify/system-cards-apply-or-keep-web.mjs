@@ -18,12 +18,10 @@ const rpc = (name, input = {}) => {
   assert(!reply.error, JSON.stringify(reply));
   return reply.value ?? reply;
 };
-const opened = rpc('neo.open');
-const ask = crypto.randomUUID();
-const now = Date.now();
-execFileSync('sqlite3', [`${run}/data/daemon.db`, `INSERT INTO neo_asks(id,session_id,title,request,status,created_at,updated_at) VALUES('${ask}','${opened.sessionId}','Synthetic settings','Synthetic verification only','open',${now},${now});`]);
+rpc('neo.open');
 const setting = { pack: 'coding', scope: { kind: 'repo', key: 'synthetic/web' }, key: 'mergePolicy' };
-const { questionId } = rpc('pack.preferences.ask', { askId: ask, requestId: 'web', values: [{ ...setting, value: 'ci_only' }] });
+const { questionId } = rpc('pack.preferences.ask', { requestId: 'web', values: [{ ...setting, value: 'ci_only' }] });
+const ask = rpc('neo.snapshot').todoAsks.find((entry) => entry.questions.some((q) => q.id === questionId)).ask.id;
 const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}) });
 const result = {};
@@ -54,7 +52,7 @@ try {
   await browser.close();
   writeFileSync(`${run}/evidence/system-cards-apply-or-keep-web.json`, JSON.stringify(result, null, 2));
 }
-assert.deepEqual(result.options, ['Apply these settings', 'Keep current settings']);
+assert.deepEqual(result.options, ['1Apply these settings', '2Keep current settings']);
 assert.equal(result.yesNoButtons, 0);
 assert.equal(result.saved, 'ci_only');
 console.log(`PASS: the web card shows Apply these settings and Keep current settings with no yes/no buttons, and tapping Apply saves the setting. ${run}/evidence/system-cards-apply-or-keep-web.json`);

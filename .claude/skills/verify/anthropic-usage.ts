@@ -13,7 +13,8 @@ assert.equal(process.env.ANTHROPIC_API_KEY, undefined);
 assert.equal(process.env.CLAUDE_CODE_OAUTH_TOKEN, undefined);
 mkdirSync(join(run, 'evidence'), { recursive: true });
 
-const resetsSevenDay = 1_795_006_800;
+const now = Date.now();
+const resetsSevenDay = Math.floor(now / 1000) + 86_400;
 const storedEvents = [
   {
     type: 'rate_limit_event',
@@ -21,12 +22,17 @@ const storedEvents = [
       status: 'allowed_warning',
       rateLimitType: 'five_hour',
       utilization: 0.87,
-      resetsAt: 1_795_000_000,
+      resetsAt: Math.floor(now / 1000) + 3600,
     },
   },
   {
     type: 'rate_limit_event',
-    rate_limit_info: { status: 'rejected', rateLimitType: 'seven_day', resetsAt: resetsSevenDay },
+    rate_limit_info: {
+      status: 'allowed_warning',
+      rateLimitType: 'seven_day',
+      utilization: 0.98,
+      resetsAt: resetsSevenDay,
+    },
   },
 ];
 
@@ -69,7 +75,7 @@ try {
     insert.run(
       crypto.randomUUID(),
       sessionId,
-      new Date(Date.UTC(2026, 10, 13, 10 + index)).toISOString(),
+      new Date(now - (index + 1) * 1000).toISOString(),
       JSON.stringify(event)
     )
   );
@@ -105,7 +111,7 @@ try {
       );
     });
 
-  await call('providers.create', {
+  const { provider } = await call<{ provider: { id: string } }>('providers.create', {
     params: {
       providerId: 'anthropic',
       displayName: 'Synthetic Claude subscription',
@@ -121,37 +127,27 @@ try {
       oauthExpiresAt: Date.now() + 3_600_000,
     },
   });
+  await call('providers.update', {
+    id: provider.id,
+    params: {},
+    credentials: { oauthAccessToken: 'synthetic-replacement-subscription-token' },
+  });
   const usage = await call('operation.invoke', {
     name: 'settings.provider.usage',
     input: { providerId: 'anthropic' },
   });
 
   assert.deepEqual(usage, {
-    supported: true,
+    supported: false,
     provider: 'anthropic',
-    windows: [
-      {
-        label: '5 hours',
-        used: 87,
-        limit: 100,
-        resetAt: new Date(1_795_000_000_000).toISOString(),
-      },
-      {
-        label: '7 days',
-        used: 100,
-        limit: 100,
-        resetAt: new Date(resetsSevenDay * 1000).toISOString(),
-      },
-    ],
+    reason: 'not_supported',
   });
   assert(!JSON.stringify(usage).includes('synthetic-subscription-token'));
   writeFileSync(
     join(run, 'evidence/anthropic-usage.json'),
     JSON.stringify({ usage, storedEvents: storedEvents.length }, null, 2)
   );
-  console.log(
-    JSON.stringify({ passed: true, windows: usage.windows.length, source: 'stored_events' })
-  );
+  console.log(JSON.stringify({ passed: true, windows: 0, ignoredEvents: storedEvents.length }));
 } finally {
   socket?.close();
   await app?.cleanup();

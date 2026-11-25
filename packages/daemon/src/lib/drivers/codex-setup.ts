@@ -12,6 +12,7 @@ import type { codexSetupQuestion } from './codex-setup-question.ts';
 type Settings = NonNullable<GlobalSettings['codexAppServerBridge']>;
 type Request = { undo?: boolean; noRemoteControl?: boolean };
 const log = new Logger('codex-setup');
+const RECOVERY_RETRY_MS = 60_000;
 
 function originalEnvironment(value: string | null, port: number) {
   const legacy = /^ws:\/\/(?:127\.0\.0\.1|localhost):47912(?:\/rpc|\/)?$/;
@@ -30,6 +31,7 @@ export function createCodexSetup(
   let pendingCheck = false;
   let checkAgain = false;
   let used = false;
+  let recovery: Promise<boolean> | undefined;
   const url = (port: number, token: Buffer) => `ws://127.0.0.1:${port}/rpc?token=${token}`;
   const enqueue = <T>(run: () => Promise<T>) => {
     const job = tail.then(run);
@@ -39,6 +41,24 @@ export function createCodexSetup(
     );
     return job;
   };
+
+  function recover(): Promise<boolean> {
+    if (shutdown.signal.aborted || !read()?.enabled) return Promise.resolve(false);
+    recovery ??= host.startManaged().then(
+      () => {
+        recovery = undefined;
+        return true;
+      },
+      (error) => {
+        log.warn('Could not bring the Codex app-server back.', error);
+        setTimeout(() => {
+          recovery = undefined;
+        }, RECOVERY_RETRY_MS).unref?.();
+        return false;
+      }
+    );
+    return recovery;
+  }
 
   async function apply({ undo, noRemoteControl }: Request, approved = false) {
     const state = read() ?? { enabled: false };
@@ -71,7 +91,7 @@ export function createCodexSetup(
     const removed = await host.migrate(signal);
     await host.startManaged();
     const token = await loadCodexBridgeToken(!approved);
-    await host.startBridge(port, token);
+    await host.startBridge(port, token, () => void recover());
     const configured: Settings = {
       enabled: true,
       port,
@@ -117,7 +137,9 @@ export function createCodexSetup(
         return;
       }
       if (!state.decision) {
-        if ((await configured(state).catch(() => false)) || shutdown.signal.aborted) return;
+        const ready = () => configured(state).catch(() => false);
+        if ((await ready()) || ((await recover()) && (await ready()))) return;
+        if (shutdown.signal.aborted) return;
         state = { ...state, questionId: crypto.randomUUID(), decision: 'asked' };
         write(state);
       }
@@ -178,9 +200,10 @@ export function createCodexSetup(
       if (state.originalUrl === undefined)
         write({ ...state, originalUrl: originalEnvironment(await host.environment(), port) });
       await host.setEnvironment(url(port, token));
-      await host.startManaged();
-      await host.startBridge(port, token);
+      await host.startBridge(port, token, () => void recover());
+      void recover();
     },
+    recover,
     async close() {
       shutdown.abort();
       await tail;

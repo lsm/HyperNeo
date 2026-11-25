@@ -119,11 +119,11 @@ describe('Whole todo-add writer', () => {
     expect(store.listTodos('ask').map((todo) => todo.id)).toEqual(['one', 'two']);
     expect(store.listQuestions('ask')).toEqual([]);
   });
-  test('settled ask is an accepted quiet no-op', async () => {
+  test('settled ask refuses the todo and changes nothing', async () => {
     store.settleAsk(store.getAsk('ask')!, 'dropped', 'No longer needed', 2);
     expect(await add('one')).toMatchObject({
-      ok: true,
-      records: [expect.stringContaining('ask_settled')],
+      ok: false,
+      reason: expect.stringMatching(/^ask_settled: this ask is dropped; the todo was not added\./),
     });
     expect(store.listTodos('ask')).toEqual([]);
     expect(changes).toEqual([]);

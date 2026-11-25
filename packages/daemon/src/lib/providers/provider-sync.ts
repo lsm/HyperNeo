@@ -7,6 +7,7 @@ import { CustomEndpointProvider, customProviderIdFor } from './custom-endpoint-p
 import { Logger } from '../logger.js';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.js';
 import { resolveKimiRegion } from './kimi-provider.js';
+import { AnthropicProvider } from './anthropic-provider.ts';
 
 const logger = new Logger('providers:sync');
 
@@ -42,7 +43,8 @@ export function parseProviderConfig(configJson: string | undefined): {
 export async function syncProviderToRegistry(
   record: ProviderRecord,
   credentials?: ProviderCredentials | null,
-  isStartupSync = false
+  isStartupSync = false,
+  credentialManager?: ProviderCredentialManager
 ): Promise<void> {
   const registry = getProviderRegistry();
   bumpProviderCatalogEpoch(record.providerId);
@@ -50,6 +52,12 @@ export async function syncProviderToRegistry(
   if (record.kind === 'built_in') {
     await registerBuiltInProvider(registry, record.providerId);
     const provider = registry.get(record.providerId);
+    if (
+      provider instanceof AnthropicProvider &&
+      (record.authType === 'oauth' || (await credentialManager?.hasAnthropicSettingsLogin()))
+    ) {
+      provider.requireOwnLogin();
+    }
     if (provider && provider.id === 'kimi' && 'setDefaultRegion' in provider) {
       let parsedRegion: unknown;
       try {
@@ -138,8 +146,11 @@ export async function syncAllProviders(
   const records = listEnabled();
   for (const record of records) {
     try {
-      const credentials = await credentialManager.getCredentials(record.providerId);
-      await syncProviderToRegistry(record, credentials, true);
+      const credentials =
+        record.providerId === 'anthropic'
+          ? null
+          : await credentialManager.getCredentials(record.providerId);
+      await syncProviderToRegistry(record, credentials, true, credentialManager);
     } catch (err) {
       logger.warn(`Failed to sync provider ${record.providerId}:`, err);
     }

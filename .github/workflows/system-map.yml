@@ -30,7 +30,8 @@ jobs:
           if ! git merge-base "$BASE_SHA" "$HEAD_SHA" > /dev/null; then
             git fetch --no-tags --unshallow origin "$BASE_SHA" "refs/pull/$PR_NUMBER/head"
           fi
-          bash scripts/system-map-diff.sh "$BASE_SHA" "$HEAD_SHA" > "$RUNNER_TEMP/system-map-paths"
+          git show "$BASE_SHA:scripts/system-map-diff.sh" > "$RUNNER_TEMP/system-map-diff.sh"
+          bash "$RUNNER_TEMP/system-map-diff.sh" "$BASE_SHA" "$HEAD_SHA" > "$RUNNER_TEMP/system-map-paths"
 
       - uses: ./.github/actions/setup-bun
         with:

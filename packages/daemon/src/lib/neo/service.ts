@@ -108,13 +108,13 @@ import { WorkTurnRepository } from '../../storage/repositories/work-turn-reposit
 import { runLagPhase } from '../event-loop-activity.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
-import { renderAddress } from '../mailbox/address.ts';
+import { parseRemoteAddress, renderAddress } from '../mailbox/address.ts';
 import type { MailboxMessageContent } from '../mailbox/entry.ts';
 import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
 import { invokeOperation } from '../operations/invoke.ts';
 import { onHumanDevicesReset } from '../pairing/human-device-reset.ts';
 import type { SessionManager } from '../session/session-manager.ts';
-import { driverWorkCaller } from './driver-work.ts';
+import { driverWorkCaller, readDriverOutcome } from './driver-work.ts';
 import { WorkDeliveryInputRepository } from '../../storage/repositories/work-delivery-input-repository.ts';
 import { catchUpWorkerTurns, planTurnCatchUp, recordWorkerTurns } from './turn-recording.ts';
 import { neoFolderPath, neoUserFolder } from './folder.ts';
@@ -1317,24 +1317,41 @@ export class NeoService {
 
   async deliverRequestReply(job: Job): Promise<Record<string, unknown>> {
     const reply = job.payload as NeoRequestReply;
+    const remote = parseRemoteAddress(reply.to);
+    const ref = sessionWorkerRef(remote?.sessionId ?? reply.to, false);
+    const workRef =
+      ref.id &&
+      (ref.adapter === 'claude-code' || ref.adapter === 'claude-desktop') &&
+      (remote || !this.db.getSession(reply.to))
+        ? { ...ref, ...(remote ? { daemon: remote.daemonId } : {}) }
+        : null;
+    const idempotencyKey = reply.key ?? `neo-request-reply:${reply.todoId}`;
     const sent = await invokeOperation(
       this.sessions.getOperationRegistry(),
-      'message.send',
-      {
-        sessionId: reply.to,
-        idempotencyKey: reply.key ?? `neo-request-reply:${reply.todoId}`,
-        message: { type: 'user', message: { content: reply.text }, parent_tool_use_id: null },
-      },
+      workRef ? 'work.send' : 'message.send',
+      workRef
+        ? { ref: workRef, notice: true, message: reply.text, idempotencyKey }
+        : {
+            sessionId: reply.to,
+            idempotencyKey,
+            message: { type: 'user', message: { content: reply.text }, parent_tool_use_id: null },
+          },
       { source: 'internal', sessionId: reply.from ?? undefined, role: 'neo' }
     ).catch((error: unknown) => ({ kind: 'failed' as const, message: String(error) }));
     if (sent.kind === 'failed' && job.retryCount < job.maxRetries) throw new Error(sent.message);
-    const result =
-      sent.kind === 'failed'
-        ? {
-            kind: 'failed',
-            reason: `${sent.message} (gave up after ${job.retryCount + 1} attempts)`,
-          }
-        : (sent.value as { kind: string; reason?: string });
+    let result: { kind: string; reason?: string };
+    if (sent.kind === 'failed') {
+      result = {
+        kind: 'failed',
+        reason: `${sent.message} (gave up after ${job.retryCount + 1} attempts)`,
+      };
+    } else if (workRef) {
+      const work = readDriverOutcome({ verb: 'send', ref: workRef }, sent);
+      result =
+        'failure' in work ? { kind: 'rejected', reason: work.failure } : { kind: 'accepted' };
+    } else {
+      result = sent.value as z.infer<typeof SendMessageResultSchema>;
+    }
     const deferred = reply.deferred ?? 0;
     if (/^(rate_limited|duplicate):/.test(result.reason ?? '') && deferred < 10) {
       this.db.getJobQueueRepo().enqueue({
@@ -1352,7 +1369,7 @@ export class NeoService {
           subject: { type: 'request_reply', id: reply.todoId },
           since: job.createdAt,
           facts: {
-            text: `Your answer to request todo ${reply.todoId} did not reach session ${reply.to}: ${result.reason ?? result.kind}. Tell it yourself with message.send.`,
+            text: `Your answer to request todo ${reply.todoId} did not reach session ${reply.to}: ${result.reason ?? result.kind}. Tell it yourself with ${workRef ? 'work.send with notice: true' : 'message.send'}.`,
           },
         },
         Date.now()

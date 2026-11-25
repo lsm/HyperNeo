@@ -19,6 +19,7 @@ import { resolveHyperneoThinking } from '../drivers/start-configuration.ts';
 import { matchModelIdOrName, usableModels } from '../usable-models.ts';
 import { getAvailableModels, isCuratedOutModel } from '../model-service.ts';
 import { inferProviderForModel } from '../providers/registry.ts';
+import { invokeOperation } from '../operations/invoke.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { admitSpaceCaller } from '../operations/space-caller-admission.ts';
 import {
@@ -28,13 +29,46 @@ import {
 } from './runtime-settings-read-operation.ts';
 
 export async function setSessionThinkingLevel(
-  sessions: Pick<SessionManager, 'updateSession'>,
+  sessions: Pick<SessionManager, 'getOperationRegistry' | 'updateSession'>,
   agent: AgentSession,
-  thinkingLevel: ThinkingLevel
+  thinkingLevel: ThinkingLevel,
+  requestedLevel: string = thinkingLevel
 ) {
   const { id, config } = agent.getSessionData();
-  const error = thinkingRefusal(config.harness, thinkingLevel);
+  const oxap = config.harness === 'oxap-codex';
+  const error = thinkingRefusal(
+    config.harness,
+    oxap ? requestedLevel : thinkingLevel,
+    config.model
+  );
   if (error) return { success: false as const, error };
+  if (oxap) {
+    const outcome = await invokeOperation(
+      sessions.getOperationRegistry(),
+      'session.runtimeSettings.update',
+      { sessionId: id, thinkingLevel },
+      { source: 'internal' }
+    );
+    const result =
+      outcome.kind === 'completed'
+        ? (outcome.value as { ok: boolean; reason?: string })
+        : undefined;
+    if (result?.ok) return { success: true as const, thinkingLevel };
+    switch (result?.reason) {
+      case 'session_busy':
+        return {
+          success: false as const,
+          error: 'Wait for the current reply to finish, then change the thinking level.',
+        };
+      case 'session_settings_changed':
+        return {
+          success: false as const,
+          error: 'The chat state changed. Try changing the thinking level again.',
+        };
+      default:
+        return { success: false as const, error: 'Could not change the Codex thinking level.' };
+    }
+  }
   await sessions.updateSession(id, { config: { ...config, thinkingLevel } });
   await agent.applyThinkingLevel();
   return { success: true as const, thinkingLevel };
@@ -208,8 +242,12 @@ function gateHarness(target: ResolvedTarget, deps: RuntimeSettingsDependencies) 
   const switched = provider ? decideSwitch(current, provider, deps.engineOf(provider)) : true;
   const reason =
     switched === true
-      ? (oxapModelSwitchRefusal(current, target.snapshot.sdkSessionId, input.model) ??
-        thinkingRefusal(current.harness, input.thinkingLevel))
+      ? (oxapModelSwitchRefusal(
+          current,
+          target.snapshot.sdkSessionId,
+          input.model,
+          input.thinkingLevel
+        ) ?? thinkingRefusal(current.harness, input.thinkingLevel, input.model ?? current.model))
       : switched;
   return reason ? { reason: { ok: false, reason } as Failure } : { value: target };
 }
@@ -220,7 +258,7 @@ async function applySettings(
   deps: RuntimeSettingsDependencies
 ) {
   const { snapshot, live, input } = target;
-  const current = JSON.parse(snapshot.config) as { model: string; provider?: Provider };
+  const current = JSON.parse(snapshot.config) as Session['config'];
   const model = input.model ?? current.model;
   const provider = input.provider ?? current.provider ?? inferProviderForModel(model);
   const { thinkingLevel } = input;
@@ -242,18 +280,33 @@ async function applySettings(
     if (!switched.success)
       return { reason: { ok: false, reason: switched.error ?? 'model_switch_failed' } as Failure };
   } else {
-    if (
-      (await deps.commit(snapshot, {
-        model: input.model !== undefined || input.provider !== undefined ? model : undefined,
-        provider: input.model !== undefined || input.provider !== undefined ? provider : undefined,
-        thinkingLevel,
-      })) !== 'won'
-    )
-      return { reason: { ok: false, reason: 'session_settings_changed' } as Failure };
-    if (live && thinkingLevel !== undefined) {
-      live.getSessionData().config.thinkingLevel = thinkingLevel;
+    const persist = async () => {
+      const stillReady = gateReady(target, input, deps);
+      if ('reason' in stillReady) return { success: false as const, error: stillReady.reason };
+      if (
+        !currentOwner() ||
+        (await deps.commit(snapshot, {
+          model: input.model !== undefined || input.provider !== undefined ? model : undefined,
+          provider:
+            input.model !== undefined || input.provider !== undefined ? provider : undefined,
+          thinkingLevel,
+        })) !== 'won'
+      )
+        return {
+          success: false as const,
+          error: { ok: false, reason: 'session_settings_changed' } as Failure,
+        };
+      if (live && thinkingLevel !== undefined)
+        live.getSessionData().config.thinkingLevel = thinkingLevel;
+      return { success: true as const };
+    };
+    const result =
+      current.harness === 'oxap-codex' && live && thinkingLevel !== undefined
+        ? await live.commitThinkingLevel(thinkingLevel, persist)
+        : await persist();
+    if (!result.success) return { reason: result.error };
+    if (live && thinkingLevel !== undefined && current.harness !== 'oxap-codex')
       await live.applyThinkingLevel();
-    }
     await deps.notify(snapshot.id).catch(() => {});
   }
   return { value: target };

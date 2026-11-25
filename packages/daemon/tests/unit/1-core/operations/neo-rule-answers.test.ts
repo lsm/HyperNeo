@@ -405,6 +405,96 @@ describe('human-approved standing rules', () => {
       expect(saved()).toEqual(before);
     }
   );
+  describe('the card has its own ask', () => {
+    const cardAsk = (questionId: string) =>
+      service.todos.getAsk(service.todos.getQuestion(questionId)!.askId)!;
+    const ask = async (requestId: string, change: object = {}) =>
+      (
+        (await invoke('neo.rule.ask', { requestId, ...edit, ...change })) as {
+          value: { questionId: string };
+        }
+      ).value.questionId;
+    const addTodo = (askId: string) =>
+      service.todos.addTodo(
+        `todo-${askId}`,
+        askId,
+        { title: 'Work', doneWhen: 'Done', check: null, instruction: 'Do it', named: null },
+        1
+      );
+
+    test.each(['ask', 'unknown-ask', undefined])('whatever askId says (%s)', async (askId) => {
+      service.todos.setAskTopic('ask', '研究', 2);
+      addTodo('ask');
+      const before = service.todos.getAsk('ask');
+      const questionId = await ask('own-ask', askId ? { askId } : {});
+      expect(cardAsk(questionId)).toMatchObject({
+        status: 'open',
+        topic: '规则',
+        projectId: null,
+        sessionId: agent.sessionId,
+      });
+      expect(service.todos.listQuestions(cardAsk(questionId).id)).toHaveLength(1);
+      expect(service.todos.getQuestion(questionId)?.todos).toEqual([]);
+      expect(service.todos.getAsk('ask')).toEqual(before);
+      expect(service.todos.listQuestions('ask')).toEqual([]);
+      expect(await ask('own-ask')).toBe(questionId);
+      expect(cardAsk(await ask('another')).id).not.toBe(cardAsk(questionId).id);
+    });
+
+    test('from the local door it belongs to the root Neo session', async () => {
+      const reply = await invoke('neo.rule.ask', { requestId: 'door', ...edit }, human);
+      const { questionId } = (reply as { value: { questionId: string } }).value;
+      expect(cardAsk(questionId).sessionId).toBe(agent.sessionId!);
+    });
+
+    test.each([
+      [APPLY, 'button', 'done'],
+      ['1', 'chat', 'done'],
+      [KEEP, 'button', 'dropped'],
+      ['2', 'chat', 'dropped'],
+      ['Change the wording', 'chat', 'open'],
+    ])('%s by %s leaves that ask %s', async (answer, surface, status) => {
+      const questionId = await ask('settles');
+      if (surface === 'button') await invoke('neo.question.answer', { questionId, answer }, human);
+      else
+        await invoke(
+          'neo.message.send',
+          {
+            sessionId: agent.sessionId,
+            requestId: crypto.randomUUID(),
+            content: answer,
+            replyTo: { kind: 'question', id: questionId },
+          },
+          human
+        );
+      expect(service.todos.getQuestion(questionId)?.state).toBe('answered');
+      expect(cardAsk(questionId).status).toBe(status as 'open');
+      expect(service.todos.getAsk('ask')?.status).toBe('open');
+    });
+
+    test('an apply that current rules prevent settles only once it is applied', async () => {
+      const questionId = await ask('stale');
+      db.updateGlobalSettings({ neo: { standingRules: ['Keep this rule.'] } });
+      await invoke('neo.question.answer', { questionId, answer: APPLY }, human);
+      expect(cardAsk(questionId).status).toBe('open');
+      db.updateGlobalSettings({
+        neo: { standingRules: ['Old synthetic rule.', 'Keep this rule.'] },
+      });
+      expect(await invoke('neo.rule.applyAnswer', { questionId })).toMatchObject({
+        value: { ok: true },
+      });
+      expect(cardAsk(questionId).status).toBe('done');
+    });
+
+    test('work added to it keeps it open', async () => {
+      const questionId = await ask('with-work');
+      const todo = addTodo(cardAsk(questionId).id);
+      await invoke('neo.question.answer', { questionId, answer: APPLY }, human);
+      expect(saved()).toEqual(['Keep this rule.', ...edit.add]);
+      expect(cardAsk(questionId).status).toBe('open');
+      expect(service.todos.getTodo(todo.id)?.state).toBe('todo');
+    });
+  });
   test('with twenty rules a proposal must replace one, and keeps the other nineteen', async () => {
     const rules = Array.from({ length: 20 }, (_, i) => `Synthetic rule ${i}.`);
     db.updateGlobalSettings({ neo: { standingRules: rules } });

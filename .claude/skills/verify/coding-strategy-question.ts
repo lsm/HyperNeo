@@ -66,17 +66,14 @@ try {
   sessions.create(todo.id, target);
   const neo = createNeoService(app.db, app.sessionManager, app.messageHub, app.internalEventBus);
   const pack = neo.packs().find((candidate) => candidate.id === 'coding')!;
-  let asked = 0;
-  const decision = await pack.workerTarget!(todo, target, async () => ({ kind: 'failed', code: 'synthetic', message: 'No worker' }), async () => { asked++; return { kind: 'failed', code: 'synthetic', message: 'Unexpected question' }; });
+  const decision = await pack.workerTarget!(todo, target, async () => ({ kind: 'failed', code: 'synthetic', message: 'No worker' }));
   assert.deepEqual(decision, { value: target });
-  assert.equal(asked, 0);
   evidence.core = core.preference;
   evidence.coding = coding;
   evidence.globalCore = globalCore.preference;
 
   evidence.decision = decision;
-  evidence.codingQuestions = asked;
-  console.log('PASS: the restarted daemon copies the host-prefixed coding value to its project, preserves the old value and does not ask the coding question.');
+  console.log('PASS: the restarted daemon copies the host-prefixed coding value to its project, preserves the old value and keeps the requested target.');
 } finally {
   writeFileSync(join(run, 'evidence/strategy-question.json'), JSON.stringify(evidence, null, 2));
   ws?.close();

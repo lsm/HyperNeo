@@ -23,6 +23,7 @@ import { getProviderRegistry } from '../providers/registry.ts';
 import { bumpProviderCatalogEpoch } from '../model-service.js';
 import { providerEnvCoordinator } from '../providers/provider-env-enrollment.ts';
 import { registerBuiltInProvider } from '../providers/factory.js';
+import { AnthropicProvider } from '../providers/anthropic-provider.ts';
 import { credentialIdentity } from '../providers/discovery-refresh-pipeline.ts';
 import type { ProviderRepository } from '../../storage/repositories/provider-repository.ts';
 import {
@@ -112,13 +113,27 @@ async function lockedClearCacheAndNotifyProvidersChanged(
   );
 }
 
+function serializeProviderLogout(
+  logout: (
+    request: ProviderLogoutRequest,
+    clear: typeof clearCacheAndNotifyProvidersChanged
+  ) => Promise<ProviderLogoutResponse>
+) {
+  return (request: ProviderLogoutRequest) =>
+    request.providerId === 'anthropic'
+      ? withProviderLock(() => logout(request, clearCacheAndNotifyProvidersChanged))
+      : logout(request, lockedClearCacheAndNotifyProvidersChanged);
+}
+
 async function removeCredentialsOrKeychainError(
   credentialManager: ProviderCredentialManager | undefined,
-  providerId: string
+  providerId: string,
+  retainOwnership = false
 ): Promise<void> {
   if (!credentialManager) return;
   try {
-    await credentialManager.removeCredentials(providerId);
+    if (retainOwnership) await credentialManager.removeCredentials(providerId, true);
+    else await credentialManager.removeCredentials(providerId);
   } catch (error) {
     if (error instanceof KeychainUnavailableError) {
       log.warn(`Logout blocked for ${providerId}: ${KEYCHAIN_UNAVAILABLE_MESSAGE}`);
@@ -160,6 +175,7 @@ export function setupAuthHandlers(
               displayName: provider.displayName,
               isAuthenticated: status.isAuthenticated,
               method: status.method,
+              credentialSource: status.credentialSource,
               expiresAt: status.expiresAt,
               needsRefresh: status.needsRefresh,
               user: status.user,
@@ -244,13 +260,15 @@ export function setupAuthHandlers(
           if (storeError) throw storeError;
           if (stripError) throw stripError;
         };
-        unsubscribe = provider.onCredentialsChanged?.((credentials) =>
-          persistCredentials(credentials).catch((error) => {
-            log.error(`Failed to persist credentials for ${providerId}:`, error);
-          })
-        );
+        if (!provider.submitOAuthCallback) {
+          unsubscribe = provider.onCredentialsChanged?.((credentials) =>
+            persistCredentials(credentials).catch((error) => {
+              log.error(`Failed to persist credentials for ${providerId}:`, error);
+            })
+          );
+        }
         const flowData = await provider.startOAuthFlow();
-        if (!provider.onCredentialsChanged) {
+        if (!provider.onCredentialsChanged && !provider.submitOAuthCallback) {
           const credentials = await provider.getCredentials?.();
           if (credentials) {
             await persistCredentials(credentials);
@@ -297,8 +315,45 @@ export function setupAuthHandlers(
       }
 
       try {
-        const result = await provider.submitOAuthCallback(callbackInput);
-        return result.ok ? { success: true } : { success: false, error: result.error };
+        const persist = async (credentials: ProviderCredentials) => {
+          if (
+            provider instanceof AnthropicProvider &&
+            providerRepo &&
+            !providerRepo.getProviderByProviderId(providerId)
+          ) {
+            await providerWriter(providerRepo).call(providerRpcWrites, 'createProvider', {
+              providerId,
+              displayName: provider.displayName,
+              kind: 'built_in',
+              authType: 'none',
+              isEnabled: true,
+            });
+          }
+          if (provider instanceof AnthropicProvider) {
+            await credentialManager?.storeOAuthTokens(providerId, credentials, { login: true });
+          } else {
+            await credentialManager?.storeOAuthTokens(providerId, credentials);
+          }
+        };
+        const anthropic = provider instanceof AnthropicProvider;
+        const result = anthropic
+          ? await provider.submitOAuthCallback(callbackInput, {
+              write: persist,
+              serialize: withProviderLock,
+            })
+          : await provider.submitOAuthCallback(callbackInput);
+        if (!result.ok) return { success: false, error: result.error };
+        const credentials = await provider.getCredentials?.();
+        if (credentials?.type === 'oauth') {
+          if (!anthropic) await persist(credentials);
+          bumpProviderCatalogEpoch(providerId);
+          await lockedClearCacheAndNotifyProvidersChanged(
+            internalEventBus,
+            providerId,
+            providerRepo
+          );
+        }
+        return { success: true };
       } catch (error) {
         log.error(`OAuth callback relay failed for ${providerId}:`, error);
         return {
@@ -311,7 +366,7 @@ export function setupAuthHandlers(
 
   messageHub.onRequest(
     'auth.logout',
-    async (req: ProviderLogoutRequest): Promise<ProviderLogoutResponse> => {
+    serializeProviderLogout(async (req, clear) => {
       const { providerId } = req;
       const registry = getProviderRegistry();
 
@@ -323,6 +378,12 @@ export function setupAuthHandlers(
         };
       }
 
+      const anthropic = provider instanceof AnthropicProvider ? provider : null;
+      if (anthropic?.isAvailable() && !anthropic.ownsLogin && !anthropic.getCredentials()) {
+        return { success: false, error: 'The inherited login is managed outside HyperNeo.' };
+      }
+      const retainOwnership = anthropic?.ownsLogin ?? false;
+
       let storedCredentials: ProviderCredentials | null = null;
       try {
         bumpProviderCatalogEpoch(providerId);
@@ -331,7 +392,7 @@ export function setupAuthHandlers(
           () => credentialManager?.hasEnvironmentCredentials(providerId) ?? false
         );
         if (!provider.logout && hasEnvironmentCredentials) {
-          await removeCredentialsOrKeychainError(credentialManager, providerId);
+          await removeCredentialsOrKeychainError(credentialManager, providerId, retainOwnership);
           return {
             success: false,
             error: `Provider ${providerId} credentials are managed by environment variables. Remove the environment variable to log out.`,
@@ -341,7 +402,7 @@ export function setupAuthHandlers(
         try {
           storedCredentials = (await credentialManager?.getCredentials(providerId)) ?? null;
         } catch (readError) {
-          await removeCredentialsOrKeychainError(credentialManager, providerId);
+          await removeCredentialsOrKeychainError(credentialManager, providerId, retainOwnership);
           if (provider.logout) {
             try {
               await provider.logout();
@@ -350,11 +411,7 @@ export function setupAuthHandlers(
             }
           }
           try {
-            await lockedClearCacheAndNotifyProvidersChanged(
-              internalEventBus,
-              providerId,
-              providerRepo
-            );
+            await clear(internalEventBus, providerId, providerRepo);
           } catch {}
           log.error(`Logout failed for ${providerId}:`, readError);
           return {
@@ -379,21 +436,17 @@ export function setupAuthHandlers(
         if (provider.logout) {
           await provider.logout();
         }
-        await removeCredentialsOrKeychainError(credentialManager, providerId);
+        await removeCredentialsOrKeychainError(credentialManager, providerId, retainOwnership);
         if (!provider.logout && provider.setCredentials) {
           provider.setCredentials({ type: 'api_key', apiKey: '' });
         }
         try {
-          await lockedClearCacheAndNotifyProvidersChanged(
-            internalEventBus,
-            providerId,
-            providerRepo
-          );
+          await clear(internalEventBus, providerId, providerRepo);
         } catch {}
         return { success: true };
       } catch (error) {
         try {
-          await removeCredentialsOrKeychainError(credentialManager, providerId);
+          await removeCredentialsOrKeychainError(credentialManager, providerId, retainOwnership);
         } catch (cleanupError) {
           if (!(cleanupError instanceof KeychainUnavailableError)) {
             log.error(`Cleanup after logout failure failed for ${providerId}:`, cleanupError);
@@ -409,12 +462,7 @@ export function setupAuthHandlers(
           credentialIdentity(storedCredentials) !== credentialIdentity(remainingCredentials);
         if (identityChanged) {
           try {
-            await lockedClearCacheAndNotifyProvidersChanged(
-              internalEventBus,
-              providerId,
-              providerRepo,
-              identityChanged
-            );
+            await clear(internalEventBus, providerId, providerRepo, identityChanged);
           } catch {}
         }
         log.error(`Logout failed for ${providerId}:`, error);
@@ -423,7 +471,7 @@ export function setupAuthHandlers(
           error: error instanceof Error ? error.message : 'Logout failed',
         };
       }
-    }
+    })
   );
 
   messageHub.onRequest(
@@ -455,6 +503,9 @@ export function setupAuthHandlers(
       try {
         bumpProviderCatalogEpoch(providerId);
         const outcome = await provider.refreshToken();
+        if (outcome === 'superseded') {
+          return { success: false, error: 'The provider login changed during refresh.' };
+        }
         if (outcome !== 'refreshed') {
           let previousCredentials: ProviderCredentials | null = null;
           try {
@@ -463,9 +514,12 @@ export function setupAuthHandlers(
           let cleanupError: unknown;
           let remaining: ProviderCredentials | null | undefined;
           try {
-            await removeCredentialsOrKeychainError(credentialManager, providerId);
+            const isAnthropic = provider instanceof AnthropicProvider;
+            if (!isAnthropic) {
+              await removeCredentialsOrKeychainError(credentialManager, providerId);
+            }
             remaining = await provider.getCredentials?.();
-            if (remaining?.type === 'oauth') {
+            if (!isAnthropic && remaining?.type === 'oauth') {
               await credentialManager?.storeOAuthTokens(providerId, remaining);
             }
           } catch (error) {

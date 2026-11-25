@@ -10,6 +10,7 @@ const logger = new Logger('security-agent');
 export interface SecurityCheckOptions {
   apiKey: string;
   apiKeyType?: 'api_key' | 'oauth';
+  sdkEnv?: () => Record<string, string> | null;
   model?: string;
   timeout?: number;
 }
@@ -154,6 +155,8 @@ export class SecurityAgent {
     content: string,
     context?: { title?: string; author?: string }
   ): Promise<SecurityCheckResult> {
+    const selected = this.options.sdkEnv?.();
+    if (selected === null) throw new Error('Anthropic is not signed in.');
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
 
     const contextInfo: string[] = [];
@@ -179,7 +182,9 @@ export class SecurityAgent {
         pathToClaudeCodeExecutable: await awaitSDKCliPath(),
         executable: isRunningUnderBun() ? 'bun' : undefined,
         settings: withSdkTranscriptRetention(),
-        env: securityAgentEnv(process.env, this.options.apiKeyType, this.options.apiKey),
+        env: selected
+          ? { ...process.env, ...selected }
+          : securityAgentEnv(process.env, this.options.apiKeyType, this.options.apiKey),
       },
     });
 

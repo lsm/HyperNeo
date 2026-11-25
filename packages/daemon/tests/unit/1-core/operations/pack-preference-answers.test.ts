@@ -235,40 +235,51 @@ describe('immutable human settings proposals', () => {
     expect(translated.options).toEqual(['一', '二', '暂时使用默认设置']);
   });
 
-  test('a settings question holds the ask work unless it is asked with hold false', async () => {
-    const work = service.todos.addTodo(
-      'held-work',
-      'ask',
-      { title: 'Work', doneWhen: 'Done', check: null, instruction: 'Do it', named: null },
-      1
-    );
-    const held = service.todos.getQuestion(await propose())!;
-    expect(held.todos).toEqual([work.id]);
-    const reply = await invoke('pack.preferences.ask', {
-      askId: 'ask',
-      requestId: 'free-request',
-      values: [values[0]],
-      hold: false,
-    });
-    const free = service.todos.getQuestion(
-      (reply as { value: { questionId: string } }).value.questionId
-    )!;
-    expect(free.todos).toEqual([]);
-    expect(
-      await invoke('pack.preferences.ask', {
+  test.each([undefined, false])(
+    'a settings card has its own ask and holds no other work (hold=%s)',
+    async (hold) => {
+      service.todos.setAskTopic('ask', '研究', 2);
+      service.todos.addTodo(
+        'work',
+        'ask',
+        { title: 'Work', doneWhen: 'Done', check: null, instruction: 'Do it', named: null },
+        1
+      );
+      const before = service.todos.getAsk('ask');
+      const reply = await invoke('pack.preferences.ask', {
         askId: 'ask',
-        requestId: 'free-request',
-        values: [values[0]],
-      })
-    ).toMatchObject({ value: { ok: false, reason: 'proposal_is_immutable' } });
-    expect(
-      await invoke('pack.preferences.ask', {
-        askId: 'ask',
-        requestId: 'synthetic-request',
+        requestId: 'own-ask',
         values,
-        hold: false,
-      })
-    ).toMatchObject({ value: { ok: false, reason: 'proposal_is_immutable' } });
+        hold,
+      });
+      const { questionId } = (reply as { value: { questionId: string } }).value;
+      const cardAsk = () => service.todos.getAsk(service.todos.getQuestion(questionId)!.askId)!;
+      expect(cardAsk()).toMatchObject({
+        status: 'open',
+        topic: '设置',
+        projectId: null,
+        sessionId: agent.sessionId,
+      });
+      expect(service.todos.getQuestion(questionId)?.todos).toEqual([]);
+      expect(service.todos.getAsk('ask')).toEqual(before);
+      expect(service.todos.listQuestions('ask')).toEqual([]);
+      const retry = { requestId: 'own-ask', values, hold };
+      expect(await invoke('pack.preferences.ask', retry)).toEqual(reply);
+      expect(service.todos.listStalledAsks(Date.now() + 1).map(({ id }) => id)).not.toContain(
+        cardAsk().id
+      );
+    }
+  );
+
+  test.each([
+    [0, 'done'],
+    [1, 'dropped'],
+  ] as const)('answering option %s settles the card ask %s', async (index, status) => {
+    const questionId = await propose();
+    await invoke('neo.question.answer', { questionId, answer: option(questionId, index) }, human);
+    const { askId } = service.todos.getQuestion(questionId)!;
+    expect(service.todos.getAsk(askId)?.status).toBe(status);
+    expect(service.todos.getAsk('ask')?.status).toBe('open');
   });
 
   test('renders global and project settings without losing false, zero or literal paths', async () => {
@@ -584,10 +595,10 @@ describe('immutable human settings proposals', () => {
         values: [{ ...values[0], value: 'invalid' }],
       })
     ).toMatchObject({ value: { ok: false } });
-    expect(service.todos.listQuestions('ask')).toEqual([]);
+    expect(service.todos.listOpenAsks().map(({ id }) => id)).toEqual(['ask']);
     const id = await propose();
     expect(await propose()).toBe(id);
-    expect(service.todos.listQuestions('ask')).toHaveLength(1);
+    expect(service.todos.listOpenAsks()).toHaveLength(2);
   });
   test.each([1, 0, 'retired'] as const)(
     'retry after %s reports a closed question and a new request reaches the human',
@@ -626,7 +637,7 @@ describe('immutable human settings proposals', () => {
     expect(
       await invoke('pack.preferences.ask', { askId: 'ask', requestId: 'fail', values })
     ).toMatchObject({ kind: 'failed' });
-    expect(service.todos.listQuestions('ask')).toEqual([]);
+    expect(service.todos.listOpenAsks().map(({ id }) => id)).toEqual(['ask']);
     db.getDatabase().exec('DROP TRIGGER synthetic_proposal_failure');
     const questionId = await propose();
     db.getDatabase()

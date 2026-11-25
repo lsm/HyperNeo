@@ -9,6 +9,7 @@ import {
   neoTodoDependencyRefusal,
   planNeoTodoDependencies,
 } from '../../lib/neo/todo-dependencies.ts';
+import { requireNeoTodoAddAsk } from '../../lib/neo/todo-add-operation.ts';
 import {
   type ResolvedNeoTodoDraft,
   neoTodoBindRefusal,
@@ -61,15 +62,9 @@ const add = (superpipe({})('neo.todo.commit-add') as PipelineAPI)
       store: NeoAskTodoRepository,
       input: Input
     ): { value: Plan } | { reason: Receipt } => {
-      const ask = store.getAsk(input.askId);
-      if (!ask) return { reason: { ok: false, reason: 'not_found: no such ask.' } };
-      if (ask.status !== 'open')
-        return {
-          reason: {
-            ok: true,
-            records: [`ask_settled: this ask is ${ask.status}; no change was made.`],
-          },
-        };
+      const open = requireNeoTodoAddAsk(store.getAsk(input.askId));
+      if ('reason' in open) return open;
+      const ask = open.value;
       const policies = neoTodoPolicies(db);
       const planned = planNeoTodoDraft(input.draft, policies);
       if ('reason' in planned) return planned;

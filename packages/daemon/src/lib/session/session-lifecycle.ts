@@ -189,7 +189,7 @@ export class SessionLifecycle {
           false,
           false
         ) ??
-        thinkingRefusal(harness, params.config?.thinkingLevel) ??
+        thinkingRefusal(harness, params.config?.thinkingLevel, modelId) ??
         (await newSessionOxapRefusal(
           harness,
           provider,
@@ -261,7 +261,9 @@ export class SessionLifecycle {
         maxTokens: params.config?.maxTokens || this.config.maxTokens,
         temperature: params.config?.temperature || this.config.temperature,
         autoScroll: params.config?.autoScroll ?? globalSettings.autoScroll,
-        thinkingLevel: params.config?.thinkingLevel ?? globalSettings.thinkingLevel,
+        thinkingLevel:
+          params.config?.thinkingLevel ??
+          (harness === 'oxap-codex' ? undefined : globalSettings.thinkingLevel),
         coordinatorMode: params.config?.coordinatorMode ?? globalSettings.coordinatorMode,
         provider,
         sandbox,

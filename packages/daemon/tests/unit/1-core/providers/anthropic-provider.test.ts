@@ -406,14 +406,15 @@ describe('AnthropicProvider', () => {
   });
 
   describe('getAuthStatus', () => {
-    it('reports plain credential presence when no failure is recorded', async () => {
-      process.env.ANTHROPIC_API_KEY = 'test-key';
-
-      const status = await provider.getAuthStatus();
+    it('reports an inherited credential when no failure is recorded', async () => {
+      const inherited = new AnthropicProvider({ ANTHROPIC_API_KEY: 'test-key' });
+      const status = await inherited.getAuthStatus();
 
       expect(status).toEqual({
         isAuthenticated: true,
         method: 'api_key',
+        credentialSource: 'inherited',
+        credentialVersion: 0,
         error: undefined,
       });
     });
@@ -530,13 +531,13 @@ describe('AnthropicProvider', () => {
       expect(config.envVars.ANTHROPIC_API_KEY).toBe('');
     });
 
-    it('should leave ambient env untouched when no credential is stored', () => {
+    it('selects the inherited subscription when no credential is stored', () => {
       process.env.CLAUDE_CODE_OAUTH_TOKEN = 'ambient-oauth-token';
       const providerWithoutStored = new AnthropicProvider();
 
       const config = providerWithoutStored.buildSdkConfig('default');
 
-      expect(config.envVars).toEqual({});
+      expect(config.envVars.CLAUDE_CODE_OAUTH_TOKEN).toBe('ambient-oauth-token');
     });
   });
 

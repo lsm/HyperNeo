@@ -1,10 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import type { SDKRateLimitInfo } from '@hyperneo/shared/sdk';
+import { describe, expect, it, mock } from 'bun:test';
 import { AnthropicProvider } from '../../../../src/lib/providers/anthropic-provider';
-import {
-  resetRateLimitEventReader,
-  setRateLimitEventReader,
-} from '../../../../src/lib/providers/anthropic-usage-source';
 
 const subscription = {
   type: 'oauth' as const,
@@ -39,15 +34,19 @@ function controlResponse(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function mockSdk(getUsage: () => Promise<unknown>) {
-  const calls = { usage: 0, interrupted: 0 };
+function mockSdk(
+  getUsage: () => Promise<unknown>,
+  inspectEnv?: (env: Record<string, string | undefined>) => void
+) {
+  const calls = { usage: 0, closed: 0 };
   mock.module('@anthropic-ai/claude-agent-sdk', () => ({
-    query: () => ({
-      interrupt: async () => {
-        calls.interrupted++;
+    query: ({ options }: { options: { env: Record<string, string | undefined> } }) => ({
+      close: () => {
+        calls.closed++;
       },
       usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => {
         calls.usage++;
+        inspectEnv?.(options.env);
         return getUsage();
       },
     }),
@@ -60,9 +59,6 @@ function provider() {
   instance.setCredentials(subscription);
   return instance;
 }
-
-beforeEach(() => resetRateLimitEventReader());
-afterEach(() => resetRateLimitEventReader());
 
 describe('AnthropicProvider.getUsage', () => {
   it('maps the subscription control response to five windows', async () => {
@@ -91,6 +87,7 @@ describe('AnthropicProvider.getUsage', () => {
       ],
     });
     expect(calls.usage).toBe(1);
+    expect(calls.closed).toBe(1);
   });
 
   it('answers not_supported for an API key configuration without asking the SDK', async () => {
@@ -106,60 +103,91 @@ describe('AnthropicProvider.getUsage', () => {
     expect(calls.usage).toBe(0);
   });
 
-  it('falls back to the latest stored event per window when the control request fails', async () => {
+  it('loads subscription usage from the same system login as SDK launches until Settings takes ownership', async () => {
+    const system = 'synthetic-system-subscription';
+    const readings: string[] = [];
+    mockSdk(
+      async () => controlResponse(),
+      (env) => {
+        readings.push(
+          env.CLAUDE_CODE_OAUTH_TOKEN === system
+            ? 'system'
+            : env.CLAUDE_CODE_OAUTH_TOKEN === subscription.accessToken
+              ? 'settings'
+              : 'unexpected'
+        );
+      }
+    );
+    const instance = new AnthropicProvider({ CLAUDE_CODE_OAUTH_TOKEN: system });
+    expect(instance.buildSdkConfig().envVars.CLAUDE_CODE_OAUTH_TOKEN === system).toBe(true);
+    expect((await instance.getUsage()).supported).toBe(true);
+    instance.setCredentials(subscription);
+    expect((await instance.getUsage()).supported).toBe(true);
+    await instance.logout();
+    expect((await instance.getUsage()).supported).toBe(false);
+    expect(readings).toEqual(['system', 'settings']);
+  });
+
+  it('uses the configured subscription when an inherited bearer is present', async () => {
+    let usesSelectedCredential = false;
+    let freshProfile = false;
+    mockSdk(
+      async () => controlResponse(),
+      (env) => {
+        usesSelectedCredential =
+          !env.ANTHROPIC_AUTH_TOKEN && env.CLAUDE_CODE_OAUTH_TOKEN === subscription.accessToken;
+        freshProfile = Boolean(env.CLAUDE_CONFIG_DIR?.includes('hyperneo-usage-'));
+      }
+    );
+    const instance = new AnthropicProvider({
+      ANTHROPIC_AUTH_TOKEN: 'synthetic-inherited-bearer',
+      CLAUDE_CONFIG_DIR: '/synthetic/inherited-claude-profile',
+    });
+    instance.setCredentials(subscription);
+
+    const result = await instance.getUsage();
+
+    expect(result.supported).toBe(true);
+    expect(usesSelectedCredential).toBe(true);
+    expect(freshProfile).toBe(true);
+  });
+
+  it('reports unavailable usage when the control request fails', async () => {
     mockSdk(async () => {
       throw new Error('get_usage unavailable');
     });
-    const events: SDKRateLimitInfo[] = [
-      {
-        status: 'allowed_warning',
-        rateLimitType: 'five_hour',
-        utilization: 0.87,
-        resetsAt: 1_795_000_000,
-      },
-      { status: 'rejected', rateLimitType: 'seven_day', resetsAt: 1_795_006_800 },
-      { status: 'allowed', rateLimitType: 'seven_day_opus' },
-    ];
-    setRateLimitEventReader(async () => events);
-
-    const result = await provider().getUsage();
-
-    expect(result).toEqual({
-      supported: true,
-      provider: 'anthropic',
-      windows: [
-        {
-          label: '5 hours',
-          used: 87,
-          limit: 100,
-          resetAt: new Date(1_795_000_000_000).toISOString(),
-        },
-        {
-          label: '7 days',
-          used: 100,
-          limit: 100,
-          resetAt: new Date(1_795_006_800_000).toISOString(),
-        },
-      ],
-    });
-  });
-
-  it('falls back when the control response changes shape', async () => {
-    mockSdk(async () => ({ session: null, subscription_type: null, rate_limits_available: true }));
-    setRateLimitEventReader(async () => [
-      { status: 'allowed_warning', rateLimitType: 'seven_day_sonnet', utilization: 0.4 },
-    ]);
-
-    expect(await provider().getUsage()).toMatchObject({
-      supported: true,
-      windows: [{ label: '7 days (Sonnet)', used: 40, limit: 100, resetAt: null }],
-    });
-  });
-
-  it('answers not_supported when there is no control data and no stored event', async () => {
-    mockSdk(async () => controlResponse({ rate_limits_available: false, rate_limits: null }));
 
     expect(await provider().getUsage()).toEqual({
+      supported: false,
+      provider: 'anthropic',
+      reason: 'not_supported',
+    });
+  });
+
+  it('reports unavailable usage when the control response has no windows', async () => {
+    mockSdk(async () => ({ session: null, subscription_type: null, rate_limits_available: true }));
+
+    expect(await provider().getUsage()).toEqual({
+      supported: false,
+      provider: 'anthropic',
+      reason: 'not_supported',
+    });
+  });
+
+  it('discards a usage response when the credential changed during the request', async () => {
+    const started = Promise.withResolvers<void>();
+    const response = Promise.withResolvers<unknown>();
+    mockSdk(async () => {
+      started.resolve();
+      return response.promise;
+    });
+    const instance = provider();
+    const reading = instance.getUsage();
+    await started.promise;
+    await instance.logout();
+    response.resolve(controlResponse());
+
+    expect(await reading).toEqual({
       supported: false,
       provider: 'anthropic',
       reason: 'not_supported',

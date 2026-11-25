@@ -99,6 +99,11 @@ const Create = z
     ...Owner,
     ...Fields,
     title: z.string().min(1),
+    askId: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('Open ask that created the goal; its review cards appear there.'),
     metric: MetricSchema.optional(),
     cadence: SessionScheduleCadenceSchema.default({ kind: 'every', everyMs: 3_600_000 }),
     reviewCadence: SessionScheduleCadenceSchema.default({
@@ -385,6 +390,14 @@ export function createSessionGoalOperations({
       'result:outcome'
     )
     .pipe(
+      (parent: string, input: z.infer<typeof Create>) => {
+        const problem = input.askId ? schedules.goalAskProblem(input.askId, parent) : null;
+        return problem ? refuse(problem) : { value: parent };
+      },
+      ['outcome', 'input'],
+      'result:outcome'
+    )
+    .pipe(
       async (parent: string, input: z.infer<typeof Create>) => {
         const problem = input.ownSession ? await parentProblem(parent) : null;
         return problem ? refuse(PARENT_REFUSALS[problem]) : { value: parent };
@@ -402,6 +415,7 @@ export function createSessionGoalOperations({
           nudgeEvery,
           ownSession,
           metric,
+          askId,
           ...draft
         } = input;
         const owned = ownSession ? await startSession(parent, `Goal: ${input.title}`) : parent;
@@ -412,6 +426,7 @@ export function createSessionGoalOperations({
             { ...draft, metrics: { ...draft.metrics, ...(metric ? metricFields(metric) : {}) } },
             Date.now(),
             (created) => {
+              if (askId) schedules.linkAsk(askId, created.id, parent);
               schedules.sync(created, cadence, nudgeEvery, reviewCadence);
               goals.saveWakeSchedule(created.id, {
                 ...goals.wakeSchedule(created.id)!,
@@ -421,6 +436,8 @@ export function createSessionGoalOperations({
           );
         } catch (error) {
           if (ownSession) await releaseSession(owned);
+          const problem = askId ? schedules.goalAskProblem(askId, parent) : null;
+          if (problem) return refuse(problem).reason;
           throw error;
         }
         audit(caller, 'goal.session.create', { goalId: goal.id, ownerSessionId: owned });

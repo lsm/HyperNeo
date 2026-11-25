@@ -673,6 +673,23 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertTrue(self.call('status')['ok'])
         print('reused_pid_preserved=1 desktop_available=1')
 
+    def test_restart_leaves_a_driver_pid_reused_by_another_user_alone(self):
+        driver = self.start()
+        record = self.lifecycle() / 'driver.json'
+        saved = json.loads(record.read_text())
+        processes = subprocess.check_output(['/bin/ps', '-axo', 'pid=,uid='], text=True, env={}).splitlines()
+        foreign = next(int(pid) for pid, uid in map(str.split, processes)
+                       if int(pid) > 1 and int(uid) != os.getuid())
+
+        def reuse_pid():
+            wait_until(lambda: not alive(driver['pid']))
+            saved['pid'] = foreign
+            record.write_text(json.dumps(saved))
+
+        self.crash_and_restart(reuse_pid)
+        self.assertEqual(self.call('status'), {'ok': True, 'result': {'state': 'stopped', 'pid': None}})
+        print('foreign_pid_ignored=1 desktop_available=1')
+
     def test_restart_serves_requests_with_an_exited_driver_awaiting_reap(self):
         driver = subprocess.Popen(['/bin/sleep', '60'], env={})
         self.addCleanup(driver.wait)

@@ -33,6 +33,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import type { Logger } from '../logger.ts';
 import type { ProviderEnvVars } from '../provider-service.ts';
 import { setKeyBridgeThinkingOff } from '../providers/provider-key-bridge.ts';
+import { AnthropicProvider } from '../providers/anthropic-provider.ts';
 import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
 import { resolveAvailableQueryProvider } from '../providers/registry.js';
 import { sleep } from '../utils/sleep.ts';
@@ -367,6 +368,10 @@ export interface OxapQueryRuntime {
   openDirectorySupported: boolean;
   hub: OxapQueryHub | Promise<OxapQueryHub>;
   clear?(): Promise<void>;
+  commitThinking?<T extends { success: boolean }>(
+    level: string,
+    persist: () => Promise<T>
+  ): Promise<T>;
 }
 
 export interface QueryRunnerContext {
@@ -588,6 +593,11 @@ export class QueryRunner {
   }
 
   private queryLiveness: { promise: Promise<void>; isLive: () => boolean } | null = null;
+  private anthropicQueryIsStale?: () => boolean;
+
+  hasStaleAnthropicQuery(): boolean {
+    return this.anthropicQueryIsStale?.() ?? false;
+  }
 
   private hasLiveQuery(): boolean {
     const queryPromise = this.ctx.queryPromise;
@@ -632,6 +642,7 @@ export class QueryRunner {
         `(generation=${messageQueue.getGeneration()})`
     );
     messageQueue.start();
+    this.anthropicQueryIsStale = undefined;
 
     const currentGeneration = this.ctx.incrementQueryGeneration();
 
@@ -1209,6 +1220,14 @@ export class QueryRunner {
           skipAmbientAnthropicApiKey: resolvedProviderId !== 'anthropic',
           extraProviderManagedEnvVars,
         }) as Record<string, string>;
+        this.anthropicQueryIsStale = undefined;
+        if (provider instanceof AnthropicProvider) {
+          const launchedProvider = provider;
+          const generation = launchedProvider.sdkLoginGeneration;
+          this.anthropicQueryIsStale = () =>
+            providerRegistry.get('anthropic') !== launchedProvider ||
+            launchedProvider.sdkLoginGeneration !== generation;
+        }
       }
 
       if (runAbortController.signal.aborted || !attemptToken.isLive()) {

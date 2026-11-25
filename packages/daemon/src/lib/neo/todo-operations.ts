@@ -29,7 +29,7 @@ import {
   type NeoTodoPolicyScope,
   type NeoTodoRepositoryDraft,
 } from './pack-contract.ts';
-import { wireNeoTodoAdd } from './todo-add-operation.ts';
+import { requireNeoTodoAddAsk, wireNeoTodoAdd } from './todo-add-operation.ts';
 import {
   readNeoTodoCompletion,
   requireNeoTodoMayFinish,
@@ -282,11 +282,8 @@ export async function recordNeoTodo(
   if (placeless) return { ok: false, reason: placeless };
   const misplaced = neoEvidencePathRefusal(input.check, null, getDataDir());
   if (misplaced) return { ok: false, reason: misplaced };
-  if (ask.status !== 'open')
-    return {
-      ok: true,
-      records: [`ask_settled: ${ask.title} is settled; nothing was added.`],
-    };
+  const open = requireNeoTodoAddAsk(ask);
+  if ('reason' in open) return open.reason;
   const accepted = planNeoTodoDraft(draft, packs, peers);
   if ('reason' in accepted) return accepted.reason;
   const records = accepted.value.records ? { records: accepted.value.records } : {};
@@ -680,18 +677,16 @@ export function createNeoTodoOperations(
       ? { ok: false, reason: `${failed}; the todo is unchanged, its session may still run.` }
       : write(plan);
   };
-  const admit = (ask: NeoAsk | null, todo?: NeoTodo) =>
+  const admit = (ask: NeoAsk | null, todo: NeoTodo) =>
     ask && ask.status !== 'open'
       ? {
           reason: {
             ok: true as const,
-            ...(todo ? { todo } : {}),
+            todo,
             records: [`ask_settled: this ask is ${ask.status}; no change was made.`],
           },
         }
-      : todo
-        ? requireNeoOpenTodo(todo, ask)
-        : requireNeoOpenAsk(ask);
+      : requireNeoOpenTodo(todo, ask);
   const owned = (pipeline: PipelineAPI) =>
     pipeline
       .input(['input', 'caller'])
@@ -714,7 +709,7 @@ export function createNeoTodoOperations(
     )
     .pipe(
       (binding: Awaited<ReturnType<typeof resolveNeoInputAsk>>) =>
-        'reason' in binding ? binding : admit(todos.getAsk(binding.value.askId)),
+        'reason' in binding ? binding : requireNeoTodoAddAsk(todos.getAsk(binding.value.askId)),
       'binding',
       'result:outcome'
     )
