@@ -5,15 +5,17 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import type { Result, WorkDelivery } from '../../../packages/daemon/src/lib/drivers/types.ts';
 
-const [portText, runText] = process.argv.slice(2);
+const [portText, runText] = process.argv.slice(-2);
+const remote = process.argv[2] === 'remote';
 const port = Number(portText), run = resolve(runText);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert.equal(process.env.PATH?.split(':')[0], join(run, 'bin'));
-assert(Number.isInteger(port) && port > 0 && port < 65536 && port !== 8399);
+assert(Number.isInteger(port) && port >= 0 && port < 65536 && port !== 8399);
 assert(!existsSync(join(run, 'data')));
 const home = join(run, 'home'), evidence = join(run, 'evidence'), cwd = join(run, 'workspace');
 const records = join(home, 'Library/Application Support/Claude/claude-code-sessions/synthetic/account');
@@ -28,13 +30,22 @@ const original = readFileSync(recordPath, 'utf8');
 writeFileSync(join(evidence, 'native-sessions.json'), JSON.stringify([{ id, title, cwd, permissionMode: 'bypassPermissions', pid, status: 'idle' }]));
 writeFileSync(join(evidence, 'live-mode'), 'bypassPermissions');
 const transcript = join(projects, `${id}.jsonl`);
-writeFileSync(transcript, '');
+writeFileSync(
+  transcript,
+  remote
+    ? [
+        JSON.stringify({ type: 'user', sessionId: id, permissionMode: 'bypassPermissions', message: { role: 'user', content: 'Latest interactive turn' } }),
+        JSON.stringify({ type: 'user', sessionId: id, permissionMode: 'auto', isSidechain: true, message: { role: 'user', content: 'Side conversation' } }),
+        '',
+      ].join('\n')
+    : ''
+);
 const socketPath = join(registrations, `${pid}.sock`);
 writeFileSync(join(registrations, `${pid}.json`), JSON.stringify({ sessionId: id, pid, procStart: 1, entrypoint: 'claude-desktop', version: '2.1.302', peerProtocol: 1, peerFeatures: ['notify_idle'], messagingSocketPath: socketPath }));
 const fixture = fileURLToPath(new URL('../../../packages/daemon/tests/fixtures/claude-b1-cli.ts', import.meta.url));
 writeFileSync(join(run, 'bin/claude'), `#!/usr/bin/env bun\nawait import(${JSON.stringify(fixture)});\n`, { mode: 0o700 });
 writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
-writeFileSync(join(run, 'bin/ps'), `#!/bin/sh\nprintf '%s\\n' '${pid} 1 ${pid} 00:20 claude --resume ${id} --permission-mode=bypassPermissions'\n`, { mode: 0o700 });
+writeFileSync(join(run, 'bin/ps'), `#!/bin/sh\nprintf '%s\\n' '${pid} 1 ${pid} 00:20 claude --resume ${id} --permission-mode=${remote ? 'auto' : 'bypassPermissions'}'\n`, { mode: 0o700 });
 const observed: unknown[] = [];
 const frames: unknown[] = [];
 const peer = createServer(socket => {
@@ -59,7 +70,8 @@ let ws: WebSocket | undefined;
 try {
   app = await createDaemonApp({ config: getConfig({ port, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
   await app.db.createSession({ id: 'synthetic-origin', title: 'Synthetic origin', workspacePath: cwd, createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
-  ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+  assert.notEqual(app.server.port, 8399);
+  ws = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('connection failed')); });
   const send = (message: string) => new Promise<Result<WorkDelivery>>((done, fail) => {
     const requestId = crypto.randomUUID();
@@ -71,7 +83,7 @@ try {
       if (reply.error) fail(new Error(JSON.stringify(reply.error))); else done(reply.data);
     };
     ws!.addEventListener('message', receive);
-    ws!.send(JSON.stringify({ id: requestId, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name: 'work.send', input: { ref: { adapter: 'claude-desktop', id: `local_${id}` }, from: 'session:synthetic-origin', message } }, timestamp: new Date().toISOString(), version: '1.0.0' }));
+    ws!.send(JSON.stringify({ id: requestId, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name: 'work.send', input: { ref: { adapter: 'claude-desktop', id: `local_${id}` }, from: remote ? 'daemon:synthetic-home::session:synthetic-origin' : 'session:synthetic-origin', message } }, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
   const sent = await send('STALE_MODE_DELIVERY_MARKER');
   assert(sent.ok && sent.value.delivered && sent.value.receipt?.inputId, JSON.stringify(sent));
@@ -85,10 +97,11 @@ try {
   assert.match(refused.detail, /bypassPermissions/);
   assert.match(refused.detail, /held/);
   assert.equal(events().filter(e => e.kind === 'relay').length, 2, 'Exactly one relay per send; no loop');
-  assert.equal(frames.length, 2, 'Exactly one direct attempt per send');
+  assert.equal(frames.length, remote ? 0 : 2, 'Only the local case has a direct reply route');
   assert.equal(readFileSync(recordPath, 'utf8'), original, 'Never rewrite Desktop metadata');
-  observed.push({ result: 'pass', liveMode: 'bypassPermissions', storedMode: 'auto', directAttempts: frames.length, relays: 2, received: 1 });
-  console.log('PASS: held direct send, live-mode retry delivered exactly once, second refusal surfaced without looping');
+  const counts = { directAttempts: frames.length, relays: 2, received: 1 };
+  observed.push({ result: 'pass', remote, liveMode: 'bypassPermissions', storedMode: 'auto', ...counts });
+  console.log(`PASS: ${remote ? 'transcript mode after remote inbox refusal' : 'launch mode after direct hold'}, ${JSON.stringify(counts)}`);
 } finally {
   ws?.close();
   await app?.cleanup();
