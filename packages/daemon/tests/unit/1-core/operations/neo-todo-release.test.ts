@@ -969,6 +969,36 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
     }
   });
 
+  test.each(['doing', 'blocked'] as const)(
+    'starts fresh when the worker holds another %s todo',
+    async (state) => {
+      const h = setup();
+      try {
+        await h.finishTodo(h.add(started));
+        recordWorkerStarted(h.db, worker, {
+          startedBy: 'neo',
+          machine: 'laptop',
+          folder: h.folder(),
+          harness: worker.adapter,
+        });
+        const holding = h.add(started);
+        h.sessions.recordRef(holding.id, worker);
+        h.store.updateTodo(holding, { state, startedAt: Date.now() }, Date.now());
+        const fresh = { adapter: 'hyperneo', id: 'fresh' };
+        h.setOnStart(() => ({
+          ok: true,
+          value: { ref: fresh, receipt: { executionId: 'fresh', inputId: 'i' } },
+        }));
+        const next = h.add({ verb: 'send', ref: worker });
+        await h.start(next.id);
+        expect(h.events).toEqual([]);
+        expect(h.sessions.readRef(next.id)).toEqual(fresh);
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
   test('blocks instead of starting unsandboxed when a prepared worker cannot be compacted', async () => {
     const h = setup();
     try {
