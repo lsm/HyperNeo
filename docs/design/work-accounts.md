@@ -9,7 +9,8 @@ and how it ended, sum it up every night, let Neo change how it hands out work, c
 result, and go back when it got worse. The models, plans and kinds of work differ per
 installation, so core holds the loop and no model table.
 
-1. **Record (this document).** Nothing about dispatch changes.
+1. **Record (this document).** Routing rules stay as they are; requiring a kind can change
+   which saved route matches a new todo.
 2. Report: a nightly summary from the recorded numbers, and Neo's suggestions.
 3. Act: Neo follows a policy inside the human's rules, tries other lines on a small share of
    reversible work, and the policy is rolled back when it is worse.
@@ -40,7 +41,9 @@ could not be read is absent, never 0. Failed and removed todos have accounts too
 `coding.verify`; other packs add theirs through `workKinds`. `neo.todo.add` and
 `neo.ask.propose` refuse a todo with an instruction and no known kind, and list the kinds.
 Todos the daemon makes itself may have none and count as missing. Saved `routes` and line
-rules already read this field (`model-lines.md`); with none saved, nothing changes.
+rules already read this field (`model-lines.md`). A todo that previously had no kind matched
+`general`; giving it a specific kind can make it match a different saved rule or none. With no
+saved routes or line rules, line selection is unchanged.
 
 **Estimate.** Not "easy" or "hard", which nobody can check, but numbers that can be compared
 with the result: `estimate: {files, lines, testLines, by}` for a kind that changes files,
@@ -140,7 +143,7 @@ Step 2 is its first consumer; until then it proves that the records are complete
 
 ## Not in this step
 
-No routing, no report, no settings, no trial of other lines. The compaction limit is no longer
+No routing policy changes, no report, no settings, no trial of other lines. The compaction limit is no longer
 one of the loop's knobs: later rounds of the same todo are not compacted (`session-reuse.md`). How much
 context a todo adds by itself (`peak - first`) is recorded, to see work that was cut too large.
 
@@ -160,7 +163,8 @@ Six PRs from `dev`, in order, failing tests first. System map read for the plann
    text, and the estimate line in `AGENTS.md` for designs. Tests: missing or unknown kind is
    refused; a pack's kind is accepted only while the pack is on; an estimate after the first
    worker is refused, for `start`, `send` and `adopt`, also when a retry or a move cleared the
-   start; a daemon-made todo without one is accepted.
+   start; a daemon-made todo without one is accepted; a new specific kind uses the existing
+   saved routing rules rather than matching `general` as an absent kind did.
    Estimate: 8 files, 130 lines, 150 test lines.
 3. **Turn usage, Codex, and the column.** Migration and `usage` on `WorkTurnFact`. Tests on real
    rollout shapes: cached input is not counted twice; a turn read in two parts has one total;
