@@ -1,6 +1,6 @@
 # Create a chat with an OXAP provider
 
-Build the web UI, then run `bash .claude/skills/verify/oxap-create-thinking.sh <evidence-dir>` with pinned Bun, Node 24, `PLAYWRIGHT_NODE_PATH` and `VERIFY_BROWSER` set. It owns an isolated daemon, seeds an OXAP provider, hub, and synthetic model, pairs a browser and cleans up. Port 31397 must be free.
+Build the web UI, then run `bash .claude/skills/verify/oxap-create-thinking.sh <evidence-dir>` with pinned Bun, Node 24, `PLAYWRIGHT_NODE_PATH` and `VERIFY_BROWSER` set. It starts an isolated daemon on a free loopback port, seeds an OXAP provider, hub, and synthetic model, pairs a browser and cleans up.
 
 A failed provider lookup shows an error and Retry restores the form. Open the
 new-chat settings after the picker reports OXAP Codex as the client, then open
@@ -8,13 +8,14 @@ Model. The synthetic catalog publishes `low`, `high` and `ultra`. The slider has
 stops for `low` and `high`, shows the selected name, and explains that OXAP
 cannot send `ultra`. Persisted `off` is ignored for this model and Sandbox stays
 hidden. Select `high` and create a chat. In the seeded idle chat, change `high`
-to `low` and reload. The touch viewport still shows `low`. Retain `oxap-thinking-desktop.png` and
-`oxap-thinking-phone.png`. This browser fixture runs without a model turn.
+to `low` and reload. The touch viewport still shows `low`. Retain
+`oxap-thinking-desktop.png` and `oxap-thinking-phone.png`. The fixture uses a
+fake Codex CLI that answers `app-server --help` and makes no model turn.
 
 The same journey checks that selecting **Attach image** in an OXAP Codex chat
 shows guidance naming the client, model and image-capable option. The chat hides
 Tools. The journey captures chat and provider settings in both themes and checks
-the selected client, executable and OXAP installation. Set
+the selected client, Codex CLI path and OXAP installation. Set
 `OXAP_UI_BEFORE=1` when running the same script on the baseline to capture the
 old chat and provider settings without requiring the new controls. Compare the
 resulting `oxap-chat-*` and `oxap-provider-*` screenshots.

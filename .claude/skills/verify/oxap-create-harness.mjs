@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 
@@ -7,6 +8,8 @@ const [port, code, output, run] = process.argv.slice(2);
 const base = `http://127.0.0.1:${port}`;
 const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, executablePath: process.env.VERIFY_BROWSER });
+const codex = join(run, 'synthetic-codex');
+writeFileSync(codex, '#!/bin/sh\necho "Usage: codex app-server [OPTIONS]"\n', { mode: 0o700 });
 const selectionKey = 'hyperneo_new_chat_selection';
 const setCodexDefault = (harness) => {
   const { reply } = JSON.parse(execFileSync('bun', [
@@ -15,7 +18,7 @@ const setCodexDefault = (harness) => {
       name: 'oxap.settings.save',
       input: {
         providerId: 'anthropic-codex', harness,
-        ...(harness === 'oxap-codex' ? { settings: { executable: '/usr/bin/true' } } : {}),
+        ...(harness === 'oxap-codex' ? { settings: { executable: codex } } : {}),
       },
     }),
   ], {

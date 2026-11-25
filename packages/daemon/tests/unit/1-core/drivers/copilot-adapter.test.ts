@@ -822,7 +822,7 @@ describe('owned Copilot lifecycle', () => {
     expect(work.link).toBeUndefined();
     expect(work.watchHint).toContain('work.status');
     const calls = readFileSync(join(fixture.run, 'calls.jsonl'), 'utf8');
-    expect(calls).toContain('"availableTools":[]');
+    expect(calls).toContain('"availableTools":["bash"]');
     expect(calls).toContain('"mode":"enqueue"');
   });
 

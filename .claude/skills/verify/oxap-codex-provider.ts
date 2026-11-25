@@ -26,6 +26,7 @@ export const oxapCodexProvider = {
 export async function seedSyntheticCodexAdmission(
   hub: MessageHub,
   settings: { updateGlobalSettings: (patch: Partial<GlobalSettings>) => unknown },
+  executable = process.execPath
 ): Promise<void> {
   settings.updateGlobalSettings({
     oxapHub: { path: process.execPath, version: 'synthetic-fixture', sha256: '0'.repeat(64) },
@@ -36,7 +37,7 @@ export async function seedSyntheticCodexAdmission(
       ...oxapCodexProvider.params,
       configJson: JSON.stringify({
         harness: 'oxap-codex',
-        harnessSettings: { executable: process.execPath },
+        harnessSettings: { executable },
       }),
     },
   });

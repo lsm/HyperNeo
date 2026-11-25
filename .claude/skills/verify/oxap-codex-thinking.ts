@@ -117,14 +117,19 @@ process.exit(await child.exited);
   const { sessionId: solSessionId } = await create(sol, 'GPT-6.2 Sol', 'think48k');
   const session = async () => (await hub.request<{ session: Session }>('session.get', { sessionId })).session;
   const change = (level: string) => hub.request('session.thinking.set', { sessionId, level });
+  const waitFor = async (ready: () => boolean, description: string) => {
+    const deadline = Date.now() + 15000;
+    while (!ready()) {
+      assert(Date.now() < deadline, `${description}. Observed ${JSON.stringify(requests)}`);
+      await Bun.sleep(30);
+    }
+  };
+  const isIdle = (id: string) =>
+    app!.sessionManager.getSession(id)?.getProcessingState().status === 'idle';
   const turn = async (effort: string) => {
     const index = requests.length;
     await hub.request('message.send', { sessionId, content: `Verify effort ${effort}` });
-    const deadline = Date.now() + 15000;
-    while (!requests[index] || app!.sessionManager.getSession(sessionId)?.getProcessingState().status !== 'idle') {
-      assert(Date.now() < deadline, `Turn did not settle. Observed ${JSON.stringify(requests)}`);
-      await Bun.sleep(30);
-    }
+    await waitFor(() => !!requests[index] && isIdle(sessionId), 'Luna turn did not settle');
     assert.deepEqual(requests[index], { model: luna, effort });
   };
   await turn('high');
@@ -218,7 +223,10 @@ process.exit(await child.exited);
         name: 'device.pair.create', input: { kind: 'human', name: 'Codex picker proof' },
       });
       assert(pairing.ok);
+      const solIndex = requests.length;
       await hub.request('message.send', { sessionId: solSessionId, content: 'Hold this reply for the picker check' });
+      await waitFor(() => !!requests[solIndex], 'Sol native request did not start');
+      assert.deepEqual(requests[solIndex], { model: sol, effort: 'max' });
       const browser = Bun.spawn(['node', '.claude/skills/verify/oxap-codex-thinking-web.mjs',
         String(preview.port), pairing.code, sessionId, solSessionId, evidenceDir], {
         stdout: 'inherit', stderr: 'inherit',
@@ -228,6 +236,7 @@ process.exit(await child.exited);
       resumeSol.resolve();
       await preview.stop(true);
     }
+    await waitFor(() => isIdle(solSessionId), 'Sol turn did not settle');
   } else {
     assert.deepEqual(await change('think48k'), { success: true, thinkingLevel: 'think48k' });
   }

@@ -496,7 +496,7 @@ describe('work verb operations', () => {
     expect(received).toEqual([
       [
         ref,
-        'next\n\nMessage Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send self --kind <kind> "<text>" (not SendMessage). Choose kind done, blocked, question or failed; use done for a PR milestone. Keep working after you send.',
+        'next\n\nMessage Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send self --from claude-desktop:d1 --kind <kind> "<text>" (not SendMessage). Choose kind done, blocked, question or failed; use done for a PR milestone. Keep working after you send.',
         { from: 'session:self', caller },
       ],
       [ref, 'q1', { from: 'session:self', caller }],
@@ -550,7 +550,7 @@ describe('work verb operations', () => {
           ...(verb === 'queue'
             ? {
                 message:
-                  'next\n\nMessage Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send daemon:imac::session:self --kind <kind> "<text>" (not SendMessage). Choose kind done, blocked, question or failed; use done for a PR milestone. Keep working after you send.',
+                  'next\n\nMessage Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings. Use: hyperneo send daemon:imac::session:self --from claude-desktop:d1 --kind <kind> "<text>" (not SendMessage). Choose kind done, blocked, question or failed; use done for a PR milestone. Keep working after you send.',
               }
             : {}),
           ref: { adapter: desktop.id, id: 'd1' },

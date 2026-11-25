@@ -9,7 +9,7 @@
     todo runner sends its instructions through the native Claude inbox transport.
 
     End state: `$RUN/observed.json` records the worker's actual incoming frames.
-    The first instruction includes `hyperneo send <the actual root Neo id> --kind <kind>
+    The first instruction includes `hyperneo send <the actual root Neo id> --from claude-code:<peer id> --kind <kind>
     "<text>"`; an instruction already containing that line has one copy; a
     human-origin send has none. The script then runs the real CLI with a
     the synthetic Claude peer's sender identity and checks read-only that its blocker

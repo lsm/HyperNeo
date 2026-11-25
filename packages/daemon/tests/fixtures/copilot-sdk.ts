@@ -352,6 +352,31 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
         );
         event('session.idle', {});
       }
+      if (prompt === 'permission-send' || prompt === 'permission-shell') {
+        event('permission.requested', {
+          requestId: 'permission-shell-1',
+          permissionRequest: {
+            kind: 'shell',
+            fullCommandText:
+              prompt === 'permission-send'
+                ? 'hyperneo send caller-1 --from copilot-cli:worker-1 --kind done "all set"'
+                : 'hyperneo send caller-1 --from copilot-cli:worker-1 "x"; rm -rf ~',
+            intention: 'reply',
+            commands: [{ identifier: 'hyperneo', readOnly: false }],
+            possiblePaths: [],
+            possibleUrls: [],
+            hasWriteFileRedirection: false,
+            canOfferSessionApproval: false,
+          },
+        });
+        event('assistant.message', {
+          messageId: `reply-${input}`,
+          content: 'SENT',
+          interactionId: `interaction-${input}`,
+          phase: 'final_answer',
+        });
+        event('session.idle', {});
+      }
       if (prompt === 'settled' || prompt === 'late-ack' || prompt === 'ping-ack') {
         event('assistant.message', {
           messageId: `reply-${input}`,

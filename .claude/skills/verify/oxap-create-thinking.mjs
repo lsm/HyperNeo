@@ -119,12 +119,12 @@ try {
     await page.getByText('Synthetic OXAP Codex', { exact: true }).first().click();
     if (!before) {
       assert.equal(await page.getByLabel('Client', { exact: true }).inputValue(), 'oxap-codex');
-      await page.getByLabel('Client executable').waitFor();
+      await page.getByLabel('Codex CLI path').waitFor();
       await page.getByText('synthetic-fixture', { exact: true }).waitFor();
     }
     await page.screenshot({ path: `${output}/oxap-provider-${theme}.png`, animations: 'disabled' });
     if (!before && theme === 'dark') {
-      const executable = page.getByLabel('Client executable');
+      const executable = page.getByLabel('Codex CLI path');
       const savedExecutable = await executable.inputValue();
       await executable.fill('relative');
       await page.getByRole('button', { name: 'Save client' }).click();
@@ -153,7 +153,7 @@ try {
       await page.goto(`${base}/settings?tab=providers`);
       await page.getByText('Synthetic OXAP Codex', { exact: true }).first().click();
       await page.getByLabel('Client', { exact: true }).selectOption('oxap-codex');
-      await page.getByLabel('Client executable').fill('/synthetic/codex');
+      await executable.fill(savedExecutable);
       await page.getByRole('button', { name: 'Save client' }).click();
       await page.waitForTimeout(10_500);
       assert.equal(await page.getByRole('button', { name: 'Save client' }).isDisabled(), true);
@@ -162,6 +162,7 @@ try {
       await page.reload();
       await page.getByText('Synthetic OXAP Codex', { exact: true }).first().click();
       assert.equal(await page.getByLabel('Client', { exact: true }).inputValue(), 'oxap-codex');
+      assert.equal(await executable.inputValue(), savedExecutable);
       await page.getByText('Version:', { exact: true }).waitFor();
       await page.getByText('SHA-256:', { exact: true }).waitFor();
       for (const appearance of ['light', 'dark']) {

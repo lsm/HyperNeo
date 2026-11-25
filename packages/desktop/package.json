@@ -1,10 +1,10 @@
 {
   "name": "@hyperneo/desktop",
-  "version": "0.63.0",
+  "version": "0.63.1",
   "private": true,
   "description": "HyperNeo Desktop App - Tauri wrapper bundling the HyperNeo daemon as a sidecar",
   "scripts": {
-    "build:sidecar": "./build-sidecar.sh",
+    "build:sidecar": "bun build-sidecar.ts",
     "dev": "cargo tauri dev",
     "build": "bun run build:sidecar && bash build-bundle.sh",
     "build:debug": "cargo tauri build --debug",

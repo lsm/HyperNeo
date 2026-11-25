@@ -223,17 +223,6 @@ export class SessionGoalRepository {
       .run(JSON.stringify(config), id);
   }
 
-  recentReviewEffects(
-    id: string,
-    after: string | undefined,
-    limit: number
-  ): { id: string; effect: string }[] {
-    return this.listJournal(id, null, limit, after ?? null).map(({ id, effect }) => ({
-      id,
-      effect,
-    }));
-  }
-
   recordFacts(id: string, lines: readonly string[]): void {
     this.db
       .prepare('UPDATE neo_goals SET facts_lines = ? WHERE id = ?')
