@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { cleanupOwnedWorktree } from '../../../../src/lib/drivers/work-placement.ts';
+import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox.ts';
 import type { WorkAdapter } from '../../../../src/lib/drivers/types.ts';
 import type { NeoDriverTarget } from '../../../../src/lib/neo/driver-work.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
@@ -961,6 +962,41 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
       expect(h.events).toEqual([]);
       expect(h.sessions.readRef(next.id)).toEqual(fresh);
     } finally {
+      h.db.close();
+    }
+  });
+
+  test('blocks instead of starting unsandboxed when a prepared worker cannot be compacted', async () => {
+    const h = setup();
+    try {
+      configureWorkerSandbox(() => 'off');
+      await h.finishTodo(h.add(started));
+      recordWorkerStarted(h.db, worker, {
+        startedBy: 'neo',
+        machine: 'laptop',
+        folder: h.folder(),
+        harness: worker.adapter,
+        preparation: { pack: 'coding', sandbox: true, parameters: {} },
+      });
+      h.setCompact(undefined);
+      let starts = 0;
+      h.setOnStart(() => {
+        starts++;
+        return { ok: false, reason: 'not_delivered', detail: 'unexpected' };
+      });
+      const next = h.add({
+        verb: 'send',
+        ref: worker,
+        preparationParameters: { target: 'dev' },
+        sandbox: true,
+      } as NeoDriverTarget);
+      await h.start(next.id);
+      expect(h.events).toEqual([]);
+      expect(starts).toBe(0);
+      expect(h.store.getTodo(next.id)?.state).toBe('blocked');
+      expect(h.store.getTodo(next.id)?.blockedReason).toContain('sandbox');
+    } finally {
+      configureWorkerSandbox(() => 'off');
       h.db.close();
     }
   });
