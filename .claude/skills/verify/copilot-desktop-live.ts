@@ -9,8 +9,10 @@ import {
 import type { Result, WorkCallContext } from '../../../packages/daemon/src/lib/drivers/types.ts';
 import { readCopilotDesktop } from '../../../packages/daemon/src/storage/copilot-desktop-read.ts';
 
-const [attended, model, effort, mode] = process.argv.slice(2);
-assert(attended === '--attended' && model && effort, 'Use --attended MODEL EFFORT with approval for this App connection.');
+const [attended, model, effort, configuredMode] = process.argv.slice(2);
+const defaults = model === '--defaults';
+const mode = defaults ? effort : configuredMode;
+assert(attended === '--attended' && (defaults || (model && effort)), 'Use --attended MODEL EFFORT or --attended --defaults with approval for this App connection.');
 assert(mode === undefined || mode === 'compact');
 assert.notEqual(process.env.NODE_ENV, 'test', 'This proof does not run in the isolated daemon.');
 const home = homedir();
@@ -44,8 +46,8 @@ const work = pass(await adapter.start!({
   place: { machine, folder, name: 'Fixture' },
   title: 'HyperNeo desktop native test',
   message: 'Without using tools, write 850 numbered lines about clouds, each with a distinct sentence.',
-  model,
-  effort,
+  model: defaults ? undefined : model,
+  effort: defaults ? undefined : effort,
 }, context), 'start');
 const { ref } = work;
 const file = join(home, '.copilot', 'session-state', ref.id, 'events.jsonl');
@@ -65,11 +67,15 @@ function events() {
   });
 }
 const effective = await wait(() => events().find((event) =>
-  event.type === 'session.start' && event.data?.selectedModel && event.data.reasoningEffort
+  event.type === 'session.start' && (defaults || (event.data?.selectedModel && event.data.reasoningEffort))
 ));
-assert.equal(effective.data?.selectedModel, model);
-assert.equal(effective.data?.reasoningEffort, effort);
-console.log('PASS effective runtime settings', model, effort);
+if (defaults) {
+  console.log('PASS runtime started with App defaults');
+} else {
+  assert.equal(effective.data?.selectedModel, model);
+  assert.equal(effective.data?.reasoningEffort, effort);
+  console.log('PASS effective runtime settings', model, effort);
+}
 
 const queued = pass(await adapter.queue!(ref, 'Withdraw this test message. Do not use tools.', context), 'queue');
 assert(queued.queuedSubmissionId);
@@ -110,4 +116,4 @@ await wait(async () => {
   return status.ok && status.value.archived;
 });
 assert(existsSync(folder));
-console.log('PASS 7 operations; effective model and effort, follow-up, queue removal, persisted abort, rename and retained directory');
+console.log('PASS 7 operations; follow-up, queue removal, persisted abort, rename and retained directory');

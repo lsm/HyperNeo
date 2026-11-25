@@ -11,6 +11,7 @@ import type { CopilotDesktopSession } from './copilot-desktop-adapter.ts';
 import { selectLocalStartFolder, type StartFolderDeps } from './start-folder.ts';
 import { workStartConfiguration } from './start-configuration.ts';
 import { workStartPreparation } from './start-preparation.ts';
+import { COPILOT_DESKTOP_UNAVAILABLE } from './types.ts';
 import type { Result, WorkAdapter, WorkDelivery, WorkRef, WorkSummary } from './types.ts';
 import { reject } from './work-operations.ts';
 
@@ -20,7 +21,7 @@ type Controls = Pick<
 >;
 const Id = z.string().regex(/^[\w-]{1,128}$/);
 const Queue = z.array(z.object({ id: Id, message_id: Id.optional() }));
-const Project = z.object({ id: Id });
+const Repository = z.object({ id: Id });
 const Workspace = z.object({ id: Id, displayPath: z.string() });
 const CreatedSession = z.object({
   session_id: Id,
@@ -56,7 +57,7 @@ export function createCopilotDesktopControl(
     const endpoint = readCopilotDesktopEndpoint(deps.homeDir);
     return endpoint
       ? callCopilotDesktop(endpoint, request, accept, timeoutMs)
-      : reject('unreachable', 'Open the signed-in Copilot Desktop app.', true);
+      : reject('unreachable', COPILOT_DESKTOP_UNAVAILABLE, true);
   };
   const target = async (ref: WorkRef, closed = false) => {
     const session = Id.safeParse(ref.id).success ? await deps.find(ref.id) : undefined;
@@ -109,24 +110,45 @@ export function createCopilotDesktopControl(
       if (!statSync(path.value).isDirectory())
         return reject('invalid_place', 'Copilot Desktop needs a directory.', true);
       const canonical = realpathSync(path.value);
-      const projectRequest = randomUUID();
-      const project = await run(
-        { type: 'create_project_from_path', path: canonical, request_id: projectRequest },
+      const endpoint = readCopilotDesktopEndpoint(deps.homeDir);
+      if (!endpoint) return reject('unreachable', COPILOT_DESKTOP_UNAVAILABLE, true);
+      const runStart: typeof run = (frame, accept, timeoutMs) =>
+        callCopilotDesktop(endpoint, frame, accept, timeoutMs);
+      const probe = (type: string, replyType: string) => {
+        const requestId = randomUUID();
+        return runStart(
+          { type, request_id: requestId },
+          (frame) =>
+            frame.type === replyType && frame.request_id === requestId ? true : undefined,
+          5000
+        );
+      };
+      const modern = (await probe('list_repositories', 'repository_list')).ok;
+      if (!modern && !(await probe('list_projects', 'project_list')).ok)
+        return reject(
+          'unreachable',
+          'Copilot Desktop did not confirm which startup protocol it supports. No session was created.',
+          true
+        );
+      const repositoryRequest = randomUUID();
+      const framePrefix = modern ? 'repository' : 'project';
+      const repository = await runStart(
+        { type: `create_${framePrefix}_from_path`, path: canonical, request_id: repositoryRequest },
         (frame) =>
-          (frame.type === 'project_created' || frame.type === 'project_updated') &&
-          frame.request_id === projectRequest
-            ? Project.safeParse(frame.project).data
+          (frame.type === `${framePrefix}_created` || frame.type === `${framePrefix}_updated`) &&
+          frame.request_id === repositoryRequest
+            ? Repository.safeParse(frame[framePrefix]).data
             : undefined
       );
-      if (!project.ok) return { ...project, notSent: true };
+      if (!repository.ok) return { ...repository, notSent: true };
       const requestId = randomUUID();
-      const created = await run(
+      const created = await runStart(
         {
           type:
             request.inPlace || request.prepareFolder || !existsSync(join(canonical, '.git'))
               ? 'create_folder_workspace'
               : 'create_worktree_workspace',
-          project_id: project.value.id,
+          [`${framePrefix}_id`]: repository.value.id,
           name: request.sessionTitle ?? request.title,
           request_id: requestId,
         },
@@ -140,7 +162,7 @@ export function createCopilotDesktopControl(
       if (!isAbsolute(workspace.displayPath))
         return reject('unreachable', 'Copilot Desktop did not confirm the workspace directory.');
       const sessionRequest = randomUUID();
-      const started = await run(
+      const started = await runStart(
         {
           type: 'create_session',
           request_id: sessionRequest,
