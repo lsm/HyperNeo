@@ -27,8 +27,6 @@ try {
   await seedSyntheticCodexAdmission(hub, app.settingsManager);
   const { sessionId } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic Codex', config: { model: OXAP_CODEX_MODEL, provider: 'anthropic-codex' } });
   assert.equal(app.db.getSession(sessionId)?.config.harness, 'oxap-codex');
-  const off = await hub.request('session.create', { workspacePath: join(run, 'workspace'), title: 'Off', config: { model: OXAP_CODEX_MODEL, provider: 'anthropic-codex', thinkingLevel: 'off' } });
-  assert.ok(off);
   const clone = await hub.request<{ accepted: boolean }>('operation.invoke', { name: 'session.clone.spawn', input: { parentSessionId: sessionId } });
   assert.equal(clone.accepted, true);
   const before = app.db.listSessions().length;
@@ -37,7 +35,7 @@ try {
   const evidence = { result, before, after };
   writeFileSync(join(run, 'evidence/result.json'), JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify(evidence));
-  assert.deepEqual(result, { accepted: false, reason: 'harness_unsupported', message: 'OXAP Codex does not take a thinking level.' });
+  assert.deepEqual(result, { accepted: false, reason: 'harness_unsupported', message: `OXAP Codex model ${app.db.getSession(sessionId)!.config.model} does not publish support for this thinking level.` });
   assert.equal(after, before);
   const legacy = app.db.getSession(sessionId)!;
   await app.db.updateSession(sessionId, { config: { ...legacy.config, maxTurns: 3 } as typeof legacy.config });

@@ -69,8 +69,6 @@ async function resolveChange(session: Session, input: Input) {
   const thinking = resolveHyperneoThinking(input.effort);
   if (input.effort !== undefined && !thinking)
     return refuse('unsupported_effort', 'Use a thinking level offered by the session.');
-  const refusal = thinkingRefusal(session.config.harness, thinking?.value);
-  if (refusal) return refuse('unsupported_effort', refusal);
   if (input.model === undefined && thinking === undefined)
     return refuse('unsupported', 'Provide a model, an effort, or both.');
 
@@ -81,6 +79,8 @@ async function resolveChange(session: Session, input: Input) {
     return refuse('unsupported_model', 'Choose an available model ID.');
   const selected = offer ?? (await resolveSessionContextModelInfo(session)).modelInfo;
   const model = offer?.id ?? current.model;
+  const refusal = thinkingRefusal(current.harness, thinking?.value, model);
+  if (refusal) return refuse('unsupported_effort', refusal);
   const provider = offer?.provider ?? current.provider;
   const driver = provider && getProviderRegistry().get(provider);
   if (!provider || !driver)

@@ -66,7 +66,11 @@ test.each(['ordinary', 'neo', 'opus1m', 'opus-native', 'neo45'] as const)(
         res.statusCode = 404;
         return res.end('{}');
       }
-      const active = body.tools?.some((tool: { name: string }) => tool.name === 'Read');
+      const lastMessage = body.messages?.at(-1);
+      const summary =
+        lastMessage?.role === 'user' &&
+        JSON.stringify(lastMessage.content).includes('detailed summary of the conversation');
+      const active = !summary && body.tools?.some((tool: { name: string }) => tool.name === 'Read');
       requests.push({ active, body });
       for (const message of body.messages ?? []) {
         if (!Array.isArray(message.content)) continue;
@@ -106,14 +110,16 @@ test.each(['ordinary', 'neo', 'opus1m', 'opus-native', 'neo45'] as const)(
                 },
               ]
             : [{ type: 'text', text: 'COMPACT_CONTINUED_SUCCESS' }];
-      } else {
+      } else if (summary) {
         summaryCalls += 1;
         content = [
           {
             type: 'text',
-            text: 'Synthetic compaction summary: continue SDK_COMPACTION_PROOF; both file reads succeeded. Preserve queued markers and finish the task.',
+            text: '<analysis>Both file reads succeeded.</analysis>\n<summary>Continue SDK_COMPACTION_PROOF. Preserve queued markers and finish the task.</summary>',
           },
         ];
+      } else {
+        content = [{ type: 'text', text: 'SDK compaction proof' }];
       }
       const tool = content[0].type === 'tool_use';
       const message = {

@@ -84,7 +84,7 @@ try{
  store.openAsk({id:'quiet-child',parentId:'quiet',projectId:null,sessionId:root,originMessageId:null,title:'Child',request:'Open child',createdAt:1});
  store.settleAsk(store.getAsk('quiet')!,'done','Finished',2);
  const refused=await add({...input('late work'),askId:'quiet'});
- assert(refused.ok && refused.records?.some((r:string)=>r.startsWith('ask_settled')),'The public add must quietly refuse a settled ask');
+ assert(!refused.ok && refused.reason.startsWith('ask_settled: this ask is done; the todo was not added.') && refused.reason.includes('neo.ask.propose'),'The public add must refuse a settled ask and name the next step');result.settledAdd=refused;
  const extended=await openCall('Settled door',[codingDraft('Additional work','one')]);
  assert(extended.ok && extended.records?.some((r:string)=>r.startsWith('ask_settled')),'A settled parent must refuse new todos');
  assert.equal(store.listTodos('quiet').length+store.listTodos('quiet-child').length,0);

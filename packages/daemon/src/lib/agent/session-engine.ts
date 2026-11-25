@@ -1,12 +1,20 @@
-import type { GlobalSettings, ProviderRecord, SessionConfig } from '@hyperneo/shared';
+import type {
+  GlobalSettings,
+  ProviderRecord,
+  SessionConfig,
+  ThinkingLevel,
+} from '@hyperneo/shared';
 import {
   isOxapHarness,
   isOxapModelLocked,
   OXAP_HARNESSES,
   oxapHarness,
+  oxapCodexReasoning,
+  oxapThinkingOptions,
   type OxapHarness,
 } from '@hyperneo/shared/types/oxap-harnesses';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { findInModels, getAvailableModels } from '../model-service.ts';
 import { savedOxapAdapter } from '../oxap/oxap-hub-config.ts';
 
 export type SessionEngine = NonNullable<SessionConfig['harness']>;
@@ -175,20 +183,53 @@ export const decideOxapOpen = (superpipe({})('oap.session.open') as PipelineAPI)
   record: Pick<ProviderRecord, 'configJson'> | null
 ) => { adapter: string } | string;
 
+function publishedCodexModel(model: string | undefined) {
+  return model
+    ? findInModels(
+        getAvailableModels().filter((entry) => entry.provider === 'anthropic-codex'),
+        model
+      )
+    : undefined;
+}
+
+export function savedOxapCodexReasoning(model: string, thinkingLevel: ThinkingLevel | undefined) {
+  if (thinkingLevel === undefined) return undefined;
+  const info = publishedCodexModel(model);
+  if (
+    (info?.codexReasoning || thinkingLevel === 'off') &&
+    !oxapThinkingOptions('oxap-codex', info).some(({ value }) => value === thinkingLevel)
+  )
+    return undefined;
+  return oxapCodexReasoning(thinkingLevel);
+}
+
 export function thinkingRefusal(
   harness: SessionConfig['harness'],
-  thinkingLevel: unknown
+  thinkingLevel: unknown,
+  model?: string
 ): string | undefined {
-  if (thinkingLevel === undefined || thinkingLevel === 'off' || !isOxapHarness(harness))
-    return undefined;
+  if (thinkingLevel === undefined || !isOxapHarness(harness)) return undefined;
+  if (harness === 'oxap-codex') {
+    const info = publishedCodexModel(model);
+    if (
+      (thinkingLevel === 'think64k' || thinkingLevel === 'ultra') &&
+      info?.codexReasoning?.levels.includes('ultra')
+    )
+      return 'OXAP cannot send ultra to this Codex model.';
+    return oxapThinkingOptions(harness, info).some(({ value }) => value === thinkingLevel)
+      ? undefined
+      : `OXAP Codex model ${model ?? 'selection'} does not publish support for this thinking level.`;
+  }
+  if (thinkingLevel === 'off') return undefined;
   const row = oxapHarness(harness);
   return row.thinking ? undefined : `${row.label} does not take a thinking level.`;
 }
 
 export function oxapModelSwitchRefusal(
-  config: Pick<SessionConfig, 'harness' | 'model'>,
+  config: Pick<SessionConfig, 'harness' | 'model' | 'thinkingLevel'>,
   nativeSessionId: string | null | undefined,
-  model: string | undefined
+  model: string | undefined,
+  thinkingLevel = config.thinkingLevel
 ): string | undefined {
   if (
     model !== undefined &&
@@ -196,5 +237,13 @@ export function oxapModelSwitchRefusal(
     isOxapModelLocked(config.harness, nativeSessionId)
   )
     return 'This DeepSeek thread has a fixed model. Start a new chat to use another model.';
+  if (
+    config.harness === 'oxap-codex' &&
+    model &&
+    model !== config.model &&
+    !thinkingRefusal(config.harness, config.thinkingLevel, config.model)
+  ) {
+    return thinkingRefusal(config.harness, thinkingLevel, model);
+  }
   return undefined;
 }

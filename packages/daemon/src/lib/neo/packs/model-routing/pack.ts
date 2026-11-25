@@ -202,7 +202,9 @@ type Access = { availability: Availability; owner: Provider | undefined; account
 async function readAccess(provider: Provider | undefined): Promise<Access> {
   if (!provider) return { availability: 'not configured', owner: provider };
   const status = await provider.getAuthStatus?.();
-  const account = `${status?.method ?? ''}:${status?.user?.email ?? status?.user?.name ?? ''}`;
+  const account =
+    status?.credentialVersion?.toString() ??
+    `${status?.method ?? ''}:${status?.user?.email ?? status?.user?.name ?? ''}`;
   if (status && !status.isAuthenticated)
     return { availability: 'not signed in', owner: provider, account };
   return {

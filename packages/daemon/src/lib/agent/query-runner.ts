@@ -367,6 +367,10 @@ export interface OxapQueryRuntime {
   openDirectorySupported: boolean;
   hub: OxapQueryHub | Promise<OxapQueryHub>;
   clear?(): Promise<void>;
+  commitThinking?<T extends { success: boolean }>(
+    level: string,
+    persist: () => Promise<T>
+  ): Promise<T>;
 }
 
 export interface QueryRunnerContext {

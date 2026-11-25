@@ -3,6 +3,7 @@ import { NEO_FRONT_INFERENCE } from './lib/job-queue-constants.ts';
 import { NEO_DRIVER_REFRESH } from './lib/neo/driver-refresh.ts';
 import { createPeerPairRoute } from './routes/neo-peer.ts';
 import { collectDaemonScratch } from './lib/drivers/daemon-scratch.ts';
+import { setProviderRepository } from './lib/model-service.ts';
 import { createCodexSetupHost } from './lib/drivers/codex-setup-host.ts';
 import { createCodexSetup } from './lib/drivers/codex-setup.ts';
 import {
@@ -124,8 +125,6 @@ import {
 } from './lib/providers/factory.js';
 import { releaseSessionKeyBridges } from './lib/providers/provider-key-bridge.js';
 import { getProviderRegistry } from './lib/providers/registry.js';
-import { setRateLimitEventReader } from './lib/providers/anthropic-usage-source.ts';
-import { anthropicRateLimitEventsRead } from './storage/repositories/anthropic-usage-read.ts';
 import { OAuthRefreshScheduler } from './lib/credentials/oauth-refresh-scheduler.js';
 import { createGoogleConnectionRefreshLoop } from './lib/connections/refresh-loop.ts';
 import { ProviderCredentialManager } from './lib/credentials/provider-credential-manager.js';
@@ -423,6 +422,7 @@ export interface DaemonAppContext {
 }
 
 async function invalidateInFlightModelLoads(): Promise<void> {
+  setProviderRepository(null);
   try {
     const { clearModelsCache } = await import('./lib/model-service.ts');
     clearModelsCache();
@@ -514,8 +514,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const reactiveDb = createReactiveDatabase(db);
     startupTimer.start('database + auth initialize');
     await db.initialize(reactiveDb);
-    const usageDb = db.getDatabase();
-    setRateLimitEventReader(() => gatewayFor(usageDb).run(anthropicRateLimitEventsRead, 200));
+    setProviderRepository(db.providers);
     if (process.env['NODE_ENV'] !== 'test') db.warmEmbedder();
     const cutOffSessionIds = db.listProcessingSessionIds();
     const interruptedTurns = await db.markRestartInterruptedTurns();

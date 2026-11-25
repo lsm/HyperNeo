@@ -143,7 +143,7 @@ export interface CodexDesktopAdapterDeps {
   spawn: SpawnFn;
   appServer: () => Promise<CodexAppServer>;
   bootstrapServer: () => Promise<CodexAppServer>;
-  prepareDesktopProject: (folder: string) => Promise<string>;
+  prepareDesktopProject: (folder: string, server: CodexAppServer) => Promise<string>;
   startDesktopTurn: (threadId: string, request: Record<string, unknown>) => Promise<void>;
   folderExists: (folder: string) => boolean;
   makeFolder: (folder: string) => void;
@@ -1341,7 +1341,7 @@ export async function startCodexThread(
       const projectFolder = request.inPlace
         ? folder
         : ((await deps.gitCheckout(folder))?.repo ?? folder);
-      const projectId = await deps.prepareDesktopProject(projectFolder);
+      const projectId = await deps.prepareDesktopProject(projectFolder, server);
       releaseTitle = await lockCodexSessionName(deps.statePath, projectFolder);
       const sessionTitle = await genericCodexSessionTitle(
         projectFolder,

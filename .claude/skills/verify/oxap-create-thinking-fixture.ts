@@ -112,6 +112,7 @@ setModelsCache(
         {
           id: 'codex-6-luna',
           name: 'Synthetic Codex',
+          codexReasoning: { levels: ['low', 'high', 'ultra'], defaultLevel: 'low' },
           alias: 'codex-6-luna',
           family: 'gpt',
           provider: 'anthropic-codex',
@@ -154,6 +155,11 @@ if (claudePicker) {
     session_id: seeded.sessionId, output: ['Open https://example.com/device.', 'Enter code SYNTHETIC'],
   });
   console.log(`AUTH_SESSION=${seeded.sessionId}`);
+  const settings = await rpc.request<{ sessionId: string }>('session.create', {
+    title: 'Synthetic thinking settings', workspacePath: `${run}/home`,
+    config: { provider: 'anthropic-codex', model: 'codex-6-luna', thinkingLevel: 'think24k', queryMode: 'manual' },
+  });
+  console.log(`SETTINGS_SESSION=${settings.sessionId}`);
 }
 const listProviders = app.db.providers.listProviders.bind(app.db.providers);
 let failProviderList = !harnessChoice && !claudePicker;

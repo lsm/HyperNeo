@@ -566,13 +566,25 @@ export class NeoAskTodoRepository {
     return this.getAsk(ask.id)!;
   }
 
+  linkAskGoal(id: string, goalId: string, now: number): boolean {
+    return this.setOpenAsk(id, 'goal_id', goalId, now);
+  }
+
   focusAsk(id: string, source: NonNullable<NeoAsk['focusedSession']>, now: number): void {
-    this.db
-      .prepare(
-        "UPDATE neo_asks SET focused_session_json = ?, updated_at = ? WHERE id = ? AND status = 'open'"
-      )
-      .run(JSON.stringify(source), now, id);
+    this.setOpenAsk(id, 'focused_session_json', JSON.stringify(source), now);
+  }
+
+  private setOpenAsk(
+    id: string,
+    column: 'goal_id' | 'focused_session_json',
+    value: string,
+    now: number
+  ): boolean {
+    const { changes } = this.db
+      .prepare(`UPDATE neo_asks SET ${column} = ?, updated_at = ? WHERE id = ? AND status = 'open'`)
+      .run(value, now, id);
     this.changed();
+    return changes > 0;
   }
 
   findAsk(
@@ -584,9 +596,10 @@ export class NeoAskTodoRepository {
     return foundAsk(
       (this.db
         .prepare(
-          `${ASK_SELECT} WHERE session_id = ?1 AND origin_message_id IS ?2 AND (?3 IS NULL OR title = ?3) AND (?3 IS NOT NULL OR parent_id IS NULL) AND goal_id IS ?4
+          `${ASK_SELECT} WHERE session_id = ?1 AND origin_message_id IS ?2 AND (?3 IS NULL OR title = ?3) AND (?3 IS NOT NULL OR parent_id IS NULL) AND (?3 IS NULL OR goal_id IS ?4)
            AND (status = 'open' OR (status = 'done'
-             AND EXISTS (SELECT 1 FROM neo_asks c WHERE c.parent_id = neo_asks.id)))`
+             AND EXISTS (SELECT 1 FROM neo_asks c WHERE c.parent_id = neo_asks.id)))
+           ORDER BY goal_id IS NOT NULL`
         )
         .get(sessionId, originMessageId, title, goalId) as AskRow | null) ?? null
     );

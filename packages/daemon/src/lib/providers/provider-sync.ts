@@ -7,6 +7,7 @@ import { CustomEndpointProvider, customProviderIdFor } from './custom-endpoint-p
 import { Logger } from '../logger.js';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.js';
 import { resolveKimiRegion } from './kimi-provider.js';
+import { AnthropicProvider } from './anthropic-provider.ts';
 
 const logger = new Logger('providers:sync');
 
@@ -50,6 +51,9 @@ export async function syncProviderToRegistry(
   if (record.kind === 'built_in') {
     await registerBuiltInProvider(registry, record.providerId);
     const provider = registry.get(record.providerId);
+    if (provider instanceof AnthropicProvider && record.authType === 'oauth') {
+      provider.requireOwnLogin();
+    }
     if (provider && provider.id === 'kimi' && 'setDefaultRegion' in provider) {
       let parsedRegion: unknown;
       try {

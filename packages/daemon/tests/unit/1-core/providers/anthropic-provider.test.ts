@@ -406,14 +406,15 @@ describe('AnthropicProvider', () => {
   });
 
   describe('getAuthStatus', () => {
-    it('reports plain credential presence when no failure is recorded', async () => {
-      process.env.ANTHROPIC_API_KEY = 'test-key';
-
-      const status = await provider.getAuthStatus();
+    it('reports an inherited credential when no failure is recorded', async () => {
+      const inherited = new AnthropicProvider({ ANTHROPIC_API_KEY: 'test-key' });
+      const status = await inherited.getAuthStatus();
 
       expect(status).toEqual({
         isAuthenticated: true,
         method: 'api_key',
+        credentialSource: 'inherited',
+        credentialVersion: 0,
         error: undefined,
       });
     });

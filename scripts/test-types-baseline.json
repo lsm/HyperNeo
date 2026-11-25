@@ -205,7 +205,7 @@
     "packages/daemon/tests/unit/1-core/operations/neo-todo-runner.test.ts": 2,
     "packages/daemon/tests/unit/1-core/operations/neo-todo-stop-context.test.ts": 2,
     "packages/daemon/tests/unit/1-core/operations/neo-todo-target.test.ts": 3,
-    "packages/daemon/tests/unit/1-core/operations/neo-todos.test.ts": 2,
+    "packages/daemon/tests/unit/1-core/operations/neo-todos.test.ts": 1,
     "packages/daemon/tests/unit/1-core/operations/neo-worker-report.test.ts": 2,
     "packages/daemon/tests/unit/1-core/operations/neo.test.ts": 4,
     "packages/daemon/tests/unit/1-core/operations/preview-candidates.test.ts": 1,

@@ -127,31 +127,16 @@ try {
   });
 
   assert.deepEqual(usage, {
-    supported: true,
+    supported: false,
     provider: 'anthropic',
-    windows: [
-      {
-        label: '5 hours',
-        used: 87,
-        limit: 100,
-        resetAt: new Date(1_795_000_000_000).toISOString(),
-      },
-      {
-        label: '7 days',
-        used: 100,
-        limit: 100,
-        resetAt: new Date(resetsSevenDay * 1000).toISOString(),
-      },
-    ],
+    reason: 'not_supported',
   });
   assert(!JSON.stringify(usage).includes('synthetic-subscription-token'));
   writeFileSync(
     join(run, 'evidence/anthropic-usage.json'),
     JSON.stringify({ usage, storedEvents: storedEvents.length }, null, 2)
   );
-  console.log(
-    JSON.stringify({ passed: true, windows: usage.windows.length, source: 'stored_events' })
-  );
+  console.log(JSON.stringify({ passed: true, windows: 0, ignoredEvents: storedEvents.length }));
 } finally {
   socket?.close();
   await app?.cleanup();
