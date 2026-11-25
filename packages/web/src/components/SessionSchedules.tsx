@@ -317,7 +317,7 @@ function ScheduleStrip({
       class="space-y-2 text-xs text-fg-muted"
       data-session-schedules={sessionId}
     >
-      <div class="max-h-64 space-y-2 overflow-y-auto px-3 pb-3">
+      <div class="space-y-2">
         <Button
           variant="ghost"
           size="xs"

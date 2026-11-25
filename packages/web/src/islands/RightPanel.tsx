@@ -2,6 +2,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { IconButton } from '../components/ui/IconButton.tsx';
 import { CloseGlyph } from '../components/icons/common-glyphs.tsx';
 import { SessionSchedules } from '../components/SessionSchedules.tsx';
+import { t } from '../lib/i18n/index.ts';
 import { sessionStore } from '../lib/session-store.ts';
 import {
   type ExtensionPanelTarget,
@@ -254,9 +255,11 @@ export function RightPanel() {
           {renderedTarget?.type === 'schedules' && (
             <div class="flex h-full min-w-0 flex-col overflow-hidden" data-testid="schedules-panel">
               <div class="flex h-[52px] flex-shrink-0 items-center gap-1 border-b border-line px-4 pr-12">
-                <h2 class="min-w-0 flex-1 truncate text-sm font-semibold text-fg">Schedules</h2>
+                <h2 class="min-w-0 flex-1 truncate text-sm font-semibold text-fg">
+                  {t('schedules.title')}
+                </h2>
                 <IconButton
-                  title="Close schedules"
+                  title={t('schedules.close')}
                   onClick={() => {
                     rightPanelTargetSignal.value = null;
                   }}

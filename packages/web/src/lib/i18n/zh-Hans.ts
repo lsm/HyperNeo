@@ -112,6 +112,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'schedules.empty': '还没有定时任务',
   'schedules.emptyHint': '让 Neo 定期去做的事，会列在这里。',
   'schedules.refresh': '刷新定时检查',
+  'schedules.close': '关闭定时检查',
   'schedules.unavailable': '来源不可用',
   'schedules.pause': '暂停',
   'schedules.resume': '恢复',

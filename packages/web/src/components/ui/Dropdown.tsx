@@ -224,7 +224,7 @@ export function Dropdown({
             'shadow-xl z-[9999] animate-slideIn',
             customContent
               ? ''
-              : 'py-1 bg-surface-overlay border border-line rounded-lg min-w-[200px]'
+              : 'py-1 bg-surface-overlay border border-line rounded-lg min-w-[200px] overflow-y-auto'
           )}
           role="menu"
         >

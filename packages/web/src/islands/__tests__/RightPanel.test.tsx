@@ -1,6 +1,7 @@
 import { signal, type Signal } from '@preact/signals';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { applyLanguage } from '../../lib/i18n/index.ts';
 
 vi.mock('../../lib/session-store', () => ({
   sessionStore: {
@@ -240,6 +241,23 @@ describe('RightPanelToggle and schedules target', () => {
     render(<RightPanel />);
     await waitFor(() => expect(screen.getByTestId('session-schedules')).toBeTruthy());
     expect(screen.getByTestId('schedules-panel').textContent).toContain('Schedules');
+  });
+
+  it('localizes the schedules panel header and close button', async () => {
+    mockSession('s1', { id: 's1', workspacePath: '/repo' } as unknown as Session);
+    applyLanguage('zh-Hans');
+    try {
+      rightPanelTargetSignal.value = { type: 'schedules', sessionId: 's1' };
+      render(<RightPanel />);
+      await waitFor(() => expect(screen.getByTestId('schedules-panel')).toBeTruthy());
+
+      expect(screen.getByTestId('schedules-panel').textContent).toContain('定时检查');
+      expect(screen.getByTestId('schedules-panel-close').getAttribute('title')).toBe(
+        '关闭定时检查'
+      );
+    } finally {
+      applyLanguage('en');
+    }
   });
 
   it('closes the schedules panel when the active session changes', async () => {
