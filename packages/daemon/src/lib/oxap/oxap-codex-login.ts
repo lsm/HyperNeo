@@ -1,6 +1,11 @@
 import { generateUUID, type JsonRpcNotification } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import { startCodexBootstrapServer, type CodexAppServer } from '../drivers/codex-app-server.ts';
+import {
+  CodexBootstrapError,
+  startCodexBootstrapServer,
+  type CodexAppServer,
+} from '../drivers/codex-app-server.ts';
+import { MessageDeliveryTerminalTurnError } from '../agent/message-delivery.ts';
 import type { OxapReopenEvents, OxapReopenStore } from './oxap-reopen.ts';
 
 const SIGN_IN_FAILURE = 'Codex is not signed in. Sign in, then send again.';
@@ -10,6 +15,8 @@ type Completion = { loginId?: string; success?: boolean; error?: string | null }
 type Code = { loginId: string; verificationUrl: string; userCode: string };
 type Login = { code: Promise<Code>; done: Promise<Completion> };
 let pending: Login | undefined;
+
+export class OxapCodexLaunchError extends MessageDeliveryTerminalTurnError {}
 
 function beginLogin(
   server: CodexAppServer,
@@ -111,7 +118,15 @@ export async function checkCodexLogin(
   const exited = new Promise<void>((resolve) => {
     reportExit = resolve;
   });
-  const server = await startCodexBootstrapServer(executable, notify, reportExit);
+  const server = await startCodexBootstrapServer(executable, notify, reportExit).catch(
+    (error: unknown) => {
+      if (!(error instanceof CodexBootstrapError)) throw error;
+      const message = /[.!?]$/.test(error.message) ? error.message : `${error.message}.`;
+      throw new OxapCodexLaunchError(
+        `${message} Check the Codex CLI path in Settings → Providers.`
+      );
+    }
+  );
   let owned: Login | undefined;
   let finished = false;
   let closed = false;

@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { setModelsCache } from '../../../packages/daemon/src/lib/model-service.ts';
@@ -79,7 +79,12 @@ if (claudePicker) {
     credentials: { oauthAccessToken: 'synthetic-picker-token' },
   });
 } else {
-  await seedSyntheticCodexAdmission(rpc, app.settingsManager);
+  const codex = `${run}/bin/codex`;
+  writeFileSync(codex, `#!/bin/sh
+[ "$*" = 'app-server --help' ] || exit 1
+echo 'Usage: codex app-server [OPTIONS]'
+`, { mode: 0o700 });
+  await seedSyntheticCodexAdmission(rpc, app.settingsManager, codex);
   await rpc.request('providers.create', {
     params: { providerId: 'anthropic', displayName: 'Synthetic SDK', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: false, sortOrder: 2 },
     credentials: { apiKey: 'sk-devproxy-test-key' },
