@@ -93,6 +93,8 @@ interface ServiceDeps {
   mainPath: string;
   path: string | undefined;
   print(text: string): void;
+  error(text: string): void;
+  makeDir(path: string): Promise<void>;
   write(path: string, text: string): Promise<void>;
   remove(path: string): Promise<void>;
   sleep(ms: number): Promise<void>;
@@ -118,6 +120,10 @@ const defaultDeps = (): ServiceDeps => ({
   mainPath: resolve(import.meta.dir, '../main.ts'),
   path: process.env.PATH,
   print: (text) => console.log(text),
+  error: (text) => console.error(text),
+  makeDir: async (path) => {
+    await mkdir(path, { recursive: true });
+  },
   write: async (path, text) => {
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, text, { mode: 0o644 });
@@ -142,7 +148,7 @@ export async function runService(
 ): Promise<number> {
   const plan = planService(args);
   if ('reason' in plan) {
-    deps.print(plan.reason);
+    deps.error(plan.reason);
     return 1;
   }
   const domain = `gui/${deps.uid}`;
@@ -171,6 +177,7 @@ export async function runService(
     ...(plan.host ? ['--host', plan.host] : []),
     ...(plan.port ? ['--port', plan.port] : []),
   ];
+  await deps.makeDir(join(deps.home, '.hyperneo', 'logs'));
   await deps.write(
     plistPath,
     servicePlist({
@@ -182,7 +189,7 @@ export async function runService(
   );
   const loaded = await launchctl(deps, ['bootstrap', domain, plistPath]);
   if (loaded.code !== 0) {
-    deps.print(`launchctl bootstrap failed: ${loaded.text}`);
+    deps.error(`launchctl bootstrap failed: ${loaded.text}`);
     return 1;
   }
   deps.print(

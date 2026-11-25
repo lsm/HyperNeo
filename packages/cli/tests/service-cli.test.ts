@@ -22,6 +22,8 @@ function harness(results: Record<string, Result | Result[]> = {}) {
   const written: Record<string, string> = {};
   const removed: string[] = [];
   const printed: string[] = [];
+  const errors: string[] = [];
+  const dirs: string[] = [];
   const spawn: SpawnFn = (args) => {
     calls.push(args);
     const planned = results[args[1] ?? ''];
@@ -43,6 +45,10 @@ function harness(results: Record<string, Result | Result[]> = {}) {
     mainPath: '/src/hyperneo/packages/cli/main.ts',
     path: '/opt/homebrew/bin:/usr/bin',
     print: (text: string) => printed.push(text),
+    error: (text: string) => errors.push(text),
+    makeDir: async (path: string) => {
+      dirs.push(path);
+    },
     write: async (path: string, text: string) => {
       written[path] = text;
     },
@@ -53,7 +59,7 @@ function harness(results: Record<string, Result | Result[]> = {}) {
       slept.push(ms);
     },
   };
-  return { deps, calls, written, removed, printed, slept };
+  return { deps, calls, written, removed, printed, errors, dirs, slept };
 }
 
 describe('planService', () => {
@@ -148,6 +154,7 @@ describe('runService', () => {
     expect(plist).toContain('<key>NODE_ENV</key>\n    <string>production</string>');
     expect(plist).toContain('<key>PATH</key>\n    <string>/opt/homebrew/bin:/usr/bin</string>');
     expect(plist).toContain('<key>WorkingDirectory</key>\n  <string>/src/hyperneo</string>');
+    expect(h.dirs).toEqual(['/Users/owner/.hyperneo/logs']);
   });
 
   test('install waits until the old service is gone before bootstrapping', async () => {
@@ -160,7 +167,8 @@ describe('runService', () => {
   test('install reports a failed bootstrap', async () => {
     const h = harness({ print: { code: 113 }, bootstrap: { code: 5, text: 'Input/output error' } });
     expect(await runService(['install'], h.deps)).toBe(1);
-    expect(h.printed.join('\n')).toContain('Input/output error');
+    expect(h.errors.join('\n')).toContain('Input/output error');
+    expect(h.printed).toEqual([]);
   });
 
   test('uninstall boots out and removes the plist', async () => {
@@ -186,5 +194,7 @@ describe('runService', () => {
     const h = harness();
     expect(await runService(['restart'], h.deps)).toBe(1);
     expect(h.calls).toEqual([]);
+    expect(h.errors[0]).toContain('Usage: hyperneo service');
+    expect(h.printed).toEqual([]);
   });
 });
