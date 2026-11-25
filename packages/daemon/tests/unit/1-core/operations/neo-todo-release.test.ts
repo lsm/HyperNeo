@@ -938,6 +938,33 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
     }
   });
 
+  test('starts fresh for a released worker', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      recordWorkerStarted(h.db, worker, {
+        startedBy: 'neo',
+        machine: 'laptop',
+        folder: h.folder(),
+        harness: worker.adapter,
+      });
+      h.db
+        .prepare('UPDATE work_started_sessions SET released_at = ? WHERE adapter = ? AND id = ?')
+        .run(Date.now(), worker.adapter, worker.id);
+      const fresh = { adapter: 'hyperneo', id: 'fresh' };
+      h.setOnStart(() => ({
+        ok: true,
+        value: { ref: fresh, receipt: { executionId: 'fresh', inputId: 'i' } },
+      }));
+      const next = h.add({ verb: 'send', ref: worker });
+      await h.start(next.id);
+      expect(h.events).toEqual([]);
+      expect(h.sessions.readRef(next.id)).toEqual(fresh);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('releases a kept worker whose prompt cache went cold', async () => {
     const h = setup();
     try {
