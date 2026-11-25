@@ -2192,6 +2192,7 @@ export class SDKMessageRepository {
     isSynthetic?: true;
     neoBatch?: true;
     neoWorkerBatch?: true;
+    shouldQuery?: false;
   } | null {
     const row = this.db
       .prepare(
@@ -2214,6 +2215,7 @@ export class SDKMessageRepository {
         isSynthetic?: boolean;
         neoBatchContent?: string | MessageContent[];
         neoWorkerBatch?: boolean;
+        shouldQuery?: boolean;
       };
       const content = message.neoBatchContent ?? message.message?.content ?? null;
       if (content === null) return null;
@@ -2226,6 +2228,7 @@ export class SDKMessageRepository {
           ? { isSynthetic: true as const }
           : {}),
         ...(message.neoWorkerBatch ? { neoWorkerBatch: true as const } : {}),
+        ...(message.shouldQuery === false ? { shouldQuery: false as const } : {}),
         ...(message.neoBatchContent !== undefined || message.neoWorkerBatch
           ? { neoBatch: true as const }
           : {}),

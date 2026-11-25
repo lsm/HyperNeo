@@ -235,7 +235,7 @@ describe('codex-desktop start', () => {
     expect(opening.sandbox).toBe('danger-full-access');
   });
 
-  test('tells a new Codex worker how to trim only its own merged or closed PR links', async () => {
+  test('tells a new Codex worker how to trim only its own PR links and to wait without short polls', async () => {
     const { instance, calls } = adapter({
       call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}),
     });
@@ -245,7 +245,7 @@ describe('codex-desktop start', () => {
         calls.find(([method]) => method === 'desktop/start-turn')?.[1].input as { text: string }[]
       )[0].text
     ).toBe(
-      `${request.message}\nTo trim this thread's PR links, call mcp__codex_app__list_artifacts, check each PR's GitHub state, then call mcp__codex_app__remove_artifact({artifact_type:"pull_request", url}) for merged/closed PRs; own thread only; never edit ~/.codex state files directly.`
+      `${request.message}\nTo trim this thread's PR links, call mcp__codex_app__list_artifacts, check each PR's GitHub state, then call mcp__codex_app__remove_artifact({artifact_type:"pull_request", url}) for merged/closed PRs; own thread only; never edit ~/.codex state files directly.\nPass yield_time_ms 30000 to exec_command. While a command still runs, wait with one empty write_stdin of yield_time_ms 60000, and give the enclosing exec or wait call the same time; each returns as soon as the command exits, so never poll in short steps.`
     );
   });
 

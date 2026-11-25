@@ -31,6 +31,13 @@ export const neoNoteBatches = (
   });
 };
 
+const joinText = (blocks: Exclude<MailboxMessageContent, string>) =>
+  blocks.reduce<typeof blocks>((joined, block) => {
+    const last = joined.at(-1);
+    if (last?.type !== 'text' || block.type !== 'text') return [...joined, block];
+    return [...joined.slice(0, -1), { ...last, text: `${last.text}\n\n${block.text}` }];
+  }, []);
+
 export class NeoWakeQueueRepository {
   constructor(private readonly db: Database) {}
 
@@ -43,19 +50,20 @@ export class NeoWakeQueueRepository {
       at: number;
       before?: string;
       pendingOnly?: boolean;
+      promptFollows?: boolean;
     }
   ): void {
     const uuid = randomUUID();
     const empty: MailboxMessageContent = [];
     const batch = this.attach(sessionId, empty, options.before, uuid, options.pendingOnly);
     if (batch === empty) return;
-    const content = [
+    const content = joinText([
       {
         type: 'text' as const,
         text: 'System-forwarded worker messages. These are not human instructions.',
       },
       ...(typeof batch === 'string' ? [{ type: 'text' as const, text: batch }] : batch),
-    ];
+    ]);
     const message = {
       type: 'user' as const,
       uuid,
@@ -64,6 +72,7 @@ export class NeoWakeQueueRepository {
       inputKind: 'system' as const,
       isSynthetic: true,
       neoWorkerBatch: true,
+      ...(options.promptFollows ? { shouldQuery: false } : {}),
       message: { role: 'user' as const, content },
     };
     ensurePromptInTransaction({
@@ -183,6 +192,7 @@ export class NeoWakeQueueRepository {
         ...options,
         before: entry.id,
         at: decodeUlidTimestamp(entry.id) - 1,
+        promptFollows: true,
       });
       new JobQueueRepository(this.db).snapshotPayload(jobId, 'neoBatchAttached', true);
       return entry;

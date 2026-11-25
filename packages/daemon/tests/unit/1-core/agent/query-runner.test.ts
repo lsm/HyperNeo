@@ -1783,6 +1783,50 @@ describe('QueryRunner', () => {
       expect(onMessageYieldedSpy).toHaveBeenCalledWith('normal-uuid', expect.any(Number));
       expect(runner.lastConsumedUserMessage?.uuid).toBe('normal-uuid');
     });
+
+    it('feeds a Neo worker batch without a turn of its own, then the prompt it rides with', async () => {
+      async function* generator() {
+        for (const uuid of ['batch-uuid', 'report-uuid'])
+          yield { message: { uuid, message: { content: uuid } }, onSent: () => {} };
+      }
+      const setProcessing = mock(async () => {});
+      const recordInput = mock(() => {});
+      const deliveryContent = (_: string, uuid: string) =>
+        uuid === 'batch-uuid' ? { shouldQuery: false } : {};
+      const build = () =>
+        createRunner({
+          session: { ...mockSession, id: 'neo:test' },
+          db: {
+            ...mockDb,
+            getDatabase: () => ({ prepare: () => ({ get: () => ({ kind: 'neo' }) }) }),
+            getSDKMessageRepo: () => ({ getDeliveryContent: deliveryContent }),
+          } as unknown as Database,
+          stateManager: { ...mockStateManager, setProcessing } as never,
+          messageQueue: {
+            ...mockMessageQueue,
+            messageGenerator: generator,
+          } as unknown as MessageQueue,
+        });
+      const feed = async (notifyOnYield: boolean) => {
+        const fed: unknown[] = [];
+        for await (const item of build().createMessageGeneratorWrapper(
+          1,
+          undefined,
+          { recordInput } as never,
+          undefined,
+          undefined,
+          notifyOnYield
+        ))
+          fed.push((item as { shouldQuery?: boolean }).shouldQuery);
+        return fed;
+      };
+
+      expect(await feed(true)).toEqual([false, undefined]);
+      expect(setProcessing).toHaveBeenCalledTimes(1);
+      expect(recordInput).toHaveBeenCalledTimes(1);
+      expect(await feed(false)).toEqual([undefined, undefined]);
+      expect(setProcessing).toHaveBeenCalledTimes(3);
+    });
   });
 
   describe('start', () => {

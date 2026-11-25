@@ -24,6 +24,7 @@ describe('Claude inbox driver runtime', () => {
   let emits: Array<(event: ClaudeInboxEvent) => void>;
   let writes: ClaudeInboxSubmission[];
   let handoffs: Parameters<Deps['handoff']>[0][];
+  let forwards: Parameters<Deps['forwardRemote']>[];
   let errors: unknown[];
   let closes: number;
   let opens: number;
@@ -44,6 +45,7 @@ describe('Claude inbox driver runtime', () => {
     emits = [];
     writes = [];
     handoffs = [];
+    forwards = [];
     errors = [];
     closes = 0;
     opens = 0;
@@ -58,9 +60,14 @@ describe('Claude inbox driver runtime', () => {
       registrationsDir: dir,
       liveSessions: async () => [{ sessionId, pid: 456, status: 'busy', owner: 'cli' }],
       hasSession: (id) => id === 'origin',
+      hasRemoteDaemon: (id) => id === 'home',
       handoff: async (args) => {
         handoffs.push(args);
         return { kind: 'enqueued', id: 'entry' };
+      },
+      forwardRemote: async (...args) => {
+        forwards.push(args);
+        return { kind: 'accepted', mailboxId: 'mailbox', messageId: 'message' };
       },
       onError: (error) => void errors.push(error),
       open: async (_directory, _name, emit) => {
@@ -168,6 +175,44 @@ describe('Claude inbox driver runtime', () => {
       expect(writes).toHaveLength(1);
     }
   );
+
+  test('a remote session sender gets its reply forwarded to the attached daemon', async () => {
+    const remote = { ...context, from: 'daemon:home::session:origin' };
+    expect(driver.admit(remote)).toEqual({ value: remote.from });
+    await driver.send(sessionId, 'question', remote, 'prompting');
+    const event = reply();
+    emits[0](event);
+    await driver.close();
+    expect(handoffs).toEqual([]);
+    expect(forwards).toEqual([
+      [
+        { kind: 'remote-session', daemonId: 'home', sessionId: 'origin' },
+        {
+          sessionId: 'origin',
+          idempotencyKey: event.messageId,
+          message: {
+            type: 'user',
+            inputKind: 'system',
+            parent_tool_use_id: null,
+            message: { role: 'user', content: event.content },
+          },
+        },
+        `driver:claude-code:${sessionId}`,
+      ],
+    ]);
+    expect(errors).toEqual([]);
+  });
+
+  test('a remote sender on an unattached daemon is refused before the inbox opens', async () => {
+    const remote = { ...context, from: 'daemon:elsewhere::session:origin' };
+    expect(driver.admit(remote)).toMatchObject({ reason: { reason: 'unreachable' } });
+    expect(await driver.send(sessionId, 'question', remote, 'prompting')).toMatchObject({
+      ok: false,
+      reason: 'unreachable',
+    });
+    expect(opens).toBe(0);
+    expect(writes).toEqual([]);
+  });
 
   test('receipt facts use separate identities and never become a human approval', async () => {
     await driver.send(sessionId, 'question', context, 'prompting');

@@ -112,6 +112,7 @@ export const en = {
   'schedules.empty': 'No schedules',
   'schedules.emptyHint': 'Things Neo does on a schedule show up here.',
   'schedules.refresh': 'Refresh schedules',
+  'schedules.close': 'Close schedules',
   'schedules.unavailable': 'Source unavailable',
   'schedules.pause': 'Pause',
   'schedules.resume': 'Resume',

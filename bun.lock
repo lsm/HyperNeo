@@ -15,7 +15,7 @@
     },
     "packages/cli": {
       "name": "@hyperneo/cli",
-      "version": "0.62.4",
+      "version": "0.63.1",
       "bin": {
         "hyperneo": "./main.ts",
       },
@@ -35,7 +35,7 @@
     },
     "packages/daemon": {
       "name": "@hyperneo/daemon",
-      "version": "0.62.4",
+      "version": "0.63.1",
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "0.3.325",
         "@anthropic-ai/sdk": "1.9.0",
@@ -70,25 +70,25 @@
     },
     "packages/desktop": {
       "name": "@hyperneo/desktop",
-      "version": "0.62.4",
+      "version": "0.63.1",
     },
     "packages/messaging": {
       "name": "@hyperneo/messaging",
-      "version": "0.62.4",
+      "version": "0.63.1",
       "devDependencies": {
         "@types/bun": "1.4.2",
       },
     },
     "packages/prompts": {
       "name": "@hyperneo/prompts",
-      "version": "0.62.4",
+      "version": "0.63.1",
       "devDependencies": {
         "@types/bun": "1.4.2",
       },
     },
     "packages/shared": {
       "name": "@hyperneo/shared",
-      "version": "0.62.4",
+      "version": "0.63.1",
       "dependencies": {
         "get-east-asian-width": "1.7.0",
         "remark-gfm": "4.0.1",
@@ -115,7 +115,7 @@
     },
     "packages/ui": {
       "name": "@hyperneo/ui",
-      "version": "0.62.4",
+      "version": "0.63.1",
       "dependencies": {
         "@floating-ui/dom": "1.8.0",
         "preact": "10.29.8",
@@ -135,7 +135,7 @@
     },
     "packages/web": {
       "name": "@hyperneo/web",
-      "version": "0.62.4",
+      "version": "0.63.1",
       "dependencies": {
         "@hyperneo/shared": "workspace:*",
         "@hyperneo/ui": "workspace:*",

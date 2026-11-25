@@ -48,15 +48,20 @@ try {
         const composer = page.getByPlaceholder('Ask or make anything...');
         await composer.pressSequentially('Send with a previously saved wrong CLI');
         await press(page.getByRole('button', { name: 'Send message' }));
-        const error = page.locator('.bg-danger\\/10').filter({ hasText: 'API Error' })
-          .getByText(target.launchError, { exact: true });
-        await error.waitFor({ timeout: 20_000 });
+        const transcript = page.locator('[data-messages-container]');
+        const title = transcript.getByText('Could not start Codex CLI', { exact: true });
+        const cause = transcript.getByText(
+          `At "${target.executable}". unknown argument: app-server. Check the Codex CLI path in Settings → Providers.`,
+          { exact: true }
+        );
+        await cause.waitFor({ timeout: 20_000 });
         assert.equal(await page.getByText('Create a new session', { exact: true }).count(), 0);
         await page.getByRole('button', { name: 'Retry', exact: true }).waitFor();
         assert.equal(await page.getByTestId('user-delivery-retry-countdown').count(), 0);
         await page.getByRole('button', { name: 'Dismiss notification' }).first()
           .waitFor({ state: 'hidden', timeout: 15_000 });
-        await error.scrollIntoViewIfNeeded();
+        assert.equal(await title.count(), 1);
+        await cause.scrollIntoViewIfNeeded();
         await screen('chat-error');
       }
       count++;

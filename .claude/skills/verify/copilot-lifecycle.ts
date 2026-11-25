@@ -6,9 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import type { Result, WorkDelivery, WorkDetail, WorkStarted } from '../../../packages/daemon/src/lib/drivers/types.ts';
-import { NEO_DRIVER_REFRESH } from '../../../packages/daemon/src/lib/neo/driver-refresh.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
-import { readWorkCompaction } from '../../../packages/daemon/src/storage/repositories/work-started-sessions-worker.ts';
+import { queueNextTodo } from './worker-reuse-todo.ts';
 
 const [portText, runText, mode = 'all'] = process.argv.slice(2);
 assert(runText);
@@ -60,29 +59,16 @@ const status = async (work: WorkStarted) => {
   assert(reply.ok, JSON.stringify(reply)); return reply.value;
 };
 async function verifyCompact(work: WorkStarted) {
-  const before = await status(work);
-  const db = app!.db.getDatabase();
-  const now = Date.now();
-  db.prepare("INSERT INTO neo_asks (id, session_id, title, request, created_at, updated_at) VALUES ('compact-ask', 'fixture-neo', 'Reuse worker', 'Run the fixture', ?, ?)").run(now, now);
-  db.prepare("INSERT INTO neo_todos (id, ask_id, position, title, done_when, state, created_at, updated_at, finished_at) VALUES ('compact-todo', 'compact-ask', 1, 'Reuse worker', 'Settled', 'done', ?, ?, ?)").run(now, now, now);
-  db.prepare("INSERT INTO neo_todo_sessions (todo_id, target, ref) VALUES ('compact-todo', ?, ?)").run(
-    JSON.stringify({ verb: 'start', adapter: work.ref.adapter, place: work.place }),
-    JSON.stringify(work.ref)
-  );
-  assert.equal(readWorkCompaction(db, work.ref).compactedAt, null);
-  app!.jobQueue.enqueue({ queue: NEO_DRIVER_REFRESH, payload: { scope: 'neo' }, runAt: now });
-  let receipt = readWorkCompaction(db, work.ref);
-  for (let attempt = 0; receipt.compactedAt === null && !receipt.failure && attempt < 100; attempt++) {
-    await new Promise((done) => setTimeout(done, 50));
-    receipt = readWorkCompaction(db, work.ref);
-  }
-  observations.push({ neoCompactionReceipt: receipt });
-  assert((receipt.compactedAt ?? 0) >= now, JSON.stringify(receipt));
-  assert.deepEqual(await status(work), before);
-  const calls = readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
-  assert.equal(calls.filter(call => call.method === 'session.send').length, 1);
-  assert.equal(calls.filter(call => call.method === 'session.history.compact' && call.params.sessionId === work.ref.id).length, 1);
-  console.log('PASS Neo retained the owned Copilot worker after one compaction, preserving its original input and reply.');
+  const delivered = queueNextTodo(app!.db.getDatabase(), work, 'fixture-neo');
+  for (let attempt = 0; !delivered() && attempt < 200; attempt++) await new Promise((done) => setTimeout(done, 50));
+  assert(delivered(), 'the next todo never reached the worker');
+  const readOrder = () => readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line).method)
+    .filter(method => ['session.send', 'session.history.compact'].includes(method));
+  for (let attempt = 0; readOrder().length < 3 && attempt < 200; attempt++) await new Promise((done) => setTimeout(done, 50));
+  const order = readOrder();
+  observations.push({ order });
+  assert.deepEqual(order, ['session.send', 'session.history.compact', 'session.send']);
+  console.log('PASS Neo compacted the owned Copilot worker once, then sent the next todo of the same ask.');
 }
 try {
   await connect();
@@ -234,7 +220,7 @@ try {
   assert.equal((await status(stopped)).status, 'stopped');
   const recovered = await rpc('work.status', { ref: active.ref, receipt: active.receipt }) as { ok: boolean; reason: string };
   assert.equal(recovered.ok, false); assert.equal(recovered.reason, 'unreachable');
-  assert.equal(readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').filter(line => JSON.parse(line).method === 'session.send').length, mode === 'all' ? 10 : mode === 'reap' ? 8 : mode === 'steer' ? 7 : ['stop-terminal', 'abort-window'].includes(mode) ? 6 : 5);
+  assert.equal(readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').filter(line => JSON.parse(line).method === 'session.send').length, mode === 'all' ? 10 : mode === 'reap' ? 8 : mode === 'steer' ? 7 : ['stop-terminal', 'abort-window', 'compact'].includes(mode) ? 6 : 5);
   console.log(`PASS Copilot lifecycle mode=${mode}; observations=${observations.length}. ${run}/evidence/observed.json`);
 } finally {
   ws?.close(); await app?.cleanup();

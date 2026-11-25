@@ -241,7 +241,7 @@ describe('MessageInput queue mode', () => {
     expect(onSend).toHaveBeenCalledWith('inject now', undefined, 'immediate');
   });
 
-  it('renders pending current-turn and next-turn queue overlays', async () => {
+  it('renders only the Next queue above the composer', async () => {
     setQueueResponses({
       enqueued: [
         {
@@ -271,14 +271,17 @@ describe('MessageInput queue mode', () => {
 
     expect(container.querySelector('[data-testid="queue-overlay"]')).toBeTruthy();
     expect(
-      container.querySelector('[data-testid="queued-current-turn-bubble"]')?.textContent
-    ).toContain('steer now');
-    expect(
       container.querySelector('[data-testid="queued-next-turn-bubble"]')?.textContent
     ).toContain('send next');
+    expect(container.querySelector('[data-testid="queued-current-turn-bubble"]')).toBeNull();
+    expect(container.textContent).not.toContain('steer now');
+    expect(mockRequest).not.toHaveBeenCalledWith(
+      'session.messages.byStatus',
+      expect.objectContaining({ status: 'enqueued' })
+    );
   });
 
-  it('removes a pending queued message', async () => {
+  it('shows nothing above the composer for steered messages only', async () => {
     setQueueResponses({
       enqueued: [
         {
@@ -286,6 +289,28 @@ describe('MessageInput queue mode', () => {
           uuid: 'uuid-enqueued',
           timestamp: 1,
           status: 'enqueued',
+          text: 'steer now',
+        },
+      ],
+    });
+
+    const { container } = render(<MessageInput sessionId="session-1" onSend={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="queue-overlay"]')).toBeNull();
+  });
+
+  it('removes a pending queued message', async () => {
+    setQueueResponses({
+      deferred: [
+        {
+          dbId: 'db-deferred',
+          uuid: 'uuid-deferred',
+          timestamp: 1,
+          status: 'deferred',
           text: 'remove me',
         },
       ],
@@ -306,7 +331,7 @@ describe('MessageInput queue mode', () => {
 
     expect(mockRequest).toHaveBeenCalledWith('session.messages.removePending', {
       sessionId: 'session-1',
-      messageDbId: 'db-enqueued',
+      messageDbId: 'db-deferred',
     });
   });
 
@@ -339,38 +364,6 @@ describe('MessageInput queue mode', () => {
     expect(mockRequest).toHaveBeenCalledWith('session.messages.promotePending', {
       sessionId: 'session-1',
       messageDbId: 'db-deferred',
-    });
-  });
-
-  it('defers an enqueued message to next', async () => {
-    setQueueResponses({
-      enqueued: [
-        {
-          dbId: 'db-enqueued',
-          uuid: 'uuid-enqueued',
-          timestamp: 1,
-          status: 'enqueued',
-          text: 'defer me',
-        },
-      ],
-    });
-
-    const { container } = render(<MessageInput sessionId="session-1" onSend={vi.fn()} />);
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    const deferButton = container.querySelector('[data-testid="defer-queued-message"]')!;
-    await act(async () => {
-      fireEvent.click(deferButton);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(mockRequest).toHaveBeenCalledWith('session.messages.deferPending', {
-      sessionId: 'session-1',
-      messageDbId: 'db-enqueued',
     });
   });
 
@@ -496,7 +489,7 @@ describe('MessageInput queue mode', () => {
         await vi.advanceTimersByTimeAsync(0);
       });
       const initialCalls = byStatusCallCount();
-      expect(initialCalls).toBeGreaterThanOrEqual(2);
+      expect(initialCalls).toBeGreaterThanOrEqual(1);
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(15000);
@@ -674,13 +667,13 @@ describe('MessageInput queue mode', () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(1);
       });
-      expect(byStatusCallCount()).toBe(2);
+      expect(byStatusCallCount()).toBe(1);
 
       await act(async () => {
         emitStatusChanged('other-session');
         await vi.advanceTimersByTimeAsync(1000);
       });
-      expect(byStatusCallCount()).toBe(2);
+      expect(byStatusCallCount()).toBe(1);
     } finally {
       vi.useRealTimers();
     }
@@ -705,19 +698,19 @@ describe('MessageInput queue mode', () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(1);
       });
-      expect(byStatusCallCount()).toBe(2);
+      expect(byStatusCallCount()).toBe(1);
 
       Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
       await act(async () => {
         await vi.advanceTimersByTimeAsync(15000);
       });
-      expect(byStatusCallCount()).toBe(2);
+      expect(byStatusCallCount()).toBe(1);
 
       Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
       await act(async () => {
         await vi.advanceTimersByTimeAsync(5000);
       });
-      expect(byStatusCallCount()).toBe(4);
+      expect(byStatusCallCount()).toBe(2);
     } finally {
       if (originalHidden) {
         Object.defineProperty(document, 'hidden', originalHidden);

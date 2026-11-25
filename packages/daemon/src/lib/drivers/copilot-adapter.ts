@@ -18,6 +18,7 @@ import { errorMessage } from '../utils/error-message.ts';
 import { copilotOwnsSession, createCopilotFind } from './copilot-find.ts';
 import { readCopilotObservations, readCopilotTurnFacts } from './copilot-observations.ts';
 import { readCopilotHistory, createCopilotInputReader } from './copilot-history.ts';
+import { COPILOT_DESKTOP_UNAVAILABLE } from './types.ts';
 import type * as W from './types.ts';
 
 type Receipt = W.WorkStarted['receipt'];
@@ -143,6 +144,7 @@ export function createCopilotAdapter(
     const record: Record = {
       work: {
         ref: { adapter: discovery.id, id: location.id },
+        copilotClient: 'cli',
         title: request.title,
         place: { ...request.place, machine: deps.machine },
         ...workExecutionLocation(location.directory, deps.machine),
@@ -245,6 +247,7 @@ export function createCopilotAdapter(
       ok: true,
       value: {
         ...work,
+        copilotClient: 'cli',
         status: record.archived
           ? 'stopped'
           : snapshot.status === 'unreachable' || (!live.has(work.ref.id) && input?.outcome)
@@ -572,6 +575,7 @@ export function createCopilotAdapter(
           ok: true,
           value: {
             ...record.work,
+            copilotClient: 'cli' as const,
             place: { ...record.work.place, folder, name: basename(folder) || folder },
             status: record.archived
               ? 'stopped'
@@ -610,14 +614,26 @@ export function createCopilotAdapter(
       return effect();
     }, ref.id);
   const startPreferred: NonNullable<W.WorkAdapter['start']> = async (request, context) => {
+    if (request.copilotClient === 'cli') return start(request);
     if (deps.desktop?.capabilities.includes('start') && deps.desktop.start) {
       const result = await deps.desktop.start(request, context);
-      if (result.ok || result.reason !== 'unreachable' || !result.notSent) return result;
+      if (
+        request.copilotClient === 'desktop' ||
+        result.ok ||
+        result.reason !== 'unreachable' ||
+        !result.notSent
+      )
+        return result;
     }
+    if (request.copilotClient === 'desktop')
+      return reject('unreachable', COPILOT_DESKTOP_UNAVAILABLE, true);
     return start(request);
   };
   return {
     ...discovery,
+    get copilotClients(): NonNullable<W.WorkAdapter['copilotClients']> {
+      return deps.desktop?.capabilities.includes('start') ? ['desktop', 'cli'] : ['cli'];
+    },
     supportsStartEffort: true,
     resolveStartConfiguration: async (request) => {
       if (deps.desktop?.capabilities.includes('start'))

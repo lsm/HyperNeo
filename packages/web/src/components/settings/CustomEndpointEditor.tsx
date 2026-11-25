@@ -70,6 +70,7 @@ export interface EditorState {
   baseUrl: string;
   apiKey: string;
   headersText: string;
+  llamaCppThinkingOff?: boolean;
   defaultModelId: string;
   models: ModelDraft[];
   presetCapabilities?: Partial<CustomEndpointModelCapabilities>;
@@ -85,6 +86,7 @@ export function presetToEditor(preset: CustomEndpointPreset): EditorState {
     name: preset.template.name ?? '',
     baseUrl: preset.template.baseUrl ?? '',
     apiKey: preset.template.apiKey ?? '',
+    llamaCppThinkingOff: preset.template.llamaCppThinkingOff,
     headersText: preset.template.headers
       ? Object.entries(preset.template.headers)
           .map(([k, v]) => `${k}: ${v}`)
@@ -111,6 +113,7 @@ export function existingToEditor(config: CustomEndpointConfig): EditorState {
     name: config.name,
     baseUrl: config.baseUrl,
     apiKey: config.apiKey ?? '',
+    llamaCppThinkingOff: config.llamaCppThinkingOff,
     headersText: config.headers
       ? Object.entries(config.headers)
           .map(([k, v]) => `${k}: ${v}`)
@@ -177,6 +180,9 @@ export function editorToConfig(state: EditorState): CustomEndpointConfig {
   };
   if (state.apiKey.trim()) config.apiKey = state.apiKey.trim();
   if (headers) config.headers = headers;
+  if (state.type === 'anthropic-messages' && state.llamaCppThinkingOff) {
+    config.llamaCppThinkingOff = true;
+  }
   if (state.defaultModelId.trim()) config.defaultModelId = state.defaultModelId.trim();
   return config;
 }
@@ -528,6 +534,17 @@ export function EditorModal({
               class={cn(FORM_CONTROL_CLASS, 'font-mono')}
             />
           </label>
+          {state.type === 'anthropic-messages' && (
+            <label class="flex items-center gap-2 sm:col-span-2">
+              <input
+                type="checkbox"
+                checked={state.llamaCppThinkingOff ?? false}
+                onChange={(e) => update({ llamaCppThinkingOff: e.currentTarget.checked })}
+                class={FORM_CHECKBOX_CLASS}
+              />
+              <span>llama.cpp compatibility for Thinking Off</span>
+            </label>
+          )}
           <label class="block sm:col-span-2">
             <span class={FORM_LABEL_CLASS}>Base URL</span>
             <input
