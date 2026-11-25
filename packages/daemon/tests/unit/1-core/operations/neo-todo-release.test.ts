@@ -787,15 +787,31 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
         throw new Error('Synthetic failure');
       },
     ],
-  ])('still sends the next todo after a %s compaction', async (_name, compact) => {
+  ])('starts a fresh worker after a %s compaction', async (_name, compact) => {
     const h = setup();
     try {
       h.setCompact(compact);
       await h.finishTodo(h.add(started));
+      recordWorkerStarted(h.db, worker, {
+        startedBy: 'neo',
+        machine: 'laptop',
+        folder: h.folder(),
+        harness: worker.adapter,
+      });
+      const fresh = { adapter: 'hyperneo', id: 'fresh' };
+      let startInput: Record<string, unknown> | undefined;
+      h.setOnStart((input) => {
+        startInput = input;
+        return {
+          ok: true,
+          value: { ref: fresh, receipt: { executionId: fresh.id, inputId: 'i' } },
+        };
+      });
       const next = h.add({ verb: 'send', ref: worker });
       await h.start(next.id);
-      expect(h.events).toEqual([`send ${worker.id}`]);
-      expect(h.sessions.readRef(next.id)).toEqual(worker);
+      expect(h.events).toEqual([]);
+      expect(h.sessions.readRef(next.id)).toEqual(fresh);
+      expect(startInput?.excludeRefs).toContainEqual(worker);
     } finally {
       h.db.close();
     }
