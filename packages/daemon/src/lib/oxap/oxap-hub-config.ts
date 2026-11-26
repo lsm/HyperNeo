@@ -48,7 +48,8 @@ export function buildHubConfig(
   records: Records,
   harnesses: Readonly<Record<string, OxapHarness>>,
   environment: Readonly<Record<string, string | undefined>>,
-  keys: Readonly<Record<string, string | undefined>>
+  keys: Readonly<Record<string, string | undefined>>,
+  stateDirectory: string
 ): { value: OxapHubConfig } | { reason: string } {
   const config: OxapHubConfig = { adapters: {}, environment: {} };
   const owners: Record<string, string> = {};
@@ -68,7 +69,7 @@ export function buildHubConfig(
       config.environment[row.key] = keys[record.providerId]!;
       names.push(row.key);
     }
-    config.adapters[record.providerId] = row.entry(settings, names);
+    config.adapters[record.providerId] = row.entry(settings, names, stateDirectory);
   }
   return { value: config };
 }

@@ -1,9 +1,13 @@
 import { EventEmitter, on } from 'node:events';
 import { generateUUID } from '@hyperneo/shared';
-import { oxapSupportsImages } from '@hyperneo/shared/types/oxap-harnesses';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import {
+  type OxapHarnessId,
+  oxapHarness,
+  oxapSupportsImages,
+} from '@hyperneo/shared/types/oxap-harnesses';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { OxapHubRequestError, type OxapHubClient } from './oxap-hub-client.ts';
+import { type OxapHubClient, OxapHubRequestError } from './oxap-hub-client.ts';
 import type { OxapQueryHub } from './oxap-query.ts';
 
 type Event = { type: string; run_id: string; [key: string]: unknown };
@@ -219,6 +223,7 @@ export function createOxapQueryHub(
   client: OxapHubClient,
   model?: {
     adapter: string;
+    harness?: OxapHarnessId;
     id: () => string | undefined;
     onFirstEvent?: (event: Event) => Promise<void>;
   }
@@ -255,7 +260,8 @@ export function createOxapQueryHub(
           uncertainSessions.delete(sessionId);
         }
         const selectedModel = model?.id();
-        const deepSeek = model?.adapter === 'deepseek';
+        const harness = model?.harness;
+        const deepSeek = harness && oxapHarness(harness).adapter === 'deepseek';
         let boundModel: string | undefined;
         if (deepSeek && selectedModel) {
           boundModel = await bindDeepSeekModel(client, sessionId, selectedModel);
@@ -267,7 +273,7 @@ export function createOxapQueryHub(
           generateUUID(),
           message,
           selects ? selectedModel : undefined,
-          deepSeek && oxapSupportsImages('oxap-deepseek', boundModel)
+          harness !== undefined && oxapSupportsImages(harness, boundModel)
         );
         const emitter = new EventEmitter();
         const events = on(emitter, 'event') as AsyncIterableIterator<[Event | Error]>;
