@@ -15,6 +15,10 @@ export function createComputerUsePack(): NeoPack {
   return {
     ...COMPUTER_USE_PACK_BRIEF,
     instructions: () => NEO_PACK_COMPUTER_USE_INSTRUCTIONS,
+    workerTemplate: (todo) =>
+      todo.desktopApps?.length && todo.named?.desktopControl !== false
+        ? 'worker.desktop'
+        : undefined,
     workerContext: () => NEO_PACK_COMPUTER_USE_WORKER,
   };
 }

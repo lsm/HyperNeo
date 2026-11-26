@@ -25,6 +25,7 @@ function harness(
     id: string;
     status: WorkStatus;
     liveStatus?: WorkStatus;
+    workerTemplate?: string;
     copilotClient?: 'cli' | 'desktop';
     turnQuestion?: WorkTurnQuestion;
     folder?: string;
@@ -177,6 +178,7 @@ function harness(
         history
           ? new Map(free.map((id) => [id, history.get(id) ?? { sameAskAt: null, settledAt: null }]))
           : new Set(free),
+      workerTemplate: (ref) => workers.find(({ id }) => id === ref.id)?.workerTemplate,
       markUnusable: (ref) => void unusable.push(ref),
       ...{
         reusePolicy: async () => ({
@@ -223,6 +225,20 @@ function harness(
 }
 
 describe('work.start session reuse preference', () => {
+  test.each([
+    [undefined, 'worker.desktop'],
+    ['worker.desktop', undefined],
+  ])('does not reuse a %s worker for a %s todo', async (existing, expected) => {
+    const id = existing ? 'templated' : 'plain';
+    const run = harness([{ id, status: 'done', workerTemplate: existing }], [id], {
+      adapter: 'hyperneo',
+      sameAsk: [id],
+    });
+    const identity = { ...neo, workerTemplate: expected };
+    expect((await run.start(identity)).value?.ref.id).toBe('fresh');
+    expect(run.sent).toEqual([]);
+  });
+
   test('per todo starts a new session even when another worker is free', async () => {
     const run = harness([{ id: 'other', status: 'done' }], ['other'], {
       adapter: 'claude-desktop',

@@ -362,6 +362,10 @@ export class NeoService {
           selectSendOrigin({}, { source: 'internal', role: 'neo', sessionId: origin }),
           { source: 'internal', role: 'neo', sessionId: origin }
         ),
+      workerTemplate: (ref) =>
+        ref.adapter === 'hyperneo' && !ref.daemon
+          ? this.sessions.getSessionFromDB(ref.id)?.metadata.workerTemplate
+          : undefined,
       workerNames: () => this.workerNames ?? fallbackWorkerNames,
       workerCompact: (id) => this.workAdapters?.().find((adapter) => adapter.id === id),
       invoke: (caller, name, input) =>

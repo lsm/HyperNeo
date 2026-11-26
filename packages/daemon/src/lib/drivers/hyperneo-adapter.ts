@@ -160,7 +160,8 @@ export interface HyperneoSessionControl {
     provider?: string,
     effort?: string,
     inPlace?: boolean,
-    prepared?: { sessionId: string; projectPath: string }
+    prepared?: { sessionId: string; projectPath: string },
+    workerTemplate?: string
   ): Promise<string>;
   resolveModel(model: string, provider?: string): Promise<{ id: string; provider: string } | null>;
   resolveDefaultModel?(): Promise<{ id: string; provider: string } | null>;
@@ -628,7 +629,8 @@ type HyperneoStartRequest = StartRequest & { provider?: string };
 export async function createHyperneoSession(
   folder: string,
   request: HyperneoStartRequest,
-  deps: HyperneoAdapterDeps
+  deps: HyperneoAdapterDeps,
+  context?: WorkCallContext
 ): Promise<Gate<string>> {
   const identity = request.preparation
     ? {
@@ -661,7 +663,8 @@ export async function createHyperneoSession(
       request.provider,
       request.effort,
       prepared ? true : request.inPlace,
-      identity
+      identity,
+      context?.caller.source === 'internal' ? context.caller.workerTemplate : undefined
     );
   } catch (error) {
     if (request.model !== undefined && error instanceof ModelUnavailableError)
@@ -781,7 +784,7 @@ const runHyperneoStart = (superpipe({})('hyperneo-start-work') as PipelineAPI)
   .pipe(requireHyperneoStartConfiguration, ['request', 'deps'], 'result:outcome')
   .pipe((request: StartRequest) => request, 'outcome', 'configured')
   .pipe(selectStartFolder, ['configured', 'deps'], 'result:outcome')
-  .pipe(createHyperneoSession, ['outcome', 'configured', 'deps'], 'result:outcome')
+  .pipe(createHyperneoSession, ['outcome', 'configured', 'deps', 'context'], 'result:outcome')
   .pipe(confirmHyperneoStart, ['outcome', 'configured', 'deps'], 'result:outcome')
   .pipe(openHyperneoWork, ['outcome', 'configured', 'context', 'deps'], 'outcome')
   .endAsync('outcome') as (

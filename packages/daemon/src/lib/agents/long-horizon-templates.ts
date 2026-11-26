@@ -1,4 +1,4 @@
-import { LH_SPACE_MANAGER_INSTRUCTIONS } from '@hyperneo/prompts';
+import { LH_SPACE_MANAGER_INSTRUCTIONS, NEO_PACK_COMPUTER_USE_WORKER } from '@hyperneo/prompts';
 import type { SpaceLongHorizonAgentTemplate } from '@hyperneo/shared';
 import { getPresetAgentTemplates } from './seed-agents.ts';
 
@@ -73,15 +73,32 @@ function workerPresetTemplates(): SpaceLongHorizonAgentTemplate[] {
   }));
 }
 
+const DESKTOP_WORKER_TEMPLATE: SpaceLongHorizonAgentTemplate = {
+  key: workerTemplateKey('desktop'),
+  handle: 'desktop',
+  displayName: 'Desktop',
+  description: 'Works in the desktop apps approved for its todo.',
+  instructions: `Use invoke with desktop.call to act in the approved apps. Ask Neo before handling secrets, deleting data, making purchases, sending anything, or answering security and permission prompts. Report UI failures to Neo with the app and what the screen showed. Never work around them with a shell.
+
+${NEO_PACK_COMPUTER_USE_WORKER}`,
+  suggestedAutonomyLevel: 1,
+  suggestedEventSubscriptions: [],
+  reminderDefaults: [],
+  ownershipPatterns: [],
+  toolPermissions: { tools: ['invoke'] },
+};
+
 export function getLongHorizonAgentTemplates(): SpaceLongHorizonAgentTemplate[] {
-  return structuredClone([...LONG_HORIZON_AGENT_TEMPLATES, ...workerPresetTemplates()]).map(
-    (template) => ({
-      ...template,
-      labels: template.key.startsWith(WORKER_TEMPLATE_KEY_PREFIX)
-        ? [...WORKER_TEMPLATE_LABELS]
-        : [...LONG_HORIZON_TEMPLATE_LABELS],
-    })
-  );
+  return structuredClone([
+    ...LONG_HORIZON_AGENT_TEMPLATES,
+    ...workerPresetTemplates(),
+    DESKTOP_WORKER_TEMPLATE,
+  ]).map((template) => ({
+    ...template,
+    labels: template.key.startsWith(WORKER_TEMPLATE_KEY_PREFIX)
+      ? [...WORKER_TEMPLATE_LABELS]
+      : [...LONG_HORIZON_TEMPLATE_LABELS],
+  }));
 }
 
 export function getLongHorizonAgentTemplate(

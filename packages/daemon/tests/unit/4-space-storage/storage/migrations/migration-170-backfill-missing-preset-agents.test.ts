@@ -140,6 +140,9 @@ describe('Migration 170: backfill missing preset agents into existing Spaces', (
     runMigration170(db);
 
     expect(countAgents(db, 'sp-1')).toBe(PRESETS.length);
+    expect(
+      db.prepare("SELECT COUNT(*) AS count FROM space_agents WHERE handle = 'desktop'").get()
+    ).toEqual({ count: 0 });
     for (const preset of PRESETS) {
       const row = readAgentByName(db, 'sp-1', preset.name)!;
       expect(row.handle).toBe(preset.handle);
