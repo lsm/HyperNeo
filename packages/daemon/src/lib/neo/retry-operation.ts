@@ -84,7 +84,9 @@ const retry = (superpipe({})('neo.message.retry') as PipelineAPI)
         service.db,
         service.repo,
         () => service.notifyChanged(),
-        service.todos
+        service.todos,
+        undefined,
+        () => service.installedPacks()
       );
       if (!receipt.ok) return { accepted: false as const, reason: receipt.reason };
       if (!receipt.created) return { accepted: false as const, reason: 'already_retried' };

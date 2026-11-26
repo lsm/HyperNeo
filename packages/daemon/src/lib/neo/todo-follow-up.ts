@@ -34,28 +34,60 @@ export function livePlanSteps(todoId: string, todos: readonly NeoTodo[]): NeoTod
   return todos.filter((step) => step.state !== 'removed' && step.dependsOn?.includes(todoId));
 }
 
+type PlanPacks = readonly { todos?: Pick<NeoTodoPack, 'plan'> }[];
+
+export async function neoPackPlan(todo: NeoTodo, packs: PlanPacks): Promise<boolean> {
+  if (todo.plan || (todo.planCheck && 'legacy' in todo.planCheck)) return false;
+  for (const pack of packs) {
+    if (await pack.todos?.plan?.(todo)) return true;
+  }
+  return false;
+}
+
+export async function neoPackPlanIds(todos: readonly NeoTodo[], packs: PlanPacks) {
+  if (!packs.some((pack) => pack.todos?.plan)) return [];
+  const plans = await Promise.all(
+    todos.map(async (todo) => ((await neoPackPlan(todo, packs)) ? todo.id : null))
+  );
+  return plans.filter((id) => id !== null);
+}
+
+export function neoRecordedPlanFacts(
+  todo: NeoTodo,
+  todos: readonly NeoTodo[],
+  cards: readonly NeoQuestion[],
+  packPlan = false
+): PlanFacts {
+  return {
+    todo,
+    plan: !(todo.planCheck && 'legacy' in todo.planCheck) && (todo.plan === true || packPlan),
+    steps: livePlanSteps(todo.id, todos),
+    cards: cards.filter((card) => card.todoId === todo.id && card.state === 'answered'),
+  };
+}
+
 export async function neoPlanFacts(
   todo: NeoTodo,
   todos: readonly NeoTodo[],
   cards: readonly NeoQuestion[],
-  packs: readonly { todos?: Pick<NeoTodoPack, 'plan'> }[]
+  packs: PlanPacks
 ): Promise<PlanFacts> {
-  const legacy = todo.planCheck && 'legacy' in todo.planCheck;
-  let plan = !legacy && todo.plan === true;
-  if (!legacy && !plan) {
-    for (const pack of packs) {
-      if (await pack.todos?.plan?.(todo)) {
-        plan = true;
-        break;
-      }
-    }
+  return neoRecordedPlanFacts(todo, todos, cards, await neoPackPlan(todo, packs));
+}
+
+export async function neoAskPlanGap(
+  askId: string,
+  family: readonly NeoTodo[],
+  packs: PlanPacks
+): Promise<{ todo: NeoTodo; reason: string } | null> {
+  const todos = family.filter((todo) => todo.askId === askId);
+  for (const todo of todos) {
+    if (todo.state !== 'done') continue;
+    const facts = await neoPlanFacts(todo, family, [], packs);
+    const reason = neoPlanRefusal(facts.plan ? facts : neoRecordedPlanFacts(todo, todos, []));
+    if (reason) return { todo, reason };
   }
-  return {
-    todo,
-    plan,
-    steps: livePlanSteps(todo.id, todos),
-    cards: cards.filter((card) => card.todoId === todo.id && card.state === 'answered'),
-  };
+  return null;
 }
 
 export function samePlanSteps(ids: readonly string[], steps: readonly NeoTodo[]): boolean {
@@ -63,17 +95,20 @@ export function samePlanSteps(ids: readonly string[], steps: readonly NeoTodo[])
   return ids.length === steps.length && steps.every((step) => supplied.has(step.id));
 }
 
-export function currentPlanCheck(todo: NeoTodo, steps: readonly NeoTodo[]): boolean {
+function currentPlanCheck(todo: NeoTodo, steps: readonly NeoTodo[]): boolean {
   const check = todo.planCheck;
   return !!check && !('legacy' in check) && samePlanSteps(check.stepIds, steps);
 }
 
-/** @public */
-export function neoPlanRefusal({ todo, plan, steps, cards }: PlanFacts): string | null {
+export function neoPlanRefusal(
+  { todo, plan, steps, cards }: PlanFacts,
+  through: 'steps' | 'check' | 'signoff' = 'signoff'
+): string | null {
   if (!plan) return steps.length ? null : neoTodoFollowUpRefusal([todo]);
   if (!steps.length) return 'plan_steps_missing: Add the plan steps as dependent todos.';
-  if (todo.state === 'done') return null;
+  if (through === 'steps' || todo.state === 'done') return null;
   if (!currentPlanCheck(todo, steps)) return 'plan_check_missing: Check the current plan steps.';
+  if (through === 'check') return null;
   const signed = cards.some((card) => {
     const picked = [card.answer].flat();
     return (

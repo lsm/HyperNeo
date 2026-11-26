@@ -33,10 +33,11 @@ import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 import type { LanguageSetting } from '@hyperneo/shared/types/settings';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import type { StagedWorkerQuestion } from '../work-queue/follow-through.ts';
-import { planNeoRemovedPrerequisiteAnswer } from './todo-removal.ts';
+import { NEO_REMOVED_PREREQUISITE } from './todo-removal.ts';
 import { isHumanWorkDecision } from './proposal.ts';
 import {
-  currentPlanCheck,
+  neoPackPlanIds,
+  neoPlanRefusal,
   neoPlanFacts,
   NEO_PLAN_SIGNOFF,
   samePlanSteps,
@@ -540,12 +541,12 @@ export function planNeoQuestion(
       return fail('plan_required: sign-off requires a current plan.');
     if (input.options.length !== 1 || input.multiple || input.confirm || input.retireWhen)
       return fail('signoff_kind: use a single option without confirm or retireWhen.');
-    if (!planFacts.steps.length)
-      return fail('plan_steps_missing: Add the plan steps as dependent todos.');
+    const missing = neoPlanRefusal(planFacts, 'steps');
+    if (missing) return fail(missing);
     if (!input.todos || !samePlanSteps(input.todos, planFacts.steps))
       return fail('plan_steps_changed: Name exactly the current plan steps.');
-    if (!currentPlanCheck(todo, planFacts.steps))
-      return fail('plan_check_missing: Check the current plan steps.');
+    const unchecked = neoPlanRefusal(planFacts, 'check');
+    if (unchecked) return fail(unchecked);
   }
   if (!signoff && !input.retireWhen && (!todoId || !todo?.check))
     return fail(
@@ -953,42 +954,26 @@ export function createNeoQuestionOperations(
       'result:outcome'
     )
     .pipe(
-      (plan: { question: NeoQuestion }) => ({
-        family: store.listFamilyTodos(plan.question.askId),
-        now: Date.now(),
-      }),
-      'outcome',
-      'facts'
-    )
-    .pipe(
-      (
-        plan: { question: NeoQuestion; answer: NeoQuestionAnswer },
-        facts: { family: NeoTodo[]; now: number }
-      ) => planNeoRemovedPrerequisiteAnswer(plan.question, facts.family, plan.answer, facts.now),
-      ['outcome', 'facts'],
-      'effects'
-    )
-    .pipe(
-      (
-        plan: { question: NeoQuestion; answer: NeoQuestionAnswer },
-        facts: { now: number },
-        effects: ReturnType<typeof planNeoRemovedPrerequisiteAnswer<NeoTodo>>
-      ) => ({
-        question: store.answerQuestion(
-          plan.question,
-          plan.answer,
+      async ({ question, answer }: { question: NeoQuestion; answer: NeoQuestionAnswer }) => {
+        const packs = policies();
+        const packPlans =
+          question.cause === NEO_REMOVED_PREREQUISITE && packs.some((pack) => pack.todos?.plan)
+            ? await neoPackPlanIds(store.listFamilyTodos(question.askId), packs)
+            : [];
+        const written = store.answerQuestionWithPlanGuard(
+          question,
+          answer,
           'button',
-          facts.now,
-          undefined,
-          undefined,
-          effects
-        ),
-        ask: store.getAsk(plan.question.askId),
-      }),
-      ['outcome', 'facts', 'effects'],
-      'written'
+          Date.now(),
+          packPlans
+        );
+        return typeof written === 'string'
+          ? fail(written)
+          : requireNeoQuestionAnswered({ question: written, ask: store.getAsk(question.askId) });
+      },
+      'outcome',
+      'result:outcome'
     )
-    .pipe(requireNeoQuestionAnswered, 'written', 'result:outcome')
     .pipe(
       async (answered: { question: NeoQuestion; ask: NeoAsk }): Promise<QuestionReceipt> => {
         await told(answered.ask, answered.question, neoQuestionAnsweredNote(answered.question));

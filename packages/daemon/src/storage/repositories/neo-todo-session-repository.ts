@@ -1,6 +1,5 @@
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import type { NeoStepRead } from '../../lib/neo/attention/sweep.ts';
-import { neoTodoWithoutFollowUp } from '../../lib/neo/todo-follow-up.ts';
 import { hasPendingTodoDecision } from '../../lib/neo/proposal.ts';
 import { neoTodoWaitReason } from '../../lib/neo/todo-start-gate.ts';
 import { neoTodoCovered } from '../../lib/neo/todo-state.ts';
@@ -433,10 +432,11 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
             !neoTodoCovered(todo, cards)
         )
       ),
-      followUps: asks.flatMap(({ ask, family }) => {
-        const todo = neoTodoWithoutFollowUp(family.filter((item) => item.askId === ask.id));
-        return todo ? [{ ask, todo }] : [];
-      }),
+      followUpAsks: asks
+        .filter(({ ask, family }) =>
+          family.some((todo) => todo.askId === ask.id && todo.state === 'done')
+        )
+        .map(({ ask, family }) => ({ ask, family })),
       steps: asks.flatMap(({ ask, family, cards }) =>
         family
           .filter((todo) => todo.askId === ask.id && LIVE_TODO_STATES.includes(todo.state))

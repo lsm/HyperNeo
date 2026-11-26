@@ -7,6 +7,7 @@ import type { NeoDriverTarget } from '../../lib/neo/driver-work.ts';
 import type { NeoTodoJudgement } from '../../lib/neo/pack-contract.ts';
 import { requireNeoTodoStartable } from '../../lib/neo/todo-runner.ts';
 import { neoTodoStartRefusal } from '../../lib/neo/todo-start-gate.ts';
+import { neoPlanRefusal, neoRecordedPlanFacts } from '../../lib/neo/todo-follow-up.ts';
 import { sameNeoTodoCheck } from '../../lib/neo/todo-completion.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
@@ -25,7 +26,7 @@ type Claim =
   | ({ ok: true; todo: NeoTodo; records?: string[] } & Partial<Start>);
 
 const recompute = (superpipe({})('neo.todo.runner-state') as PipelineAPI)
-  .input(['store', 'id', 'check', 'change', 'now', 'judgement'])
+  .input(['store', 'id', 'check', 'change', 'now', 'judgement', 'packPlan'])
   .pipe((store: NeoAskTodoRepository, id: string) => store.getTodo(id), ['store', 'id'], 'current')
   .pipe(
     (todo: NeoTodo | null, check: NeoTodo['check'], judgement: NeoTodoJudgement) =>
@@ -44,12 +45,34 @@ const recompute = (superpipe({})('neo.todo.runner-state') as PipelineAPI)
   .pipe(
     (
       store: NeoAskTodoRepository,
+      todo: NeoTodo | null,
       id: string,
       change: NeoTodoPatch,
       now: number,
-      judgement: NeoTodoJudgement
-    ) => store.commitState(id, change, now, judgement),
-    ['store', 'id', 'change', 'now', 'judgement'],
+      judgement: NeoTodoJudgement,
+      packPlan = false
+    ) => {
+      const reason =
+        todo && (todo.plan || packPlan) && (change.state === 'done' || judgement.state === 'done')
+          ? neoPlanRefusal(
+              neoRecordedPlanFacts(
+                todo,
+                store.listFamilyTodos(todo.askId),
+                store.listQuestions(todo.askId),
+                packPlan
+              )
+            )
+          : null;
+      return reason
+        ? store.commitState(
+            id,
+            { state: 'blocked', blockedBy: 'check', blockedReason: reason, nextAction: reason },
+            now,
+            { state: 'no_opinion' }
+          )
+        : store.commitState(id, change, now, judgement);
+    },
+    ['store', 'outcome', 'id', 'change', 'now', 'judgement', 'packPlan'],
     'outcome'
   )
   .end('outcome') as (
@@ -58,7 +81,8 @@ const recompute = (superpipe({})('neo.todo.runner-state') as PipelineAPI)
   check: NeoTodo['check'],
   change: NeoTodoPatch,
   now: number,
-  judgement: NeoTodoJudgement
+  judgement: NeoTodoJudgement,
+  packPlan?: boolean
 ) => State;
 
 const claim = (superpipe({})('neo.todo.claim-start-state') as PipelineAPI)
@@ -133,9 +157,13 @@ class NeoTodoRunnerState {
     check: NeoTodo['check'],
     change: NeoTodoPatch,
     now: number,
-    judgement: NeoTodoJudgement
+    judgement: NeoTodoJudgement,
+    packPlan = false
   ) {
-    return { ...recompute(this.store, id, check, change, now, judgement), changed: this.changed };
+    return {
+      ...recompute(this.store, id, check, change, now, judgement, packPlan),
+      changed: this.changed,
+    };
   }
   claim(id: string, now: number, trackerHold: string | null = null) {
     return { ...claim(this.store, this.sessions, id, now, trackerHold), changed: this.changed };

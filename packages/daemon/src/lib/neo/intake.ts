@@ -35,7 +35,9 @@ import { neoLocalTimeLine } from './local-time.ts';
 import { admitNeoPreviewContext } from './preview-context.ts';
 import { NeoPreviewContextSchema, NeoPreviewReferenceSchema } from './preview-context-schema.ts';
 import { isHumanWorkDecision } from './proposal.ts';
-import { planNeoRemovedPrerequisiteAnswer } from './todo-removal.ts';
+import { NEO_REMOVED_PREREQUISITE } from './todo-removal.ts';
+import { neoPackPlanIds } from './todo-follow-up.ts';
+import type { NeoPack } from './pack-contract.ts';
 
 function projectionIssue(content: z.infer<typeof SessionContentSchema>): string | null {
   const projected = toMailboxMessage({
@@ -356,7 +358,8 @@ export function recordNeoReplyAnswer(
   reply: NeoReply | null,
   input: IntakeInput,
   store: NeoAskTodoRepository,
-  sessionId: string
+  sessionId: string,
+  packPlans: readonly string[] = []
 ): IntakeResult {
   const words = neoAskText(input.content).trim();
   if (
@@ -368,21 +371,16 @@ export function recordNeoReplyAnswer(
   ) {
     const picked = neoChoiceByNumber(words, reply.question);
     if (picked === 'invalid') return receipt;
-    const answer = picked ?? words;
-    const now = Date.now();
-    store.answerQuestion(
+    store.answerQuestionWithPlanGuard(
       reply.question,
-      answer,
+      picked ?? words,
       'chat',
-      now,
-      { sessionId, messageId: input.requestId },
-      undefined,
-      planNeoRemovedPrerequisiteAnswer(
-        reply.question,
-        store.listFamilyTodos(reply.question.askId),
-        answer,
-        now
-      )
+      Date.now(),
+      packPlans,
+      {
+        sessionId,
+        messageId: input.requestId,
+      }
     );
   }
   return receipt;
@@ -558,7 +556,7 @@ function admitNeoIntakeTarget(
 }
 
 const runIntake = (superpipe({})('neo.message.send') as PipelineAPI)
-  .input(['input', 'caller', 'db', 'repo', 'notify', 'store', 'images'])
+  .input(['input', 'caller', 'db', 'repo', 'notify', 'store', 'images', 'packs'])
   .pipe(admitNeoIntake, ['input', 'caller'], 'result:receipt')
   .pipe(
     (input: IntakeInput, store: NeoAskTodoRepository) => readNeoReply(input.replyTo, store),
@@ -683,14 +681,23 @@ const runIntake = (superpipe({})('neo.message.send') as PipelineAPI)
     'receipt'
   )
   .pipe(
-    (
+    async (
       receipt: IntakeResult,
       reply: NeoReply | null,
       input: IntakeInput,
       store: NeoAskTodoRepository,
-      root: IntakeTarget
-    ) => recordNeoReplyAnswer(receipt, reply, input, store, root.target.id),
-    ['receipt', 'reply', 'input', 'store', 'root'],
+      root: IntakeTarget,
+      installed?: () => readonly NeoPack[]
+    ) => {
+      const packs = installed?.() ?? [];
+      const question = reply?.question;
+      const planIds =
+        question?.cause === NEO_REMOVED_PREREQUISITE && packs.some((pack) => pack.todos?.plan)
+          ? await neoPackPlanIds(store.listFamilyTodos(question.askId), packs)
+          : [];
+      return recordNeoReplyAnswer(receipt, reply, input, store, root.target.id, planIds);
+    },
+    ['receipt', 'reply', 'input', 'store', 'root', 'packs'],
     'receipt'
   )
   .pipe(
@@ -707,7 +714,8 @@ const runIntake = (superpipe({})('neo.message.send') as PipelineAPI)
   repo: NeoRepository,
   notify: NeoIntakeNotifier,
   store: NeoAskTodoRepository,
-  images?: StagedImages
+  images?: StagedImages,
+  packs?: () => readonly NeoPack[]
 ) => Promise<IntakeResult>;
 
 export const retryNeoIntake = runIntake;
@@ -717,7 +725,8 @@ export function createNeoIntakeOperation(
   repo: NeoRepository,
   notify: NeoIntakeNotifier = noNotification,
   store: NeoAskTodoRepository = new NeoAskTodoRepository(db.getDatabase()),
-  images?: StagedImages
+  images?: StagedImages,
+  packs?: () => readonly NeoPack[]
 ) {
   return defineOperation({
     name: 'neo.message.send',
@@ -725,6 +734,6 @@ export function createNeoIntakeOperation(
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'human_only' },
-    execute: (input, caller) => runIntake(input, caller, db, repo, notify, store, images),
+    execute: (input, caller) => runIntake(input, caller, db, repo, notify, store, images, packs),
   });
 }

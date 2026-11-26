@@ -22057,6 +22057,10 @@
                         "null"
                       ]
                     },
+                    "plan": {
+                      "const": true,
+                      "type": "boolean"
+                    },
                     "position": {
                       "type": "number"
                     },
@@ -23186,6 +23190,10 @@
                               "null"
                             ]
                           },
+                          "plan": {
+                            "const": true,
+                            "type": "boolean"
+                          },
                           "position": {
                             "type": "number"
                           },
@@ -23821,6 +23829,10 @@
                         "null"
                       ]
                     },
+                    "plan": {
+                      "const": true,
+                      "type": "boolean"
+                    },
                     "position": {
                       "type": "number"
                     },
@@ -24151,7 +24163,7 @@
                   "type": "string"
                 },
                 "producesFollowUp": {
-                  "description": "True when this todo's result is more work: a design, plan, research or inventory. Once it finishes, its ask cannot settle done until a later todo exists (unstarted is fine). Add each follow-up with after: [this todo's id].",
+                  "description": "True when research, inventory or other work yields follow-up todos. Once it finishes, its ask cannot settle done until a later todo exists (unstarted is fine). Add each follow-up with after: [this todo's id].",
                   "type": "boolean"
                 },
                 "target": {
@@ -24793,6 +24805,10 @@
                         "string",
                         "null"
                       ]
+                    },
+                    "plan": {
+                      "const": true,
+                      "type": "boolean"
                     },
                     "position": {
                       "type": "number"
@@ -25901,6 +25917,10 @@
                                 "null"
                               ]
                             },
+                            "plan": {
+                              "const": true,
+                              "type": "boolean"
+                            },
                             "position": {
                               "type": "number"
                             },
@@ -26662,6 +26682,10 @@
                         "null"
                       ]
                     },
+                    "plan": {
+                      "const": true,
+                      "type": "boolean"
+                    },
                     "position": {
                       "type": "number"
                     },
@@ -27243,6 +27267,10 @@
                         "string",
                         "null"
                       ]
+                    },
+                    "plan": {
+                      "const": true,
+                      "type": "boolean"
                     },
                     "position": {
                       "type": "number"
@@ -33172,6 +33200,10 @@
                               "string",
                               "null"
                             ]
+                          },
+                          "plan": {
+                            "const": true,
+                            "type": "boolean"
                           },
                           "position": {
                             "type": "number"
@@ -41561,6 +41593,10 @@
                               "null"
                             ]
                           },
+                          "plan": {
+                            "const": true,
+                            "type": "boolean"
+                          },
                           "position": {
                             "type": "number"
                           },
@@ -42326,6 +42362,11 @@
             ],
             "default": null
           },
+          "plan": {
+            "const": true,
+            "description": "True for a design or work plan whose steps the human approves. File the steps with after, run a plan check, then ask for sign-off before completing the plan.",
+            "type": "boolean"
+          },
           "priority": {
             "default": "normal",
             "enum": [
@@ -42337,7 +42378,7 @@
             "type": "string"
           },
           "producesFollowUp": {
-            "description": "True when this todo's result is more work: a design, plan, research or inventory. Once it finishes, its ask cannot settle done until a later todo exists (unstarted is fine). Add each follow-up with after: [this todo's id].",
+            "description": "True when research, inventory or other work yields follow-up todos. Once it finishes, its ask cannot settle done until a later todo exists (unstarted is fine). Add each follow-up with after: [this todo's id].",
             "type": "boolean"
           },
           "target": {
@@ -42806,6 +42847,10 @@
                       "null"
                     ]
                   },
+                  "plan": {
+                    "const": true,
+                    "type": "boolean"
+                  },
                   "position": {
                     "type": "number"
                   },
@@ -43198,6 +43243,10 @@
                       "null"
                     ]
                   },
+                  "plan": {
+                    "const": true,
+                    "type": "boolean"
+                  },
                   "position": {
                     "type": "number"
                   },
@@ -43589,6 +43638,10 @@
                       "string",
                       "null"
                     ]
+                  },
+                  "plan": {
+                    "const": true,
+                    "type": "boolean"
                   },
                   "position": {
                     "type": "number"
@@ -44310,6 +44363,10 @@
                       "null"
                     ]
                   },
+                  "plan": {
+                    "const": true,
+                    "type": "boolean"
+                  },
                   "position": {
                     "type": "number"
                   },
@@ -44714,6 +44771,10 @@
                       "string",
                       "null"
                     ]
+                  },
+                  "plan": {
+                    "const": true,
+                    "type": "boolean"
                   },
                   "position": {
                     "type": "number"
@@ -45140,6 +45201,10 @@
                       "null"
                     ]
                   },
+                  "plan": {
+                    "const": true,
+                    "type": "boolean"
+                  },
                   "position": {
                     "type": "number"
                   },
@@ -45546,6 +45611,10 @@
                       "string",
                       "null"
                     ]
+                  },
+                  "plan": {
+                    "const": true,
+                    "type": "boolean"
                   },
                   "position": {
                     "type": "number"
@@ -45956,6 +46025,10 @@
                       "string",
                       "null"
                     ]
+                  },
+                  "plan": {
+                    "const": true,
+                    "type": "boolean"
                   },
                   "position": {
                     "type": "number"

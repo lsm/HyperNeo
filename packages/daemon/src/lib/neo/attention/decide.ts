@@ -107,7 +107,9 @@ export const NEO_ATTENTION_KINDS: readonly NeoAttentionKind[] = [
     decide: always('wake'),
     ladder: [HOUR, 4 * HOUR, DAY],
     render: ({ subject, facts }) =>
-      `Todo "${facts.title}" (${facts.todoId}) in ask "${facts.askTitle}" (${subject.id}) finished and produces follow-up work, but no todo follows it. Add the follow-up todos it calls for with neo.todo.add after:["${facts.todoId}"]; the ask cannot settle done until one exists.`,
+      typeof facts.reason === 'string' && facts.reason.startsWith('plan_steps_missing:')
+        ? `Plan "${facts.title}" (${facts.todoId}) in ask "${facts.askTitle}" (${subject.id}) has no live steps. Add them with neo.todo.add after:["${facts.todoId}"] before settling done.`
+        : `Todo "${facts.title}" (${facts.todoId}) in ask "${facts.askTitle}" (${subject.id}) finished and produces follow-up work, but no todo follows it. Add the follow-up todos it calls for with neo.todo.add after:["${facts.todoId}"]; the ask cannot settle done until one exists.`,
   },
 ];
 

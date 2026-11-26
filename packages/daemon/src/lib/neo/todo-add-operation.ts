@@ -19,6 +19,7 @@ type AddInput = z.infer<typeof NeoTodoDraftSchema> & {
   askId?: string;
   input?: string;
   topic?: string;
+  plan?: true;
   desktopApps?: string[];
 };
 type Result = { ok: false; reason: string } | { ok: true; todo?: NeoTodo; records?: string[] };
