@@ -308,46 +308,46 @@ describe.skipIf(!isBun)('anthropic-messages-bridge: session thinking enforcement
     expect(upstreamHadThinking).toBe(false);
   });
 
-  it('removes effort overrides for llama.cpp sessions with thinking off', async () => {
-    let upstreamBody: unknown;
-    server = await createAnthropicMessagesBridgeServer({
-      baseUrl: 'http://127.0.0.1:1',
-      disableThinkingWithChatTemplate: true,
-      fetchImpl: Object.assign(
-        async (...[, init]: Parameters<typeof fetch>) => {
-          upstreamBody = JSON.parse(new TextDecoder().decode(init?.body as ArrayBuffer));
-          return Response.json({ content: [{ type: 'text', text: 'hi' }] });
-        },
-        { preconnect: () => undefined }
-      ),
-    });
-    server.setSessionThinkingConfig?.('sess-off', { type: 'disabled' });
+  it.each([undefined, { type: 'json_schema', schema: { type: 'object' } }])(
+    'removes effort overrides for llama.cpp sessions with thinking off and format %j',
+    async (format) => {
+      let upstreamBody: unknown;
+      server = await createAnthropicMessagesBridgeServer({
+        baseUrl: 'http://127.0.0.1:1',
+        disableThinkingWithChatTemplate: true,
+        fetchImpl: Object.assign(
+          async (...[, init]: Parameters<typeof fetch>) => {
+            upstreamBody = JSON.parse(new TextDecoder().decode(init?.body as ArrayBuffer));
+            return Response.json({ content: [{ type: 'text', text: 'hi' }] });
+          },
+          { preconnect: () => undefined }
+        ),
+      });
+      server.setSessionThinkingConfig?.('sess-off', { type: 'disabled' });
 
-    const request = {
-      model: 'local-model',
-      max_tokens: 16,
-      messages: [{ role: 'user', content: 'hi' }],
-    };
-    const res = await postWithSession(server.port, 'sess-off', {
-      ...request,
-      thinking: { type: 'adaptive' },
-      chat_template_kwargs: { custom_option: 'preserve' },
-      output_config: {
-        effort: 'high',
-        format: { type: 'json_schema', schema: { type: 'object' } },
-      },
-      reasoning_effort: 'high',
-    });
+      const request = {
+        model: 'local-model',
+        max_tokens: 16,
+        messages: [{ role: 'user', content: 'hi' }],
+      };
+      const res = await postWithSession(server.port, 'sess-off', {
+        ...request,
+        thinking: { type: 'adaptive' },
+        chat_template_kwargs: { custom_option: 'preserve' },
+        output_config: { effort: 'high', format },
+        reasoning_effort: 'high',
+      });
 
-    expect(res.status).toBe(200);
-    await res.text();
-    expect(upstreamBody).toEqual({
-      ...request,
-      thinking: { type: 'disabled' },
-      chat_template_kwargs: { custom_option: 'preserve', enable_thinking: false },
-      output_config: { format: { type: 'json_schema', schema: { type: 'object' } } },
-    });
-  });
+      expect(res.status).toBe(200);
+      await res.text();
+      expect(upstreamBody).toEqual({
+        ...request,
+        thinking: { type: 'disabled' },
+        chat_template_kwargs: { custom_option: 'preserve', enable_thinking: false },
+        ...(format ? { output_config: { format } } : {}),
+      });
+    }
+  );
 
   it('leaves unknown sessions untouched (no rewrite without an explicit config)', async () => {
     let upstreamThinking: unknown = 'not-captured';

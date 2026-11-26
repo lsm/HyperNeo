@@ -13,8 +13,11 @@ with and without the endpoint-level llama.cpp compatibility option. Off sends
 the Anthropic disabled value together with the template switch when
 compatibility is selected. High forwards the budget, and Auto keeps the model
 default. Off with compatibility enabled also strips both effort overrides so
-they cannot re-enable thinking. The other cases forward effort unchanged, and
-all cases preserve the response format and unrelated template settings.
+they cannot re-enable thinking. Send a response format for one model and
+effort alone for the other. Off with compatibility should omit the
+effort-only output config and preserve the response format when supplied.
+The other cases forward effort unchanged, and all cases preserve unrelated
+template settings.
 Require twelve successful requests across the two cases.
 
 In the web app, open Settings, Connections & Services, Providers. Edit an

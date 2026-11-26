@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { CustomEndpointProvider } from '../../../packages/daemon/src/lib/providers/custom-endpoint-provider.ts';
 
-const models = ['reasoning-model-a', 'reasoning-model-b'];
-const format = { type: 'json_schema', schema: { type: 'object' } };
+const models = [
+  { id: 'reasoning-model-a' },
+  { id: 'reasoning-model-b', format: { type: 'json_schema', schema: { type: 'object' } } },
+];
 
 for (const llamaCppThinkingOff of [false, true]) {
   const received: Record<string, unknown>[] = [];
@@ -13,7 +15,7 @@ for (const llamaCppThinkingOff of [false, true]) {
       type: 'anthropic-messages',
       baseUrl: 'http://127.0.0.1:1',
       llamaCppThinkingOff,
-      models: models.map((id) => ({ id })),
+      models: models.map(({ id }) => ({ id })),
     },
     {
       bridgeFetchImpl: async (_url, init) => {
@@ -25,9 +27,11 @@ for (const llamaCppThinkingOff of [false, true]) {
 
   try {
     const session = { sessionId: 'thinking-off-proof' };
-    for (const model of models) {
+    for (const [index, { id: model, format }] of models.entries()) {
       await provider.ensureBridgeStarted(model, session);
       const { envVars } = provider.buildSdkConfig(model, session);
+      const formatOptions = format ? { format } : undefined;
+      const outputConfig = { effort: 'high', ...formatOptions };
       for (const level of ['off', 'think24k', 'auto']) {
         provider.setSessionThinkingConfig(session.sessionId, level);
         const response = await fetch(`${envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
@@ -41,7 +45,7 @@ for (const llamaCppThinkingOff of [false, true]) {
             max_tokens: 32000,
             messages: [{ role: 'user', content: 'Summarize the session so work can continue.' }],
             thinking: { type: 'adaptive' },
-            output_config: { effort: 'high', format },
+            output_config: outputConfig,
             reasoning_effort: 'high',
             ...(llamaCppThinkingOff ? { chat_template_kwargs: { custom_option: 'preserve' } } : {}),
           }),
@@ -49,11 +53,7 @@ for (const llamaCppThinkingOff of [false, true]) {
         assert.equal(response.status, 200);
         assert.equal((await response.json()).content[0].text, 'Session summary');
       }
-    }
-
-    assert.equal(received.length, 6);
-    for (let i = 0; i < received.length; i += 3) {
-      const [off, high, auto] = received.slice(i, i + 3);
+      const [off, high, auto] = received.slice(index * 3, (index + 1) * 3);
       assert.deepEqual(off.thinking, { type: 'disabled' });
       assert.deepEqual(
         off.chat_template_kwargs,
@@ -61,10 +61,10 @@ for (const llamaCppThinkingOff of [false, true]) {
       );
       assert.deepEqual(high.thinking, { type: 'enabled', budget_tokens: 24000 });
       assert.equal(auto.thinking, undefined);
-      assert.deepEqual(off.output_config, llamaCppThinkingOff ? { format } : { effort: 'high', format });
+      assert.deepEqual(off.output_config, llamaCppThinkingOff ? formatOptions : outputConfig);
       assert.equal(off.reasoning_effort, llamaCppThinkingOff ? undefined : 'high');
       for (const request of [high, auto]) {
-        assert.deepEqual(request.output_config, { effort: 'high', format });
+        assert.deepEqual(request.output_config, outputConfig);
         assert.equal(request.reasoning_effort, 'high');
         assert.deepEqual(
           request.chat_template_kwargs,
@@ -72,6 +72,7 @@ for (const llamaCppThinkingOff of [false, true]) {
         );
       }
     }
+    assert.equal(received.length, 6);
     console.log(`PASS: six bridge requests with llama.cpp compatibility ${llamaCppThinkingOff}`);
   } finally {
     await provider.shutdown();
