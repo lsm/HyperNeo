@@ -1,4 +1,4 @@
-export type SessionToolProfile = 'worker' | 'neo' | 'manual';
+export type SessionToolProfile = 'worker' | 'desktop' | 'neo' | 'manual';
 
 export type SessionToolChoiceKey = `skill:${string}` | `mcp:${string}`;
 

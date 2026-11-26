@@ -579,6 +579,32 @@ describe('createDriverSession', () => {
     ]);
   });
 
+  test('starts a desktop worker with invoke as its only tool and desktop instructions', async () => {
+    const { created, manager } = sessionManager(false);
+    await createDriverSession(
+      manager as never,
+      '/notes',
+      'desktop task',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true,
+      undefined,
+      'worker.desktop'
+    );
+    expect(created[0]).toMatchObject({
+      workerTemplate: 'worker.desktop',
+      toolProfile: 'desktop',
+      config: {
+        sdkToolsPreset: [],
+        allowedTools: ['mcp__hyperneo-operations__invoke'],
+        disallowedTools: expect.arrayContaining(['Bash', 'Write']),
+        systemPrompt: { append: expect.stringContaining('desktop.call') },
+      },
+    });
+  });
+
   test('starts work in a linked worktree in place', async () => {
     const root = mkdtempSync(join(tmpdir(), 'driver-linked-'));
     const linked = join(root, 'feature');

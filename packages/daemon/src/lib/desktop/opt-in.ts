@@ -1,3 +1,4 @@
+import type { NeoDesktopApp } from '@hyperneo/shared/types/neo-ask';
 import type { Database } from '../../storage/sqlite-compat.ts';
 
 export type DesktopTodoRow = {
@@ -6,6 +7,8 @@ export type DesktopTodoRow = {
   title: string;
   named: string | null;
   apps?: string | null;
+  askApps?: string | null;
+  open?: number;
   active: number;
   finished?: number;
   doing?: number;
@@ -15,6 +18,8 @@ export function readDesktopTodos(db: Pick<Database, 'prepare'>, worker?: string)
   return db
     .prepare(
       `SELECT * FROM (SELECT json_extract(s.ref, '$.id') AS worker, t.id, t.title, t.named, t.desktop_apps AS apps,
+        a.desktop_apps AS askApps,
+        (a.status = 'open' AND t.state IN ('todo', 'doing', 'blocked')) AS open,
         (t.state IN ('todo', 'doing', 'blocked') AND t.approved_at IS NOT NULL AND a.status = 'open') AS active,
         (t.state IN ('done', 'removed')) AS finished,
         (t.state = 'doing') AS doing
@@ -26,10 +31,20 @@ export function readDesktopTodos(db: Pick<Database, 'prepare'>, worker?: string)
 }
 
 export const desktopApps = (row: DesktopTodoRow): string[] =>
-  (JSON.parse(row.apps ?? '[]') as { bundleId: string }[]).map((app) => app.bundleId);
+  (JSON.parse(row.apps ?? '[]') as NeoDesktopApp[]).map((app) => app.bundleId);
 
-export const desktopAllowedRow = (row: DesktopTodoRow) =>
-  desktopApps(row).length > 0 && JSON.parse(row.named ?? '{}').desktopControl !== false;
+export function desktopConsent(row: DesktopTodoRow) {
+  const requested = desktopApps(row);
+  if (!requested.length || JSON.parse(row.named ?? '{}').desktopControl === false)
+    return 'desktop_not_enabled';
+  const approved = JSON.parse(row.askApps ?? '[]') as NeoDesktopApp[];
+  const scope = requested.map((id) => approved.find((app) => app.bundleId === id));
+  if (scope.some((app) => !app)) return 'desktop_not_enabled';
+  if (scope.some((app) => app?.seen !== 'all')) return 'desktop_consent_outdated';
+  return null;
+}
+
+export const desktopAllowedRow = (row: DesktopTodoRow) => desktopConsent(row) === null;
 
 export function desktopAllowed(rows: readonly DesktopTodoRow[], worker: string) {
   const own = rows.filter((row) => row.worker === worker && row.active);

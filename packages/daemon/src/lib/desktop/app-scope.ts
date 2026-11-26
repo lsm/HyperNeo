@@ -39,20 +39,5 @@ export async function resolveDesktopApps(
   return { value: apps };
 }
 
-const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const spoken = (app: NeoDesktopApp) => [app.name, app.bundleId.split('.').at(-1) ?? app.name];
-
-export function unnamedDesktopApp(
-  message: string,
-  apps: readonly NeoDesktopApp[]
-): NeoDesktopApp | undefined {
-  return apps.find(
-    (app) =>
-      !spoken(app).some((name) =>
-        new RegExp(`(^|[^\\p{L}\\p{N}])${escape(name)}($|[^\\p{L}\\p{N}])`, 'iu').test(message)
-      )
-  );
-}
-
 export const desktopAppsLine = (apps: readonly NeoDesktopApp[]) =>
-  `🖥 ${apps.map((app) => app.name).join(', ')}`;
+  `🖥 ${apps.map((app) => app.name).join(', ')}. The worker and its model will see everything these apps show, on every page.`;
