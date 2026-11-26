@@ -125,14 +125,19 @@ without a receipt. The transcript check below counts such turns apart.
 A turn with neither has none: an adopted session's turns, and any turn without a receipt in a
 worker that two todos reached, whether a send or the human started it.
 
-**Receipts.** Every adapter already returns a receipt at send whenever it confirms delivery:
-in one week, 917 of 917 confirmed Claude Desktop sends, 73 of 73 Claude Code, 372 of 372
-HyperNeo, 629 of 629 confirmed Codex Desktop sends and 301 of 301 confirmed Codex starts. No
-adapter change is needed. A queued or unconfirmed Codex send has none, and nothing links it to
-its row: neither its `queuedSubmissionId` (0 of 1732 turn inputs in a week) nor the
-`clientUserMessageId` the daemon sends is kept in the rollout, and pairing by time or text is
-not a receipt. Such a turn has a todo only through step 2. This is a known limit, not guessed
-around.
+**Receipts.** A delivery key is a receipt, a `startedTurnId` or a `steeredIntoTurnId`. In one
+week every confirmed delivery had one (Claude Desktop 917 of 917, Claude Code 73 of 73,
+HyperNeo 372 of 372, Codex Desktop sends 629 of 629, starts 301 of 301), but the code does not
+promise it on every path, so no adapter change is made and these are stated limits:
+
+- A Claude Desktop send through the relay is confirmed without a receipt when the relay returns
+  no input id (`claude-desktop-adapter.ts`).
+- A Codex Desktop steer has no receipt; its `steeredIntoTurnId` is its key.
+- A queued or unconfirmed Codex send has no key, and nothing links it to its row: neither its
+  `queuedSubmissionId` (0 of 1732 turn inputs in a week) nor the `clientUserMessageId` the
+  daemon sends is kept in the rollout, and pairing by time or text is not a receipt.
+
+Such turns have a todo only through step 2. This is a known limit, not guessed around.
 
 Measured on the 6624 worker turns of one week: 713 (10.8%) have a receipt and 1165 (17.6%) get
 the starting todo, so 28% have a todo today. In the same week Codex Desktop had 1732 queued
@@ -183,7 +188,9 @@ Six PRs from `dev`, in order, failing tests first. System map read for the plann
    two matching todos give none; a started worker's turns keep its todo while no row of another
    todo names it; a pending send and a failed send without an outcome ref of another todo each
    take step 2 away from every turn of that worker, earlier ones too; so does another todo's
-   adoption, also after that todo rebinds elsewhere, is unclaimed or is deleted; a worker
+   adoption, also after that todo rebinds elsewhere, is unclaimed or is deleted; a Codex steer
+   gives its todo by `steeredIntoTurnId`; a Claude Desktop relay send without an input id gives
+   none by step 1; a worker
    started before the migration gets no step 2; a `notSent`
    failure does not; a human-started turn in a worker one todo reached keeps that todo; an adopted session's turns without a receipt have none; a reviewer keeps its
    role.
@@ -212,9 +219,9 @@ Six PRs from `dev`, in order, failing tests first. System map read for the plann
 **Done when**, one week after the last PR: at least 95% of finished todos that had a worker of
 the three adapters have kind and an estimate when required (or the reviewed PR's size for a
 review); at least 95% have complete usage. Turns with omitted subagent cost count as incomplete,
-not zero. At least 95% of delivered sends and starts on the adapters that return a receipt at send
-(Claude Code, Claude Desktop, HyperNeo, and Codex Desktop when it confirms) have one; queued
-and unconfirmed Codex sends are counted apart and reported.
+not zero. Of all confirmed sends and starts, at least 95% have a delivery key; the denominator
+includes the limited paths, and each (Claude Desktop relay sends without an input id, Codex
+steers, queued and unconfirmed Codex sends) is also reported on its own line.
 The share of worker turns with a todo is reported against today's 28%. For 20 turns with a
 todo, picked at random, the todo read from the worker's own transcript matches at least 19
 times, with turns the human started counted apart. For 20 todos with complete usage, picked
