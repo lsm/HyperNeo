@@ -106,17 +106,21 @@ reads it for pull requests (`codingTurnTodos`); that decision moves to core as t
    (`start`, `send` or `adopt`) observed delivered before that moment, or the todo that started
    the worker (`work_started_sessions`) if there is none, plus every row for that worker
    accepted before that moment and not observed before it, whether observed later or not yet
-   (`observed_at` null). If they all name one todo, the turn has it; if not, or if there are
-   none, it has none.
+   (`observed_at` null), plus every uncertain failure accepted after that newest row and before
+   that moment. If they all name one todo, the turn has it; if not, or if there are none, it
+   has none.
 
-Acceptance is never taken as delivery. A row is in one of four states, and step 2 treats each
+Acceptance is never taken as delivery. A row is in one of five states, and step 2 treats each
 so: **accepted, in flight** (no outcome, `observed_at` null): it may already have reached the
 worker, so it is a candidate; a row whose worker is not yet known (`start`, or `todo` without
 a ref) is a candidate for the worker bound to its todo. **Observed delivered** (an outcome
 with a ref and no `failure`; a queued send or a catch-up after a restart included): a
-candidate from acceptance on, and the newest such row before the turn is the base. **Failed**
-(`failure` set): never reached the worker, never a candidate. **Adopt**: written observed at
-the adoption, so it is the base from then on. Turns of an adopted session before its adoption
+candidate from acceptance on, and the newest such row before the turn is the base.
+**Failed, known not sent** (`failure` with `notSent: true`): never reached the worker, never a candidate.
+**Failed, uncertain** (any other `failure`: a timeout or a lost connection after dispatch may
+still have delivered it): a candidate, for the worker its target names, until a later row is
+observed delivered. **Adopt**: written observed at the adoption, so it is the base from then
+on. Turns of an adopted session before its adoption
 have none.
 
 Measured on 3677 turns of one week: 962 have a receipt, 3 of them of two todos. For the other
