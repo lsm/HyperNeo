@@ -10,9 +10,11 @@ Three gaps leave approved work sitting without anyone looking at it:
 2. A todo sent to a named worker queues while another doing todo holds that
    worker, even when that todo only waits for its PR and the worker is idle.
    Neo is told the worker is working, so it leaves the wait alone.
-3. The phone's "In progress" counts every todo whose owner is `daemon`,
-   `worker` or `pack` and labels all three "Running". Most of them are waiting
-   for a review, a merge, a queue slot or an earlier step.
+3. The phone's "In progress" chip lists every todo item in progress whose
+   owner is not the human, and labels the `daemon`, `worker` and `pack` owners
+   all "Running". Most of them are waiting for a review, a merge, a queue slot
+   or an earlier step. A Neo step over a day old becomes a `waiting` item with
+   owner `neo`, which no chip but "All work" shows.
 
 Each fix reuses what exists: the coding PR reader and ledger, the todo
 mutation writer, the owner function, the runner's worker-wait wake, the
@@ -128,11 +130,15 @@ on: wait for that PR, or add a replacement todo for another worker to the same
 ask first and then remove this one with `replacedBy` (removing first drops the
 link). Otherwise the text is unchanged.
 
-The clock is the existing nudge ladder. It starts when `recordWaits` first
-sees the candidate waiting and the holder only reserving at the same time, so
-a candidate that arrives after the holder went idle waits its own 60 minutes.
-It restarts when the target changes, or when the holder works again and later
-qualifies again. An earlier "working" wake does not stop the reserved one.
+The clock is the existing nudge ladder. Today `recordWaits` restarts it only
+when a todo enters a worker wait, so a wait that began as "working" would
+never wake again once the holder goes idle. `recordWaits` therefore also
+restarts it whenever the stored reason changes between the working and the
+reserved form, or the target worker or PR changes. A candidate that arrives
+after the holder went idle waits its own 60 minutes; one queued while the
+holder worked gets a fresh 60 minutes from the moment the holder qualifies.
+A holder that works again flips the text back, and a later idle restarts it
+again. An earlier "working" wake does not stop the reserved one.
 
 ## 3. The phone separates working from waiting
 
@@ -163,13 +169,17 @@ fault 2, fixed separately).
 
 The phone's filters become: Waiting on you, Working, Waiting, Held, All.
 
-- Working: `step: working`. Waiting: `step: waiting` or `neo`, labelled from
-  `waitingOn` ("Waiting for review, CI or merge", "After an earlier step",
-  "Queued", "HyperNeo is checking") or "Neo's step".
+Each todo item sits in exactly one of the first four chips:
+
+- Waiting on you: `step: you`, plus open cards as today. It still counts asks.
+- Working: `step: working`.
+- Waiting: `step: waiting` or `neo`, labelled from `waitingOn` ("Waiting for
+  review, CI or merge", "After an earlier step", "Queued", "HyperNeo is
+  checking") or "Neo's step". A Neo step over a day old stays here, not in
+  Waiting on you.
 - Held: held cards as today, plus `step: paused` todos. The ask filtering that
   uses the card-only held predicate keeps that predicate.
-- Waiting on you keeps its rule and still counts asks. The other chips count
-  items, as today.
+- Working, Waiting and Held count items, as today.
 - Rows, counts and deep links use the same predicate for each filter, and
   each row's label comes from the same field. A todo blocked on its check
   keeps no owner label, as today.
@@ -193,14 +203,17 @@ The phone's filters become: Waiting on you, Working, Waiting, Held, All.
    Tests: each row of the step table; a send-target todo behind an idle holder
    with an open PR gets the reserved text and one wake 60 minutes after both
    were first seen together, none before, also for a candidate that arrives
-   late; a changed target restarts it; an open PR the check would not count
+   late and for one queued while the holder worked (working wake first, then
+   a reserved wake 60 minutes after the holder went idle); a changed target
+   restarts it; an open PR the check would not count
    (an unrelated one, or a replacement older than the closed named PR) does
    not qualify; a holder whose worker is running, `needs_you`, failed or unknown, a
    closed or historical PR, or a holder with another check kind keeps today's
    text.
 3. **Phone: Working and Waiting.** The filters and labels from `step`, legacy
-   mapping, one predicate for rows, counts, labels and links; screenshots in
-   light and dark.
+   mapping, one predicate for rows, counts, labels and links, and each todo
+   item in exactly one of the four chips (a day-old Neo step included);
+   screenshots in light and dark.
 
 ## Limits
 
