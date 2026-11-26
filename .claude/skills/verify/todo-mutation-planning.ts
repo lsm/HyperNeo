@@ -63,10 +63,11 @@ try {
     await assert.rejects(plan({kind:'edit',todoId:'first',title:'Proposed'}), /unknown.*neo.todoMutationReads/i);
     report.missingPlannerReproduced = true;
   } else {
-    const planned = await plan({kind:'edit',todoId:'first',title:'Proposed',addUrls:['https://github.com/synthetic/planning/pull/1']});
+    const denied = await plan({kind:'edit',todoId:'first',title:'Proposed',addUrls:['https://github.com/synthetic/planning/pull/1']});
+    assert(!denied.ok && denied.reason.includes('pr_already_tracked:'));
+    const planned = await plan({kind:'edit',todoId:'first',title:'Proposed',addUrls:['https://github.com/synthetic/planning/pull/2']});
     assert(planned.ok && planned.patch);
     assert.equal(planned.patch.title,'Proposed');
-    assert(planned.records?.some(record => record.startsWith('pr_already_tracked:')));
     assert.equal(planned.todo.report,text);
     const proposed = await plan({kind:'edit',todoId:'first',check:{pack:'core',kind:'evidence',params:{path:join(run,'not-created')}}});
     assert(proposed.ok && proposed.patch);
@@ -76,7 +77,7 @@ try {
     assert(!completion.ok && completion.reason.startsWith('card_unanswered:'), 'planning must refuse completion while a todo card is unanswered');
     report.unansweredCompletionRefused = true;
     report.plannerRegistered = true;
-    report.records = planned.records;
+    report.duplicateRefusal = denied.reason;
     report.derivedCheck = proposed.patch.check;
   }
   recording = false;

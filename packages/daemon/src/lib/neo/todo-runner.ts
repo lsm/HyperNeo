@@ -1194,8 +1194,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         const ref = sessions.readRef(todo.id);
         const ask = store.getAsk(todo.askId);
         return ((todo.state === 'doing' && todo.report) ||
-          (todo.state === 'blocked' &&
-            ['worker', 'stalled', 'environment', 'needs-human'].includes(todo.blockedBy ?? ''))) &&
+          (todo.state === 'blocked' && todo.blockedBy !== 'held')) &&
           ref &&
           ask?.status === 'open'
           ? { value: { ref, ask } }
@@ -1215,6 +1214,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         });
         await observe(todo.id, outcome, target.ref);
         const live = readDriverLive(outcome);
+        if (live && todo.state === 'blocked')
+          await sessions.write('noteWorkerStatus', todo.id, target.ref, live.status, now);
         if (
           todo.blockedBy === 'needs-human' &&
           neoTurnQuestionGone(sessions.readNudge(todo.id)?.turnQuestion, live) &&
@@ -1228,7 +1229,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           deps.changed();
           return;
         }
-        if (['environment', 'needs-human'].includes(todo.blockedBy ?? '')) return;
+        if (todo.state === 'blocked' && !['worker', 'stalled'].includes(todo.blockedBy ?? ''))
+          return;
         await sessions.write(
           'recordProgress',
           todo.id,
@@ -1443,7 +1445,13 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     .pipe(
       async (context: NudgeContext, now: number) => {
         const live = await workerLive(context.ask, context.ref);
-        await sessions.write('noteWorkerStatus', context.todo.id, live?.status ?? 'unknown', now);
+        await sessions.write(
+          'noteWorkerStatus',
+          context.todo.id,
+          context.ref,
+          live?.status ?? 'unknown',
+          now
+        );
         return live;
       },
       ['admission', 'now'],

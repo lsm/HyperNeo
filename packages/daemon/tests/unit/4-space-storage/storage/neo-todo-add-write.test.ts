@@ -176,7 +176,7 @@ describe('Whole todo-add writer', () => {
     expect(store.listTodos('ask')).toEqual([]);
     expect(changes).toEqual([]);
   });
-  test('records current PR peers while concurrent additions stay nonblocking', async () => {
+  test('refuses a concurrent addition for an already tracked PR', async () => {
     const coding = {
       ...draft(),
       instruction: null,
@@ -190,10 +190,10 @@ describe('Whole todo-add writer', () => {
     const results = await Promise.all([add('one', coding), add('two', coding)]);
     expect(results[0]).toMatchObject({ ok: true });
     expect(results[1]).toMatchObject({
-      ok: true,
-      records: [expect.stringContaining('pr_already_tracked:')],
+      ok: false,
+      reason: expect.stringContaining('pr_already_tracked:'),
     });
-    expect(store.listTodos('ask')).toHaveLength(2);
+    expect(store.listTodos('ask')).toHaveLength(1);
   });
   test('a late target failure also rolls back a newly routed child ask', async () => {
     db.exec("UPDATE neo_asks SET repo='synthetic/original' WHERE id='ask'");

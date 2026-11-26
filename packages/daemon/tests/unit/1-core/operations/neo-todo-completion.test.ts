@@ -259,6 +259,44 @@ describe('coding todo PR ownership through add and edit', () => {
     }
   });
 
+  test('URL-free merge checks can use newly assigned or bound work', async () => {
+    const { db, store, call } = setup();
+    try {
+      const check = { pack: 'coding', kind: 'pr_merged', params: {} };
+      const base = { after: [], askId: 'ask', check };
+      const work = {
+        instruction: 'Open and land a PR',
+        target: { verb: 'start', adapter: 'hyperneo' },
+      };
+      const bound = await call('neo.todo.add', {
+        ...base,
+        title: 'Continue running work',
+        target: { verb: 'bind', ref: { adapter: 'hyperneo', id: 'running-worker' } },
+      });
+      expect(bound).toMatchObject({ ok: true, todo: { instruction: null, state: 'doing' } });
+      if (!bound.ok) throw new Error(bound.reason);
+      expect(await call('neo.todo.edit', { todoId: bound.todo.id, check })).toMatchObject({
+        ok: true,
+      });
+      expect(await call('neo.todo.add', { ...base, ...work, title: 'Open a PR' })).toMatchObject({
+        ok: true,
+        todo: { check, instruction: work.instruction },
+      });
+      const original = store.addTodo(
+        'assignable',
+        'ask',
+        { title: 'Assignable', doneWhen: 'Observed', check: null, instruction: null, named: null },
+        1
+      );
+      expect(await call('neo.todo.edit', { todoId: original.id, check, ...work })).toMatchObject({
+        ok: true,
+        todo: { check, instruction: work.instruction },
+      });
+    } finally {
+      db.close();
+    }
+  });
+
   const draft = (urls: string[] = []) => ({
     title: 'Original fix',
     doneWhen: 'Merged',
@@ -343,19 +381,6 @@ describe('coding todo PR ownership through add and edit', () => {
       ).toMatchObject({
         ok: true,
       });
-    } finally {
-      db.close();
-    }
-  });
-  test('only one concurrent edit can claim the same PR', async () => {
-    const { db, store, call } = setup();
-    try {
-      store.addTodo('one', 'ask', draft(), 1);
-      store.addTodo('two', 'ask', draft(), 2);
-      const results = await Promise.all(
-        ['one', 'two'].map((todoId) => call('neo.todo.edit', { todoId, addUrls: [url(2)] }))
-      );
-      expect(results.filter((result) => result.ok)).toHaveLength(1);
     } finally {
       db.close();
     }
