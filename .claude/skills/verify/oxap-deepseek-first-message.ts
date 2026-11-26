@@ -18,7 +18,7 @@ import { answerCodexProbeLocally, serveLocalRelease } from './oxap-codex-provide
 const [binary, version, sha256, ...args] = process.argv.slice(2);
 const mode = args.length === 2 ? args[0] : 'first';
 const runArgument = args.at(-1)!;
-assert(['first', 'routed', 'routed-with-key', 'routed-web', 'routed-missing-key', 'recovery', 'pending', 'flash', 'image', 'flash-web', 'pro-web', 'flash-recovery', 'sdk-default', 'locked-recovery', 'refused-reopen', 'first-open-retry', 'no-replay'].includes(mode));
+assert(['first', 'routed', 'routed-with-key', 'routed-web', 'routed-missing-key', 'routed-zen', 'routed-zen-missing-key', 'routed-unknown', 'recovery', 'pending', 'flash', 'image', 'flash-web', 'pro-web', 'flash-recovery', 'sdk-default', 'locked-recovery', 'refused-reopen', 'first-open-retry', 'no-replay'].includes(mode));
 const run = resolve(runArgument);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -27,9 +27,11 @@ assert.deepEqual(await checkOxapBinary(binary, { version, sha256 }), { ok: true 
 const workspace = join(run, 'workspace');
 const peer = join(run, 'dsh');
 const routed = mode.startsWith('routed');
-const missingRouteKey = mode === 'routed-missing-key';
+const missingRouteKey = mode.endsWith('-missing-key');
+const unknownRoute = mode === 'routed-unknown';
+const route = unknownRoute ? 'opencode-typo' : mode.startsWith('routed-zen') ? 'opencode-zen' : 'opencode-go';
 mkdirSync(workspace);
-if (routed) writeFileSync(join(workspace, 'verify-model-provider'), '');
+if (routed) writeFileSync(join(workspace, 'verify-model-provider'), route);
 const nativePromptCount = join(workspace, 'verify-native-prompt-count');
 if (mode === 'no-replay') {
   process.env.HYPERNEO_HUMAN_SEND_SILENCE_MS = '250';
@@ -124,10 +126,17 @@ async function verify() {
       input: {
         providerId: 'deepseek',
         harness: 'oxap-deepseek',
-        settings: { executable: peer, ...(routed ? { model_provider: 'opencode-go' } : {}) },
+        settings: { executable: peer, ...(routed ? { model_provider: route } : {}) },
       },
     });
     evidence.harnessSave = saved;
+    if (unknownRoute) {
+      assert.deepEqual(saved, { accepted: false, reason: 'DeepSeek model provider must be opencode-go or opencode-zen' });
+      assert.deepEqual(releaseRequests, []);
+      Object.assign(evidence, { refused: 1, pass: true });
+      console.log(JSON.stringify(evidence));
+      return;
+    }
     assert.deepEqual(saved, { accepted: true });
   }
   assert.deepEqual(releaseRequests, ['SHA256SUMS.txt', `${version}.tar.gz`]);
@@ -153,7 +162,7 @@ async function verify() {
     const deepseek = providers.find(({ providerId }) => providerId === 'deepseek');
     assert(deepseek);
     evidence.readyHarnesses = deepseek.readyHarnesses;
-    await assert.rejects(create(), /OPENCODE_API_KEY/, 'Session creation must refuse the missing OpenCode Go key');
+    await assert.rejects(create(), /OPENCODE_API_KEY/, 'Session creation must refuse the missing OpenCode key');
     assert.deepEqual(deepseek.readyHarnesses, []);
     Object.assign(evidence, { refused: 1, pass: true });
     console.log(JSON.stringify(evidence));
@@ -217,7 +226,7 @@ async function verify() {
   if (routed) {
     const document = readFileSync(join(run, 'data/oap/oap-serve.json'), 'utf8');
     const entry = JSON.parse(document).adapters.deepseek;
-    assert.equal(entry.model_provider, 'opencode-go');
+    assert.equal(entry.model_provider, route);
     assert(entry.environment.includes('DSH_HOME'));
     assert(!entry.environment.includes('OPENCODE_API_KEY'));
     assert(!entry.environment.includes('DEEPSEEK_API_KEY'));

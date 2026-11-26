@@ -41,6 +41,10 @@ With `routed-missing-key`, save the OpenCode Go route and omit its environment
 key. Check that the provider is no longer ready for OXAP and that creating a
 chat returns a refusal naming `OPENCODE_API_KEY`.
 
+With `routed-zen` and `routed-zen-missing-key`, check the same reply and refusal
+for the OpenCode Zen catalog row. With `routed-unknown`, require Settings to
+refuse an unknown route before installing the hub.
+
 With `routed-web`, use the browser setup above to save the setting in Providers,
 reload to check the saved setting and official API key field, and select DeepSeek
 V4 Pro in the new chat picker without an official key. The fixture then sends a
