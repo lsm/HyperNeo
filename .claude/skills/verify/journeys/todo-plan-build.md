@@ -9,7 +9,7 @@ TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evid
 
 The helper starts an isolated daemon and invokes its registered work, messaging
 and question operations. It verifies that an unmarked todo cannot start a
-checker. It marks a synthetic plan in storage, then observes the daemon's
+checker and refuses a marked plan with zero live steps. It marks a synthetic plan in storage, then observes the daemon's
 checker delivery, refusal to record the wrong steps, recording of the correct
-steps and opening of a sign-off card. The author role is a fixture. No model
+steps and opening of a sign-off card. The remote author delivery is a fixture. No model
 turn runs. Keep `observed.json`, `proof.log` and the wrapper exit status.

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  NEO_PLAN_SIGNOFF,
   neoPlanCheckBrief,
   neoPlanFacts,
   neoPlanRefusal,
@@ -141,6 +142,25 @@ describe('neoPlanRefusal', () => {
     expect(
       neoPlanRefusal(await neoPlanFacts({ ...checked, state: 'done' }, [step], [], []))
     ).toBeNull();
+    const card = h.store.askQuestion(
+      'approval',
+      h.ask.id,
+      {
+        text: 'Approve the build step?',
+        kind: 'choice',
+        options: ['Approve'],
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        todoId: plan.id,
+        todos: [step.id],
+        cause: NEO_PLAN_SIGNOFF,
+      },
+      3
+    );
+    const signed = h.store.answerQuestion(card, 'Approve', 'chat', 4);
+    expect(signed?.answer).toBe('Approve');
+    expect(neoPlanRefusal(await neoPlanFacts(checked, [step], [signed!], []))).toBeNull();
   });
 
   test('keeps legacy todos on the original follow-up rule even with a plan hook', async () => {

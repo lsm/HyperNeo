@@ -40,7 +40,6 @@ try {
   new NeoRepository(db).reserveBinding({ sessionId: owner, kind: 'neo', projectId: null });
   store.openAsk({ id: 'ask', projectId: null, sessionId: owner, originMessageId: null, title: 'Synthetic plan', request: 'Synthetic request', createdAt: 1 });
   store.addTodo('plan', 'ask', { title: 'Plan', doneWhen: 'Cover the requirements', check: null, instruction: 'Document cache expiry', named: null }, 1);
-  store.addTodo('step', 'ask', { title: 'Add expiry', doneWhen: 'Built', check: null, instruction: 'Preserve cache keys', named: null, dependsOn: ['plan'] }, 1);
   const startInput = {
     adapter: 'hyperneo',
     place: { machine: hostname(), folder, name: 'Synthetic' },
@@ -53,6 +52,10 @@ try {
   observed.unmarked = unmarked;
   assert(unmarked.kind === 'completed' && (unmarked.value as { reason?: string }).reason === 'todo_required', JSON.stringify(unmarked));
   db.prepare("UPDATE neo_todos SET plan=1, evidence='Synthetic design' WHERE id='plan'").run();
+  const empty = await invokeOperation(registry, 'work.start', startInput, caller);
+  observed.empty = empty;
+  assert(empty.kind === 'completed' && (empty.value as { ok: boolean }).ok === false, JSON.stringify(empty));
+  store.addTodo('step', 'ask', { title: 'Add expiry', doneWhen: 'Built', check: null, instruction: 'Preserve cache keys', named: null, dependsOn: ['plan'] }, 1);
   const start = await invokeOperation(registry, 'work.start', startInput, caller);
   observed.start = start;
   assert(start.kind === 'completed', JSON.stringify(start));
@@ -66,7 +69,16 @@ try {
     assert(delivery.message.includes(item), item);
   assert(delivery.outcome && 'ref' in delivery.outcome && delivery.outcome.model, JSON.stringify(delivery.outcome));
   observed.brief = delivery.message;
-  db.prepare("INSERT INTO neo_todo_roles (todo_id,role,adapter,id,at,model) VALUES ('plan','do','hyperneo','synthetic-author',1,'synthetic-author-model')").run();
+  const deliveryStore = new WorkDeliveryInputRepository(db);
+  const author = await deliveryStore.accept('plan', `session:${owner}`, {
+    verb: 'start', adapter: 'hyperneo',
+    place: { machine: 'synthetic', name: 'Other daemon', daemon: 'synthetic-remote' },
+  }, 'Synthetic author brief', 2);
+  db.prepare("UPDATE work_delivery_inputs SET target = json_set(target, '$.role', 'do') WHERE id = ?").run(author);
+  await deliveryStore.recordOutcome(author, {
+    ref: { adapter: 'hyperneo', id: 'synthetic-author', daemon: 'synthetic-remote' },
+    model: 'synthetic-author-model',
+  }, 3);
   const send = (from: string, stepIds: string[]) => invokeOperation(registry, 'message.send', {
     to: owner, text: `Synthetic check ${stepIds.join(',')}`, check: { verdict: 'pass', stepIds },
   }, { source: 'internal', sessionId: from, role: 'direct_task_worker' });
@@ -84,7 +96,7 @@ try {
   }, caller);
   observed.card = card;
   assert(card.kind === 'completed' && (card.value as { ok: boolean }).ok, JSON.stringify(card));
-  console.log('PASS: dormant admission, checker brief, mismatched report, recorded pass, sign-off card; count=5');
+  console.log('PASS: dormant admission, empty plan refusal, checker brief, mismatched report, remote-authored plan pass, sign-off card; count=6');
 } catch (error) {
   observed.error = String(error);
   throw error;
