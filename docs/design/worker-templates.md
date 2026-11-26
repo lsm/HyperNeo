@@ -117,20 +117,23 @@ Neo then writes only the goal and the done-when for a desktop todo.
 
 ## 2. Old observations on custom endpoints
 
-Each request to a custom endpoint passes a bridge that parses the Anthropic request:
-`providers/anthropic-messages-bridge` and `openai-chat-bridge`; the Ollama bridge stays out of
-this step. One shared function runs in the two before the request is converted:
+One shared function runs before conversion in `providers/anthropic-messages-bridge` and
+`openai-chat-bridge`. The native Ollama bridge rejects image tool results, including the
+latest screenshot this rule would keep, so screenshot-based workers on that route are out
+of scope. Its text-only desktop results remain untrimmed in this slice.
 
 - A desktop result is a `tool_result` whose `tool_use_id` names a desktop tool call in the
   request. The results of the newest assistant message with a desktop call stay as the bridge
   receives them; every older desktop result is collapsed to one line. Non-desktop turns do not
   move this point, and non-desktop results are never changed, also inside a parallel batch.
   A failed step collapses the same way; nothing is rolled back.
-- The line is built from the call's own arguments and the result's status, with no label
-  lookup: the tool, `pid`, `window_id`, `element_token` or `x,y`, and `ok` or `failed:
-  <reason>`, where a failure is `is_error` or a body with `ok: false` and its `reason`. For
-  example `click pid=812 window=3 token=e14: ok` or `click pid=812 window=3 at 410,220: failed:
-  invalid_arguments`. The result body is dropped: no screenshot and no accessibility text.
+- Start the line with the tool name. Add the call's present target arguments as `key=value`
+  in this order: `bundle_id`, `pid`, `window_id`, `element_token`, `x`, `y`, `from_x`,
+  `from_y`, `to_x`, `to_y`, `x1`, `y1`, `x2`, `y2`. A call with no target fields has just
+  the tool and status. Omit action payloads such as typed text, values, and keys. End the
+  line with `ok` or `failed` and the reason when supplied. A failure is `is_error` or a body
+  with `ok: false`. Drop the rest of the result body, including screenshots and accessibility
+  text.
 - "As the bridge receives it" differs by bridge: the messages bridge forwards screenshots, and
   the OpenAI chat bridge already turns any image inside a `tool_result` into the text `[image]`,
   even with vision on, so there the latest result is its text and that marker.
@@ -193,7 +196,8 @@ never the laptop. System map read for the planned files.
    refusals, including an app that was not approved; results carry `at` and `ms`.
    Estimate: 4 files, 90 lines, 120 test lines.
 3. **Collapse old observations.** Tests: the newest desktop call's results stay as received;
-   an older one becomes its line with tool, pid, window and token or point, and ok; a failure by
+   older lines keep the tool, status, and only the defined target fields, covering a token,
+   a point, a drag, a zoom, an app launch, and a call with no target fields; a failure by
    `is_error` and one by `ok: false` keep the reason; a line holds no image and no
    accessibility text; non-desktop turns after a desktop result leave it in full; a parallel
    batch keeps its non-desktop results; failure, then a fresh `get_window_state`, then the next
