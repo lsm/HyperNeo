@@ -284,6 +284,11 @@ export function RemoteDaemonsSettings() {
                 </div>
                 <div class="truncate font-mono text-xs text-fg-faint">{daemon.url}</div>
                 <div class="truncate font-mono text-xs text-fg-muted">{daemon.addressExample}</div>
+                {!daemon.paired && (
+                  <div class="mt-1 text-xs text-fg-muted">
+                    Attach with a pairing code to enable editing.
+                  </div>
+                )}
               </div>
               <div class="flex justify-end gap-2">
                 <Button

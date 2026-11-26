@@ -19,3 +19,7 @@ The helper opens Edit on the paired daemon at three widths and saves
 The edit form contains the current display name and MessageHub URL. After
 saving both fields, reload Settings and verify the new values, the original
 daemon address prefix, and a successful Test using the same paired device.
+
+Replace the address through Attach without entering a pairing code. The new
+endpoint shows how to enable editing, and an edit request directs the caller
+to pair the current endpoint first.

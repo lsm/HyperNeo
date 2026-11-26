@@ -104,5 +104,8 @@ try {
   assert.equal(refused.kind, 'rejected');
   assert.match(refused.reason, /pairing code/);
   await page.getByText('Attach with a pairing code to enable editing.').waitFor({ timeout: 5000 });
+  await page.reload();
+  await page.getByText('Attach with a pairing code to enable editing.').waitFor();
+  await page.screenshot({ animations: 'disabled', path: join(run, 'local', 'evidence', 'remote-daemon-pairing-required-1280.png') });
   console.log('PASS: a replaced endpoint needs its own pairing before edits are available');
 } finally { await browser.close(); }
