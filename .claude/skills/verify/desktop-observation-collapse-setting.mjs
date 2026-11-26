@@ -17,6 +17,15 @@ const browser = await chromium.launch({
 const result = {};
 try {
   const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
+  const pair = JSON.parse(execFileSync('bun', ['packages/cli/main.ts', 'pair', '--name', 'Synthetic settings browser'], {
+    env: { HOME: `${run}/home`, PATH: process.env.PATH, TMPDIR: run, NODE_ENV: 'test', HYPERNEO_DATA_DIR: `${run}/data`, HYPERNEO_SESSION_DOOR: `${run}/data/session-door.sock` },
+    encoding: 'utf8',
+  }));
+  const paired = await page.request.post(`http://127.0.0.1:${port}/pair`, {
+    headers: { origin: `http://127.0.0.1:${port}` },
+    data: { code: pair.code, name: 'Synthetic settings browser' },
+  });
+  assert.equal(paired.status(), 200);
   const toggle = page.getByRole('switch', { name: 'Collapse older desktop observations' });
   const open = async () => {
     await page.goto(`http://127.0.0.1:${port}/settings?tab=harness`);
