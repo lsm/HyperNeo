@@ -1,12 +1,10 @@
 import type { WorkRef } from '../../lib/drivers/types.ts';
-import type { NeoDriverTarget, readDriverOutcome } from '../../lib/neo/driver-work.ts';
+import type { NeoDeliveryTarget, readDriverOutcome } from '../../lib/neo/driver-work.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { defineDbOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 
-type Target =
-  | Extract<NeoDriverTarget, { verb: 'start' | 'send' }>
-  | { verb: 'todo'; todoId: string };
+type Target = NeoDeliveryTarget | { verb: 'todo'; todoId: string };
 type Outcome = ReturnType<typeof readDriverOutcome> & { notSent?: true };
 type InputRow = {
   id: string;
