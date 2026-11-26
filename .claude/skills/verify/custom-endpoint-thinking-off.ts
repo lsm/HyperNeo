@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { CustomEndpointProvider } from '../../../packages/daemon/src/lib/providers/custom-endpoint-provider.ts';
 
 const models = ['reasoning-model-a', 'reasoning-model-b'];
+const format = { type: 'json_schema', schema: { type: 'object' } };
 
 for (const llamaCppThinkingOff of [false, true]) {
   const received: Record<string, unknown>[] = [];
@@ -40,6 +41,8 @@ for (const llamaCppThinkingOff of [false, true]) {
             max_tokens: 32000,
             messages: [{ role: 'user', content: 'Summarize the session so work can continue.' }],
             thinking: { type: 'adaptive' },
+            output_config: { effort: 'high', format },
+            reasoning_effort: 'high',
             ...(llamaCppThinkingOff ? { chat_template_kwargs: { custom_option: 'preserve' } } : {}),
           }),
         });
@@ -58,7 +61,11 @@ for (const llamaCppThinkingOff of [false, true]) {
       );
       assert.deepEqual(high.thinking, { type: 'enabled', budget_tokens: 24000 });
       assert.equal(auto.thinking, undefined);
+      assert.deepEqual(off.output_config, llamaCppThinkingOff ? { format } : { effort: 'high', format });
+      assert.equal(off.reasoning_effort, llamaCppThinkingOff ? undefined : 'high');
       for (const request of [high, auto]) {
+        assert.deepEqual(request.output_config, { effort: 'high', format });
+        assert.equal(request.reasoning_effort, 'high');
         assert.deepEqual(
           request.chat_template_kwargs,
           llamaCppThinkingOff ? { custom_option: 'preserve' } : undefined

@@ -12,8 +12,10 @@ local upstream fixture. It checks Off, High and Auto for two arbitrary model IDs
 with and without the endpoint-level llama.cpp compatibility option. Off sends
 the Anthropic disabled value together with the template switch when
 compatibility is selected. High forwards the budget, and Auto keeps the model
-default. Both preserve existing template settings. Require twelve successful
-requests across the two cases.
+default. Off with compatibility enabled also strips both effort overrides so
+they cannot re-enable thinking. The other cases forward effort unchanged, and
+all cases preserve the response format and unrelated template settings.
+Require twelve successful requests across the two cases.
 
 In the web app, open Settings, Connections & Services, Providers. Edit an
 Anthropic Messages custom endpoint. Enable "llama.cpp compatibility for Thinking
