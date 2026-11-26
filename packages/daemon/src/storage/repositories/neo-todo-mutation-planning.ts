@@ -57,9 +57,10 @@ class NeoTodoMutationPlanner {
         },
       };
     const accepted = planNeoTodoDraft(
-      { ...plan.todo, check },
+      { ...plan.todo, check, instruction: input.instruction ?? plan.todo.instruction },
       this.policies,
-      this.todos.listTodos(plan.todo.askId)
+      this.todos.listTodos(plan.todo.askId),
+      !!new NeoTodoSessionRepository(this.db).readRef(plan.todo.id)
     );
     if ('reason' in accepted) return accepted;
     const records = [

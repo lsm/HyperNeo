@@ -178,12 +178,11 @@ describe('Read-only todo mutation plans', () => {
     });
   });
 
-  test('explicit check replacement and URLs use current peer ownership records', async () => {
+  test('explicit check replacement refuses URLs held by a live merge todo', async () => {
     const check = { pack: 'coding', kind: 'pr_merged', params: { urls: [url(2)] } };
     expect(await plan({ kind: 'edit', todoId: 'first', check, addUrls: [url(1)] })).toMatchObject({
-      ok: true,
-      patch: { check: { params: { urls: [url(2), url(1)] } } },
-      records: [expect.stringContaining('pr_already_tracked:')],
+      ok: false,
+      reason: expect.stringContaining('pr_already_tracked:'),
     });
   });
 

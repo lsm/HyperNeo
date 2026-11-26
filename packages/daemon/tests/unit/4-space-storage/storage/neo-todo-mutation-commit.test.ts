@@ -196,18 +196,17 @@ describe('Atomic todo mutation commits', () => {
     }
   );
 
-  test('duplicate PR edits both commit with ownership bookkeeping on the second receipt', async () => {
-    expect(await commit({ kind: 'edit', todoId: 'first', addUrls: [url] })).toMatchObject({
-      ok: true,
-    });
-    expect(await commit({ kind: 'edit', todoId: 'peer', addUrls: [url] })).toMatchObject({
-      ok: true,
-      todo: { check: { params: { urls: [url] } } },
-      records: [expect.stringContaining('pr_already_tracked:')],
-    });
-    expect(store.listTodos('ask').every((todo) => JSON.stringify(todo.check).includes(url))).toBe(
-      true
+  test('only one concurrent edit can claim the same PR', async () => {
+    const before = store.listTodos('ask');
+    const results = await Promise.all(
+      before.map((todo) => commit({ kind: 'edit', todoId: todo.id, addUrls: [url] }))
     );
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    expect(results.filter((result) => !result.ok)).toEqual([
+      { ok: false, reason: expect.stringContaining('pr_already_tracked:') },
+    ]);
+    const denied = before[results.findIndex((result) => !result.ok)];
+    expect(store.getTodo(denied.id)).toEqual(denied);
   });
 
   test('a changed requirement reopens a completed todo without dropping its stored report', async () => {

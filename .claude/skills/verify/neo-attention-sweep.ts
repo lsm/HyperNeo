@@ -177,6 +177,27 @@ try {
     2,
     'the overdue check is told again on the ladder'
   );
+  const stopped = 'synthetic-stopped-worker';
+  db.prepare(
+    'INSERT INTO sessions (id,title,type,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?,?,?,?,?,?,?,?,?)'
+  ).run(
+    stopped, 'Synthetic stopped worker', 'general', join(run, 'workspace'),
+    new Date(at).toISOString(), new Date(at).toISOString(), 'ended', '{}', '{}'
+  );
+  for (const blocker of ['environment', 'check', 'held'] as const) {
+    const id = `stopped-${blocker}`;
+    add(id);
+    todoSessions.create(id, { verb: 'send', ref: { adapter: 'hyperneo', id: stopped } });
+    todoSessions.recordRef(id, { adapter: 'hyperneo', id: stopped }, at);
+    todoSessions.recordNudge(id, { since: at, nudges: 0, live: 'running', liveSince: at });
+    todos.updateTodo(todos.getTodo(id)!, { state: 'doing', startedAt: at }, at);
+    todos.updateTodo(todos.getTodo(id)!, { state: 'blocked', blockedBy: blocker }, clock);
+  }
+  await service.todoRunner.refresh((message, error) => { throw new Error(message, { cause: error }); });
+  const stoppedWakes = await sweep('after status refresh finds the blocked workers stopped', 30);
+  for (const blocker of ['environment', 'check'])
+    assert.equal(stoppedWakes.filter((text) => text.startsWith(step(`stopped-${blocker}`))).length, 1);
+  assert(!stoppedWakes.some((text) => text.startsWith(step('stopped-held'))));
   evidence.passed = true;
   console.log('PASS');
 } catch (error) {
