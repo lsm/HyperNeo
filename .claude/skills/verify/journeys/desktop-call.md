@@ -12,11 +12,14 @@ TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh \
   /absolute/fresh/evidence-directory .claude/skills/verify/desktop-call.ts
 ```
 
-The journey first proposes a Finder todo through Neo's MCP operation and answers
+The journey first proposes a Calculator todo through Neo's MCP operation and answers
 its disclosure card through the human WebSocket door. The real work start must
 create a Desktop template session. The actual SDK request to the loopback model
 must expose `invoke` and every catalog tool, carry the system instructions, and
-omit their copy from the brief. The model calls `get_window_state` for Finder
+omit their copy from the brief. The saved SDK startup and HyperNeo composer must
+show only the desktop MCP tools and no skills, slash commands or agents. Pass
+prints `desktop worker inventory PASS`. The exact lists and Claude Code version
+are saved to `evidence/desktop-worker-inventory.json`. The model calls `get_window_state` for Calculator
 and tries `launch_app` for unapproved TextEdit. Both return `at` and `ms`. The
 TextEdit call returns `app_not_in_todo_scope` without dispatching any input.
 The session MCP door must list exactly four operations and refuse a file read.

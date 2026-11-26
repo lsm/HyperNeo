@@ -197,7 +197,7 @@ try {
     modelRequest.promise,
     delay(30_000, undefined, { ref: false }).then(() => { throw new Error('No model request for the Calculator todo'); }),
   ]);
-  assert.deepEqual(outbound.tools.sort(), [...modelTools].sort());
+  assert.deepEqual([...outbound.tools].sort(), [...modelTools].sort());
   assert.match(outbound.system, /desktop tools to act in the approved apps/);
   assert(!outbound.brief.includes('desktop_permissions_required'));
   const results = await Promise.race([
@@ -209,6 +209,9 @@ try {
     (message) => message.type === 'system' && message.subtype === 'init'
   );
   assert(init, 'No Claude Code startup inventory was recorded');
+  const { commandsData } = await hub.request<{ commandsData: { availableCommands: string[] } }>(
+    'state.session', { sessionId: ref.id }
+  );
   const inventory = {
     claudeCodeVersion: init.claude_code_version,
     tools: init.tools,
@@ -217,7 +220,7 @@ try {
     slashCommands: init.slash_commands,
     terminalSlashCommands: init.terminal_slash_commands,
     agents: init.agents,
-    composerCommands: await templated.getSlashCommands(),
+    composerCommands: commandsData.availableCommands,
   };
   writeFileSync(join(run, 'evidence/desktop-worker-inventory.json'), JSON.stringify(inventory, null, 2));
   assert.deepEqual([...init.tools].sort(), [...modelTools].sort());
@@ -225,6 +228,9 @@ try {
   assert.deepEqual(init.slash_commands, []);
   assert.deepEqual(init.terminal_slash_commands ?? [], []);
   assert.deepEqual(init.agents ?? [], []);
+  assert.deepEqual(inventory.composerCommands, []);
+  assert.doesNotMatch(outbound.system + outbound.brief, /deep-research|statusline-setup|Available agent types/i);
+  console.log(`desktop worker inventory PASS sdk_tools=${init.tools.length} model_tools=${outbound.tools.length} skills=0 slash_commands=0 agents=0 composer_commands=0`);
   assert.equal(results.length, 2);
   const [captured, refused] = results.map(result => JSON.parse(result.content?.[0]?.text ?? ''));
   assert.equal(captured.ok, true);

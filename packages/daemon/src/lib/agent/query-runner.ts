@@ -2665,7 +2665,11 @@ export class QueryRunner {
   }
 
   async handleSDKMessage(message: SDKMessage, queryGeneration?: number): Promise<void> {
-    await this.ctx.onSDKMessage(message, undefined, queryGeneration);
+    const visibleMessage =
+      this.ctx.session.config.toolProfile === 'desktop' && isSDKSystemInit(message)
+        ? { ...message, agents: [] }
+        : message;
+    await this.ctx.onSDKMessage(visibleMessage, undefined, queryGeneration);
     await this.ctx.onMarkApiSuccess(message, queryGeneration);
   }
 

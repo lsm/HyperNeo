@@ -31,6 +31,7 @@ export class SlashCommandManager {
 
   async getSlashCommands(): Promise<string[]> {
     const { logger, queryObject } = this.ctx;
+    if (this.ctx.session.config.toolProfile === 'desktop') return [];
 
     if (this.slashCommands.length > 0) {
       if (!this.commandsFetchedFromSDK && !this.commandsRestoredFromDb && queryObject) {
@@ -51,6 +52,7 @@ export class SlashCommandManager {
   }
 
   async updateFromInit(sdkCommands: string[]): Promise<void> {
+    if (this.ctx.session.config.toolProfile === 'desktop') return;
     if (this.commandsFetchedFromSDK && !this.commandsChangedSinceInit) return;
 
     const { session, db, internalEventBus } = this.ctx;
@@ -74,6 +76,7 @@ export class SlashCommandManager {
 
   async updateFromCommandsChanged(sdkCommands: string[]): Promise<void> {
     const { session, db, internalEventBus } = this.ctx;
+    if (session.config.toolProfile === 'desktop') return;
 
     const kaiBuiltInCommands = getBuiltInCommandNames();
     const allCommands = [...new Set([...sdkCommands, ...kaiBuiltInCommands])];
@@ -94,6 +97,7 @@ export class SlashCommandManager {
 
   async fetchAndCache(): Promise<void> {
     const { session, db, internalEventBus, logger, queryObject } = this.ctx;
+    if (session.config.toolProfile === 'desktop') return;
 
     if (!queryObject || typeof queryObject.supportedCommands !== 'function') {
       return;

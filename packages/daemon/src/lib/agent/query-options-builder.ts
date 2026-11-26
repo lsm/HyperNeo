@@ -649,11 +649,13 @@ export class QueryOptionsBuilder {
       executable: config.executable ?? (isRunningUnderBun() ? 'bun' : undefined),
       executableArgs: config.executableArgs,
       pathToClaudeCodeExecutable: sdkCliPath,
+      extraArgs: desktop ? { 'disable-slash-commands': null } : undefined,
 
       settingSources:
         config.settingSources ?? this.ctx.settingsManager.getGlobalSettings().settingSources,
       settings: withSdkTranscriptRetention({
         ...providerSettings,
+        ...(desktop ? { disableBundledSkills: true } : {}),
         ...(sessionHasAutoCompactWindow && config.autoCompactWindow !== undefined
           ? { autoCompactWindow: config.autoCompactWindow }
           : {}),
