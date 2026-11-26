@@ -1,5 +1,6 @@
 import type { NeoAttentionEvent } from '../neo/attention/decide.ts';
 import { createNeoFrontHandler } from '../neo/front-job.ts';
+import { createStagedImages, stagedAttachmentDirectory } from './attachment-upload-route.ts';
 import { readCodingTodoWorker } from '../neo/packs/coding/worker-read.ts';
 import { codingProjectIdentity } from '../neo/packs/coding/project-cleanup.ts';
 import { createPeerMessageRoute } from '../../routes/neo-peer-message.ts';
@@ -386,6 +387,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
     readGithubReviewThreads: (url, workspacePath) =>
       neoService.readReviewThreads(url, workspacePath),
   });
+  const stagedImages = createStagedImages(stagedAttachmentDirectory(deps.config.dbPath));
   setupSessionHandlers(
     deps.messageHub,
     deps.sessionManager,
@@ -394,6 +396,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
     undefined,
     {
       writeToolPreferences,
+      stagedImages,
       ensureSession: async (target) => {
         if (space) return space.ensureSession(target);
         const sessionId = target.kind === 'session' ? target.sessionId : null;
@@ -523,7 +526,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
     ...(space?.familyOperations(boundFamilyContext) ?? []),
     ...deps.extensions.operations(),
     createDaemonExtensionsOperation(deps.extensions),
-    ...createNeoOperations(neoService, codingProjectIdentity, readCodingTodoWorker),
+    ...createNeoOperations(neoService, codingProjectIdentity, readCodingTodoWorker, stagedImages),
     ...createVoiceTestOperations(deps.settingsManager, providerCredentialManager),
     ...createNeoHomeOperations(neoService, neoHome),
     createNeoHomeGithubOperation(neoService, neoHome),

@@ -31,7 +31,10 @@ import { createRequestGuard } from './lib/pairing/origin-host.ts';
 import { createUpgradeAuthenticator, type UpgradeIdentity } from './lib/pairing/upgrade-auth.ts';
 import { ensureLocalCredential } from './lib/pairing/local-credential.ts';
 import { createMessageImageHandler } from './lib/rpc-handlers/message-image-route.ts';
-import { createAttachmentUpload } from './lib/rpc-handlers/attachment-upload-route.ts';
+import {
+  createAttachmentUpload,
+  stagedAttachmentDirectory,
+} from './lib/rpc-handlers/attachment-upload-route.ts';
 import { createAgentReadGuard } from './lib/pairing/agent-read.ts';
 import { daemonPairingLimiter } from './lib/pairing/pairing-limiter.ts';
 import { daemonPairWaits } from './lib/pairing/pair-waits.ts';
@@ -1359,7 +1362,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const guardAgent = createAgentReadGuard(() => db.gateway);
     const guardRequest = async (req: Request) => guardOrigin(req) ?? (await guardAgent(req));
     const attachments = createAttachmentUpload(
-      join(dirname(config.dbPath), 'staged-attachments'),
+      stagedAttachmentDirectory(config.dbPath),
       authenticateUpgrade
     );
     const stopAttachmentSweep = await attachments.startSweep((error) =>
