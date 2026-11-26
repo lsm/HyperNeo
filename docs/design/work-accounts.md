@@ -99,23 +99,22 @@ start and send, with the todo, the worker and the time. An adoption gets a row t
 verb `adopt`, with no message and already delivered: the binding's `boundAt` is replaced by a
 rebind and cleared by a move, the row is not. Readers that match a message or wait for a
 delivery skip `adopt` rows. Coding already
-reads it for pull requests (`codingTurnTodos`); that decision moves to core with two more steps:
+reads it for pull requests (`codingTurnTodos`); that decision moves to core as two steps:
 
 1. The todo whose delivery receipt names an input of the turn. Two such todos: none.
-2. Otherwise the todo of the worker's newest delivered row (`start`, `send` or `adopt`)
-   that reached the worker before the turn started. A row sent straight in reached it when it
-   was accepted. A row that waited in a queue (`queued` in its outcome, which a catch-up after
-   a restart also is) is known to have reached it only when it is observed (`observed_at`); a
-   turn that starts in between takes the row before it (or step 3), and has none if that todo
-   differs from the queued row's.
-3. Before any of those, the todo that started the worker (`work_started_sessions`). Turns of an
-   adopted session before its adoption have none.
+2. Otherwise, the todos that may have reached the worker when the turn started: the newest row
+   (`start`, `send` or `adopt`) observed delivered before that moment, or the todo that started
+   the worker (`work_started_sessions`) if there is none, plus every row accepted before that
+   moment and observed after it. If they all name one todo, the turn has it; if not, or if
+   there are none, it has none.
+
+Acceptance is never taken as delivery, for a direct send, a queued one or a catch-up after a
+restart. Turns of an adopted session before its adoption have none.
 
 Measured on 3677 turns of one week: 962 have a receipt, 3 of them of two todos. For the other
-959 the time rule alone gives the same todo 954 times. The 2715 without a receipt all get a
-todo, but nothing checks it yet; how often that todo is right is part of **Done when**. In the
-same week 1619 turns started while a queued row was still unobserved; for 134 of them the row
-before it had another todo, so they have none.
+959 the time rule alone gives the same todo 954 times. Over all 6462 turns of that week on
+workers with a delivery row, step 2 finds two todos for 622 turns without a receipt (9.6%),
+which therefore have none. How often a single todo is right is part of **Done when**.
 All 987 started or sent todos of that week have a row. The worker and the daemon run on one
 machine and share its clock. The role is the worker's newest one for that todo in
 `neo_todo_roles`, else `do`.
@@ -163,8 +162,9 @@ Six PRs from `dev`, in order, failing tests first. System map read for the plann
    keeps its todo; a failed delivery gives nothing; a receipt beats the time; two todos in one
    turn give none; a started worker's first turn, which begins before its receipt; an adopted
    session's earlier turns have none; after an adoption, a rebind and a move keep the adopted
-   todo for the turns between; a turn that starts while a queued send of another todo is
-   unobserved has none, also after a restart; a reviewer keeps its role.
+   todo for the turns between; a turn that starts while a send of another todo is accepted
+   but not yet observed has none, direct or queued, also after a restart; a reviewer keeps its
+   role.
    Estimate: 6 files, 110 lines, 200 test lines.
 2. **Kind and estimate.** Core kinds, the checks on the two operations, the fact, the Neo tool
    text, and the estimate line in `AGENTS.md` for designs. Tests: missing or unknown kind is
@@ -190,7 +190,7 @@ Six PRs from `dev`, in order, failing tests first. System map read for the plann
 **Done when**, one week after the last PR: at least 95% of finished todos that had a worker of
 the three adapters have kind and an estimate when required (or the reviewed PR's size for a
 review); at least 95% have complete usage. Turns with omitted subagent cost count as incomplete,
-not zero. The share of unattributed turns is below 5%. For 20 turns without a receipt, picked at
+not zero. The share of unattributed turns is below 12%. For 20 turns without a receipt, picked at
 random, the todo read from the worker's own transcript matches the given todo at least 19 times;
 a wrong todo counts as a miss, not as attributed. For 20 todos with complete usage, picked
 at random, the totals match the harness's own records.
