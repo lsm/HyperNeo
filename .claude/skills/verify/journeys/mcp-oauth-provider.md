@@ -2,7 +2,7 @@
 
 ```bash
 bash .claude/skills/verify/proof-run.sh /absolute/evidence/mcp-oauth-provider \
-  .claude/skills/verify/mcp-oauth-provider.ts
+  .claude/skills/verify/mcp-oauth-provider.ts "$(git rev-parse HEAD)"
 ```
 
 Keep each evidence directory fresh.
@@ -17,6 +17,7 @@ nothing, and a 401 naming the second server sends it no request.
 
 This is a construction slice: there is no connect RPC, Settings row or session
 proxy yet. Unit contracts in `tests/unit/1-core/credentials/mcp-oauth-provider.test.ts`
-cover the over-broad grant, Slack reply shapes, unpinned origins, issuer and
-endpoint mismatches, refresh without `scope` and body caps. The evidence holds
+cover the over-broad grant, Slack reply shapes, unpinned origins, exact credential
+URLs across redirects, issuer, resource and endpoint binding, deadlines, upstream
+error text, refresh without `scope` and body caps. The evidence holds
 outcomes only, never tokens.

@@ -10,7 +10,8 @@ import { createMcpOAuthProvider } from '../../../packages/daemon/src/lib/connect
 import type { McpOAuthPreset } from '../../../packages/daemon/src/lib/connections/mcp-fetch.ts';
 import { startFakeMcpOAuthServer } from '../../../packages/daemon/tests/helpers/fake-mcp-oauth-server.ts';
 
-const run = resolve(process.argv[2]);
+const run = resolve(process.argv.at(-1) ?? '');
+const testedHead = process.argv.length > 3 ? process.argv[2] : 'unrecorded';
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -66,7 +67,7 @@ try {
   other.stop();
   await app.cleanup();
 }
-const text = JSON.stringify({ surface: 'real SDK auth() in an isolated test-daemon process against a loopback fake MCP OAuth server; vault on the daemon database; no connect RPC yet', evidence, resourcesClosed: true }, null, 2);
+const text = JSON.stringify({ testedHead, surface: 'real SDK auth() in an isolated test-daemon process against a loopback fake MCP OAuth server; vault on the daemon database; no connect RPC yet', evidence, resourcesClosed: true }, null, 2);
 assert(!secrets.some((secret) => text.includes(secret)));
 writeFileSync(join(run, 'evidence/mcp-oauth-provider.json'), text);
 console.log('PASS: discovery, DCR and PKCE through the real SDK; grant only in the vault and readable after restart; other instance and row read nothing; foreign 401 reached no other server');

@@ -25,28 +25,71 @@ const slackErrors: Record<string, [number, string]> = {
   request_timeout: [503, 'temporarily_unavailable'],
 };
 
-const sameEndpoint = (a: URL, b: string) =>
-  a.origin + a.pathname === new URL(b).origin + new URL(b).pathname;
+const oauthErrors = new Set([
+  'invalid_request',
+  'invalid_client',
+  'invalid_grant',
+  'unauthorized_client',
+  'unsupported_grant_type',
+  'invalid_scope',
+  'access_denied',
+  'server_error',
+  'temporarily_unavailable',
+  'invalid_client_metadata',
+  'invalid_redirect_uri',
+  'invalid_token',
+  'insufficient_scope',
+]);
 
-async function readCapped(response: Response, maxBytes: number) {
+const sameUrl = (a: URL, b: string) => a.href === new URL(b).href;
+
+function parse(body: string) {
+  try {
+    return JSON.parse(body);
+  } catch {
+    throw new Error('request_failed');
+  }
+}
+
+async function readCapped(response: Response, maxBytes: number, signal: AbortSignal) {
   const reader = response.body?.getReader();
+  const aborted = new Promise<never>((_, reject) =>
+    signal.addEventListener('abort', () => reject(new Error('request_failed')), { once: true })
+  );
+  aborted.catch(() => {});
   const chunks: Uint8Array[] = [];
   let size = 0;
   try {
     for (;;) {
-      const chunk = await reader?.read();
-      if (!chunk || chunk.done) return Buffer.concat(chunks);
+      signal.throwIfAborted();
+      const chunk = reader && (await Promise.race([reader.read(), aborted]));
+      if (!chunk || chunk.done) return Buffer.concat(chunks).toString('utf8');
       size += chunk.value.byteLength;
       if (size > maxBytes) throw new Error('response_too_large');
       chunks.push(chunk.value);
     }
   } finally {
-    await reader?.cancel();
+    await reader?.cancel().catch(() => {});
   }
 }
 
-function slackReply(body: Buffer) {
-  const data = JSON.parse(body.toString('utf8'));
+function errorReply(status: number, body: string) {
+  let error: unknown;
+  try {
+    error = JSON.parse(body).error;
+  } catch {}
+  const code =
+    typeof error === 'string' && oauthErrors.has(error)
+      ? error
+      : status === 429 || status >= 500
+        ? 'temporarily_unavailable'
+        : 'invalid_request';
+  return { status, body: JSON.stringify({ error: code }) };
+}
+
+function tokenReply(body: string, slack: boolean) {
+  const data = parse(body);
+  if (!slack) return { status: 200, body };
   if (data.ok === false) {
     const [status, error] = slackErrors[data.error] ?? [400, 'invalid_request'];
     return { status, body: JSON.stringify({ error }) };
@@ -60,9 +103,12 @@ export function createMcpFetch(options: {
   preset: McpOAuthPreset;
   tokenEndpoint: () => string | undefined;
   maxBytes?: number;
+  timeoutMs?: number;
   fetchImpl?: typeof fetch;
 }): FetchLike {
+  let tooLarge = false;
   return async (input, init) => {
+    if (tooLarge) throw new Error('response_too_large');
     const url = new URL(input);
     if (!options.preset.origins.includes(url.origin)) throw new Error('request_failed');
     const headers = new Headers(init?.headers);
@@ -72,20 +118,33 @@ export function createMcpFetch(options: {
         ? init.body
         : new URLSearchParams(typeof init?.body === 'string' ? init.body : '');
     const tokenEndpoint = options.tokenEndpoint();
-    const toToken = !!tokenEndpoint && sameEndpoint(url, tokenEndpoint);
+    const toToken = !!tokenEndpoint && sameUrl(url, tokenEndpoint);
     if ((/^basic /i.test(auth) || grantParams.some((key) => params.has(key))) && !toToken)
       throw new Error('request_failed');
-    if (/^bearer /i.test(auth) && !sameEndpoint(url, options.preset.url))
+    if (/^bearer /i.test(auth) && !sameUrl(url, options.preset.url))
       throw new Error('request_failed');
-    const response = await (options.fetchImpl ?? fetch)(url, { ...init, redirect: 'manual' });
-    const body = await readCapped(response, options.maxBytes ?? 262144);
+    const signal = AbortSignal.any([
+      AbortSignal.timeout(options.timeoutMs ?? 30000),
+      ...(init?.signal ? [init.signal] : []),
+    ]);
+    let response: Response;
+    let body: string;
+    try {
+      response = await (options.fetchImpl ?? fetch)(url, { ...init, redirect: 'manual', signal });
+      body = await readCapped(response, options.maxBytes ?? 262144, signal);
+    } catch (error) {
+      tooLarge = error instanceof Error && error.message === 'response_too_large';
+      throw new Error(tooLarge ? 'response_too_large' : 'request_failed');
+    }
     const reply =
-      toToken && options.preset.slackTokens
-        ? slackReply(body)
-        : {
-            status: response.status,
-            body: [204, 205, 304].includes(response.status) ? null : body,
-          };
+      response.status >= 400
+        ? errorReply(response.status, body)
+        : toToken && response.ok
+          ? tokenReply(body, !!options.preset.slackTokens)
+          : {
+              status: response.status,
+              body: [204, 205, 304].includes(response.status) ? null : body,
+            };
     const replyHeaders = new Headers(response.headers);
     replyHeaders.delete('content-length');
     replyHeaders.delete('content-encoding');

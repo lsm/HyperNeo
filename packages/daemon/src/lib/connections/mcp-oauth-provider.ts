@@ -1,11 +1,4 @@
-import type {
-  OAuthClientProvider,
-  OAuthDiscoveryState,
-} from '@modelcontextprotocol/sdk/client/auth.js';
-import type {
-  OAuthClientInformationMixed,
-  OAuthTokens,
-} from '@modelcontextprotocol/sdk/shared/auth.js';
+import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import { createMcpFetch, type McpOAuthPreset } from './mcp-fetch.ts';
 import { mcpGrant, type McpGrant } from './status.ts';
 import type { ConnectionVault } from './vault.ts';
@@ -14,12 +7,11 @@ type Draft = Partial<Omit<McpGrant, 'generation'>> & { verifier?: string };
 
 const sameUrl = (a: string | undefined, b: string) =>
   !!a && new URL(a).href.replace(/\/$/, '') === new URL(b).href.replace(/\/$/, '');
-const boundTo = (
-  preset: McpOAuthPreset,
-  state: { authorizationServerUrl: string; authorizationServerMetadata?: { issuer: string } }
-) =>
-  sameUrl(state.authorizationServerUrl, preset.issuer) &&
-  sameUrl(state.authorizationServerMetadata?.issuer, preset.issuer);
+const boundTo = (preset: McpOAuthPreset, binding: McpGrant['binding']) =>
+  sameUrl(binding.resource, preset.url) &&
+  sameUrl(binding.authorizationServerUrl, preset.issuer) &&
+  sameUrl(binding.authorizationServerMetadata.issuer, preset.issuer) &&
+  binding.authorizationServerMetadata.authorization_endpoint === preset.authorizationEndpoint;
 const withinMaximum = (preset: McpOAuthPreset, scopes: string[]) =>
   scopes.every((scope) => preset.scopes.includes(scope));
 const scopeList = (scope: string | null | undefined) => scope?.split(/\s+/).filter(Boolean);
@@ -30,16 +22,19 @@ export function createMcpOAuthProvider(options: {
   preset: McpOAuthPreset;
   generation: number;
   redirectUrl: string;
-  client?: { clientId: string; clientSecret?: string };
   attempt?: { authorize: (url: URL) => void };
-  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
 }) {
   const { preset, attempt } = options;
   let draft: Draft = {};
   const ready = attempt
     ? Promise.resolve()
     : options.vault.readMcp(options.serverId).then((grant) => {
-        if (grant?.generation === options.generation && boundTo(preset, grant.binding))
+        if (
+          grant?.generation === options.generation &&
+          boundTo(preset, grant.binding) &&
+          withinMaximum(preset, grant.scopes)
+        )
           draft = grant;
       });
   const persist = async () => {
@@ -60,24 +55,19 @@ export function createMcpOAuthProvider(options: {
       redirect_uris: [options.redirectUrl],
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
-      token_endpoint_auth_method: options.client?.clientSecret ? 'client_secret_post' : 'none',
+      token_endpoint_auth_method: 'none',
       scope: preset.scopes.join(' '),
     },
     clientInformation: async () => {
       await ready;
-      const preRegistered = options.client && {
-        client_id: options.client.clientId,
-        client_secret: options.client.clientSecret,
-        issuer: preset.issuer,
-      };
-      return (draft.client as OAuthClientInformationMixed | undefined) ?? preRegistered;
+      return draft.client;
     },
     saveClientInformation: (client) => {
-      draft.client = client;
+      draft.client = mcpGrant.shape.client.parse(client);
     },
     tokens: async () => {
       await ready;
-      return attempt ? undefined : (draft.tokens as OAuthTokens | undefined);
+      return attempt ? undefined : draft.tokens;
     },
     saveTokens: async (tokens) => {
       await ready;
@@ -107,18 +97,22 @@ export function createMcpOAuthProvider(options: {
       return draft.verifier;
     },
     saveDiscoveryState: (state) => {
-      if (!boundTo(preset, state)) throw new Error('request_failed');
-      draft.binding = mcpGrant.shape.binding.parse(state);
+      const binding = mcpGrant.shape.binding.safeParse({
+        ...state,
+        resource: state.resourceMetadata?.resource ?? preset.url,
+      });
+      if (!binding.success || !boundTo(preset, binding.data)) throw new Error('request_failed');
+      draft.binding = binding.data;
     },
     discoveryState: async () => {
       await ready;
-      return draft.binding as OAuthDiscoveryState | undefined;
+      return draft.binding;
     },
   };
   const fetchFn = createMcpFetch({
     preset,
     tokenEndpoint: () => draft.binding?.authorizationServerMetadata.token_endpoint,
-    fetchImpl: options.fetchImpl,
+    timeoutMs: options.timeoutMs,
   });
   return { provider, fetch: fetchFn, commit: persist };
 }

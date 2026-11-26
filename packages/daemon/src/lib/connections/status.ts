@@ -1,4 +1,10 @@
 import { z } from 'zod';
+import {
+  OAuthClientInformationSchema,
+  OAuthMetadataSchema,
+  OAuthProtectedResourceMetadataSchema,
+  OAuthTokensSchema,
+} from '@modelcontextprotocol/sdk/shared/auth.js';
 
 export const connectionProviders = ['google', 'microsoft'] as const;
 
@@ -71,15 +77,14 @@ export type ConnectionTokens = z.infer<typeof connectionTokens>;
 export const mcpGrant = z.object({
   generation: z.number().int().nonnegative(),
   scopes: z.array(z.string().max(300)).max(50),
-  client: z.looseObject({ client_id: z.string().min(1) }),
-  tokens: z.looseObject({ access_token: z.string().min(1), token_type: z.string() }),
-  binding: z.looseObject({
+  client: OAuthClientInformationSchema,
+  tokens: OAuthTokensSchema,
+  binding: z.object({
+    resource: z.string().url(),
     authorizationServerUrl: z.string().url(),
-    authorizationServerMetadata: z.looseObject({
-      issuer: z.string().url(),
-      authorization_endpoint: z.string().url(),
-      token_endpoint: z.string().url(),
-    }),
+    authorizationServerMetadata: OAuthMetadataSchema,
+    resourceMetadata: OAuthProtectedResourceMetadataSchema.optional(),
+    resourceMetadataUrl: z.string().optional(),
   }),
 });
 
