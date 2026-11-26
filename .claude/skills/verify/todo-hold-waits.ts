@@ -325,7 +325,7 @@ try {
     "UPDATE neo_todos SET state = 'blocked', blocked_by = 'held', blocked_reason = 'Legacy hold' WHERE id = 'legacy'"
   );
   db.exec(
-    "ALTER TABLE neo_todos DROP COLUMN hold_json; DELETE FROM migration_markers WHERE key = 'migration_537'"
+    "ALTER TABLE neo_todos DROP COLUMN hold_json; DELETE FROM migration_markers WHERE key = 'migration_538'"
   );
   const migrated = clock;
   runMigrations(db, () => {});

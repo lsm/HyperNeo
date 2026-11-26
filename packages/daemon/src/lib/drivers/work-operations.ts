@@ -24,7 +24,7 @@ import {
   type OperationCaller,
   type OperationDefinition,
 } from '../operations/registry.ts';
-import type { NeoDriverTarget } from '../neo/driver-work.ts';
+import type { NeoDeliveryTarget } from '../neo/driver-work.ts';
 import type { RemoteDaemons } from './find-operation.ts';
 import { stampWork } from './places.ts';
 import { workStartConfiguration } from './start-configuration.ts';
@@ -179,6 +179,7 @@ export interface WorkVerbDeps {
     }
   ) => void | Promise<void>;
   reportUncertain?: (report: WorkSendUncertainty) => Promise<void>;
+  preparePlanCheck?: (input: StartInput, caller: OperationCaller) => Promise<Gate<StartInput>>;
   startPlace?: (input: StartDraft, caller: OperationCaller) => Gate<StartInput>;
 }
 
@@ -205,6 +206,7 @@ const ForwardedOriginSchema = z.string().min(1).max(REPLY_ORIGIN_MAX).optional()
 export const WORK_START_EXCLUDE_REFS_MAX = 30;
 
 export const StartWorkInputSchema = z.object({
+  checkPlan: z.literal(true).optional(),
   todoId: z
     .string()
     .trim()
@@ -357,9 +359,9 @@ type StartDraft = z.infer<typeof StartWorkInputSchema>;
 type StartInput = StartDraft & { place: z.infer<typeof PlaceSchema> } & Pick<
     StartRequest,
     'inPlace' | 'prepareFolder'
-  >;
+  > & { planStepIds?: string[] };
 type SendInput = z.infer<typeof SendWorkInputSchema>;
-type WorkTarget = Extract<NeoDriverTarget, { verb: 'start' | 'send' }>;
+type WorkTarget = NeoDeliveryTarget;
 type RefInput = z.infer<typeof WorkRefInputSchema>;
 type StatusInput = z.infer<typeof WorkStatusInputSchema>;
 type StartResult = z.infer<typeof StartWorkResultSchema>;
@@ -484,6 +486,10 @@ const workTarget = (input: StartInput | SendInput): WorkTarget =>
     ? { verb: 'send', ref: input.ref }
     : {
         verb: 'start',
+        ...(input.planStepIds ? { planStepIds: input.planStepIds } : {}),
+        ...(input.place.daemon && !input.checkPlan && (input.role ?? 'do') === 'do'
+          ? { role: 'do' as const }
+          : {}),
         adapter: input.adapter,
         place: input.place,
         ...(input.createFolder === undefined ? {} : { createFolder: input.createFolder }),
@@ -751,16 +757,19 @@ export async function startWork(
         model: result.value.model,
         effort: result.value.effort,
         preparation: input.preparation,
-        ...(ownedTodoId(input, caller, deps) ? { role: input.role ?? 'do' } : {}),
+        ...(ownedTodoId(input, caller, deps)
+          ? { role: input.checkPlan ? 'check' : (input.role ?? 'do') }
+          : {}),
       });
     return result;
   }
   const { daemon: _daemon, ...place } = input.place;
+  const { checkPlan: _checkPlan, planStepIds: _planStepIds, ...forwarded } = input;
   const result = await forwardWork(
     route.daemon,
     'work.start',
     {
-      ...input,
+      ...forwarded,
       place,
       ...(input.excludeRefs
         ? {
@@ -1283,6 +1292,16 @@ const runStartWork = (superpipe({})('work.start') as PipelineAPI)
   .pipe(workSourceFacts, ['input', 'caller', 'deps'], 'sourceFacts')
   .pipe(requireWorkSource, ['sourceFacts', 'input'], 'result:outcome')
   .pipe(resolveStartPlace, ['input', 'caller', 'deps'], 'result:outcome')
+  .pipe(
+    (input: StartInput, caller: OperationCaller, deps: WorkVerbDeps) =>
+      input.checkPlan
+        ? (deps.preparePlanCheck?.(input, caller) ?? {
+            reason: reject('unsupported', 'Plan checks are unavailable.', true),
+          })
+        : { value: input },
+    ['outcome', 'caller', 'deps'],
+    'result:outcome'
+  )
   .pipe((resolved: StartInput) => resolved, 'outcome', 'input')
   .pipe(routeStart, ['input', 'deps'], 'result:outcome')
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
@@ -1314,7 +1333,7 @@ const runStartWork = (superpipe({})('work.start') as PipelineAPI)
     ) =>
       recordThrownWork(
         async () =>
-          (await reuseIdleWorker(route, input, from, caller, deps)) ??
+          (input.checkPlan ? null : await reuseIdleWorker(route, input, from, caller, deps)) ??
           startWork(route, input, from, caller, deps),
         inputId,
         deps

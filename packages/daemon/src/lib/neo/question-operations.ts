@@ -35,6 +35,12 @@ import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-to
 import type { StagedWorkerQuestion } from '../work-queue/follow-through.ts';
 import { planNeoRemovedPrerequisiteAnswer } from './todo-removal.ts';
 import { isHumanWorkDecision } from './proposal.ts';
+import {
+  currentPlanCheck,
+  neoPlanFacts,
+  NEO_PLAN_SIGNOFF,
+  samePlanSteps,
+} from './todo-follow-up.ts';
 
 const ReportLine = z
   .string()
@@ -313,6 +319,8 @@ const AskKinds = z.discriminatedUnion('kind', [
     ...Asked,
     kind: z.literal('choice'),
     options: z.array(Text).min(1).max(6),
+    signoff: z.literal(true).optional().describe('Ask the human to sign off on a plan.'),
+    todos: z.array(Text).min(1).optional().describe('Exact live step IDs for a plan sign-off.'),
     details: z
       .record(Text, Text)
       .optional()
@@ -511,7 +519,8 @@ export function planNeoQuestion(
   input: z.infer<typeof Ask>,
   todo?: NeoTodo | null,
   sourceSession?: NeoQuestionSource,
-  policies: readonly NeoTodoPolicy[] = questionPolicies()
+  policies: readonly NeoTodoPolicy[] = questionPolicies(),
+  planFacts?: Awaited<ReturnType<typeof neoPlanFacts>>
 ): Gate<QuestionPlan> {
   if (input.focused && !sourceSession)
     return fail('source_session_unavailable: focused discussion needs one readable session.');
@@ -523,7 +532,22 @@ export function planNeoQuestion(
     !['done', 'removed'].includes(todo.state)
       ? requestedTodoId
       : undefined;
-  if (!input.retireWhen && (!todoId || !todo?.check))
+  const signoff = input.kind === 'choice' && input.signoff === true;
+  if (input.kind === 'choice' && input.todos && !signoff)
+    return fail('signoff_required: pass todos only for plan sign-off.');
+  if (signoff) {
+    if (!todoId || !planFacts?.plan || !todo)
+      return fail('plan_required: sign-off requires a current plan.');
+    if (input.options.length !== 1 || input.multiple || input.confirm || input.retireWhen)
+      return fail('signoff_kind: use a single option without confirm or retireWhen.');
+    if (!planFacts.steps.length)
+      return fail('plan_steps_missing: Add the plan steps as dependent todos.');
+    if (!input.todos || !samePlanSteps(input.todos, planFacts.steps))
+      return fail('plan_steps_changed: Name exactly the current plan steps.');
+    if (!currentPlanCheck(todo, planFacts.steps))
+      return fail('plan_check_missing: Check the current plan steps.');
+  }
+  if (!signoff && !input.retireWhen && (!todoId || !todo?.check))
     return fail(
       'retire_when_required: no linked todo check; supply retireWhen {pack, kind, params}.'
     );
@@ -566,6 +590,7 @@ export function planNeoQuestion(
       );
   }
   const draft: NeoQuestionDraft = {
+    ...(signoff ? { cause: NEO_PLAN_SIGNOFF, todos: input.todos } : {}),
     ...(input.retireWhen ? { retireWhen: input.retireWhen } : {}),
     text: input.text,
     ...(sourceSession ? { sourceSession } : {}),
@@ -596,7 +621,10 @@ export function requireNeoQuestionReplaceable(
   if (!replaced) return fail(`not_found: no question ${replaces}.`);
   if (replaced.askId !== ask.id)
     return fail(`other_ask: question ${replaces} belongs to another ask; replace only this ask's.`);
-  if (replaced.state === 'open' && isHumanWorkDecision(replaced))
+  if (
+    replaced.state === 'open' &&
+    (isHumanWorkDecision(replaced) || replaced.cause === NEO_PLAN_SIGNOFF)
+  )
     return fail('human_decision_required: the human must answer this work decision.');
   return { value: replaced.state === 'open' ? replaced : null };
 }
@@ -775,13 +803,20 @@ export function createNeoQuestionOperations(
           return fail('source_session_unavailable: choose one readable source session.');
         const current = requireNeoOpenAsk(store.getAsk(owned.id));
         if ('reason' in current) return current;
+        const todo = input.todoId ? store.getTodo(input.todoId) : null;
+        const installed = policies();
+        const facts =
+          input.kind === 'choice' && input.signoff && todo
+            ? await neoPlanFacts(todo, store.listFamilyTodos(owned.id), [], installed)
+            : undefined;
         return planNeoQuestion(
           current.value,
           store.listQuestions(owned.id),
           input,
-          'todoId' in input && input.todoId ? store.getTodo(input.todoId) : null,
+          todo,
           source ?? undefined,
-          policies()
+          installed,
+          facts
         );
       },
       ['outcome', 'input'],
@@ -866,7 +901,7 @@ export function createNeoQuestionOperations(
     .pipe(
       (question: NeoQuestion): Gate<NeoQuestion> | { reason: QuestionReceipt } => {
         if (question.state !== 'open') return { reason: { ok: true, question } };
-        if (isHumanWorkDecision(question))
+        if (isHumanWorkDecision(question) || question.cause === NEO_PLAN_SIGNOFF)
           return fail('human_decision_required: the human must answer this work decision.');
         if (question.heldAt) return fail(QUESTION_HELD);
         const open = requireNeoOpenAsk(store.getAsk(question.askId));

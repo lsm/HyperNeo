@@ -1,5 +1,6 @@
 export { keepNeoOwnedSettings } from '../global-settings-patch.ts';
 import { configureWorkerSandbox } from '../drivers/worker-sandbox.ts';
+import { configureDesktopObservationCollapse } from '../providers/custom-endpoint-provider.ts';
 import type { MessageHub } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { GlobalSettings } from '@hyperneo/shared';
@@ -77,6 +78,9 @@ export function registerSettingsHandlers(
   onVoiceKeySaved?: (host: string) => Promise<unknown>
 ) {
   configureWorkerSandbox(() => settingsManager.getGlobalSettings().workerSandbox ?? 'off');
+  configureDesktopObservationCollapse(
+    () => settingsManager.getGlobalSettings().desktopObservationCollapse === true
+  );
   messageHub.onRequest(
     'settings.global.update',
     async (data: { updates: Partial<GlobalSettings> }) => {

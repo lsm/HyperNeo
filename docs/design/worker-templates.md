@@ -179,7 +179,7 @@ threshold.
 ## Not in this step
 
 No template choice by Neo, no templates for Claude Code or Codex workers, no coding template,
-no editing of worker templates, no settings page. Collapsing is for desktop observations on
+no editing of worker templates, and no settings page beyond the collapse switch. Collapsing is for desktop observations on
 the two bridges. No redaction inside an approved app.
 
 ## Changes
@@ -218,8 +218,9 @@ never the laptop. System map read for the planned files.
    `get_window_state` is ignored in a collapse session; on append-only fixtures, two
    requests one step apart have the same conversation blocks before the earliest newly
    collapsed result; `count_tokens` measures the collapsed body; the stored conversation is unchanged;
-   both bridges. Collapse ships off, behind a constant in code, not a setting. A one-line PR turns it on,
-   only after a replay of the
+   both bridges. Collapse ships off, behind the `desktopObservationCollapse` global setting
+   (Settings, next to Worker sandbox), which the bridges read on every request. Turn it on,
+   or make it the default, only after a replay of the
    recorded Calculator, TextEdit and Safari steps with full current snapshots picks the
    recorded target at every step whose target is in the current snapshot, with exact
    next-call agreement reported per task.

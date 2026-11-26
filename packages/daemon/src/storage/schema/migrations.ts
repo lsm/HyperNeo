@@ -1,3 +1,4 @@
+import { runMigration537 } from './m537-neo-todo-plan.ts';
 import { runMigration528 } from './m528-retire-session-strategy.ts';
 import { runMigration529 } from './m529-work-start-record.ts';
 import { runMigration526 } from './m526-neo-front-failure-reason.ts';
@@ -1107,7 +1108,8 @@ export function runMigrations(
   run(migrationMarkerKey(534), () => runMigration534(db));
   run(migrationMarkerKey(535), () => runMigration535(db));
   run(migrationMarkerKey(536), () => runMigration536(db));
-  run(migrationMarkerKey(537), () => {
+  run(migrationMarkerKey(537), () => runMigration537(db));
+  run(migrationMarkerKey(538), () => {
     if (!db.prepare("SELECT 1 FROM pragma_table_info('neo_todos') WHERE name = 'hold_json'").get())
       db.exec('ALTER TABLE neo_todos ADD COLUMN hold_json TEXT');
     db.prepare(`UPDATE neo_todos

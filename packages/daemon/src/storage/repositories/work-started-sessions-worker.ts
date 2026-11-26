@@ -108,10 +108,11 @@ export function recordTodoRole(
 
 export function readTodoRoles(db: BunDatabase, todoId: string) {
   return db
-    .prepare(`SELECT role, adapter, id, model, effort FROM neo_todo_roles
+    .prepare(`SELECT role, adapter, id, model, effort, at FROM neo_todo_roles
     WHERE todo_id = ? ORDER BY at DESC, rowid DESC`)
     .all(todoId) as {
     role: string;
+    at: number;
     adapter: string;
     id: string;
     model: string | null;
