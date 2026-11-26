@@ -1,4 +1,5 @@
 import { createPairWaits } from '../../../../src/lib/pairing/pair-waits.ts';
+import { randomUUID } from 'node:crypto';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { MessageHub, MessageHubRouter } from '@hyperneo/shared';
@@ -37,6 +38,7 @@ function migratedDb() {
 
 async function startPairableDaemon() {
   const db = migratedDb();
+  const daemonId = randomUUID();
   const devices = new DevicePairingRepository(db);
   const registry = createOperationRegistry([
     defineOperation({
@@ -63,6 +65,7 @@ async function startPairableDaemon() {
   hub.registerTransport(transport);
   setupOperationHandlers(hub, registry, (clientId) => transport.deviceOf(clientId));
   const pair = createPairRoute({
+    daemonId,
     waits: createPairWaits(),
     repo: devices,
     limiter: createPairingLimiter(),
@@ -87,6 +90,7 @@ async function startPairableDaemon() {
   });
   return {
     db,
+    daemonId,
     devices,
     url: `ws://127.0.0.1:${server.port}/ws`,
     clientCount: () => transport.getClientCount(),
@@ -156,7 +160,8 @@ describe('attaching a daemon with a pairing code', () => {
   test('revoking the paired daemon closes its connection and refuses reconnecting', async () => {
     const made = remote.devices.createCode('daemon', null, true, Date.now());
     await attach({ code: made.code });
-    expect(await daemons.invoke('b', 'work.status', {})).toEqual({ kind: 'daemon' });
+    const replyId = `paired:${remote.daemonId}`;
+    expect(await daemons.invoke(replyId, 'work.status', {})).toEqual({ kind: 'daemon' });
     const [device] = remote.devices.listDevices();
     remote.devices.revokeDevice(device.id, Date.now());
     announceDeviceRevoked(device.id);
@@ -164,7 +169,7 @@ describe('attaching a daemon with a pairing code', () => {
     while (remote.clientCount() > 0 && Date.now() < deadline)
       await new Promise((resolve) => setTimeout(resolve, 10));
     expect(remote.clientCount()).toBe(0);
-    await expect(daemons.invoke('b', 'work.status', {})).rejects.toThrow();
+    await expect(daemons.invoke(replyId, 'work.status', {})).rejects.toThrow();
   });
 
   test('testing an attached address uses its saved pairing credential', async () => {

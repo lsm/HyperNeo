@@ -20,9 +20,10 @@ const dbPath = join(run, 'data/daemon.db');
 const senderId = 'inbox-proof-sender';
 
 if (process.argv.includes('--daemon')) {
+  const port = Number(process.argv.at(-2));
   const app = await createDaemonApp({
     config: {
-      ...getConfig({ host: '127.0.0.1', port: 0, dbPath, workspaceRoot: run }),
+      ...getConfig({ host: '127.0.0.1', port, dbPath, workspaceRoot: run }),
       disableWorktrees: true,
     },
     verbose: false,
@@ -33,16 +34,18 @@ if (process.argv.includes('--daemon')) {
   await app.spaceRuntimeService?.ready();
   await app.jobProcessor.stop();
   const now = new Date().toISOString();
-  await app.db.createSession({
-    id: senderId,
-    title: 'Inbox proof sender',
-    workspacePath: run,
-    createdAt: now,
-    lastActiveAt: now,
-    status: 'active',
-    config: { queryMode: 'manual' },
-    metadata: { messageCount: 0, totalTokens: 0, totalCost: 0 },
-  });
+  if (!app.db.getSession(senderId)) {
+    await app.db.createSession({
+      id: senderId,
+      title: 'Inbox proof sender',
+      workspacePath: run,
+      createdAt: now,
+      lastActiveAt: now,
+      status: 'active',
+      config: { queryMode: 'manual' },
+      metadata: { messageCount: 0, totalTokens: 0, totalCost: 0 },
+    });
+  }
   process.send!(app.server.port);
 } else {
   const alias = 'attached-home';
@@ -93,23 +96,27 @@ if (process.argv.includes('--daemon')) {
     });
   });
 
-  async function start(dir: string) {
+  async function start(dir: string, requestedPort = 0) {
     for (const part of ['bin', 'data', 'home', 'tmp']) {
       mkdirSync(join(dir, part), { recursive: true });
     }
     writeFileSync(join(dir, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
     writeFileSync(join(dir, 'bin/ps'), '#!/bin/sh\nexit 0\n', { mode: 0o700 });
-    const child = spawn(process.execPath, [import.meta.path, '--daemon', dir], {
-      env: {
-        HOME: join(dir, 'home'),
-        HYPERNEO_DATA_DIR: join(dir, 'data'),
-        TMPDIR: join(dir, 'tmp'),
-        NODE_ENV: 'test',
-        PATH: `${join(dir, 'bin')}:${process.env.PATH}`,
-        LOG_LEVEL: 'warn',
-      },
-      stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
-    });
+    const child = spawn(
+      process.execPath,
+      [import.meta.path, '--daemon', String(requestedPort), dir],
+      {
+        env: {
+          HOME: join(dir, 'home'),
+          HYPERNEO_DATA_DIR: join(dir, 'data'),
+          TMPDIR: join(dir, 'tmp'),
+          NODE_ENV: 'test',
+          PATH: `${join(dir, 'bin')}:${process.env.PATH}`,
+          LOG_LEVEL: 'warn',
+        },
+        stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
+      }
+    );
     const exited = new Promise<number | null>((done) => child.once('close', done));
     children.push({ process: child, exited });
     const port = await new Promise<number>((done, fail) => {
@@ -137,6 +144,12 @@ if (process.argv.includes('--daemon')) {
     await transport.connect();
     return {
       url,
+      port,
+      async stop() {
+        await transport.close();
+        child.kill('SIGTERM');
+        assert.equal(await exited, 0);
+      },
       rpc: <T>(name: string, input: unknown) =>
         hub.request<T>('operation.invoke', { name, input }, { timeout: 30_000 }),
     };
@@ -209,8 +222,8 @@ if (process.argv.includes('--daemon')) {
     await new Promise<void>((done, fail) => peer.listen(socketPath, done).once('error', fail));
     chmodSync(socketPath, 0o600);
 
-    const source = await start(home);
-    const target = await start(worker);
+    let source = await start(home);
+    let target = await start(worker);
     await attach(source, target, ref.daemon);
     const send = (message: string) =>
       source.rpc<Result<WorkDelivery>>('work.send', {
@@ -227,6 +240,10 @@ if (process.argv.includes('--daemon')) {
     assert.equal(frames.length, 0);
 
     await attach(target, source, alias);
+    await Promise.all([source.stop(), target.stop()]);
+    source = await start(home, source.port);
+    target = await start(worker, target.port);
+    evidence.restarted = true;
     const delivered = await send(text);
     evidence.delivered = delivered;
     assert(delivered.ok && delivered.value.delivered, JSON.stringify(delivered));
@@ -271,7 +288,11 @@ if (process.argv.includes('--daemon')) {
   } finally {
     save();
     await Promise.all(transports.map((transport) => transport.close()));
-    for (const child of children) child.process.kill('SIGTERM');
+    for (const child of children) {
+      if (child.process.exitCode === null && child.process.signalCode === null) {
+        child.process.kill('SIGTERM');
+      }
+    }
     const exitCodes = await Promise.all(children.map((child) => child.exited));
     console.log(JSON.stringify({ daemonExitCodes: exitCodes, inboxFrames: frames.length }));
     if (peer.listening) await new Promise<void>((done) => peer.close(() => done()));

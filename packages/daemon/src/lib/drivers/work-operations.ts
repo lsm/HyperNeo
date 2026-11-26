@@ -98,7 +98,7 @@ export interface WorkVerbDeps {
   health?: () => Record<string, DriverHealth> | Promise<Record<string, DriverHealth>>;
   remote: RemoteDaemons;
   daemonName: string;
-  replyDaemonId?: string;
+  qualifyReplyOrigin?: (from: string) => string;
   freeWorkers?: (
     adapter: string,
     todoId?: string,
@@ -542,7 +542,7 @@ function withTodoRecords<T>(outcome: Result<T>, records: string[]): Result<T> {
 }
 
 function qualifyWorkOrigin(from: string, deps: WorkVerbDeps): string {
-  return qualifyRemoteOrigin(from, deps.replyDaemonId ?? deps.daemonName);
+  return deps.qualifyReplyOrigin?.(from) ?? qualifyRemoteOrigin(from, deps.daemonName);
 }
 
 export function workReplyInput<

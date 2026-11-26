@@ -27,7 +27,6 @@ export interface Config {
   maxSubscriptionsPerClient: number;
   nodeEnv: string;
   workspaceRoot?: string;
-  replyDaemonId?: string;
   disableWorktrees?: boolean;
   disableGoalProcessing?: boolean;
   githubWebhookSecret?: string;
@@ -120,7 +119,6 @@ export function getConfig(overrides?: ConfigOverrides): Config {
     nodeEnv,
     workspaceRoot:
       overrides?.workspaceRoot ?? hyperneoEnv('WORKSPACE_PATH') ?? hyperneoEnv('WORKSPACE_ROOT'),
-    replyDaemonId: hyperneoEnv('DAEMON_ID')?.trim() || undefined,
     disableWorktrees: hyperneoEnv('DISABLE_WORKTREES') === '1',
     disableGoalProcessing: hyperneoEnv('DISABLE_GOAL_PROCESSING') === '1',
     githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET,
