@@ -51,4 +51,41 @@ try {
   const editCount = await edit.count();
   console.log(`Paired daemon Edit buttons: ${editCount}`);
   assert.equal(editCount, 1, 'The paired daemon should offer Edit');
+
+  const attachedUrl = `ws://127.0.0.1:${remotePort}/ws`;
+  const updatedUrl = `${attachedUrl}?address=updated`;
+  const dialog = page.getByRole('dialog', { name: 'Edit remote daemon' });
+  const remoteDevices = () => JSON.parse(rpc(remotePort, 'remote', 'device.list', {})).reply.devices;
+  const [pairedDevice] = remoteDevices();
+  assert.equal(pairedDevice.kind, 'daemon');
+  for (const width of [390, 1280]) {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    await edit.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(run, 'local', 'evidence', `remote-daemon-list-${width}.png`) });
+    await edit.click();
+    await dialog.waitFor();
+    assert.equal(await dialog.getByLabel('Display name').inputValue(), 'synthetic');
+    assert.equal(await dialog.getByLabel('MessageHub URL').inputValue(), attachedUrl);
+    assert.equal(await dialog.getByRole('textbox').count(), 2);
+    await page.screenshot({ path: join(run, 'local', 'evidence', `remote-daemon-edit-${width}.png`) });
+    if (width === 390) {
+      await dialog.getByRole('button', { name: 'Cancel' }).click();
+      await dialog.waitFor({ state: 'hidden' });
+    }
+  }
+  await dialog.getByLabel('Display name').fill('Renamed daemon');
+  await dialog.getByLabel('MessageHub URL').fill(updatedUrl);
+  await dialog.getByRole('button', { name: 'Save' }).click();
+  await dialog.waitFor({ state: 'hidden' });
+  await page.getByText('Renamed daemon', { exact: true }).waitFor();
+  await page.reload();
+  await page.getByText('Renamed daemon', { exact: true }).waitFor();
+  await page.getByText(updatedUrl, { exact: true }).waitFor();
+  await page.getByText('daemon:synthetic::session:<sessionId>', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Test', exact: true }).last().click();
+  await page.getByText('Remote daemon is reachable', { exact: true }).waitFor();
+  const devicesAfterEdit = remoteDevices();
+  assert.deepEqual(devicesAfterEdit.map(({ id }) => id), [pairedDevice.id]);
+  assert(devicesAfterEdit[0].lastSeenAt > (pairedDevice.lastSeenAt ?? 0));
+  console.log('PASS: label and endpoint saved; the edited endpoint reconnected with the original paired device');
 } finally { await browser.close(); }

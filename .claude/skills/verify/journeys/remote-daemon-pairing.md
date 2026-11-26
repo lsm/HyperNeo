@@ -13,3 +13,9 @@ Use `$RUN/local` and `$RUN/remote` for the two launch directories. The helper
 pairs a synthetic browser, checks a wrong remote code is shown as refused, then
 attaches with a valid remote code and checks the code is cleared. It saves the
 refusal at both 1280 and 390 pixels under `$RUN/local/evidence/`.
+
+The helper opens Edit on the paired daemon at both widths and saves
+`remote-daemon-list-{390,1280}.png` and `remote-daemon-edit-{390,1280}.png`.
+The edit form contains the current display name and MessageHub URL. After
+saving both fields, reload Settings and verify the new values, the original
+daemon address prefix, and a successful Test using the same paired device.
