@@ -47,11 +47,15 @@ the same PR reader its checks use (`readPrs`). It does not read the todo's turns
 and does not accept replacement PRs; the todo's own completion check keeps its
 current behaviour, including finishing a held todo.
 
+Results are matched to the named URLs by the coding PR identity
+(`codingPrKey`). The first matching row wins:
+
 | PR read | Result |
 |---|---|
-| every distinct named PR read and merged | release |
+| the read failed, or any named PR has no result | no change; next sweep reads again |
 | any named PR closed without merging | failed |
-| a named PR missing from the result, or the read failed | no change; next sweep reads again |
+| every named PR merged | release |
+| otherwise (some still open) | no change |
 
 **Writing the result.** The result is applied through the existing todo
 mutation writer, which re-plans against the latest row. The write also checks
@@ -76,9 +80,10 @@ completion or a closed ask in between makes the write a no-op.
 | `now >= reviewAt` | neo, reason `hold_review`, since `reviewAt` |
 | otherwise | nobody |
 
-`since` is a stored time, and the event's detail is built only from stored
-facts (the hold reason, and for `hold_failed` the PR URL and reason), so the
-rendered text and the attention identity stay the same across sweeps. While
+`since` is a stored time. The two hold events render only stored hold facts
+(the todo id, the hold reason, and for `hold_failed` the PR URL and reason),
+not the todo's title, so their text and attention identity (todo, `heldAt`,
+reason, rung) stay the same across sweeps and edits. While
 the hold stays in place, reminders repeat on the existing ladder.
 The sweep raises `todo.neo_step` only for approved or started todos, as today;
 a held unapproved todo stays in the approval flow. Neo answers by acting on the
@@ -109,19 +114,25 @@ The reason text changes when the holder is **only reserving** the worker:
   and is doing;
 - its worker's last status is `done` or `stopped` (not `failed`, `needs_you`,
   running, queued or unknown);
-- its check is `coding.pr_merged` and the coding ledger has an open PR for it
-  (`closedAt` is null). The coding pack answers this through one optional hook,
-  `NeoTodoPack.openPr(todoId)`, read from its existing ledger. A closed or
-  historical PR, or another check kind, does not count.
+- its check is `coding.pr_merged` and one PR that check is still waiting on
+  is open. The coding pack answers this through one optional hook,
+  `NeoTodoPack.openPr(todoId)`: it takes the open PRs from its existing ledger
+  read and keeps only those the current check counts, the same selection
+  `codingTodoCheck` makes (the named PRs, or a turn PR only where the check
+  accepts it as a replacement). A closed or historical PR, an open PR the
+  check would not count, or another check kind does not qualify.
 
 Then the reason reads "Waiting for worker …, which is idle but kept by
 "<holder>" while <PR> is open", and the 60-minute wake carries it with the way
 on: wait for that PR, or add a replacement todo for another worker to the same
 ask first and then remove this one with `replacedBy` (removing first drops the
-link). Otherwise the text is unchanged. Today the ladder restarts only when a
-wait begins; it also restarts when the reserved text first appears, so its
-wake comes 60 minutes after the worker became only reserved, even if an
-earlier "working" wake was already sent.
+link). Otherwise the text is unchanged.
+
+The clock is the existing nudge ladder. It starts when `recordWaits` first
+sees the candidate waiting and the holder only reserving at the same time, so
+a candidate that arrives after the holder went idle waits its own 60 minutes.
+It restarts when the target changes, or when the holder works again and later
+qualifies again. An earlier "working" wake does not stop the reserved one.
 
 ## 3. The phone separates working from waiting
 
@@ -170,20 +181,23 @@ The phone's filters become: Waiting on you, Working, Waiting, Held, All.
    validation, the read and fenced write in the refresh sweep, the digest, the
    held owner rows. Tests through the real hold operation and refresh: an
    unstarted and a started todo released on merge, and the next sweep after a
-   started release; a merged-plus-missing pair changes nothing; a closed PR
-   gives `hold_failed` with its URL; a failed read changes nothing; an
+   started release; a merged-plus-missing pair and a closed-plus-missing pair
+   change nothing; a closed PR gives `hold_failed` with its URL; a failed read changes nothing; an
    unrelated merged PR of the same todo does not release; the todo's own check
    finishing while held; a re-hold during a pending read; empty or unknown
    `until` refused; a decision card refuses the fields; a migrated hold reaches
    Neo after 24 h and a title edit does not move it; repeated sweeps send one
-   digest and one wake per rung.
+   digest and one wake per rung, also after a title edit between sweeps.
 2. **Daemon: queue steps and the reserved-worker reason.** `step` /
    `waitingOn`, `NeoTodoPack.openPr`, and the reason text in `recordWaits`.
    Tests: each row of the step table; a send-target todo behind an idle holder
-   with an open PR gets the reserved text and one wake 60 minutes after the
-   holder went idle, none before, also when the wait began earlier; a holder whose worker is running, `needs_you`, failed or unknown, a
+   with an open PR gets the reserved text and one wake 60 minutes after both
+   were first seen together, none before, also for a candidate that arrives
+   late; a changed target restarts it; an open PR the check would not count
+   (an unrelated one, or a replacement older than the closed named PR) does
+   not qualify; a holder whose worker is running, `needs_you`, failed or unknown, a
    closed or historical PR, or a holder with another check kind keeps today's
-   text; a changed target restarts the ladder.
+   text.
 3. **Phone: Working and Waiting.** The filters and labels from `step`, legacy
    mapping, one predicate for rows, counts, labels and links; screenshots in
    light and dark.
