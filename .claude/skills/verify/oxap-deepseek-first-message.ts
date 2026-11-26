@@ -103,6 +103,23 @@ try {
   }
   const providerId = go ? 'opencode' : 'deepseek';
   const harness = go ? 'oxap-opencode-dsh' : 'oxap-deepseek';
+  if (go) {
+    const missing = join(run, 'missing-dsh');
+    const rejected = [];
+    for (const [executable, reason] of [
+      [missing, `DeepSeek harness path "${missing}" must point to an executable file.`],
+      [process.execPath, `"${process.execPath}" did not respond as the DeepSeek harness. Enter the path to dsh.`],
+    ]) {
+      const outcome = await hub.request('operation.invoke', {
+        name: 'oxap.settings.save',
+        input: { providerId, harness, settings: { executable } },
+      });
+      rejected.push((outcome as { accepted: boolean }).accepted);
+      assert.deepEqual(outcome, { accepted: false, reason });
+    }
+    evidence.invalidExecutableAccepted = rejected;
+    assert.equal(JSON.parse(app.db.providers.getProviderByProviderId(providerId)?.configJson ?? '{}').harnessSettings, undefined);
+  }
   const saved = await hub.request('operation.invoke', {
     name: 'oxap.settings.save',
     input: { providerId, harness, settings: { executable: peer } },

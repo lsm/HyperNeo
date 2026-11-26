@@ -10,7 +10,9 @@ bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
 ```
 
 The daemon stores separate synthetic keys for OpenCode Go and DeepSeek over
-RPC. An OpenCode Go session chooses DSH while its provider default is SDK.
+RPC. Saving the Go harness rejects a missing executable and a different
+CLI, then accepts the DSH peer. An OpenCode Go session chooses DSH while its
+provider default is SDK.
 The native peer checks the Go endpoint and key reference in the overlay and
 requires that only the Go key reaches its process. Its reply reports the model
 bound by the hub. The journey changes the provider default, sends a follow-up,
