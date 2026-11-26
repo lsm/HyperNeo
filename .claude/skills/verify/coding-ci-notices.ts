@@ -10,6 +10,8 @@ import { createCodingPack } from '../../../packages/daemon/src/lib/neo/packs/cod
 import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
 import { CodingPrEventRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-events.ts';
 import { CodingPrSweepRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-sweep.ts';
+import { createCodingDaemonMergeSweep } from '../../../packages/daemon/src/lib/neo/packs/coding/daemon-merge-sweep.ts';
+import type { SpawnFn } from '../../../packages/daemon/src/lib/runtime-spawn/types.ts';
 import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 
 const [mode, path] = process.argv.slice(2), run = resolve(path), repo = 'synthetic/notices', worker = 'synthetic-owner';
@@ -41,7 +43,8 @@ try {
   for (const [key, value] of Object.entries({ mergePolicy: 'human', humanSignoff: [] })) assert.equal((await rpc('pack.preferences.set', { pack: 'coding', scope: { kind: 'repo', key: repo }, key, value })).ok, true);
   const db = app.db.getDatabase(), ledger = new CodingPrLedgerRepository(db);
   const messages: string[] = [], escalations: string[] = [];
-  const pack = createCodingPack({ database: () => db, readPrs: async () => [], todoPrs: new CodingTodoPrRepository(db), prLedger: ledger, prEvents: new CodingPrEventRepository(db), prSweep: new CodingPrSweepRepository(db), projectRepos: () => [repo], prSweepDeps: { tell: async (_ref, _key, text) => { messages.push(text); return neo!.sendToRef({ adapter: 'hyperneo', id: worker }, _key, text); }, wake: async () => true }, attend: async event => { escalations.push(String(event.facts.text)); return true; }, readLedgerRepo: async () => ({ data: { rateLimit: { remaining: 4000 }, repository: { nameWithOwner: repo, done: { nodes: [] }, open: { pageInfo: { hasNextPage: false }, nodes: [{ number: 1, title: 'Pending CI', headRefName: 'work', headRefOid: 'a'.repeat(40), state: 'OPEN', isDraft: false, mergeable: 'MERGEABLE', closedAt: null, reviewDecision: 'REVIEW_REQUIRED', reviews: { nodes: [] }, files: { nodes: [{ path: 'src/app.ts' }], pageInfo: { hasNextPage: false } }, commits: { nodes: [{ commit: { statusCheckRollup: { state: 'PENDING' } } }] } }] } } } }) });
+  let terminal = false;
+  const pack = createCodingPack({ database: () => db, readPrs: async () => [], todoPrs: new CodingTodoPrRepository(db), prLedger: ledger, prEvents: new CodingPrEventRepository(db), prSweep: new CodingPrSweepRepository(db), projectRepos: () => [repo], prSweepDeps: { tell: async (_ref, _key, text) => { messages.push(text); return neo!.sendToRef({ adapter: 'hyperneo', id: worker }, _key, text); }, wake: async () => true }, attend: async event => { escalations.push(String(event.facts.text)); return true; }, readLedgerRepo: async () => ({ data: { rateLimit: { remaining: 4000 }, repository: { nameWithOwner: repo, done: { nodes: terminal ? [{ number: 1, title: 'Pending CI', headRefName: 'work', headRefOid: 'a'.repeat(40), state: 'MERGED', isDraft: false, mergeable: 'MERGEABLE', closedAt: new Date().toISOString(), reviewDecision: 'REVIEW_REQUIRED', reviews: { nodes: [] }, files: { nodes: [{ path: 'src/app.ts' }], pageInfo: { hasNextPage: false } }, commits: { nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] } }] : [] }, open: { pageInfo: { hasNextPage: false }, nodes: terminal ? [] : [{ number: 1, title: 'Pending CI', headRefName: 'work', headRefOid: 'a'.repeat(40), state: 'OPEN', isDraft: false, mergeable: 'MERGEABLE', closedAt: null, reviewDecision: 'REVIEW_REQUIRED', reviews: { nodes: [] }, files: { nodes: [{ path: 'src/app.ts' }], pageInfo: { hasNextPage: false } }, commits: { nodes: [{ commit: { statusCheckRollup: { state: 'PENDING' } } }] } }] } } } }) });
   seedPrOwner(db, repo, { adapter: 'hyperneo', id: worker });
   const now = Date.now();
   for (const minutes of [0, 20, 40, 60]) await pack.sweep!(now + minutes * 60_000);
@@ -50,6 +53,28 @@ try {
   writeFileSync(join(run, 'evidence/ci-notices.json'), JSON.stringify(result, null, 2));
   assert.equal(result.state, 'waiting_ci');
   if (mode === 'reproduce') assert(messages.some(text => text.includes('CI is still running')));
-  else { assert.equal(messages.length, 0); assert.equal(escalations.length, 1); }
+  else {
+    assert.equal(messages.length, 0); assert.equal(escalations.length, 1);
+    const url = `https://github.com/${repo}/pull/1`, head = 'a'.repeat(40);
+    await ledger.write('daemonMerge', { kind: 'begin', url, head, actor: 'daemon:coding-sweep', at: now + 1 });
+    await ledger.write('daemonMerge', { kind: 'finish', url, head, commit: 'b'.repeat(40), at: now + 2 });
+    terminal = true;
+    const spawn: SpawnFn = (args) => {
+      let data: unknown = { url, body: '', state: 'MERGED', headRefOid: head, baseRefOid: 'd'.repeat(40), isDraft: false, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', author: { login: 'author' }, changedFiles: 1, files: [{ path: 'src/app.ts' }], labels: [], mergeCommit: { oid: 'b'.repeat(40) } };
+      if (args.some(arg => arg.includes('CodingMergeFiles'))) data = [{ data: { repository: { pullRequest: { headRefOid: head, baseRefOid: 'd'.repeat(40), files: { nodes: [{ path: 'src/app.ts' }], pageInfo: { hasNextPage: false, endCursor: null } } } } } }];
+      else if (args.includes('graphql')) data = { data: { repository: { pullRequest: { url, headRefOid: head, reviewThreads: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } } } } };
+      else if (args.some(arg => arg.endsWith('/labels'))) data = [[]];
+      else if (args.some(arg => arg.endsWith('/reviews'))) data = [[]];
+      else if (args[2] === 'checks') data = [{ name: 'Required', bucket: 'pass', link: url + '/checks' }];
+      const page = args.includes('per_page=100');
+      return { stdout: new Response((page ? 'HTTP/2.0 200 OK\r\n\r\n' : '') + JSON.stringify(page ? (data as unknown[])[0] : data)).body, stderr: new Response('').body, exited: Promise.resolve(0), exitCode: 0, kill() {} };
+    };
+    const events = new CodingPrEventRepository(db);
+    await createCodingDaemonMergeSweep(() => db, ledger, events, { tell: async (ref, key, text) => { messages.push(text); return neo!.sendToRef(ref, key, text); }, attend: async () => true }, spawn)(now + 61 * 60_000);
+    await pack.sweep!(now + 61 * 60_000);
+    await pack.sweep!(now + 62 * 60_000);
+    assert.equal(messages.length, 1); assert(messages[0].includes('Merge confirmed:'));
+    writeFileSync(join(run, 'evidence/merged-notices.json'), JSON.stringify({ messages }, null, 2));
+  }
   console.log(JSON.stringify(result));
 } finally { ws?.close(); await neo?.dispose(); await app?.cleanup(); }

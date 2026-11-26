@@ -77,7 +77,10 @@ export function planCodingPrNudge(
   if (row.state === 'approved_green' && row.mergeBy === 'daemon') return null;
   if (!STATE_TEXT[row.state] || now - row.readAt > CODING_PR_FRESH_MS) return null;
   if (!row.owner && row.state !== 'waiting_cross_review') return null;
-  return planNudge({ since: row.stateSince, nudges: row.nudges }, now);
+  const nudge = planNudge({ since: row.stateSince, nudges: row.nudges }, now);
+  return nudge?.kind === 'remind' && ['waiting_ci', 'approved_pending'].includes(row.state)
+    ? null
+    : nudge;
 }
 
 const minutesSince = (row: CodingSweepRow, now: number) =>
