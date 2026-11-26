@@ -67,3 +67,20 @@ export const connectionTokens = z.object({
 });
 
 export type ConnectionTokens = z.infer<typeof connectionTokens>;
+
+export const mcpGrant = z.object({
+  generation: z.number().int().nonnegative(),
+  scopes: z.array(z.string().max(300)).max(50),
+  client: z.looseObject({ client_id: z.string().min(1) }),
+  tokens: z.looseObject({ access_token: z.string().min(1), token_type: z.string() }),
+  binding: z.looseObject({
+    authorizationServerUrl: z.string().url(),
+    authorizationServerMetadata: z.looseObject({
+      issuer: z.string().url(),
+      authorization_endpoint: z.string().url(),
+      token_endpoint: z.string().url(),
+    }),
+  }),
+});
+
+export type McpGrant = z.infer<typeof mcpGrant>;
