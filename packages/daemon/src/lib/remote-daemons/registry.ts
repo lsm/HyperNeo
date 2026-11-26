@@ -44,6 +44,7 @@ async function withConnectDeadline<T>(
 export interface DaemonAttachment {
   daemonId: string;
   url: string;
+  displayName?: string;
 }
 
 export interface RemoteDaemonSecrets {
@@ -55,12 +56,13 @@ export interface RemoteDaemonSecrets {
     peerDaemonId?: string
   ): Promise<void>;
   credentialFor(daemonId: string, url: string): string | null;
+  updateEndpoint(daemonId: string, previousUrl: string, url: string, persist: () => void): boolean;
   routesForPeer(peerDaemonId: string): DaemonAttachment[];
   remove(daemonId: string): Promise<void>;
 }
 
 export class RemoteDaemonRegistry {
-  private readonly urls = new Map<string, string>();
+  private readonly attachments = new Map<string, DaemonAttachment>();
   private localDaemonId: string | undefined;
   private persist: ((attachments: DaemonAttachment[]) => void) | null = null;
   private secrets: RemoteDaemonSecrets | null = null;
@@ -84,7 +86,7 @@ export class RemoteDaemonRegistry {
     secrets: RemoteDaemonSecrets,
     localDaemonId?: string
   ): void {
-    for (const { daemonId, url } of attachments) this.urls.set(daemonId, url);
+    for (const attachment of attachments) this.attachments.set(attachment.daemonId, attachment);
     this.persist = persist;
     this.secrets = secrets;
     this.localDaemonId = localDaemonId;
@@ -103,20 +105,39 @@ export class RemoteDaemonRegistry {
     peerDaemonId?: string
   ): Promise<void> {
     if (credential) await this.secrets?.save(daemonId, url, credential, this.now(), peerDaemonId);
-    this.urls.set(daemonId, url);
+    this.attachments.set(daemonId, { ...this.attachments.get(daemonId), daemonId, url });
     this.forget(daemonId);
     this.persist?.(this.list());
   }
 
   list(): DaemonAttachment[] {
-    return [...this.urls].map(([daemonId, url]) => ({ daemonId, url }));
+    return [...this.attachments.values()];
+  }
+
+  isPaired({ daemonId, url }: DaemonAttachment): boolean {
+    return Boolean(this.secrets?.credentialFor(daemonId, url));
+  }
+
+  edit(daemonId: string, url: string, displayName: string): boolean {
+    const current = this.attachments.get(daemonId);
+    if (!current) return false;
+    const edited = { daemonId, url, displayName };
+    const updated = this.secrets?.updateEndpoint(daemonId, current.url, url, () => {
+      this.persist?.(
+        this.list().map((attachment) => (attachment === current ? edited : attachment))
+      );
+    });
+    if (!updated) return false;
+    this.attachments.set(daemonId, edited);
+    if (url !== current.url) this.forget(daemonId);
+    return true;
   }
 
   private route(id: string): string | undefined {
-    if (!id.startsWith(PAIRED_DAEMON_PREFIX)) return this.urls.has(id) ? id : undefined;
+    if (!id.startsWith(PAIRED_DAEMON_PREFIX)) return this.attachments.has(id) ? id : undefined;
     const matches = this.secrets
       ?.routesForPeer(id.slice(PAIRED_DAEMON_PREFIX.length))
-      .filter(({ daemonId, url }) => this.urls.get(daemonId) === url);
+      .filter(({ daemonId, url }) => this.attachments.get(daemonId)?.url === url);
     return matches?.length === 1 ? matches[0].daemonId : undefined;
   }
 
@@ -126,7 +147,7 @@ export class RemoteDaemonRegistry {
 
   async detach(daemonId: string): Promise<boolean> {
     await this.secrets?.remove(daemonId);
-    const wasAttached = this.urls.delete(daemonId);
+    const wasAttached = this.attachments.delete(daemonId);
     this.forget(daemonId);
     if (wasAttached) this.persist?.(this.list());
     return wasAttached;
@@ -184,9 +205,9 @@ export class RemoteDaemonRegistry {
 
   async probe(url: string): Promise<void> {
     const credential =
-      [...this.urls]
-        .filter(([, attached]) => attached === url)
-        .map(([daemonId]) => this.secrets?.credentialFor(daemonId, url) ?? null)
+      this.list()
+        .filter((attachment) => attachment.url === url)
+        .map(({ daemonId }) => this.secrets?.credentialFor(daemonId, url) ?? null)
         .find((saved) => saved !== null) ?? null;
     const attempt = this.createAttempt(url, credential);
     try {
@@ -230,7 +251,7 @@ export class RemoteDaemonRegistry {
     options?: { timeoutMs?: number }
   ): Promise<unknown> => {
     const daemonId = this.route(id);
-    const url = daemonId === undefined ? undefined : this.urls.get(daemonId);
+    const url = daemonId === undefined ? undefined : this.attachments.get(daemonId)?.url;
     if (daemonId === undefined || url === undefined)
       throw new RemoteNotSentError(`No attached daemon: ${id}`);
     const failed = this.connectFailures.get(daemonId);

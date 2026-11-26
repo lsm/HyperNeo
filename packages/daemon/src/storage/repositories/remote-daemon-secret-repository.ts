@@ -58,6 +58,17 @@ export class RemoteDaemonSecretRepository {
     return row?.credential ?? null;
   }
 
+  updateEndpoint(daemonId: string, previousUrl: string, url: string, persist: () => void): boolean {
+    return this.db.transaction(() => {
+      const result = this.db
+        .prepare('UPDATE remote_daemon_secrets SET url = ? WHERE daemon_id = ? AND url = ?')
+        .run(url, daemonId, previousUrl);
+      if (result.changes === 0) return false;
+      persist();
+      return true;
+    })();
+  }
+
   routesForPeer(peerDaemonId: string): { daemonId: string; url: string }[] {
     return this.db
       .query<{ daemonId: string; url: string }, [string]>(

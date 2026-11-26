@@ -51,24 +51,28 @@ try {
   const editCount = await edit.count();
   console.log(`Paired daemon Edit buttons: ${editCount}`);
   assert.equal(editCount, 1, 'The paired daemon should offer Edit');
+  await page.reload();
+  await edit.waitFor();
 
   const attachedUrl = `ws://127.0.0.1:${remotePort}/ws`;
   const updatedUrl = `${attachedUrl}?address=updated`;
   const dialog = page.getByRole('dialog', { name: 'Edit remote daemon' });
-  const remoteDevices = () => JSON.parse(rpc(remotePort, 'remote', 'device.list', {})).reply.devices;
-  const [pairedDevice] = remoteDevices();
-  assert.equal(pairedDevice.kind, 'daemon');
-  for (const width of [390, 1280]) {
+  const remoteDevices = () => JSON.parse(rpc(remotePort, 'remote', 'device.list', {}))
+    .reply.devices.filter(({ kind }) => kind === 'daemon');
+  const pairedDevices = remoteDevices();
+  assert.equal(pairedDevices.length, 1);
+  const [pairedDevice] = pairedDevices;
+  for (const width of [390, 768, 1280]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     await edit.scrollIntoViewIfNeeded();
-    await page.screenshot({ path: join(run, 'local', 'evidence', `remote-daemon-list-${width}.png`) });
+    await page.screenshot({ animations: 'disabled', path: join(run, 'local', 'evidence', `remote-daemon-list-${width}.png`) });
     await edit.click();
     await dialog.waitFor();
     assert.equal(await dialog.getByLabel('Display name').inputValue(), 'synthetic');
     assert.equal(await dialog.getByLabel('MessageHub URL').inputValue(), attachedUrl);
     assert.equal(await dialog.getByRole('textbox').count(), 2);
-    await page.screenshot({ path: join(run, 'local', 'evidence', `remote-daemon-edit-${width}.png`) });
-    if (width === 390) {
+    await page.screenshot({ animations: 'disabled', path: join(run, 'local', 'evidence', `remote-daemon-edit-${width}.png`) });
+    if (width !== 1280) {
       await dialog.getByRole('button', { name: 'Cancel' }).click();
       await dialog.waitFor({ state: 'hidden' });
     }

@@ -276,7 +276,7 @@ export function RemoteDaemonsSettings() {
           {daemons.map((daemon) => (
             <div
               key={daemon.daemonId}
-              class="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center"
+              class="flex flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center"
             >
               <div class="min-w-0 flex-1">
                 <div class="truncate text-sm font-medium text-fg-soft">
