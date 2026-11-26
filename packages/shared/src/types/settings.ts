@@ -238,7 +238,7 @@ export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
 
   customEndpoints?: CustomEndpointConfig[];
 
-  attachedDaemons?: { daemonId: string; url: string }[];
+  attachedDaemons?: { daemonId: string; url: string; displayName?: string }[];
   allowedHosts?: string[];
 
   voice?: VoiceSettings;

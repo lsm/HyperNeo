@@ -6051,6 +6051,20 @@
             "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
             "type": "string"
           },
+          "edit": {
+            "additionalProperties": false,
+            "properties": {
+              "displayName": {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "displayName"
+            ],
+            "type": "object"
+          },
           "url": {
             "examples": [
               "wss://example.com/ws"
@@ -6263,6 +6277,13 @@
                     },
                     "daemonId": {
                       "type": "string"
+                    },
+                    "displayName": {
+                      "type": "string"
+                    },
+                    "paired": {
+                      "const": true,
+                      "type": "boolean"
                     },
                     "url": {
                       "type": "string"
