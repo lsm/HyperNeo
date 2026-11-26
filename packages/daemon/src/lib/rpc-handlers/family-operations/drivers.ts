@@ -1,6 +1,6 @@
 import { getBuiltInSpaceAgentTemplates } from '../../agents/template-manager.ts';
 import { deriveWorkerDisallowedTools } from '../../agents/tool-policy.ts';
-import { renderRemoteAddress } from '../../mailbox/address.ts';
+import { qualifyRemoteOrigin, renderRemoteAddress } from '../../mailbox/address.ts';
 import { proposalQuestionId, requireAcceptedAsk } from '../../neo/proposal.ts';
 import { NeoSessionMessageRepository } from '../../../storage/repositories/neo-session-message-repository.ts';
 import { NeoTodoSessionRepository } from '../../../storage/repositories/neo-todo-session-repository.ts';
@@ -808,6 +808,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     health: health.read,
     remote: remoteDaemons,
     daemonName: machine,
+    qualifyReplyOrigin: (from: string) => qualifyRemoteOrigin(from, remoteDaemons.replyDaemonId),
     startPlace: neoStartPlace({
       db: db(),
       machine,

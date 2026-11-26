@@ -17,6 +17,7 @@ import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import { startSessionDoor } from './lib/messaging/session-door.ts';
 import { stampActiveAttempt } from './lib/tasks/direct-attempt-flag.ts';
 import { homedir } from 'os';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { codexStatePath } from './storage/codex-desktop-read.ts';
 import { parsePositiveInt, type Config } from './config.ts';
@@ -222,6 +223,7 @@ import { sweepOrphanedAgentChildren } from './lib/agent/orphan-child-sweep.ts';
 import { AgentChildProcessRepository } from './storage/repositories/agent-child-process-repository.ts';
 import { remoteDaemons } from './lib/remote-daemons/registry.ts';
 import { RemoteDaemonSecretRepository } from './storage/repositories/remote-daemon-secret-repository.ts';
+import { artifactIdentityWrites } from './storage/repositories/artifact-file-identity-write.ts';
 import { OxapEngine } from './lib/oxap/oxap-engine.ts';
 import { createOxapRuntime } from './lib/oxap/oxap-query.ts';
 import { readHubOptions, type OxapSettingsDeps } from './lib/oxap/oxap-settings.ts';
@@ -653,10 +655,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       return Math.min(MAX_GITHUB_POLLING_INTERVAL_SECONDS, Math.max(0, Math.trunc(value)));
     };
     applyProviderModelAllowlistsToEnv(settingsManager.getGlobalSettings().providerModelAllowlists);
+    const daemonId = await db.gateway.call(artifactIdentityWrites, 'ensure', randomUUID());
     remoteDaemons.restore(
       settingsManager.getGlobalSettings().attachedDaemons ?? [],
       (attachedDaemons) => settingsManager.updateGlobalSettings({ attachedDaemons }),
-      new RemoteDaemonSecretRepository(db.getDatabase())
+      new RemoteDaemonSecretRepository(db.getDatabase()),
+      daemonId
     );
 
     const credentialManager = ProviderCredentialManager.create(db.getDatabase());
@@ -1318,6 +1322,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const pairing = new DevicePairingRepository(db.getDatabase());
     const handlePeerPair = createPeerPairRoute(db.gateway);
     const handlePair = createPairRoute({
+      daemonId,
       repo: pairing,
       limiter: daemonPairingLimiter,
       now: Date.now,

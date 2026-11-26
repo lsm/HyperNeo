@@ -98,6 +98,7 @@ export interface WorkVerbDeps {
   health?: () => Record<string, DriverHealth> | Promise<Record<string, DriverHealth>>;
   remote: RemoteDaemons;
   daemonName: string;
+  qualifyReplyOrigin?: (from: string) => string;
   freeWorkers?: (
     adapter: string,
     todoId?: string,
@@ -540,6 +541,10 @@ function withTodoRecords<T>(outcome: Result<T>, records: string[]): Result<T> {
     : outcome;
 }
 
+function qualifyWorkOrigin(from: string, deps: WorkVerbDeps): string {
+  return deps.qualifyReplyOrigin?.(from) ?? qualifyRemoteOrigin(from, deps.daemonName);
+}
+
 export function workReplyInput<
   T extends StartInput | SendInput | z.infer<typeof WithdrawWorkInputSchema>,
 >(input: T, from: string, caller: OperationCaller, deps: WorkVerbDeps): T {
@@ -551,7 +556,7 @@ export function workReplyInput<
     ...input,
     message: withReplyLine(
       input.message,
-      remote ? qualifyRemoteOrigin(from, deps.daemonName) : from,
+      remote ? qualifyWorkOrigin(from, deps) : from,
       'cli',
       'ref' in input ? `${adapter}:${input.ref.id}` : undefined
     ),
@@ -764,7 +769,7 @@ export async function startWork(
               .map(({ daemon: _daemon, ...ref }) => ref),
           }
         : {}),
-      from: qualifyRemoteOrigin(from, deps.daemonName),
+      from: qualifyWorkOrigin(from, deps),
     },
     StartWorkResultSchema,
     deps.remote,
@@ -1145,7 +1150,7 @@ export async function sendWork(
       message: input.message,
       ...(input.mode ? { mode: input.mode } : {}),
       ...idempotency,
-      from: qualifyRemoteOrigin(from, deps.daemonName),
+      from: qualifyWorkOrigin(from, deps),
     },
     SendWorkResultSchema,
     deps.remote,
@@ -1440,7 +1445,7 @@ async function changeQueuedInput(
   const forwarded = {
     ...input,
     ref: localRef(input.ref),
-    from: qualifyRemoteOrigin(from, deps.daemonName),
+    from: qualifyWorkOrigin(from, deps),
   };
   const result =
     'message' in input
