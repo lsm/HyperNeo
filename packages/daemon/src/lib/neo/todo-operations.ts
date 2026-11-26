@@ -163,7 +163,7 @@ export type NeoTodoPolicy = {
   id: string;
   todos?: Pick<
     NonNullable<NeoPack['todos']>,
-    'doneWhen' | 'addUrls' | 'refuse' | 'record' | 'repository'
+    'doneWhen' | 'addUrls' | 'refuse' | 'record' | 'repository' | 'plan'
   >;
 };
 

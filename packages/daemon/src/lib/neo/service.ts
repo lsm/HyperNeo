@@ -1,3 +1,7 @@
+import { getAvailableModels } from '../model-service.ts';
+import { workStartedSessionReads } from '../../storage/repositories/work-started-sessions-worker.ts';
+import { chooseLine } from './pack-selection.ts';
+import { livePlanSteps, samePlanSteps } from './todo-follow-up.ts';
 import { workerInputWrites } from '../../storage/repositories/worker-input-worker.ts';
 import { selectSendOrigin } from '../messaging/message-send.ts';
 import { frontSessionId, isPublicationSpeaker, frontModeNote } from './front-mode.ts';
@@ -898,11 +902,69 @@ export class NeoService {
     now: number
   ) => Promise<unknown>;
 
+  private async recordPlanCheck(
+    input: Parameters<SessionReportHandler>[0],
+    sender: string
+  ): Promise<void> {
+    if (input.check?.verdict !== 'pass') return;
+    const db = this.db.getDatabase();
+    const remote = parseRemoteAddress(sender);
+    const local = sessionWorkerRef(remote?.sessionId ?? sender, !!this.db.getSession(sender));
+    const ref = remote ? { ...local, daemon: remote.daemonId } : local;
+    const delivery = new WorkDeliveryInputRepository(db)
+      .list(ref)
+      .findLast(
+        ({ target, originSessionId }) =>
+          target.verb === 'start' &&
+          target.planStepIds &&
+          sessionSender(originSessionId) === input.sessionId
+      );
+    if (!delivery?.todoId || delivery.target.verb !== 'start') return;
+    const model = delivery.outcome && 'ref' in delivery.outcome && delivery.outcome.model;
+    const todo = this.todos.getCheckable(delivery.todoId);
+    const stepIds = input.check.stepIds;
+    const offered = delivery.target.planStepIds;
+    if (
+      !model ||
+      !todo ||
+      !offered ||
+      stepIds.length !== offered.length ||
+      new Set(stepIds).size !== offered.length ||
+      !offered.every((id) => stepIds.includes(id))
+    )
+      return;
+    const roles = await this.db.gateway.call(workStartedSessionReads, 'todoRoles', todo.id);
+    const doer = roles.find((role) => role.role === 'do');
+    if (!doer?.model || (doer.adapter === ref.adapter && doer.id === ref.id)) return;
+    const alternatives = getAvailableModels('global')
+      .filter((line) => line.available && line.id !== doer.model)
+      .map(({ id, provider }) => ({ model: id, provider }));
+    const ranking = await chooseLine(this.packs(), 'plan-check', alternatives, {
+      projectId: this.todos.getAsk(todo.askId)?.projectId ?? undefined,
+    });
+    const anotherModelUsable = ranking.ranked.length > 0;
+    if (anotherModelUsable && model === doer.model) return;
+    this.todos.inTransaction(() => {
+      if (
+        !this.todos.getCheckable(todo.id) ||
+        !samePlanSteps(stepIds, livePlanSteps(todo.id, this.todos.listFamilyTodos(todo.askId)))
+      )
+        return;
+      db.prepare('UPDATE neo_todos SET plan_check_json = ? WHERE id = ?').run(
+        JSON.stringify({ session: sender, model, anotherModelUsable, stepIds }),
+        todo.id
+      );
+    });
+    this.notifyChanged();
+  }
+
   readonly handleWorkerQuestion = (superpipe({})('neo.workerQuestionReport') as PipelineAPI)
     .input(['input', 'origin', 'retry'])
     .pipe(
-      (input: Parameters<SessionReportHandler>[0], origin: string) => {
+      async (input: Parameters<SessionReportHandler>[0], origin: string) => {
         const sender = sessionSender(origin);
+        if (input.check && sender && this.repo.getBindingBySession(input.sessionId)?.kind === 'neo')
+          await this.recordPlanCheck(input, sender);
         if (
           !sender ||
           !['question', 'blocked'].includes(input.kind ?? '') ||

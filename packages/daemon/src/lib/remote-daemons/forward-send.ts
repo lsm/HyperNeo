@@ -13,6 +13,7 @@ export function createRemoteSendForwarder(
         sessionId: target.sessionId,
         message: input.message,
         ...(input.kind ? { kind: input.kind } : {}),
+        ...(input.check ? { check: input.check } : {}),
         ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
         ...(input.deliveryMode === undefined ? {} : { deliveryMode: input.deliveryMode }),
         from: qualifyRemoteOrigin(origin, daemonName),

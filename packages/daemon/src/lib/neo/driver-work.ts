@@ -37,6 +37,7 @@ import type { OperationCaller } from '../operations/registry.ts';
 import { NeoReadWorkTarget } from './read-work.ts';
 
 const NeoStartWorkTarget = z.object({
+  planStepIds: z.array(z.string()).optional(),
   verb: z.literal('start'),
   sessionTitle: z
     .string()

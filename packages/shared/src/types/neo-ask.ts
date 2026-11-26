@@ -92,6 +92,10 @@ export type NeoTodoBlocker =
   | 'stalled'
   | 'held';
 
+export type NeoPlanCheck =
+  | { legacy: true }
+  | { session: string; model: string; anotherModelUsable: boolean; stepIds: string[] };
+
 export interface NeoTodo extends ArtifactProjection {
   worker?: WorkerIdentity | null;
   desktopApps?: NeoDesktopApp[];
@@ -121,6 +125,8 @@ export interface NeoTodo extends ArtifactProjection {
   approvedAt: number | null;
   approvalQuestionId: string | null;
   producesFollowUp?: true;
+  plan?: true;
+  planCheck?: NeoPlanCheck;
 }
 
 export type NeoQuestionKind = 'yesno' | 'choice' | 'reply';

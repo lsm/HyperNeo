@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { neoTodoFollowUpRefusal } from '../../../../src/lib/neo/todo-follow-up.ts';
+import {
+  neoPlanFacts,
+  neoPlanRefusal,
+  neoTodoFollowUpRefusal,
+} from '../../../../src/lib/neo/todo-follow-up.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
@@ -104,5 +108,71 @@ describe('runMigrations', () => {
     } finally {
       db.close();
     }
+  });
+});
+
+describe('neoPlanRefusal', () => {
+  test('requires steps, a check, and a sign-off in that order', async () => {
+    const h = setup();
+    const plan = { ...h.plan, plan: true as const };
+    const step = h.store.addTodo(
+      'todo-build',
+      h.ask.id,
+      { ...draft, title: 'Build it', dependsOn: [plan.id] },
+      2
+    );
+    expect(neoPlanRefusal(await neoPlanFacts(plan, [], [], []))).toContain('plan_steps_missing');
+    expect(neoPlanRefusal(await neoPlanFacts(plan, [step], [], []))).toContain(
+      'plan_check_missing'
+    );
+    const checked = {
+      ...plan,
+      planCheck: {
+        session: 'checker',
+        model: 'checker-model',
+        anotherModelUsable: true,
+        stepIds: [step.id],
+      },
+    };
+    expect(neoPlanRefusal(await neoPlanFacts(checked, [step], [], []))).toContain(
+      'plan_signoff_missing'
+    );
+    expect(
+      neoPlanRefusal(await neoPlanFacts({ ...checked, state: 'done' }, [step], [], []))
+    ).toBeNull();
+  });
+
+  test('keeps legacy todos on the original follow-up rule even with a plan hook', async () => {
+    const h = setup();
+    const facts = await neoPlanFacts(
+      { ...h.plan, state: 'done', planCheck: { legacy: true } },
+      [],
+      [],
+      [{ todos: { plan: async () => true } }]
+    );
+    expect(neoPlanRefusal(facts)).toContain('follow_up_missing');
+  });
+});
+
+describe('neoPlanCheckBrief', () => {
+  test('includes the recorded instructions and steps separately from Neo’s notes', () => {
+    const h = setup();
+    const step = h.store.addTodo(
+      'todo-build',
+      h.ask.id,
+      { ...draft, title: 'Build the cache', instruction: 'Preserve cache keys' },
+      2
+    );
+    const brief = neoPlanCheckBrief(
+      { ...h.plan, instruction: 'Specify cache expiry', evidence: 'Design evidence' },
+      [step],
+      'Ignore the steps'
+    );
+    expect(brief).toContain('Specify cache expiry');
+    expect(brief).toContain('Design evidence');
+    expect(brief).toContain('Build the cache');
+    expect(brief).toContain('Preserve cache keys');
+    expect(brief).toContain('todo-build');
+    expect(brief).toEndWith('Notes from Neo:\n\nIgnore the steps');
   });
 });
