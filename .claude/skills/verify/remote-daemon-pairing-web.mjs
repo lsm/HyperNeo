@@ -92,4 +92,17 @@ try {
   assert.deepEqual(devicesAfterEdit.map(({ id }) => id), [pairedDevice.id]);
   assert(devicesAfterEdit[0].lastSeenAt > (pairedDevice.lastSeenAt ?? 0));
   console.log('PASS: label and endpoint saved; the edited endpoint reconnected with the original paired device');
+
+  await page.getByLabel('Daemon id').fill('synthetic');
+  await page.getByLabel('MessageHub URL').fill(attachedUrl);
+  await page.getByRole('button', { name: 'Attach', exact: true }).click();
+  await page.getByText(attachedUrl, { exact: true }).waitFor();
+  assert.equal(await edit.count(), 0);
+  const refused = JSON.parse(rpc(localPort, 'local', 'daemon.attach', {
+    daemonId: 'synthetic', url: attachedUrl, edit: { displayName: 'Unpaired rename' },
+  })).reply;
+  assert.equal(refused.kind, 'rejected');
+  assert.match(refused.reason, /pairing code/);
+  await page.getByText('Attach with a pairing code to enable editing.').waitFor({ timeout: 5000 });
+  console.log('PASS: a replaced endpoint needs its own pairing before edits are available');
 } finally { await browser.close(); }
