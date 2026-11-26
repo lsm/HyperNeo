@@ -104,12 +104,20 @@ reads it for pull requests (`codingTurnTodos`); that decision moves to core as t
 1. The todo whose delivery receipt names an input of the turn. Two such todos: none.
 2. Otherwise, the todos that may have reached the worker when the turn started: the newest row
    (`start`, `send` or `adopt`) observed delivered before that moment, or the todo that started
-   the worker (`work_started_sessions`) if there is none, plus every row accepted before that
-   moment and observed after it. If they all name one todo, the turn has it; if not, or if
-   there are none, it has none.
+   the worker (`work_started_sessions`) if there is none, plus every row for that worker
+   accepted before that moment and not observed before it, whether observed later or not yet
+   (`observed_at` null). If they all name one todo, the turn has it; if not, or if there are
+   none, it has none.
 
-Acceptance is never taken as delivery, for a direct send, a queued one or a catch-up after a
-restart. Turns of an adopted session before its adoption have none.
+Acceptance is never taken as delivery. A row is in one of four states, and step 2 treats each
+so: **accepted, in flight** (no outcome, `observed_at` null): it may already have reached the
+worker, so it is a candidate; a row whose worker is not yet known (`start`, or `todo` without
+a ref) is a candidate for the worker bound to its todo. **Observed delivered** (an outcome
+with a ref and no `failure`; a queued send or a catch-up after a restart included): a
+candidate from acceptance on, and the newest such row before the turn is the base. **Failed**
+(`failure` set): never reached the worker, never a candidate. **Adopt**: written observed at
+the adoption, so it is the base from then on. Turns of an adopted session before its adoption
+have none.
 
 Measured on 3677 turns of one week: 962 have a receipt, 3 of them of two todos. For the other
 959 the time rule alone gives the same todo 954 times. Over all 6462 turns of that week on
