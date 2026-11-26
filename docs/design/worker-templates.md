@@ -127,7 +127,8 @@ of scope. Its text-only desktop results remain untrimmed in this slice.
   tool is an action. One rule decides what stays as the bridge receives it: the results of
   the newest assistant message with a desktop call, and the newest failed desktop result
   while no action after it has succeeded. Every other desktop result is collapsed to one
-  line. A newer failure replaces the older one, which then collapses. For example, failed
+  line. A newer failure replaces the older one: the older one loses this extra retention and
+  collapses once it is outside the newest batch; two failures inside that batch both stay. For example, failed
   click, full read, successful click: before the second click the failure and the read stay
   in full; after it both collapse and only the click's result stays. Non-desktop turns do
   not move this point, and non-desktop results are never changed, also inside a parallel
@@ -213,7 +214,7 @@ never the laptop. System map read for the planned files.
    accessibility text; non-desktop turns after a desktop result leave it in full; a parallel
    batch keeps its non-desktop results; failed click, full read, successful click keeps the
    failure and the read in full before the click and only the click after it; a second
-   failure replaces the first; `since` on
+   failure replaces the first, and two failures in the newest batch both stay; `since` on
    `get_window_state` is ignored in a collapse session; on append-only fixtures, two
    requests one step apart have the same conversation blocks before the earliest newly
    collapsed result; `count_tokens` measures the collapsed body; the stored conversation is unchanged;
