@@ -15,11 +15,14 @@ TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh \
 The journey first proposes a Finder todo through Neo's MCP operation and answers
 its disclosure card through the human WebSocket door. The real work start must
 create a Desktop template session. The actual SDK request to the loopback model
-must expose only `invoke`, carry the system instructions, and omit their copy
-from the brief. The session MCP door must list exactly four operations and refuse
-a file read. The fake host sends a synthetic token in both accessibility fields
-and a screenshot. The MCP result must contain just a redaction marker after the
-normal status. An app missing from the card and legacy cards with or without
+must expose `invoke` and every catalog tool, carry the system instructions, and
+omit their copy from the brief. The model calls `get_window_state` for Finder
+and tries `launch_app` for unapproved TextEdit. Both return `at` and `ms`. The
+TextEdit call returns `app_not_in_todo_scope` without dispatching any input.
+The session MCP door must list exactly four operations and refuse a file read.
+The fake host sends a synthetic token in both accessibility fields and a
+screenshot. The native and `invoke` results must contain just a redaction marker
+after the normal status. An app missing from the card and legacy cards with or without
 recorded approval must refuse capture before dispatch. Pass prints `desktop worker template journey PASS` and saves
 `desktop-worker-template.json`. The signed host and its dialogs remain a separate journey.
 

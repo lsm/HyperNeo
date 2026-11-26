@@ -128,6 +128,25 @@ const audit = () =>
     timestamp: number;
   }>;
 
+test('desktop results include a timestamp and elapsed milliseconds even when refused', async () => {
+  const handler = createOperationMcpHandler(registry(), () => caller);
+  const callDesktop = async () =>
+    JSON.parse((await handler({ name: 'desktop.call', input })).content[0].text);
+  const start = Date.now();
+  const allowed = await callDesktop();
+  db.prepare("UPDATE neo_asks SET desktop_apps = '[]'").run();
+  const refused = await callDesktop();
+  expect(allowed).toMatchObject({ ok: true, dispatched: true });
+  expect(refused).toMatchObject({ ok: false, dispatched: false, reason: 'desktop_not_enabled' });
+  for (const { at, ms } of [allowed, refused]) {
+    expect(Date.parse(at)).toBeGreaterThanOrEqual(start);
+    expect(Date.parse(at)).toBeLessThanOrEqual(Date.now());
+    expect(Number.isInteger(ms)).toBe(true);
+    expect(ms).toBeGreaterThanOrEqual(0);
+  }
+  expect(requests).toHaveLength(1);
+});
+
 test('desktop.call drops the screenshot and accessibility text containing a token', async () => {
   const token = 'ghp_' + 'SyntheticToken012345678901234567890123';
   body = {

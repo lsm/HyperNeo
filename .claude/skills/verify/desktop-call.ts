@@ -39,30 +39,53 @@ const app = await createDaemonApp({
 assert(![8399, 8499].includes(app.server.port));
 const model = 'desktop-template-proof';
 const instruction = 'Identify the open Finder window.';
+const bundleId = 'com.apple.finder';
+const otherApp = 'com.apple.TextEdit';
+const toolPrefix = 'mcp__hyperneo-operations__';
+const modelTools = ['invoke', ...catalog.map(({ name }) => name)].map(name => toolPrefix + name);
+const toolCalls = [
+  { name: 'get_window_state', input: { pid: 123, window_id: 7, timeout_ms: 1000 } },
+  { name: 'launch_app', input: { bundle_id: otherApp } },
+];
 const modelRequest = Promise.withResolvers<{ tools: string[]; system: string; brief: string }>();
+type ModelBlock = { type: string; tool_use_id?: string; content?: { type: string; text?: string }[] };
+const modelResults = Promise.withResolvers<ModelBlock[]>();
+let modelStep = 0;
 const mock = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
   const path = new URL(request.url).pathname;
   if (path.endsWith('/models')) return Response.json({ data: [{ id: model, type: 'model' }] });
   if (path.endsWith('/count_tokens')) return Response.json({ input_tokens: 20 });
   if (!path.endsWith('/messages')) return Response.json({});
-  const body = await request.json() as { stream?: boolean; tools?: { name: string }[]; system?: unknown; messages?: unknown };
+  const body = await request.json() as { stream?: boolean; tools?: { name: string }[]; system?: unknown; messages?: { content: string | ModelBlock[] }[] };
   const brief = JSON.stringify(body.messages ?? []);
   if (brief.includes(instruction)) modelRequest.resolve({
     tools: (body.tools ?? []).map(({ name }) => name),
     system: JSON.stringify(body.system ?? ''),
     brief,
   });
+  const command = body.stream && brief.includes(instruction) ? toolCalls[modelStep++] : undefined;
+  if (body.stream && brief.includes(instruction) && modelStep === toolCalls.length + 1) {
+    modelResults.resolve((body.messages ?? []).flatMap(({ content }) =>
+      typeof content === 'string' ? [] : content.filter(block => block.type === 'tool_result')
+    ));
+  }
   const usage = { input_tokens: 20, output_tokens: 5 };
-  const block = { type: 'text', text: 'Synthetic desktop reply.' };
-  const message = { id: 'msg_desktop_proof', type: 'message', role: 'assistant', model, content: [block], stop_reason: 'end_turn', stop_sequence: null, usage };
+  const block = command
+    ? { type: 'tool_use', id: `toolu_desktop_${modelStep}`, name: toolPrefix + command.name, input: {} }
+    : { type: 'text', text: '' };
+  const text = 'Synthetic desktop reply.';
+  const stopReason = command ? 'tool_use' : 'end_turn';
+  const message = { id: `msg_desktop_proof_${modelStep}`, type: 'message', role: 'assistant', model, content: [{ type: 'text', text }], stop_reason: stopReason, stop_sequence: null, usage };
   if (!body.stream) return Response.json(message);
   const event = (type: string, data: unknown) => `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
   return new Response([
     event('message_start', { type: 'message_start', message: { ...message, content: [], stop_reason: null } }),
-    event('content_block_start', { type: 'content_block_start', index: 0, content_block: { ...block, text: '' } }),
-    event('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: block.text } }),
+    event('content_block_start', { type: 'content_block_start', index: 0, content_block: block }),
+    event('content_block_delta', { type: 'content_block_delta', index: 0, delta: command
+      ? { type: 'input_json_delta', partial_json: JSON.stringify(command.input) }
+      : { type: 'text_delta', text } }),
     event('content_block_stop', { type: 'content_block_stop', index: 0 }),
-    event('message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage }),
+    event('message_delta', { type: 'message_delta', delta: { stop_reason: stopReason, stop_sequence: null }, usage }),
     event('message_stop', { type: 'message_stop' }),
   ].join(''), { headers: { 'content-type': 'text/event-stream' } });
 } });
@@ -109,6 +132,10 @@ const host = createServer(socket => {
       socket.end(JSON.stringify({ ok: true, result: { call_id: request.callId, bundle_id: 'org.example.fixture', class: 'pointer', decision: 'refused', reason, dispatched: false } }) + '\n');
       return;
     }
+    if (request.tool === 'launch_app' && !request.apps.includes(request.arguments.bundle_id)) {
+      socket.end(JSON.stringify({ ok: true, result: { call_id: request.callId, bundle_id: request.arguments.bundle_id, class: null, decision: 'refused', reason: 'app_not_in_todo_scope', dispatched: false } }) + '\n');
+      return;
+    }
     const body = secretObservation
       ? { reason: null, content: [{ type: 'text', text: token }, driverError.content[1]], structuredContent: { accessibilityTree: token } }
       : request.tool === 'get_window_state' ? { reason: 'driver_error', ...driverError } : { reason: null };
@@ -142,7 +169,6 @@ try {
   const neo = createOperationMcpHandler(registry, () => ({ sessionId: root, role: 'neo' }));
   const fromNeo = async (name: string, input: Record<string, unknown>) =>
     JSON.parse((await neo({ name, input })).content[0].text);
-  const bundleId = 'com.apple.finder';
   const opened = await fromNeo('neo.ask.propose', { title: 'Inspect Finder', request: 'Inspect the test folder in Finder?', desktopApps: [bundleId] });
   assert(opened.ok, JSON.stringify(opened));
   const ask = new NeoAskTodoRepository(sql);
@@ -152,6 +178,7 @@ try {
     name: 'neo.question.answer', input: { questionId: card.id, answer: 'yes' },
   });
   assert(answered.ok, JSON.stringify(answered));
+  secretObservation = true;
   app.jobProcessor.start();
   const added = await fromNeo('neo.todo.add', {
     askId: opened.ask.id, title: 'Identify the Finder window', after: [],
@@ -170,16 +197,35 @@ try {
     modelRequest.promise,
     delay(30_000, undefined, { ref: false }).then(() => { throw new Error('No model request for the Finder todo'); }),
   ]);
-  await app.jobProcessor.stop();
-  assert.deepEqual(outbound.tools, ['mcp__hyperneo-operations__invoke']);
-  assert.match(outbound.system, /desktop\.call to act in the approved apps/);
+  assert.deepEqual(outbound.tools.sort(), [...modelTools].sort());
+  assert.match(outbound.system, /desktop tools to act in the approved apps/);
   assert(!outbound.brief.includes('desktop_permissions_required'));
+  const results = await Promise.race([
+    modelResults.promise,
+    delay(30_000, undefined, { ref: false }).then(() => { throw new Error('No native desktop tool results reached the model'); }),
+  ]);
+  await app.jobProcessor.stop();
+  assert.equal(results.length, 2);
+  const [captured, refused] = results.map(result => JSON.parse(result.content?.[0]?.text ?? ''));
+  assert.equal(captured.ok, true);
+  assert.equal(refused.reason, 'app_not_in_todo_scope');
+  assert.equal(refused.dispatched, false);
+  for (const { at, ms } of [captured, refused]) {
+    assert(Number.isFinite(Date.parse(at)));
+    assert(Number.isInteger(ms) && ms >= 0);
+  }
+  assert.match(results[0].content?.[1]?.text ?? '', /redacted/);
+  assert(!JSON.stringify(results).includes(token));
+  assert.deepEqual(requests.map(({ tool, arguments: args, apps }) => ({ tool, args, apps })),
+    toolCalls.map(({ name, input }) => ({ tool: name, args: input, apps: [bundleId] })));
+  requests.length = 0;
+  sql.prepare("DELETE FROM mcp_audit_log WHERE session_id = ?").run(ref.id);
   const options = await templated.optionsBuilder.build();
   assert.deepEqual(options.tools, []);
-  assert.deepEqual(options.allowedTools, ['mcp__hyperneo-operations__invoke']);
+  assert.deepEqual(options.allowedTools, modelTools);
   assert.deepEqual(Object.keys(options.mcpServers ?? {}), ['hyperneo-operations']);
   assert(options.systemPrompt && typeof options.systemPrompt === 'object');
-  assert.match(options.systemPrompt.append ?? '', /desktop\.call to act in the approved apps/);
+  assert.match(options.systemPrompt.append ?? '', /desktop tools to act in the approved apps/);
   const templateCall = operationInvoke(templated.getOperationMcpServer());
   const operations = JSON.parse((await templateCall({ name: 'operations.list', input: { all: true } })).content[0].text)
     .map(({ name }: { name: string }) => name).sort();
@@ -211,8 +257,9 @@ try {
     card: card.text, template: 'worker.desktop', builtins: options.tools, allowedTools: options.allowedTools,
     mcpServers: Object.keys(options.mcpServers ?? {}), operations, denied: true, redacted: true,
     modelTools: outbound.tools, templatePrompt: true, shortBrief: true, rejectedCaptures: 3,
+    captured, refused,
   }, null, 2));
-  console.log('desktop worker template journey PASS builtins=0 mcp_tools=1 admitted_operations=4 denied_file_reads=1 redacted_observations=1 rejected_captures=3');
+  console.log(`desktop worker template journey PASS builtins=0 mcp_tools=${modelTools.length} admitted_operations=4 denied_file_reads=1 timed_native_results=2 redacted_observations=2 rejected_captures=3`);
   requests.length = 0;
   sql.prepare("DELETE FROM mcp_audit_log WHERE session_id = ?").run(ref.id);
   const worker = await app.sessionManager.createSession({ workspacePath: run, title: 'Synthetic desktop worker', config: modelConfig });
@@ -373,7 +420,10 @@ try {
   const stopped = await stop;
   assert.deepEqual(stopped, { ok: true, value: { stopped: true } });
   assert.equal((await inFlight).reason, 'turn_stopped');
-  assert.deepEqual(await dispatch(), { ok: false, reason: 'turn_stopped', decision: 'refused', dispatched: false });
+  const { at, ms, ...revoked } = await dispatch();
+  assert(Number.isFinite(Date.parse(at)));
+  assert(Number.isInteger(ms) && ms >= 0);
+  assert.deepEqual(revoked, { ok: false, reason: 'turn_stopped', decision: 'refused', dispatched: false });
   assert.equal(requests.length, 13);
   turn = new DesktopTurn();
   assert.equal((await dispatch()).dispatched, true);
