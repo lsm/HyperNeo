@@ -53,25 +53,18 @@ harness, and existing code reads it from there.
 
 ## One adapter per provider, and the default changing
 
-The hub registers one adapter per provider id, built only from providers whose
-*default* is OXAP. Two things follow, and the design fixes both:
+The hub registers one adapter per provider id. Two rules make an override
+safe; both are in place:
 
-1. **Availability is separated from the default.** `buildHubConfig`
-   registers an adapter, and `readKeys` in `oxap-settings.ts` loads the
-   provider key, for each provider that has saved OXAP settings, whatever
-   its default. Today both look only at the default, so a retained DSH adapter
-   would start without `DEEPSEEK_API_KEY`. Saving the default as `sdk` keeps
-   `harnessSettings` instead of dropping them (today `oxap-settings.ts`
-   removes both). "Saved" means the executable settings are in the record that already holds
-   them; it does not look at the key. The provider card shows the retained
-   executable field whenever settings are saved, whether or not the key is set
-   and even while the default is `sdk`, so a stale path can be fixed without
-   flipping the default.
-2. **Existing chats survive a default change.** `openGate` refuses to reopen a
-   chat whose harness differs from the provider's current default ("no longer
-   uses"). It instead checks that the session's harness is still saved for
-   its provider. Reopening does not check the key and behaves exactly as today. Changing the default then leaves an OXAP chat usable, and an
-   SDK override and a default-OXAP chat run on the same daemon.
+1. **Availability is separate from the default.** `buildHubConfig` registers
+   an adapter, and `readKeys` in `oxap-settings.ts` loads its key, for each
+   provider with saved OXAP settings, whatever its default. Saving the default
+   as `sdk` keeps `harnessSettings`. "Saved" means the executable settings are
+   in the provider record; it does not look at the key.
+2. **Existing chats survive a default change.** `openGate` reopens a chat
+   against the harness saved for its provider, not the current default, and
+   does not check the key. An SDK override and a default-OXAP chat run on the
+   same daemon.
 
 Each provider has at most one OXAP row today, so the adapter keeps its
 provider-id name and `harnessSettings` stay flat. That includes OpenCode Go
@@ -84,16 +77,28 @@ One new row, `oxap-opencode-dsh`: provider `opencode`, key `OPENCODE_API_KEY`.
 It is chosen like any other row, as OpenCode's default in Settings or as a
 per-session override.
 
-- **Endpoint.** DSH's built-in Go profile does not reach the Go endpoint, so the
-  entry starts DSH with `--profile sdk --patch <overlay>`. The daemon writes the
-  overlay into its own state directory: one `opencode-go` provider at the
-  endpoint the daemon already uses (`OpenCodeProvider.CHAT_BASE_URL`), with the
-  key read from `OPENCODE_API_KEY`. The session's model is passed through
-  unchanged.
+- **Launch.** The entry has the same DSH adapter `type` as `oxap-deepseek`,
+  with DSH's native `provider: 'opencode-go'` and a fixed start model, which
+  the per-submit switch below replaces. It starts DSH with `--profile sdk --patch
+  <overlay>`, because DSH's built-in Go profile does not reach the Go endpoint.
+  The daemon writes the overlay into its own state directory: the
+  `opencode-go` provider at the endpoint the daemon already uses
+  (`OpenCodeProvider.CHAT_BASE_URL`), with the key read from
+  `OPENCODE_API_KEY`. The entry sets neither `model_provider` nor
+  `model_endpoint`, since the hub's routing for those sets `DEEPSEEK_API_KEY`
+  in the child.
+- **Selected model.** The session's model reaches DSH the way it already does
+  for `oxap-deepseek`: before each submit, `oxap-query-hub.ts` sends
+  `session.model.switch` with the session's model and waits for the
+  confirmation. Today that binding runs only when the adapter id is
+  `deepseek`; it runs for every DSH row instead (by harness row, not adapter
+  id), so it also covers this row, whose adapter id is `opencode`.
 - **Key.** It is the OpenCode provider's own key, resolved as the provider
   resolves it (`OpencodeProvider.getApiKey`: `OPENCODE_API_KEY`, then
-  `OPENCODE_GO_API_KEY`, then the stored credential), so a setup that works
-  today is ready. `DEEPSEEK_API_KEY` is never set for it.
+  `OPENCODE_GO_API_KEY`, then the stored credential). That resolution goes into
+  the shared OXAP key callback (`app.ts`), which feeds readiness, creation and
+  the hub launch, so a setup that works today is ready. `DEEPSEEK_API_KEY` is
+  never set for it.
 
 ## What happens when the harness is not installed
 
@@ -115,22 +120,22 @@ them.
 
 Each slice works on its own: nothing is reachable before what it needs exists.
 
-1. Availability: keep `harnessSettings` when the default is set to `sdk`;
-   register adapters and load keys from saved settings; `openGate` checks
-   saved, not default; the card field above. Tests: switch DeepSeek's default to SDK, then run a
-   turn on an existing OXAP chat (key present); same for Codex.
+1. Availability (in place): saved settings register adapters and load keys,
+   an `sdk` default keeps them, and `openGate` checks the saved harness.
 2. Admission: `session.create` accepts `harness`; resolve, validate and store
    it; the ready-for-new-session check. Safe after 1 because an admitted override can
    open. Tests: default, SDK override, OXAP override on an SDK default,
    unsupported, not ready (no settings, no key).
 3. Dialog: show the effective harness next to the model, list supported rows
    (disabled when not ready), send `harness` only when the user overrides.
-4. Prove both first-batch pairs end to end on one daemon: provider default
-   chat and SDK override chat, then the reverse.
-5. OpenCode Go with DSH: the row, its overlay and key. Tests: a DSH session on
-   OpenCode reaches the Go endpoint with the OpenCode key and no
-   `DEEPSEEK_API_KEY`; a key set only as `OPENCODE_GO_API_KEY` makes the row
-   ready.
+4. Prove the OpenAI Codex and DeepSeek pairs end to end on one daemon:
+   provider default chat and SDK override chat, then the reverse.
+5. OpenCode Go with DSH: the row, its overlay, the model binding by row, and
+   the key in the shared callback. Tests: a DSH session on OpenCode reaches
+   the Go endpoint with the OpenCode key and no `DEEPSEEK_API_KEY`, and the
+   outbound request carries the session's selected model; a key set only as
+   `OPENCODE_GO_API_KEY` makes the row ready and reaches DSH as
+   `OPENCODE_API_KEY`.
 6. Later, one PR each: other pairs.
 
 Measuring quota use between SDK and OXAP Codex is separate work and not part
