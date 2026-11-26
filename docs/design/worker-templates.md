@@ -21,40 +21,51 @@ and thinking level (`agents/template-manager.ts`, built-ins in `agents/seed-agen
 
 ## 1. A template for a todo worker
 
-**Where it lives.** A worker template has the shape of a space agent template
-(`SpaceAgentTemplate`: instructions, tools, model, thinking level) and is a built-in in code,
-owned by a pack; the computer-use pack ships `desktop-operator`. The existing template
-operations need a Space, and todo workers have none, so a worker template is not stored in
-`space_agent_templates` and the human does not edit it in this step. No new table or column.
+**Where it lives.** Worker templates already exist: every preset in `agents/seed-agents.ts`
+(`getPresetAgentTemplates`, tools in `PRESET_AGENT_TOOLS`) becomes a built-in template
+`worker.<handle>` through `workerPresetTemplates` in `agents/long-horizon-templates.ts`, and
+`getBuiltInSpaceAgentTemplates` serves it. The desktop operator is one more preset there,
+handle `desktop`, key `worker.desktop`. Its handle is added to the reserved handles
+(`RESERVED_SPACE_AGENT_HANDLES`, `agents/slug.ts`), so `SpaceAgentTemplateManager.listIn` does not offer it in
+Spaces, where desktop control does not exist.
 
-**Who picks it.** A new optional pack hook `workerTemplate(todo)` returns a key or nothing.
-Computer-use returns `desktop-operator` when the todo has desktop apps. Core passes the key
-with `work.start`; Neo does not choose. Only the HyperNeo adapter applies a template now; the
-Claude Code and Codex adapters start as today.
+**How a todo worker reads it.** `resolveEffectiveSpaceAgentTemplate(key, '', repo)`
+(`agents/template-manager.ts`): a row of `space_agent_templates` with `space_id = ''` (the
+column's default) wins, else the built-in. The core preset list owns it. Editing goes through
+`SpaceAgentTemplateRepository` in scope `''`; the existing RPCs need a Space and do not reach
+it, so in this step only a code change or a migration edits it. No new table, column or
+registry.
+
+**Who picks it.** Core, not Neo: a todo with desktop apps on the HyperNeo adapter starts with
+`worker.desktop`. The Claude Code and Codex adapters start as today.
 
 **What it changes in the session.** `createDriverSession`
-(`rpc-handlers/family-operations/drivers.ts`) builds the config from the template the same way
-`buildAgentSessionConfig` does for space agents: `instructions` are appended to the system
-prompt, and `model` and `thinkingLevel` apply when the todo names none. The template
-tools drive `allowedTools` and `disallowedTools` using the existing `deriveWorkerDisallowedTools`
-policy. Unlike a space agent, the worker uses a restricted SDK builtin preset so Bash and the
-other unlisted builtins are not exposed. MCP tools remain subject to operation admission. The
-fetch and Exa servers are not attached. The session records the template key in its metadata.
+(`rpc-handlers/family-operations/drivers.ts`) maps the template as space agents do
+(`session-resolution/agent-session-config.ts`): `instructions` are appended to the system
+prompt, and `model` and `thinkingLevel` apply when the todo names none. The template's tools
+drive `allowedTools` and `disallowedTools` through `deriveWorkerDisallowedTools`
+(`agents/tool-policy.ts`). Unlike a space agent, the worker gets a restricted SDK built-in
+preset, so Bash and the other unlisted built-ins are not exposed. MCP tools stay subject to
+operation admission. The fetch and Exa servers are not attached. The session records the
+template key in its metadata.
 
 **The brief.** Only the text the template replaces is left out, and only for a session started
-with that template: the computer-use `workerContext` from `neo/todo-runner.ts` and the coding
-merge policy. The other packs' `workerContext` (delegation preferences among them), the instruction, the done-when line
-and the core reply and blocker rules stay. Every other worker, on any adapter, gets the brief
-as today.
+with that template: the computer-use `workerContext` from `neo/todo-runner.ts`. The other
+packs' text (delegation preferences, the coding rules and merge policy when the todo is coding
+work), the instruction, the done-when line and the core reply and blocker rules stay. Every
+other worker, on any adapter, gets the brief as today.
 
 **Reuse.** A session started with a template is reused only for a todo with the same template,
 and a todo with a template never reuses a session without it, so no worker loses rules it was
 not started with.
 
-**`desktop-operator`.**
+**`worker.desktop`.**
 
-- Tools: `Read` and the desktop tools. No Bash, Write, Task, Cron, Skill or plan tools. A
-  future editable template may list `Bash`.
+- Tools: `Read` and the desktop tools. No Bash, Write, Task, Cron, Skill or plan tools. An
+  edited copy may list `Bash`.
+- `Read` gets the secret read rules (`neo/secret-read-rules.ts`, `neoSecretReadRules`), which
+  today only Neo's own sessions get (`agent/query-options-builder.ts`, `getDisallowedTools`);
+  a templated session gets them too.
 - Desktop tools are top-level: one tool per entry of `desktop/tool-catalog.json`
   (`list_windows`, `get_window_state`, `launch_app`, `click`, ..., `zoom`), each calling
   `desktop.call {tool, args}`. This is the Neo resident-tool pattern in
@@ -66,12 +77,19 @@ not started with.
   reported to Neo with the app and the screen, never worked around with a shell. The
   computer-use worker text moves here.
 
-**What it can see.** A prompt cannot keep a secret out of a screenshot, so the boundary is the
-app list. `desktop.call` already refuses any action or capture outside the apps the human
-approved for the ask (`app_action_not_authorized`, `desktop/opt-in.ts`). The human does not
-approve a password manager, a terminal or a settings pane that shows keys; secure text fields
-are masked by macOS in both screenshots and accessibility values. Nothing new is redacted in
-this step; the proof checks both points.
+**What it can see.** A prompt cannot keep a secret out of a screenshot, so two checks run in
+code before a result reaches the model:
+
+- The app list. `desktop.call` already refuses any action or capture outside the apps the
+  human approved for the todo (`desktop/opt-in.ts`).
+- The screen content. In `desktop/call-operation.ts`, the accessibility text of each result is
+  matched against known secret shapes (private key headers, and token prefixes such as
+  `sk-`, `ghp_`, `github_pat_`, `xox`, `AKIA`). A match replaces that text with a marker and
+  drops the result's screenshot, with one line saying why. Secure text fields are already
+  masked by macOS.
+
+A secret drawn only as pixels, with no accessibility text, is not caught. That is the limit
+of this step, and the human's app approval covers it.
 
 Neo then writes only the goal and the done-when for a desktop todo.
 
@@ -115,17 +133,20 @@ two bridges that know the session. No redaction inside an approved app.
 Four PRs from `dev`, failing tests first. Heavy builds and tests run on CI or the build Mac,
 never the laptop. System map read for the planned files.
 
-1. **Template for a todo worker.** The pack hook, the built-in with `Read` and `invoke` only
-   (desktop still through `invoke desktop.call`, as today), `work.start` carrying the key, the
-   session config, the brief and reuse rules. Works alone: a desktop worker starts with two
-   tools and the short prompt. Tests: a desktop todo on HyperNeo starts with the template's
-   tools and prompt; a coding todo and a Codex worker keep today's brief; a templated session
-   is not reused for another todo and the reverse; a todo that names a model keeps it.
-   Estimate: 6 files, 150 lines, 180 test lines.
+1. **Template for a todo worker.** The `desktop` preset with `Read` and `invoke` only (desktop
+   still through `invoke desktop.call`, as today), its reserved handle, resolution in scope
+   `''`, the session config, the secret read rules, the brief and reuse rules. Works alone: a
+   desktop worker starts with two tools and the short prompt. Tests: a desktop todo on HyperNeo
+   starts with the template's tools and prompt; a row in scope `''` overrides the built-in;
+   Spaces do not list it; a desktop todo that is also coding work keeps the coding rules and
+   merge policy; a coding todo and a Codex worker keep today's brief; a templated session is
+   not reused for another todo and the reverse; `Read` of a protected file is refused.
+   Estimate: 7 files, 150 lines, 200 test lines.
 2. **Top-level desktop tools and timing.** The template adds the catalog tools. Tests: the
    template session lists them and no Bash; a call reaches `desktop.call` with the same
-   refusals, including an app that was not approved; results carry `at` and `ms`.
-   Estimate: 4 files, 90 lines, 120 test lines.
+   refusals, including an app that was not approved; results carry `at` and `ms`; a result
+   whose accessibility text holds a token shape comes back with a marker and no screenshot.
+   Estimate: 4 files, 120 lines, 150 test lines.
 3. **Trim old observations.** Tests: below the threshold nothing changes; past it all but the
    last 3 become a line; the next request keeps the same lines; non-desktop results are kept;
    two sessions on one bridge keep their own sets; no window set means no trim; both bridges.
@@ -138,5 +159,7 @@ never the laptop. System map read for the planned files.
 local model: all three tasks pass; the first request is at most half of 13,655 tokens; no
 Bash call; context stays below 60% of the window, with no SDK auto-compaction; a daemon
 compaction on the same daemon writes a real compact boundary with a summary near 2,000 tokens;
-a capture of an app that was not approved is refused, and a password typed in a Safari page
-appears masked in both the screenshot and the accessibility tree.
+a capture of an app that was not approved is refused; a password typed in a Safari page
+appears masked in both the screenshot and the accessibility tree; a Safari page showing a
+fake `ghp_` token returns the marker and no screenshot; `Read` of a file under `~/.ssh` is
+refused.
