@@ -117,21 +117,27 @@ Neo then writes only the goal and the done-when for a desktop todo.
 
 ## 2. Old observations on custom endpoints
 
-Each request to a custom endpoint passes a bridge that parses the Anthropic request. Two of
-them know the session: `providers/anthropic-messages-bridge` (from the request) and
-`openai-chat-bridge` (from its session token). The Ollama bridge does not, so it is left out.
-One shared function runs in the two before the request is converted:
+Each request to a custom endpoint passes a bridge that parses the Anthropic request:
+`providers/anthropic-messages-bridge` and `openai-chat-bridge`; the Ollama bridge stays out of
+this step. One shared function runs in the two before the request is converted:
 
-- The model's window is set per session at the call that already sets its thinking
-  (`setSessionThinkingConfig`, from `agent/query-runner.ts`). A session with no window set is
-  not trimmed. Its state is dropped when the session's query stops.
-- When the estimated input of a session passes 60% of the model's window, every desktop
-  observation except the last 3 is replaced by one line: tool, time, and "call
-  get_window_state for the current screen". Observations are the results of desktop tools:
-  screenshots and accessibility trees.
-- The replaced ids are kept per session, and later requests replace the same ones, so the
-  prefix stays the same and the endpoint's cache holds until the next crossing. A restart loses
-  the set; the next request trims again, which costs one cold read.
+- Every desktop observation except the latest is collapsed to one line as soon as the model
+  has taken its next step, that is, when a later desktop tool call follows it in the request.
+  Observations are the results of desktop tools: screenshots and accessibility trees. A failed
+  step collapses the same way; nothing is rolled back.
+- The line keeps the tool, its target (app and window, element or point, from the call's own
+  arguments), ok or failed, and the error text on a failure, for example `click "Save" in
+  TextEdit: ok` or `click at 410,220 in Safari: failed, element not found`. No screenshot and no
+  accessibility text.
+- Cache: each step changes only the last two or three messages (the previous observation
+  becomes its line, the new call and result are added); the prefix before them is unchanged,
+  so the endpoint's cache keeps hitting.
+- The rule depends only on the request, so it needs no session state, a restart changes
+  nothing, and context grows by one line and the model's own text per step, not by a screen.
+- Text the model needs from a screen is used in the step it arrives: the model carries it in
+  its own reply or next call, which is never collapsed, or calls `get_window_state` again.
+- After a failure the failed observation is the latest, so the model sees it in full to
+  recover; it collapses only once the model has acted on it.
 - Nothing is changed in the stored conversation; only the request is.
 
 **Summary size.** The daemon's own compaction (`agent/context-budget-enforcement.ts`,
@@ -141,14 +147,14 @@ Today `MessageQueue.isInternalCompaction` and the check in `agent/query-runner.t
 `/compact` exactly, which drives deduplication and the wait for the compact boundary. Both
 change to match the command word, as the queue's own `isUserCompactCommand` already does, so one
 queued compaction of either form still counts once and still waits for its boundary. The
-SDK's own auto-compaction keeps its prompt; the trim is what keeps desktop sessions below its
+SDK's own auto-compaction keeps its prompt; collapsing is what keeps desktop sessions below its
 threshold.
 
 ## Not in this step
 
 No template choice by Neo, no templates for Claude Code or Codex workers, no coding template,
-no editing of worker templates, no settings page. Trimming is for desktop observations on the
-two bridges that know the session. No redaction inside an approved app.
+no editing of worker templates, no settings page. Collapsing is for desktop observations on
+the two bridges. No redaction inside an approved app.
 
 ## Changes
 
@@ -175,10 +181,12 @@ never the laptop. System map read for the planned files.
    template session lists them and no Bash; a call reaches `desktop.call` with the same
    refusals, including an app that was not approved; results carry `at` and `ms`.
    Estimate: 4 files, 90 lines, 120 test lines.
-3. **Trim old observations.** Tests: below the threshold nothing changes; past it all but the
-   last 3 become a line; the next request keeps the same lines; non-desktop results are kept;
-   two sessions on one bridge keep their own sets; no window set means no trim; both bridges.
-   Estimate: 5 files, 120 lines, 180 test lines.
+3. **Collapse old observations.** Tests: the latest observation stays in full; an earlier one
+   becomes its line with tool, target and ok; a failed one keeps its error text; a line holds no
+   image and no accessibility text; two requests one step apart differ only in their last
+   messages; the observation after a failure stays in full until the next call; non-desktop
+   results are kept; the stored conversation is unchanged; both bridges.
+   Estimate: 4 files, 90 lines, 150 test lines.
 4. **Summary size.** Tests: both enqueue sites send the line; a queued `/compact` with text
    dedupes with a plain one and waits for the boundary.
    Estimate: 4 files, 40 lines, 70 test lines.
