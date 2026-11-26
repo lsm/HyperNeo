@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createAnthropicMessagesBridgeServer } from '../../../packages/daemon/src/lib/providers/anthropic-messages-bridge/server.ts';
 import { createOpenAIChatBridgeServer } from '../../../packages/daemon/src/lib/providers/openai-chat-bridge/server.ts';
@@ -34,7 +34,7 @@ const earlier = [
     [call('drag', 'drag', { to_y: 8, from_y: 0, from_x: 5, to_x: 7 })],
     [result('drag')]
   ),
-  ...step([call('zoom', 'zoom', { x2: 4, y2: 3, x1: 2, y1: 1 })], [result('zoom')]),
+  ...step([call('zoom', 'invoke', { name: 'desktop.call', input: { tool: 'zoom', args: { x2: 4, y2: 3, x1: 2, y1: 1 } } })], [result('zoom')]),
   ...step(
     [call('type', 'type_text', { window_id: 2, pid: 1, text: 'payload' })],
     [result('type')]
@@ -156,5 +156,6 @@ const off = await verify('chat', false);
 const on = await verify('chat', true);
 assert(typeof off.count === 'number' && typeof on.count === 'number' && on.count < off.count);
 const results = [off, on, await verify('messages', false), await verify('messages', true)];
+await mkdir(join(run, 'evidence'), { recursive: true });
 await writeFile(join(run, 'evidence', 'desktop-observation-collapse.json'), JSON.stringify(results.map(({ count, ...result }) => ({ ...result, ...(typeof count === 'number' ? { inputTokens: count } : { forwardedMessages: count.length }) })), null, 2));
 console.log(`desktop observation collapse PASS modes=${results.length} upstream_requests=${results.reduce((sum, result) => sum + result.requests, 0)} chat_tokens=${off.count}->${on.count}`);

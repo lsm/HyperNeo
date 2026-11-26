@@ -23,9 +23,25 @@ export function createOperationMcpServer(
   registry: OperationRegistrySource,
   resolveCaller: (operation: string) => CallerIdentity | Promise<CallerIdentity>,
   recordRefusal?: (refusal: OperationRefusal) => void | Promise<void>,
-  descriptionRole?: OperationCallerRole | 'desktop'
+  descriptionRole?: OperationCallerRole | 'desktop',
+  fullDesktopSnapshots?: () => boolean
 ) {
-  const invoke = createOperationMcpHandler(registry, resolveCaller, recordRefusal);
+  const handle = createOperationMcpHandler(registry, resolveCaller, recordRefusal);
+  const invoke = (args: z.infer<typeof OperationMcpInvocationSchema>) => {
+    const input = args.input;
+    if (
+      args.name === 'desktop.call' &&
+      input?.tool === 'get_window_state' &&
+      fullDesktopSnapshots?.()
+    ) {
+      const read = z.looseObject({ since: z.unknown().optional() }).safeParse(input.args);
+      if (read.success) {
+        const { since: _since, ...full } = read.data;
+        return handle({ ...args, input: { ...input, args: full } });
+      }
+    }
+    return handle(args);
+  };
   const discovery =
     descriptionRole === 'neo'
       ? 'operations.list {prefix,cursor?}; operations.describe {name}. message.send acceptance means durable mailbox persistence, not an agent reply.'

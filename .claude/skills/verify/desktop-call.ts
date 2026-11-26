@@ -17,7 +17,8 @@ import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repos
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 
-const run = resolve(process.argv[2]);
+const run = resolve(process.argv.at(-1)!);
+const collapse = process.argv.includes('--collapse');
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -44,11 +45,11 @@ const otherApp = 'com.apple.TextEdit';
 const toolPrefix = 'mcp__hyperneo-operations__';
 const modelTools = ['invoke', ...catalog.map(({ name }) => name)].map(name => toolPrefix + name);
 const toolCalls = [
-  { name: 'get_window_state', input: { pid: 123, window_id: 7, timeout_ms: 1000 } },
+  { name: 'get_window_state', input: { pid: 123, window_id: 7, timeout_ms: 1000, since: 'latest' } },
   { name: 'launch_app', input: { bundle_id: otherApp } },
 ];
 const modelRequest = Promise.withResolvers<{ tools: string[]; system: string; brief: string }>();
-type ModelBlock = { type: string; tool_use_id?: string; content?: { type: string; text?: string }[] };
+type ModelBlock = { type: string; tool_use_id?: string; content?: string | { type: string; text?: string }[] };
 const modelResults = Promise.withResolvers<ModelBlock[]>();
 let modelStep = 0;
 const mock = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
@@ -199,6 +200,7 @@ try {
   ]);
   assert.deepEqual(outbound.tools.sort(), [...modelTools].sort());
   assert.match(outbound.system, /desktop tools to act in the approved apps/);
+  assert.match(outbound.system, /Put any exact text you will need in your own reply/);
   assert(!outbound.brief.includes('desktop_permissions_required'));
   const results = await Promise.race([
     modelResults.promise,
@@ -206,18 +208,33 @@ try {
   ]);
   await app.jobProcessor.stop();
   assert.equal(results.length, 2);
-  const [captured, refused] = results.map(result => JSON.parse(result.content?.[0]?.text ?? ''));
-  assert.equal(captured.ok, true);
+  const [capture, refusal] = results;
+  assert(Array.isArray(refusal.content));
+  const refused = JSON.parse(refusal.content[0].text ?? '');
   assert.equal(refused.reason, 'app_not_in_todo_scope');
   assert.equal(refused.dispatched, false);
-  for (const { at, ms } of [captured, refused]) {
-    assert(Number.isFinite(Date.parse(at)));
-    assert(Number.isInteger(ms) && ms >= 0);
+  assert(Number.isFinite(Date.parse(refused.at)));
+  assert(Number.isInteger(refused.ms) && refused.ms >= 0);
+  if (collapse) {
+    assert.equal(capture.content, 'get_window_state pid=123 window_id=7 ok');
+  } else {
+    assert(Array.isArray(capture.content));
+    const captured = JSON.parse(capture.content[0].text ?? '');
+    assert.equal(captured.ok, true);
+    assert(Number.isFinite(Date.parse(captured.at)));
+    assert(Number.isInteger(captured.ms) && captured.ms >= 0);
+    assert.match(capture.content[1]?.text ?? '', /redacted/);
   }
-  assert.match(results[0].content?.[1]?.text ?? '', /redacted/);
   assert(!JSON.stringify(results).includes(token));
+  const stored = JSON.stringify(app.db.getSDKMessages(ref.id, 30).messages);
+  assert.match(stored, /Desktop observation redacted because it contains a possible secret/);
+  assert(!stored.includes('get_window_state pid=123 window_id=7 ok'));
   assert.deepEqual(requests.map(({ tool, arguments: args, apps }) => ({ tool, args, apps })),
-    toolCalls.map(({ name, input }) => ({ tool: name, args: input, apps: [bundleId] })));
+    toolCalls.map(({ name, input }) => {
+      const { since, ...full } = input;
+      return { tool: name, args: collapse ? full : input, apps: [bundleId] };
+    }));
+  console.log(`desktop snapshot journey PASS collapse=${collapse} dispatches=${requests.length} kept_full=${collapse ? 1 : 2} since_forwarded=${!collapse}`);
   requests.length = 0;
   sql.prepare("DELETE FROM mcp_audit_log WHERE session_id = ?").run(ref.id);
   const options = await templated.optionsBuilder.build();
@@ -257,9 +274,9 @@ try {
     card: card.text, template: 'worker.desktop', builtins: options.tools, allowedTools: options.allowedTools,
     mcpServers: Object.keys(options.mcpServers ?? {}), operations, denied: true, redacted: true,
     modelTools: outbound.tools, templatePrompt: true, shortBrief: true, rejectedCaptures: 3,
-    captured, refused,
+    capture: capture.content, refused, collapse, fullCaptureStored: true,
   }, null, 2));
-  console.log(`desktop worker template journey PASS builtins=0 mcp_tools=${modelTools.length} admitted_operations=4 denied_file_reads=1 timed_native_results=2 redacted_observations=2 rejected_captures=3`);
+  console.log(`desktop worker template journey PASS builtins=0 mcp_tools=${modelTools.length} admitted_operations=4 denied_file_reads=1 timed_native_results=${collapse ? 1 : 2} redacted_observations=2 rejected_captures=3`);
   requests.length = 0;
   sql.prepare("DELETE FROM mcp_audit_log WHERE session_id = ?").run(ref.id);
   const worker = await app.sessionManager.createSession({ workspacePath: run, title: 'Synthetic desktop worker', config: modelConfig });

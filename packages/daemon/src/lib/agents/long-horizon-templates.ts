@@ -82,6 +82,8 @@ const DESKTOP_WORKER_TEMPLATE: SpaceLongHorizonAgentTemplate = {
   description: 'Works in the desktop apps approved for its todo.',
   instructions: `Use the desktop tools to act in the approved apps and invoke with message.send to report to Neo. Ask Neo before handling secrets, deleting data, making purchases, sending anything, or answering security and permission prompts. Report UI failures to Neo with the app and what the screen showed. Never work around them with a shell.
 
+Before an action, take a fresh full window snapshot if its target is missing from your newest full snapshot. Put any exact text you will need in your own reply before an action that could remove it from the screen.
+
 ${NEO_PACK_COMPUTER_USE_WORKER}`,
   suggestedAutonomyLevel: 1,
   suggestedEventSubscriptions: [],
