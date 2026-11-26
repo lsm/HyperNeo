@@ -9,6 +9,7 @@ import {
   isOxapHarness,
   OXAP_HARNESSES,
   oxapHarness,
+  oxapModelProvider,
   type OxapHarnessId,
 } from '@hyperneo/shared/types/oxap-harnesses';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -18,7 +19,12 @@ import { findExecutable } from '../drivers/find-executable.ts';
 import { defineOperation, type OperationDefinition } from '../operations/registry.ts';
 import { withProviderLock } from '../rpc-handlers/provider-mutation-lock.ts';
 import type { OxapEngine, OxapEngineOptions } from './oxap-engine.ts';
-import { buildHubConfig, missingSetting, savedOxapAdapter } from './oxap-hub-config.ts';
+import {
+  buildHubConfig,
+  deepSeekModelProviderRefusal,
+  missingSetting,
+  savedOxapAdapter,
+} from './oxap-hub-config.ts';
 import { releaseName, type OxapHubBinary } from './oxap-install.ts';
 
 export interface OxapSettingsDeps {
@@ -114,10 +120,14 @@ export async function newSessionOxapRefusal(
   const executable = saved.settings.executable;
   if (executable && !(await isExecutableFile(executable)))
     return `${provider} needs an executable file; check Settings → Providers`;
-  if (saved.modelProvider === 'opencode-go' && !credentials?.environment.OPENCODE_API_KEY?.trim())
-    return `${provider} needs OPENCODE_API_KEY in the daemon environment for OpenCode Go`;
-  if (!saved.modelProvider && row.key && !(await credentials?.key(provider))?.trim())
+  if (saved.modelProvider) {
+    const refusal = deepSeekModelProviderRefusal(saved.modelProvider);
+    if (refusal) return refusal;
+    if (!credentials?.environment.OPENCODE_API_KEY?.trim())
+      return `${provider} needs OPENCODE_API_KEY in the daemon environment for ${saved.modelProvider}`;
+  } else if (row.key && !(await credentials?.key(provider))?.trim()) {
     return `${provider} needs ${row.key}`;
+  }
   return undefined;
 }
 
@@ -199,6 +209,10 @@ function planSave(input: Save, records: ProviderRecord[]) {
     const updated = { ...saved?.settings, ...settings };
     const missing = missingSetting(settingsRow, updated);
     if (missing) return { reason: `${record.providerId} needs an absolute ${missing} path` };
+    const reason =
+      settingsRow.adapter === 'deepseek' &&
+      deepSeekModelProviderRefusal(oxapModelProvider(updated));
+    if (reason) return { reason };
     rest.harnessSettings = updated;
   }
   if (row) rest.harness = input.harness;

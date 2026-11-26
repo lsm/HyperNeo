@@ -15,6 +15,13 @@ type Records = readonly Pick<ProviderRecord, 'providerId' | 'configJson'>[];
 
 type ProviderConfig = Pick<ProviderRecord, 'providerId' | 'configJson'>;
 
+export function deepSeekModelProviderRefusal(
+  modelProvider: string | undefined
+): string | undefined {
+  if (modelProvider && modelProvider !== 'opencode-go' && modelProvider !== 'opencode-zen')
+    return 'DeepSeek model provider must be opencode-go or opencode-zen';
+}
+
 export function savedOxapAdapter(
   record: ProviderConfig,
   harnesses: Readonly<Record<string, OxapHarness>> = OXAP_HARNESSES
@@ -60,7 +67,7 @@ export function buildHubConfig(
   const owners: Record<string, string> = {};
   for (const record of records) {
     const saved = savedOxapAdapter(record, harnesses);
-    if (!saved) continue;
+    if (!saved || deepSeekModelProviderRefusal(saved.modelProvider)) continue;
     const { row, settings, modelProvider } = saved;
     const names: string[] = [];
     for (const name of row.environment) {
