@@ -133,7 +133,17 @@ started a turn 625 of 625, but Codex Desktop starts only 301 of 492. A Codex sta
 receives the opening turn's id and checks it, then drops it (`startCodexDesktopTurn` in
 `drivers/codex-desktop-handoff.ts`, and the app-server `turn/start` branch in
 `codex-desktop-adapter.ts`); the receipt it returns is found afterwards by reading the
-rollout, which can miss. Returning that turn id is the one adapter change. The stated limits:
+rollout, which can miss. Returning that turn id is one adapter change.
+
+A queued or unconfirmed Codex send gets its key from the id the daemon already chooses for it.
+Every Codex Desktop send path passes a fresh `clientUserMessageId` (the app-server
+`thread/queue/add` and the Desktop `thread-follower-start-turn`), and when the message runs
+Codex writes an `item_completed` event whose user item carries it as `client_id`, with the
+`turn_id` of the turn it ran in. The daemon drops that id today. So the outcome keeps it as
+`clientMessageId`, the Codex turn reader adds each user item's `client_id` to the turn's
+inputs, and `deliveryKeys` matches the two. That is an exact id written by Codex, not time or
+text, so it is a receipt. The `queuedSubmissionId` is not kept by Codex (0 of 1732 turn
+inputs in a week) and is not used. The stated limits:
 
 - A Claude Desktop send through the relay already returns the input id whenever the relay has
   one (`claude-desktop-adapter.ts`). It has none only when the receiver logged just a queue
@@ -141,11 +151,10 @@ rollout, which can miss. Returning that turn id is the one adapter change. The s
   receipt. This happened to 0 of 5914 delivered Claude Desktop sends since October; there is
   no id left to return.
 - A Codex Desktop steer has no receipt; its `steeredIntoTurnId` is its key.
-- A queued or unconfirmed Codex send has no key, and nothing links it to its row: neither its
-  `queuedSubmissionId` (0 of 1732 turn inputs in a week) nor the `clientUserMessageId` the
-  daemon sends is kept in the rollout, and pairing by time or text is not a receipt.
+- A Codex send through the `codex queue` command, the fallback when the app server cannot be
+  reached, sends no client id, so it has no key.
 
-A delivery without a key (the relay case and the queued or unconfirmed Codex send) gives its
+A delivery without a key (the relay case and the `codex queue` fallback) gives its
 turn a todo only through step 2. A steer has its key and is assigned in step 1. This is a known
 limit, not guessed around.
 
@@ -168,8 +177,7 @@ have no `usage`.
 
 A todo's usage is complete only when every turn it has is complete and no worker it reached (by
 a delivery row, a start or an adoption) has a turn without a todo. Such a turn may be this
-todo's work, so its cost is unknown, not zero; this is where queued and unconfirmed Codex sends
-show up.
+todo's work, so its cost is unknown, not zero.
 
 ## 3. Size and rework from packs
 
@@ -196,7 +204,7 @@ context a todo adds by itself (`peak - first`) is recorded, to see work that was
 
 ## Changes
 
-Seven PRs from `dev`, in order, failing tests first. System map read for the planned files.
+Eight PRs from `dev`, in order, failing tests first. System map read for the planned files.
 
 1. **Turn to todo.** The decision in core, and the `work_adoptions` migration; coding uses it and keeps its stricter reading of an
    uncertain turn. Tests: a turn recorded after `reopen`, a redispatch, a retry and a restart
@@ -216,24 +224,31 @@ Seven PRs from `dev`, in order, failing tests first. System map read for the pla
    for a send. Tests: a start whose rollout read misses still has its turn id and gives its
    todo; a start whose call returns no turn id still fails as today.
    Estimate: 4 files, 30 lines, 60 test lines.
-3. **Kind and estimate.** Core kinds, the checks on the two operations, the fact, the Neo tool
+3. **Codex client message id.** Each Codex Desktop send keeps its `clientUserMessageId` in the
+   outcome as `clientMessageId`, queued or not; the Codex turn reader adds the `client_id` of
+   the turn's `item_completed` user items to its inputs; `deliveryKeys` reads both. Tests on
+   real rollout shapes: a queued send that runs later gives its todo; two queued sends that run
+   in two turns each give their own; a `codex queue` fallback send has none; a user item without
+   `client_id` adds nothing.
+   Estimate: 4 files, 50 lines, 100 test lines.
+4. **Kind and estimate.** Core kinds, the checks on the two operations, the fact, the Neo tool
    text, and the estimate line in `AGENTS.md` for designs. Tests: missing or unknown kind is
    refused; a pack's kind is accepted only while the pack is on; changing an estimate after
    the todo is added is refused; a daemon-made todo without one is accepted; a todo with
    a kind matches the saved rules of that kind, and one without keeps today's fallbacks.
    Estimate: 8 files, 130 lines, 150 test lines.
-4. **Turn usage, Codex, and the column.** Migration and `usage` on `WorkTurnFact`. Tests on real
+5. **Turn usage, Codex, and the column.** Migration and `usage` on `WorkTurnFact`. Tests on real
    rollout shapes: cached input is not counted twice; a turn read in two parts has one total;
    an old row has no usage.
    Estimate: 6 files, 130 lines, 170 test lines.
-5. **Turn usage, Claude and HyperNeo.** Tests: several rows of one message count once; a
+6. **Turn usage, Claude and HyperNeo.** Tests: several rows of one message count once; a
    subagent turn is incomplete; another model in the same turn is kept apart.
    Estimate: 4 files, 110 lines, 180 test lines.
-6. **Size and rework.** The hook and coding's implementation. Tests: test and document paths,
+7. **Size and rework.** The hook and coding's implementation. Tests: test and document paths,
    lock files, more files than one page, a hand merge, a head counted once, a todo with two
    PRs.
    Estimate: 6 files, 150 lines, 200 test lines.
-7. **The read operation.** Tests: a failed todo, a todo with two workers, a missing pack hook,
+8. **The read operation.** Tests: a failed todo, a todo with two workers, a missing pack hook,
    an unattributed turn in a worker the todo reached makes its usage incomplete, one in another
    worker does not; the share with no todo per adapter.
    Estimate: 4 files, 130 lines, 170 test lines.
@@ -241,20 +256,21 @@ Seven PRs from `dev`, in order, failing tests first. System map read for the pla
 **Done when**, one week after the last PR: at least 95% of finished todos that had a worker of
 Claude Code, Claude Desktop, HyperNeo or Codex Desktop have kind and an estimate when required
 (or the reviewed PR's size for a review); at least 95% have complete usage. Turns with omitted
-subagent cost count as incomplete, not zero. Receipts: at least 95% of confirmed sends and starts on the adapters that return a
-receipt (Claude Code, Claude Desktop, HyperNeo, Codex Desktop), leaving out the stated limits
-(Claude Desktop relay sends without an input id, Codex steers, queued and unconfirmed Codex
-sends), have a receipt. Keys: at least 95% of all confirmed sends and starts, limits included,
+subagent cost count as incomplete, not zero. Receipts: at least 95% of confirmed sends and
+starts on the adapters that return a receipt (Claude Code, Claude Desktop, HyperNeo, Codex
+Desktop), leaving out the stated limits (Claude Desktop relay sends without an input id, Codex
+steers, `codex queue` fallback sends), have a receipt. Queued and unconfirmed Codex sends are on their own line: the share that got a
+receipt once their message ran. Keys: at least 95% of all confirmed sends and starts, limits included,
 have a delivery key. Each limited path is reported on its own line.
-The share of worker turns with a todo is reported per adapter against today's 28%. For 20 turns with a
-todo, picked at random, the todo read from the worker's own transcript matches at least 19
+The share of worker turns with a todo is reported per adapter against today's 28%. For 20
+turns with a todo, picked at random, the todo read from the worker's own transcript matches at least 19
 times, with turns the human started counted apart. For 20 todos with complete usage, picked
 at random, the totals match the harness's own records.
 
 ## Limits
 
 - A turn without a receipt in a worker that two todos reached has none, even when the right
-  todo is clear to a person. Queued and unconfirmed Codex sends never have a receipt.
+  todo is clear to a person. A Codex send through the `codex queue` fallback has no receipt.
 - A turn the human starts in a worker that one todo reached counts for that todo, by the
   fallback, not by proof.
 - Work Neo does in its own conversation has no todo and no account.
