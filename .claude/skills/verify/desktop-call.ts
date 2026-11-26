@@ -38,8 +38,8 @@ const app = await createDaemonApp({
 });
 assert(![8399, 8499].includes(app.server.port));
 const model = 'desktop-template-proof';
-const instruction = 'Identify the open Finder window.';
-const bundleId = 'com.apple.finder';
+const instruction = 'Identify the open Calculator window.';
+const bundleId = 'com.apple.calculator';
 const otherApp = 'com.apple.TextEdit';
 const toolPrefix = 'mcp__hyperneo-operations__';
 const modelTools = ['invoke', ...catalog.map(({ name }) => name)].map(name => toolPrefix + name);
@@ -169,7 +169,7 @@ try {
   const neo = createOperationMcpHandler(registry, () => ({ sessionId: root, role: 'neo' }));
   const fromNeo = async (name: string, input: Record<string, unknown>) =>
     JSON.parse((await neo({ name, input })).content[0].text);
-  const opened = await fromNeo('neo.ask.propose', { title: 'Inspect Finder', request: 'Inspect the test folder in Finder?', desktopApps: [bundleId] });
+  const opened = await fromNeo('neo.ask.propose', { title: 'Inspect Calculator', request: 'Inspect the Calculator window?', desktopApps: [bundleId] });
   assert(opened.ok, JSON.stringify(opened));
   const ask = new NeoAskTodoRepository(sql);
   const card = ask.listQuestions(opened.ask.id)[0]!;
@@ -181,7 +181,7 @@ try {
   secretObservation = true;
   app.jobProcessor.start();
   const added = await fromNeo('neo.todo.add', {
-    askId: opened.ask.id, title: 'Identify the Finder window', after: [],
+    askId: opened.ask.id, title: 'Identify the Calculator window', after: [],
     check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'evidence', 'complete') } },
     instruction,
     target: { verb: 'start', adapter: 'hyperneo', ...modelConfig, place: { machine: hostname(), folder: run, name: 'Synthetic workspace' } },
@@ -195,7 +195,7 @@ try {
   assert.equal(templated.getSessionData().metadata.workerTemplate, 'worker.desktop');
   const outbound = await Promise.race([
     modelRequest.promise,
-    delay(30_000, undefined, { ref: false }).then(() => { throw new Error('No model request for the Finder todo'); }),
+    delay(30_000, undefined, { ref: false }).then(() => { throw new Error('No model request for the Calculator todo'); }),
   ]);
   assert.deepEqual(outbound.tools.sort(), [...modelTools].sort());
   assert.match(outbound.system, /desktop tools to act in the approved apps/);
@@ -205,6 +205,26 @@ try {
     delay(30_000, undefined, { ref: false }).then(() => { throw new Error('No native desktop tool results reached the model'); }),
   ]);
   await app.jobProcessor.stop();
+  const init = app.db.getSDKMessagesByType(ref.id, 'system', 'init').find(
+    (message) => message.type === 'system' && message.subtype === 'init'
+  );
+  assert(init, 'No Claude Code startup inventory was recorded');
+  const inventory = {
+    claudeCodeVersion: init.claude_code_version,
+    tools: init.tools,
+    modelTools: outbound.tools,
+    skills: init.skills,
+    slashCommands: init.slash_commands,
+    terminalSlashCommands: init.terminal_slash_commands,
+    agents: init.agents,
+    composerCommands: await templated.getSlashCommands(),
+  };
+  writeFileSync(join(run, 'evidence/desktop-worker-inventory.json'), JSON.stringify(inventory, null, 2));
+  assert.deepEqual([...init.tools].sort(), [...modelTools].sort());
+  assert.deepEqual(init.skills, []);
+  assert.deepEqual(init.slash_commands, []);
+  assert.deepEqual(init.terminal_slash_commands ?? [], []);
+  assert.deepEqual(init.agents ?? [], []);
   assert.equal(results.length, 2);
   const [captured, refused] = results.map(result => JSON.parse(result.content?.[0]?.text ?? ''));
   assert.equal(captured.ok, true);
@@ -247,7 +267,7 @@ try {
   const reasonForCapture = async () => JSON.parse((await templateCall(observation)).content[0].text).reason;
   setScope([{ bundleId: 'com.apple.TextEdit', name: 'TextEdit', seen: 'all' }]);
   assert.equal(await reasonForCapture(), 'desktop_not_enabled');
-  setScope([{ bundleId, name: 'Finder' }]);
+  setScope([{ bundleId, name: 'Calculator' }]);
   assert.equal(await reasonForCapture(), 'desktop_consent_outdated');
   sql.prepare('UPDATE neo_todos SET approved_at = NULL WHERE id = ?').run(added.todo.id);
   assert.equal(await reasonForCapture(), 'desktop_consent_outdated');
