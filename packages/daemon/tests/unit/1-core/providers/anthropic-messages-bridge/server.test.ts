@@ -313,10 +313,13 @@ describe.skipIf(!isBun)('anthropic-messages-bridge: session thinking enforcement
     server = await createAnthropicMessagesBridgeServer({
       baseUrl: 'http://127.0.0.1:1',
       disableThinkingWithChatTemplate: true,
-      fetchImpl: async (_url, init) => {
-        upstreamBody = JSON.parse(new TextDecoder().decode(init?.body as ArrayBuffer));
-        return Response.json({ content: [{ type: 'text', text: 'hi' }] });
-      },
+      fetchImpl: Object.assign(
+        async (...[, init]: Parameters<typeof fetch>) => {
+          upstreamBody = JSON.parse(new TextDecoder().decode(init?.body as ArrayBuffer));
+          return Response.json({ content: [{ type: 'text', text: 'hi' }] });
+        },
+        { preconnect: () => undefined }
+      ),
     });
     server.setSessionThinkingConfig?.('sess-off', { type: 'disabled' });
 
