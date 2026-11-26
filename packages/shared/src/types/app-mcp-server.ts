@@ -2,6 +2,14 @@ export type AppMcpServerSourceType = 'stdio' | 'sse' | 'http';
 
 export type AppMcpServerSource = 'builtin' | 'user' | 'imported';
 
+export interface AppMcpServerAuth {
+  kind: 'oauth';
+  preset: string;
+  clientId?: string;
+  generation: number;
+  active: boolean;
+}
+
 export interface AppMcpServer {
   id: string;
   name: string;
@@ -18,16 +26,17 @@ export interface AppMcpServer {
   lastAttachError?: string;
   createdAt?: number;
   updatedAt?: number;
+  auth?: AppMcpServerAuth;
 }
 
 export type CreateAppMcpServerRequest = Omit<
   AppMcpServer,
-  'id' | 'enabled' | 'source' | 'lastAttachError'
+  'id' | 'enabled' | 'source' | 'lastAttachError' | 'auth'
 > & {
   enabled?: boolean;
   source?: AppMcpServerSource;
 };
 
 export type UpdateAppMcpServerRequest = { id: string } & Partial<
-  Omit<AppMcpServer, 'id' | 'lastAttachError'>
+  Omit<AppMcpServer, 'id' | 'lastAttachError' | 'auth'>
 >;

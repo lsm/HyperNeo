@@ -172,10 +172,16 @@ describe('McpImportService', () => {
       const id = repo.getByName('web')!.id;
       const auth = { kind: 'oauth' as const, preset: 'test', generation: 1, active: true };
       repo.setAuth(id, auth);
+      const protectedRow = repo.get(id);
 
       declare('https://b.example.test/mcp');
-      await service.refreshFromFile(file);
-      expect(repo.get(id)?.url).toBe('https://a.example.test/mcp');
+      expect(await service.refreshFromFile(file)).toMatchObject({ status: 'ok', updated: 0 });
+
+      writeMcpJson(file, {
+        mcpServers: { web: { type: 'http', url: protectedRow?.url, headers: { 'X-Test': 'new' } } },
+      });
+      expect(await service.refreshFromFile(file)).toMatchObject({ status: 'ok', updated: 0 });
+      expect(repo.get(id)).toEqual(protectedRow);
 
       writeMcpJson(file, { mcpServers: {} });
       await service.refreshFromFile(file);

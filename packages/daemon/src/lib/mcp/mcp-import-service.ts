@@ -235,7 +235,7 @@ export class McpImportService {
         continue;
       }
 
-      if (!fieldsEqual(existing, req)) {
+      if (!existing.auth && !fieldsEqual(existing, req)) {
         try {
           this.db.appMcpServers.update(existing.id, {
             description: req.description,
@@ -891,6 +891,8 @@ function persistMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
           }
           continue;
         }
+
+        if (existing.auth) continue;
 
         const shouldMergeEnabled = !!legacy && legacy.enabled && !existing.enabled;
         const needsName = existing.name !== resolvedName;

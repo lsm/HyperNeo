@@ -107,8 +107,12 @@ export function registerAppMcpHandlers(messageHub: MessageHub, ctx: AppMcpHandle
       throw new Error('id is required');
     }
 
-    if (!db.appMcpServers.get(id)) {
+    const existing = db.appMcpServers.get(id);
+    if (!existing) {
       throw new Error(`MCP server not found: ${id}`);
+    }
+    if (existing.auth) {
+      throw new Error(`MCP server "${existing.name}" uses OAuth; disconnect it first`);
     }
 
     await writeToolDefaults(db, {

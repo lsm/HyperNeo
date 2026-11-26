@@ -112,7 +112,9 @@ describe('MCP default RPC writes', () => {
       url: 'https://mcp.example.test/mcp',
     });
     registry.setAuth(server.id, { kind: 'oauth', preset: 'test', generation: 1, active: false });
-    await expect(call('mcp.registry.delete', { id: server.id })).rejects.toThrow();
+    await expect(call('mcp.registry.delete', { id: server.id })).rejects.toThrow(
+      'disconnect it first'
+    );
     expect(registry.get(server.id)).not.toBeNull();
   });
   it('creates and deletes matching default choices', async () => {
