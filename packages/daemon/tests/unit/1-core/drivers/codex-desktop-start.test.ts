@@ -960,6 +960,7 @@ describe('codex-desktop start', () => {
         status: 'running',
         lastActivityAt: NOW,
         link: 'codex://threads/th1',
+        startedTurnId: 'turn-opening',
       },
     });
     expect(calls).toEqual([
@@ -994,7 +995,7 @@ describe('codex-desktop start', () => {
           shared: {
             call: async (method, params) => {
               shared.push([method, params]);
-              return {};
+              return method === 'turn/start' ? { turn: { id: 'turn-shared' } } : {};
             },
             close: async () => {},
           },

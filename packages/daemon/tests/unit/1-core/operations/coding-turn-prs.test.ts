@@ -158,7 +158,11 @@ describe('coding turn PRs', () => {
   test('a Codex start whose rollout read missed gives its todo by the opening turn id', () => {
     const { db, record } = setup();
     const outcome = readDriverOutcome(
-      { verb: 'start', adapter: 'codex-desktop', place: { machine: 'laptop', folder: '/w' } },
+      {
+        verb: 'start',
+        adapter: 'codex-desktop',
+        place: { machine: 'laptop', folder: '/w', name: 'w' },
+      },
       { kind: 'completed', value: { ok: true, value: { ref, startedTurnId: 't-open' } } }
     );
     db.prepare(
