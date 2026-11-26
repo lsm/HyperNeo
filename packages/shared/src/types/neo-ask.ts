@@ -78,6 +78,13 @@ export interface NeoTodoCheck {
   params: Record<string, unknown>;
 }
 
+export interface NeoTodoHold {
+  heldAt: number;
+  until?: NeoTodoCheck;
+  reviewAt: number;
+  failed?: { at: number; url: string; reason: string };
+}
+
 export type NeoTodoState = 'todo' | 'doing' | 'blocked' | 'done' | 'removed';
 
 export type NeoTodoPriority = 'low' | 'normal' | 'high' | 'urgent';
@@ -108,6 +115,7 @@ export interface NeoTodo extends ArtifactProjection {
   blockedReason: string | null;
   nextAction: string | null;
   blockedBy: NeoTodoBlocker | null;
+  hold?: NeoTodoHold;
   priority: NeoTodoPriority;
   dependsOn: string[] | null;
   replacedBy: string | null;

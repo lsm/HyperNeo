@@ -50,7 +50,9 @@ export async function readNeoSteps(
     deps.packs(),
     steps.flatMap((row) => {
       const next = owner(row);
-      return next.owner === 'neo' && next.reason !== 'check_overdue' ? [row.todo] : [];
+      return !row.facts.held && next.owner === 'neo' && next.reason !== 'check_overdue'
+        ? [row.todo]
+        : [];
     })
   );
   return steps.map((row) =>
@@ -74,15 +76,27 @@ export function planNeoSweepEvents(
               kind: 'todo.neo_step',
               subject: { type: 'todo', id: row.todo.id },
               since: next.since,
-              facts: {
-                title: row.todo.title,
-                reason: next.reason,
-                requestFrom: row.todo.named?.requestFrom,
-                detail:
-                  next.reason === 'failed'
-                    ? (row.todo.blockedReason ?? row.todo.reason ?? '').replace(/[.。\s]+$/, '')
-                    : '',
-              },
+              facts:
+                row.facts.held && row.todo.hold
+                  ? {
+                      heldAt: row.todo.hold.heldAt,
+                      reason: next.reason,
+                      detail: row.todo.hold.failed
+                        ? `${row.todo.blockedReason} (${row.todo.hold.failed.url} ${row.todo.hold.failed.reason})`
+                        : row.todo.blockedReason,
+                    }
+                  : {
+                      title: row.todo.title,
+                      reason: next.reason,
+                      requestFrom: row.todo.named?.requestFrom,
+                      detail:
+                        next.reason === 'failed'
+                          ? (row.todo.blockedReason ?? row.todo.reason ?? '').replace(
+                              /[.。\s]+$/,
+                              ''
+                            )
+                          : '',
+                    },
             },
           ]
         : [];

@@ -1,7 +1,7 @@
 import { neoToolDescription } from '@hyperneo/prompts';
 import { hasPendingTodoDecision } from './proposal.ts';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
-import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAsk, NeoQuestion, NeoTodo, NeoTodoCheck } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { NeoTopicPick } from './ask-topic.ts';
@@ -43,7 +43,7 @@ import {
   planNeoTodoDependencies,
 } from './todo-dependencies.ts';
 import { isNeoTodoStartable, neoTodoFailed } from './todo-runner.ts';
-import { neoTodoCovered } from './todo-state.ts';
+import { NEO_TODO_HOLD_RELEASED, neoTodoCovered } from './todo-state.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -331,16 +331,26 @@ const Edit = z.object({
     .optional()
     .describe('Replace the todo ids this todo waits for; [] lets it run alongside the others.'),
 });
-type EditPlan = Omit<z.infer<typeof Edit>, 'hold'> & { hold?: string | null };
+type EditPlan = Omit<z.infer<typeof Edit>, 'hold'> & {
+  hold?: string | null;
+  until?: NeoTodoCheck;
+  reviewAt?: number;
+  holdResult?: { heldAt: number; failure?: { url: string; reason: string } };
+};
 
 const Hold = z.object({
   todoId: Text,
   reason: Text.nullable().describe('Why this step waits; null releases it.'),
   decision: z.boolean().optional().describe('Ask the human to start, resume or remove this step.'),
+  until: z.unknown().optional().describe('Release condition: coding.pr_merged with params.urls.'),
+  reviewAt: z
+    .number()
+    .optional()
+    .describe('Time in epoch milliseconds for Neo to review the hold.'),
 });
 
 export type WriteNeoTodoHold = (
-  input: { todoId: string; reason: string | null },
+  input: { todoId: string; reason: string | null; until?: NeoTodoCheck; reviewAt?: number },
   caller: OperationCaller
 ) => Promise<TodoReceipt | Rejection>;
 
@@ -441,6 +451,14 @@ export function planNeoTodoEdit(todo: NeoTodo, input: EditPlan, now = Date.now()
       'already_started: what a started todo waits for cannot change; its worker is already running.'
     );
   const held = todo.state === 'blocked' && todo.blockedBy === 'held';
+  const observed = input.holdResult;
+  if (observed && (!held || todo.hold?.heldAt !== observed.heldAt))
+    return fail('hold_changed: the todo no longer has that hold.');
+  if (observed?.failure) {
+    if (!todo.hold || todo.hold.failed) return fail('hold_failed: already recorded.');
+    const { url, reason } = observed.failure;
+    return { value: { todo, patch: { hold: { ...todo.hold, failed: { url, reason, at: now } } } } };
+  }
   if (!input.instruction !== !input.target)
     return fail('work_incomplete: give a todo work with instruction and target together.');
   if (
@@ -457,6 +475,7 @@ export function planNeoTodoEdit(todo: NeoTodo, input: EditPlan, now = Date.now()
       `not_holdable: only a waiting or running todo can be held; this one is ${todo.state}.`
     );
   if (input.hold === null && !held) return fail('not_held: this todo is not held.');
+  const heldAt = Math.max(now, todo.updatedAt + 1);
   return {
     value: {
       todo,
@@ -473,6 +492,11 @@ export function planNeoTodoEdit(todo: NeoTodo, input: EditPlan, now = Date.now()
           ? {
               state: 'blocked',
               blockedBy: 'held',
+              hold: {
+                heldAt,
+                ...(input.until ? { until: input.until } : {}),
+                reviewAt: input.reviewAt ?? heldAt + (input.until ? 7 : 1) * 24 * 3_600_000,
+              },
               blockedReason: input.hold,
               nextAction: 'Release it when ready.',
             }
@@ -483,7 +507,7 @@ export function planNeoTodoEdit(todo: NeoTodo, input: EditPlan, now = Date.now()
             : {
                 state: 'blocked',
                 blockedBy: 'worker',
-                blockedReason: 'The hold was released.',
+                blockedReason: NEO_TODO_HOLD_RELEASED,
                 nextAction: 'Continue the worker.',
               }
           : {}),
@@ -833,8 +857,29 @@ export function createNeoTodoOperations(
     .input(['input', 'caller'])
     .pipe(
       async (input: z.infer<typeof Hold>) => {
+        const hasFields = input.until !== undefined || input.reviewAt !== undefined;
+        if (hasFields && (input.decision === true || input.reason === null))
+          return fail('invalid_hold: only a non-decision hold accepts until and reviewAt.');
+        const condition =
+          input.until === undefined ? undefined : TodoCheck.strict().safeParse(input.until);
+        if (
+          condition &&
+          (!condition.success ||
+            !packs()
+              .find((pack) => pack.id === condition.data.pack)
+              ?.todos?.hold?.accepts(condition.data))
+        )
+          return fail('unsupported_until: use a supported hold condition with valid parameters.');
+        const now = Date.now();
+        if (
+          input.reviewAt !== undefined &&
+          (input.reviewAt < now || input.reviewAt > now + 30 * 24 * 3_600_000)
+        )
+          return fail('invalid_review_at: reviewAt must be within the next 30 days.');
         if (input.reason === null || input.decision !== true)
-          return { value: { kind: 'edit' as const, request: input } };
+          return {
+            value: { kind: 'edit' as const, request: { ...input, until: condition?.data } },
+          };
         const todo = todos.getTodo(input.todoId);
         if (!todo) return requireNeoOpenTodo(todo, null);
         const admitted = admit(todos.getAsk(todo.askId), todo);
@@ -850,7 +895,7 @@ export function createNeoTodoOperations(
     .pipe(
       async (
         plan:
-          | { kind: 'edit'; request: z.infer<typeof Hold> }
+          | { kind: 'edit'; request: Parameters<WriteNeoTodoHold>[0] }
           | { kind: 'card'; todo: NeoTodo; draft: NeoQuestionDraft },
         caller: OperationCaller
       ) => {
@@ -858,7 +903,15 @@ export function createNeoTodoOperations(
           return writeHold
             ? writeHold(plan.request, caller)
             : present(
-                await edit({ todoId: plan.request.todoId, hold: plan.request.reason }, caller)
+                await edit(
+                  {
+                    todoId: plan.request.todoId,
+                    hold: plan.request.reason,
+                    until: plan.request.until,
+                    reviewAt: plan.request.reviewAt,
+                  },
+                  caller
+                )
               );
         const { todo, draft } = plan;
         const failed = todo.startedAt === null ? null : await controls.stop(todo);

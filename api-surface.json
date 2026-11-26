@@ -44425,9 +44425,16 @@
             ],
             "description": "Why this step waits; null releases it."
           },
+          "reviewAt": {
+            "description": "Time in epoch milliseconds for Neo to review the hold.",
+            "type": "number"
+          },
           "todoId": {
             "minLength": 1,
             "type": "string"
+          },
+          "until": {
+            "description": "Release condition: coding.pr_merged with params.urls."
           }
         },
         "required": [

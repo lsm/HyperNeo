@@ -93,6 +93,7 @@ export type NeoTodoPatch = Partial<
     | 'blockedReason'
     | 'nextAction'
     | 'blockedBy'
+    | 'hold'
     | 'priority'
     | 'dependsOn'
     | 'instruction'
@@ -119,6 +120,7 @@ const TODO_COLUMNS: Record<keyof NeoTodoPatch, string> = {
   blockedReason: 'blocked_reason',
   nextAction: 'next_action',
   blockedBy: 'blocked_by',
+  hold: 'hold_json',
   priority: 'priority',
   dependsOn: 'depends_on',
   instruction: 'instruction',
@@ -152,7 +154,7 @@ const TODO_SELECT = `SELECT id, ask_id AS askId, position, title, done_when AS d
   next_action AS nextAction, blocked_by AS blockedBy, replaced_by AS replacedBy,
   added_after_start AS addedAfterStart, report, evidence, artifacts_json AS artifactsJson, priority, depends_on AS dependsOnJson, created_at AS createdAt,
   updated_at AS updatedAt, started_at AS startedAt, finished_at AS finishedAt,
-  approved_at AS approvedAt, approval_question_id AS approvalQuestionId,
+  approved_at AS approvedAt, approval_question_id AS approvalQuestionId, hold_json AS holdJson,
   produces_follow_up AS producesFollowUp, desktop_apps AS desktopAppsJson FROM neo_todos`;
 
 export type NeoQuestionDraft = Pick<
@@ -268,7 +270,9 @@ type TodoRow = Omit<
   | 'dependsOn'
   | 'producesFollowUp'
   | 'desktopApps'
+  | 'hold'
 > & {
+  holdJson: string | null;
   desktopAppsJson: string | null;
   checkJson: string | null;
   producesFollowUp: number;
@@ -286,9 +290,11 @@ const toTodo = ({
   addedAfterStart,
   producesFollowUp,
   desktopAppsJson,
+  holdJson,
   ...row
 }: TodoRow): NeoTodo => ({
   ...row,
+  ...(holdJson ? { hold: JSON.parse(holdJson) as NeoTodo['hold'] } : {}),
   ...(desktopAppsJson ? { desktopApps: JSON.parse(desktopAppsJson) as NeoDesktopApp[] } : {}),
   ...(producesFollowUp === 1 ? { producesFollowUp: true as const } : {}),
   dependsOn: parsed<string[]>(dependsOnJson),
@@ -976,6 +982,8 @@ export class NeoAskTodoRepository {
       change.state && change.state !== 'blocked'
         ? { ...change, blockedReason: null, nextAction: null, blockedBy: null }
         : change;
+    if (todo.hold && patch.blockedBy !== undefined && patch.blockedBy !== 'held')
+      patch.hold = undefined;
     const keys = Object.keys(patch) as (keyof NeoTodoPatch)[];
     const changed = this.db.transaction(() => {
       const result = this.db
@@ -988,9 +996,11 @@ export class NeoAskTodoRepository {
           ...keys.map((key) =>
             key === 'check' || key === 'artifacts' || key === 'dependsOn' || key === 'named'
               ? JSON.stringify(patch[key] ?? null)
-              : (patch[key] ?? null)
+              : key === 'hold' && patch.hold
+                ? JSON.stringify(patch.hold)
+                : (patch[key] ?? null)
           ),
-          now,
+          Math.max(now, patch.hold?.heldAt ?? todo.hold?.heldAt ?? todo.updatedAt),
           todo.id
         );
       if (
