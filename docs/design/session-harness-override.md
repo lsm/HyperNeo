@@ -27,8 +27,9 @@ An eligible row that is not ready still shows, disabled, with "Set up in
 Settings → Providers". `sdk` is always selectable.
 
 First batch: OpenAI Codex offers SDK and OXAP Codex; DeepSeek offers SDK and
-OXAP DeepSeek. OpenCode Go with DSH, then each other pair, is a table row added
-only after that pair is proven (endpoint, auth, model ids). Until then a pair
+OXAP DeepSeek. OpenCode Go with DSH is proven for Flash only (below). Each other
+pair is a table row added only after that pair is proven (endpoint, auth, model
+ids). Until then a pair
 is simply absent from the list.
 
 ## Where the override is stored
@@ -77,6 +78,34 @@ provider-id name and `harnessSettings` stay flat. That includes OpenCode Go
 with DSH, whose first row this would be. A naming scheme for two OXAP rows on
 one provider is decided only when a second pairing needs it.
 
+## OpenCode Go with DSH, Flash only
+
+DSH 0.2.2-rc.2 is proven on OpenCode Go for one model only: `deepseek-v4.1-flash`
+answered with HTTP 200 through a DSH profile overlay that points at the Go
+endpoint the daemon already uses (`OpenCodeProvider.CHAT_BASE_URL`). DSH's
+built-in Go profile failed the same check, so it is not used. Matching by
+provider alone would offer DSH for every Go model, so this pair adds one thing:
+a row may name the models it serves.
+
+- **The row.** `oxap-opencode-dsh`: provider `opencode`, `models:
+  ['deepseek-v4.1-flash']`, key `OPENCODE_API_KEY`. Its entry starts DSH with
+  `--profile sdk --patch <overlay>`. The daemon writes the overlay into its own
+  state directory: one `opencode-go` provider with that endpoint, the API key read
+  from `OPENCODE_API_KEY`, and that one model. The key is the OpenCode provider's
+  own key, loaded for the row's `key` as for every row. `DEEPSEEK_API_KEY` is never
+  set for it.
+- **Selection and admission.** A row with `models` is eligible only when the
+  session's model is in that list. The dialog lists it only then. `session.create`
+  refuses an override to it for any other model with a plain message. A row
+  without `models` is unchanged.
+- **Default.** When this row is the saved default for OpenCode, a Flash session
+  uses it. Any other Go model resolves to `sdk`, today's OpenCode path. No other
+  fallback is added. `engineForProvider` takes the model for this.
+- **Model change.** The thread lock that already fixes the model of a started
+  DeepSeek thread (`isOxapModelLocked`, today `oxap-deepseek` only) also names
+  this row. Before the first turn, a switch to a model outside the list is
+  refused by the same eligibility check. The chat keeps its harness.
+
 ## What happens when the harness is not installed
 
 - Dialog: the row is disabled with the Settings hint above. The user cannot
@@ -109,8 +138,14 @@ Each slice works on its own: nothing is reachable before what it needs exists.
    (disabled when not ready), send `harness` only when the user overrides.
 4. Prove both first-batch pairs end to end on one daemon: provider default
    chat and SDK override chat, then the reverse.
-5. Later, one PR each: OpenCode Go with DSH, then other pairs once each is
-   proven.
+5. OpenCode Go with DSH, Flash only: the `models` field, the row and its
+   overlay, model-aware eligibility in the dialog, creation and
+   `engineForProvider`, and the row in the model lock. Tests: a Flash override
+   is admitted and its first turn reaches the Go endpoint with the OpenCode key
+   and no `DEEPSEEK_API_KEY`; an override for another Go model is refused; with
+   the row as default, Flash uses DSH and another Go model uses `sdk`; switching
+   a DSH chat to another model is refused.
+6. Later, one PR each: other pairs once each is proven.
 
 Measuring quota use between SDK and OXAP Codex is separate work and not part
 of this build.
