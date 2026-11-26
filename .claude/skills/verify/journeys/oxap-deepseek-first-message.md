@@ -28,3 +28,11 @@ second turn in the same chat. The local dsh peer requires the saved key, and
 the transcript confirms the reply arrived on the original native thread.
 
 The fixture runs the published OXAP hub with a local dsh peer.
+
+With `routed`, save `model_provider: opencode-go` over RPC and send the first
+message without an official DeepSeek key. With `routed-with-key`, repeat with a
+stored official key. Both modes give only the hub a synthetic OpenCode key and
+require the local dsh peer to receive the translated endpoint and key, use the
+daemon-owned home without a managed credential file, and deliver a chat reply.
+The served document must contain the provider ID and no key values. These
+modes exercise OXAP routing without contacting OpenCode Go.

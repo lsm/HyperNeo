@@ -14,7 +14,16 @@ if sys.argv[1:] == ['--help']:
     sys.exit(0)
 
 assert sys.argv[1:] == ['--profile', 'sdk']
-assert os.environ.get('DEEPSEEK_API_KEY') == 'synthetic-deepseek-proof'
+if os.path.exists('verify-model-provider'):
+    assert 'OPENCODE_API_KEY' not in os.environ
+    assert os.environ.get('DEEPSEEK_API_KEY') == 'synthetic-route-proof'
+    assert os.environ.get('DEEPSEEK_BASE_URL') == 'https://opencode.ai/inference/go'
+    home = os.environ['DSH_HOME']
+    assert home == os.path.join(os.path.dirname(os.environ['HOME']), 'data/oap/dsh')
+    assert os.path.isdir(home)
+    assert not os.path.lexists(os.path.join(home, '.credentials.yaml'))
+else:
+    assert os.environ.get('DEEPSEEK_API_KEY') == 'synthetic-deepseek-proof'
 
 lease = None
 use_lease = os.path.exists("verify-native-lease")

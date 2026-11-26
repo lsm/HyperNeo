@@ -18,7 +18,7 @@ import { answerCodexProbeLocally, serveLocalRelease } from './oxap-codex-provide
 const [binary, version, sha256, ...args] = process.argv.slice(2);
 const mode = args.length === 2 ? args[0] : 'first';
 const runArgument = args.at(-1)!;
-assert(['first', 'recovery', 'pending', 'flash', 'image', 'flash-web', 'pro-web', 'flash-recovery', 'sdk-default', 'locked-recovery', 'refused-reopen', 'first-open-retry', 'no-replay'].includes(mode));
+assert(['first', 'routed', 'routed-with-key', 'recovery', 'pending', 'flash', 'image', 'flash-web', 'pro-web', 'flash-recovery', 'sdk-default', 'locked-recovery', 'refused-reopen', 'first-open-retry', 'no-replay'].includes(mode));
 const run = resolve(runArgument);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -26,7 +26,9 @@ assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert.deepEqual(await checkOxapBinary(binary, { version, sha256 }), { ok: true });
 const workspace = join(run, 'workspace');
 const peer = join(run, 'dsh');
+const routed = mode === 'routed' || mode === 'routed-with-key';
 mkdirSync(workspace);
+if (routed) writeFileSync(join(workspace, 'verify-model-provider'), '');
 const nativePromptCount = join(workspace, 'verify-native-prompt-count');
 if (mode === 'no-replay') {
   process.env.HYPERNEO_HUMAN_SEND_SILENCE_MS = '250';
@@ -51,6 +53,11 @@ const boot = () => createDaemonApp({
   verbose: false,
 });
 let app = await boot();
+if (routed) {
+  Object.assign(app.oxapSettings, {
+    environment: { ...process.env, OPENCODE_API_KEY: 'synthetic-route-proof', DSH_HOME: join(run, 'home') },
+  });
+}
 const connect = () => new WebSocketClientTransport({
   url: `ws://127.0.0.1:${app.server.port}/ws`,
   autoReconnect: false,
@@ -72,11 +79,15 @@ try {
       isDefault: true,
       sortOrder: 0,
     },
-    credentials: { apiKey: 'synthetic-deepseek-proof' },
+    ...(mode === 'routed' ? {} : { credentials: { apiKey: 'synthetic-deepseek-proof' } }),
   });
   const saved = await hub.request('operation.invoke', {
     name: 'oxap.settings.save',
-    input: { providerId: 'deepseek', harness: 'oxap-deepseek', settings: { executable: peer } },
+    input: {
+      providerId: 'deepseek',
+      harness: 'oxap-deepseek',
+      settings: { executable: peer, ...(routed ? { model_provider: 'opencode-go' } : {}) },
+    },
   });
   evidence.harnessSave = saved;
   assert.deepEqual(saved, { accepted: true });
@@ -177,6 +188,17 @@ try {
     await new Promise((done) => setTimeout(done, 25));
   }
   const status = await client.request('work.status', { session_id: sessionId });
+  if (routed) {
+    const document = readFileSync(join(run, 'data/oap/oap-serve.json'), 'utf8');
+    const entry = JSON.parse(document).adapters.deepseek;
+    assert.equal(entry.model_provider, 'opencode-go');
+    assert(entry.environment.includes('DSH_HOME'));
+    assert(!entry.environment.includes('OPENCODE_API_KEY'));
+    assert(!entry.environment.includes('DEEPSEEK_API_KEY'));
+    assert(!document.includes('synthetic-route-proof'));
+    assert(!document.includes('synthetic-deepseek-proof'));
+    evidence.routedProvider = entry.model_provider;
+  }
   const nativeId = app.db.getSession(sessionId)?.sdkSessionId;
   assert(nativeId);
   assert.equal((status as { link?: string }).link, `deepseek://sessions/${nativeId}`);
