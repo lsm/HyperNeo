@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
-import { chmodSync, copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { checkOxapBinary } from '../../../packages/daemon/src/lib/oxap/oxap-binary.ts';
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
 import { readHubOptions } from '../../../packages/daemon/src/lib/oxap/oxap-settings.ts';
+import { OpencodeProvider } from '../../../packages/daemon/src/lib/providers/opencode-provider.ts';
+import { getProviderRegistry } from '../../../packages/daemon/src/lib/providers/registry.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import {
@@ -18,7 +20,7 @@ import { answerCodexProbeLocally, serveLocalRelease } from './oxap-codex-provide
 const [binary, version, sha256, ...args] = process.argv.slice(2);
 const mode = args.length === 2 ? args[0] : 'first';
 const runArgument = args.at(-1)!;
-assert(['first', 'recovery', 'pending', 'flash', 'image', 'flash-web', 'pro-web', 'flash-recovery', 'sdk-default', 'locked-recovery', 'refused-reopen', 'first-open-retry'].includes(mode));
+assert(['first', 'recovery', 'pending', 'flash', 'image', 'flash-web', 'pro-web', 'flash-recovery', 'sdk-default', 'opencode-go', 'opencode-go-alias', 'locked-recovery', 'refused-reopen', 'first-open-retry', 'no-replay'].includes(mode));
 const run = resolve(runArgument);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -27,6 +29,12 @@ assert.deepEqual(await checkOxapBinary(binary, { version, sha256 }), { ok: true 
 const workspace = join(run, 'workspace');
 const peer = join(run, 'dsh');
 mkdirSync(workspace);
+const nativePromptCount = join(workspace, 'verify-native-prompt-count');
+if (mode === 'no-replay') {
+  process.env.HYPERNEO_HUMAN_SEND_SILENCE_MS = '250';
+  process.env.HYPERNEO_SDK_STREAM_SILENCE_TIMEOUT_MS = '1500';
+  writeFileSync(nativePromptCount, '');
+}
 mkdirSync(join(run, 'evidence'));
 copyFileSync('.claude/skills/verify/oxap-deepseek-peer.py', peer);
 chmodSync(peer, 0o700);
@@ -68,25 +76,80 @@ try {
     },
     credentials: { apiKey: 'synthetic-deepseek-proof' },
   });
+  const aliasKey = mode === 'opencode-go-alias';
+  const go = mode === 'opencode-go' || aliasKey;
+  if (go) {
+    assert.deepEqual(await hub.request('operation.invoke', {
+      name: 'oxap.settings.save',
+      input: { providerId: 'deepseek', harness: 'oxap-deepseek', settings: { executable: peer } },
+    }), { accepted: true });
+    await hub.request('providers.create', {
+      params: {
+        providerId: 'opencode',
+        displayName: 'Synthetic OpenCode Go',
+        kind: 'built_in',
+        authType: 'api_key',
+        isEnabled: true,
+        isDefault: false,
+        sortOrder: 1,
+      },
+      ...(aliasKey ? {} : { credentials: { apiKey: 'synthetic-opencode-go-proof' } }),
+    });
+    if (aliasKey) {
+      const registry = getProviderRegistry();
+      registry.unregister('opencode');
+      registry.register(new OpencodeProvider({ OPENCODE_GO_API_KEY: 'synthetic-opencode-go-proof' }));
+    }
+  }
+  const providerId = go ? 'opencode' : 'deepseek';
+  const harness = go ? 'oxap-opencode-dsh' : 'oxap-deepseek';
+  if (go) {
+    const missing = join(run, 'missing-dsh');
+    const rejected = [];
+    for (const [executable, reason] of [
+      [missing, `DeepSeek harness path "${missing}" must point to an executable file.`],
+      [process.execPath, `"${process.execPath}" did not respond as the DeepSeek harness. Enter the path to dsh.`],
+    ]) {
+      const outcome = await hub.request('operation.invoke', {
+        name: 'oxap.settings.save',
+        input: { providerId, harness, settings: { executable } },
+      });
+      rejected.push((outcome as { accepted: boolean }).accepted);
+      assert.deepEqual(outcome, { accepted: false, reason });
+    }
+    evidence.invalidExecutableAccepted = rejected;
+    assert.equal(JSON.parse(app.db.providers.getProviderByProviderId(providerId)?.configJson ?? '{}').harnessSettings, undefined);
+  }
   const saved = await hub.request('operation.invoke', {
     name: 'oxap.settings.save',
-    input: { providerId: 'deepseek', harness: 'oxap-deepseek', settings: { executable: peer } },
+    input: { providerId, harness, settings: { executable: peer } },
   });
   evidence.harnessSave = saved;
   assert.deepEqual(saved, { accepted: true });
   assert.deepEqual(releaseRequests, ['SHA256SUMS.txt', `${version}.tar.gz`]);
+  if (go) {
+    assert.deepEqual(await hub.request('operation.invoke', {
+      name: 'oxap.settings.save',
+      input: { providerId, harness: 'sdk' },
+    }), { accepted: true });
+    const { providers } = await hub.request<{
+      providers: { providerId: string; readyHarnesses?: string[] }[];
+    }>('providers.list', { forNewSession: true });
+    assert.deepEqual(providers.find((provider) => provider.providerId === providerId)?.readyHarnesses, [harness]);
+  }
   const flash = ['flash', 'image', 'flash-web', 'flash-recovery', 'locked-recovery', 'refused-reopen'].includes(mode);
   const web = mode.endsWith('-web');
   const locked = mode === 'locked-recovery';
   const refusesReopen = mode === 'refused-reopen';
   if (locked || mode === 'flash-recovery') writeFileSync(join(workspace, 'verify-native-lease'), '');
   const withImage = mode === 'image' || mode === 'flash-web';
-  const model = flash ? 'deepseek-v4-flash' : 'deepseek-v4-pro';
+  const model = go ? 'deepseek-v4.1-flash' : flash ? 'deepseek-v4-flash' : 'deepseek-v4-pro';
   const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a4NEAAAAASUVORK5CYII=';
   const { sessionId } = await hub.request<{ sessionId: string }>('session.create', {
     workspacePath: workspace,
     title: 'Synthetic DeepSeek first message',
-    config: { provider: 'deepseek', model },
+    ...(go ? { harness } : {}),
+    config: { provider: providerId, model },
   });
   if (mode === 'first-open-retry') {
     assert(!app.db.getSession(sessionId)?.sdkSessionId);
@@ -159,7 +222,7 @@ try {
   } else {
     await hub.request('message.send', {
       sessionId,
-      content: flash ? 'Verify model and images' : 'Synthetic DeepSeek prompt',
+      content: flash || go ? 'Verify model and images' : 'Synthetic DeepSeek prompt',
       ...(withImage ? { images: [{ data: png, media_type: 'image/png' }] } : {}),
     });
   }
@@ -174,7 +237,7 @@ try {
   const nativeId = app.db.getSession(sessionId)?.sdkSessionId;
   assert(nativeId);
   assert.equal((status as { link?: string }).link, `deepseek://sessions/${nativeId}`);
-  const capabilities = (await client.request('capabilities', { adapter: 'deepseek' })) as {
+  const capabilities = (await client.request('capabilities', { adapter: providerId })) as {
     payload?: { features?: Record<string, { level?: string }> };
   };
   const modelSwitch = capabilities.payload?.features?.['session.model.switch']?.level;
@@ -189,7 +252,7 @@ try {
   evidence.reply = replyText;
   assert.deepEqual(
     replyText,
-    flash
+    flash || go
       ? [JSON.stringify({ model, images: withImage ? [{ type: 'image', data: png, mimeType: 'image/png' }] : [] })]
       : mode === 'first-open-retry'
         ? [
@@ -198,6 +261,21 @@ try {
           ]
         : ['Synthetic DeepSeek reply']
   );
+  if (mode === 'no-replay') {
+    const snapshot = () => app.db.getDatabase().prepare(
+      `SELECT seq, timestamp, consumed_seq AS consumedSeq FROM sdk_messages
+       WHERE session_id = ? AND message_type = 'user' AND send_status = 'consumed'
+       ORDER BY seq`
+    ).all(sessionId);
+    const before = snapshot();
+    assert.equal(before.length, 1);
+    await Bun.sleep(3500);
+    const nativePrompts = readFileSync(nativePromptCount, 'utf8').length;
+    evidence.nativePrompts = nativePrompts;
+    assert.equal(nativePrompts, 1);
+    assert.deepEqual(snapshot(), before);
+    assert.deepEqual(errors, []);
+  }
   if (flash) {
     const switching = await hub.request<{ success: boolean; error: string }>('session.model.switch', {
       sessionId, provider: 'deepseek', model: 'deepseek-v4-pro',
@@ -210,7 +288,7 @@ try {
     );
     evidence.existingSwitchRefused = true;
   }
-  if (['recovery', 'pending', 'flash-recovery', 'sdk-default', 'locked-recovery', 'refused-reopen'].includes(mode)) {
+  if (go || ['recovery', 'pending', 'flash-recovery', 'sdk-default', 'locked-recovery', 'refused-reopen'].includes(mode)) {
     while (app.sessionManager.getCachedSession(sessionId)?.queryPromise) {
       assert(Date.now() < deadline, 'The first query did not finish shutting down');
       await Bun.sleep(25);
@@ -275,14 +353,15 @@ try {
       assert.equal(evidence.chatReason, true, 'The worker chat should show the refusal reason');
       assert.equal(evidence.statusFailedWithReason, true, 'Work status should expose the refusal');
     } else {
-      if (mode === 'sdk-default') {
+      if (mode === 'sdk-default' || go) {
         assert.deepEqual(await hub.request('operation.invoke', {
-          name: 'oxap.settings.save', input: { providerId: 'deepseek', harness: 'sdk' },
+          name: 'oxap.settings.save',
+          input: go ? { providerId, harness, settings: { executable: peer } } : { providerId, harness: 'sdk' },
         }), { accepted: true });
       } else {
         await app.oxapEngine.restart();
       }
-      const verifyModel = mode === 'flash-recovery';
+      const verifyModel = mode === 'flash-recovery' || go;
       const expectedReply = verifyModel
         ? JSON.stringify({ model, images: [], reopened: true })
         : 'Synthetic DeepSeek reply after restart';
@@ -316,6 +395,10 @@ try {
     }
   }
 
+  if (go) {
+    evidence.endpoint = 'https://opencode.ai/zen/go/v1';
+    evidence.openCodeKeyIsolated = true;
+  }
   Object.assign(evidence, { opened: 1, firstMessageReplies: replies.length, modelSwitch, pass: true });
   console.log(JSON.stringify(evidence));
 } finally {

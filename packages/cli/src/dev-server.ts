@@ -253,6 +253,11 @@ export async function startDevServer(config: Config) {
         server.requestIP(req)?.address ?? null
       );
       if (image) return image;
+      const attachment = await daemonContext.handleAttachmentUpload(
+        req,
+        server.requestIP(req)?.address ?? null
+      );
+      if (attachment) return attachment;
 
       try {
         const entry = resolveNeoEntry(url);

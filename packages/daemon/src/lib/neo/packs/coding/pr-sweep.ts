@@ -42,7 +42,7 @@ export type CodingSweepDeps = {
     text: string,
     pr?: string,
     findings?: readonly string[]
-  ): Promise<boolean>;
+  ): Promise<boolean | 'gone'>;
   wake(key: string, text: string): Promise<boolean>;
 };
 
@@ -77,7 +77,10 @@ export function planCodingPrNudge(
   if (row.state === 'approved_green' && row.mergeBy === 'daemon') return null;
   if (!STATE_TEXT[row.state] || now - row.readAt > CODING_PR_FRESH_MS) return null;
   if (!row.owner && row.state !== 'waiting_cross_review') return null;
-  return planNudge({ since: row.stateSince, nudges: row.nudges }, now);
+  const nudge = planNudge({ since: row.stateSince, nudges: row.nudges }, now);
+  return nudge?.kind === 'remind' && ['waiting_ci', 'approved_pending'].includes(row.state)
+    ? null
+    : nudge;
 }
 
 const minutesSince = (row: CodingSweepRow, now: number) =>
@@ -229,7 +232,7 @@ export async function sweepCodingPrs(
         !(await repo.reviewSentLater(receipt)) &&
         (await deps
           .tell(row.owner, key, codingFailingText(row), codingPrUrl(deps.host, row), row.findings)
-          .catch(() => false));
+          .catch(() => false)) === true;
       if (told) await repo.markReviewLater(receipt);
     }
     const nudge = planCodingPrNudge(row, now);
@@ -248,7 +251,7 @@ export async function sweepCodingPrs(
           codingPrUrl(deps.host, row),
           row.findings
         )
-        .catch(() => false));
+        .catch(() => false)) === true;
     if (nudge.kind === 'remind' && row.state !== 'waiting_cross_review')
       log.warn(`PR sweep ${key} to ${owned(row.owner!)}: ${told ? 'told' : 'not told'}`);
     if (told) {

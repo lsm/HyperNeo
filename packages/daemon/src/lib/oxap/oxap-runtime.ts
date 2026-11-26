@@ -5,29 +5,39 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { OxapQueryRuntime } from '../agent/query-runner.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { OxapEngine, OxapEngineOptions } from './oxap-engine.ts';
-import { OxapHubRequestError, type OxapHubClient } from './oxap-hub-client.ts';
+import {
+  isDefiniteOxapRefusal,
+  OxapHubRequestError,
+  type OxapHubClient,
+} from './oxap-hub-client.ts';
+import { updateOxapReasoning } from './oxap-query-hub.ts';
 import type { OxapQueryHub } from './oxap-query.ts';
 import { withOxapRecovery } from './oxap-recovery.ts';
 import { openOxapSession, type OxapReopenStore, type OxapReopenEvents } from './oxap-reopen.ts';
-import { decideOxapOpen } from '../agent/session-engine.ts';
+import { decideOxapOpen, savedOxapCodexReasoning } from '../agent/session-engine.ts';
 import { canonicalModelId } from '../model-service.ts';
 import { checkCodexLogin } from './oxap-codex-login.ts';
 import { savedOxapAdapter } from './oxap-hub-config.ts';
+import { recordOxapInit } from './oxap-init.ts';
 
 type OpenPlan = { sessionId: string; directory: string; request: Record<string, unknown> };
 
 function validateSession(session: Session): { sessionId: string; directory: string } {
-  const directory = session.worktree?.worktreePath ?? session.workspacePath;
-  if (!directory || !isAbsolute(directory)) throw new Error('Codex workspace must be absolute');
+  const directory = session.worktree?.worktreePath ?? session.workspacePath ?? process.cwd();
+  if (!isAbsolute(directory)) throw new Error('Codex workspace must be absolute');
   return { sessionId: session.id, directory };
 }
 
 function openPlan(
   input: { sessionId: string; directory: string },
   id: string,
-  open: { adapter: string } | string
+  open: { adapter: string } | string,
+  session: Session
 ): OpenPlan {
   if (typeof open === 'string') throw new Error(open);
+  const { harness, model, thinkingLevel } = session.config;
+  const reasoning =
+    harness === 'oxap-codex' ? savedOxapCodexReasoning(model, thinkingLevel) : undefined;
   return {
     ...input,
     request: {
@@ -39,7 +49,10 @@ function openPlan(
         profile: 'open-agent-protocol.agent-control-core',
         type: 'session.open.request',
         id,
-        payload: { session_id: input.sessionId },
+        payload: {
+          session_id: input.sessionId,
+          ...(reasoning ? { reasoning_level: reasoning } : {}),
+        },
       },
     },
   };
@@ -53,7 +66,7 @@ const prepareOpen = (superpipe({})('oap.runtime.open') as PipelineAPI)
     ['session', 'record'],
     'open'
   )
-  .pipe(openPlan, ['placement', 'id', 'open'], 'plan')
+  .pipe(openPlan, ['placement', 'id', 'open', 'session'], 'plan')
   .end('plan') as (session: Session, id: string, record: ProviderRecord | null) => OpenPlan;
 
 type SessionSlot = {
@@ -63,7 +76,30 @@ type SessionSlot = {
   client?: OxapHubClient;
   hub?: OxapQueryHub;
   deleted: boolean;
+  settingsTail?: Promise<void>;
+  reasoningUnconfirmed?: boolean;
 };
+
+function serializeSettings<T>(slot: SessionSlot, run: () => Promise<T>): Promise<T> {
+  const result = (slot.settingsTail ?? Promise.resolve()).then(run);
+  slot.settingsTail = result.then(
+    () => {},
+    () => {}
+  );
+  return result;
+}
+
+async function heldSession(client: OxapHubClient, sessionId: string): Promise<boolean> {
+  try {
+    const status = (await client.request('work.status', { session_id: sessionId })) as {
+      held?: boolean;
+    };
+    return status.held !== false;
+  } catch (error) {
+    if (!(error instanceof OxapHubRequestError) || error.code !== 'unknown_session') throw error;
+    return false;
+  }
+}
 
 function planClear(
   session: Session,
@@ -149,8 +185,57 @@ export function createOxapRuntime(
       slot.session = session;
       sessions.set(session.id, slot);
     }
+    const ensureLive = () => {
+      if (!slot || slot.deleted) throw new Error('Codex session was deleted');
+    };
+    const restoreReasoning = async (client: OxapHubClient) => {
+      if (!slot?.reasoningUnconfirmed) return;
+      ensureLive();
+      const current = slot.session;
+      const reasoning = savedOxapCodexReasoning(current.config.model, current.config.thinkingLevel);
+      const held = await heldSession(client, current.id);
+      if (held && reasoning) {
+        await updateOxapReasoning(client, current.id, reasoning);
+      } else {
+        if (held) await client.request('close', { session_id: current.id });
+        const record = current.config.provider ? providerRecord(current.config.provider) : null;
+        const plan = prepareOpen(current, generateUUID(), record);
+        if (!db || !messageHub) throw new Error('Codex OAP session storage is unavailable');
+        await openOxapSession(client, plan, current, db, messageHub, events, ensureLive);
+      }
+      slot.reasoningUnconfirmed = false;
+    };
     const runtime: OxapQueryRuntime = {
       openDirectorySupported: true,
+      commitThinking(level, persist) {
+        if (session.config.harness !== 'oxap-codex' || !slot) return persist();
+        return serializeSettings(slot, async () => {
+          ensureLive();
+          await slot.opening?.catch(() => {});
+          const client = slot.client;
+          if (!client || !slot.hub || !engine.isCurrentHub(client)) {
+            const result = await persist();
+            if (result.success && slot.opening) slot.reasoningUnconfirmed = true;
+            return result;
+          }
+          await restoreReasoning(client);
+          if (!(await heldSession(client, session.id))) {
+            const result = await persist();
+            if (result.success) slot.reasoningUnconfirmed = true;
+            return result;
+          }
+          slot.reasoningUnconfirmed = true;
+          try {
+            await updateOxapReasoning(client, session.id, level);
+          } catch (error) {
+            if (isDefiniteOxapRefusal(error)) slot.reasoningUnconfirmed = false;
+            throw error;
+          }
+          const result = await persist();
+          if (result.success) slot.reasoningUnconfirmed = false;
+          return result;
+        });
+      },
       clear() {
         return clearSession(runtime, session, slot, db);
       },
@@ -184,22 +269,40 @@ export function createOxapRuntime(
                   if (!executable) throw new Error('Codex executable is not configured');
                   await checkLogin(session.id, db, messageHub, executable);
                 }
-                await openOxapSession(client, plan, session, db, messageHub, events, () => {
-                  if (slot.deleted) throw new Error('Codex session was deleted');
-                });
+                await openOxapSession(client, plan, session, db, messageHub, events, ensureLive);
                 if (slot.deleted) throw new Error('Codex session was deleted');
-                slot.hub = withOxapRecovery(
-                  engine.createQueryHub(client, {
-                    adapter,
-                    id: () => {
-                      const model = slot.session.config.model;
-                      return model && canonicalModelId(adapter, model);
-                    },
-                  }),
-                  () => slot.session,
-                  db,
-                  messageHub
-                );
+                const query = engine.createQueryHub(client, {
+                  adapter,
+                  harness: isOxapHarness(session.config.harness)
+                    ? session.config.harness
+                    : undefined,
+                  onFirstEvent: (event) =>
+                    recordOxapInit(
+                      client,
+                      plan,
+                      session,
+                      event.payload,
+                      db,
+                      messageHub,
+                      ensureLive
+                    ),
+                  id: () => {
+                    const model = slot.session.config.model;
+                    return model && canonicalModelId(adapter, model);
+                  },
+                });
+                const settingsAwareQuery: OxapQueryHub =
+                  session.config.harness === 'oxap-codex'
+                    ? {
+                        ...query,
+                        submit: (...args) =>
+                          serializeSettings(slot, async () => {
+                            await restoreReasoning(client);
+                            return query.submit(...args);
+                          }),
+                      }
+                    : query;
+                slot.hub = withOxapRecovery(settingsAwareQuery, () => slot.session, db, messageHub);
                 return slot.hub;
               })
               .catch((error: unknown) => {

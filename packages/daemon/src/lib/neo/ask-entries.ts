@@ -94,9 +94,10 @@ export function neoAskEntryState(
 ): NeoAskEntryState {
   if (ask.status === 'dropped') return 'dropped';
   if (ask.status === 'done') return 'done';
+  const unheld = cards.filter((card) => !card.heldAt);
   if (
-    questions.some((question) => question.state === 'open') ||
-    todos.some((todo) => neoTodoPlace(todo, cards) === 'waiting')
+    questions.some((question) => question.state === 'open' && !question.heldAt) ||
+    todos.some((todo) => neoTodoPlace(todo, unheld) === 'waiting')
   )
     return 'waiting';
   if (todos.some((todo) => todo.state === 'doing' || todo.state === 'blocked')) return 'doing';

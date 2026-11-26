@@ -234,31 +234,64 @@ describe('one completion rule for Neo todos', () => {
 });
 
 describe('coding todo PR ownership through add and edit', () => {
-  test('an unknown PR is recorded without certifying completion', async () => {
-    const { db, store, call, runner } = setup();
+  test('refuses add and edit of a merge check with no PR or worker', async () => {
+    const { db, store, call } = setup();
     try {
-      const added = await call('neo.todo.add', {
-        after: [],
-        askId: 'ask',
-        title: 'PR not yet known',
-        doneWhen: 'Merged',
-        check: { pack: 'coding', kind: 'pr_merged', params: {} },
+      const check = { pack: 'coding', kind: 'pr_merged', params: {} };
+      const original = store.addTodo(
+        'check-only',
+        'ask',
+        { title: 'Check only', doneWhen: 'Observed', check: null, instruction: null, named: null },
+        1
+      );
+      for (const [name, input] of [
+        ['neo.todo.add', { after: [], askId: 'ask', title: 'Unknown PR', check }],
+        ['neo.todo.edit', { todoId: original.id, check }],
+      ] as const) {
+        expect(await call(name, input)).toMatchObject({
+          ok: false,
+          reason: expect.stringContaining('pr_merged_needs_urls:'),
+        });
+      }
+      expect(store.listTodos('ask')).toEqual([original]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('URL-free merge checks can use newly assigned or bound work', async () => {
+    const { db, store, call } = setup();
+    try {
+      const check = { pack: 'coding', kind: 'pr_merged', params: {} };
+      const base = { after: [], askId: 'ask', check };
+      const work = {
+        instruction: 'Open and land a PR',
+        target: { verb: 'start', adapter: 'hyperneo' },
+      };
+      const bound = await call('neo.todo.add', {
+        ...base,
+        title: 'Continue running work',
+        target: { verb: 'bind', ref: { adapter: 'hyperneo', id: 'running-worker' } },
       });
-      expect(added).toMatchObject({
+      expect(bound).toMatchObject({ ok: true, todo: { instruction: null, state: 'doing' } });
+      if (!bound.ok) throw new Error(bound.reason);
+      expect(await call('neo.todo.edit', { todoId: bound.todo.id, check })).toMatchObject({
         ok: true,
-        records: [expect.stringContaining('pr_merged_needs_urls:')],
       });
-      if (!added.ok) throw new Error(added.reason);
-      await runner.checkNow([added.todo.id], () => {});
-      expect(store.getTodo(added.todo.id)?.state).not.toBe('done');
-      store.updateTodo(store.getTodo(added.todo.id)!, { startedAt: 1 }, 1);
-      expect(
-        await call('neo.todo.edit', {
-          todoId: added.todo.id,
-          done: 'reported',
-          evidence: 'PR remains unidentified',
-        })
-      ).toMatchObject({ ok: true, todo: { state: 'blocked', blockedBy: 'check' } });
+      expect(await call('neo.todo.add', { ...base, ...work, title: 'Open a PR' })).toMatchObject({
+        ok: true,
+        todo: { check, instruction: work.instruction },
+      });
+      const original = store.addTodo(
+        'assignable',
+        'ask',
+        { title: 'Assignable', doneWhen: 'Observed', check: null, instruction: null, named: null },
+        1
+      );
+      expect(await call('neo.todo.edit', { todoId: original.id, check, ...work })).toMatchObject({
+        ok: true,
+        todo: { check, instruction: work.instruction },
+      });
     } finally {
       db.close();
     }
@@ -271,7 +304,7 @@ describe('coding todo PR ownership through add and edit', () => {
     instruction: 'Land the fix',
     named: null,
   });
-  test.each(['named'])('records a duplicate of a live %s PR on the same ask', async () => {
+  test('refuses a duplicate of a live PR on the same ask', async () => {
     const { db, store, call } = setup();
     try {
       store.addTodo('original', 'ask', draft([url(2)]), 1);
@@ -287,10 +320,12 @@ describe('coding todo PR ownership through add and edit', () => {
         },
       });
       expect(result).toMatchObject({
-        ok: true,
-        records: [expect.stringMatching(/pr_already_tracked:.*todo original "Original fix"/)],
+        ok: false,
+        reason: expect.stringMatching(
+          /pr_already_tracked:.*Original fix.*core\.evidence.*review comment/
+        ),
       });
-      expect(store.listTodos('ask')).toHaveLength(2);
+      expect(store.listTodos('ask')).toHaveLength(1);
     } finally {
       db.close();
     }
@@ -317,19 +352,16 @@ describe('coding todo PR ownership through add and edit', () => {
       db.close();
     }
   });
-  test.each(['named'])('edit records URLs another live todo holds through %s', async () => {
+  test('refuses adding URLs owned by another live merge todo', async () => {
     const { db, store, call } = setup();
     try {
       store.addTodo('owner', 'ask', { ...draft([url(2)]), title: 'Existing owner' }, 1);
       const target = store.addTodo('target', 'ask', draft([url(1)]), 2);
       expect(await call('neo.todo.edit', { todoId: target.id, addUrls: [url(2)] })).toMatchObject({
-        ok: true,
-        records: [expect.stringContaining('owner')],
+        ok: false,
+        reason: expect.stringMatching(/pr_already_tracked:.*owner.*core\.evidence/),
       });
-      expect(store.getTodo(target.id)?.check?.params.urls).toEqual([
-        url(1).toLowerCase(),
-        url(2).toLowerCase(),
-      ]);
+      expect(store.getTodo(target.id)?.check?.params.urls).toEqual([url(1)]);
     } finally {
       db.close();
     }
@@ -349,19 +381,6 @@ describe('coding todo PR ownership through add and edit', () => {
       ).toMatchObject({
         ok: true,
       });
-    } finally {
-      db.close();
-    }
-  });
-  test('concurrent edits both record the same PR', async () => {
-    const { db, store, call } = setup();
-    try {
-      store.addTodo('one', 'ask', draft(), 1);
-      store.addTodo('two', 'ask', draft(), 2);
-      const results = await Promise.all(
-        ['one', 'two'].map((todoId) => call('neo.todo.edit', { todoId, addUrls: [url(2)] }))
-      );
-      expect(results.filter((result) => result.ok)).toHaveLength(2);
     } finally {
       db.close();
     }

@@ -3,6 +3,7 @@ import { vi } from 'vitest';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
+import { nextStepOwner } from '../../../../src/lib/neo/attention/owner.ts';
 import { createNeoAttentionSweep } from '../../../../src/lib/neo/attention/sweep.ts';
 import {
   CODING_ATTENTION_KINDS,
@@ -194,6 +195,34 @@ afterEach(() => {
   current?.clock.mockRestore();
   current?.db.close();
   current = null;
+});
+
+describe('blocked worker attention on refresh', () => {
+  test.each([
+    ['environment', 'done', 'neo'],
+    ['check', 'done', 'neo'],
+    ['held', 'running', 'nobody'],
+  ] as const)('refreshes worker attention for a %s block', async (blockedBy, status, owner) => {
+    const w = (current = world());
+    const todo = w.adopt('Continue the work.');
+    w.workers.get('adopted-session')!.status = 'done';
+    const since = Date.now();
+    const blocked = w.store.updateTodo(w.todo(todo.id), { state: 'blocked', blockedBy }, since);
+    const running = { since, nudges: 0, live: 'running', liveSince: since };
+    w.sessions.recordNudge(todo.id, running);
+    const step = () => {
+      const row = w.sessions.neoStepFacts().steps.find((row) => row.todo.id === todo.id)!;
+      return nextStepOwner({ ...row.facts, todo: row.todo, now: Date.now() });
+    };
+    expect(step()).toEqual({ owner: blockedBy === 'held' ? 'nobody' : 'worker' });
+
+    await w.at(120);
+
+    expect(w.sessions.readNudge(todo.id)?.live).toBe(status);
+    expect(w.todo(todo.id)).toEqual(blocked);
+    expect(step()).toMatchObject(owner === 'neo' ? { owner, reason: 'idle_worker' } : { owner });
+    if (blockedBy === 'held') expect(w.sessions.readNudge(todo.id)).toMatchObject(running);
+  });
 });
 
 describe('a doing todo never sits idle without someone on it', () => {

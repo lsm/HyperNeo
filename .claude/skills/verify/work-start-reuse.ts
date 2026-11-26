@@ -187,9 +187,10 @@ try {
   store.updateTodo(store.getTodo('todo-wait')!, { state: 'doing', startedAt: 5 }, 5);
   const waiting = await invokeOperation(app.sessionManager.getOperationRegistry(), 'work.start', input('wait', 'todo-wait'), neo);
   assert.equal(waiting.kind, 'completed');
-  assert.equal((waiting as { value: { reason?: string } }).value.reason, 'worker_busy');
-  assert.equal(store.getTodo('todo-wait')?.state, 'todo');
-  assert.equal(todos.get('todo-wait')?.verb, 'send');
+  const next = (waiting as { value: Result<WorkStarted> }).value;
+  assert(next.ok, JSON.stringify(next));
+  assert.notEqual(next.value.reused, true);
+  assert(![first.id, third.id, build.id, separate.id].includes(next.value.ref.id));
   store.addTodo('todo-bound', 'synthetic-ask', { title: 'Bound', doneWhen: 'Synthetic', check: null, instruction: 'Synthetic', named: null }, 6);
   todos.bind('todo-bound', { adapter: 'hyperneo', id: first.id }, Date.now());
   store.updateTodo(store.getTodo('todo-bound')!, { state: 'doing', startedAt: 6 }, 6);
@@ -204,8 +205,30 @@ try {
   assert(noTodoResult.ok, JSON.stringify(noTodoResult));
   assert.notEqual(noTodoResult.value.reused, true, 'a start without an ask must not reuse another matter');
   const otherNeo = { ...neo, sessionId: 'other-synthetic-neo' };
-  const foreignTodo = await start('foreign-todo', otherNeo, 'todo-wait');
+  store.addTodo('todo-foreign', 'synthetic-ask', { title: 'Foreign', doneWhen: 'Synthetic', check: null, instruction: 'Synthetic', named: null }, 6);
+  const foreignTodo = await start('foreign-todo', otherNeo, 'todo-foreign');
   assert.equal(foreignTodo.reused, false, 'a start for another owner must not reuse another matter');
+  store.openAsk({ id: 'clean-ask', projectId: null, sessionId: 'synthetic-neo', originMessageId: null, title: 'Clean', request: 'Synthetic', createdAt: 6 });
+  db.prepare(`UPDATE neo_pack_preferences SET value_json='"per_todo"' WHERE pack='core' AND key='sessionReuse'`).run();
+  store.addTodo('clean-first', 'clean-ask', { title: 'First', doneWhen: 'Synthetic', check: null, instruction: 'Synthetic', named: null }, 6);
+  const cleanFirst = await start('clean-first', neo, 'clean-first');
+  todos.bind('clean-first', { adapter: 'hyperneo', id: cleanFirst.id }, Date.now());
+  store.updateTodo(store.getTodo('clean-first')!, { state: 'done' }, Date.now());
+  await settle([cleanFirst.id]);
+  db.prepare(`UPDATE neo_pack_preferences SET value_json='"per_ask"' WHERE pack='core' AND key='sessionReuse'`).run();
+  store.addTodo('todo-unconfirmed', 'clean-ask', { title: 'Unconfirmed', doneWhen: 'Synthetic', check: null, instruction: 'Synthetic', named: null }, 6);
+  const getControl = app.sessionManager.getSessionForControl.bind(app.sessionManager);
+  let refused;
+  try {
+    app.sessionManager.getSessionForControl = async (id) => id === cleanFirst.id ? null : getControl(id);
+    refused = await start('unconfirmed', neo, 'todo-unconfirmed');
+  } finally {
+    app.sessionManager.getSessionForControl = getControl;
+  }
+  const reuseFact = db.prepare("SELECT value_json FROM pack_facts WHERE todo_id = ? AND pack = 'core' AND key = 'worker_reuse'").get('todo-unconfirmed') as { value_json: string } | null;
+  assert.notEqual(refused.id, cleanFirst.id);
+  assert.equal(refused.reused, false);
+  assert.equal(reuseFact && JSON.parse(reuseFact.value_json).reason, 'not_confirmed');
   assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
   const socket = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   let remote;
@@ -236,7 +259,7 @@ try {
     assert.notEqual(reply.value.reused, true);
     remote = { newSession: reply.value.ref.id !== separate.id, reused: reply.value.reused === true };
   } finally { socket.close(); }
-  writeFileSync(join(run, 'evidence/session-reuse-dispatch.json'), JSON.stringify({ perTodo: separate, perAsk: { reason: 'worker_busy', state: store.getTodo('todo-wait')?.state, target: todos.get('todo-wait')?.verb }, noTodo: { reused: noTodoResult.value.reused === true }, foreignTodo, remote }, null, 2));
+  writeFileSync(join(run, 'evidence/session-reuse-dispatch.json'), JSON.stringify({ perTodo: separate, perAsk: { fresh: next.value.reused !== true, ref: next.value.ref }, unconfirmed: { fresh: refused.reused === false, fact: reuseFact && JSON.parse(reuseFact.value_json) }, noTodo: { reused: noTodoResult.value.reused === true }, foreignTodo, remote }, null, 2));
 
   const git = (...args: string[]) => {
     const result = spawnSync('git', ['-C', folder, ...args], {

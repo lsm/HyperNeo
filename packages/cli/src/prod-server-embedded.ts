@@ -173,6 +173,11 @@ export async function startProdServer(config: Config) {
       if (markdown) return markdown;
       const image = await daemonContext.handleMessageImage(req, client?.remoteAddress ?? null);
       if (image) return image;
+      const attachment = await daemonContext.handleAttachmentUpload(
+        req,
+        client?.remoteAddress ?? null
+      );
+      if (attachment) return attachment;
 
       const entry = resolveNeoEntry(url);
       if (entry?.kind === 'redirect') {

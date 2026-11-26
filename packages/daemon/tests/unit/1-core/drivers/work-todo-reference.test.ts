@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations.ts';
+import { replyMessageBodyLength } from '../../../../src/lib/messaging/session-reply.ts';
 import type { WorkAdapter } from '../../../../src/lib/drivers/types.ts';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -156,7 +157,9 @@ describe('Neo work todo reference', () => {
         kind: 'completed',
         value: { ok: true },
       });
-      expect(delivered).toEqual(['Follow-up']);
+      expect(delivered.map((text) => text.slice(0, replyMessageBodyLength(text)))).toEqual([
+        'Follow-up',
+      ]);
     }
   );
 

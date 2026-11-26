@@ -13,13 +13,12 @@ import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import {
   markWorkUnusable,
   readStartedWork,
+  readCleanWorkerRecord,
   readTrustedWorkers,
-  readWorkCompaction,
+  readSameAskWorkers,
   recordWorkRelease,
   claimTodoWorker,
   unclaimTodoWorker,
-  type WorkCompactionFailure,
-  workStartedSessionWrites,
 } from './work-started-sessions-worker.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -111,13 +110,17 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     since: number
   ): Promise<ReturnType<NeoTodoSessionRepository['finishedWorkers']>>;
   read(
-    method: 'workerCompactionFacts',
-    ref: WorkRef
-  ): Promise<ReturnType<NeoTodoSessionRepository['workerCompactionFacts']>>;
+    method: 'reusesAskWorker',
+    todoId: string
+  ): Promise<ReturnType<NeoTodoSessionRepository['reusesAskWorker']>>;
   read(
     method: 'reuseFacts',
     todoId: string
   ): Promise<ReturnType<NeoTodoSessionRepository['reuseFacts']>>;
+  read(
+    method: 'cleanWorkerFacts',
+    todoId: string
+  ): Promise<ReturnType<NeoTodoSessionRepository['cleanWorkerFacts']>>;
   read(
     method: (typeof neoTodoSessionReads.methods)[number],
     key?: string | number | WorkRef | Record<string, string | null>
@@ -308,18 +311,18 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
 
   queueFacts(trackerHolds: Record<string, string | null> = {}, open = this.openAskFacts()) {
     const { asks } = open;
-    const running = open.todos.flatMap((todo) =>
-      todo.state === 'doing'
-        ? [
-            {
-              group: asks.find((ask) => ask.id === todo.askId)?.projectId ?? null,
-              worker: neoWorkerKey(open.ref(todo.id)),
-              title: todo.title,
-              idle: open.idle(todo.id),
-            },
-          ]
-        : []
-    );
+    const running = open.todos.flatMap((todo) => {
+      if (todo.state !== 'doing') return [];
+      const target = open.target(todo.id);
+      return [
+        {
+          group: asks.find((ask) => ask.id === todo.askId)?.projectId ?? null,
+          worker: neoWorkerKey(open.ref(todo.id) ?? (target?.verb === 'send' ? target.ref : null)),
+          title: todo.title,
+          idle: open.idle(todo.id),
+        },
+      ];
+    });
     const waiting = asks.flatMap((ask) => {
       const asked = open.cards(ask);
       const family = open.family(ask);
@@ -482,7 +485,8 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       this.recordNudge(todoId, { ...current, nudges });
   }
 
-  noteWorkerStatus(todoId: string, status: string, now: number): void {
+  noteWorkerStatus(todoId: string, ref: WorkRef, status: string, now: number): void {
+    if (neoWorkerKey(this.readRef(todoId)) !== neoWorkerKey(ref)) return;
     const prior = this.readNudge(todoId);
     if (prior?.live !== status)
       this.recordNudge(todoId, {
@@ -598,10 +602,17 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       )
     )
       return 'none';
+    const previous = this.get(todoId);
+    const checkout =
+      previous?.verb === 'start'
+        ? { preparationParameters: previous.preparationParameters ?? {}, sandbox: previous.sandbox }
+        : previous?.verb === 'send'
+          ? { preparationParameters: previous.preparationParameters, sandbox: previous.sandbox }
+          : {};
     this.db
       .prepare(`INSERT INTO neo_todo_sessions (todo_id, target) VALUES (?, ?)
         ON CONFLICT(todo_id) DO UPDATE SET target = excluded.target`)
-      .run(todoId, JSON.stringify({ verb: 'send', ref }));
+      .run(todoId, JSON.stringify({ verb: 'send', ref, ...checkout }));
     if (todo.state === 'doing')
       store.updateTodo(todo, { state: 'todo', startedAt: null }, Date.now());
     if (todo.instruction) return 'instruction';
@@ -739,6 +750,19 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     ).map((row) => row.todoId);
   }
 
+  wasNamedByHuman(ref: WorkRef): boolean {
+    return !!this.db
+      .prepare(
+        `SELECT 1 FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
+        WHERE json_extract(t.named, '$.session') IS NOT NULL
+          AND COALESCE(json_extract(s.ref, '$.adapter'), json_extract(s.target, '$.ref.adapter')) = ?
+          AND COALESCE(json_extract(s.ref, '$.id'), json_extract(s.target, '$.ref.id')) = ?
+          AND COALESCE(json_extract(s.ref, '$.daemon'), json_extract(s.target, '$.ref.daemon')) IS ?
+        LIMIT 1`
+      )
+      .get(ref.adapter, ref.id, ref.daemon ?? null);
+  }
+
   finishedWorkers(since: number): {
     todoId: string;
     target: NeoDriverTarget;
@@ -863,24 +887,36 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     return releaseReuseFacts(this.db, todoId);
   }
 
-  workerCompactionFacts(ref: WorkRef) {
-    const own = readStartedWork(this.db, null, undefined, ref)[0];
-    if (
-      !own ||
-      own.releasedAt !== null ||
-      this.liveTodo(own.claimedBy) ||
-      this.doingTodoOn(ref, null, LIVE_TODO_STATES)
-    )
-      return undefined;
-    return readWorkCompaction(this.db, ref);
+  cleanWorkerFacts(todoId: string) {
+    const todo = new NeoAskTodoRepository(this.db).getTodo(todoId);
+    const target = this.get(todoId);
+    if (!todo || target?.verb !== 'send') return null;
+    const ref = target.ref;
+    const { record, role, sameAsk } = readCleanWorkerRecord(this.db, todoId, todo.askId, ref);
+    return {
+      record,
+      sameTodo: neoWorkerKey(this.readRef(todoId)) === neoWorkerKey(ref) || !!role,
+      named: !!todo.named?.session,
+      sameAsk: !!sameAsk,
+      otherTodo: !!this.doingTodoOn(ref, null, ['doing', 'blocked'], todoId),
+    };
   }
 
-  recordWorkerCompacted(ref: WorkRef, at: number): Promise<void> {
-    return gatewayFor(this.db).call(workStartedSessionWrites, 'recordCompacted', ref, at);
+  recordWorkerReuse(todoId: string, value: unknown): void {
+    this.writeCoreFact(todoId, 'worker_reuse', value);
   }
 
-  recordCompactionFailure(todoId: string, worker: WorkRef, failure: WorkCompactionFailure): void {
-    this.writeCoreFact(todoId, 'compaction_failure', { worker, ...failure });
+  reusesAskWorker(todoId: string): boolean {
+    const todo = new NeoAskTodoRepository(this.db).getTodo(todoId);
+    const target = this.get(todoId);
+    if (!todo || todo.named?.session || target?.verb !== 'send' || this.readRef(todoId))
+      return false;
+    const { ref } = target;
+    return (
+      !ref.daemon &&
+      !this.doingTodoOn(ref, null, ['doing', 'blocked'], todoId) &&
+      readSameAskWorkers(this.db, todo.askId, todoId, ref.adapter).some(({ id }) => id === ref.id)
+    );
   }
 
   recordReleaseKept(todoId: string, kept: unknown): void {
@@ -923,9 +959,11 @@ export const neoTodoSessionReads = defineRepositoryOp(
     'workerName',
     'syncedActivity',
     'syncedLive',
+    'wasNamedByHuman',
     'finishedWorkers',
     'reuseFacts',
-    'workerCompactionFacts',
+    'reusesAskWorker',
+    'cleanWorkerFacts',
   ]
 );
 export const neoTodoSessionWrites = defineRepositoryOp(
@@ -950,8 +988,8 @@ export const neoTodoSessionWrites = defineRepositoryOp(
     'claimWorker',
     'unclaimWorker',
     'recordReleased',
+    'recordWorkerReuse',
     'recordReleaseKept',
-    'recordCompactionFailure',
     'recordReleasePending',
   ]
 );

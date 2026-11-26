@@ -202,6 +202,11 @@ export async function startProdServer(config: Config) {
         server.requestIP(req)?.address ?? null
       );
       if (image) return image;
+      const attachment = await daemonContext.handleAttachmentUpload(
+        req,
+        server.requestIP(req)?.address ?? null
+      );
+      if (attachment) return attachment;
 
       return app.fetch(req);
     },

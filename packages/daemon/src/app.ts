@@ -3,6 +3,7 @@ import { NEO_FRONT_INFERENCE } from './lib/job-queue-constants.ts';
 import { NEO_DRIVER_REFRESH } from './lib/neo/driver-refresh.ts';
 import { createPeerPairRoute } from './routes/neo-peer.ts';
 import { collectDaemonScratch } from './lib/drivers/daemon-scratch.ts';
+import { setProviderRepository } from './lib/model-service.ts';
 import { createCodexSetupHost } from './lib/drivers/codex-setup-host.ts';
 import { createCodexSetup } from './lib/drivers/codex-setup.ts';
 import {
@@ -16,6 +17,7 @@ import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import { startSessionDoor } from './lib/messaging/session-door.ts';
 import { stampActiveAttempt } from './lib/tasks/direct-attempt-flag.ts';
 import { homedir } from 'os';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { codexStatePath } from './storage/codex-desktop-read.ts';
 import { parsePositiveInt, type Config } from './config.ts';
@@ -30,6 +32,10 @@ import { createRequestGuard } from './lib/pairing/origin-host.ts';
 import { createUpgradeAuthenticator, type UpgradeIdentity } from './lib/pairing/upgrade-auth.ts';
 import { ensureLocalCredential } from './lib/pairing/local-credential.ts';
 import { createMessageImageHandler } from './lib/rpc-handlers/message-image-route.ts';
+import {
+  createAttachmentUpload,
+  stagedAttachmentDirectory,
+} from './lib/rpc-handlers/attachment-upload-route.ts';
 import { createAgentReadGuard } from './lib/pairing/agent-read.ts';
 import { daemonPairingLimiter } from './lib/pairing/pairing-limiter.ts';
 import { daemonPairWaits } from './lib/pairing/pair-waits.ts';
@@ -55,6 +61,7 @@ import {
 } from '@hyperneo/shared';
 import type { ProviderRecord } from '@hyperneo/shared';
 import type { Provider, ProviderCredentials } from '@hyperneo/shared/provider';
+import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import {
   createDaemonInternalEventBus,
@@ -122,9 +129,8 @@ import {
   disableBuiltInProvidersWithoutEnabledRecord,
 } from './lib/providers/factory.js';
 import { releaseSessionKeyBridges } from './lib/providers/provider-key-bridge.js';
+import { OpencodeProvider } from './lib/providers/opencode-provider.ts';
 import { getProviderRegistry } from './lib/providers/registry.js';
-import { setRateLimitEventReader } from './lib/providers/anthropic-usage-source.ts';
-import { anthropicRateLimitEventsRead } from './storage/repositories/anthropic-usage-read.ts';
 import { OAuthRefreshScheduler } from './lib/credentials/oauth-refresh-scheduler.js';
 import { createGoogleConnectionRefreshLoop } from './lib/connections/refresh-loop.ts';
 import { ProviderCredentialManager } from './lib/credentials/provider-credential-manager.js';
@@ -132,6 +138,7 @@ import { KeychainUnavailableError } from './lib/credentials/credential-store.js'
 import { sameCredentialIdentity } from './lib/credentials/credential-identity.js';
 import { stripPersistedDiscovery } from './lib/providers/discovery-refresh-pipeline.js';
 import { syncAllProviders } from './lib/providers/provider-sync.js';
+import { AnthropicProvider } from './lib/providers/anthropic-provider.ts';
 import {
   clearProviderFailureRecords,
   subscribeProviderFailureChanges,
@@ -217,6 +224,7 @@ import { sweepOrphanedAgentChildren } from './lib/agent/orphan-child-sweep.ts';
 import { AgentChildProcessRepository } from './storage/repositories/agent-child-process-repository.ts';
 import { remoteDaemons } from './lib/remote-daemons/registry.ts';
 import { RemoteDaemonSecretRepository } from './storage/repositories/remote-daemon-secret-repository.ts';
+import { artifactIdentityWrites } from './storage/repositories/artifact-file-identity-write.ts';
 import { OxapEngine } from './lib/oxap/oxap-engine.ts';
 import { createOxapRuntime } from './lib/oxap/oxap-query.ts';
 import { readHubOptions, type OxapSettingsDeps } from './lib/oxap/oxap-settings.ts';
@@ -309,6 +317,20 @@ export async function applyStoredProviderCredentials(
 ): Promise<void> {
   for (const provider of providers) {
     try {
+      if (provider instanceof AnthropicProvider) {
+        if (
+          db.providers.getProviderByProviderId(provider.id)?.authType === 'oauth' ||
+          (await credentialManager.hasAnthropicSettingsLogin())
+        ) {
+          provider.requireOwnLogin();
+        }
+        const version = provider.credentialVersion;
+        const credentials = await credentialManager.getCredentials(provider.id);
+        if (credentials && version === provider.credentialVersion && !provider.getCredentials()) {
+          provider.setCredentials(credentials);
+        }
+        continue;
+      }
       const providerCredentials = await provider.getCredentials?.();
       if (providerCredentials?.type === 'oauth' || providerCredentials?.type === 'api_key') {
         await runReconcilePersistedDiscovery({
@@ -383,6 +405,7 @@ export interface DaemonAppContext {
   handlePair2: ((req: Request, remoteAddress: string | null) => Promise<Response>) | null;
   handleAskMarkdown: (req: Request, remoteAddress: string | null) => Promise<Response | null>;
   handleMessageImage: (req: Request, remoteAddress: string | null) => Promise<Response | null>;
+  handleAttachmentUpload: (req: Request, remoteAddress: string | null) => Promise<Response | null>;
   authenticateUpgrade: (
     req: Request,
     remoteAddress: string | null
@@ -422,6 +445,7 @@ export interface DaemonAppContext {
 }
 
 async function invalidateInFlightModelLoads(): Promise<void> {
+  setProviderRepository(null);
   try {
     const { clearModelsCache } = await import('./lib/model-service.ts');
     clearModelsCache();
@@ -513,8 +537,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const reactiveDb = createReactiveDatabase(db);
     startupTimer.start('database + auth initialize');
     await db.initialize(reactiveDb);
-    const usageDb = db.getDatabase();
-    setRateLimitEventReader(() => gatewayFor(usageDb).run(anthropicRateLimitEventsRead, 200));
+    setProviderRepository(db.providers);
     if (process.env['NODE_ENV'] !== 'test') db.warmEmbedder();
     const cutOffSessionIds = db.listProcessingSessionIds();
     const interruptedTurns = await db.markRestartInterruptedTurns();
@@ -633,10 +656,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       return Math.min(MAX_GITHUB_POLLING_INTERVAL_SECONDS, Math.max(0, Math.trunc(value)));
     };
     applyProviderModelAllowlistsToEnv(settingsManager.getGlobalSettings().providerModelAllowlists);
+    const daemonId = await db.gateway.call(artifactIdentityWrites, 'ensure', randomUUID());
     remoteDaemons.restore(
       settingsManager.getGlobalSettings().attachedDaemons ?? [],
       (attachedDaemons) => settingsManager.updateGlobalSettings({ attachedDaemons }),
-      new RemoteDaemonSecretRepository(db.getDatabase())
+      new RemoteDaemonSecretRepository(db.getDatabase()),
+      daemonId
     );
 
     const credentialManager = ProviderCredentialManager.create(db.getDatabase());
@@ -690,10 +715,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       logError('[Daemon] Provider sync failed (non-fatal):', err);
     }
 
-    const authStatus = await authManager.getAuthStatus();
     const anthropicProvider = providerRegistry.get('anthropic');
-    const hasAnthropicAuth =
-      authStatus.isAuthenticated || (anthropicProvider?.isAvailable() ?? false);
+    const hasAnthropicAuth = anthropicProvider?.isAvailable() ?? false;
 
     if (hasAnthropicAuth) {
       void import('./lib/model-service.ts')
@@ -844,6 +867,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         });
       },
       key: async (providerId) => {
+        const provider = providerRegistry.get(providerId);
+        if (provider instanceof OpencodeProvider) return provider.getApiKey();
         const credentials = await credentialManager.getCredentials(providerId);
         return credentials?.type === 'api_key' ? credentials.apiKey : undefined;
       },
@@ -943,32 +968,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     let gitHubService: GitHubService | null = null;
     const shouldEnableGitHub = config.githubWebhookSecret || getGitHubPollingIntervalSeconds() > 0;
 
-    if (hasAnthropicAuth) {
-      const storedCredentials = await anthropicProvider?.getCredentials?.();
-      const apiKey =
-        config.anthropicApiKey ||
-        config.claudeCodeOAuthToken ||
-        config.anthropicAuthToken ||
-        (storedCredentials?.type === 'api_key' ? storedCredentials.apiKey : undefined) ||
-        (storedCredentials?.type === 'oauth' ? storedCredentials.accessToken : undefined);
-      const apiKeyType: 'api_key' | 'oauth' | undefined =
-        storedCredentials?.type === 'api_key'
-          ? 'api_key'
-          : storedCredentials?.type === 'oauth'
-            ? 'oauth'
-            : apiKey === config.claudeCodeOAuthToken || apiKey === config.anthropicAuthToken
-              ? 'oauth'
-              : apiKey === config.anthropicApiKey
-                ? 'api_key'
-                : undefined;
-
-      if (apiKey) {
+    if (anthropicProvider instanceof AnthropicProvider) {
+      const sdkEnv = () =>
+        anthropicProvider.isAvailable() ? anthropicProvider.buildSdkConfig().envVars : null;
+      if (hasAnthropicAuth) {
         gitHubService = createGitHubService({
           db,
           internalEventBus,
           config,
-          apiKey,
-          apiKeyType,
+          sdkEnv,
           githubToken: process.env.GITHUB_TOKEN,
           collectPollPage: collectGitHubPollPage,
           jobQueue,
@@ -1029,8 +1037,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       },
       { subscriberName: 'session-external-events', namespaceId: SESSION_EVENT_SCOPE }
     );
+    const usesOxap = (sessionId: string) => isOxapHarness(db.getSession(sessionId)?.config.harness);
     const restartRecoveryDeps: RestartRecoveryDeps = {
       readEvidence: async (sessionId) => {
+        if (usesOxap(sessionId)) return null;
         await db.waitForSdkMessageColumns(sessionId);
         return db.getSDKMessageRepo().readRestartRecoveryEvidence(sessionId);
       },
@@ -1315,6 +1325,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const pairing = new DevicePairingRepository(db.getDatabase());
     const handlePeerPair = createPeerPairRoute(db.gateway);
     const handlePair = createPairRoute({
+      daemonId,
       repo: pairing,
       limiter: daemonPairingLimiter,
       now: Date.now,
@@ -1358,6 +1369,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     });
     const guardAgent = createAgentReadGuard(() => db.gateway);
     const guardRequest = async (req: Request) => guardOrigin(req) ?? (await guardAgent(req));
+    const attachments = createAttachmentUpload(
+      stagedAttachmentDirectory(config.dbPath),
+      authenticateUpgrade
+    );
+    const stopAttachmentSweep = await attachments.startSweep((error) =>
+      logError('[Daemon] Could not sweep staged attachments:', error)
+    );
 
     let server: ServerHandle | undefined;
     let removeRuntimeDescriptorFile = () => {};
@@ -1366,6 +1384,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       startupAborted = true;
       const extensionsStopped = extensions.stop();
       await releaseFailedStartup([
+        stopAttachmentSweep,
         () => server?.stop(true),
         () => removeRuntimeDescriptorFile(),
         () => sessionDoor?.close(),
@@ -1440,6 +1459,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         if (markdown) return markdown;
         const image = await handleMessageImage(req, client?.remoteAddress ?? null);
         if (image) return image;
+        const attachment = await attachments.handle(req, client?.remoteAddress ?? null);
+        if (attachment) return attachment;
 
         if (url.pathname === '/ws') {
           const device = await authenticateUpgrade(req, client?.remoteAddress ?? null);
@@ -1611,12 +1632,16 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         ),
     });
 
+    const { prepare: prepareSdkHumanSend } = humanSend;
     messageDeliveryProcessor.register(
       MESSAGE_DELIVERY,
       createMessageDeliveryHandler({
         jobQueue,
-        prepareHumanSend: humanSend.prepare,
-        watchHumanSend: humanSend.watch,
+        prepareHumanSend: async (sessionId) =>
+          usesOxap(sessionId) ? 'deliver' : prepareSdkHumanSend(sessionId),
+        watchHumanSend: (sessionId, uuid) => {
+          if (!usesOxap(sessionId)) humanSend.watch(sessionId, uuid);
+        },
         getSession: async (sessionId: string) => {
           const indexed = taskAgentManager?.getSubSession(sessionId);
           if (indexed && sessionManager?.getCachedSession(sessionId) === indexed) {
@@ -1763,6 +1788,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         return;
       }
       isCleanedUp = true;
+      await stopAttachmentSweep();
       db.stopSdkMessageColumnsBackfill();
       startupLogCaptureCleanup = null;
       for (const timer of cooldownResumeTimers) clearTimeout(timer);
@@ -1938,6 +1964,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       handlePair2,
       handleAskMarkdown,
       handleMessageImage,
+      handleAttachmentUpload: attachments.handle,
       authenticateUpgrade,
       guardRequest,
       db,

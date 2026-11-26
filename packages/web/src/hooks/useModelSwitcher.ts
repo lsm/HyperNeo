@@ -63,6 +63,7 @@ export interface RawModelEntry {
   context_window?: number;
   thinkingModes?: 'off' | 'on' | 'granular';
   effortLevels?: ModelInfo['effortLevels'];
+  codexReasoning?: ModelInfo['codexReasoning'];
   available?: boolean;
 }
 
@@ -104,6 +105,7 @@ export function mapRawModelsToModelInfos(models: RawModelEntry[]): ModelInfo[] {
       available: m.available !== false,
       thinkingModes: m.thinkingModes,
       effortLevels: m.effortLevels,
+      codexReasoning: m.codexReasoning,
     };
   });
 
@@ -281,13 +283,13 @@ export function useModelSwitcher(
       const modelInfos = mapRawModelsToModelInfos(models);
       setAvailableModels(modelInfos);
 
-      if (fetchedModelId && fetchedProvider && !fetchedModelInfo) {
+      if (fetchedModelId && fetchedProvider && !fetchedModelInfo?.codexReasoning) {
         const matched = modelInfos.find(
           (m) =>
             (m.id === fetchedModelId || m.alias === fetchedModelId) &&
             m.provider === fetchedProvider
         );
-        if (matched) setCurrentModelInfo(matched);
+        if (matched && (!fetchedModelInfo || matched.codexReasoning)) setCurrentModelInfo(matched);
       }
     } catch {
     } finally {
@@ -343,16 +345,16 @@ export function useModelSwitcher(
           return;
         }
 
-        const result = (await hub.request('session.model.switch', {
-          sessionId,
-          model: model.id,
-          provider: model.provider,
-        })) as {
+        const result = await hub.request<{
           success: boolean;
           model: string;
           error?: string;
           pending?: { model: string; provider: string };
-        };
+        }>(
+          'session.model.switch',
+          { sessionId, model: model.id, provider: model.provider },
+          { timeout: 30_000 }
+        );
 
         if (result.success && result.pending) {
           toast.info(`${model.name || result.pending.model}: ${t('composer.switchesNextTurn')}`);

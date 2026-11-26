@@ -1,13 +1,16 @@
 import { afterAll, describe, expect, spyOn, test } from 'bun:test';
-import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { cleanupOwnedWorktree } from '../../../../src/lib/drivers/work-placement.ts';
+import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox.ts';
 import type { WorkAdapter } from '../../../../src/lib/drivers/types.ts';
 import type { NeoDriverTarget } from '../../../../src/lib/neo/driver-work.ts';
+import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
+import { prepareCodingExecution } from '../../../../src/lib/neo/packs/coding/prepare-execution.ts';
 import {
   admitSessionArchive,
   NEO_TODO_RELEASE_PRINCIPAL,
@@ -75,9 +78,11 @@ function setup() {
   });
   const archived: unknown[] = [];
   const compacted: string[] = [];
+  const events: string[] = [];
   let cacheUntil: WorkAdapter['cacheUntil'];
   let compact: WorkAdapter['compact'] = async (ref) => {
     compacted.push(ref.id);
+    events.push(`compact ${ref.id}`);
     return { ok: true, value: { compacted: true } };
   };
   const notices: string[] = [];
@@ -88,6 +93,8 @@ function setup() {
   let onStatus = () => {};
   let folder = pushedCheckout();
   let next = worker;
+  let onStart: ((input: Record<string, unknown>) => unknown) | undefined;
+  const packs: NeoPack[] = [];
   const reuse = (mode: string) =>
     db
       .prepare(
@@ -98,6 +105,7 @@ function setup() {
       .run(JSON.stringify(mode));
   reuse('per_todo');
   const invoke = recordedWorkInvoke(sessions.inputs, async (caller, name, input) => {
+    if (name === 'work.start' && onStart) return completed(await onStart(input));
     if (name === 'work.start')
       return completed({
         ok: true,
@@ -107,11 +115,13 @@ function setup() {
           lastActivityAt: 1,
         },
       });
-    if (name === 'work.send')
+    if (name === 'work.send') {
+      events.push(`send ${(input.ref as typeof worker).id}`);
       return completed({
         ok: true,
         value: { delivered: true, receipt: { executionId: worker.id, inputId: 'i' } },
       });
+    }
     if (name === 'neo.session.archive') {
       archived.push(input.ref);
       return completed(await archive(caller));
@@ -131,17 +141,22 @@ function setup() {
     sessions,
     invoke,
     workerCompact: () => ({ compact, cacheUntil }),
-    packs: () => [],
+    packs: () => packs,
     tell: async (_ask, _todo, note) => {
       notices.push(note);
     },
     attend: async () => {},
     changed: () => {},
   });
-  const add = (target: NeoDriverTarget, named: Record<string, unknown> | null = null) => {
+  const add = (
+    target: NeoDriverTarget,
+    named: Record<string, unknown> | null = null,
+    askId = 'ask',
+    createdAt = 1
+  ) => {
     const todo = store.addTodo(
       crypto.randomUUID(),
-      'ask',
+      askId,
       {
         approvedAt: 1,
         dependsOn: [],
@@ -151,7 +166,7 @@ function setup() {
         instruction: 'Build the rows.',
         named,
       },
-      1
+      createdAt
     );
     sessions.create(todo.id, target);
     return todo;
@@ -173,6 +188,9 @@ function setup() {
     refresh,
     archived,
     compacted,
+    events,
+    start: (todoId: string) => runner.start(todoId),
+    fill: () => runner.fill(),
     setCompact: (next: WorkAdapter['compact']) => {
       compact = next;
     },
@@ -186,6 +204,10 @@ function setup() {
     setFolder: (next: string) => {
       folder = next;
     },
+    setOnStart: (next: typeof onStart) => {
+      onStart = next;
+    },
+    packs,
     setOnStatus: (next: () => void) => {
       onStatus = next;
     },
@@ -267,10 +289,10 @@ describe('neo todo runner refresh releases finished workers', () => {
             value: { archived: true },
           }
       );
-      await h.finishTodo(h.add({ verb: 'send', ref: worker }));
       h.db
         .prepare('DELETE FROM work_started_sessions WHERE adapter = ? AND id = ?')
         .run(worker.adapter, worker.id);
+      await h.finishTodo(h.add({ verb: 'send', ref: worker }));
       await h.refresh();
       await h.refresh();
       expect(
@@ -300,7 +322,9 @@ describe('neo todo runner refresh releases finished workers', () => {
             value: { archived: true },
           }
       );
-      await h.finishTodo(h.add({ verb: 'send', ref: worker }));
+      const todo = h.add({ verb: 'send', ref: worker });
+      h.sessions.recordRef(todo.id, worker);
+      await h.finishTodo(todo);
       await h.refresh();
       expect(h.archived).toEqual([worker]);
       expect(h.released()).toHaveLength(1);
@@ -348,7 +372,9 @@ describe('neo todo runner refresh releases finished workers', () => {
     const h = setup();
     try {
       h.setArchive(() => ({ ok: false, reason: 'busy' }));
-      await h.finishTodo(h.add({ verb: 'send', ref: worker }));
+      const todo = h.add({ verb: 'send', ref: worker });
+      h.sessions.recordRef(todo.id, worker);
+      await h.finishTodo(todo);
       await h.refresh();
       expect(h.archived).toEqual([worker]);
       expect(h.released()).toEqual([]);
@@ -718,256 +744,14 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
     }
   });
 
-  test('compacts a kept worker once per free period', async () => {
-    const h = setup();
-    try {
-      h.reuse('long_lived');
-      await h.finishTodo(h.add(started));
-      await h.refresh();
-      await h.refresh();
-      expect(h.compacted).toEqual([worker.id]);
-
-      const next = h.add(started);
-      await h.finishTodo(next);
-      h.db
-        .prepare('UPDATE neo_todos SET finished_at = ? WHERE id = ?')
-        .run(Date.now() + 1, next.id);
-      await h.refresh();
-      expect(h.compacted).toEqual([worker.id, worker.id]);
-      expect(h.archived).toEqual([]);
-    } finally {
-      h.db.close();
-    }
-  });
-
-  test('backs off after an unconfirmed compaction and then retries the kept worker', async () => {
-    const h = setup();
-    const ref = { ...worker, id: crypto.randomUUID() };
-    const attempts: string[] = [];
-    try {
-      h.reuse('long_lived');
-      h.startNext(ref);
-      await h.finishTodo(h.add(started));
-      const runRelease = (now: number) =>
-        releaseNeoTodoWorkers(
-          h.sessions,
-          h.invoke,
-          () => {},
-          now,
-          undefined,
-          () => ({
-            compact: async (target) => {
-              attempts.push(target.id);
-              return attempts.length > 1
-                ? { ok: true, value: { compacted: true } }
-                : { ok: false, reason: 'not_delivered', detail: 'Compaction was not confirmed.' };
-            },
-          })
-        );
-
-      await runRelease(Date.now());
-      await runRelease(Date.now());
-      expect(attempts).toEqual([ref.id]);
-      expect((await h.sessions.read('workerCompactionFacts', ref))?.compactedAt).toBeNull();
-      expect(kept(h)).toEqual([{ kept: 'kept_for_reuse' }]);
-
-      const later = Date.now() + 5 * 60_000;
-      await runRelease(later);
-      await runRelease(later);
-      expect(attempts).toEqual([ref.id, ref.id]);
-      expect((await h.sessions.read('workerCompactionFacts', ref))?.compactedAt).toBeGreaterThan(0);
-      expect(h.archived).toEqual([]);
-    } finally {
-      h.db.close();
-    }
-  });
-
-  test('keeps a worker after its timed-out compaction succeeds and the cache goes cold', async () => {
-    const h = setup();
-    try {
-      h.reuse('long_lived');
-      const todo = h.add(started);
-      await h.finishTodo(todo);
-      const attemptedAt = Date.now();
-      const retryAt = attemptedAt + 5 * 60_000;
-      await h.sessions.write('recordCompactionFailure', todo.id, worker, {
-        count: 1,
-        attemptedAt,
-        retryAt,
-      });
-      h.db
-        .prepare(
-          `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata)
-           VALUES (?, 'Worker', '/synthetic', ?, ?, 'active', '{}', '{}')`
-        )
-        .run(worker.id, attemptedAt, attemptedAt);
-      h.db
-        .prepare(
-          `INSERT INTO sdk_messages
-           (id, session_id, message_type, message_subtype, sdk_message, timestamp, internal_compaction_turn)
-           VALUES (?, ?, 'result', 'success', '{}', ?, 1)`
-        )
-        .run(crypto.randomUUID(), worker.id, new Date(attemptedAt + 76_000).toISOString());
-      await releaseNeoTodoWorkers(
-        h.sessions,
-        h.invoke,
-        () => {},
-        retryAt,
-        undefined,
-        () => ({
-          compact: async () => {
-            throw new Error('Late success must not dispatch another compaction.');
-          },
-          cacheUntil: async () => retryAt - 1,
-        })
-      );
-      expect((await h.sessions.read('workerCompactionFacts', worker))?.compactedAt).toBe(
-        attemptedAt
-      );
-      expect(h.archived).toEqual([]);
-      expect(kept(h)).toEqual([{ kept: 'kept_for_reuse' }]);
-    } finally {
-      h.db.close();
-    }
-  });
-
-  test('skips busy and unavailable workers without using the compaction attempt budget', async () => {
-    const h = setup();
-    const ref = { ...worker, id: crypto.randomUUID() };
-    const warnings: string[] = [];
-    const attempts = [false, 'busy', 'not_open', 'not_found', 'unreachable', true] as const;
-    let index = 0;
-    try {
-      h.reuse('long_lived');
-      h.startNext(ref);
-      await h.finishTodo(h.add(started));
-      for (const _attempt of attempts) {
-        await releaseNeoTodoWorkers(
-          h.sessions,
-          h.invoke,
-          (message) => warnings.push(message),
-          Date.now(),
-          undefined,
-          () => ({
-            compact: async () => {
-              const outcome = attempts[index++];
-              return typeof outcome === 'boolean'
-                ? { ok: true, value: { compacted: outcome } }
-                : { ok: false, reason: outcome, detail: 'Synthetic skip' };
-            },
-          })
-        );
-      }
-      expect(index).toBe(attempts.length);
-      expect(warnings).toEqual([]);
-      expect((await h.sessions.read('workerCompactionFacts', ref))?.compactedAt).toBeGreaterThan(0);
-      expect(h.archived).toEqual([]);
-    } finally {
-      h.db.close();
-    }
-  });
-
-  test('caps failed attempts until the worker finishes another todo', async () => {
-    const h = setup();
-    const ref = { ...worker, id: crypto.randomUUID() };
-    const warnings: string[] = [];
-    const errors: string[] = [];
-    try {
-      h.reuse('long_lived');
-      h.startNext(ref);
-      await h.finishTodo(h.add(started));
-      const runRelease = (now: number) =>
-        releaseNeoTodoWorkers(
-          h.sessions,
-          h.invoke,
-          (message, error) => {
-            warnings.push(message);
-            errors.push((error as Error).message);
-          },
-          now,
-          undefined,
-          () => ({
-            compact: async () => ({
-              ok: false,
-              reason: 'not_delivered',
-              detail: 'Synthetic compaction refusal',
-            }),
-          })
-        );
-
-      for (let sweep = 0; sweep < 5; sweep++) await runRelease(Date.now() + sweep * 6 * 60_000);
-      expect(warnings).toHaveLength(3);
-      expect(warnings[2]).toContain('3/3');
-      expect(errors[2]).toBe('not_delivered: Synthetic compaction refusal');
-      expect((await h.sessions.read('workerCompactionFacts', ref))?.failure?.count).toBe(3);
-      expect(kept(h)).toEqual([{ kept: 'kept_for_reuse' }]);
-      expect((await h.sessions.read('workerCompactionFacts', ref))?.compactedAt).toBeNull();
-
-      const next = h.add(started);
-      await h.finishTodo(next);
-      await runRelease(Date.now());
-      expect(warnings).toHaveLength(4);
-      expect(warnings[3]).toContain('1/3');
-      expect(h.archived).toEqual([]);
-    } finally {
-      h.db.close();
-    }
-  });
-
-  test('honors an exhausted retry budget already stored in the database', async () => {
-    const h = setup();
-    const ref = { ...worker, id: crypto.randomUUID() };
-    try {
-      h.reuse('long_lived');
-      h.startNext(ref);
-      const todo = h.add(started);
-      await h.finishTodo(todo);
-      const at = Date.now();
-      await h.sessions.write('recordCompactionFailure', todo.id, ref, {
-        count: 3,
-        attemptedAt: at,
-        retryAt: at,
-      });
-      await h.refresh();
-      expect(h.compacted).toEqual([]);
-      expect(kept(h)).toEqual([{ kept: 'kept_for_reuse' }]);
-    } finally {
-      h.db.close();
-    }
-  });
-
-  test('returns from the release sweep while a kept worker is still compacting', async () => {
-    const h = setup();
-    const ref = { ...worker, id: crypto.randomUUID() };
-    const pending = Promise.withResolvers<{ ok: true; value: { compacted: boolean } }>();
-    const startedCompaction: string[] = [];
-    try {
-      h.reuse('long_lived');
-      h.startNext(ref);
-      h.setCompact((target) => {
-        startedCompaction.push(target.id);
-        return pending.promise;
-      });
-      await h.finishTodo(h.add(started));
-      await h.refresh();
-      await h.refresh();
-      expect(startedCompaction).toEqual([ref.id]);
-      expect(kept(h)).toEqual([{ kept: 'kept_for_reuse' }]);
-      expect((await h.sessions.read('workerCompactionFacts', ref))?.compactedAt).toBeNull();
-    } finally {
-      pending.resolve({ ok: true, value: { compacted: false } });
-      h.db.close();
-    }
-  });
-
-  test('compacts a kept worker while its prompt cache is warm', async () => {
+  test('keeps a warm worker without compacting it before its next todo', async () => {
     const h = setup();
     try {
       h.reuse('long_lived');
       h.setCacheUntil(async () => Date.now() + 60_000);
       await h.finishTodo(h.add(started));
       await h.refresh();
-      expect(h.compacted).toEqual([worker.id]);
+      expect(h.compacted).toEqual([]);
       expect(h.archived).toEqual([]);
       expect(kept(h)).toEqual([{ kept: 'kept_for_reuse' }]);
     } finally {
@@ -975,7 +759,515 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
     }
   });
 
-  test('releases a kept worker whose prompt cache went cold before compaction', async () => {
+  test('releases a long_lived worker once its ask is settled', async () => {
+    const h = setup();
+    try {
+      h.reuse('long_lived');
+      await h.finishTodo(h.add(started));
+      h.store.settleAsk(h.store.getAsk('ask')!, 'done', 'Rows built.', Date.now());
+      await h.refresh();
+      expect(h.archived).toEqual([worker]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('compacts the worker of the same ask before sending its next todo', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      const next = h.add({ verb: 'send', ref: worker });
+      await h.start(next.id);
+      expect(h.events).toEqual([`compact ${worker.id}`, `send ${worker.id}`]);
+      expect(h.sessions.readRef(next.id)).toEqual(worker);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test.each([
+    [
+      'refused',
+      async () => ({ ok: false as const, reason: 'busy' as const, detail: 'Synthetic refusal' }),
+    ],
+    [
+      'failing',
+      async () => {
+        throw new Error('Synthetic failure');
+      },
+    ],
+  ])('starts a fresh worker after a %s compaction', async (_name, compact) => {
+    const h = setup();
+    try {
+      h.setCompact(compact);
+      await h.finishTodo(h.add(started));
+      recordWorkerStarted(h.db, worker, {
+        startedBy: 'neo',
+        machine: 'laptop',
+        folder: h.folder(),
+        harness: worker.adapter,
+        provider: 'synthetic-provider',
+        model: 'synthetic-model',
+        effort: 'high',
+      });
+      const fresh = { adapter: 'hyperneo', id: 'fresh' };
+      let startInput: Record<string, unknown> | undefined;
+      h.setOnStart((input) => {
+        startInput = input;
+        return {
+          ok: true,
+          value: { ref: fresh, receipt: { executionId: fresh.id, inputId: 'i' } },
+        };
+      });
+      const next = h.add({ verb: 'send', ref: worker });
+      await h.start(next.id);
+      expect(h.events).toEqual([]);
+      expect(h.sessions.readRef(next.id)).toEqual(fresh);
+      expect(startInput?.excludeRefs).toContainEqual(worker);
+      expect(startInput).toMatchObject({
+        provider: 'synthetic-provider',
+        model: 'synthetic-model',
+        effort: 'high',
+      });
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('does not send a todo that was removed while its worker compacted', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      const next = h.add({ verb: 'send', ref: worker });
+      h.setCompact(async () => {
+        h.store.updateTodo(h.store.getTodo(next.id)!, { state: 'removed' }, Date.now());
+        return { ok: true, value: { compacted: true } };
+      });
+      await h.start(next.id);
+      expect(h.events).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('starts other queued todos while a worker compacts and sends to it only once', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      let finish = () => {};
+      const gate = new Promise<void>((resolve) => (finish = resolve));
+      h.setCompact(async () => {
+        h.events.push('compacting');
+        await gate;
+        return { ok: true, value: { compacted: true } };
+      });
+      h.setOnStart(() => {
+        h.events.push('start other');
+        return {
+          ok: true,
+          value: {
+            ref: { adapter: 'hyperneo', id: 'worker-2' },
+            receipt: { executionId: 'worker-2', inputId: 'i' },
+            lastActivityAt: 1,
+          },
+        };
+      });
+      const first = h.add({ verb: 'send', ref: worker }, null, 'ask', 2);
+      const other = h.add(started, null, 'ask', 3);
+      const second = h.add({ verb: 'send', ref: worker }, null, 'ask', 4);
+      await h.fill();
+      await h.fill();
+      expect(h.events).toEqual(['compacting', 'start other']);
+      expect(h.sessions.readRef(other.id)?.id).toBe('worker-2');
+      expect(h.store.getTodo(first.id)?.state).toBe('doing');
+      expect(h.store.getTodo(second.id)?.state).toBe('todo');
+      finish();
+      while (!h.sessions.readRef(first.id)) await new Promise((done) => setTimeout(done, 1));
+      expect(h.events).toEqual(['compacting', 'start other', `send ${worker.id}`]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('leaves a todo removed while its start was refused as removed', async () => {
+    const h = setup();
+    try {
+      const next = h.add(started);
+      h.setOnStart(() => {
+        h.store.updateTodo(h.store.getTodo(next.id)!, { state: 'removed' }, Date.now());
+        return { ok: false, reason: 'todo_required', detail: 'closed', notSent: true };
+      });
+      expect(await h.start(next.id)).toMatchObject({ ok: true, todo: { state: 'removed' } });
+      expect(h.notices).toEqual([]);
+      expect(h.store.getTodo(next.id)?.state).toBe('removed');
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('sends to a session the human named without compacting it', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      const named = h.add({ verb: 'send', ref: worker }, { session: worker.id });
+      await h.start(named.id);
+      h.store.updateTodo(
+        h.store.getTodo(named.id)!,
+        { state: 'done', finishedAt: Date.now() },
+        Date.now()
+      );
+      expect(h.events).toEqual([`send ${worker.id}`]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('starts fresh for a worker from another ask', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      recordWorkerStarted(h.db, worker, {
+        startedBy: 'neo',
+        machine: 'laptop',
+        folder: h.folder(),
+        harness: worker.adapter,
+      });
+      h.store.openAsk({
+        id: 'other',
+        projectId: null,
+        sessionId: 'neo',
+        originMessageId: 'm2',
+        title: 'Other',
+        request: 'Other work',
+        createdAt: 2,
+      });
+      const fresh = { adapter: 'hyperneo', id: 'fresh' };
+      h.setOnStart(() => ({
+        ok: true,
+        value: { ref: fresh, receipt: { executionId: 'fresh', inputId: 'i' } },
+      }));
+      const other = h.add({ verb: 'send', ref: worker }, null, 'other');
+      await h.start(other.id);
+      expect(h.events).toEqual([]);
+      expect(h.sessions.readRef(other.id)).toEqual(fresh);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('starts fresh for a released worker', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      recordWorkerStarted(h.db, worker, {
+        startedBy: 'neo',
+        machine: 'laptop',
+        folder: h.folder(),
+        harness: worker.adapter,
+      });
+      h.db
+        .prepare('UPDATE work_started_sessions SET released_at = ? WHERE adapter = ? AND id = ?')
+        .run(Date.now(), worker.adapter, worker.id);
+      const fresh = { adapter: 'hyperneo', id: 'fresh' };
+      h.setOnStart(() => ({
+        ok: true,
+        value: { ref: fresh, receipt: { executionId: 'fresh', inputId: 'i' } },
+      }));
+      const next = h.add({ verb: 'send', ref: worker });
+      await h.start(next.id);
+      expect(h.events).toEqual([]);
+      expect(h.sessions.readRef(next.id)).toEqual(fresh);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('starts a replacement from the project instead of the old linked worktree', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      const linked = join(scratch, crypto.randomUUID());
+      git(h.folder(), 'worktree', 'add', '--detach', linked, 'HEAD');
+      recordWorkerStarted(h.db, worker, {
+        startedBy: 'neo',
+        machine: 'laptop',
+        folder: linked,
+        harness: worker.adapter,
+      });
+      h.setCompact(undefined);
+      let place: unknown;
+      const fresh = { adapter: 'hyperneo', id: 'fresh' };
+      h.setOnStart((input) => {
+        place = input.place;
+        return { ok: true, value: { ref: fresh, receipt: { executionId: 'fresh', inputId: 'i' } } };
+      });
+      const next = h.add({ verb: 'send', ref: worker });
+      await h.start(next.id);
+      expect(h.events).toEqual([]);
+      expect(h.sessions.readRef(next.id)).toEqual(fresh);
+      expect(place).toMatchObject({ folder: realpathSync(h.folder()) });
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('clears the old worker wait reason when starting a replacement', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      recordWorkerStarted(h.db, worker, {
+        startedBy: 'neo',
+        machine: 'laptop',
+        folder: h.folder(),
+        harness: worker.adapter,
+      });
+      h.setCompact(undefined);
+      const fresh = { adapter: 'hyperneo', id: 'fresh' };
+      h.setOnStart(() => ({
+        ok: true,
+        value: { ref: fresh, receipt: { executionId: 'fresh', inputId: 'i' } },
+      }));
+      const next = h.add({ verb: 'send', ref: worker });
+      h.store.updateTodo(next, { reason: 'Waiting for worker hyperneo:worker-1.' }, Date.now());
+      await h.start(next.id);
+      expect(h.sessions.readRef(next.id)).toEqual(fresh);
+      expect(h.store.getTodo(next.id)).toMatchObject({ state: 'doing', reason: null });
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test.each(['doing', 'blocked'] as const)(
+    'starts fresh when the worker holds another %s todo',
+    async (state) => {
+      const h = setup();
+      try {
+        await h.finishTodo(h.add(started));
+        recordWorkerStarted(h.db, worker, {
+          startedBy: 'neo',
+          machine: 'laptop',
+          folder: h.folder(),
+          harness: worker.adapter,
+        });
+        const holding = h.add(started);
+        h.sessions.recordRef(holding.id, worker);
+        h.store.updateTodo(holding, { state, startedAt: Date.now() }, Date.now());
+        const fresh = { adapter: 'hyperneo', id: 'fresh' };
+        h.setOnStart(() => ({
+          ok: true,
+          value: { ref: fresh, receipt: { executionId: 'fresh', inputId: 'i' } },
+        }));
+        const next = h.add({ verb: 'send', ref: worker });
+        await h.start(next.id);
+        expect(h.events).toEqual([]);
+        expect(h.sessions.readRef(next.id)).toEqual(fresh);
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
+  test('blocks instead of starting unsandboxed when a prepared worker cannot be compacted', async () => {
+    const h = setup();
+    try {
+      configureWorkerSandbox(() => 'off');
+      await h.finishTodo(h.add(started));
+      recordWorkerStarted(h.db, worker, {
+        startedBy: 'neo',
+        machine: 'laptop',
+        folder: h.folder(),
+        harness: worker.adapter,
+        preparation: { pack: 'coding', sandbox: true, parameters: {} },
+      });
+      h.setCompact(undefined);
+      let starts = 0;
+      h.setOnStart(() => {
+        starts++;
+        return { ok: false, reason: 'not_delivered', detail: 'unexpected' };
+      });
+      const next = h.add({
+        verb: 'send',
+        ref: worker,
+        preparationParameters: { target: 'dev' },
+        sandbox: true,
+      } as NeoDriverTarget);
+      await h.start(next.id);
+      expect(h.events).toEqual([]);
+      expect(starts).toBe(0);
+      expect(h.store.getTodo(next.id)?.state).toBe('blocked');
+      expect(h.store.getTodo(next.id)?.blockedReason).toContain('sandbox');
+    } finally {
+      configureWorkerSandbox(() => 'off');
+      h.db.close();
+    }
+  });
+
+  test('keeps a replacement sandboxed when the setting permits it', async () => {
+    const h = setup();
+    try {
+      configureWorkerSandbox(() => 'on-demand');
+      await h.finishTodo(h.add(started));
+      recordWorkerStarted(h.db, worker, {
+        startedBy: 'neo',
+        machine: 'laptop',
+        folder: h.folder(),
+        harness: worker.adapter,
+        preparation: { pack: 'coding', sandbox: true, parameters: {} },
+      });
+      h.packs.push({
+        id: 'coding',
+        describe: 'coding',
+        instructions: () => null,
+        prepareExecution: async () => ({ ok: false, reason: 'unused' }),
+      });
+      h.setCompact(undefined);
+      let preparation: unknown;
+      const fresh = { adapter: 'hyperneo', id: 'fresh' };
+      h.setOnStart((input) => {
+        preparation = input.preparation;
+        return { ok: true, value: { ref: fresh, receipt: { executionId: 'fresh', inputId: 'i' } } };
+      });
+      const parameters = { target: 'dev' };
+      const next = h.add({
+        verb: 'send',
+        ref: worker,
+        preparationParameters: parameters,
+      } as NeoDriverTarget);
+      h.store.updateTodo(next, { check: { pack: 'coding', kind: 'pr', params: {} } }, Date.now());
+      await h.start(next.id);
+      expect(h.events).toEqual([]);
+      expect(h.sessions.readRef(next.id)).toEqual(fresh);
+      expect(preparation).toEqual({ pack: 'coding', parameters, sandbox: true });
+    } finally {
+      configureWorkerSandbox(() => 'off');
+      h.db.close();
+    }
+  });
+
+  test('blocks a prepared replacement without checkout parameters', async () => {
+    const h = setup();
+    try {
+      configureWorkerSandbox(() => 'on-demand');
+      await h.finishTodo(h.add(started));
+      recordWorkerStarted(h.db, worker, {
+        startedBy: 'neo',
+        machine: 'laptop',
+        folder: h.folder(),
+        harness: worker.adapter,
+        preparation: { pack: 'coding', sandbox: true, parameters: {} },
+      });
+      h.packs.push({
+        id: 'coding',
+        describe: 'coding',
+        instructions: () => null,
+        prepareExecution: prepareCodingExecution,
+      });
+      h.setCompact(undefined);
+      let starts = 0;
+      h.setOnStart(() => {
+        starts++;
+        return { ok: false, reason: 'not_delivered', detail: 'unexpected' };
+      });
+      const next = h.add({ verb: 'send', ref: worker });
+      h.store.updateTodo(next, { check: { pack: 'coding', kind: 'pr', params: {} } }, Date.now());
+      await h.start(next.id);
+      expect(h.events).toEqual([]);
+      expect(starts).toBe(0);
+      expect(h.store.getTodo(next.id)?.state).toBe('blocked');
+    } finally {
+      configureWorkerSandbox(() => 'off');
+      h.db.close();
+    }
+  });
+
+  test.each(['pinned', 'moved', 'missing-prerequisite'] as const)(
+    'a queued %s review prepares only its pinned checkout',
+    async (scenario) => {
+      const h = setup();
+      let cleanup: (() => Promise<void>) | undefined;
+      try {
+        configureWorkerSandbox(() => 'on-demand');
+        await h.finishTodo(h.add(started));
+        recordWorkerStarted(h.db, worker, {
+          startedBy: 'neo',
+          machine: 'laptop',
+          folder: h.folder(),
+          harness: worker.adapter,
+          preparation: { pack: 'coding', sandbox: true, parameters: {} },
+        });
+        h.setCompact(undefined);
+        const head = execFileSync('git', ['rev-parse', 'HEAD'], {
+          cwd: h.folder(),
+          encoding: 'utf8',
+        }).trim();
+        git(h.folder(), 'push', '-q', 'origin', 'HEAD:refs/pull/7/head');
+        const parameters = {
+          pullRequest: 7,
+          head: scenario === 'moved' ? 'f'.repeat(40) : head,
+          role: 'review',
+          prerequisiteCommits: [scenario === 'missing-prerequisite' ? '0'.repeat(40) : head],
+        };
+        h.packs.push({
+          id: 'coding',
+          describe: 'coding',
+          instructions: () => null,
+          prepareExecution: prepareCodingExecution,
+        });
+        let opened = false;
+        let checkoutHead: string | null = null;
+        h.setOnStart(async (input) => {
+          const preparation = input.preparation as { parameters: Record<string, unknown> };
+          const destination = join(scratch, crypto.randomUUID());
+          const result = await prepareCodingExecution(
+            { directory: h.folder(), destination, parameters: preparation.parameters },
+            {
+              run: async (command, cwd) => {
+                const child = spawnSync(command[0], command.slice(1), { cwd, encoding: 'utf8' });
+                return {
+                  code: child.status ?? 1,
+                  stdout: child.stdout ?? '',
+                  stderr: child.stderr ?? '',
+                };
+              },
+            }
+          );
+          if (!result.ok) return { ok: false, reason: 'not_delivered', detail: result.reason };
+          cleanup = result.value.release;
+          checkoutHead = execFileSync('git', ['rev-parse', 'HEAD'], {
+            cwd: result.value.directory,
+            encoding: 'utf8',
+          }).trim();
+          opened = true;
+          return {
+            ok: true,
+            value: {
+              ref: { adapter: 'hyperneo', id: 'fresh' },
+              receipt: { executionId: 'fresh', inputId: 'i' },
+            },
+          };
+        });
+        const next = h.add({
+          verb: 'start',
+          adapter: 'hyperneo',
+          preparationParameters: parameters,
+          sandbox: true,
+        });
+        h.store.updateTodo(next, { check: { pack: 'coding', kind: 'pr', params: {} } }, Date.now());
+        h.queueOn(next.id);
+        await h.start(next.id);
+        expect(h.events).toEqual([]);
+        expect(opened).toBe(scenario === 'pinned');
+        if (scenario === 'pinned') expect(String(checkoutHead)).toBe(head);
+        else expect(h.store.getTodo(next.id)?.state).toBe('blocked');
+      } finally {
+        if (cleanup) await cleanup();
+        configureWorkerSandbox(() => 'off');
+        h.db.close();
+      }
+    }
+  );
+
+  test('releases a kept worker whose prompt cache went cold', async () => {
     const h = setup();
     try {
       h.reuse('long_lived');
@@ -990,26 +1282,15 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
     }
   });
 
-  test('keeps an already compacted worker after its prompt cache goes cold', async () => {
+  test('keeps a per_ask worker of an open ask after its prompt cache went cold', async () => {
     const h = setup();
     try {
-      h.reuse('long_lived');
-      h.setCacheUntil(async () => Date.now() + 60_000);
+      h.reuse('per_ask');
+      h.setCacheUntil(async () => Date.now() - 60 * 60_000);
       await h.finishTodo(h.add(started));
       await h.refresh();
-      expect(h.compacted).toEqual([worker.id]);
-      for (let i = 0; i < 50; i++) {
-        if ((await h.sessions.read('workerCompactionFacts', worker))?.compactedAt) break;
-        await Bun.sleep(5);
-      }
-      expect((await h.sessions.read('workerCompactionFacts', worker))?.compactedAt).toBeGreaterThan(
-        0
-      );
-      h.setCacheUntil(async () => Date.now() - 60 * 60_000);
-      await h.refresh();
-      expect(h.compacted).toEqual([worker.id]);
       expect(h.archived).toEqual([]);
-      expect(h.released()).toEqual([]);
+      expect(kept(h)).toEqual([{ kept: 'kept_for_reuse' }]);
     } finally {
       h.db.close();
     }
@@ -1076,30 +1357,6 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
       await h.refresh();
       expect(h.compacted).toEqual([]);
       expect(h.archived).toEqual([]);
-    } finally {
-      h.db.close();
-    }
-  });
-
-  test('keeps only the most recently used free worker per folder under long_lived', async () => {
-    const h = setup();
-    const newer = { adapter: 'hyperneo', id: 'worker-2' };
-    try {
-      h.reuse('long_lived');
-      const first = h.add(started);
-      await h.finishTodo(first);
-      await h.refresh();
-      expect(h.archived).toEqual([]);
-      expect(kept(h)).toEqual([{ kept: 'kept_for_reuse' }]);
-      h.db
-        .prepare('UPDATE neo_todos SET finished_at = ? WHERE id = ?')
-        .run(Date.now() - 8 * 24 * 60 * 60 * 1000, first.id);
-      h.startNext(newer);
-      await h.finishTodo(h.add(started));
-      await h.refresh();
-      await h.refresh();
-      expect(h.archived).toEqual([worker]);
-      expect(h.released()).toHaveLength(1);
     } finally {
       h.db.close();
     }

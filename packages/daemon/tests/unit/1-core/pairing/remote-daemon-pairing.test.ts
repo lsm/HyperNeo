@@ -1,4 +1,5 @@
 import { createPairWaits } from '../../../../src/lib/pairing/pair-waits.ts';
+import { randomUUID } from 'node:crypto';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { MessageHub, MessageHubRouter } from '@hyperneo/shared';
@@ -37,6 +38,7 @@ function migratedDb() {
 
 async function startPairableDaemon() {
   const db = migratedDb();
+  const daemonId = randomUUID();
   const devices = new DevicePairingRepository(db);
   const registry = createOperationRegistry([
     defineOperation({
@@ -45,6 +47,13 @@ async function startPairableDaemon() {
       inputSchema: z.object({}),
       resultSchema: z.object({ kind: z.string().nullable() }),
       execute: async (_input, caller: OperationCaller) => ({ kind: caller.device?.kind ?? null }),
+    }),
+    defineOperation({
+      name: 'operations.list',
+      description: 'Answer the reachability probe',
+      inputSchema: z.object({}),
+      resultSchema: z.object({}),
+      execute: async () => ({}),
     }),
   ]);
   const router = new MessageHubRouter({
@@ -56,6 +65,7 @@ async function startPairableDaemon() {
   hub.registerTransport(transport);
   setupOperationHandlers(hub, registry, (clientId) => transport.deviceOf(clientId));
   const pair = createPairRoute({
+    daemonId,
     waits: createPairWaits(),
     repo: devices,
     limiter: createPairingLimiter(),
@@ -80,6 +90,7 @@ async function startPairableDaemon() {
   });
   return {
     db,
+    daemonId,
     devices,
     url: `ws://127.0.0.1:${server.port}/ws`,
     clientCount: () => transport.getClientCount(),
@@ -149,7 +160,8 @@ describe('attaching a daemon with a pairing code', () => {
   test('revoking the paired daemon closes its connection and refuses reconnecting', async () => {
     const made = remote.devices.createCode('daemon', null, true, Date.now());
     await attach({ code: made.code });
-    expect(await daemons.invoke('b', 'work.status', {})).toEqual({ kind: 'daemon' });
+    const replyId = `paired:${remote.daemonId}`;
+    expect(await daemons.invoke(replyId, 'work.status', {})).toEqual({ kind: 'daemon' });
     const [device] = remote.devices.listDevices();
     remote.devices.revokeDevice(device.id, Date.now());
     announceDeviceRevoked(device.id);
@@ -157,7 +169,37 @@ describe('attaching a daemon with a pairing code', () => {
     while (remote.clientCount() > 0 && Date.now() < deadline)
       await new Promise((resolve) => setTimeout(resolve, 10));
     expect(remote.clientCount()).toBe(0);
-    await expect(daemons.invoke('b', 'work.status', {})).rejects.toThrow();
+    await expect(daemons.invoke(replyId, 'work.status', {})).rejects.toThrow();
+  });
+
+  test('testing an attached address uses its saved pairing credential', async () => {
+    await expect(daemons.probe(remote.url)).rejects.toThrow();
+    const made = remote.devices.createCode('daemon', null, true, Date.now());
+    await attach({ code: made.code });
+    await expect(daemons.probe(remote.url)).resolves.toBeUndefined();
+  });
+
+  test('editing the endpoint keeps the original pairing and stable reply address', async () => {
+    const made = remote.devices.createCode('daemon', null, true, Date.now());
+    await attach({ code: made.code });
+    const [original] = remote.devices.listDevices();
+    const url = `${remote.url}?address=updated`;
+    expect(await attach({ url, edit: { displayName: 'Remote office' } })).toMatchObject({
+      kind: 'completed',
+      value: { kind: 'attached', daemonId: 'b', url },
+    });
+    expect(await daemons.invoke(`paired:${remote.daemonId}`, 'work.status', {})).toEqual({
+      kind: 'daemon',
+    });
+    expect(remote.devices.listDevices().map(({ id }) => id)).toEqual([original.id]);
+  });
+
+  test('testing uses a saved credential even when another attachment shares the address', async () => {
+    await invokeOperation(operations, 'daemon.attach', { daemonId: 'a', url: remote.url }, human);
+    const made = remote.devices.createCode('daemon', null, true, Date.now());
+    await attach({ code: made.code });
+    await expect(daemons.probe(remote.url)).resolves.toBeUndefined();
+    daemons.forget('a');
   });
 
   test('a wrong code is refused and leaves nothing attached or stored', async () => {

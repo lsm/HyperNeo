@@ -272,6 +272,32 @@ describe('PR ledger events', () => {
     }
   });
 
+  test('an event for an owner that no longer exists is dropped instead of retried', async () => {
+    const { db, events, deps, cycle, own } = setup(100);
+    try {
+      const merged = response(
+        [],
+        [node(8549, { state: 'MERGED', closedAt: new Date(150).toISOString() })]
+      );
+      await cycle(merged, 200);
+      own(8549);
+      let attempts = 0;
+      const gone = {
+        ...deps,
+        host: 'github.com',
+        tell: async () => {
+          attempts += 1;
+          return 'gone' as const;
+        },
+      };
+      await deliverCodingPrEvents(events, [], gone);
+      await deliverCodingPrEvents(events, [], gone);
+      expect(attempts).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
   test('terminal history predating activation is not replayed to existing owners', async () => {
     const { db, events, deps, told, cycle, own } = setup(1000);
     try {

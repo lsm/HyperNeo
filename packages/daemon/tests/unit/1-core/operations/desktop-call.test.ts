@@ -9,14 +9,20 @@ import {
   decideDesktopCall,
 } from '../../../../src/lib/desktop/call-operation.ts';
 import catalog from '../../../../src/lib/desktop/tool-catalog.json' with { type: 'json' };
-import { describeOperationDefinition } from '../../../../src/lib/operations/discovery.ts';
+import {
+  createDiscoveryOperations,
+  describeOperationDefinition,
+} from '../../../../src/lib/operations/discovery.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
 import {
   createOperationRegistry,
+  defineOperation,
+  type OperationRegistry,
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
 import { planSessionDoorCall } from '../../../../src/lib/messaging/session-door.ts';
+import { z } from 'zod';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 let db: Database;
@@ -49,7 +55,7 @@ beforeEach(async () => {
     CREATE TABLE neo_todos(id TEXT, ask_id TEXT, title TEXT, state TEXT, approved_at INTEGER, named TEXT, desktop_apps TEXT DEFAULT '[{"bundleId":"org.example.app","name":"app"}]');
     CREATE TABLE neo_todo_sessions(todo_id TEXT, ref TEXT);
     CREATE TABLE mcp_audit_log(id TEXT, timestamp INTEGER, agent_name TEXT, session_id TEXT, tool_name TEXT, params_summary TEXT, space_id TEXT, task_id TEXT, workflow_run_id TEXT);
-    INSERT INTO neo_asks VALUES('ask','open','[{"bundleId":"org.example.app","name":"app"}]');
+    INSERT INTO neo_asks VALUES('ask','open','[{"bundleId":"org.example.app","name":"app","seen":"all"}]');
     INSERT INTO neo_todos(id, ask_id, title, state, approved_at, named) VALUES('todo','ask','Synthetic action','doing',1,'{"desktopControl":true}');
     INSERT INTO neo_todo_sessions VALUES('todo','{"adapter":"hyperneo","id":"worker-a"}');`);
   requests = [];
@@ -121,6 +127,94 @@ const audit = () =>
     params_summary: string;
     timestamp: number;
   }>;
+
+test('desktop results include a timestamp and elapsed milliseconds even when refused', async () => {
+  const handler = createOperationMcpHandler(registry(), () => caller);
+  const callDesktop = async () =>
+    JSON.parse((await handler({ name: 'desktop.call', input })).content[0].text);
+  const start = Date.now();
+  const allowed = await callDesktop();
+  db.prepare("UPDATE neo_asks SET desktop_apps = '[]'").run();
+  const refused = await callDesktop();
+  expect(allowed).toMatchObject({ ok: true, dispatched: true });
+  expect(refused).toMatchObject({ ok: false, dispatched: false, reason: 'desktop_not_enabled' });
+  for (const { at, ms } of [allowed, refused]) {
+    expect(Date.parse(at)).toBeGreaterThanOrEqual(start);
+    expect(Date.parse(at)).toBeLessThanOrEqual(Date.now());
+    expect(Number.isInteger(ms)).toBe(true);
+    expect(ms).toBeGreaterThanOrEqual(0);
+  }
+  expect(requests).toHaveLength(1);
+});
+
+test('desktop.call drops the screenshot and accessibility text containing a token', async () => {
+  const token = 'ghp_' + 'SyntheticToken012345678901234567890123';
+  body = {
+    content: [
+      { type: 'text', text: `Window contents: ${token}` },
+      { type: 'image', data: 'ZmFrZQ==', mimeType: 'image/png' },
+    ],
+    structuredContent: { accessibilityTree: token },
+  };
+  const handler = createOperationMcpHandler(registry(), () => caller);
+  const response = await handler({ name: 'desktop.call', input });
+  expect(response.content.slice(1)).toEqual([
+    { type: 'text', text: expect.stringContaining('redacted') },
+  ]);
+  expect(JSON.stringify(response)).not.toContain(token);
+});
+
+test('desktop.call does not dispatch for an app absent from the ask card', async () => {
+  db.prepare("UPDATE neo_asks SET desktop_apps = '[]'").run();
+  expect(await call()).toMatchObject({ value: { ok: false, dispatched: false } });
+  expect(requests).toHaveLength(0);
+});
+
+test.each([1, null])(
+  'desktop.call refuses a legacy card with approved_at=%s',
+  async (approvedAt) => {
+    db.prepare('UPDATE neo_asks SET desktop_apps = ?').run(
+      '[{"bundleId":"org.example.app","name":"app"}]'
+    );
+    db.prepare('UPDATE neo_todos SET approved_at = ?').run(approvedAt);
+    expect(await call()).toMatchObject({
+      value: { ok: false, reason: 'desktop_consent_outdated', dispatched: false },
+    });
+    expect(requests).toHaveLength(0);
+  }
+);
+
+test('a desktop worker can discover and invoke only its four operations', async () => {
+  let operations: OperationRegistry;
+  const trivial = (name: 'message.send' | 'work.read') =>
+    defineOperation({
+      name,
+      description: name,
+      inputSchema: z.object({}),
+      resultSchema: z.literal(true),
+      execute: async (): Promise<true> => true,
+    });
+  operations = createOperationRegistry([
+    ...registry().entries,
+    ...createDiscoveryOperations(() => operations),
+    trivial('message.send'),
+    trivial('work.read'),
+  ]);
+  const desktop = { ...caller, profile: 'desktop' as const };
+  const invoke = (name: string, args: unknown) => invokeOperation(operations, name, args, desktop);
+  const all = await invoke('operations.list', { all: true });
+  expect(all.kind).toBe('completed');
+  expect(
+    all.kind === 'completed' && (all.value as { name: string }[]).map(({ name }) => name).sort()
+  ).toEqual(['desktop.call', 'message.send', 'operations.describe', 'operations.list']);
+  expect(await invoke('operations.describe', { name: 'work.read' })).toMatchObject({
+    kind: 'completed',
+    value: { found: false },
+  });
+  for (const name of ['work.read', 'unregistered.read'])
+    expect(await invoke(name, {})).toMatchObject({ kind: 'failed', code: 'forbidden' });
+  expect(await invoke('message.send', {})).toMatchObject({ kind: 'completed' });
+});
 
 test('desktop.call reports when the Desktop app is not connected', async () => {
   await new Promise<void>((done) => server.close(() => done()));

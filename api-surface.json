@@ -6051,6 +6051,20 @@
             "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
             "type": "string"
           },
+          "edit": {
+            "additionalProperties": false,
+            "properties": {
+              "displayName": {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "displayName"
+            ],
+            "type": "object"
+          },
           "url": {
             "examples": [
               "wss://example.com/ws"
@@ -6263,6 +6277,13 @@
                     },
                     "daemonId": {
                       "type": "string"
+                    },
+                    "displayName": {
+                      "type": "string"
+                    },
+                    "paired": {
+                      "const": true,
+                      "type": "boolean"
                     },
                     "url": {
                       "type": "string"
@@ -18064,6 +18085,11 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "askId": {
+            "description": "Open ask that created the goal; its review cards appear there.",
+            "minLength": 1,
+            "type": "string"
+          },
           "cadence": {
             "default": {
               "everyMs": 3600000,
@@ -24114,6 +24140,14 @@
                           "minLength": 1,
                           "type": "string"
                         },
+                        "copilotClient": {
+                          "enum": [
+                            "auto",
+                            "desktop",
+                            "cli"
+                          ],
+                          "type": "string"
+                        },
                         "createFolder": {
                           "type": "boolean"
                         },
@@ -24194,6 +24228,11 @@
                           },
                           "type": "object"
                         },
+                        "provider": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        },
                         "sandbox": {
                           "description": "Ask for the OS worker sandbox (writes limited to the work folder), e.g. for untrusted or external code. Applies when the human set the worker sandbox to on-demand.",
                           "type": "boolean"
@@ -24217,6 +24256,16 @@
                     },
                     {
                       "properties": {
+                        "preparationParameters": {
+                          "additionalProperties": {
+                            "$ref": "#/$defs/__schema0"
+                          },
+                          "description": "Parameters for the linked ask pack preparation stage.",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "type": "object"
+                        },
                         "ref": {
                           "properties": {
                             "adapter": {
@@ -24237,6 +24286,10 @@
                             "id"
                           ],
                           "type": "object"
+                        },
+                        "sandbox": {
+                          "description": "Ask for the OS worker sandbox (writes limited to the work folder), e.g. for untrusted or external code. Applies when the human set the worker sandbox to on-demand.",
+                          "type": "boolean"
                         },
                         "verb": {
                           "const": "send",
@@ -30888,32 +30941,74 @@
               },
               {
                 "items": {
-                  "oneOf": [
+                  "anyOf": [
                     {
-                      "properties": {
-                        "text": {
-                          "minLength": 1,
-                          "type": "string"
-                        },
-                        "type": {
-                          "const": "text",
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "type",
-                        "text"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "properties": {
-                        "source": {
+                      "oneOf": [
+                        {
                           "properties": {
-                            "data": {
+                            "text": {
                               "minLength": 1,
                               "type": "string"
                             },
+                            "type": {
+                              "const": "text",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "text"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "properties": {
+                            "source": {
+                              "properties": {
+                                "data": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "media_type": {
+                                  "enum": [
+                                    "image/png",
+                                    "image/jpeg",
+                                    "image/gif",
+                                    "image/webp"
+                                  ],
+                                  "type": "string"
+                                },
+                                "type": {
+                                  "const": "base64",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "type",
+                                "media_type",
+                                "data"
+                              ],
+                              "type": "object"
+                            },
+                            "type": {
+                              "const": "image",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "source"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "source": {
+                          "additionalProperties": false,
+                          "properties": {
                             "media_type": {
                               "enum": [
                                 "image/png",
@@ -30923,15 +31018,19 @@
                               ],
                               "type": "string"
                             },
+                            "sha256": {
+                              "pattern": "^[a-f0-9]{64}$",
+                              "type": "string"
+                            },
                             "type": {
-                              "const": "base64",
+                              "const": "upload",
                               "type": "string"
                             }
                           },
                           "required": [
                             "type",
                             "media_type",
-                            "data"
+                            "sha256"
                           ],
                           "type": "object"
                         },
@@ -38993,7 +39092,6 @@
           }
         },
         "required": [
-          "askId",
           "requestId"
         ],
         "type": "object"
@@ -42150,7 +42248,7 @@
             "type": "object"
           },
           "desktopApps": {
-            "description": "Bundle ids of the apps on this Mac this todo drives. Each must be on its ask’s approved proposal card, or named by the human message in input. Only this todo gets them. For any other app, propose a new ask with desktopApps.",
+            "description": "Bundle ids of the apps on this Mac this todo drives. Each must be on its ask’s approved proposal card with the visibility disclosure. Only this todo gets them. For any other app, propose a new ask with desktopApps.",
             "items": {
               "pattern": "^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$",
               "type": "string"
@@ -42212,6 +42310,14 @@
                   "adapter": {
                     "maxLength": 80,
                     "minLength": 1,
+                    "type": "string"
+                  },
+                  "copilotClient": {
+                    "enum": [
+                      "auto",
+                      "desktop",
+                      "cli"
+                    ],
                     "type": "string"
                   },
                   "createFolder": {
@@ -42294,6 +42400,11 @@
                     },
                     "type": "object"
                   },
+                  "provider": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  },
                   "sandbox": {
                     "description": "Ask for the OS worker sandbox (writes limited to the work folder), e.g. for untrusted or external code. Applies when the human set the worker sandbox to on-demand.",
                     "type": "boolean"
@@ -42317,6 +42428,16 @@
               },
               {
                 "properties": {
+                  "preparationParameters": {
+                    "additionalProperties": {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    "description": "Parameters for the linked ask pack preparation stage.",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
                   "ref": {
                     "properties": {
                       "adapter": {
@@ -42337,6 +42458,10 @@
                       "id"
                     ],
                     "type": "object"
+                  },
+                  "sandbox": {
+                    "description": "Ask for the OS worker sandbox (writes limited to the work folder), e.g. for untrusted or external code. Applies when the human set the worker sandbox to on-demand.",
+                    "type": "boolean"
                   },
                   "verb": {
                     "const": "send",
@@ -43728,6 +43853,14 @@
                     "minLength": 1,
                     "type": "string"
                   },
+                  "copilotClient": {
+                    "enum": [
+                      "auto",
+                      "desktop",
+                      "cli"
+                    ],
+                    "type": "string"
+                  },
                   "createFolder": {
                     "type": "boolean"
                   },
@@ -43808,6 +43941,11 @@
                     },
                     "type": "object"
                   },
+                  "provider": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  },
                   "sandbox": {
                     "description": "Ask for the OS worker sandbox (writes limited to the work folder), e.g. for untrusted or external code. Applies when the human set the worker sandbox to on-demand.",
                     "type": "boolean"
@@ -43831,6 +43969,16 @@
               },
               {
                 "properties": {
+                  "preparationParameters": {
+                    "additionalProperties": {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    "description": "Parameters for the linked ask pack preparation stage.",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
                   "ref": {
                     "properties": {
                       "adapter": {
@@ -43851,6 +43999,10 @@
                       "id"
                     ],
                     "type": "object"
+                  },
+                  "sandbox": {
+                    "description": "Ask for the OS worker sandbox (writes limited to the work folder), e.g. for untrusted or external code. Applies when the human set the worker sandbox to on-demand.",
+                    "type": "boolean"
                   },
                   "verb": {
                     "const": "send",
@@ -47315,7 +47467,6 @@
           }
         },
         "required": [
-          "askId",
           "requestId"
         ],
         "type": "object"
@@ -57180,6 +57331,19 @@
                       },
                       "type": "array"
                     },
+                    "copilotClients": {
+                      "items": {
+                        "enum": [
+                          "desktop",
+                          "cli"
+                        ],
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "displayName": {
+                      "type": "string"
+                    },
                     "health": {
                       "additionalProperties": false,
                       "properties": {
@@ -57562,6 +57726,13 @@
                       "busy": {
                         "const": true,
                         "type": "boolean"
+                      },
+                      "copilotClient": {
+                        "enum": [
+                          "desktop",
+                          "cli"
+                        ],
+                        "type": "string"
                       },
                       "desktopUI": {
                         "additionalProperties": false,
@@ -58853,6 +59024,205 @@
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
+          "effort": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
+          "model": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "ref": {
+            "properties": {
+              "adapter": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "daemon": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "adapter",
+              "id"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "ref"
+        ],
+        "type": "object"
+      },
+      "name": "work.reconfigure",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": true,
+                "type": "boolean"
+              },
+              "records": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "value": {
+                "additionalProperties": false,
+                "properties": {
+                  "appliesFrom": {
+                    "enum": [
+                      "next-turn",
+                      "when-idle"
+                    ],
+                    "type": "string"
+                  },
+                  "next": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "effort": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "model": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "model",
+                      "effort"
+                    ],
+                    "type": "object"
+                  },
+                  "previous": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "effort": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "model": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "model",
+                      "effort"
+                    ],
+                    "type": "object"
+                  },
+                  "ref": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "adapter": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "daemon": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "id": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "adapter",
+                      "id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "ref",
+                  "previous",
+                  "next",
+                  "appliesFrom"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "ok",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "detail": {
+                "type": "string"
+              },
+              "notSent": {
+                "const": true,
+                "description": "Proves no input was accepted: no dispatch or an explicit precondition refusal. Otherwise reconcile before retrying.",
+                "type": "boolean"
+              },
+              "ok": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "enum": [
+                  "unsupported_model",
+                  "unsupported_effort",
+                  "unsupported_preparation",
+                  "preparation_failed",
+                  "unknown_adapter",
+                  "worker_busy",
+                  "unsupported",
+                  "not_supported",
+                  "not_found",
+                  "not_open",
+                  "not_delivered",
+                  "claude_cli_login_expired",
+                  "unreachable",
+                  "invalid_place",
+                  "busy",
+                  "human_only",
+                  "live_todo",
+                  "not_started_by_us",
+                  "todo_required"
+                ],
+                "type": "string"
+              },
+              "uncertainDesktopInputId": {
+                "description": "Client input ID of an uncertain Desktop handoff; not a delivery receipt. Reconcile before retrying.",
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "ok",
+              "reason",
+              "detail"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
           "ref": {
             "properties": {
               "adapter": {
@@ -59242,6 +59612,14 @@
             "minLength": 1,
             "type": "string"
           },
+          "copilotClient": {
+            "enum": [
+              "auto",
+              "desktop",
+              "cli"
+            ],
+            "type": "string"
+          },
           "createFolder": {
             "type": "boolean"
           },
@@ -59372,6 +59750,11 @@
           "provenance": {
             "type": "boolean"
           },
+          "provider": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
           "role": {
             "description": "Role on the todo: do, review, verify or check. Defaults to do.",
             "enum": [
@@ -59433,6 +59816,13 @@
                   "busy": {
                     "const": true,
                     "type": "boolean"
+                  },
+                  "copilotClient": {
+                    "enum": [
+                      "desktop",
+                      "cli"
+                    ],
+                    "type": "string"
                   },
                   "desktopUI": {
                     "additionalProperties": false,
@@ -59880,6 +60270,13 @@
                   "busy": {
                     "const": true,
                     "type": "boolean"
+                  },
+                  "copilotClient": {
+                    "enum": [
+                      "desktop",
+                      "cli"
+                    ],
+                    "type": "string"
                   },
                   "desktopUI": {
                     "additionalProperties": false,

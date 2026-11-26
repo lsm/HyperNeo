@@ -33,11 +33,12 @@ import type {
   SessionType,
   SkillEnablementOverride,
   SystemPromptConfig,
+  ThinkingLevel,
 } from '@hyperneo/shared';
 import { generateUUID, DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
 import type { McpSetServersResult } from '@hyperneo/shared/sdk';
 import type { SessionToolInventory } from '@hyperneo/shared/types/observed-tool-inventory';
-import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
+import { isOxapHarness, oxapCodexReasoning } from '@hyperneo/shared/types/oxap-harnesses';
 import { sdkFallbackProviders } from './session-engine.ts';
 import type { Database } from '../../storage/database.ts';
 import type { SDKTranscriptCheck } from '../sdk-session-file-manager.ts';
@@ -205,6 +206,7 @@ import {
   refreshModels,
 } from '../model-service.ts';
 import { getProviderService } from '../provider-service.ts';
+import { CustomEndpointProvider } from '../providers/custom-endpoint-provider.ts';
 import {
   getProviderRegistry,
   initializeProviders,
@@ -387,7 +389,8 @@ export class AgentSession
     inputOrigin?: () => { messageId: string } | null,
     desktopTurn?: () => DesktopTurn | null
   ): ReturnType<typeof createOperationMcpServer> {
-    const descriptionRole = this.operationCallerIdentity().role;
+    const registration = this.getOperationMcpRegistration(inputOrigin, desktopTurn);
+    const descriptionRole = registration[3];
     const descriptionKey =
       descriptionRole === 'neo'
         ? JSON.stringify([descriptionRole, enabledOperationPacks(this.resolveOperationRegistry())])
@@ -395,7 +398,19 @@ export class AgentSession
     const scoped = inputOrigin || desktopTurn;
     if (!scoped && this.operationMcpServer && this.operationMcpServerKey === descriptionKey)
       return this.operationMcpServer;
-    const server = createOperationMcpServer(
+    const server = createOperationMcpServer(...registration);
+    if (!scoped) {
+      this.operationMcpServer = server;
+      this.operationMcpServerKey = descriptionKey;
+    }
+    return server;
+  }
+
+  getOperationMcpRegistration(
+    inputOrigin?: () => { messageId: string } | null,
+    desktopTurn?: () => DesktopTurn | null
+  ): Parameters<typeof createOperationMcpServer> {
+    return [
       () => this.resolveOperationRegistry(),
       (operation) => {
         const turn =
@@ -412,13 +427,14 @@ export class AgentSession
         };
       },
       this.recordOperationRefusal,
-      descriptionRole
-    );
-    if (!scoped) {
-      this.operationMcpServer = server;
-      this.operationMcpServerKey = descriptionKey;
-    }
-    return server;
+      this.session.config.toolProfile === 'desktop'
+        ? 'desktop'
+        : this.operationCallerIdentity().role,
+      () => {
+        const provider = getProviderRegistry().get(this.providerId());
+        return provider instanceof CustomEndpointProvider && provider.collapseDesktopObservations;
+      },
+    ];
   }
 
   private readonly recordOperationRefusal = (refusal: OperationRefusal) =>
@@ -1281,6 +1297,10 @@ export class AgentSession
     await this.lifecycleManager.ensureQueryStarted(signal);
   }
 
+  hasStaleAnthropicQuery(): boolean {
+    return this.queryRunner instanceof QueryRunner && this.queryRunner.hasStaleAnthropicQuery();
+  }
+
   async startQueryAndEnqueue(
     messageId: string,
     messageContent: string | MessageContent[],
@@ -1870,14 +1890,27 @@ export class AgentSession
     newModel: string,
     newProvider: string,
     nonInterrupting = false,
-    commit?: RuntimeSettingsCommit
+    commit?: RuntimeSettingsCommit,
+    thinkingLevel?: ThinkingLevel
   ): Promise<ModelSwitchResult> {
-    const result = await (commit
-      ? this.modelSwitchHandler.switchModel(newModel, newProvider, nonInterrupting, commit)
-      : nonInterrupting
-        ? this.modelSwitchHandler.switchModel(newModel, newProvider, true)
-        : this.modelSwitchHandler.switchModel(newModel, newProvider));
-    if (result.success) await this.rateLimitWatchdog.forgetModelLimits();
+    const args: [boolean?, RuntimeSettingsCommit?, boolean?, ThinkingLevel?] =
+      thinkingLevel !== undefined
+        ? [false, undefined, false, thinkingLevel]
+        : commit
+          ? [nonInterrupting, commit]
+          : nonInterrupting
+            ? [true]
+            : [];
+    const switchModel = () => this.modelSwitchHandler.switchModel(newModel, newProvider, ...args);
+    const effort = commit?.thinkingLevel ?? thinkingLevel;
+    const result =
+      effort === undefined
+        ? await switchModel()
+        : await this.commitThinkingLevel(effort, switchModel);
+    if (result.success) {
+      if (thinkingLevel !== undefined) await this.applyThinkingLevel();
+      await this.rateLimitWatchdog.forgetModelLimits();
+    }
     return result;
   }
 
@@ -1901,20 +1934,22 @@ export class AgentSession
   requestModelSwitch(
     model: string,
     provider: string,
-    stillWanted?: () => boolean
+    stillWanted?: () => boolean,
+    thinkingLevel?: ThinkingLevel
   ): Promise<{ success: boolean; model: string; error?: string; pending?: PendingModelSwitch }> {
     return this.queueModelSwitch(async () =>
       stillWanted && !stillWanted()
         ? { success: false, model: this.session.config.model, error: 'The switch was superseded' }
-        : this.runModelSwitchRequest(model, provider)
+        : this.runModelSwitchRequest(model, provider, thinkingLevel)
     );
   }
 
   private async runModelSwitchRequest(
     model: string,
-    provider: string
+    provider: string,
+    thinkingLevel?: ThinkingLevel
   ): Promise<{ success: boolean; model: string; error?: string; pending?: PendingModelSwitch }> {
-    const invalid = await this.modelSwitchHandler.invalidModel(model, provider);
+    const invalid = await this.modelSwitchHandler.invalidModel(model, provider, thinkingLevel);
     if (invalid) {
       await this.applyPendingModelSwitch();
       return { success: false, model: this.session.config.model, error: invalid };
@@ -1922,9 +1957,10 @@ export class AgentSession
     const live = await this.modelSwitchHandler.canSwitchLive(model, provider);
     if (modelSwitchTiming(this.stateManager.getState().status, live) === 'now') {
       await this.setPendingModelSwitch(undefined);
-      return this.handleModelSwitch(model, provider);
+      return this.handleModelSwitch(model, provider, false, undefined, thinkingLevel);
     }
-    const pending = { model, provider, requestedAt: Date.now() };
+    const pending: PendingModelSwitch = { model, provider, requestedAt: Date.now() };
+    if (thinkingLevel !== undefined) pending.thinkingLevel = thinkingLevel;
     await this.setPendingModelSwitch(pending);
     const applied =
       modelSwitchTiming(this.stateManager.getState().status) === 'now' &&
@@ -1947,7 +1983,8 @@ export class AgentSession
     const pending = this.session.metadata?.pendingModelSwitch;
     if (!pending || modelSwitchTiming(this.stateManager.getState().status) !== 'now') return false;
     await this.setPendingModelSwitch(undefined);
-    const result = await this.handleModelSwitch(pending.model, pending.provider);
+    const { model, provider, thinkingLevel } = pending;
+    const result = await this.handleModelSwitch(model, provider, false, undefined, thinkingLevel);
     if (!result.success && !result.reported) {
       const message = `The switch to ${pending.model} requested during the last turn failed: ${result.error ?? 'unknown error'}`;
       this.logger.warn(message);
@@ -1987,7 +2024,18 @@ export class AgentSession
     return this.sdkRuntimeConfig.setMaxThinkingTokens(tokens);
   }
 
+  commitThinkingLevel<T extends { success: boolean }>(
+    level: ThinkingLevel,
+    persist: () => Promise<T>
+  ): Promise<T> {
+    const reasoning = oxapCodexReasoning(level);
+    return this.session.config.harness === 'oxap-codex' && reasoning && this.oxap?.commitThinking
+      ? this.oxap.commitThinking(reasoning, persist)
+      : persist();
+  }
+
   async applyThinkingLevel(): Promise<void> {
+    if (isOxapHarness(this.session.config.harness)) return;
     const level = this.optionsBuilder.getEffectiveThinkingLevel();
     getProviderRegistry()
       .get(this.session.config.provider ?? '')
@@ -3413,7 +3461,7 @@ export class AgentSession
               return { outcome: 'blocked', retryAt: Date.now() + LOGIN_HOLD_PARK_MS };
           }
 
-          if (!this.messageQueue.isRunning()) {
+          if (!this.messageQueue.isRunning() || this.hasStaleAnthropicQuery()) {
             const startResult = await this.lifecycleManager.ensureQueryStarted(signal);
             if (startResult === 'blocked') {
               return {

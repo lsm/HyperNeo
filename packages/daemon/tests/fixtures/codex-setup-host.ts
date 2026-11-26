@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { access, mkdir, writeFile } from 'node:fs/promises';
+import { access, mkdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname, join } from 'node:path';
 import { setImmediate } from 'node:timers/promises';
@@ -24,6 +24,7 @@ export async function exerciseCodexSetupHost(home: string) {
   const abort = new AbortController();
   const signal = AbortSignal.any([abort.signal, AbortSignal.timeout(6000)]);
   let active = true;
+  let startFails = false;
   let idleReads = 0;
   let environment = 'ws://original.example/';
   const server = createServer();
@@ -76,6 +77,7 @@ export async function exerciseCodexSetupHost(home: string) {
     } else {
       assert.equal(action, 'app-server');
       calls.push(value);
+      if (value === 'start' && startFails) code = 1;
     }
     return {
       stdout: new Response(text).body,
@@ -127,6 +129,12 @@ export async function exerciseCodexSetupHost(home: string) {
       'idle',
       'enable-remote-control',
     ]);
+    startFails = true;
+    await assert.rejects(host.startManaged(), /Could not start/);
+    assert.equal(calls.at(-1), 'start');
+    await rm(path);
+    await host.startManaged();
+    assert.deepEqual(calls.slice(-2), ['start', 'restart']);
     return { idleReads, deferredRestarts: 1, heldSends: 1, migratedJobs: labels.length };
   } finally {
     abort.abort();

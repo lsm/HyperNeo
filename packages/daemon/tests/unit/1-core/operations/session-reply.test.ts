@@ -4,6 +4,8 @@ import {
   createSendMessageRedirectHook,
   replyMessageBodyLength,
   withReplyLine,
+  withOwnReplySender,
+  withReplySender,
 } from '../../../../src/lib/messaging/session-reply';
 
 const hook = createSendMessageRedirectHook((id) => id === 'neo:root');
@@ -53,6 +55,29 @@ describe('external CLI reply arguments', () => {
     expect(withReplyLine('Human.', 'chat', 'cli')).toBe('Human.');
     const incomplete = 'Human.\n\nReport progress, questions or blockers to Neo';
     expect(replyMessageBodyLength(incomplete)).toBe(incomplete.length);
+  });
+
+  test('names the worker as sender so the CLI needs no session environment', () => {
+    const message = withReplyLine('Go.', 'session:neo%3Aroot', 'cli', "copilot-cli:it's");
+    expect(message).toContain(
+      "hyperneo send neo:root --from 'copilot-cli:it'\\''s' --kind <kind> \"<text>\""
+    );
+    expect(replyMessageBodyLength(message)).toBe('Go.'.length);
+  });
+
+  test('swaps a start reply line for one that names the worker', () => {
+    const start = withReplyLine('Go.', 'session:neo%3Aroot', 'cli');
+    const sent = withReplySender(start, 'session:neo%3Aroot', 'antigravity-cli:w1');
+    expect(sent).toBe(withReplyLine('Go.', 'session:neo%3Aroot', 'cli', 'antigravity-cli:w1'));
+    expect(withReplySender('Human.', 'session:neo%3Aroot', 'antigravity-cli:w1')).toBe('Human.');
+  });
+
+  test('adds the worker id to a start reply line that has no sender', () => {
+    const start = withReplyLine('Go.', 'session:neo%3Aroot', 'cli');
+    const named = withReplyLine('Go.', 'session:neo%3Aroot', 'cli', 'antigravity-cli:w1');
+    expect(withOwnReplySender(start, 'antigravity-cli:w1')).toBe(named);
+    expect(withOwnReplySender(named, 'antigravity-cli:other')).toBe(named);
+    expect(withOwnReplySender('Human.', 'antigravity-cli:w1')).toBe('Human.');
   });
 
   test('a quoted template is not mistaken for an actionable reply line to the real sender', () => {

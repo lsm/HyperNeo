@@ -1,3 +1,5 @@
+import { COMPACT_SUMMARY_COMMAND } from '../agent/message-queue.ts';
+import { WORKER_COMPACTION_TIMEOUT_MS } from './worker-compaction.ts';
 import type { AgentSession } from '../agent/agent-session.ts';
 import { withWorkerProvenance } from './worker-provenance.ts';
 import { installClaudeNativeWrites } from './claude-native-writes.ts';
@@ -119,7 +121,7 @@ export async function compactHyperneoWorker(
   const timeout = setTimeout(() => {
     startup.abort();
     unconfirmed();
-  }, 60_000);
+  }, WORKER_COMPACTION_TIMEOUT_MS);
   try {
     const enqueue = async () => {
       if (!queue.isRunning()) await session.ensureQueryStarted(startup.signal);
@@ -130,7 +132,10 @@ export async function compactHyperneoWorker(
       }
       if (!queue.isRunning()) return unconfirmed();
       enqueued = true;
-      await queue.enqueueWithId(id, '/compact', true, { durable: true, prepend: true });
+      await queue.enqueueWithId(id, COMPACT_SUMMARY_COMMAND, true, {
+        durable: true,
+        prepend: true,
+      });
     };
     void enqueue().catch(() => {
       if (!queue.hasOutstandingInternalCompaction()) unconfirmed();
@@ -159,9 +164,10 @@ export interface HyperneoSessionControl {
     provider?: string,
     effort?: string,
     inPlace?: boolean,
-    prepared?: { sessionId: string; projectPath: string }
+    prepared?: { sessionId: string; projectPath: string },
+    workerTemplate?: string
   ): Promise<string>;
-  resolveModel(model: string): Promise<{ id: string; provider: string } | null>;
+  resolveModel(model: string, provider?: string): Promise<{ id: string; provider: string } | null>;
   resolveDefaultModel?(): Promise<{ id: string; provider: string } | null>;
   reconfigure?(
     sessionId: string,
@@ -627,7 +633,8 @@ type HyperneoStartRequest = StartRequest & { provider?: string };
 export async function createHyperneoSession(
   folder: string,
   request: HyperneoStartRequest,
-  deps: HyperneoAdapterDeps
+  deps: HyperneoAdapterDeps,
+  context?: WorkCallContext
 ): Promise<Gate<string>> {
   const identity = request.preparation
     ? {
@@ -660,7 +667,8 @@ export async function createHyperneoSession(
       request.provider,
       request.effort,
       prepared ? true : request.inPlace,
-      identity
+      identity,
+      context?.caller.source === 'internal' ? context.caller.workerTemplate : undefined
     );
   } catch (error) {
     if (request.model !== undefined && error instanceof ModelUnavailableError)
@@ -689,7 +697,7 @@ async function requireHyperneoStartConfiguration(
   const configured = { ...request, ...(thinking ? { effort: thinking.label.toLowerCase() } : {}) };
   if (request.model === undefined) return { value: configured };
   try {
-    const model = await deps.sessions.resolveModel(request.model);
+    const model = await deps.sessions.resolveModel(request.model, request.provider);
     return model
       ? { value: { ...configured, model: model.id, provider: model.provider } }
       : { reason: reject('unsupported_model', `No available model matches ${request.model}.`) };
@@ -780,7 +788,7 @@ const runHyperneoStart = (superpipe({})('hyperneo-start-work') as PipelineAPI)
   .pipe(requireHyperneoStartConfiguration, ['request', 'deps'], 'result:outcome')
   .pipe((request: StartRequest) => request, 'outcome', 'configured')
   .pipe(selectStartFolder, ['configured', 'deps'], 'result:outcome')
-  .pipe(createHyperneoSession, ['outcome', 'configured', 'deps'], 'result:outcome')
+  .pipe(createHyperneoSession, ['outcome', 'configured', 'deps', 'context'], 'result:outcome')
   .pipe(confirmHyperneoStart, ['outcome', 'configured', 'deps'], 'result:outcome')
   .pipe(openHyperneoWork, ['outcome', 'configured', 'context', 'deps'], 'outcome')
   .endAsync('outcome') as (

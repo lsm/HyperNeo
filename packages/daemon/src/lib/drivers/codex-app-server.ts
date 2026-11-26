@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { JsonRpcNotification } from '@hyperneo/shared';
 import WebSocket from 'ws';
 import { Logger } from '../logger.ts';
+import { WORKER_COMPACTION_TIMEOUT_MS } from './worker-compaction.ts';
 import { ProcessJsonRpcTransport } from '../process-json-rpc.ts';
 import { selectCodexConfiguration } from './codex-start-configuration.ts';
 
@@ -20,6 +21,8 @@ export class CodexRequestError extends Error {
   }
 }
 
+export class CodexConnectError extends Error {}
+
 export interface CodexSocketFile {
   exists: boolean;
   target?: string;
@@ -29,7 +32,7 @@ export function codexConnectError(
   socketPath: string,
   cause: unknown,
   socket: CodexSocketFile
-): Error {
+): CodexConnectError {
   const detail =
     socket.exists === false && socket.target
       ? `it points to ${socket.target}, which no longer exists`
@@ -40,9 +43,10 @@ export function codexConnectError(
           : typeof (cause as { message?: unknown } | null)?.message === 'string'
             ? (cause as { message: string }).message
             : String(cause);
-  return new Error(`Could not connect to the Codex app-server at ${socketPath}: ${detail}`, {
-    cause,
-  });
+  return new CodexConnectError(
+    `Could not connect to the Codex app-server at ${socketPath}: ${detail}`,
+    { cause }
+  );
 }
 
 function readCodexSocketFile(socketPath: string): CodexSocketFile {
@@ -99,7 +103,7 @@ export async function compactCodexThread(
     )
       complete(params.turn.status === 'completed');
   });
-  const timeout = setTimeout(() => complete(false), 60_000);
+  const timeout = setTimeout(() => complete(false), WORKER_COMPACTION_TIMEOUT_MS);
   try {
     await server.call('thread/compact/start', { threadId });
     return await completed;
@@ -122,6 +126,8 @@ export function codexCommand() {
   );
 }
 
+export class CodexBootstrapError extends Error {}
+
 export async function startCodexBootstrapServer(
   command = codexCommand(),
   onNotification?: (notification: JsonRpcNotification) => void,
@@ -130,6 +136,8 @@ export async function startCodexBootstrapServer(
   let endInput = () => {};
   let resolveExit = () => {};
   let closing: Promise<void> | undefined;
+  let startupStderr = '';
+  let initialized = false;
   const exited = new Promise<void>((resolve) => {
     resolveExit = resolve;
   });
@@ -138,6 +146,10 @@ export async function startCodexBootstrapServer(
     command,
     args: ['app-server', '--listen', 'stdio://'],
     requestTimeoutMs: CALL_TIMEOUT_MS,
+    onStderr: (text) => {
+      if (initialized) log.warn('Codex app-server stderr:', text.trimEnd());
+      else startupStderr = (startupStderr + text).trimStart().slice(0, 4096);
+    },
     onNotification: (notification) => {
       onNotification?.(notification);
       for (const listener of listeners) listener(notification);
@@ -183,10 +195,18 @@ export async function startCodexBootstrapServer(
       capabilities: { experimentalApi: true },
     });
     transport.sendNotification('initialized', {});
+    initialized = true;
     return server;
   } catch (error) {
     await server.close();
-    throw error;
+    const diagnostic = startupStderr.split(/\r?\n/, 1)[0]?.trim().slice(0, 640);
+    const reason = error instanceof Error ? error.message : String(error);
+    const detail =
+      diagnostic ||
+      (reason === 'JSON-RPC process exited' ? 'The process exited before responding.' : reason);
+    throw new CodexBootstrapError(`Could not start Codex CLI at "${command}". ${detail}`, {
+      cause: error,
+    });
   }
 }
 
@@ -196,6 +216,18 @@ type Pending = {
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 };
+
+export async function connectRecoveredCodexAppServer(
+  connect: () => Promise<CodexAppServer>,
+  recover: () => Promise<boolean>
+): Promise<CodexAppServer> {
+  try {
+    return await connect();
+  } catch (error) {
+    if (!(error instanceof CodexConnectError) || !(await recover())) throw error;
+    return connect();
+  }
+}
 
 export function connectCodexAppServer(
   socketPath: string,

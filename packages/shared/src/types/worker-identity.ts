@@ -11,6 +11,8 @@ const ENGINES: Record<string, string> = {
   'claude-code': 'Claude',
   'claude-desktop': 'Claude',
   'copilot-cli': 'Copilot',
+  'antigravity-cli': 'Antigravity',
+  'cursor-cli': 'Cursor',
   copilot: 'Copilot',
   opencode: 'OpenCode',
   hyperneo: 'HyperNeo',

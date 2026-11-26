@@ -1,4 +1,5 @@
 import { WorkRefSchema } from '../drivers/types.ts';
+import type { StagedImages } from '../rpc-handlers/attachment-upload-route.ts';
 import { NEO_ANSWER_NOTE } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { neoToolDescription } from '@hyperneo/prompts';
 import { createPeerOperations } from './peer-operations.ts';
@@ -376,7 +377,8 @@ function createNeoProjectSaveOperation(service: NeoService) {
 export function createNeoOperations(
   service: NeoService,
   identity: NeoProjectIdentityPolicy,
-  readWorker: NeoTodoWorkerRead
+  readWorker: NeoTodoWorkerRead,
+  stagedImages?: StagedImages
 ) {
   const mutationGateway = gatewayFor(service.db.getDatabase());
   const messageStatuses: NeoMessageStatusPresenter = (items) =>
@@ -773,7 +775,8 @@ export function createNeoOperations(
         service.notifyChanged();
         if (questionId) void service.deliverQuestionAnswers(questionId);
       },
-      service.todos
+      service.todos,
+      stagedImages
     ),
     createNeoReorganizeOperation(neoReorganizeRuntime(service, identity)),
     createNeoProjectListOperation(service.repo, hostname),
@@ -802,7 +805,8 @@ export function createNeoOperations(
       service.todos,
       () => service.installedPacks(),
       () => service.db.getGlobalSettings().language,
-      () => service.refreshPackPreferences()
+      () => service.refreshPackPreferences(),
+      () => service.repo.defaultBinding()?.sessionId
     ),
     createNeoPreferenceOperation(service),
     createNeoFrontModelOperation(service),

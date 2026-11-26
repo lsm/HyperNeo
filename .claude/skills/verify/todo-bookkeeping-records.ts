@@ -34,33 +34,37 @@ try {
       evidence.push({ phase, description });
       assert.equal(described.isError ?? false, false);
       assert.equal(description.found, true);
-      assert(description.description.includes('recorded without blocking'));
-      assert(!description.description.includes('on that ask is refused'));
-      const invoke = async (name: string, input: unknown) => {
+      assert(description.description.includes('another live merge todo in the same ask is refused'));
+      const invoke = async (name: string, input: unknown, refusal?: RegExp) => {
         const reply = await handler({ name, input });
         const result = JSON.parse(reply.content[0].text);
         evidence.push({ phase, name, input, result });
         assert.equal(reply.isError ?? false, false, JSON.stringify(result));
-        assert.equal(result.ok, true, JSON.stringify(result));
+        assert.equal(result.ok, !refusal, JSON.stringify(result));
+        if (refusal) assert.match(result.reason, refusal);
         return result;
       };
       if (phase === 'initial') {
         db.prepare("INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?, 'Synthetic bookkeeping proof', '/tmp', '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z', 'active', '{}', '{}')").run(sender);
         new NeoRepository(db).reserveBinding({ sessionId: sender, kind: 'neo', projectId: null });
-        seedHistoricalAsk(new NeoAskTodoRepository(db), sender, { title: 'Record bookkeeping', request: 'Keep todo mutations moving and retain warnings' });
-        const opened = await invoke('neo.ask.propose', { title: 'Record bookkeeping', request: 'Keep todo mutations moving and retain warnings', todos: [{ after: [], title: 'PR not identified yet', doneWhen: 'Merged', check: { ...check, params: {} } }] });
-        assert(opened.records[0].startsWith('pr_merged_needs_urls:'));
-        const first = await invoke('neo.todo.add', { after: [], askId: opened.ask.id, title: 'Original', doneWhen: 'Merged', check });
-        const duplicate = await invoke('neo.todo.add', { after: [], askId: first.todo.askId, title: 'Follow-up', doneWhen: 'Merged', check });
-        assert(duplicate.records[0].startsWith('pr_already_tracked:'));
-        const edited = await invoke('neo.todo.edit', { todoId: opened.todos[0].id, addUrls: [url], title: 'PR now identified' });
-        assert(edited.records[0].startsWith('pr_already_tracked:'));
-        const plain = await invoke('neo.todo.add', { after: [], askId: first.todo.askId, title: 'Plain', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } } });
+        const store = new NeoAskTodoRepository(db);
+        const ask = seedHistoricalAsk(store, sender, { title: 'PR admissions', request: 'Track the PR once' });
+        const draft = { after: [], askId: ask.id, title: 'Original', check };
+        const emptyCheck = { ...check, params: {} };
+        await invoke('neo.todo.add', { ...draft, check: emptyCheck }, /pr_merged_needs_urls:/);
+        const first = await invoke('neo.todo.add', draft);
+        const duplicate = /pr_already_tracked:.*core\.evidence.*review comment/;
+        await invoke('neo.todo.add', { ...draft, title: 'Follow-up' }, duplicate);
+        const comment = `${url}#discussion_r100`;
+        const plain = await invoke('neo.todo.add', { ...draft, title: 'Review', check: { pack: 'core', kind: 'evidence', params: { url: comment } } });
+        await invoke('neo.todo.edit', { todoId: plain.todo.id, check: emptyCheck }, /pr_merged_needs_urls:/);
+        await invoke('neo.todo.edit', { todoId: plain.todo.id, check, title: 'Duplicate edit' }, duplicate);
         const unsupported = await invoke('neo.todo.edit', { todoId: plain.todo.id, addUrls: [url], title: 'URL recorded' });
         assert(unsupported.records[0].startsWith('check_urls_unsupported:'));
         assert(unsupported.records[0].includes(url));
         assert.equal(unsupported.todo.title, 'URL recorded');
         assert.deepEqual(unsupported.todo.check, plain.todo.check);
+        assert.equal(store.listTodos(ask.id).length, 2);
         const malformed = await handler({ name: 'neo.todo.add', input: { after: [], askId: first.todo.askId, title: 'Malformed', doneWhen: 'Merged', check: { ...check, params: { urls: ['not-a-pr'] } } } });
         const rejected = JSON.parse(malformed.content[0].text);
         evidence.push({ phase, malformed: rejected });
@@ -69,10 +73,10 @@ try {
       }
       const records = db.prepare('SELECT operation, reason, accepted FROM operation_refusals ORDER BY id').all() as { reason: string; accepted: number }[];
       evidence.push({ phase, records });
-      assert.equal(records.length, 5);
-      assert.equal(records.filter(row => row.accepted === 1).length, 4);
+      assert.equal(records.length, 6);
+      assert.equal(records.filter(row => row.accepted === 1).length, 1);
       assert(records.some(row => row.accepted === 0 && row.reason.includes('pr_merged_invalid_urls:')));
     } finally { await app.cleanup(); }
   }
-  console.log('PASS: real daemon MCP accepts bookkeeping conditions, returns records, and retains accepted audit records across restart.');
+  console.log('PASS: real daemon MCP refuses duplicate and empty merge checks, accepts review links, and retains audit records across restart.');
 } finally { globalThis.fetch = network; writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2)); }

@@ -119,11 +119,11 @@ describe('Whole todo-add writer', () => {
     expect(store.listTodos('ask').map((todo) => todo.id)).toEqual(['one', 'two']);
     expect(store.listQuestions('ask')).toEqual([]);
   });
-  test('settled ask is an accepted quiet no-op', async () => {
+  test('settled ask refuses the todo and changes nothing', async () => {
     store.settleAsk(store.getAsk('ask')!, 'dropped', 'No longer needed', 2);
     expect(await add('one')).toMatchObject({
-      ok: true,
-      records: [expect.stringContaining('ask_settled')],
+      ok: false,
+      reason: expect.stringMatching(/^ask_settled: this ask is dropped; the todo was not added\./),
     });
     expect(store.listTodos('ask')).toEqual([]);
     expect(changes).toEqual([]);
@@ -176,7 +176,7 @@ describe('Whole todo-add writer', () => {
     expect(store.listTodos('ask')).toEqual([]);
     expect(changes).toEqual([]);
   });
-  test('records current PR peers while concurrent additions stay nonblocking', async () => {
+  test('refuses a concurrent addition for an already tracked PR', async () => {
     const coding = {
       ...draft(),
       instruction: null,
@@ -190,10 +190,10 @@ describe('Whole todo-add writer', () => {
     const results = await Promise.all([add('one', coding), add('two', coding)]);
     expect(results[0]).toMatchObject({ ok: true });
     expect(results[1]).toMatchObject({
-      ok: true,
-      records: [expect.stringContaining('pr_already_tracked:')],
+      ok: false,
+      reason: expect.stringContaining('pr_already_tracked:'),
     });
-    expect(store.listTodos('ask')).toHaveLength(2);
+    expect(store.listTodos('ask')).toHaveLength(1);
   });
   test('a late target failure also rolls back a newly routed child ask', async () => {
     db.exec("UPDATE neo_asks SET repo='synthetic/original' WHERE id='ask'");

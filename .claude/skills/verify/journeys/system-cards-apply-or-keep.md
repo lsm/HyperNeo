@@ -1,7 +1,7 @@
 # Rule and setting cards apply or keep
 
 The daemon's own rule, pack-setting and home-repository cards are fixed
-two-option choices: A applies, B keeps what is there. A yes on a yes/no card
+two-option choices: 1 applies, 2 keeps what is there. A yes on a yes/no card
 applies nothing.
 
 On a fresh isolated daemon from Launch, with `HYPERNEO_DATA_DIR="$RUN/data"`:
@@ -12,23 +12,27 @@ NODE_PATH=<directory containing playwright> VERIFY_BROWSER=<Chromium executable>
   node .claude/skills/verify/system-cards-apply-or-keep-web.mjs <port> "$RUN"
 ```
 
-The first helper drives the real RPC doors. A `neo.rule.ask` card reaches the
+Each rule or setting card opens on an ask of its own (topic 规则 or 设置), whatever
+`askId` is passed. Apply settles that ask done and keep settles it dropped; the ask
+that was passed keeps no card and stays open.
+
+The first helper drives the real RPC doors and checks this in the snapshot. A `neo.rule.ask` card reaches the
 snapshot as a choice of `Apply these rule changes` or `Keep current rules`. Keep and
-a bare chat `yes` change no rules. A chat `A` and the apply button each apply their
+a bare chat `yes` change no rules. A chat `1` and the apply button each apply their
 edit. A card turned into a yes/no card changes no rules on a chat `yes`. A
-setting proposal saves nothing on keep, saves on a chat `A`, and a yes/no
+setting proposal saves nothing on keep, saves on a chat `1`, and a yes/no
 setting card saves nothing on a button `yes`. Evidence:
 `evidence/system-cards-apply-or-keep.json`.
 
 The second helper pairs a headless browser, opens `/neo` at 390 wide and finds the
-setting card with `Apply these settings` and `Keep current settings` exactly as
-written, with no drawn letters and no yes/no buttons. Tapping Apply saves the
+setting card with `Apply these settings` and `Keep current settings` numbered
+1 and 2, with no yes/no buttons. Tapping Apply saves the
 setting. Evidence:
 `evidence/system-cards-apply-or-keep-web.{json,png}`; look at the screenshot.
 
 The home-repository card is covered by `neo-home-github.ts` in
 [the private home proposal journey](private-github-home-proposal-h3-slice-2.md)
-with its `verify`, `chat`, `legacy` and `decline` modes. Citing a chat `A` to
+with its `verify`, `chat`, `legacy` and `decline` modes. Citing a chat `1` to
 `neo.rule.save` needs a Neo session caller, so unit tests cover it, not this RPC
 helper. Stop the daemon with `stop.sh` in the same shell as launch.
 

@@ -3,9 +3,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAntigravityStart } from '../../../../src/lib/drivers/antigravity-start.ts';
+import { withReplyLine } from '../../../../src/lib/messaging/session-reply.ts';
 import { JsonRpcRequestTimeoutError } from '../../../../src/lib/process-json-rpc.ts';
 
-const peer = vi.hoisted(() => ({ created: vi.fn(), request: vi.fn(), close: vi.fn() }));
+const peer = vi.hoisted(() => ({
+  created: vi.fn(),
+  request: vi.fn(),
+  respond: vi.fn(),
+  close: vi.fn(),
+}));
 vi.mock('../../../../src/lib/process-json-rpc.ts', async (original) => ({
   ...(await original<typeof import('../../../../src/lib/process-json-rpc.ts')>()),
   ProcessJsonRpcTransport: class {
@@ -13,6 +19,7 @@ vi.mock('../../../../src/lib/process-json-rpc.ts', async (original) => ({
       peer.created(options);
     }
     sendRequest = peer.request;
+    sendResponse = peer.respond;
     close = peer.close;
   },
 }));
@@ -76,6 +83,30 @@ describe('createAntigravityStart.start', () => {
     expect(peer.close).toHaveBeenCalledOnce();
   });
 
+  it('names its own session id in the start reply line', async () => {
+    peer.request
+      .mockResolvedValueOnce({ result: { stopReason: 'end_turn' } })
+      .mockResolvedValueOnce({ result: {} });
+    await driver.start({
+      place: { machine: 'fixture', folder, name: 'Workspace' },
+      title: 'Run',
+      message: withReplyLine('Go.', 'session:neo%3Aroot', 'cli'),
+    });
+    expect(peer.request).toHaveBeenCalledWith(
+      'session/prompt',
+      {
+        sessionId: ref.id,
+        prompt: [
+          {
+            type: 'text',
+            text: withReplyLine('Go.', 'session:neo%3Aroot', 'cli', 'antigravity-cli:owned-1'),
+          },
+        ],
+      },
+      expect.anything()
+    );
+  });
+
   it('reports when the turn reached its time limit', async () => {
     peer.request.mockImplementationOnce(
       () =>
@@ -109,5 +140,27 @@ describe('createAntigravityStart.start', () => {
       'disconnected during the turn'
     );
     expect(peer.close).toHaveBeenCalledOnce();
+  });
+
+  it('answers permission requests through the reply-command gate', async () => {
+    peer.request.mockReturnValueOnce(new Promise(() => {}));
+    expect(await start(driver, folder)).toMatchObject({ ok: true });
+    const { onRequest } = peer.created.mock.calls[0][0];
+    const permission = (CommandLine: string) => ({
+      toolCall: { kind: 'execute', rawInput: { CommandLine } },
+      options: [{ optionId: 'allow', kind: 'allow_once' }],
+    });
+
+    onRequest({
+      id: 7,
+      method: 'session/request_permission',
+      params: permission('hyperneo send session:a hi'),
+    });
+    onRequest({ id: 8, method: 'session/request_permission', params: permission('rm -rf ~') });
+
+    expect(peer.respond).toHaveBeenCalledWith(7, {
+      outcome: { outcome: 'selected', optionId: 'allow' },
+    });
+    expect(peer.respond).toHaveBeenCalledWith(8, { outcome: { outcome: 'cancelled' } });
   });
 });

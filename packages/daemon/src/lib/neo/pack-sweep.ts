@@ -17,13 +17,16 @@ export function schedulePackSweep(queue: JobQueueRepository, delay = NEO_PACK_SW
 
 export const sweepNeoPacks = (superpipe({})('neo-pack-sweep') as PipelineAPI)
   .input(['queue', 'service'])
-  .pipe((queue: JobQueueRepository) => schedulePackSweep(queue), 'queue')
   .pipe(
-    async (service: NeoService) => {
-      await service.sweepPacks();
+    async (queue: JobQueueRepository, service: NeoService) => {
+      try {
+        await service.sweepPacks();
+      } finally {
+        schedulePackSweep(queue);
+      }
       return { swept: true };
     },
-    'service',
+    ['queue', 'service'],
     'result'
   )
   .endAsync('result') as (

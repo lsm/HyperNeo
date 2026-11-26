@@ -7,14 +7,14 @@ export const SESSION_REUSE_PREFERENCE: NeoPackPreferenceDeclaration = {
   label: { en: 'Session reuse', 'zh-Hans': '会话复用' },
   question: { en: 'How should sessions be reused?', 'zh-Hans': '如何复用会话？' },
   valueLabels: {
-    long_lived: { en: 'Long-lived sessions', 'zh-Hans': '长期会话' },
+    long_lived: { en: 'Reuse when free', 'zh-Hans': '空闲就复用' },
     per_ask: { en: 'One session per matter', 'zh-Hans': '每件事一个会话' },
     per_todo: { en: 'One session per step', 'zh-Hans': '每个步骤一个会话' },
   },
   valueDescriptions: {
     long_lived: {
-      en: 'Reuse a free worker in this folder.',
-      'zh-Hans': '复用此文件夹中空闲的工作者。',
+      en: 'Reuse this matter’s free worker; start a new session otherwise.',
+      'zh-Hans': '复用本事项空闲的工作者，否则启动新会话。',
     },
     per_ask: {
       en: 'Reuse this matter’s worker and wait if it is busy.',
@@ -31,7 +31,6 @@ export const SESSION_REUSE_PREFERENCE: NeoPackPreferenceDeclaration = {
 export function sessionReuseQuestion(facts: SessionReuseFacts) {
   const prefix = `core.sessionReuse:${facts.scope.kind}:${facts.scope.key}:`;
   return {
-    askId: facts.askId,
     requestId: `${prefix}${crypto.randomUUID()}`,
     prefix,
     hold: false as const,

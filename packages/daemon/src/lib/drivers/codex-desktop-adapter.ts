@@ -84,6 +84,7 @@ import {
 import { reject } from './work-operations.ts';
 import { cleanupOwnedWorktree, type GitCheckout, prepareWorkerFolder } from './work-placement.ts';
 import { gitWorktreeProject } from './worktree-project.ts';
+import { WORKER_COMPACTION_TIMEOUT_MS } from './worker-compaction.ts';
 
 const THREADS_PER_PLACE = 20;
 const RECENT_MS = 2 * 60_000;
@@ -143,7 +144,7 @@ export interface CodexDesktopAdapterDeps {
   spawn: SpawnFn;
   appServer: () => Promise<CodexAppServer>;
   bootstrapServer: () => Promise<CodexAppServer>;
-  prepareDesktopProject: (folder: string) => Promise<string>;
+  prepareDesktopProject: (folder: string, server: CodexAppServer) => Promise<string>;
   startDesktopTurn: (threadId: string, request: Record<string, unknown>) => Promise<void>;
   folderExists: (folder: string) => boolean;
   makeFolder: (folder: string) => void;
@@ -1341,7 +1342,7 @@ export async function startCodexThread(
       const projectFolder = request.inPlace
         ? folder
         : ((await deps.gitCheckout(folder))?.repo ?? folder);
-      const projectId = await deps.prepareDesktopProject(projectFolder);
+      const projectId = await deps.prepareDesktopProject(projectFolder, server);
       releaseTitle = await lockCodexSessionName(deps.statePath, projectFolder);
       const sessionTitle = await genericCodexSessionTitle(
         projectFolder,
@@ -1575,7 +1576,7 @@ async function compactIdleCodexThread(
           : reject('not_delivered', 'The Codex app-server did not confirm compaction.')
       );
     }
-    const deadline = Date.now() + 60_000;
+    const deadline = Date.now() + WORKER_COMPACTION_TIMEOUT_MS;
     do {
       const { lines } = await readTailLines(path, ROLLOUT_TAIL_BYTES, size);
       if (completedDesktopCompaction(lines)) return { ok: true, value: { compacted: true } };

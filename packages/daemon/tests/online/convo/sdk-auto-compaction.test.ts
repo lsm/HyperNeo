@@ -12,9 +12,12 @@ import type { SDKMessage } from '@hyperneo/shared/sdk';
 
 const createTestDirectory = testDirectories();
 
-test.each(['ordinary', 'neo', 'opus1m', 'opus-native', 'neo45'] as const)(
-  '%s SDK compacts mid-turn without cancelling tools or losing queued inputs',
+test.each(['ordinary', 'neo', 'opus1m', 'opus-native', 'neo45', 'daemon', 'worker'] as const)(
+  '%s compaction keeps queued inputs',
   async (kind) => {
+    const daemon = kind === 'daemon';
+    const worker = kind === 'worker';
+    const manual = daemon || worker;
     const neo = kind === 'neo' || kind === 'neo45';
     const oneM = kind.startsWith('opus') || kind === 'neo45';
     const native = kind === 'opus-native';
@@ -66,8 +69,12 @@ test.each(['ordinary', 'neo', 'opus1m', 'opus-native', 'neo45'] as const)(
         res.statusCode = 404;
         return res.end('{}');
       }
-      const active = body.tools?.some((tool: { name: string }) => tool.name === 'Read');
-      requests.push({ active, body });
+      const lastMessage = body.messages?.at(-1);
+      const summary =
+        lastMessage?.role === 'user' &&
+        JSON.stringify(lastMessage.content).includes('detailed summary of the conversation');
+      const active = !summary && body.tools?.some((tool: { name: string }) => tool.name === 'Read');
+      requests.push({ active, summary, body });
       for (const message of body.messages ?? []) {
         if (!Array.isArray(message.content)) continue;
         for (const part of message.content) {
@@ -95,8 +102,9 @@ test.each(['ordinary', 'neo', 'opus1m', 'opus-native', 'neo45'] as const)(
             : turn === 1 && kind === 'neo45'
               ? 300000
               : 1000;
+        if (manual) usage = daemon && turn === 1 ? 125000 : 1000;
         content =
-          turn <= 2
+          !manual && turn <= 2
             ? [
                 {
                   type: 'tool_use',
@@ -106,14 +114,20 @@ test.each(['ordinary', 'neo', 'opus1m', 'opus-native', 'neo45'] as const)(
                 },
               ]
             : [{ type: 'text', text: 'COMPACT_CONTINUED_SUCCESS' }];
-      } else {
+      } else if (summary) {
         summaryCalls += 1;
+        if (manual) {
+          held = true;
+          await gate;
+        }
         content = [
           {
             type: 'text',
-            text: 'Synthetic compaction summary: continue SDK_COMPACTION_PROOF; both file reads succeeded. Preserve queued markers and finish the task.',
+            text: '<analysis>Both file reads succeeded.</analysis>\n<summary>Continue SDK_COMPACTION_PROOF. Preserve queued markers and finish the task.</summary>',
           },
         ];
+      } else {
+        content = [{ type: 'text', text: 'SDK compaction proof' }];
       }
       const tool = content[0].type === 'tool_use';
       const message = {
@@ -197,6 +211,7 @@ test.each(['ordinary', 'neo', 'opus1m', 'opus-native', 'neo45'] as const)(
       });
       return {
         ...options,
+        settings: daemon ? { autoCompactEnabled: false } : options.settings,
         sandbox: { enabled: false },
         debugFile: join(run, 'sdk-debug.log'),
         stderr: (data) => {
@@ -317,6 +332,53 @@ test.each(['ordinary', 'neo', 'opus1m', 'opus-native', 'neo45'] as const)(
         }
         throw new Error(`Missing ${label}; run=${run}`);
       };
+      if (manual) {
+        const live = await app.sessionManager.getSessionForControl(sessionId);
+        if (!live) throw new Error('Session unavailable for compaction');
+        let workerResult: Promise<unknown> | undefined;
+        if (worker) {
+          await wait(
+            () => turn === 1 && live.getProcessingState().status === 'idle',
+            'idle worker after the first turn'
+          );
+          const { compactHyperneoWorker } = await import(
+            '../../../src/lib/drivers/hyperneo-adapter.ts'
+          );
+          const bus = app.internalEventBus;
+          workerResult = compactHyperneoWorker(live, (complete) =>
+            bus.subscribe('session.compacted', complete, {
+              sessionId,
+              subscriberName: 'worker-compaction-proof',
+            })
+          );
+        }
+        await wait(() => held, 'held manual summary request');
+        await send(markers[0]);
+        release();
+        await wait(async () => {
+          messages = (
+            await hub.request<{ sdkMessages: SDKMessage[] }>('message.sdkMessages', { sessionId })
+          ).sdkMessages;
+          return requests.some((r) => r.active && JSON.stringify(r.body).includes(markers[0]));
+        }, 'queued input reaching the model');
+        const boundaries = messages.filter(
+          (message) =>
+            message.type === 'system' &&
+            message.subtype === 'compact_boundary' &&
+            message.compact_metadata.trigger === 'manual'
+        );
+        expect(boundaries).toHaveLength(1);
+        expect(summaryCalls).toBe(1);
+        if (workerResult)
+          expect(await workerResult).toEqual({ ok: true, value: { compacted: true } });
+        expect(
+          JSON.stringify(requests.find((r) => r.summary)?.body).includes(
+            'Keep the summary near 2,000 tokens, with only the goal, the state reached, open steps, and the last observation.'
+          ),
+          'summary request carries the daemon instructions'
+        ).toBe(true);
+        return;
+      }
       await wait(() => held, 'held second model call');
       for (const marker of markers) accepted.push(await send(marker));
       const live = await app.sessionManager.getSessionForControl(sessionId);

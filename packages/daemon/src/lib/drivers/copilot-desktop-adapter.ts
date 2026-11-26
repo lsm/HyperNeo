@@ -46,6 +46,7 @@ type Read = (query: FindQuery, id?: string) => Promise<CopilotDesktopSession[]>;
 function summarize(session: CopilotDesktopSession, machine: string): WorkSummary {
   return {
     ref: { adapter: COPILOT_CLIENT.id, id: session.id },
+    copilotClient: 'desktop',
     title: session.title,
     place: { machine, folder: session.folder, name: session.project || basename(session.folder) },
     ...(isAbsolute(session.directory)
@@ -129,6 +130,9 @@ export function createCopilotDesktopAdapter(
   });
   return {
     id: COPILOT_CLIENT.id,
+    get copilotClients(): NonNullable<WorkAdapter['copilotClients']> {
+      return controlAvailable?.() ? ['desktop'] : [];
+    },
     steerBehavior: 'best_effort',
     get capabilities(): WorkAdapter['capabilities'] {
       return controlAvailable?.()
@@ -166,6 +170,12 @@ export function createCopilotDesktopAdapter(
           };
     },
     ...control,
+    start: (request, context) =>
+      request.copilotClient === 'cli'
+        ? Promise.resolve(
+            reject('unreachable', 'Copilot CLI is unavailable on this machine.', true)
+          )
+        : control.start(request, context),
     find: (query) => find(query, read, machine),
     async readTurns(id, around, before, after, cursor) {
       const file = await readableHistory(id);

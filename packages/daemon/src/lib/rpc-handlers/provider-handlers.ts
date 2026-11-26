@@ -1,6 +1,10 @@
 import type { MessageHub } from '@hyperneo/shared';
 import { oxapHarnessesForProvider } from '@hyperneo/shared/types/oxap-harnesses';
-import { newSessionOxapRefusal, type OxapSettingsDeps } from '../oxap/oxap-settings.ts';
+import {
+  detectOxapExecutable,
+  newSessionOxapRefusal,
+  type OxapSettingsDeps,
+} from '../oxap/oxap-settings.ts';
 import { VOICE_CREDENTIAL_PROVIDER_ID } from './settings-handlers.ts';
 import type { CreateProviderParams, ProviderRecord, UpdateProviderParams } from '@hyperneo/shared';
 import type { ListRemoteModelsOptions, ProviderCredentials } from '@hyperneo/shared/provider';
@@ -117,6 +121,21 @@ type RequestCredentials = {
   oauthExpiresAt?: number;
 };
 
+async function storeRequestedOAuth(
+  manager: ProviderCredentialManager,
+  providerId: string,
+  credentials: RequestCredentials
+): Promise<void> {
+  const tokens = {
+    accessToken: credentials.oauthAccessToken,
+    refreshToken: credentials.oauthRefreshToken,
+    expiresAt: credentials.oauthExpiresAt,
+  };
+  if (providerId === 'anthropic')
+    await manager.storeOAuthTokens(providerId, tokens, { login: true });
+  else await manager.storeOAuthTokens(providerId, tokens);
+}
+
 export async function resolveCredentialsForHydration(
   credentialManager: ProviderCredentialManager,
   providerId: string,
@@ -232,9 +251,18 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         }
       })
     );
-    if ((data as { forNewSession?: boolean } | undefined)?.forNewSession !== true) {
-      return { providers: enriched };
+    const options = data as { forNewSession?: boolean; forSettings?: boolean } | undefined;
+    if (options?.forSettings === true) {
+      const providers = await Promise.all(
+        enriched.map(async (record) => {
+          const [harness] = oxapHarnessesForProvider(record.providerId);
+          const detectedHarnessExecutable = harness && (await detectOxapExecutable(harness));
+          return detectedHarnessExecutable ? { ...record, detectedHarnessExecutable } : record;
+        })
+      );
+      return { providers };
     }
+    if (options?.forNewSession !== true) return { providers: enriched };
     const installed = deps.oxapSettings?.settings().oxapHub;
     return {
       providers: await Promise.all(
@@ -289,18 +317,22 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         data.params.kind === 'custom_endpoint' ? withCustomEndpointsLock : withProviderLock;
       return lock(async () => {
         validateCreateParams(data.params);
-        const record = await writer.call(providerRpcWrites, 'createProvider', data.params);
+        const params = { ...data.params };
+        if (
+          params.providerId === 'anthropic' &&
+          params.authType === 'oauth' &&
+          !data.credentials?.oauthAccessToken
+        ) {
+          params.authType = 'none';
+        }
+        const record = await writer.call(providerRpcWrites, 'createProvider', params);
 
         try {
           if (record.kind !== 'custom_endpoint') {
             if (data.credentials?.apiKey) {
               await credentialManager.storeApiKey(record.providerId, data.credentials.apiKey);
             } else if (data.credentials?.oauthAccessToken) {
-              await credentialManager.storeOAuthTokens(record.providerId, {
-                accessToken: data.credentials.oauthAccessToken,
-                refreshToken: data.credentials.oauthRefreshToken,
-                expiresAt: data.credentials.oauthExpiresAt,
-              });
+              await storeRequestedOAuth(credentialManager, record.providerId, data.credentials);
             }
           }
 
@@ -314,7 +346,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
               record.providerId,
               data.credentials
             );
-            await syncProviderToRegistry(record, creds);
+            await syncProviderToRegistry(record, creds, false, credentialManager);
           } else if (record.kind === 'built_in') {
             markBuiltInProviderDisabled(record.providerId);
             await removeProviderFromRegistry(record.providerId, { preserveCredentials: true });
@@ -361,11 +393,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
                 await credentialManager.storeApiKey(existing.providerId, data.credentials.apiKey);
                 updates.authType = 'api_key';
               } else if (data.credentials.oauthAccessToken) {
-                await credentialManager.storeOAuthTokens(existing.providerId, {
-                  accessToken: data.credentials.oauthAccessToken,
-                  refreshToken: data.credentials.oauthRefreshToken,
-                  expiresAt: data.credentials.oauthExpiresAt,
-                });
+                await storeRequestedOAuth(credentialManager, existing.providerId, data.credentials);
                 updates.authType = 'oauth';
               }
             } catch (err) {
@@ -399,7 +427,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
                   record.providerId,
                   data.credentials
                 );
-                await syncProviderToRegistry(record, creds);
+                await syncProviderToRegistry(record, creds, false, credentialManager);
               }
             }
           } catch (error) {

@@ -1,4 +1,5 @@
 import { anthropicErrorTypeForHttpStatus } from '@hyperneo/shared/provider/error-taxonomy';
+import { collapseDesktopObservations } from '../desktop-observation-collapse.ts';
 import { Logger } from '../../logger.js';
 import { createHttpWsServer } from '../../runtime-server/index.js';
 import type { AnthropicRequest } from '../provider-anthropic-compat/translator.js';
@@ -7,7 +8,10 @@ import { isJsonContentType, normalizeUpstreamError } from '../shared/normalize-u
 
 const logger = new Logger('anthropic-messages-bridge-server');
 
-type SessionThinkingConfig = { type: 'enabled'; budget_tokens: number } | undefined;
+type SessionThinkingConfig =
+  | { type: 'enabled'; budget_tokens: number }
+  | { type: 'disabled' }
+  | undefined;
 
 export type AnthropicMessagesBridgeServer = {
   port: number;
@@ -27,8 +31,10 @@ export type AnthropicMessagesBridgeConfig = {
   apiKey?: string;
   headers?: Record<string, string>;
   fetchImpl?: typeof fetch;
+  collapseDesktopObservations?: boolean;
   models?: AnthropicMessagesBridgeModel[];
   thinkingSupported?: boolean;
+  disableThinkingWithChatTemplate?: boolean;
   accessToken?: string;
   forwardHeaders?: string[];
   sessionHeader?: string;
@@ -89,10 +95,28 @@ function disableThinking(bodyBytes: ArrayBuffer): ArrayBuffer {
   return encoded.buffer.slice(encoded.byteOffset, encoded.byteOffset + encoded.byteLength);
 }
 
-function enforceThinking(bodyBytes: ArrayBuffer, desired: SessionThinkingConfig): ArrayBuffer {
+function enforceThinking(
+  bodyBytes: ArrayBuffer,
+  desired: SessionThinkingConfig,
+  disableThinkingWithChatTemplate: boolean
+): ArrayBuffer {
   const text = new TextDecoder().decode(bodyBytes);
-  const body: Partial<AnthropicRequest> = JSON.parse(text);
-  if (desired === undefined) {
+  const body: Partial<AnthropicRequest> & {
+    chat_template_kwargs?: Record<string, unknown>;
+    output_config?: { effort?: unknown };
+    reasoning_effort?: unknown;
+  } = JSON.parse(text);
+  if (desired?.type === 'disabled') {
+    body.thinking = desired;
+    if (disableThinkingWithChatTemplate) {
+      body.chat_template_kwargs = { ...body.chat_template_kwargs, enable_thinking: false };
+      delete body.output_config?.effort;
+      if (body.output_config && Object.keys(body.output_config).length === 0) {
+        delete body.output_config;
+      }
+      delete body.reasoning_effort;
+    }
+  } else if (desired === undefined) {
     delete body.thinking;
   } else if (typeof body.max_tokens !== 'number' || body.max_tokens <= desired.budget_tokens) {
     return bodyBytes;
@@ -159,6 +183,12 @@ export async function createAnthropicMessagesBridgeServer(
       let bodyBytes: ArrayBuffer;
       try {
         bodyBytes = await req.arrayBuffer();
+        if (config.collapseDesktopObservations) {
+          const body: AnthropicRequest = JSON.parse(new TextDecoder().decode(bodyBytes));
+          const collapsed = collapseDesktopObservations(body);
+          if (collapsed !== body)
+            bodyBytes = new TextEncoder().encode(JSON.stringify(collapsed)).buffer;
+        }
       } catch {
         return sendJsonError(400, 'invalid_request_error', 'Bad Request');
       }
@@ -168,7 +198,11 @@ export async function createAnthropicMessagesBridgeServer(
         const desired =
           config.thinkingSupported === false ? undefined : sessionThinking.get(sessionId);
         try {
-          bodyBytes = enforceThinking(bodyBytes, desired);
+          bodyBytes = enforceThinking(
+            bodyBytes,
+            desired,
+            config.disableThinkingWithChatTemplate === true
+          );
         } catch {
           return sendJsonError(400, 'invalid_request_error', 'Bad Request: invalid JSON');
         }

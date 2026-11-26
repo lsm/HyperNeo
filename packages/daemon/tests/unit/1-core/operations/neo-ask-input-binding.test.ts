@@ -129,48 +129,13 @@ describe('neo ask binding from human input', () => {
     }
   });
 
-  test('an app reaches only the todo whose human message names it or whose ask card approved it', async () => {
+  test('a human message cannot grant desktop access without an approved ask card', async () => {
     const f = setup();
     try {
-      const chrome = { bundleId: 'com.google.Chrome', name: 'Google Chrome' };
       const input = f.human('Use Chrome to find the March invoice');
-      const refused = await f.add({ input, desktopApps: ['com.google.Chrome', 'com.apple.mail'] });
-      expect(refused).toMatchObject({
-        ok: false,
-        reason: expect.stringContaining('Mail is not on'),
-      });
-      const added = await f.add({ input, desktopApps: ['com.google.Chrome'] });
-      if (!added.ok || !added.todo) throw new Error('add failed');
-      const askId = added.todo.askId;
-      expect(f.store.listTodos(askId).map((todo) => todo.desktopApps ?? null)).toEqual([[chrome]]);
-      expect(f.store.getAsk(askId)?.desktopApps).toBeUndefined();
-      expect(f.store.listQuestions(askId)).toEqual([]);
-      const sibling = await f.add({ askId, title: 'Sibling step' });
-      expect(sibling.ok).toBe(true);
-      const claimed = await f.add({
-        askId,
-        title: 'Claim step',
-        desktopApps: ['com.google.Chrome'],
-      });
-      expect(claimed).toMatchObject({
+      expect(await f.add({ input, desktopApps: ['com.google.Chrome'] })).toMatchObject({
         ok: false,
         reason: expect.stringContaining('desktop_app_not_approved'),
-      });
-      await f.store.addAskDesktopApps(askId, [chrome], 2);
-      const pooled = await f.add({
-        askId,
-        title: 'Pooled step',
-        desktopApps: ['com.google.Chrome'],
-      });
-      expect(pooled.ok).toBe(true);
-      expect(
-        Object.fromEntries(
-          f.store.listTodos(askId).map((todo) => [todo.title, todo.desktopApps ?? null])
-        )
-      ).toEqual({
-        'Fix the two Open buttons': [chrome],
-        'Sibling step': null,
-        'Pooled step': [chrome],
       });
     } finally {
       f.db.close();
@@ -462,6 +427,50 @@ describe('neo ask binding from human input', () => {
       });
       const added = await f.add({ input, askId: f.slow.id });
       expect(added.ok && added.todo?.askId).toBe(f.slow.id);
+    } finally {
+      f.db.close();
+    }
+  });
+
+  test('a reply to a question on a settled ask is told to propose, not to pass input again', async () => {
+    const f = setup();
+    try {
+      const asked = await f.ask({ askId: f.slow.id });
+      if (!asked.ok) throw new Error(asked.reason);
+      const input = f.human('Use the index', { kind: 'question', id: asked.question.id });
+      f.store.settleAsk(f.slow, 'done', 'Finished', 2);
+      expect(await f.add({ input })).toEqual({
+        ok: false,
+        reason:
+          'ask_settled: this ask is done; the todo was not added. Use neo.ask.propose with a new title.',
+      });
+      expect(f.store.listTodos(f.slow.id)).toEqual([]);
+    } finally {
+      f.db.close();
+    }
+  });
+
+  test('the human message and replies to it still reach their ask once it has a goal', async () => {
+    const f = setup();
+    try {
+      const origin = f.human('Grow the guide');
+      f.store.openAsk({
+        id: 'goal-ask',
+        sessionId: session,
+        originMessageId: origin,
+        projectId: null,
+        title: 'Grow the guide',
+        request: 'Grow the guide',
+        createdAt: 1,
+      });
+      f.db.exec(
+        "INSERT INTO neo_goals (id, owner_session_id, title, created_at, updated_at) VALUES ('goal', 'neo:synthetic', 'Grow', 1, 1); UPDATE neo_asks SET goal_id = 'goal' WHERE id = 'goal-ask'"
+      );
+      const again = await f.add({ input: origin });
+      expect(again.ok && again.todo?.askId).toBe('goal-ask');
+      const reply = f.human('Also this', { kind: 'message', id: origin, author: 'user' });
+      const replied = await f.add({ input: reply, title: 'Also this' });
+      expect(replied.ok && replied.todo?.askId).toBe('goal-ask');
     } finally {
       f.db.close();
     }

@@ -24,7 +24,7 @@ try {
   await page.getByRole('button', { name: 'Pair this browser' }).click();
   await page.getByText('This browser is paired.').waitFor();
   await page.goto(`${base}/session/${sessionId}`);
-  const banner = page.getByTestId('error-banner');
+  const banner = page.getByTestId('chat-error-row').or(page.getByTestId('error-banner'));
   await banner.getByText(fixture === 'slow' || fixture === 'timeout' ? /Claude Code is still downloading/ : failureText).waitFor({ timeout: 30000 });
   for (const scheme of ['dark', 'light']) {
     await page.emulateMedia({ colorScheme: scheme });

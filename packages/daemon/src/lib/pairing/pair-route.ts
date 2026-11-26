@@ -11,6 +11,7 @@ const PairRequest = z.object({
 });
 
 export interface PairRouteDeps {
+  readonly daemonId?: string;
   readonly repo: DevicePairingRepository;
   readonly limiter: PairingLimiter;
   readonly now: () => number;
@@ -19,23 +20,36 @@ export interface PairRouteDeps {
 
 const MAX_BODY_BYTES = 4 * 1024;
 
-export async function readBoundedText(req: Request): Promise<string | null> {
-  if (Number(req.headers.get('content-length') ?? 0) > MAX_BODY_BYTES) return null;
+export async function readBoundedText(
+  req: Request,
+  maxBytes = MAX_BODY_BYTES,
+  signal?: AbortSignal
+): Promise<string | null> {
+  if (signal?.aborted || Number(req.headers.get('content-length') ?? 0) > maxBytes) return null;
   const reader = req.body?.getReader();
   if (!reader) return '';
+  const cancel = () => {
+    void reader.cancel().catch(() => {});
+  };
+  signal?.addEventListener('abort', cancel, { once: true });
   const chunks: Uint8Array[] = [];
   let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > MAX_BODY_BYTES) {
-      await reader.cancel();
-      return null;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > maxBytes) {
+        cancel();
+        return null;
+      }
+      chunks.push(value);
     }
-    chunks.push(value);
+    return signal?.aborted ? null : Buffer.concat(chunks).toString('utf8');
+  } finally {
+    signal?.removeEventListener('abort', cancel);
+    reader.releaseLock();
   }
-  return Buffer.concat(chunks).toString('utf8');
 }
 
 const parseJson = (text: string): unknown => {
@@ -67,12 +81,14 @@ function deviceCookie(credential: string, origin: string): string {
 
 export function answerPaired(
   req: Request,
-  paired: { device: { id: string; kind: string }; credential: string }
+  paired: { device: { id: string; kind: string }; credential: string },
+  daemonId?: string
 ): Response {
   const origin = req.headers.get('origin');
   const device = {
     deviceId: paired.device.id,
     kind: paired.device.kind,
+    ...(paired.device.kind === 'daemon' && daemonId ? { daemonId } : {}),
   };
   if (!origin || paired.device.kind === 'agent')
     return answer(200, { ...device, credential: paired.credential });
@@ -81,7 +97,7 @@ export function answerPaired(
   return response;
 }
 
-export function createPairRoute({ repo, limiter, now, waits }: PairRouteDeps) {
+export function createPairRoute({ repo, limiter, now, waits, daemonId }: PairRouteDeps) {
   return async (req: Request): Promise<Response> => {
     if (req.method !== 'POST') return answer(405, { error: 'method_not_allowed' });
     const admitted = limiter.admit(now());
@@ -108,7 +124,7 @@ export function createPairRoute({ repo, limiter, now, waits }: PairRouteDeps) {
       outcome = await repo.redeemAsync(parsed.data, at);
     }
     const { paired, awaitingApproval, usedElsewhere, refusal } = outcome;
-    if (paired) return answerPaired(req, paired);
+    if (paired) return answerPaired(req, paired, daemonId);
     if (awaitingApproval) return answer(403, { error: 'awaiting_approval' });
     limiter.fail(at);
     return usedElsewhere

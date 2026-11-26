@@ -1,4 +1,6 @@
-import { renderRemoteAddress } from '../../mailbox/address.ts';
+import { getBuiltInSpaceAgentTemplates } from '../../agents/template-manager.ts';
+import { deriveWorkerDisallowedTools } from '../../agents/tool-policy.ts';
+import { qualifyRemoteOrigin, renderRemoteAddress } from '../../mailbox/address.ts';
 import { proposalQuestionId, requireAcceptedAsk } from '../../neo/proposal.ts';
 import { NeoSessionMessageRepository } from '../../../storage/repositories/neo-session-message-repository.ts';
 import { NeoTodoSessionRepository } from '../../../storage/repositories/neo-todo-session-repository.ts';
@@ -100,6 +102,7 @@ import {
 } from '../../drivers/claude-remote-control.ts';
 import {
   connectCodexAppServer,
+  connectRecoveredCodexAppServer,
   startCodexBootstrapServer,
 } from '../../drivers/codex-app-server.ts';
 import { startCodexDesktopTurn } from '../../drivers/codex-desktop-handoff.ts';
@@ -123,6 +126,7 @@ import {
 import { sessionSender } from '../../messaging/message-send.ts';
 import { renderAddress } from '../../mailbox/address.ts';
 import { createWorkerOwnershipBackfillOperations } from '../../neo/worker-ownership-backfill.ts';
+import { createWorkReconfigureOperation } from '../../drivers/work-reconfigure.ts';
 import { createNeoSessionArchiveOperation } from '../../neo/session-archive-operation.ts';
 import { createNeoSessionUnarchiveOperation } from '../../neo/session-unarchive-operation.ts';
 import { reject } from '../../drivers/work-operations.ts';
@@ -161,9 +165,15 @@ async function readAvailableModels(): Promise<readonly ModelInfo[]> {
   return getAvailableModels('global');
 }
 
-export async function resolveDriverModel(models: readonly ModelInfo[], requested: string) {
+export async function resolveDriverModel(
+  models: readonly ModelInfo[],
+  requested: string,
+  provider?: string
+) {
   const { findInModels } = await import('../../model-service.ts');
-  const available = usableModels(models);
+  const available = usableModels(models).filter(
+    (model) => !provider || model.provider === provider
+  );
   const names = matchModelIdOrName(available, requested);
   if (names.length > 1)
     throw new ModelUnavailableError(
@@ -181,13 +191,31 @@ export async function createDriverSession(
   provider?: string,
   effort?: string,
   inPlace = false,
-  prepared?: { sessionId: string; projectPath: string }
+  prepared?: { sessionId: string; projectPath: string },
+  workerTemplate?: string
 ): Promise<string> {
   const gitRoot = inPlace
     ? null
     : (await sessionManager.getWorktreeManager().detectGitSupport(workspacePath)).gitRoot;
   const placement = planWorkPlacement(await checkoutAt(gitRoot));
-  const thinkingLevel = resolveHyperneoThinking(effort)?.value;
+  const template = workerTemplate
+    ? getBuiltInSpaceAgentTemplates().find(({ key }) => key === workerTemplate)
+    : undefined;
+  if (workerTemplate && !template) throw new Error(`Unknown worker template ${workerTemplate}.`);
+  model ??= template?.model ?? undefined;
+  const thinkingLevel = resolveHyperneoThinking(effort)?.value ?? template?.thinkingLevel;
+  const templateConfig: Partial<SessionConfig> | undefined = template
+    ? {
+        systemPrompt: { type: 'preset', preset: 'claude_code', append: template.instructions },
+        sdkToolsPreset: [],
+        coordinatorMode: false,
+        allowedTools: template.tools?.map((tool) =>
+          tool === 'invoke' ? 'mcp__hyperneo-operations__invoke' : tool
+        ),
+        disallowedTools: deriveWorkerDisallowedTools(template.tools),
+        settingSources: [],
+      }
+    : undefined;
   const create = (config?: Partial<SessionConfig>) =>
     sessionManager.createSession({
       workspacePath,
@@ -196,9 +224,10 @@ export async function createDriverSession(
         ? { sessionId: prepared.sessionId, executionProjectPath: prepared.projectPath }
         : {}),
       worktreeMode: placement.kind === 'worktree' ? 'worktree' : 'direct',
-      toolProfile: 'worker',
-      ...(config || thinkingLevel
-        ? { config: { ...config, ...(thinkingLevel ? { thinkingLevel } : {}) } }
+      toolProfile: template?.key === 'worker.desktop' ? 'desktop' : 'worker',
+      ...(template ? { workerTemplate: template.key } : {}),
+      ...(config || thinkingLevel || templateConfig
+        ? { config: { ...templateConfig, ...config, ...(thinkingLevel ? { thinkingLevel } : {}) } }
         : {}),
     });
   const selected = model
@@ -304,7 +333,7 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
         (await cleanupPrepared());
       return { ok: true, value: { archived: true, ...(worktree ? { worktree } : {}) } };
     },
-    create: (workspacePath, title, model, provider, effort, inPlace, prepared) =>
+    create: (workspacePath, title, model, provider, effort, inPlace, prepared, workerTemplate) =>
       createDriverSession(
         sessionManager,
         workspacePath,
@@ -314,9 +343,11 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
         provider,
         effort,
         inPlace,
-        prepared
+        prepared,
+        workerTemplate
       ),
-    resolveModel: async (model) => resolveDriverModel(await readAvailableModels(), model),
+    resolveModel: async (model, provider) =>
+      resolveDriverModel(await readAvailableModels(), model, provider),
     resolveDefaultModel: async () => {
       const { decision } = await resolveNewSessionModel(
         undefined,
@@ -520,7 +551,8 @@ function codexDesktopAdapters(
   ) => Promise<CodexSnapshot>,
   searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>,
   prepareExecution: WorkExecutionPreparer,
-  admitWork: FamilyOperationContext['deps']['admitCodexWork']
+  admitWork: FamilyOperationContext['deps']['admitCodexWork'],
+  recoverAppServer: () => Promise<boolean>
 ): WorkAdapter[] {
   const codexHome = codexWorkerHome();
   const statePath = codexStatePath(homedir());
@@ -536,9 +568,13 @@ function codexDesktopAdapters(
       machine: hostname(),
       now: Date.now,
       spawn: spawnProcess,
-      appServer: () => connectCodexAppServer(codexAppServerSocketPath(codexHome)),
+      appServer: () =>
+        connectRecoveredCodexAppServer(
+          () => connectCodexAppServer(codexAppServerSocketPath(codexHome)),
+          recoverAppServer
+        ),
       bootstrapServer: () => startCodexBootstrapServer(),
-      prepareDesktopProject: (folder) => ensureCodexDesktopProject(folder, codexHome, spawnProcess),
+      prepareDesktopProject: ensureCodexDesktopProject,
       startDesktopTurn: (threadId, request) =>
         startCodexDesktopTurn(join(codexHome, 'ipc', 'ipc.sock'), spawnProcess, threadId, request),
       folderExists: existsSync,
@@ -637,7 +673,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
         context.deps.db.readCodexSnapshotAsync(statePath, includeClosed, idPrefix, fullTitles),
       searchChats,
       prepareExecution,
-      context.deps.admitCodexWork
+      context.deps.admitCodexWork,
+      async () => (await context.deps.codexSetup?.recover()) ?? false
     );
   const copilotDesktopPath = copilotDesktopStatePath(homedir());
   const copilotDesktop = createCopilotDesktopAdapter(
@@ -684,6 +721,12 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       )
     : null;
   if (antigravity) context.driverCleanup?.push(antigravity.close);
+  const cursor = cursorPath
+    ? createCursorDiscovery(cursorPath, homedir(), machine, (adapter) =>
+        gatewayFor(db()).call(workStartedSessionReads, 'startedFolders', adapter)
+      )
+    : null;
+  if (cursor) context.driverCleanup?.push(cursor.close);
   const cursorState = cursorDesktopStatePath(homedir());
   const cursorDesktop = createCursorDesktopDiscovery(
     (query) => context.deps.db.readCursorDesktopAsync({ statePath: cursorState, query }),
@@ -722,7 +765,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     }),
     ...codex(),
     ...(antigravity ? [antigravity] : []),
-    ...(cursorPath ? [createCursorDiscovery(cursorPath, homedir(), machine)] : []),
+    ...(cursor ? [cursor] : []),
     ...desktop,
     ...claudeCodeAdapters(
       searchChats,
@@ -765,6 +808,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     health: health.read,
     remote: remoteDaemons,
     daemonName: machine,
+    qualifyReplyOrigin: (from: string) => qualifyRemoteOrigin(from, remoteDaemons.replyDaemonId),
     startPlace: neoStartPlace({
       db: db(),
       machine,
@@ -853,6 +897,10 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
           sessionId
         )
       ),
+    workerTemplate: (ref: WorkRef) =>
+      ref.adapter === 'hyperneo' && !ref.daemon
+        ? context.deps.sessionManager.getSessionFromDB(ref.id)?.metadata.workerTemplate
+        : undefined,
     reusePolicy: async (adapter: string, todoId: string | undefined, caller: OperationCaller) => {
       const facts =
         todoId && caller.sessionId
@@ -910,6 +958,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       }
       return { mode: facts.mode, sameAsk: facts.sameAsk };
     },
+    warn: (message: string, error: unknown) => log.warn(message, error),
     markUnusable: (ref: StartedWork, reason: string) =>
       gatewayFor(db()).call(workStartedSessionWrites, 'markUnusable', ref, reason),
     roleContext: async (todoId: string, adapter: string, preparationPack?: string) => {
@@ -947,6 +996,10 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       ),
     unclaimWorker: (todoId: string, ref: WorkRef, role?: string) =>
       new NeoTodoSessionRepository(db()).write('unclaimWorker', todoId, ref, role),
+    recordWorkerReuse: (
+      todoId: string,
+      value: Parameters<NonNullable<WorkVerbDeps['recordWorkerReuse']>>[1]
+    ) => new NeoTodoSessionRepository(db()).write('recordWorkerReuse', todoId, value),
     reportUncertain: async (report: WorkSendUncertainty) => {
       const to = sessionSender(report.from) ?? new NeoRepository(db()).defaultBinding()?.sessionId;
       if (!to) throw new Error('No originating session or default Neo for the uncertainty report.');
@@ -1031,16 +1084,19 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       ? null
       : readWorkTurnPage(db(), sessionId, around, before, after, cursor);
   };
+  const readBinding = (sessionId: string) => new NeoRepository(db()).getBindingBySession(sessionId);
   return [
     createFindWorkOperation(deps),
     createWorkCleanupRuntime(context),
     health.operation,
     ...createWorkVerbOperations({ ...deps, queueInput: workerInputs.accept }),
+    createWorkReconfigureOperation({
+      db: context.deps.db,
+      sessions: context.deps.sessionManager,
+      readBinding,
+    }),
     createNeoSessionArchiveOperation({ ...deps, db: context.deps.db }),
-    createNeoSessionUnarchiveOperation(
-      (sessionId) => new NeoRepository(db()).getBindingBySession(sessionId),
-      context.deps.sessionManager
-    ),
+    createNeoSessionUnarchiveOperation(readBinding, context.deps.sessionManager),
     ...createWorkerOwnershipBackfillOperations(context.deps.db),
     createReadWorkOperation({
       readTurns,

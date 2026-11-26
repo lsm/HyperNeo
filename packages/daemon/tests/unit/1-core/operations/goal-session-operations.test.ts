@@ -114,6 +114,78 @@ function setup(
   };
 }
 
+describe('goal creation from an ask', () => {
+  const openAsk = (db: Database, id: string, sessionId = 'neo:root') =>
+    new NeoAskTodoRepository(db).openAsk({
+      id,
+      projectId: null,
+      sessionId,
+      originMessageId: null,
+      title: 'Grow',
+      request: 'Grow',
+      createdAt: 1,
+    });
+  const draft = { title: 'Grow', doneTest: 'Public' };
+
+  test.each([false, true])('links the ask to the goal (own session: %s)', async (ownSession) => {
+    const { db, call } = setup();
+    try {
+      openAsk(db, 'ask');
+      const created = await call('goal.session.create', { ...draft, askId: 'ask', ownSession });
+      expect(created.accepted).toBe(true);
+      expect(new NeoAskTodoRepository(db).getAsk('ask')?.goalId).toBe(created.goal.id);
+    } finally {
+      db.close();
+    }
+  });
+
+  test.each([
+    ['missing', 'ask_not_found'],
+    ['settled', 'ask_settled'],
+    ['foreign', 'ask_not_found'],
+    ['taken', 'ask_has_goal'],
+  ])('refuses a %s ask and creates no goal', async (kind, reason) => {
+    const { db, call } = setup();
+    try {
+      const asks = new NeoAskTodoRepository(db);
+      if (kind !== 'missing') openAsk(db, 'ask', kind === 'foreign' ? 'neo:other' : 'neo:root');
+      if (kind === 'settled') asks.settleAsk(asks.getAsk('ask')!, 'done', 'Closed', 2);
+      if (kind === 'taken') await call('goal.session.create', { ...draft, askId: 'ask' });
+      const before = (await call('goal.session.list', {})).goals.length;
+      const linked = asks.getAsk('ask')?.goalId;
+      expect(await call('goal.session.create', { ...draft, askId: 'ask' })).toEqual({
+        accepted: false,
+        reason: expect.stringContaining(reason),
+      });
+      expect((await call('goal.session.list', {})).goals).toHaveLength(before);
+      expect(asks.getAsk('ask')?.goalId).toBe(linked);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('an ask that settles while the goal session starts refuses and releases that session', async () => {
+    const f = setup();
+    try {
+      const asks = new NeoAskTodoRepository(f.db);
+      openAsk(f.db, 'ask');
+      f.started.push = (...args) => {
+        asks.settleAsk(asks.getAsk('ask')!, 'done', 'Closed', 2);
+        return Array.prototype.push.apply(f.started, args);
+      };
+      expect(
+        await f.call('goal.session.create', { ...draft, askId: 'ask', ownSession: true })
+      ).toEqual({ accepted: false, reason: expect.stringContaining('ask_settled') });
+      expect(f.released).toEqual(['goal-session-1']);
+      expect(
+        (await f.call('goal.session.list', { ownerSessionId: 'goal-session-1' })).goals
+      ).toEqual([]);
+    } finally {
+      f.db.close();
+    }
+  });
+});
+
 describe('session goal detail reads', () => {
   test('get and list project the persisted what-works note without changing it', async () => {
     const { db, call } = setup();

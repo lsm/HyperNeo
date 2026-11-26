@@ -38,15 +38,16 @@ import {
   isCloneChoice,
   type ResolveClones,
 } from '../session/clone-cascade.ts';
+import { setSessionThinkingLevel } from '../session/runtime-settings-operations.ts';
 import { admitUpdateSessionConfig } from '../session/create-session-config.ts';
 import {
   codexSessionRefusal,
   engineForProvider,
   oxapModelSwitchRefusal,
-  thinkingRefusal,
 } from '../agent/session-engine.ts';
 import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import { validateImageSizes } from '../session/message-persistence.ts';
+import type { StagedImages } from './attachment-upload-route.ts';
 import {
   hasRuntimeWorkerOperations,
   isWorkflowSubSessionIdentity,
@@ -118,6 +119,7 @@ export interface SessionHandlerDeps {
   listClones?: (parentId: string) => Session[];
   primaryAgentFor?: (sessionId: string) => { id: string; displayName: string } | null;
   runsGoal?: (sessionId: string) => boolean;
+  stagedImages?: StagedImages;
 }
 
 function goalSessionRefusal(
@@ -374,7 +376,8 @@ export function setupSessionHandlers(
       const locked = oxapModelSwitchRefusal(
         existing.config,
         existing.sdkSessionId,
-        updates.config?.model
+        updates.config?.model,
+        updates.config?.thinkingLevel
       );
       if (locked) throw new Error(locked);
     }
@@ -632,13 +635,16 @@ export function setupSessionHandlers(
       throw new Error('Invalid deliveryMode');
     }
 
-    if (images && images.length > 0) {
-      validateImageSizes(images);
-    }
-
     const outcome = await deps?.ensureSession({ kind: 'session', sessionId: targetSessionId });
     if (outcome?.kind !== 'resolved') {
       throw new Error('Session not found');
+    }
+
+    const staged = images && deps?.stagedImages ? await deps.stagedImages(images) : null;
+    if (staged && 'reason' in staged) throw new Error(staged.reason);
+    const resolvedImages = staged?.value ?? images;
+    if (resolvedImages && resolvedImages.length > 0) {
+      validateImageSizes(resolvedImages);
     }
 
     const messageId = generateUUID();
@@ -647,7 +653,7 @@ export function setupSessionHandlers(
       sessionId: outcome.sessionId,
       messageId,
       content,
-      images,
+      images: resolvedImages,
       deliveryMode,
     });
 
@@ -819,19 +825,14 @@ export function setupSessionHandlers(
       throw new Error('Session not found');
     }
 
-    const thinkingLevel = normalizeThinkingLevel(level);
-    const refusal = thinkingRefusal(agentSession.getSessionData().config.harness, thinkingLevel);
-    if (refusal) throw new Error(refusal);
-
-    await sessionManager.updateSession(targetSessionId, {
-      config: {
-        ...agentSession.getSessionData().config,
-        thinkingLevel,
-      },
-    });
-    await agentSession.applyThinkingLevel();
-
-    return { success: true, thinkingLevel };
+    const result = await setSessionThinkingLevel(
+      sessionManager,
+      agentSession,
+      normalizeThinkingLevel(level),
+      level
+    );
+    if (!result.success) throw new Error(result.error);
+    return result;
   });
 
   messageHub.onRequest('session.thinking.get', async (data) => {
@@ -939,6 +940,7 @@ export function setupSessionHandlers(
           autoCompactPercent: m.autoCompactPercent,
           thinkingModes: m.thinkingModes,
           effortLevels: m.effortLevels,
+          codexReasoning: m.codexReasoning,
           available: m.available !== false && !unavailable.has(m.provider ?? ''),
           type: 'model' as const,
         })),

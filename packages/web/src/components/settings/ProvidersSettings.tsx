@@ -5,16 +5,12 @@ import { ChevronDownGlyph } from '../icons/common-glyphs.tsx';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useSignalEffect } from '@preact/signals';
 import { GLOBAL_SYSTEM_SNAPSHOT_REQUEST, STATE_CHANNELS } from '@hyperneo/shared';
-import type {
-  ProviderRecord,
-  CredentialStoreStatus,
-  GlobalSystemSnapshot,
-  GlobalSettings,
-} from '@hyperneo/shared';
+import type { CredentialStoreStatus, GlobalSystemSnapshot, GlobalSettings } from '@hyperneo/shared';
 import type { ProviderAuthStatus, CuratedModel } from '@hyperneo/shared/provider';
 import {
   updateGlobalSettings,
   listProviders,
+  type ListedProvider,
   deleteProvider,
   updateProvider,
   setDefaultProvider,
@@ -45,8 +41,7 @@ import {
 } from './CustomEndpointEditor.tsx';
 import { useFetchModels } from './useFetchModels.ts';
 
-interface EnrichedProvider extends ProviderRecord {
-  available: boolean;
+interface EnrichedProvider extends ListedProvider {
   authStatus?: ProviderAuthStatus;
 }
 
@@ -255,7 +250,7 @@ export function ProvidersSettings() {
       await connectionManager.onConnected(CONNECTION_GATE_TIMEOUT_MS);
       if (generation !== loadGenerationRef.current) return;
       const [{ providers: records }, authResponse] = await Promise.all([
-        listProviders(),
+        listProviders({ forSettings: true }),
         listProviderAuthStatus().catch((_err) => {
           toast.warning('Auth status unavailable — showing cached state');
           return null;
@@ -835,11 +830,11 @@ export function ProvidersSettings() {
         );
         setHubBinary(snapshot.settings?.settings?.oxapHub);
       } catch {
-        toast.warning('Harness saved, but the hub path could not be refreshed.');
+        toast.warning('Client saved. Could not refresh OXAP installation details.');
       }
-      toast.success('Harness saved');
+      toast.success('Client saved');
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to save harness');
+      toast.error(error instanceof Error ? error.message : 'Could not save client');
     } finally {
       setPendingId(null);
     }
@@ -965,7 +960,7 @@ export function ProvidersSettings() {
               class="text-accent hover:underline"
               onClick={() => navigateToSettings('harness')}
             >
-              Sessions &amp; Harness
+              Sessions &amp; Clients
             </button>
             .
           </p>
@@ -988,7 +983,8 @@ export function ProvidersSettings() {
                 );
                 const draft = harnessDrafts[provider.id] ?? {
                   harness: config.harness ?? 'sdk',
-                  executable: config.harnessSettings?.executable ?? '',
+                  executable:
+                    config.harnessSettings?.executable || provider.detectedHarnessExecutable || '',
                 };
                 const selectedOxap = isOxapHarness(draft.harness)
                   ? oxapHarness(draft.harness)
@@ -998,11 +994,17 @@ export function ProvidersSettings() {
                   (config.harnessSettings?.executable ? eligible[0]?.[1] : undefined);
                 const hasExecutableField =
                   executableHarness?.settings.includes('executable') ?? false;
+                const codexExecutable = executableHarness?.adapter === 'codex';
+                const executableLabel = codexExecutable
+                  ? 'Codex CLI path'
+                  : 'DeepSeek harness path';
                 const installedHub = hubBinary ?? globalSettings.value?.oxapHub;
                 const isExpanded = expandedId === provider.id;
                 const isPending = pendingId === provider.id;
                 const isCustom = provider.kind === 'custom_endpoint';
                 const auth = provider.authStatus;
+                const authType =
+                  auth?.credentialSource === 'inherited' ? auth.method : provider.authType;
                 const isAuthenticated = provider.available || auth?.isAuthenticated;
                 const needsRefresh = auth?.needsRefresh;
                 const visiblePanel = visibleModelsPanels[provider.id] ?? EMPTY_VISIBLE_MODELS_PANEL;
@@ -1046,16 +1048,16 @@ export function ProvidersSettings() {
                           </span>
                           <span
                             class={`text-[10px] px-1.5 py-0.5 rounded-full ${
-                              provider.authType === 'api_key'
+                              authType === 'api_key'
                                 ? 'bg-accent/40 text-accent-soft'
-                                : provider.authType === 'oauth'
+                                : authType === 'oauth'
                                   ? 'bg-cat-purple/40 text-cat-purple'
                                   : 'bg-surface-raised text-fg-muted'
                             }`}
                           >
-                            {provider.authType === 'api_key'
+                            {authType === 'api_key'
                               ? 'API Key'
-                              : provider.authType === 'oauth'
+                              : authType === 'oauth'
                                 ? 'OAuth'
                                 : 'None'}
                           </span>
@@ -1068,6 +1070,23 @@ export function ProvidersSettings() {
                         <div class="text-xs text-fg-faint font-mono mt-0.5">
                           {provider.providerId}
                         </div>
+                        {provider.providerId === 'anthropic' &&
+                          auth?.method === 'oauth' &&
+                          auth.user?.email && (
+                            <div class="text-xs text-fg-muted mt-0.5 break-all">
+                              Signed in as {auth.user.email}
+                            </div>
+                          )}
+                        {auth?.credentialSource && (
+                          <div class="text-xs text-fg-muted mt-0.5">
+                            Credential source:{' '}
+                            {auth.credentialSource === 'hyperneo'
+                              ? 'HyperNeo'
+                              : auth.method === 'oauth'
+                                ? 'Claude Code'
+                                : 'Environment'}
+                          </div>
+                        )}
                       </div>
 
                       <div class="flex items-center gap-2 flex-shrink-0">
@@ -1139,9 +1158,9 @@ export function ProvidersSettings() {
                         {eligible.length > 0 && (
                           <div class="pt-3 space-y-2">
                             <label class="block text-sm">
-                              Harness
+                              Client
                               <select
-                                aria-label="Harness"
+                                aria-label="Client"
                                 value={draft.harness}
                                 onChange={(e) =>
                                   setHarnessDrafts((prev) => ({
@@ -1159,10 +1178,10 @@ export function ProvidersSettings() {
                             </label>
                             {hasExecutableField && executableHarness && (
                               <label class="block text-sm">
-                                Harness executable
+                                {executableLabel}
                                 <input
-                                  aria-label="Harness executable"
-                                  placeholder={`Absolute path to ${executableHarness.label} executable`}
+                                  aria-label={executableLabel}
+                                  placeholder={`Absolute path to ${codexExecutable ? 'codex' : 'dsh'}`}
                                   value={draft.executable}
                                   onInput={(e) =>
                                     setHarnessDrafts((prev) => ({
@@ -1176,13 +1195,14 @@ export function ProvidersSettings() {
                                   class="block w-full bg-bg border border-line rounded px-2 py-1.5"
                                 />
                                 <span class="block text-xs text-fg-muted">
-                                  An absolute path is required.
+                                  Use the absolute path returned by{' '}
+                                  <code>which {codexExecutable ? 'codex' : 'dsh'}</code>.
                                 </span>
                               </label>
                             )}
                             {selectedOxap && (
                               <div class="text-sm">
-                                <p>Hub binary</p>
+                                <p>OXAP installation</p>
                                 {installedHub ? (
                                   <dl class="mt-1 space-y-1 text-xs text-fg-muted break-all">
                                     <div>
@@ -1199,13 +1219,13 @@ export function ProvidersSettings() {
                                     </div>
                                   </dl>
                                 ) : (
-                                  <p class="text-xs text-fg-muted">Hub not installed</p>
+                                  <p class="text-xs text-fg-muted">OXAP is not installed</p>
                                 )}
                               </div>
                             )}
                             {(selectedOxap || hasExecutableField) && (
                               <p class="text-xs text-fg-muted">
-                                Saving restarts the hub and interrupts active OXAP runs.
+                                Saving restarts OXAP and interrupts active chats using OXAP clients.
                               </p>
                             )}
                             <Button
@@ -1214,7 +1234,7 @@ export function ProvidersSettings() {
                               disabled={isPending}
                               onClick={() => void saveHarness(provider, draft, hasExecutableField)}
                             >
-                              Save harness
+                              Save client
                             </Button>
                           </div>
                         )}
@@ -1262,17 +1282,18 @@ export function ProvidersSettings() {
                                   Refresh Login
                                 </Button>
                               )}
-                              {(isAuthenticated || needsRefresh) && (
-                                <Button
-                                  size="sm"
-                                  variant="secondary"
-                                  onClick={() => handleOAuthLogout(provider)}
-                                  loading={isPending}
-                                  disabled={isPending}
-                                >
-                                  Logout
-                                </Button>
-                              )}
+                              {(isAuthenticated || needsRefresh) &&
+                                auth?.credentialSource !== 'inherited' && (
+                                  <Button
+                                    size="sm"
+                                    variant="secondary"
+                                    onClick={() => handleOAuthLogout(provider)}
+                                    loading={isPending}
+                                    disabled={isPending}
+                                  >
+                                    Logout
+                                  </Button>
+                                )}
                               {(!isAuthenticated || provider.providerId === 'anthropic') && (
                                 <Button
                                   size="sm"
@@ -1286,7 +1307,7 @@ export function ProvidersSettings() {
                               )}
                             </div>
                           )}
-                          {provider.authType === 'none' && (
+                          {provider.authType === 'none' && provider.providerId !== 'anthropic' && (
                             <p class="text-xs text-fg-faint">No authentication required.</p>
                           )}
                         </div>

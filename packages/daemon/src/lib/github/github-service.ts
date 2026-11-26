@@ -28,8 +28,9 @@ export interface GitHubServiceOptions {
   db: Database;
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
   config: Config;
-  apiKey: string;
+  apiKey?: string;
   apiKeyType?: 'api_key' | 'oauth';
+  sdkEnv?: () => Record<string, string> | null;
   githubToken?: string;
   jobQueue?: JobQueueRepository;
   jobProcessor?: JobQueueProcessor;
@@ -41,8 +42,6 @@ export class GitHubService {
   private db: Database;
   private internalEventBus: InternalEventBus<DaemonInternalEventMap>;
   private config: Config;
-  private apiKey: string;
-  private apiKeyType?: 'api_key' | 'oauth';
   private githubToken?: string;
   private collectPollPage?: GitHubPollCollector;
 
@@ -64,8 +63,6 @@ export class GitHubService {
     this.db = options.db;
     this.internalEventBus = options.internalEventBus;
     this.config = options.config;
-    this.apiKey = options.apiKey;
-    this.apiKeyType = options.apiKeyType;
     this.githubToken = options.githubToken;
     this.collectPollPage = options.collectPollPage;
     this.jobQueue = options.jobQueue;
@@ -81,14 +78,15 @@ export class GitHubService {
     this.eventFilter = createEventFilter(this.filterConfigManager.getGlobalFilter(), filterOptions);
 
     this.securityAgent = createSecurityAgent({
-      apiKey: this.apiKey,
-      apiKeyType: this.apiKeyType,
+      apiKey: options.apiKey ?? '',
+      apiKeyType: options.apiKeyType,
+      sdkEnv: options.sdkEnv,
     });
 
     log.info('GitHubService initialized', {
       hasWebhookSecret: !!this.config.githubWebhookSecret,
       pollingInterval: this.getPollingIntervalSecondsValue(),
-      hasApiKey: !!this.apiKey,
+      hasApiKey: !!options.apiKey || !!options.sdkEnv?.(),
     });
   }
 

@@ -152,7 +152,7 @@ export function admitCreateSessionConfig(
 export function admitUpdateSessionConfig(
   requested: Partial<SessionConfig> | undefined,
   currentSelection?: SessionConfig['toolSelection'],
-  current?: Pick<SessionConfig, 'harness' | 'provider'>,
+  current?: Pick<SessionConfig, 'harness' | 'provider' | 'model'>,
   engineOf: (provider: string) => SessionEngine = () => 'sdk'
 ): Partial<SessionConfig> | undefined {
   if (!requested) return requested;
@@ -167,7 +167,7 @@ export function admitUpdateSessionConfig(
   if (isOxapHarness(current?.harness)) {
     const refusal =
       codexSessionRefusal(requested, false, false) ??
-      thinkingRefusal(current.harness, requested.thinkingLevel);
+      thinkingRefusal(current.harness, requested.thinkingLevel, requested.model ?? current.model);
     if (refusal) throw new Error(refusal);
   }
 

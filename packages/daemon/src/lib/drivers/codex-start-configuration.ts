@@ -13,12 +13,13 @@ const Page = z.object({
       displayName: z.string(),
       hidden: z.boolean().optional(),
       isDefault: z.boolean(),
+      defaultReasoningEffort: z.string().optional(),
       supportedReasoningEfforts: z.array(z.object({ reasoningEffort: z.string().min(1) })),
     })
   ),
   nextCursor: z.string().min(1).nullable(),
 });
-type Model = Parameters<typeof workStartConfiguration.select>[1][number];
+type Model = Parameters<typeof workStartConfiguration.select>[1][number] & { defaultLevel: string };
 type Gate<T> = { value: T } | { reason: Rejected };
 const unavailable = (detail: string): Gate<never> => ({
   reason: { ok: false, reason: 'unreachable', detail },
@@ -34,15 +35,14 @@ function catalogModels(page: z.infer<typeof Page>): Model[] {
         aliases: [model.id, model.displayName, ...(named ? [`${named[2]} ${named[1]}`] : [])],
         efforts: model.supportedReasoningEfforts.map((effort) => effort.reasoningEffort),
         isDefault: model.isDefault,
+        defaultLevel: model.defaultReasoningEffort ?? '',
       };
     });
 }
 
-async function readModels(
-  request: Request,
+export async function readCodexModels(
   server: Pick<CodexAppServer, 'call'>
 ): Promise<Gate<Model[]>> {
-  if (request.model === undefined && request.effort === undefined) return { value: [] };
   const models: Model[] = [];
   const cursors = new Set<string>();
   let cursor: string | undefined;
@@ -72,7 +72,14 @@ async function readModels(
 
 export const selectCodexConfiguration = (superpipe({})('codex-start-configuration') as PipelineAPI)
   .input(['request', 'server'])
-  .pipe(readModels, ['request', 'server'], 'result:configuration')
+  .pipe(
+    (request: Request, server: Pick<CodexAppServer, 'call'>) =>
+      request.model === undefined && request.effort === undefined
+        ? { value: [] }
+        : readCodexModels(server),
+    ['request', 'server'],
+    'result:configuration'
+  )
   .pipe(
     (request: Request, models: Model[]): Gate<Request> => {
       const selected = workStartConfiguration.select(request, models);

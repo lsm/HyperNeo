@@ -20,12 +20,15 @@ try {
   const storageState = await initial.context().storageState();
   await initial.close();
   for (const theme of ['light', 'dark']) {
+    const phone = theme === 'dark';
     const context = await browser.newContext({
       storageState,
       colorScheme: theme,
-      viewport: { width: 1280, height: 800 },
+      viewport: phone ? { width: 390, height: 844 } : { width: 1280, height: 800 },
+      hasTouch: phone,
     });
     const page = await context.newPage();
+    assert.equal(await page.evaluate(() => matchMedia('(pointer: coarse)').matches), phone);
     await page.goto(`${base}/sessions`);
     if (theme === 'light') {
       await page.getByRole('alert').getByText('Synthetic provider lookup failure').waitFor();
@@ -52,9 +55,13 @@ try {
       .getByRole('button', { name: 'Choose model, client and thinking' })
       .and(page.locator('[aria-description="Client: OXAP Codex"]'))
       .click();
-    await page.getByRole('button', { name: 'Model, Synthetic Codex' }).click();
+    await page.getByRole('button', { name: /Model(?: & thinking)?, Synthetic Codex/ }).click();
     await page.getByRole('group', { name: 'Models', exact: true }).getByText('Synthetic Codex').waitFor();
-    assert.equal(await page.getByRole('slider', { name: 'Thinking' }).count(), 0);
+    const newThinking = page.getByRole('slider', { name: 'Thinking' });
+    await newThinking.waitFor({ timeout: 5000 });
+    assert.equal(await newThinking.getAttribute('max'), '1');
+    await newThinking.press('End');
+    assert.equal(await newThinking.getAttribute('aria-valuetext'), 'high');
     assert.equal(await page.getByRole('button', { name: 'Sandbox' }).count(), 0);
     await page.screenshot({ path: `${output}/oxap-create-${theme}.png`, animations: 'disabled' });
     if (theme === 'light') {
@@ -62,32 +69,46 @@ try {
       await page.getByRole('button', { name: 'Start chat' }).click();
       await page.waitForURL(/\/session\//, { timeout: 15000 });
       assert.equal(await page.getByText('OXAP Codex does not take a thinking level.').count(), 0);
-      await page.getByRole('button', { name: 'Choose model and thinking' }).click();
-      assert.equal(await page.getByRole('slider', { name: 'Thinking' }).count(), 0);
       sessionPath = new URL(page.url()).pathname;
-      console.log('OXAP session model picker hides thinking');
-      console.log('OXAP create accepted with persisted thinking=off and sandbox=true; controls absent');
     }
-    if (theme === 'dark') {
-      await page.goto(`${base}${sessionPath}`);
-      await page.getByRole('button', { name: 'Choose model and thinking' }).waitFor();
+    if (!phone) {
+      const settingsId = /SETTINGS_SESSION=([^\s]+)/.exec(readFileSync(`${output}/daemon.log`, 'utf8'))?.[1];
+      assert(settingsId);
+      sessionPath = `/session/${settingsId}`;
     }
+    await page.goto(`${base}${sessionPath}`);
+    await page.getByRole('button', { name: 'Choose model and thinking' }).waitFor();
     if (!before) {
-      await page.getByText(/This harness accepts text only/).waitFor();
+      const guidance = page.getByRole('alert').filter({
+        hasText: /OXAP Codex.*cannot attach images.*Synthetic Codex.*DeepSeek V4 Flash/,
+      });
+      assert.equal(await guidance.count(), 0);
       await page.getByTitle('More options').click();
       const attach = page.getByRole('button', { name: 'Attach image' });
-      assert.equal(await attach.isDisabled(), true);
       const separators = await attach.evaluate(el => [...el.parentElement.children].filter(child => child.classList.contains('h-px') && getComputedStyle(child).display !== 'none').length);
       await page.screenshot({ path: `${output}/oxap-menu-${theme}.png`, animations: 'disabled' });
       assert.equal(separators, 1, 'OXAP attachment menu must show one separator');
       assert.equal(await page.getByRole('button', { name: 'Tools', exact: true }).count(), 0);
-      await page.getByTitle('More options').click();
+      await attach.click();
+      await guidance.waitFor();
+      await guidance.getByRole('button', { name: 'Dismiss notification' }).click();
+      await guidance.waitFor({ state: 'detached' });
     }
     await page.getByRole('button', { name: 'Choose model and thinking' }).click();
     const oxapMenu = page.getByRole('group', { name: 'Model and thinking settings' });
-    assert.equal(await oxapMenu.getByRole('slider', { name: 'Thinking' }).count(), 0);
+    const thinking = oxapMenu.getByRole('slider', { name: 'Thinking' });
+    await thinking.waitFor();
+    assert.equal(await thinking.getAttribute('max'), '1');
+    assert.equal(await thinking.getAttribute('aria-valuetext'), phone ? 'low' : 'high');
     assert.equal(await oxapMenu.getByText('Synthetic SDK Model').count(), 0);
-    await oxapMenu.screenshot({ path: `${output}/oxap-picker-${theme}.png`, animations: 'disabled' });
+    await page.screenshot({ path: `${output}/oxap-thinking-${phone ? 'phone' : 'desktop'}.png`, animations: 'disabled' });
+    if (!phone) {
+      await thinking.press('Home');
+      await page.getByRole('img', { name: 'Thinking: low' }).waitFor();
+      await page.reload();
+      await page.getByRole('img', { name: 'Thinking: low' }).waitFor();
+      await page.getByRole('button', { name: 'Choose model and thinking' }).click();
+    }
     await page.getByRole('button', { name: 'Close model settings' }).click();
     await page.getByTitle('More options').click();
     assert.equal(await page.getByRole('button', { name: 'Tools', exact: true }).count(), 0);
@@ -97,24 +118,24 @@ try {
     await page.goto(`${base}/settings?tab=providers`);
     await page.getByText('Synthetic OXAP Codex', { exact: true }).first().click();
     if (!before) {
-      assert.equal(await page.getByLabel('Harness', { exact: true }).inputValue(), 'oxap-codex');
-      await page.getByLabel('Harness executable').waitFor();
+      assert.equal(await page.getByLabel('Client', { exact: true }).inputValue(), 'oxap-codex');
+      await page.getByLabel('Codex CLI path').waitFor();
       await page.getByText('synthetic-fixture', { exact: true }).waitFor();
     }
     await page.screenshot({ path: `${output}/oxap-provider-${theme}.png`, animations: 'disabled' });
     if (!before && theme === 'dark') {
-      const executable = page.getByLabel('Harness executable');
+      const executable = page.getByLabel('Codex CLI path');
       const savedExecutable = await executable.inputValue();
       await executable.fill('relative');
-      await page.getByRole('button', { name: 'Save harness' }).click();
+      await page.getByRole('button', { name: 'Save client' }).click();
       await page.getByText(/needs an absolute executable path/).waitFor();
       await executable.fill(savedExecutable);
-      await page.getByLabel('Harness', { exact: true }).selectOption('sdk');
-      await page.getByRole('button', { name: 'Save harness' }).click();
-      await page.getByText('Harness saved').waitFor();
+      await page.getByLabel('Client', { exact: true }).selectOption('sdk');
+      await page.getByRole('button', { name: 'Save client' }).click();
+      await page.getByText('Client saved').waitFor();
       await page.reload();
       await page.getByText('Synthetic OXAP Codex', { exact: true }).first().click();
-      assert.equal(await page.getByLabel('Harness', { exact: true }).inputValue(), 'sdk');
+      assert.equal(await page.getByLabel('Client', { exact: true }).inputValue(), 'sdk');
       console.log('Invalid executable refused; switching back to Claude Code persisted');
       const created = JSON.parse(execFileSync('bun', ['.claude/skills/verify/rpc.ts', 'rpc:session.create', JSON.stringify({ title: 'Provider retry proof', workspacePath: `${run}/home`, config: { provider: 'anthropic', model: 'synthetic-sdk', queryMode: 'manual' } })], { encoding: 'utf8', env: { ...process.env, HYPERNEO_DATA_DIR: `${run}/data`, VERIFY_PORT: port } })).reply;
       assert(created.sessionId);
@@ -131,16 +152,17 @@ try {
       console.log('SDK picker kept its model after lookup failure and recovered on retry');
       await page.goto(`${base}/settings?tab=providers`);
       await page.getByText('Synthetic OXAP Codex', { exact: true }).first().click();
-      await page.getByLabel('Harness', { exact: true }).selectOption('oxap-codex');
-      await page.getByLabel('Harness executable').fill('/synthetic/codex');
-      await page.getByRole('button', { name: 'Save harness' }).click();
+      await page.getByLabel('Client', { exact: true }).selectOption('oxap-codex');
+      await executable.fill(savedExecutable);
+      await page.getByRole('button', { name: 'Save client' }).click();
       await page.waitForTimeout(10_500);
-      assert.equal(await page.getByRole('button', { name: 'Save harness' }).isDisabled(), true);
+      assert.equal(await page.getByRole('button', { name: 'Save client' }).isDisabled(), true);
       assert.equal(await page.getByText(/Request timeout/).count(), 0);
-      await page.getByText('Harness saved').waitFor({ timeout: 15000 });
+      await page.getByText('Client saved').waitFor({ timeout: 15000 });
       await page.reload();
       await page.getByText('Synthetic OXAP Codex', { exact: true }).first().click();
-      assert.equal(await page.getByLabel('Harness', { exact: true }).inputValue(), 'oxap-codex');
+      assert.equal(await page.getByLabel('Client', { exact: true }).inputValue(), 'oxap-codex');
+      assert.equal(await executable.inputValue(), savedExecutable);
       await page.getByText('Version:', { exact: true }).waitFor();
       await page.getByText('SHA-256:', { exact: true }).waitFor();
       for (const appearance of ['light', 'dark']) {
@@ -190,3 +212,5 @@ try {
 } finally {
   await browser.close();
 }
+console.log('Codex thinking picker verified on desktop and touch viewports');
+process.exit(0);

@@ -45,6 +45,7 @@ import {
 import { readNeoAskTopics, readNeoTopicCounts, rewriteNeoTopicPick } from './neo-ask-topic-read.ts';
 import { NeoPublicationRepository } from './neo-publication-repository.ts';
 import { NeoQuestionAnswerRepository } from './neo-question-answer-repository.ts';
+import { cardAskId } from '../../lib/neo/card-ask.ts';
 import { applyNeoRuleAnswer } from './neo-rule-answer.ts';
 import type { neoTodoAddWrites } from './neo-todo-add-write.ts';
 import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
@@ -566,13 +567,25 @@ export class NeoAskTodoRepository {
     return this.getAsk(ask.id)!;
   }
 
+  linkAskGoal(id: string, goalId: string, now: number): boolean {
+    return this.setOpenAsk(id, 'goal_id', goalId, now);
+  }
+
   focusAsk(id: string, source: NonNullable<NeoAsk['focusedSession']>, now: number): void {
-    this.db
-      .prepare(
-        "UPDATE neo_asks SET focused_session_json = ?, updated_at = ? WHERE id = ? AND status = 'open'"
-      )
-      .run(JSON.stringify(source), now, id);
+    this.setOpenAsk(id, 'focused_session_json', JSON.stringify(source), now);
+  }
+
+  private setOpenAsk(
+    id: string,
+    column: 'goal_id' | 'focused_session_json',
+    value: string,
+    now: number
+  ): boolean {
+    const { changes } = this.db
+      .prepare(`UPDATE neo_asks SET ${column} = ?, updated_at = ? WHERE id = ? AND status = 'open'`)
+      .run(value, now, id);
     this.changed();
+    return changes > 0;
   }
 
   findAsk(
@@ -584,9 +597,10 @@ export class NeoAskTodoRepository {
     return foundAsk(
       (this.db
         .prepare(
-          `${ASK_SELECT} WHERE session_id = ?1 AND origin_message_id IS ?2 AND (?3 IS NULL OR title = ?3) AND (?3 IS NOT NULL OR parent_id IS NULL) AND goal_id IS ?4
+          `${ASK_SELECT} WHERE session_id = ?1 AND origin_message_id IS ?2 AND (?3 IS NULL OR title = ?3) AND (?3 IS NOT NULL OR parent_id IS NULL) AND (?3 IS NULL OR goal_id IS ?4)
            AND (status = 'open' OR (status = 'done'
-             AND EXISTS (SELECT 1 FROM neo_asks c WHERE c.parent_id = neo_asks.id)))`
+             AND EXISTS (SELECT 1 FROM neo_asks c WHERE c.parent_id = neo_asks.id)))
+           ORDER BY goal_id IS NOT NULL`
         )
         .get(sessionId, originMessageId, title, goalId) as AskRow | null) ?? null
     );
@@ -756,6 +770,7 @@ export class NeoAskTodoRepository {
       COALESCE((SELECT MAX(updated_at) FROM neo_todos WHERE ask_id = neo_asks.id), updated_at) AS since
       FROM neo_asks WHERE status = 'open'
       AND EXISTS (SELECT 1 FROM sessions WHERE sessions.id = neo_asks.session_id AND sessions.status = 'active')
+      AND NOT EXISTS (SELECT 1 FROM neo_goals WHERE neo_goals.id = neo_asks.goal_id AND neo_goals.status IN ('active', 'paused'))
       AND NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state IN ('todo', 'doing'))
       AND NOT EXISTS (SELECT 1 FROM neo_questions WHERE ask_id = neo_asks.id AND state = 'open'
         AND NOT ${NEO_ADVISORY_QUESTION('neo_questions')})
@@ -1211,6 +1226,9 @@ export class NeoAskTodoRepository {
         if (preferences.ok && preferences.applied) settingsChanged = 'preferences';
         const rules = applyNeoRuleAnswer(this.db, question.id, approval);
         if (rules.ok && rules.changed) settingsChanged = 'rules';
+        const kept = [answer].flat().join('\n') === question.options?.at(-1);
+        if (preferences.ok || rules.ok || kept)
+          this.settleCardAsk(question.id, preferences.ok || rules.ok, now);
       }
       return answered;
     })();
@@ -1218,6 +1236,23 @@ export class NeoAskTodoRepository {
     this.touchAsk(question.askId, now);
     if (settingsChanged) this.settingsChanged(settingsChanged);
     return this.getQuestion(question.id);
+  }
+
+  settleCardAsk(questionId: string, applied: boolean, now: number): void {
+    const ask = this.getAsk(cardAskId(questionId));
+    if (
+      ask?.status !== 'open' ||
+      this.listTodos(ask.id).some((todo) => ['todo', 'doing', 'blocked'].includes(todo.state)) ||
+      this.listQuestions(ask.id).some((question) => question.state === 'open') ||
+      this.listChildAsks(ask.id).some((child) => child.status === 'open')
+    )
+      return;
+    this.settleAsk(
+      ask,
+      applied ? 'done' : 'dropped',
+      applied ? 'The human applied the change.' : 'The human kept the current values.',
+      now
+    );
   }
 
   retireQuestion(

@@ -146,6 +146,11 @@ export function customEndpointProblem(
     return `Custom endpoint '${config.id}': type '${config.type}' is invalid (allowed: ${[
       ...VALID_CUSTOM_ENDPOINT_TYPES,
     ].join(', ')})`;
+  if (
+    config.llamaCppThinkingOff !== undefined &&
+    (typeof config.llamaCppThinkingOff !== 'boolean' || config.type !== 'anthropic-messages')
+  )
+    return `Custom endpoint '${config.id}': llamaCppThinkingOff requires Anthropic Messages and a boolean value`;
   if (!config.name || typeof config.name !== 'string')
     return `Custom endpoint '${config.id}': name is required`;
   if (!config.baseUrl || typeof config.baseUrl !== 'string')

@@ -13,30 +13,28 @@ const rpc = (name, input = {}) => {
   assert(!reply.error, JSON.stringify(reply));
   return reply.value ?? reply;
 };
-const opened = rpc('neo.open');
-const askId = crypto.randomUUID();
-const now = Date.now();
-execFileSync('sqlite3', [`${run}/data/daemon.db`, `INSERT INTO neo_asks(id,session_id,title,request,status,created_at,updated_at) VALUES('${askId}','${opened.sessionId}','Synthetic reuse settings','Choose how sessions are reused','open',${now},${now});`]);
+rpc('neo.open');
 const scope = { kind: 'global', key: '' };
 const address = { pack: 'core', scope, key: 'sessionReuse' };
 const alternatives = ['long_lived', 'per_ask', 'per_todo'].map((value) => [{ ...address, value }]);
-const { questionId } = rpc('pack.preferences.ask', { askId, requestId: 'synthetic-reuse', alternatives, hold: false });
+const { questionId } = rpc('pack.preferences.ask', { requestId: 'synthetic-reuse', alternatives, hold: false });
 assert(questionId);
 const delegation = { pack: 'delegation', scope, key: 'signIn' };
 const delegationQuestion = rpc('pack.preferences.ask', {
-  askId, requestId: 'synthetic-sign-in', hold: false,
+  requestId: 'synthetic-sign-in', hold: false,
   alternatives: [[{ ...delegation, value: 'self' }], [{ ...delegation, value: 'saved' }]],
 }).questionId;
 assert(delegationQuestion);
 const coding = { pack: 'coding', scope: { kind: 'repo', key: 'synthetic/repo' }, key: 'mergePolicy' };
 const codingQuestion = rpc('pack.preferences.ask', {
-  askId, requestId: 'synthetic-coding', hold: false,
+  requestId: 'synthetic-coding', hold: false,
   alternatives: ['review_bot', 'ci_only', 'human'].map((value) => [{ ...coding, value }]),
 }).questionId;
 assert(codingQuestion);
 const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, executablePath: process.env.VERIFY_BROWSER });
 const observed = {};
+const cardOf = async (page, id) => (await revealAsk(page, rpc('neo.snapshot').todoAsks.find((entry) => entry.questions.some((q) => q.id === id)).ask.id)).locator(`[id="neo-ref-question-${id}"]`);
 try {
   const code = rpc('device.pair.create', { kind: 'human', name: 'Synthetic browser' }).code;
   assert(code);
@@ -46,18 +44,17 @@ try {
   await page.getByText('This browser is paired.').waitFor();
   await page.goto(`http://127.0.0.1:${port}/neo`);
   await page.getByRole('button', { name: /^Your work/ }).click();
-  const card = await revealAsk(page, askId);
-  const signIn = card.locator(`[id="neo-ref-question-${delegationQuestion}"]`);
+  const signIn = await cardOf(page, delegationQuestion);
   await signIn.waitFor();
   observed.delegationText = await signIn.innerText();
   assert(observed.delegationText.includes('Work continues using the default until you answer.'));
   assert(!observed.delegationText.includes('I sign in: I sign in'));
-  const codingCard = card.locator(`[id="neo-ref-question-${codingQuestion}"]`);
+  const codingCard = await cardOf(page, codingQuestion);
   await codingCard.waitFor();
   observed.codingText = await codingCard.innerText();
   assert(observed.codingText.includes('How are pull requests reviewed?'));
   assert(observed.codingText.includes('synthetic/repo'));
-  const body = card.locator(`[id="neo-ref-question-${questionId}"]`);
+  const body = await cardOf(page, questionId);
   await body.waitFor();
   observed.text = await body.innerText();
   observed.tables = await body.locator('table').count();

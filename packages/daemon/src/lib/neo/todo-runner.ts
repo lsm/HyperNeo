@@ -4,6 +4,7 @@ import { Logger } from '../logger.ts';
 import { neoTrackerReads } from '../../storage/repositories/neo-tracker-mirror.ts';
 import { planNeoTrackerStarts } from './tracker-start-gate.ts';
 import { workerSandboxOn } from '../drivers/worker-sandbox.ts';
+import { gitWorktreeProject } from '../drivers/worktree-project.ts';
 import { withWorkerDeliveryId, withWorkerProvenance } from '../drivers/worker-provenance.ts';
 import { createWorkQueue } from '../work-queue/sweep.ts';
 import { NEO_TODO_FAILURE_NEXT, neoQuestionCoversTodo, neoTodoAwaitsHuman } from './todo-state.ts';
@@ -58,6 +59,7 @@ import { sameNeoTodoCheck } from './todo-completion.ts';
 import { planNudge } from './nudge.ts';
 import { isNeoTodoWorkerWait, planNeoTodoWaits } from './todo-worker-wait.ts';
 import { planNeoTurnReportSweep } from './turn-report-sweep.ts';
+import { compactBeforeReuse, planCleanWorker } from '../drivers/worker-compaction.ts';
 import { releaseNeoTodoWorkers, type WorkerCompact } from './todo-release.ts';
 import { neoTurnOrigin } from './turn-origin.ts';
 import { deliverNeoTurnReport } from './turn-report.ts';
@@ -91,6 +93,7 @@ export interface NeoTodoRunnerDeps {
     origin: string,
     ref?: WorkRef
   ) => Promise<string>;
+  workerTemplate?: (ref: WorkRef) => string | undefined;
   workerNames?: () => NeoWorkerNameSource | undefined;
   workerCompact?: WorkerCompact;
   store: NeoAskTodoRepository;
@@ -345,7 +348,14 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   const formatGoal = (instruction: string, goal: NeoWorkGoal | null) =>
     (deps.packs().find((pack) => pack.workGoal)?.workGoal ?? withWorkGoal)(instruction, goal);
   const { store, sessions } = deps;
-  const workerBrief = (todo: NeoTodo, instruction: string, harness: string, existing = true) => {
+  const enabledPacks = () => deps.enabledPacks?.() ?? deps.packs();
+  const workerBrief = (
+    todo: NeoTodo,
+    instruction: string,
+    harness: string,
+    existing: boolean,
+    template?: string
+  ) => {
     if (
       todo.check?.pack === 'core' &&
       todo.check.kind === 'evidence' &&
@@ -355,7 +365,9 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     }
     instruction += `\n\nEven when told to stay quiet, report questions or blockers requiring a human decision with message.send {to: the sending Neo, kind: question or blocked, text: original report, question: {todoId: "${todo.id}", title: short question, options: 2–6 short options, language: en or zh-Hans}} in the human's configured language. Do not keep working while waiting for that answer.`;
     instruction = [
-      ...(deps.enabledPacks?.() ?? deps.packs()).map((pack) => pack.workerContext?.()),
+      ...enabledPacks().map((pack) =>
+        template && pack.workerTemplate?.(todo) === template ? null : pack.workerContext?.()
+      ),
       instruction,
     ]
       .filter(Boolean)
@@ -389,6 +401,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     )
     .endAsync('status') as (todoId: string, ref: WorkRef, ask: NeoAsk) => Promise<OperationOutcome>;
   const starting = new Set<string>();
+  const compacting = new Map<string, () => void>();
   let reportCursor = 0;
   const caller = (ask: NeoAsk) => driverWorkCaller({ originSessionId: ask.sessionId });
   const recompute = (superpipe({})('neo.todo.recompute-committed') as PipelineAPI)
@@ -450,11 +463,104 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   };
 
   const dispatch = async ({ todo, ask, target, moved, replaced }: Startable) => {
+    const templates = new Set(
+      enabledPacks().flatMap((pack) => {
+        const key = pack.workerTemplate?.(todo);
+        return key ? [key] : [];
+      })
+    );
+    const template = templates.size === 1 ? templates.values().next().value : undefined;
+    const localTemplate = (adapter: string, daemon?: string) =>
+      adapter === 'hyperneo' && !daemon ? template : undefined;
+    let excluded: WorkRef | undefined;
+    if (target.verb === 'send') {
+      if (
+        deps.workerTemplate?.(target.ref) !== localTemplate(target.ref.adapter, target.ref.daemon)
+      )
+        return startFailed(
+          todo,
+          ask,
+          'Start a new worker for this todo. The session uses a different worker template.'
+        );
+      const facts = await sessions.read('cleanWorkerFacts', todo.id);
+      const compact = deps.workerCompact?.(target.ref.adapter)?.compact;
+      let decision = planCleanWorker({
+        sameTodo: facts?.sameTodo ?? false,
+        named: facts?.named ?? false,
+        started: !!facts?.record,
+        remote: !!target.ref.daemon,
+        sameAsk: facts?.sameAsk ?? false,
+        released: !!facts?.record?.releasedAt,
+        otherTodo: facts?.otherTodo ?? false,
+        canCompact: !!compact,
+      });
+      if (decision.action === 'compact') {
+        compacting.get(todo.id)?.();
+        const confirmed = await compactBeforeReuse(
+          { ref: target.ref, sameAsk: true, compact },
+          caller(ask),
+          (text, error) => log.warn(text, { todoId: todo.id }, error)
+        );
+        if (!confirmed) decision = { action: 'fresh', reason: 'not_confirmed' };
+        else
+          await sessions.write('recordWorkerReuse', todo.id, {
+            worker: target.ref,
+            result: 'compacted',
+          });
+      }
+      const current = store.getTodo(todo.id);
+      if (current && current.state !== 'doing') return { ok: true as const, todo: current };
+      if (decision.action === 'fresh' && facts?.record) {
+        const record = facts.record;
+        const old = target.ref;
+        await sessions.write('recordWorkerReuse', todo.id, {
+          worker: old,
+          result: 'fresh',
+          reason: decision.reason,
+        });
+        const pack = deps.packs().find((item) => item.id === todo.check?.pack);
+        const preparationRequired =
+          !!record.preparation || (!!pack?.prepareExecution && workerSandboxOn(target.sandbox));
+        let refusal: string | null = null;
+        if (record.preparation && (!workerSandboxOn(true) || !pack?.prepareExecution))
+          refusal = 'The replacement cannot preserve its sandbox under the current settings.';
+        else if (preparationRequired && target.preparationParameters === undefined)
+          refusal =
+            'Name the target or PR, head and prerequisite commits in a start before replacing this worker.';
+        if (refusal) {
+          log.warn('Clean worker replacement refused', { todoId: todo.id, reason: refusal });
+          return {
+            ok: true as const,
+            todo: await finish(todo, ask, planNeoTodoFailure(todo, refusal), Date.now()),
+          };
+        }
+        if (!record.folder || !record.machine)
+          return startFailed(todo, ask, 'The worker start record has no folder or machine.');
+        const folder = await gitWorktreeProject(record.folder);
+        excluded = old;
+        replaced = old;
+        moved = `The previous worker could not be reused cleanly; the daemon moved this todo to a fresh worker.`;
+        target = {
+          verb: 'start',
+          adapter: old.adapter,
+          place: { machine: record.machine, folder, name: folder },
+          ...(record.provider ? { provider: record.provider } : {}),
+          ...(record.model ? { model: record.model } : {}),
+          ...(record.effort ? { effort: record.effort } : {}),
+          ...(record.preparation ? { sandbox: true } : { sandbox: target.sandbox }),
+          preparationParameters: target.preparationParameters,
+        };
+      }
+    }
     const status = target.verb === 'send' ? await refreshIdentity(todo.id, target.ref, ask) : null;
     const prepare = deps.packs().find((pack) => pack.id === todo.check?.pack);
     const exclusions =
       target.verb === 'start' ? await prepare?.workerStartExclusions?.(todo) : undefined;
     if (exclusions && 'reason' in exclusions) return startFailed(todo, ask, exclusions.reason);
+    const workerTemplate =
+      target.verb === 'start'
+        ? localTemplate(target.adapter, target.place?.daemon)
+        : deps.workerTemplate?.(target.ref);
     const card = neoTodoCard(todo, ask, prepare?.workerRules);
     card.instruction = workerBrief(
       todo,
@@ -462,7 +568,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         .filter(Boolean)
         .join('\n\n'),
       target.verb === 'start' ? target.adapter : target.ref.adapter,
-      target.verb === 'send'
+      target.verb === 'send',
+      workerTemplate
     );
     const localStart = target.verb === 'start' && !target.place?.daemon;
     const names = localStart ? deps.workerNames?.() : undefined;
@@ -507,7 +614,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       if (target.verb === 'start') {
         call.input.role = 'do';
         call.input.provenance = true;
-        if (exclusions) call.input.excludeRefs = exclusions.value;
+        if (exclusions || excluded)
+          call.input.excludeRefs = [...(exclusions?.value ?? []), ...(excluded ? [excluded] : [])];
       }
       const message = String(call.input.message);
       const probe =
@@ -522,7 +630,11 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         message,
         probe,
         baseline,
-        outcome: await deps.invoke(caller(ask), call.name, call.input),
+        outcome: await deps.invoke(
+          { ...caller(ask), ...(workerTemplate ? { workerTemplate } : {}) },
+          call.name,
+          call.input
+        ),
       };
     };
     const { message, probe, baseline, outcome } = await (target.verb === 'start' && names
@@ -669,6 +781,11 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     const target = sessions.get(todoId);
     if (todo?.state !== 'todo' || todo.startedAt !== null || target?.verb !== 'send')
       return { value: null };
+    const clean = await sessions.read('cleanWorkerFacts', todoId);
+    if (clean?.record && !clean.sameTodo && !clean.named && !target.ref.daemon) {
+      await recordWaits({ waits: [{ id: todoId, reason: null }] }, Date.now());
+      return { value: null };
+    }
     const worker = neoWorkerKey(target.ref);
     const facts = await readQueueFacts();
     const candidate = { id: todoId, worker, ref: target.ref };
@@ -699,28 +816,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       neoTodoStartRefusal(todo, store.listFamilyTodos(ask.id), store.gateQuestions(ask), hold)
     )
       return { value: null };
-    const decision = await pack.workerTarget(
-      todo,
-      target,
-      (ref) => deps.invoke(caller(ask), 'work.status', { ref }),
-      async (input) => {
-        const outcome = await deps.invoke(caller(ask), 'pack.preferences.ask', {
-          askId: ask.id,
-          ...input,
-        });
-        const reply = outcome.kind === 'completed' ? (outcome.value as { ok?: boolean }) : null;
-        if (!reply?.ok)
-          await note(
-            'todo.unworked',
-            todo,
-            Date.now(),
-            `A settings question for this todo could not be opened (${JSON.stringify(outcome)}); the work continues without it.`,
-            { reason: 'settings_question' }
-          ).catch((error) =>
-            log.warn('Settings question note pending', { todoId: todo.id }, error)
-          );
-        return outcome;
-      }
+    const decision = await pack.workerTarget(todo, target, (ref) =>
+      deps.invoke(caller(ask), 'work.status', { ref })
     );
     if ('reason' in decision) {
       const reason = `${TARGET_WAIT}${decision.reason}`;
@@ -802,26 +899,33 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     replaced?: WorkRef
   ) => Promise<{ ok: true; todo: NeoTodo; records?: string[] } | Rejection>;
 
+  const startQueued = async (todoId: string) => {
+    try {
+      return await start(todoId);
+    } catch (error) {
+      const todo = store.getTodo(todoId);
+      if (todo)
+        await note(
+          'todo.unworked',
+          todo,
+          todo.updatedAt,
+          `Todo "${todo.title}" (${todo.id}) could not start: ${String(error)}`
+        );
+      throw error;
+    } finally {
+      compacting.delete(todoId);
+    }
+  };
+
   const queue = createWorkQueue<NudgeClaim>(
     {
       queue: () => readQueueFacts(),
       waiting: () => readQueue(Date.now()),
       claim: (todoId, now, move) => nudge(todoId, now, move),
       act: (claim, now) => act(claim, now),
-      start: async (todoId) => {
-        try {
-          return await start(todoId);
-        } catch (error) {
-          const todo = store.getTodo(todoId);
-          if (todo)
-            await note(
-              'todo.unworked',
-              todo,
-              todo.updatedAt,
-              `Todo "${todo.title}" (${todo.id}) could not start: ${String(error)}`
-            );
-          throw error;
-        }
+      start: (todoId) => {
+        const yielded = new Promise<void>((resolve) => compacting.set(todoId, resolve));
+        return Promise.race([startQueued(todoId), yielded]);
       },
     },
     deps.limits
@@ -1126,8 +1230,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         const ref = sessions.readRef(todo.id);
         const ask = store.getAsk(todo.askId);
         return ((todo.state === 'doing' && todo.report) ||
-          (todo.state === 'blocked' &&
-            ['worker', 'stalled', 'environment', 'needs-human'].includes(todo.blockedBy ?? ''))) &&
+          (todo.state === 'blocked' && todo.blockedBy !== 'held')) &&
           ref &&
           ask?.status === 'open'
           ? { value: { ref, ask } }
@@ -1147,6 +1250,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         });
         await observe(todo.id, outcome, target.ref);
         const live = readDriverLive(outcome);
+        if (live && todo.state === 'blocked')
+          await sessions.write('noteWorkerStatus', todo.id, target.ref, live.status, now);
         if (
           todo.blockedBy === 'needs-human' &&
           neoTurnQuestionGone(sessions.readNudge(todo.id)?.turnQuestion, live) &&
@@ -1160,7 +1265,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           deps.changed();
           return;
         }
-        if (['environment', 'needs-human'].includes(todo.blockedBy ?? '')) return;
+        if (todo.state === 'blocked' && !['worker', 'stalled'].includes(todo.blockedBy ?? ''))
+          return;
         await sessions.write(
           'recordProgress',
           todo.id,
@@ -1375,7 +1481,13 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     .pipe(
       async (context: NudgeContext, now: number) => {
         const live = await workerLive(context.ask, context.ref);
-        await sessions.write('noteWorkerStatus', context.todo.id, live?.status ?? 'unknown', now);
+        await sessions.write(
+          'noteWorkerStatus',
+          context.todo.id,
+          context.ref,
+          live?.status ?? 'unknown',
+          now
+        );
         return live;
       },
       ['admission', 'now'],

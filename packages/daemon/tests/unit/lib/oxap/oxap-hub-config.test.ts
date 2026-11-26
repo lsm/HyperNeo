@@ -28,7 +28,8 @@ describe('buildHubConfig', () => {
       [codex('anthropic-codex'), { providerId: 'anthropic', configJson: '{}' }],
       OXAP_HARNESSES,
       { HOME: '/synthetic/home', CODEX_HOME: '/synthetic/codex-home', PATH: '/usr/bin' },
-      {}
+      {},
+      '/synthetic/state'
     );
     expect(result).toEqual({
       value: {
@@ -48,7 +49,13 @@ describe('buildHubConfig', () => {
   });
 
   test('lists CODEX_HOME only when the human has set one', () => {
-    const result = buildHubConfig([codex('anthropic-codex')], OXAP_HARNESSES, { HOME: '/h' }, {});
+    const result = buildHubConfig(
+      [codex('anthropic-codex')],
+      OXAP_HARNESSES,
+      { HOME: '/h' },
+      {},
+      '/synthetic/state'
+    );
     expect(result).toMatchObject({
       value: {
         adapters: { 'anthropic-codex': { environment: ['HOME'] } },
@@ -59,7 +66,13 @@ describe('buildHubConfig', () => {
 
   test('leaves out a provider whose harness setting is not an absolute path', () => {
     expect(
-      buildHubConfig([codex('anthropic-codex', { executable: 'codex' })], OXAP_HARNESSES, {}, {})
+      buildHubConfig(
+        [codex('anthropic-codex', { executable: 'codex' })],
+        OXAP_HARNESSES,
+        {},
+        {},
+        '/synthetic/state'
+      )
     ).toEqual({ value: { adapters: {}, environment: {} } });
   });
 
@@ -76,7 +89,8 @@ describe('buildHubConfig', () => {
       {},
       {
         'anthropic-codex': 'sk-synthetic-a',
-      }
+      },
+      '/synthetic/state'
     );
     expect(same).toMatchObject({
       value: {
@@ -91,7 +105,13 @@ describe('buildHubConfig', () => {
 
   test('skips an unreadable provider record instead of failing every OXAP chat', () => {
     expect(
-      buildHubConfig([{ providerId: 'anthropic-codex', configJson: '{' }], OXAP_HARNESSES, {}, {})
+      buildHubConfig(
+        [{ providerId: 'anthropic-codex', configJson: '{' }],
+        OXAP_HARNESSES,
+        {},
+        {},
+        '/synthetic/state'
+      )
     ).toEqual({ value: { adapters: {}, environment: {} } });
   });
 });

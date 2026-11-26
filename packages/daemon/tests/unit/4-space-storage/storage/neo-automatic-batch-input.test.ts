@@ -62,6 +62,9 @@ test('a structured wake delivers a public worker input before the unchanged even
   expect(JSON.stringify(batch.content)).toContain('Earlier worker note A');
   expect(JSON.stringify(batch.content)).toContain('Earlier worker note B');
   expect(JSON.stringify(batch.content)).not.toContain('Decision needed');
+  expect(batch.content).toHaveLength(1);
+  expect(batch.shouldQuery).toBe(false);
+  expect(sdk.getDeliveryContent(root, event.messageUuid!)!.shouldQuery).toBeUndefined();
   expect(sdk.getDeliveryContent(root, event.messageUuid!)!.content).toBe('Decision needed');
   await boundDeliveryContent(db.getDatabase(), first, batch);
   expect(
@@ -95,6 +98,7 @@ test('the fifteen-minute fallback delivers one visible batch without a placehold
   expect(JSON.stringify(batch.content)).toContain('System-forwarded worker messages');
   expect(JSON.stringify(batch.content)).toContain('Timer worker note A');
   expect(JSON.stringify(batch.content)).toContain('Timer worker note B');
+  expect(batch.shouldQuery).toBeUndefined();
   await boundDeliveryContent(db.getDatabase(), jobs[0], batch);
   expect(
     new NeoSessionMessageRepository(db.getDatabase()).get(

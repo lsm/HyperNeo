@@ -1,25 +1,5 @@
-import type { SDKControlGetUsageResponse, SDKRateLimitInfo } from '@hyperneo/shared/sdk';
+import type { SDKControlGetUsageResponse } from '@hyperneo/shared/sdk';
 import type { UsageWindow } from '@hyperneo/shared/provider';
-
-export type RateLimitEventReader = () => Promise<readonly SDKRateLimitInfo[]>;
-
-let reader: RateLimitEventReader = async () => [];
-
-export function setRateLimitEventReader(next: RateLimitEventReader | null): void {
-  reader = next ?? (async () => []);
-}
-
-export function resetRateLimitEventReader(): void {
-  reader = async () => [];
-}
-
-export async function readStoredRateLimitEvents(): Promise<readonly SDKRateLimitInfo[]> {
-  try {
-    return await reader();
-  } catch {
-    return [];
-  }
-}
 
 const WINDOW_LABELS: Record<string, string> = {
   five_hour: '5 hours',
@@ -57,17 +37,4 @@ export function usageWindowsFromControl(
     if (window) windows.push(window);
   }
   return windows.length ? windows : null;
-}
-
-export function usageWindowsFromEvents(events: readonly SDKRateLimitInfo[]): UsageWindow[] {
-  return events.flatMap((event) => {
-    const label = event.rateLimitType ? WINDOW_LABELS[event.rateLimitType] : undefined;
-    if (!label) return [];
-    const resetAt =
-      typeof event.resetsAt === 'number' ? new Date(event.resetsAt * 1000).toISOString() : null;
-    if (typeof event.utilization === 'number')
-      return [{ label, used: Math.round(event.utilization * 100), limit: 100, resetAt }];
-    if (event.status === 'rejected') return [{ label, used: 100, limit: 100, resetAt }];
-    return [];
-  });
 }

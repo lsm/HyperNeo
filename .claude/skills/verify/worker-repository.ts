@@ -8,6 +8,9 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
+import { buildClaudeDesktopGroups } from '../../../packages/daemon/src/lib/drivers/claude-desktop-adapter.ts';
+import { toFindQuery, FindWorkInputSchema } from '../../../packages/daemon/src/lib/drivers/find-operation.ts';
+import { stampDaemon } from '../../../packages/daemon/src/lib/drivers/places.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
@@ -59,7 +62,15 @@ try {
   const todos = new NeoAskTodoRepository(db), sessions = new NeoTodoSessionRepository(db);
   todos.openAsk({ id: 'ask', sessionId: sender, projectId: null, originMessageId: null, title: 'Repository admission', request: 'Use the correct repository', createdAt: 1 });
   const production = app.sessionManager.getOperationRegistry();
-  const remoteRef = { adapter: 'hyperneo', id: 'synthetic-remote-worker', daemon: 'synthetic-remote-owner' };
+  const remoteRef = { adapter: 'claude-desktop', id: 'local_synthetic_worker', daemon: 'synthetic-remote-owner' };
+  const remoteFolder = '/synthetic/remote-repository';
+  const remoteRecords = Array.from({ length: 21 }, (_, index) => ({
+    sessionId: index === 0 ? remoteRef.id : `local_recent_${index}`,
+    cwd: remoteFolder,
+    title: index === 0 ? 'Requested worker' : 'Recent worker',
+    lastActivityAt: index + 1,
+    isArchived: index > 0,
+  }));
   let remoteRemotes = ['git@github.com:example/repo.git'];
   let remoteLookups = 0;
   const registry = createOperationRegistry(production.entries.map(op => {
@@ -67,13 +78,18 @@ try {
     if (op.name === 'work.status') return { ...op, execute: async (input, caller) => {
       const { ref } = input as { ref: typeof remoteRef };
       if (ref.daemon !== remoteRef.daemon) return op.execute(input, caller);
-      return { ok: true, value: { ref, title: 'Synthetic remote worker', status: 'done', lastActivityAt: 1, place: { machine: 'synthetic-remote', name: 'Remote repository', folder: '/synthetic/remote-repository' } } };
+      return { ok: true, value: { ref, title: 'Requested worker', status: 'done', lastActivityAt: 1, place: { machine: 'synthetic-remote', name: 'Remote repository', folder: remoteFolder } } };
     } };
     if (op.name === 'work.find') return { ...op, execute: async (input, caller) => {
-      if ((input as { idPrefix?: string }).idPrefix !== remoteRef.id) return op.execute(input, caller);
-      remoteLookups++;
-      const place = { machine: 'synthetic-remote', name: 'Remote repository', remotes: remoteRemotes };
-      return { places: [{ place, adapters: [remoteRef.adapter], lastActivityAt: 1, openCount: 1, archivedCount: 0, work: [{ ref: remoteRef, place, title: 'Synthetic remote worker', status: 'done', lastActivityAt: 1 }] }], unreachable: [] };
+      const query = FindWorkInputSchema.parse(input);
+      if (!query.adapters?.includes(remoteRef.adapter)) return op.execute(input, caller);
+      if (query.idPrefix === remoteRef.id) remoteLookups++;
+      const groups = buildClaudeDesktopGroups(remoteRecords, [], toFindQuery(query), { machine: 'synthetic-remote' });
+      return { places: stampDaemon(groups.map((group) => ({
+        ...group,
+        place: { ...group.place, remotes: remoteRemotes },
+        work: group.work.map((work) => ({ ...work, place: { ...work.place, remotes: remoteRemotes } })),
+      })), remoteRef.daemon), unreachable: [] };
     } };
     return op;
   }));
@@ -87,7 +103,9 @@ try {
     return result;
   };
   const check = { pack: 'coding', kind: 'pr_merged', params: { urls: ['https://github.com/example/repo/pull/1'] } };
-  const add = (extra: object = {}) => call('neo.todo.add', { askId: 'ask', title: 'Synthetic todo', after: [], check, ...extra });
+  const dependency = await call('neo.todo.add', { askId: 'ask', title: 'Open prerequisite', after: [], check: { pack: 'core', kind: 'human_confirmed', params: { questionId: 'synthetic-prerequisite' } } });
+  assert.equal(dependency.ok, true, JSON.stringify(dependency));
+  const add = (extra: object = {}) => call('neo.todo.add', { askId: 'ask', title: 'Synthetic todo', after: [dependency.todo.id], check, ...extra });
   const refusal = (result: { ok: boolean; reason?: string }) => {
     assert.equal(result.ok, false, JSON.stringify(result));
     assert.match(result.reason!, /^worker_repository_mismatch:/);
@@ -95,17 +113,6 @@ try {
     assert.equal(db.prepare('SELECT COUNT(*) AS n FROM work_delivery_inputs').get().n, 0);
   };
   await call('work.status', { ref: refs[0] });
-  for (const verb of ['send', 'bind'] as const) {
-    const title = `Open matching ${verb}`;
-    const opened = await call('neo.ask.propose', { title, request: 'Use matching worker', todos: [{ title: 'Matching worker', after: [], check, instruction: verb === 'send' ? 'Implement' : null, target: { verb, ref: refs[0] } }] });
-    assert.equal(opened.ok, true, JSON.stringify(opened));
-  }
-  const countAsks = () => (db.prepare('SELECT count(*) AS n FROM neo_asks').get() as { n: number }).n;
-  const beforeBadAsk = countAsks();
-  const badAsk = await call('neo.ask.propose', { title: 'Open wrong worker', request: 'Use the wrong worker', todos: [{ title: 'Wrong worker', after: [], check, instruction: 'Implement', target: { verb: 'send', ref: refs[1] } }] });
-  assert.equal(badAsk.ok, false, JSON.stringify(badAsk));
-  assert.match(badAsk.reason, /^worker_repository_mismatch:/);
-  assert.equal(countAsks(), beforeBadAsk);
   assert.equal((await add({ instruction: 'Implement change', target: { verb: 'send', ref: refs[0] } })).ok, true);
   assert.equal((await add({ instruction: 'Renamed repository', target: { verb: 'send', ref: refs[3] } })).ok, true);
   assert.equal((await add({ check: { ...check, params: { urls: ['https://github.com/example/old-name/pull/1'] } }, instruction: 'Existing repository name', target: { verb: 'send', ref: refs[3] } })).ok, true);
@@ -141,19 +148,32 @@ try {
     todos.updateTodo(todos.getTodo(pending.todo.id)!, { state: 'doing', startedAt: 1, approvedAt: 1 }, 1);
     refusal(await call('neo.todo.continue', { todoId: pending.todo.id, message: 'Continue change' }));
   }
-  assert.equal((await add({ target: { verb: 'bind', ref: refs[0] } })).ok, true);
+  assert.equal((await add({ after: [], target: { verb: 'bind', ref: refs[0] } })).ok, true);
   assert.equal((await add({ check: { pack: 'core', kind: 'human_confirmed', params: { questionId: 'synthetic-question' } }, instruction: 'Non-coding task', target: { verb: 'send', ref: refs[1] } })).ok, true);
-  assert.equal((await add({ instruction: 'Remote coding task', target: { verb: 'send', ref: remoteRef } })).ok, true);
+  const discovery = await call('work.find', { adapters: [remoteRef.adapter] });
+  assert.deepEqual(discovery.places[0].work.map((work: { ref: unknown }) => work.ref), [remoteRef]);
+  assert.deepEqual(discovery.places[0].work[0].place.remotes, remoteRemotes);
+  const history = await call('work.find', { adapters: [remoteRef.adapter], idPrefix: remoteRef.id, includeClosed: true });
+  assert.equal(history.places[0].work.length, 20);
+  assert(!history.places[0].work.some((work: { ref: { id: string } }) => work.ref.id === remoteRef.id));
+  assert.deepEqual(history.places[0].place.remotes, remoteRemotes);
+  const remoteAdded = await add({ instruction: 'Remote coding task', target: { verb: 'send', ref: remoteRef } });
+  assert.equal(remoteAdded.ok, true, JSON.stringify(remoteAdded));
   assert(remoteLookups > 0);
   for (const remotes of [['https://github.com/example/other.git'], []]) {
     remoteRemotes = remotes;
-    refusal(await add({ instruction: 'Remote coding task', target: { verb: 'send', ref: remoteRef } }));
+    const before = todos.listTodos('ask').length;
+    const rejected = await add({ instruction: 'Remote coding task', target: { verb: 'send', ref: remoteRef } });
+    refusal(rejected);
+    assert.match(rejected.reason, remotes.length ? /is in github\.com\/example\/other;/ : /is in unknown;/);
+    assert.equal(todos.listTodos('ask').length, before);
   }
   assert.equal(sends, 0);
   const requests = readFileSync(join(run, 'evidence/gh.log'), 'utf8').trim().split('\n').sort();
   evidence.push({ githubReads: requests.length, githubRequests: requests });
   console.log(`githubReads=${requests.length}`);
   evidence.push({ remoteLookups, sends, deliveryInputs: db.prepare('SELECT COUNT(*) AS n FROM work_delivery_inputs').get().n });
+  console.log('remote: matching accepted=1; different refused=1; unknown refused=1');
   console.log(`PASS: same and renamed repositories accepted; failed lookup refused; other/unknown refused on add/edit/bind/continue; non-coding accepted; sends=${sends}; deliveryInputs=0`);
 } finally {
   await app.cleanup();

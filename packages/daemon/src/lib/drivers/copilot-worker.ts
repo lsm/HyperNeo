@@ -1,3 +1,4 @@
+import { WORKER_COMPACTION_TIMEOUT_MS } from './worker-compaction.ts';
 import { workInput } from './work-messages.ts';
 import { workerWorkEnvironment, workerWorkLocationsBrief } from '../work-locations.ts';
 import { CopilotClient, RuntimeConnection, type SessionEvent } from '@github/copilot-sdk';
@@ -5,6 +6,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { isAbsolute } from 'node:path';
 import { buildSafeProcessEnv } from '../safe-process-env.ts';
 import { workStartConfiguration } from './start-configuration.ts';
+import { isReplyCommand } from './reply-command-permission.ts';
 import type { WorkDelivery } from './types.ts';
 export class CopilotModelUnavailableError extends Error {}
 export class CopilotEffortUnavailableError extends Error {}
@@ -41,6 +43,15 @@ export interface CopilotWorkerConfig {
   resume?: boolean;
   onInput?: (id: string, input: InputState) => void;
 }
+
+const sendsReply = (request: unknown) =>
+  typeof request === 'object' &&
+  request !== null &&
+  'kind' in request &&
+  request.kind === 'shell' &&
+  'fullCommandText' in request &&
+  typeof request.fullCommandText === 'string' &&
+  isReplyCommand(request.fullCommandText);
 
 function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
   const next = structuredClone(state);
@@ -105,7 +116,7 @@ function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
       }
       break;
     case 'permission.requested':
-      next.status = 'needs_you';
+      if (!sendsReply(event.data.permissionRequest)) next.status = 'needs_you';
       break;
     case 'session.error':
       next.status = 'failed';
@@ -239,8 +250,9 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
       workingDirectory: config.cwd,
       model: config.model,
       reasoningEffort: effort,
-      availableTools: [],
-      onPermissionRequest: () => ({ kind: 'reject' as const }),
+      availableTools: ['bash'],
+      onPermissionRequest: (request: unknown) =>
+        sendsReply(request) ? { kind: 'approve-once' as const } : { kind: 'reject' as const },
     };
     session = await bounded(
       config.resume
@@ -378,7 +390,7 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
     },
     async compact() {
       requireOpen();
-      const result = await bounded(session.rpc.history.compact(), Math.max(timeoutMs, 60_000));
+      const result = await bounded(session.rpc.history.compact(), WORKER_COMPACTION_TIMEOUT_MS);
       return result.success === true;
     },
     async withdraw(inputId: string) {

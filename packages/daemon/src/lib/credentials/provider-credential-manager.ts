@@ -7,10 +7,12 @@ import { providerRpcWrites } from '../../storage/repositories/provider-rpc-write
 import {
   createCredentialStore,
   credentialService,
+  DatabaseCredentialStore,
   type CredentialStore,
 } from './credential-store.js';
 
 const DEFAULT_ACCOUNT = 'default';
+const ANTHROPIC_SETTINGS_ACCOUNT = 'settings';
 
 const PROVIDER_ENV_KEYS: Record<string, string[]> = {
   anthropic: ['ANTHROPIC_API_KEY'],
@@ -36,15 +38,20 @@ export interface CredentialWriteHooks {
 
 export class ProviderCredentialManager {
   static create(db: Database, env: NodeJS.ProcessEnv = process.env): ProviderCredentialManager {
-    return new ProviderCredentialManager(createCredentialStore(db), db, env);
+    const store = createCredentialStore(db);
+    const localStore =
+      store instanceof DatabaseCredentialStore ? store : new DatabaseCredentialStore(db);
+    return new ProviderCredentialManager(store, db, env, localStore);
   }
 
   private hooks: CredentialWriteHooks = {};
+  private anthropicWrites: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly store: CredentialStore,
     private readonly db: Database,
-    private readonly env: NodeJS.ProcessEnv = process.env
+    private readonly env: NodeJS.ProcessEnv = process.env,
+    private readonly localStore?: CredentialStore
   ) {}
 
   setCredentialWriteHooks(hooks: CredentialWriteHooks): void {
@@ -57,37 +64,96 @@ export class ProviderCredentialManager {
 
   async storeApiKey(providerId: string, apiKey: string): Promise<void> {
     const credentials: ProviderCredentials = { type: 'api_key', apiKey };
-    await this.store.set(
-      credentialService(providerId),
-      DEFAULT_ACCOUNT,
-      JSON.stringify(credentials)
-    );
-    await this.updateProviderAuth(providerId, 'api_key', 'healthy');
+    const write = async () => {
+      const owned = providerId === 'anthropic' && (await this.hasAnthropicSettingsLogin());
+      await (owned ? this.localStore! : this.store).set(
+        credentialService(providerId),
+        owned ? ANTHROPIC_SETTINGS_ACCOUNT : DEFAULT_ACCOUNT,
+        JSON.stringify(credentials)
+      );
+      await this.updateProviderAuth(providerId, 'api_key', 'healthy');
+    };
+    if (providerId === 'anthropic') await this.writeAnthropicLogin(write);
+    else await write();
     this.afterCredentialWrite(providerId);
   }
 
   async storeOAuthTokens(
     providerId: string,
-    tokens: ProviderCredentials | Record<string, unknown>
+    tokens: ProviderCredentials | Record<string, unknown>,
+    options?: { login?: boolean }
   ): Promise<void> {
     const credentials = normalizeOAuthCredentials(tokens);
-    await this.store.set(
-      credentialService(providerId),
-      DEFAULT_ACCOUNT,
-      JSON.stringify(credentials)
-    );
-    await this.updateProviderAuth(providerId, 'oauth', 'healthy');
+    if (providerId === 'anthropic' && this.localStore) {
+      const store = this.localStore;
+      const written = await this.writeAnthropicLogin(async () => {
+        const previous = await this.readAnthropicSettingsLogin();
+        if (previous === 'null' && !options?.login) return false;
+        const service = credentialService(providerId);
+        await store.set(service, ANTHROPIC_SETTINGS_ACCOUNT, JSON.stringify(credentials));
+        try {
+          await this.updateProviderAuth(providerId, 'oauth', 'healthy');
+        } catch (error) {
+          if (previous == null) await store.delete(service, ANTHROPIC_SETTINGS_ACCOUNT);
+          else await store.set(service, ANTHROPIC_SETTINGS_ACCOUNT, previous);
+          throw error;
+        }
+        return true;
+      });
+      if (!written) return;
+    } else {
+      await this.store.set(
+        credentialService(providerId),
+        DEFAULT_ACCOUNT,
+        JSON.stringify(credentials)
+      );
+      await this.updateProviderAuth(providerId, 'oauth', 'healthy');
+    }
     this.afterCredentialWrite(providerId);
   }
 
   async getCredentials(providerId: string): Promise<ProviderCredentials | null> {
+    if (providerId === 'anthropic') {
+      const local = await this.readAnthropicSettingsLogin();
+      if (local != null) return JSON.parse(local) as ProviderCredentials | null;
+    }
     const data = await this.store.get(credentialService(providerId), DEFAULT_ACCOUNT);
     if (!data) return null;
     return JSON.parse(data) as ProviderCredentials;
   }
 
-  async removeCredentials(providerId: string): Promise<void> {
+  async removeCredentials(providerId: string, retainOwnership = false): Promise<void> {
+    if (providerId === 'anthropic' && this.localStore) {
+      const store = this.localStore;
+      await this.writeAnthropicLogin(async () => {
+        const local = await this.readAnthropicSettingsLogin();
+        if (
+          retainOwnership ||
+          local != null ||
+          (await this.getCredentials(providerId))?.type === 'oauth'
+        ) {
+          await store.set(credentialService(providerId), ANTHROPIC_SETTINGS_ACCOUNT, 'null');
+        } else {
+          await this.store.delete(credentialService(providerId), DEFAULT_ACCOUNT);
+        }
+      });
+      return;
+    }
     await this.store.delete(credentialService(providerId), DEFAULT_ACCOUNT);
+  }
+
+  async hasAnthropicSettingsLogin(): Promise<boolean> {
+    return (await this.readAnthropicSettingsLogin()) != null;
+  }
+
+  private readAnthropicSettingsLogin(): Promise<string | null> | undefined {
+    return this.localStore?.get(credentialService('anthropic'), ANTHROPIC_SETTINGS_ACCOUNT);
+  }
+
+  private writeAnthropicLogin<T>(write: () => Promise<T>): Promise<T> {
+    const result = this.anthropicWrites.then(write, write);
+    this.anthropicWrites = result.catch(() => {});
+    return result;
   }
 
   hasEnvironmentCredentials(providerId: string): boolean {

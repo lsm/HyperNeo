@@ -1,18 +1,22 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
+import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
+import { gatewayFor } from '../../../packages/daemon/src/storage/db-gateway/db-gateway.ts';
+import { createNeoTodoRunner } from '../../../packages/daemon/src/lib/neo/todo-runner.ts';
+import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
 import type { FindWorkResultSchema } from '../../../packages/daemon/src/lib/drivers/find-operation.ts';
 import type { ReadWorkResultSchema } from '../../../packages/daemon/src/lib/drivers/read-operation.ts';
 import type { Result, WorkDelivery, WorkDetail, WorkStarted } from '../../../packages/daemon/src/lib/drivers/types.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
-import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
-import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
-import { readWorkCompaction } from '../../../packages/daemon/src/storage/repositories/work-started-sessions-worker.ts';
+import { queueNextTodo } from './worker-reuse-todo.ts';
 import type { z } from 'zod';
 
 const run = process.argv.at(-1)!;
@@ -32,7 +36,9 @@ const resumeFixture = mode === 'resume' || lateBatch || lateClose || stopFixture
 const longHistory = mode === 'history-long';
 const historyFixture = mode === 'history' || longHistory;
 const compactUnconfirmed = mode === 'compact-unconfirmed';
-const compactFixture = mode === 'compact' || compactUnconfirmed;
+const worktreeReplacement = mode === 'worktree-replacement';
+const busyReplacement = mode === 'busy-replacement' || worktreeReplacement;
+const compactFixture = mode === 'compact' || compactUnconfirmed || busyReplacement;
 const configUnsupported = mode === 'config-unsupported';
 const configUnconfirmed = mode === 'config-unconfirmed';
 const configFixture = mode === 'config' || configUnsupported || configUnconfirmed;
@@ -69,7 +75,7 @@ if (process.argv[2] === '--version') {
   process.exit(0);
 }
 if (process.argv[2] === '--sandbox') {
-  const args = ['--sandbox','--conversation','owned-1','--settings','{"disableSlashCommands":false}','--print','/compact','--output-format','stream-json','--print-timeout','90s'];
+  const args = ['--sandbox','--conversation','owned-1','--settings','{"disableSlashCommands":false}','--print','/compact','--output-format','stream-json','--print-timeout','180s'];
   assert.deepEqual(process.argv.slice(2), args);
   assert.equal(process.cwd(), ${JSON.stringify(workspaceRoot)});
   appendFileSync(${JSON.stringify(journal)}, JSON.stringify({method:'compact'}) + '\\n');
@@ -89,7 +95,8 @@ const discovery = !process.argv.includes('--sandbox');
 assert.deepEqual(process.argv.slice(2), discovery
   ? ['acp', '--disable-telemetry'] : ['acp', '--sandbox', '--disable-telemetry']);
 assert.equal(process.cwd(), discovery ? process.env.HOME : ${JSON.stringify(workspaceRoot)});
-const sessionId = 'owned-1';
+let sessionId = 'owned-1';
+let replacement = false;
 const emit = (...messages) => process.stdout.write(messages.map(message => JSON.stringify({jsonrpc: '2.0', ...message}) + '\\n').join(''));
 const chunk = (id, text, role='agent') => ({method:'session/update',params:{sessionId:id,update:{sessionUpdate:role+'_message_chunk',content:{type:'text',text}}}});
 const note = (id, text) => emit(chunk(id, text));
@@ -122,6 +129,10 @@ for await (const line of createInterface({input: process.stdin})) {
   ]}});
   else if (method === 'session/new') {
     assert.deepEqual(params,{cwd:${JSON.stringify(workspaceRoot)},mcpServers:[]});
+    if (${compactUnconfirmed || busyReplacement} && existsSync(${JSON.stringify(releaseCompaction)})) {
+      sessionId = 'owned-2';
+      replacement = true;
+    }
     emit({id,result:{sessionId,configOptions:${configFixture} ? configOptions() : undefined}});
   } else if (method === 'session/set_config_option') {
     assert(${configFixture});
@@ -171,6 +182,12 @@ for await (const line of createInterface({input: process.stdin})) {
     if (resumed && ${closeError}) emit({id,error:{code:-32603,message:'Save failed'}});
     else emit({id,result:{}});
   } else if (method === 'session/prompt') {
+    if (replacement) {
+      assert.equal(params.sessionId, 'owned-2');
+      assert(params.prompt[0].text.includes('Synthetic next todo of the same ask'));
+      emit({id,result:{stopReason:'end_turn'}});
+      continue;
+    }
     if (${steerFixture}) {
       assert.equal(params.sessionId,sessionId);
       if (promptId === undefined) {
@@ -441,52 +458,69 @@ try {
           metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 },
         });
         new NeoRepository(db).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
-        const todos = new NeoAskTodoRepository(db);
-        const sessions = new NeoTodoSessionRepository(db);
-        const todoId = 'compact-fixture';
-        todos.openAsk({ id: 'compact-ask', projectId: null, sessionId: root, originMessageId: null, title: 'Keep worker', request: 'Keep this worker for another turn', createdAt: now });
-        todos.addTodo(todoId, 'compact-ask', { title: 'First turn', doneWhen: 'Greet', check: null, instruction: 'Greet the user', named: null }, now);
-        sessions.create(todoId, { verb: 'start', adapter, place: input.place });
-        sessions.recordRef(todoId, started.value.ref, now);
-        db.prepare("UPDATE neo_todos SET state='done', finished_at=? WHERE id=?").run(now, todoId);
-        const refresh = async () => {
-          await app.jobProcessor.stop();
-          db.prepare("UPDATE job_queue SET run_at=0 WHERE queue='neo.work.driver.refresh' AND status='pending'").run();
-          const job = db.prepare("SELECT id FROM job_queue WHERE queue='neo.work.driver.refresh' AND status='pending' LIMIT 1").get() as { id: string } | null;
-          assert(job);
-          await app.jobProcessor.tick();
-          const deadline = Date.now() + 5_000;
-          while (Date.now() < deadline) {
-            const row = db.prepare('SELECT status,error FROM job_queue WHERE id=?').get(job.id) as { status: string; error: string | null };
-            if (row.status === 'completed') return;
-            assert(!['failed','dead'].includes(row.status), row.error ?? row.status);
-            await Bun.sleep(25);
-          }
-          assert.fail('Neo worker refresh did not finish');
-        };
         const countCompactions = () => (readFileSync(journal, 'utf8').match(/"method":"compact"/g) ?? []).length;
-        await refresh();
+        const delivered = queueNextTodo(db, started.value, root);
+        if (busyReplacement) {
+          const todos = new NeoAskTodoRepository(db);
+          const sessions = new NeoTodoSessionRepository(db);
+          const held = todos.addTodo('compact-held', 'compact-ask', { title: 'Held', doneWhen: 'Synthetic', check: null, instruction: 'Synthetic', named: null }, Date.now());
+          sessions.create(held.id, { verb: 'send', ref: started.value.ref });
+          sessions.recordRef(held.id, started.value.ref);
+          todos.updateTodo(held, { state: 'doing', startedAt: Date.now() }, Date.now());
+          if (worktreeReplacement) {
+            const git = (...args: string[]) => {
+              const result = spawnSync('git', ['-C', workspaceRoot, ...args], {
+                encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 'Fixture', GIT_AUTHOR_EMAIL: 'fixture@example.invalid', GIT_COMMITTER_NAME: 'Fixture', GIT_COMMITTER_EMAIL: 'fixture@example.invalid' },
+              });
+              assert.equal(result.status, 0, result.stderr);
+            };
+            git('init', '-q');
+            git('commit', '--allow-empty', '-qm', 'Fixture');
+            const linked = join(run, 'old-worker');
+            git('worktree', 'add', '-q', '--detach', linked, 'HEAD');
+            db.prepare('UPDATE work_started_sessions SET folder = ? WHERE adapter = ? AND id = ?').run(linked, adapter, started.value.ref.id);
+          }
+          const next = todos.getTodo('compact-next')!;
+          todos.updateTodo(next, { reason: 'Waiting for worker antigravity-cli:owned-1.' }, Date.now());
+          writeFileSync(releaseCompaction, '');
+          let replacementFolder: unknown;
+          const runner = createNeoTodoRunner({
+            limits: () => ({ running: 99, perGroup: 99 }),
+            write: gatewayFor(db).run.bind(gatewayFor(db)), store: todos, sessions,
+            invoke: (caller, name, input) => {
+              if (name === 'work.start') replacementFolder = (input.place as { folder?: string })?.folder;
+              return invokeOperation(app.sessionManager.getOperationRegistry(), name, input, caller);
+            },
+            workerCompact: () => undefined, packs: () => [], tell: async () => {}, attend: async () => {}, changed: () => {},
+          });
+          await runner.start('compact-next');
+          if (worktreeReplacement) assert.equal(replacementFolder, workspaceRoot);
+          const deadline = Date.now() + 5_000;
+          while (!delivered() && Date.now() < deadline) await Bun.sleep(25);
+          assert(delivered(), 'A new worker must take the waiting todo');
+          assert.equal(sessions.readRef('compact-next')?.id, 'owned-2');
+          assert.equal(todos.getTodo('compact-next')?.reason, null);
+          results.busyReplacement = { fresh: true, waitReasonCleared: true, projectFolder: worktreeReplacement };
+        } else {
         const startDeadline = Date.now() + 5_000;
         while (!countCompactions() && Date.now() < startDeadline) await Bun.sleep(25);
-        assert.equal(countCompactions(), 1, 'The kept worker runs one native compaction');
+        assert.equal(countCompactions(), 1, 'Reuse runs one native compaction before the next todo');
+        assert.equal(delivered(), false, 'The next todo must wait for the compaction');
         const busy = await send(started.value.ref.id);
         assert(!busy.ok && busy.reason === 'busy' && busy.notSent);
         writeFileSync(releaseCompaction, '');
-        const readCompaction = () => readWorkCompaction(db, started.value.ref);
         const completionDeadline = Date.now() + 5_000;
-        while (!readCompaction().compactedAt && !readCompaction().failure && Date.now() < completionDeadline)
-          await Bun.sleep(25);
-        const finished = readCompaction();
+        while (!delivered() && Date.now() < completionDeadline) await Bun.sleep(25);
+        assert(delivered(), 'The next todo must be dispatched after the compaction');
+        const dispatched = new NeoTodoSessionRepository(db).readRef('compact-next');
+        assert.equal(dispatched?.id, compactUnconfirmed ? 'owned-2' : started.value.ref.id);
         if (compactUnconfirmed) {
-          assert.equal(finished.compactedAt, null);
-          assert.equal(finished.failure?.count, 1);
-        } else {
-          assert(finished.compactedAt && finished.compactedAt >= now);
-          assert.equal(finished.failure, null);
+          const row = db.prepare("SELECT value_json FROM pack_facts WHERE todo_id = 'compact-next' AND pack = 'core' AND key = 'worker_reuse'").get() as { value_json: string };
+          assert.equal(JSON.parse(row.value_json).reason, 'not_confirmed');
         }
-        await refresh();
         assert.equal(countCompactions(), 1);
-        results.compaction = { confirmed: !!finished.compactedAt, attempts: countCompactions() };
+        results.compaction = { unconfirmed: compactUnconfirmed, attempts: countCompactions() };
+        }
       }
       if (historyFixture) {
         const read = (options: object) => rpc<z.infer<typeof ReadWorkResultSchema>>('work.read', {

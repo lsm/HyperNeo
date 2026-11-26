@@ -33,6 +33,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import type { Logger } from '../logger.ts';
 import type { ProviderEnvVars } from '../provider-service.ts';
 import { setKeyBridgeThinkingOff } from '../providers/provider-key-bridge.ts';
+import { AnthropicProvider } from '../providers/anthropic-provider.ts';
 import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
 import { resolveAvailableQueryProvider } from '../providers/registry.js';
 import { sleep } from '../utils/sleep.ts';
@@ -42,7 +43,7 @@ import type { AskUserQuestionHandler } from './ask-user-question-handler.ts';
 import { createFlagSettingsFileWriter } from './flag-settings-file.ts';
 import { assessLimitError, type LimitRetryHint } from './limit-error-classifier.ts';
 import { drainDeliveryWaitersOnTerminalSDKMessage } from './message-delivery.ts';
-import type { MessageQueue } from './message-queue.ts';
+import { isCompactCommand, type MessageQueue } from './message-queue.ts';
 import { isNetworkUnreachableError } from './network-outage-pause.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
 import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-token.ts';
@@ -50,6 +51,7 @@ import { ObservedToolInventory } from './observed-tool-inventory.ts';
 import type { QueryLike } from './query-like.ts';
 import { createOxapQuery, type OxapQueryHub } from '../oxap/oxap-query.ts';
 import { OxapReopenDeliveryError, oxapReopenDeliveryFailure } from '../oxap/oxap-reopen.ts';
+import { OxapCodexLaunchError } from '../oxap/oxap-codex-login.ts';
 import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import { codexSessionRefusal, selectSessionEngine, type SessionEngine } from './session-engine.ts';
 import type { QueryOptionsBuilder } from './query-options-builder.ts';
@@ -366,6 +368,10 @@ export interface OxapQueryRuntime {
   openDirectorySupported: boolean;
   hub: OxapQueryHub | Promise<OxapQueryHub>;
   clear?(): Promise<void>;
+  commitThinking?<T extends { success: boolean }>(
+    level: string,
+    persist: () => Promise<T>
+  ): Promise<T>;
 }
 
 export interface QueryRunnerContext {
@@ -587,6 +593,11 @@ export class QueryRunner {
   }
 
   private queryLiveness: { promise: Promise<void>; isLive: () => boolean } | null = null;
+  private anthropicQueryIsStale?: () => boolean;
+
+  hasStaleAnthropicQuery(): boolean {
+    return this.anthropicQueryIsStale?.() ?? false;
+  }
 
   private hasLiveQuery(): boolean {
     const queryPromise = this.ctx.queryPromise;
@@ -631,6 +642,7 @@ export class QueryRunner {
         `(generation=${messageQueue.getGeneration()})`
     );
     messageQueue.start();
+    this.anthropicQueryIsStale = undefined;
 
     const currentGeneration = this.ctx.incrementQueryGeneration();
 
@@ -1191,6 +1203,8 @@ export class QueryRunner {
           optionsBuilder.getEffectiveThinkingLevel()
         );
         setKeyBridgeThinkingOff(session.id, queryOptions.thinking?.type === 'disabled');
+        if (session.config.toolProfile === 'desktop')
+          providerEnvVars = { ...providerEnvVars, ENABLE_TOOL_SEARCH: 'false' };
         const extraProviderManagedEnvVars = NON_ANTHROPIC_PREFIX_PROVIDER_VARS.filter(
           (key) => providerEnvVars[key] !== undefined
         );
@@ -1208,6 +1222,14 @@ export class QueryRunner {
           skipAmbientAnthropicApiKey: resolvedProviderId !== 'anthropic',
           extraProviderManagedEnvVars,
         }) as Record<string, string>;
+        this.anthropicQueryIsStale = undefined;
+        if (provider instanceof AnthropicProvider) {
+          const launchedProvider = provider;
+          const generation = launchedProvider.sdkLoginGeneration;
+          this.anthropicQueryIsStale = () =>
+            providerRegistry.get('anthropic') !== launchedProvider ||
+            launchedProvider.sdkLoginGeneration !== generation;
+        }
       }
 
       if (runAbortController.signal.aborted || !attemptToken.isLive()) {
@@ -1671,15 +1693,17 @@ export class QueryRunner {
         );
         messageQueue.clear(cancelled ? undefined : failure);
         if (!cancelled && live()) {
-          if (failure instanceof OxapReopenDeliveryError) {
+          const launchFailure = failure instanceof OxapCodexLaunchError;
+          if (launchFailure || failure instanceof OxapReopenDeliveryError) {
             await this.failures.terminal(failure.message);
             if (!live()) return;
-            await this.displayErrorAsAssistantMessage(failure.message, { markAsError: true });
+            if (!launchFailure)
+              await this.displayErrorAsAssistantMessage(failure.message, { markAsError: true });
           }
           await errorManager.handleError(
             session.id,
             failure,
-            ErrorCategory.SESSION,
+            launchFailure ? ErrorCategory.VALIDATION : ErrorCategory.SESSION,
             failure.message,
             stateManager.getState(),
             { harness: engine },
@@ -2553,6 +2577,11 @@ export class QueryRunner {
       const live = () => !this.ctx.isCleaningUp() && (liveAttempt?.() ?? true);
       await this.failures.admit(live);
       const coordinator = !!neoCoordinatorBinding(this.ctx.db, session.id);
+      const prompt =
+        coordinator && message.uuid
+          ? this.ctx.db.getSDKMessageRepo?.().getDeliveryContent(session.id, message.uuid)
+          : null;
+      const ridesAlong = notifyOnYield && prompt?.shouldQuery === false;
       if (notifyOnYield && !coordinator)
         await messageQueue.onMessageYielded?.(message.uuid ?? '', Date.now());
       const queuedMessage = message as typeof message & { internal?: boolean };
@@ -2570,7 +2599,8 @@ export class QueryRunner {
             : undefined;
       const startsDaemonTurn =
         isInternal &&
-        (promptText === '/compact' || promptText === TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE);
+        promptText !== undefined &&
+        (isCompactCommand(promptText) || promptText === TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE);
 
       if (startsDaemonTurn && stateManager.getState().status !== 'processing') {
         await stateManager.setProcessing(queuedMessage.uuid ?? 'unknown', 'initializing');
@@ -2592,11 +2622,12 @@ export class QueryRunner {
         if (this._turnConsumedUserMessages.length > 32) {
           this._turnConsumedUserMessages.shift();
         }
-        await stateManager.setProcessing(
-          message.uuid ?? 'unknown',
-          'initializing',
-          this._turnConsumedUserMessages.map((entry) => entry.uuid)
-        );
+        if (!ridesAlong)
+          await stateManager.setProcessing(
+            message.uuid ?? 'unknown',
+            'initializing',
+            this._turnConsumedUserMessages.map((entry) => entry.uuid)
+          );
         if (!this.ctx.firstMessageReceived) {
           const generationMessages = this._consumedUserMessages.get(queryGeneration) ?? [];
           generationMessages.push({
@@ -2616,11 +2647,8 @@ export class QueryRunner {
       );
 
       startGuard?.();
-      questionInputs?.recordInput(queuedMessage);
-      if (humanInputs && message.uuid && neoCoordinatorBinding(this.ctx.db, session.id)) {
-        const prompt = this.ctx.db.getSDKMessageRepo().getDeliveryContent(session.id, message.uuid);
-        if (prompt?.inputKind === 'human') humanInputs.recordInput(queuedMessage);
-      }
+      if (!ridesAlong) questionInputs?.recordInput(queuedMessage);
+      if (humanInputs && prompt?.inputKind === 'human') humanInputs.recordInput(queuedMessage);
       if (this.turnEndedGeneration === queryGeneration)
         this.fedAfterTurnEnd.push({
           uuid: message.uuid ?? '',
@@ -2628,8 +2656,8 @@ export class QueryRunner {
           internal: isInternal,
         });
       yield this.retryPromptIdentity.outgoing(
-        message,
-        !!neoCoordinatorBinding(this.ctx.db, session.id)
+        ridesAlong ? { ...message, shouldQuery: false } : message,
+        coordinator
       );
       this.streamSilence = noteStreamFed(this.streamSilence, Date.now());
       onSent();

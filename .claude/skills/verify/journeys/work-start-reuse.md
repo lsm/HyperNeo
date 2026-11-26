@@ -2,10 +2,9 @@
 
 When Neo calls `work.start`, the daemon first looks for a recorded worker of the same
 adapter, idle (`done`) in the same folder, that holds no open todo and was never marked
-unusable. If one exists, it receives the message and the receipt says `reused: true` with
-its ref. A todo first prefers its ask's most recently used eligible worker;
-different-ask reuse prefers the worker whose latest ask settled longest ago.
-Unknown settlement history remains a fallback. Otherwise a new session starts.
+unusable, and that already worked on the same ask. If one exists, it is compacted when its
+adapter confirms compaction, receives the message, and the receipt says `reused: true` with its
+ref. Otherwise a new session starts; a worker of another ask is never reused.
 A human start always creates a new session. Use ask-worker-affinity.md for the
 recorded-history and pack-exclusion proof.
 
@@ -38,8 +37,9 @@ End state, from `evidence/work-start-reuse.json`:
   database gateway, with no started-session SQL on the daemon's main connection.
 
 `evidence/session-reuse-dispatch.json` additionally records a fresh session under
-`per_todo` and a doing todo returning to the queue when its ask's workers are busy
-under `per_ask`.
+`per_todo` and a fresh worker under `per_ask` when the ask's workers hold other todos.
+It also makes one worker's compaction return unconfirmed and checks that the next
+todo starts fresh and records `not_confirmed` in its `worker_reuse` fact.
 When an assigned role is busy, a new round does not start a different worker;
 if the todo cannot be queued, the refusal says no message was sent.
 The helper also forwards a start through the destination's real RPC door while

@@ -175,7 +175,7 @@ describe('todo and ask bookkeeping records through MCP', () => {
     }
   });
   test.each(['neo.todo.add', 'neo.todo.edit', 'neo.todo.continue', 'neo.todo.remove'])(
-    '%s on a settled ask records without mutation',
+    '%s on a settled ask answers without mutation',
     async (name) => {
       const h = setup();
       try {
@@ -193,7 +193,11 @@ describe('todo and ask bookkeeping records through MCP', () => {
             reason: 'Recorded',
             ref: { adapter: 'hyperneo', id: 'worker' },
           })
-        ).toMatchObject({ ok: true, records: [expect.stringContaining('ask_settled:')] });
+        ).toMatchObject(
+          name === 'neo.todo.add'
+            ? { ok: false, reason: expect.stringContaining('ask_settled:') }
+            : { ok: true, records: [expect.stringContaining('ask_settled:')] }
+        );
         expect(h.store.listTodos(h.ask.id)).toEqual(before);
         expect(h.store.getAsk(h.ask.id)?.status).toBe('dropped');
         expect(h.calls).toEqual([]);

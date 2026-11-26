@@ -337,6 +337,7 @@ export interface SessionProgress {
 }
 
 export interface PendingModelSwitch {
+  thinkingLevel?: ThinkingLevel;
   model: string;
   provider: string;
   requestedAt: number;
@@ -348,6 +349,7 @@ export interface ModelLimit {
 }
 
 export interface SessionMetadata {
+  workerTemplate?: string;
   queryFailureEpisode?: {
     id: string;
     failures: number;

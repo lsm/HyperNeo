@@ -15,8 +15,8 @@ import { createTestSession } from '../../../helpers/database.ts';
 const models = vi.hoisted(() => ({
   valid: vi.fn(async () => true),
   catalog: vi.fn(() => [
-    { id: 'new-model', provider: 'anthropic' },
-    { id: 'old-model', provider: 'openrouter' },
+    { id: 'new-model', alias: 'new-model', provider: 'anthropic' },
+    { id: 'old-model', alias: 'old-model', provider: 'openrouter' },
   ]),
 }));
 vi.mock('../../../../src/lib/model-service.ts', async (original) => ({
@@ -47,8 +47,8 @@ describe('session.runtimeSettings.update native boundary', () => {
     repo.createSession(session);
     models.valid.mockReset().mockResolvedValue(true);
     models.catalog.mockReset().mockReturnValue([
-      { id: 'new-model', provider: 'anthropic' },
-      { id: 'old-model', provider: 'openrouter' },
+      { id: 'new-model', alias: 'new-model', provider: 'anthropic' },
+      { id: 'old-model', alias: 'old-model', provider: 'openrouter' },
     ]);
   });
   afterEach(() => db.close());
@@ -92,9 +92,11 @@ describe('session.runtimeSettings.update native boundary', () => {
       getQueryGeneration: () => state.generation,
     } as unknown as ModelSwitchHandlerContext;
     const native = {
+      session,
       modelSwitchHandler: new ModelSwitchHandler(ctx),
       rateLimitWatchdog: { forgetModelLimits: async () => {} },
       handleModelSwitch: NativeSession.prototype.handleModelSwitch,
+      commitThinkingLevel: NativeSession.prototype.commitThinkingLevel,
       getSessionData: () => session,
       getProcessingState: () => ({ status: state.status }),
       isQueryActiveOrStarting: () => !!state.query || !!state.starting,
@@ -269,8 +271,14 @@ describe('session.runtimeSettings.update native boundary', () => {
 
   test.each([
     { catalog: [], reason: 'catalog_unavailable' },
-    { catalog: [{ id: 'old-model', provider: 'anthropic' }], reason: 'catalog_unavailable' },
-    { catalog: [{ id: 'other-model', provider: 'openrouter' }], reason: 'invalid_model' },
+    {
+      catalog: [{ id: 'old-model', alias: 'old-model', provider: 'anthropic' }],
+      reason: 'catalog_unavailable',
+    },
+    {
+      catalog: [{ id: 'other-model', alias: 'other-model', provider: 'openrouter' }],
+      reason: 'invalid_model',
+    },
   ])('cold provider-only rejects $reason without writing any stored row', async (entry) => {
     const f = fixture();
     f.cold();

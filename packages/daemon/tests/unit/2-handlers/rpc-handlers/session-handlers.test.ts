@@ -3453,7 +3453,7 @@ describe('Session RPC Handlers — session.sandbox.switch', () => {
           { sessionId: 's1', level: 'think16k' },
           {}
         )
-      ).rejects.toThrow(/OXAP Codex does not take a thinking level/);
+      ).rejects.toThrow(/does not publish support for this thinking level/);
       expect(updateSession).not.toHaveBeenCalled();
       expect(config).toEqual(stored());
     });

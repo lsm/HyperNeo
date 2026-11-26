@@ -408,7 +408,11 @@ describe('durable worker follow-ups', () => {
       expect(accepted).toMatchObject({
         value: { ok: true, value: { delivered: false, inputId: expect.any(String) } },
       });
-      expect(sessions.get(todo.id)).toEqual({ verb: 'send', ref: h.ref });
+      expect(sessions.get(todo.id)).toEqual({
+        verb: 'send',
+        ref: h.ref,
+        preparationParameters: {},
+      });
       expect(store.getTodo(todo.id)?.instruction).toBe(
         existingInstruction ? 'Original instruction' : 'New pre-start message'
       );

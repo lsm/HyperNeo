@@ -6,7 +6,7 @@ export const copilotFixture = fileURLToPath(new URL('../fixtures/copilot-sdk.ts'
 export const copilotFolder = '/synthetic/copilot-project';
 export const copilotSession = '11111111-1111-4111-8111-111111111111';
 
-export function prepareCopilotFixture(run: string) {
+export function prepareCopilotFixture(run: string, flags: string[] = []) {
   const root = realpathSync(resolve(run));
   const home = join(root, 'home');
   mkdirSync(join(home, 'evidence'), { recursive: true });
@@ -37,7 +37,7 @@ export function prepareCopilotFixture(run: string) {
   mkdirSync(bin, { recursive: true });
   writeFileSync(
     join(bin, 'copilot'),
-    `#!/usr/bin/env bun\nprocess.argv.push('--production-version'); await import(${JSON.stringify(copilotFixture)});\n`,
+    `#!/usr/bin/env bun\nprocess.argv.push('--production-version', ...${JSON.stringify(flags)}); await import(${JSON.stringify(copilotFixture)});\n`,
     { mode: 0o700 }
   );
   return { home, bin };

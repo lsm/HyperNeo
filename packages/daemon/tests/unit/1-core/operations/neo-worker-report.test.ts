@@ -2,7 +2,7 @@ import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import { z } from 'zod';
-import { createTestDb } from '../../../helpers/database.ts';
+import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 import { createNeoService } from '../../helpers/neo-service.ts';
 import {
   createSendMessageOperation,
@@ -17,6 +17,10 @@ import {
 } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { WorkRefSchema, WorkSummarySchema } from '../../../../src/lib/drivers/types.ts';
+import {
+  SendWorkInputSchema,
+  SendWorkResultSchema,
+} from '../../../../src/lib/drivers/work-operations.ts';
 import {
   InternalEventBus,
   type DaemonInternalEventMap,
@@ -927,6 +931,7 @@ async function replySetup(forward: RemoteSendForwarder) {
   const db = await createTestDb();
   const sent: SessionSent[] = [];
   const forwarded: { target: string; idempotencyKey?: string; origin: string }[] = [];
+  const workNotices: { input: z.infer<typeof SendWorkInputSchema>; from?: string }[] = [];
   let registry = createOperationRegistry([]);
   const service = createNeoService(
     db,
@@ -935,11 +940,22 @@ async function replySetup(forward: RemoteSendForwarder) {
     new InternalEventBus<DaemonInternalEventMap>()
   );
   registry = createOperationRegistry([
+    defineOperation({
+      name: 'work.send',
+      description: 'Synthetic work notice recipient',
+      inputSchema: SendWorkInputSchema,
+      resultSchema: SendWorkResultSchema,
+      policy: { safetyClass: 'mutate' },
+      execute: async (input, caller) => {
+        workNotices.push({ input, from: caller.sessionId });
+        return { ok: true as const, value: { delivered: false, inputId: 'queued-reply' } };
+      },
+    }),
     createSendMessageOperation(
       db.getJobQueueRepo(),
       (id) => {
         if (id === 'broken') throw new Error('synthetic session read failure');
-        return id === 'gone' ? null : 'active';
+        return id === 'gone' ? null : (db.getSession(id)?.status ?? null);
       },
       async (target, input, origin) => {
         forwarded.push({
@@ -987,7 +1003,7 @@ async function replySetup(forward: RemoteSendForwarder) {
       .getJobQueueRepo()
       .listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })
       .filter((job) => JSON.stringify(job.payload).includes(text));
-  return { db, service, sent, forwarded, close, closeOnly, wakes };
+  return { db, service, sent, forwarded, workNotices, close, closeOnly, wakes };
 }
 
 test('a request from an attached remote session is answered once through the remote forwarder', async () => {
@@ -1016,6 +1032,44 @@ test('a request from an attached remote session is answered once through the rem
   }
 });
 
+test.each([
+  ['claude-desktop:local_fixture', { adapter: 'claude-desktop', id: 'local_fixture' }],
+  [
+    'claude-code:00000000-0000-4000-8000-000000000001',
+    { adapter: 'claude-code', id: '00000000-0000-4000-8000-000000000001' },
+  ],
+  [
+    'daemon:peer::session:claude-code%3A00000000-0000-4000-8000-000000000001',
+    { adapter: 'claude-code', id: '00000000-0000-4000-8000-000000000001', daemon: 'peer' },
+  ],
+] as const)('a request from %s is answered once as a work notice', async (sender, ref) => {
+  const { db, service, close, forwarded, workNotices, wakes } = await replySetup(async () => ({
+    kind: 'rejected',
+    reason: 'Unexpected session forward',
+  }));
+  try {
+    const result = await close(sender);
+    expect(workNotices).toEqual([
+      {
+        from: 'neo',
+        input: {
+          ref,
+          notice: true,
+          idempotencyKey: expect.stringMatching(/^neo-request-reply:/),
+          message:
+            'Neo closed your request "Close the merged todo" as done: Merged\nNo todo was added for it.',
+        },
+      },
+    ]);
+    expect(result).toEqual({ kind: 'accepted' });
+    expect(forwarded).toEqual([]);
+    expect(wakes('did not reach')).toEqual([]);
+  } finally {
+    service.dispose();
+    db.close();
+  }
+});
+
 test('an unreachable remote requester or a gone local one wakes Neo with the failed answer', async () => {
   for (const sender of ['daemon:peer::session:worker', 'gone']) {
     const { db, service, sent, close, wakes } = await replySetup(async () => ({
@@ -1033,21 +1087,26 @@ test('an unreachable remote requester or a gone local one wakes Neo with the fai
   }
 });
 
-test('a local request answer is delivered once and recorded as a sent message', async () => {
-  const { db, service, sent, close } = await replySetup(async () => {
-    throw new Error('no remote');
-  });
-  try {
-    expect(await close('stranger')).toEqual({ kind: 'accepted' });
-    expect(sent).toHaveLength(1);
-    expect(
-      db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'stranger' })
-    ).toHaveLength(1);
-  } finally {
-    service.dispose();
-    db.close();
+test.each(['stranger', 'claude-desktop:registered'])(
+  'a registered daemon session %s receives one answer in its mailbox',
+  async (sender) => {
+    const { db, service, sent, close, workNotices } = await replySetup(async () => {
+      throw new Error('no remote');
+    });
+    try {
+      await db.createSession(createTestSession(sender));
+      expect(await close(sender)).toEqual({ kind: 'accepted' });
+      expect(sent).toHaveLength(1);
+      expect(
+        db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': sender })
+      ).toHaveLength(1);
+      expect(workNotices).toEqual([]);
+    } finally {
+      service.dispose();
+      db.close();
+    }
   }
-});
+);
 
 test('a reply that keeps failing to send wakes Neo on its last attempt instead of dying silently', async () => {
   const { db, service, sent, closeOnly, wakes } = await replySetup(async () => {
@@ -1155,6 +1214,7 @@ test('seven answers to one sender within a minute all arrive; the rate-limited o
     throw new Error('no remote');
   });
   try {
+    await db.createSession(createTestSession('stranger'));
     const queue = db.getJobQueueRepo();
     const outcomes: string[] = [];
     for (let i = 0; i < 7; i++) {

@@ -25,14 +25,14 @@ function mcpResult(value: unknown, isError = false): McpResult {
   };
 }
 
-function desktopCallResult(value: unknown): McpResult {
+function desktopCallResult(value: unknown, timing: { at: string; ms: number }): McpResult {
   const { content = [], ...rest } = value as {
     content?: CallToolResult['content'];
     reason?: unknown;
   };
   return {
     content: [
-      mcpResult(rest).content[0],
+      mcpResult({ ...rest, ...timing }).content[0],
       ...content.map((block) =>
         block.type === 'image' &&
         typeof block.data === 'string' &&
@@ -69,19 +69,34 @@ export function operationRefusal(
 export function createOperationMcpHandler(
   registry: OperationRegistrySource,
   resolveCaller: (operation: string) => CallerIdentity | Promise<CallerIdentity>,
-  recordRefusal: (refusal: OperationRefusal) => void | Promise<void> = () => {}
+  recordRefusal: (refusal: OperationRefusal) => void | Promise<void> = () => {},
+  fullDesktopSnapshots?: () => boolean
 ) {
   return async (args: unknown) => {
     const parsed = OperationMcpInvocationSchema.safeParse(args);
     if (!parsed.success) {
       return mcpResult({ code: 'invalid_input', message: parsed.error.message }, true);
     }
+    const started = performance.now();
+    const timing = () => ({
+      at: new Date().toISOString(),
+      ms: Math.round(performance.now() - started),
+    });
+    const desktop = parsed.data.name === 'desktop.call';
     try {
       const caller = await resolveCaller(parsed.data.name);
+      let input = parsed.data.input;
+      if (desktop && input?.tool === 'get_window_state' && fullDesktopSnapshots?.()) {
+        const read = z.looseObject({ since: z.unknown().optional() }).safeParse(input.args);
+        if (read.success) {
+          const { since: _since, ...full } = read.data;
+          input = { ...input, args: full };
+        }
+      }
       const outcome = await invokeOperation(
         resolveOperationRegistry(registry),
         parsed.data.name,
-        parsed.data.input,
+        input,
         {
           ...caller,
           source: 'mcp',
@@ -100,18 +115,22 @@ export function createOperationMcpHandler(
             }
           }
       }
-      if (outcome.kind === 'completed' && parsed.data.name === 'desktop.call')
-        return desktopCallResult(outcome.value);
+      if (outcome.kind === 'completed' && desktop)
+        return desktopCallResult(outcome.value, timing());
       return outcome.kind === 'completed'
         ? mcpResult(
             parsed.data.name.startsWith('neo.') ? explainNeoRefusal(outcome.value) : outcome.value
           )
-        : mcpResult({ code: outcome.code, message: outcome.message }, true);
+        : mcpResult(
+            { code: outcome.code, message: outcome.message, ...(desktop ? timing() : {}) },
+            true
+          );
     } catch (error) {
       return mcpResult(
         {
           code: 'invocation_failed',
           message: error instanceof Error ? error.message : String(error),
+          ...(desktop ? timing() : {}),
         },
         true
       );

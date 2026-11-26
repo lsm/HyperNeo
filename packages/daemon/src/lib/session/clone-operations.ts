@@ -133,7 +133,8 @@ export function admitCloneThinking(
   const message =
     (isOxapHarness(parent.config.harness)
       ? codexSessionRefusal(parent.config, false, false)
-      : undefined) ?? thinkingRefusal(parent.config.harness, input.thinkingLevel);
+      : undefined) ??
+    thinkingRefusal(parent.config.harness, input.thinkingLevel, input.model ?? parent.config.model);
   return message ? { reason: reject('harness_unsupported', message) } : { value: parent };
 }
 
@@ -158,7 +159,9 @@ export async function buildCloneParams(
     toolProfile: parent.config.toolProfile,
     config: {
       ...config,
-      ...(isOxapHarness(parent.config.harness) && !oxapHarness(parent.config.harness).thinking
+      ...(isOxapHarness(parent.config.harness) &&
+      (!oxapHarness(parent.config.harness).thinking ||
+        thinkingRefusal(parent.config.harness, thinkingLevel, input.model ?? parent.config.model))
         ? {}
         : { thinkingLevel }),
       ...(input.model ? { model: input.model } : {}),

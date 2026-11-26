@@ -37,6 +37,9 @@ Read one reference by URL and list a repository for time-range questions.
 PR events, owner workers' reports and passing pr_merged/issue_closed checks reach
 you as messages; never sleep or poll gh to wait for review, CI
 or merge.
+Pending CI does not send owner reminders; the sweep still escalates a prolonged wait to Neo.
+A daemon merge sends one confirmation to its owner; if delivery fails or the owner changes,
+the merged event remains available to the current owner.
 Coding worker briefs, work goals and PR notifications include repository merge
 preferences as data: merge policy, review bot, human sign-off, merge executor
 and provenance. Unset review settings are explicit; declared defaults still apply.

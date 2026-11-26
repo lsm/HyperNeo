@@ -1,5 +1,10 @@
 import { neoToolDescription } from '@hyperneo/prompts';
 import type { WorkerInput } from '../../storage/repositories/worker-input-worker.ts';
+import {
+  compactBeforeReuse,
+  planCleanWorker,
+  type WorkerReuseReason,
+} from './worker-compaction.ts';
 import { withWorkerProvenance } from './worker-provenance.ts';
 import type { DriverHealth } from '@hyperneo/shared/types/settings';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
@@ -12,6 +17,7 @@ import {
   replyMessageBodyLength,
   REPLY_ORIGIN_MAX,
   withReplyLine,
+  withReplySender,
 } from '../messaging/session-reply.ts';
 import {
   defineOperation,
@@ -30,6 +36,10 @@ import {
   type WorkerReuseFacts,
 } from './worker-reuse.ts';
 import {
+  COPILOT_ADAPTER_ID,
+  COPILOT_DESKTOP_UNAVAILABLE,
+  CopilotClientSchema,
+  CopilotStartClientSchema,
   PlaceSchema,
   WorkDetailSchema,
   WorkDeliverySchema,
@@ -59,7 +69,7 @@ type RoutedVerb =
   | 'stop'
   | 'archive';
 type Route<Verb extends RoutedVerb> =
-  | { daemon: string }
+  | { daemon: string; verifiedCopilotStart?: true }
   | {
       local: NonNullable<WorkAdapter[Verb]>;
       supportsStartEffort?: boolean;
@@ -88,6 +98,7 @@ export interface WorkVerbDeps {
   health?: () => Record<string, DriverHealth> | Promise<Record<string, DriverHealth>>;
   remote: RemoteDaemons;
   daemonName: string;
+  qualifyReplyOrigin?: (from: string) => string;
   freeWorkers?: (
     adapter: string,
     todoId?: string,
@@ -96,6 +107,7 @@ export interface WorkVerbDeps {
     | ReadonlySet<string>
     | ReadonlyMap<string, WorkerReuseFacts>
     | Promise<ReadonlySet<string> | ReadonlyMap<string, WorkerReuseFacts>>;
+  workerTemplate?: (ref: WorkRef) => string | undefined;
   reusePolicy?: (
     adapter: string,
     todoId: string | undefined,
@@ -118,6 +130,7 @@ export interface WorkVerbDeps {
     perRoundFields: readonly string[];
   }>;
   markUnusable?: (ref: WorkRef, reason: string) => void | Promise<void>;
+  warn?: (message: string, error: unknown) => void;
   claimWorker?: (
     ref: WorkRef,
     todoId?: string,
@@ -127,6 +140,10 @@ export interface WorkVerbDeps {
     shareWith?: readonly string[]
   ) => Promise<boolean>;
   unclaimWorker?: (todoId: string, ref: WorkRef, role?: string) => Promise<void>;
+  recordWorkerReuse?: (
+    todoId: string,
+    value: { worker: WorkRef; result: 'compacted' | 'fresh'; reason?: WorkerReuseReason }
+  ) => Promise<void>;
   isOpenTodo?: (todoId: string, sessionId: string) => boolean;
   acceptedTodo?: (todoId: string) => boolean;
   noticeReply?: (ref: WorkRef, sessionId: string) => boolean;
@@ -199,6 +216,7 @@ export const StartWorkInputSchema = z.object({
     .optional()
     .describe('Role on the todo: do, review, verify or check. Defaults to do.'),
   adapter: z.string().min(1),
+  copilotClient: CopilotStartClientSchema.optional(),
   place: PlaceSchema.optional(),
   title: z.string().trim().min(1).max(200),
   sessionTitle: z
@@ -216,6 +234,7 @@ export const StartWorkInputSchema = z.object({
   provenance: z.boolean().optional(),
   preparation: workStartPreparation.schema.optional(),
   model: z.string().trim().min(1).max(200).optional(),
+  provider: z.string().trim().min(1).max(200).optional(),
   effort: workStartConfiguration.schema.shape.effort,
   from: ForwardedOriginSchema,
 });
@@ -324,6 +343,8 @@ export const WorkAdaptersResultSchema = workResultSchema(
   z.array(
     z.object({
       id: z.string(),
+      displayName: z.string().optional(),
+      copilotClients: z.array(CopilotClientSchema).optional(),
       capabilities: z.array(RoutedCapabilitySchema),
       steerBehavior: z.literal('best_effort').optional(),
       health: WorkDriverHealthSchema.optional(),
@@ -520,23 +541,24 @@ function withTodoRecords<T>(outcome: Result<T>, records: string[]): Result<T> {
     : outcome;
 }
 
+function qualifyWorkOrigin(from: string, deps: WorkVerbDeps): string {
+  return deps.qualifyReplyOrigin?.(from) ?? qualifyRemoteOrigin(from, deps.daemonName);
+}
+
 export function workReplyInput<
   T extends StartInput | SendInput | z.infer<typeof WithdrawWorkInputSchema>,
 >(input: T, from: string, caller: OperationCaller, deps: WorkVerbDeps): T {
   const adapter = 'adapter' in input ? input.adapter : input.ref.adapter;
-  if (
-    !('message' in input) ||
-    caller.role !== 'neo' ||
-    !['claude-code', 'claude-desktop', 'codex-desktop'].includes(adapter)
-  )
+  if (!('message' in input) || caller.role !== 'neo' || ['hyperneo', 'space'].includes(adapter))
     return input;
   const remote = 'place' in input ? input.place.daemon : input.ref.daemon;
   return {
     ...input,
     message: withReplyLine(
       input.message,
-      remote ? qualifyRemoteOrigin(from, deps.daemonName) : from,
-      'cli'
+      remote ? qualifyWorkOrigin(from, deps) : from,
+      'cli',
+      'ref' in input ? `${adapter}:${input.ref.id}` : undefined
     ),
   };
 }
@@ -582,7 +604,7 @@ export function pickRoute<Verb extends RoutedVerb>(
 }
 
 function admitRemoteStartModel(route: Route<'start'>, input: StartInput): Gate<Route<'start'>> {
-  return input.model !== undefined && 'daemon' in route
+  return input.model !== undefined && 'daemon' in route && !route.verifiedCopilotStart
     ? {
         reason: reject(
           'unsupported_model',
@@ -593,7 +615,8 @@ function admitRemoteStartModel(route: Route<'start'>, input: StartInput): Gate<R
 }
 
 export function admitStartEffort(route: Route<'start'>, input: StartInput): Gate<Route<'start'>> {
-  return input.effort === undefined || ('local' in route && route.supportsStartEffort === true)
+  return input.effort === undefined ||
+    ('local' in route ? route.supportsStartEffort === true : route.verifiedCopilotStart)
     ? { value: route }
     : {
         reason: reject(
@@ -651,11 +674,49 @@ export function annotateUnreachable(rejected: Rejected, hint: string): Rejected 
 }
 
 export function routeStart(input: StartInput, deps: WorkVerbDeps): Gate<Route<'start'>> {
-  return pickRoute(
+  if (input.copilotClient !== undefined && input.adapter !== COPILOT_ADAPTER_ID)
+    return {
+      reason: reject('unsupported', 'Client selection is only available for Copilot.', true),
+    };
+  const route = pickRoute(
     'start',
     { adapter: input.adapter, daemon: input.place.daemon },
     deps.adapters()
   );
+  if ('reason' in route && input.copilotClient === 'desktop')
+    return { reason: reject('unreachable', COPILOT_DESKTOP_UNAVAILABLE, true) };
+  return route;
+}
+
+async function admitRemoteCopilotStart(
+  route: Route<'start'>,
+  input: StartInput,
+  deps: WorkVerbDeps
+): Promise<Gate<Route<'start'>>> {
+  if (!('daemon' in route) || !input.copilotClient || input.copilotClient === 'auto')
+    return { value: route };
+  const catalog = await listWorkAdapters(route.daemon, deps);
+  if (!catalog.ok) return { reason: { ...catalog, notSent: true } };
+  const choices = catalog.value.find(({ id }) => id === COPILOT_ADAPTER_ID)?.copilotClients;
+  if (!choices)
+    return {
+      reason: reject(
+        'unsupported',
+        'The selected HyperNeo server cannot verify Copilot client selection.',
+        true
+      ),
+    };
+  if (!choices.includes(input.copilotClient))
+    return {
+      reason: reject(
+        'unreachable',
+        input.copilotClient === 'desktop'
+          ? COPILOT_DESKTOP_UNAVAILABLE
+          : 'Copilot CLI is unavailable on the selected machine.',
+        true
+      ),
+    };
+  return { value: { ...route, verifiedCopilotStart: true } };
 }
 
 export async function startWork(
@@ -708,7 +769,7 @@ export async function startWork(
               .map(({ daemon: _daemon, ...ref }) => ref),
           }
         : {}),
-      from: qualifyRemoteOrigin(from, deps.daemonName),
+      from: qualifyWorkOrigin(from, deps),
     },
     StartWorkResultSchema,
     deps.remote,
@@ -751,7 +812,8 @@ export async function reuseIdleWorker(
     !folder ||
     !requestedAdapter?.send ||
     ((input.model || input.effort) && !requestedAdapter.resolveStartConfiguration) ||
-    input.createFolder
+    input.createFolder ||
+    (input.copilotClient !== undefined && input.copilotClient !== 'auto')
   )
     return null;
   const todoId = ownedTodoId(input, caller, deps);
@@ -762,7 +824,8 @@ export async function reuseIdleWorker(
     : undefined;
   if (input.preparation && !context) return null;
   const assigned = context?.roles.find((row) => row.role === role);
-  if (todoId && assigned && assigned.adapter !== adapter.id) {
+  const workerTemplate = caller.source === 'internal' ? caller.workerTemplate : undefined;
+  if (!workerTemplate && todoId && assigned && assigned.adapter !== adapter.id) {
     const priorAdapter = deps.adapters().find((candidate) => candidate.id === assigned.adapter);
     const priorContext = await deps.roleContext?.(
       todoId,
@@ -787,9 +850,12 @@ export async function reuseIdleWorker(
   }
   const matches = (id: string) => {
     const entry = context?.preparations.find((item) => item.id === id);
-    return context
-      ? !!entry && matchingPreparation(entry.preparation, input.preparation, context.perRoundFields)
-      : true;
+    return (
+      deps.workerTemplate?.({ adapter: adapter.id, id }) === workerTemplate &&
+      (!context ||
+        (!!entry &&
+          matchingPreparation(entry.preparation, input.preparation, context.perRoundFields)))
+    );
   };
   const previous = context?.roles.find((row) => row.role === role && row.adapter === adapter.id);
   const prior = previous && matches(previous.id) ? previous : undefined;
@@ -811,6 +877,7 @@ export async function reuseIdleWorker(
     !(policy?.mode === 'per_ask' && policy.sameAsk.length)
   )
     return null;
+  const sameAsk = (id: string) => !!policy?.sameAsk.includes(id);
   const configured =
     input.model || input.effort ? await adapter.resolveStartConfiguration!(input) : null;
   if ((input.model || input.effort) && !configured) return null;
@@ -831,9 +898,7 @@ export async function reuseIdleWorker(
       (prior
         ? work.ref.id === prior.id
         : (!!free?.has(work.ref.id) || canShare(work.ref.id)) &&
-          (canShare(work.ref.id) ||
-            policy?.mode !== 'per_ask' ||
-            policy.sameAsk.includes(work.ref.id)) &&
+          (canShare(work.ref.id) || !policy || sameAsk(work.ref.id)) &&
           !context?.roles.some(
             (row) =>
               row.adapter === work.ref.adapter &&
@@ -891,6 +956,14 @@ export async function reuseIdleWorker(
           'none';
         return reject('worker_busy', WORKER_BUSY_DETAIL[queued], true);
       }
+      if (todoId && (!decision.candidate.free || !adapter.compact)) {
+        await deps.recordWorkerReuse?.(todoId, {
+          worker: decision.candidate.work.ref,
+          result: 'fresh',
+          reason: !decision.candidate.free ? 'other_todo' : 'cannot_compact',
+        });
+        break;
+      }
       busy = decision.candidate;
       break;
     }
@@ -934,13 +1007,14 @@ export async function reuseIdleWorker(
         continue;
       }
     }
+    const addressed = withReplySender(input.message, from, `${adapter.id}:${work.ref.id}`);
     const message = input.provenance
-      ? withWorkerProvenance(input.message, {
+      ? withWorkerProvenance(addressed, {
           model: identity?.model ?? null,
           effort: identity?.effort ?? null,
           harness: adapter.id,
         })
-      : input.message;
+      : addressed;
     const claimed = deps.claimWorker
       ? await deps
           .claimWorker(
@@ -963,6 +1037,45 @@ export async function reuseIdleWorker(
         return reject('worker_busy', WORKER_BUSY_DETAIL[queued], true);
       }
       continue;
+    }
+    let clean = planCleanWorker({
+      sameTodo: !todoId || prior?.id === work.ref.id || canShare(work.ref.id),
+      named: false,
+      started: true,
+      remote: false,
+      sameAsk: sameAsk(work.ref.id),
+      released: false,
+      otherTodo: false,
+      canCompact: !!adapter.compact,
+    });
+    if (clean.action === 'compact') {
+      const confirmed = await compactBeforeReuse(
+        { ref: work.ref, sameAsk: true, compact: adapter.compact },
+        caller,
+        deps.warn ?? (() => {})
+      );
+      if (!confirmed) clean = { action: 'fresh', reason: 'not_confirmed' };
+      else if (todoId)
+        await deps.recordWorkerReuse?.(todoId, { worker: work.ref, result: 'compacted' });
+    }
+    if (clean.action === 'fresh') {
+      if (todoId) {
+        await deps.unclaimWorker?.(todoId, work.ref, input.role);
+        await deps.recordWorkerReuse?.(todoId, {
+          worker: work.ref,
+          result: 'fresh',
+          reason: clean.reason,
+        });
+      }
+      reuseHolds.delete(key);
+      const index = sameAskCandidates.indexOf(chosen);
+      if (index >= 0) sameAskCandidates.splice(index, 1);
+      continue;
+    }
+    if (todoId && caller.sessionId && deps.isOpenTodo?.(todoId, caller.sessionId) === false) {
+      reuseHolds.delete(key);
+      await deps.unclaimWorker?.(todoId, work.ref, input.role);
+      return reject('todo_required', 'This todo closed before its worker was messaged.', true);
     }
     const sent = await adapter.send!(work.ref, message, { from, caller }).catch(
       (error: unknown) => {
@@ -1037,7 +1150,7 @@ export async function sendWork(
       message: input.message,
       ...(input.mode ? { mode: input.mode } : {}),
       ...idempotency,
-      from: qualifyRemoteOrigin(from, deps.daemonName),
+      from: qualifyWorkOrigin(from, deps),
     },
     SendWorkResultSchema,
     deps.remote,
@@ -1173,6 +1286,7 @@ const runStartWork = (superpipe({})('work.start') as PipelineAPI)
   .pipe((resolved: StartInput) => resolved, 'outcome', 'input')
   .pipe(routeStart, ['input', 'deps'], 'result:outcome')
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
+  .pipe(admitRemoteCopilotStart, ['outcome', 'input', 'deps'], 'result:outcome')
   .pipe(admitRemoteStartModel, ['outcome', 'input'], 'result:outcome')
   .pipe(admitStartEffort, ['outcome', 'input'], 'result:outcome')
   .pipe(
@@ -1331,7 +1445,7 @@ async function changeQueuedInput(
   const forwarded = {
     ...input,
     ref: localRef(input.ref),
-    from: qualifyRemoteOrigin(from, deps.daemonName),
+    from: qualifyWorkOrigin(from, deps),
   };
   const result =
     'message' in input
@@ -1517,6 +1631,9 @@ async function listWorkAdapters(
       return {
         id,
         capabilities,
+        ...(id === COPILOT_ADAPTER_ID
+          ? { displayName: 'Copilot', copilotClients: [...(adapter?.copilotClients ?? [])] }
+          : {}),
         ...(adapter?.steerBehavior && capabilities.includes('steer')
           ? { steerBehavior: adapter.steerBehavior }
           : {}),

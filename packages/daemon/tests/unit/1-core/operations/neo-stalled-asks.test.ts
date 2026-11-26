@@ -3,6 +3,7 @@ import type { MessageHub } from '@hyperneo/shared';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import { createCleanupHandler } from '../../../../src/lib/job-handlers/cleanup.handler.ts';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository.ts';
+import { SessionGoalRepository } from '../../../../src/storage/repositories/session-goal-repository.ts';
 import { createNeoService } from '../../helpers/neo-service.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createTestDb } from '../../../helpers/database.ts';
@@ -169,6 +170,36 @@ test('Neo is woken when the last todo ends, once more a day later, and again aft
   expect(wakes()).toHaveLength(3);
   expect(digests()).toEqual([]);
 });
+
+test.each(['active', 'paused'] as const)(
+  'an ask whose goal is %s is not told as finished or idle until the goal ends',
+  async (status) => {
+    const goals = new SessionGoalRepository(db.getDatabase());
+    const goal = goals.create(root, { title: 'Synthetic goal' }, clock);
+    if (status === 'paused') goals.update(goal, { status }, clock);
+    for (const id of ['goal-finished', 'goal-empty'])
+      service.todos.openAsk({
+        id,
+        goalId: goal.id,
+        sessionId: root,
+        projectId: null,
+        originMessageId: null,
+        title: id,
+        request: 'Synthetic work',
+        createdAt: clock - 2 * hour,
+      });
+    todo('goal-finished', 'done');
+    ask('plain-finished');
+    todo('plain-finished', 'done');
+    await service.refreshDriverWork();
+    expect(wakes()).toEqual([finished('plain-finished')]);
+    expect(digests()).toEqual([]);
+    goals.update(goals.get(goal.id)!, { status: 'completed' }, clock);
+    await service.refreshDriverWork();
+    expect(wakes()).toEqual([finished('goal-finished'), finished('plain-finished')]);
+    expect(digests()).toEqual([idle('goal-empty')]);
+  }
+);
 
 test('writing the outcome does not wake Neo about the same finish again', async () => {
   ask('finished', clock);

@@ -192,6 +192,7 @@ import mdmessagingReplyProtocol from './messaging/reply-protocol.md' with { type
 import mdmessagingReplyToTarget from './messaging/reply-to-target.md' with { type: 'text' };
 import mdmessagingReplyToTask from './messaging/reply-to-task.md' with { type: 'text' };
 import mdspaceOperationsDoorListing from './space/operations-door-listing.md' with { type: 'text' };
+import mdToolWorkReconfigure from './neo/tools/work.reconfigure.md' with { type: 'text' };
 import mdToolWorkRename from './neo/tools/work.rename.md' with { type: 'text' };
 import mdToolWorkAdapters from './neo/tools/work.adapters.md' with { type: 'text' };
 import mdToolWorkStart from './neo/tools/work.start.md' with { type: 'text' };
@@ -681,6 +682,7 @@ export const NEO_PACK_SKILLS: Readonly<
 
 export const NEO_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze(
   buildPromptRegistry({
+    'neo/tools/work.reconfigure.md': mdToolWorkReconfigure,
     'neo/tools/work.rename.md': mdToolWorkRename,
     'neo/tools/work.adapters.md': mdToolWorkAdapters,
     'neo/tools/work.start.md': mdToolWorkStart,

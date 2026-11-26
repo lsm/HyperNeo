@@ -1,3 +1,4 @@
+import { OperationMcpHttpServer } from '../operations/operation-http-server.ts';
 import {
   cleanupOwnedWorktree,
   releaseRemovedWorkerFolders,
@@ -100,9 +101,11 @@ export interface CreateSessionParams {
   currentTaskId?: string;
   promptProvenance?: SessionMetadata['promptProvenance'];
   toolProfile?: SessionToolProfile;
+  workerTemplate?: string;
 }
 
 export class SessionLifecycle {
+  private readonly operationMcp = new OperationMcpHttpServer();
   private readonly resourceOperations = new Map<string, Promise<unknown>>();
   private logger: Logger;
 
@@ -189,7 +192,7 @@ export class SessionLifecycle {
           false,
           false
         ) ??
-        thinkingRefusal(harness, params.config?.thinkingLevel) ??
+        thinkingRefusal(harness, params.config?.thinkingLevel, modelId) ??
         (await newSessionOxapRefusal(
           harness,
           provider,
@@ -261,7 +264,9 @@ export class SessionLifecycle {
         maxTokens: params.config?.maxTokens || this.config.maxTokens,
         temperature: params.config?.temperature || this.config.temperature,
         autoScroll: params.config?.autoScroll ?? globalSettings.autoScroll,
-        thinkingLevel: params.config?.thinkingLevel ?? globalSettings.thinkingLevel,
+        thinkingLevel:
+          params.config?.thinkingLevel ??
+          (harness === 'oxap-codex' ? undefined : globalSettings.thinkingLevel),
         coordinatorMode: params.config?.coordinatorMode ?? globalSettings.coordinatorMode,
         provider,
         sandbox,
@@ -270,6 +275,7 @@ export class SessionLifecycle {
         ...(params.toolProfile ? { toolProfile: params.toolProfile } : {}),
       },
       metadata: {
+        ...(params.workerTemplate ? { workerTemplate: params.workerTemplate } : {}),
         ...(params.executionProjectPath
           ? { executionProjectPath: params.executionProjectPath }
           : {}),
@@ -644,6 +650,18 @@ export class SessionLifecycle {
     }
   }
 
+  grantOperationMcp(session: ReturnType<AgentSessionFactory>) {
+    const { id } = session.getSessionData();
+    const stored = this.db.getSession(id);
+    if (this.resourceOperations.has(id) || !stored || stored.status === 'archived')
+      throw new Error('Operations MCP requires an open session.');
+    return this.operationMcp.grant(session);
+  }
+
+  closeOperationMcp() {
+    return this.operationMcp.close();
+  }
+
   unarchive(sessionId: string): Promise<UnarchiveSessionResponse> {
     return this.withSessionResources(sessionId, async () => {
       const session = this.db.getSession(sessionId);
@@ -731,6 +749,7 @@ export class SessionLifecycle {
     sessionId: string,
     trigger: ArchiveResourcesTrigger
   ): Promise<WorktreeCleanup | undefined> {
+    await this.operationMcp.revoke(sessionId);
     const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
     const session = this.db.getSession(sessionId);
     if (!session) {
@@ -860,6 +879,7 @@ export class SessionLifecycle {
     sessionId: string,
     trigger: DeleteResourcesTrigger
   ): Promise<void> {
+    await this.operationMcp.revoke(sessionId);
     const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
     const session = this.db.getSession(sessionId);
 

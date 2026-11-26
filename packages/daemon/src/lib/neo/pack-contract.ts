@@ -9,8 +9,6 @@ import type { NeoStatusLine } from './status-codes.ts';
 import type { OperationDefinition } from '../operations/registry.ts';
 import type { DescribedRunner } from 'superpipe';
 import type { NeoAttentionEvent, NeoAttentionKind } from './attention/decide.ts';
-import type { z } from 'zod';
-import type { PackPreferenceInput } from './preference-operations.ts';
 import type { NeoStepFacts } from './attention/owner.ts';
 
 export interface NeoPackBrief {
@@ -62,7 +60,8 @@ export interface NeoTodoPack {
   doneWhen?(check: NeoTodoCheck): string | null;
   addUrls?(todo: NeoTodo, urls: readonly string[]): NeoTodoCheck | null;
   refuse?(
-    draft: Pick<NeoTodo, 'check' | 'instruction'> & Partial<NeoTodoRepositoryDraft>,
+    draft: Pick<NeoTodo, 'check' | 'instruction'> &
+      Partial<NeoTodoRepositoryDraft> & { boundWorker?: boolean },
     peers?: readonly NeoTodo[],
     scope?: NeoTodoPolicyScope
   ): string | null;
@@ -162,16 +161,12 @@ export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
   ): Record<string, string | number | null>[];
   workerRules?: string;
   workerContext?(): string | null;
+  workerTemplate?(todo: NeoTodo): string | undefined;
   workerStartExclusions?(todo: NeoTodo): WorkerStartExclusions | Promise<WorkerStartExclusions>;
   workerTarget?(
     todo: NeoTodo,
     target: NeoTodoTarget,
-    status: (ref: WorkRef) => Promise<OperationOutcome>,
-    askSetting: (input: {
-      requestId: string;
-      hold?: false;
-      alternatives: z.infer<typeof PackPreferenceInput>[][];
-    }) => Promise<OperationOutcome>
+    status: (ref: WorkRef) => Promise<OperationOutcome>
   ): Promise<NeoWorkerTargetDecision>;
   workerTargetRefused?(todo: NeoTodo): void | Promise<void>;
   workerStartBrief?(

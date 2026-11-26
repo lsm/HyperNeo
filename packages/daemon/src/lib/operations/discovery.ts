@@ -122,7 +122,9 @@ export function findDescribedOperation(
   const operation = registry.get(name);
   const enabled = caller?.role === 'neo' ? enabledOperationPacks(registry) : [];
   return operation &&
-    (!caller || caller.role !== 'neo' || isOperationAdmitted(operation, caller, enabled))
+    (!caller ||
+      (caller.role !== 'neo' && caller.profile !== 'desktop') ||
+      isOperationAdmitted(operation, caller, enabled))
     ? { value: operation }
     : { reason: { found: false, name } };
 }

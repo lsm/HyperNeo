@@ -9,6 +9,7 @@ import { createTables, runMigrations } from '../../../../src/storage/schema/inde
 import { Database } from '../../../../src/storage/sqlite-compat';
 import {
   readReusableWorkers,
+  readSameAskWorkers,
   recordWorkerStarted,
 } from '../../../../src/storage/repositories/work-started-sessions-worker';
 
@@ -56,6 +57,7 @@ function setup(gate?: Promise<void>) {
   );
   sessions.create('owned', { verb: 'start', adapter: 'claude-desktop', place });
   const sent: string[] = [];
+  const firstSent = Promise.withResolvers<void>();
   const adapter: WorkAdapter = {
     id: 'claude-desktop',
     capabilities: ['find', 'start', 'send'],
@@ -85,8 +87,10 @@ function setup(gate?: Promise<void>) {
         lastActivityAt: 2,
       },
     }),
+    compact: async () => ({ ok: true, value: { compacted: true } }),
     send: async (ref) => {
       sent.push(ref.id);
+      firstSent.resolve();
       if (sent.length === 1) await gate;
       return { ok: true, value: { delivered: true, receipt: { executionId: 'e', inputId: 'i' } } };
     },
@@ -97,6 +101,10 @@ function setup(gate?: Promise<void>) {
       remote: { list: () => [], invoke: async () => ({}) },
       daemonName: 'imac',
       freeWorkers: (id, todoId, sessionId) => readReusableWorkers(db, id, todoId, sessionId),
+      reusePolicy: async (adapter, todoId) => ({
+        mode: 'long_lived',
+        sameAsk: todoId ? readSameAskWorkers(db, 'mine', todoId, adapter).map(({ id }) => id) : [],
+      }),
       claimWorker: async (ref, todoId) => sessions.claimWorker(ref, todoId ?? null),
       unclaimWorker: async (todoId, ref) => sessions.unclaimWorker(todoId, ref),
       acceptedTodo: (todoId) => !!store.getTodo(todoId),
@@ -112,7 +120,7 @@ function setup(gate?: Promise<void>) {
       },
     })
   );
-  return { db, sessions, sent, registry };
+  return { db, sessions, sent, registry, firstSent: firstSent.promise };
 }
 
 function start(registry: ReturnType<typeof setup>['registry'], todoId: string) {
@@ -153,7 +161,7 @@ describe('work.start reuse binds only a todo the caller owns', () => {
     const h = setup(new Promise<void>((done) => (open = done)));
     try {
       const first = start(h.registry, 'owned');
-      while (!h.sent.length) await Promise.resolve();
+      await h.firstSent;
       const second = await start(h.registry, 'owned');
       expect((second as { value: { value: { ref: { id: string } } } }).value.value.ref.id).toBe(
         'fresh'
@@ -164,6 +172,7 @@ describe('work.start reuse binds only a todo the caller owns', () => {
       open();
       await first;
     } finally {
+      open();
       h.db.close();
     }
   });

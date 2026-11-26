@@ -3,7 +3,6 @@ import { workerOwnershipFacts } from '../repositories/worker-ownership-read-work
 import { workerInputReads, workerInputWrites } from '../repositories/worker-input-worker.ts';
 import { neoFrontReads } from '../repositories/neo-front-read-worker.ts';
 import { sessionGoalReviewReads } from '../repositories/session-goal-review-read-worker.ts';
-import { anthropicRateLimitEventsRead } from '../repositories/anthropic-usage-read.ts';
 import {
   neoFrontDeliveryWrites,
   neoFrontInputWrites,
@@ -139,9 +138,10 @@ import { parkDeliveryJob } from '../repositories/job-delivery-parking.ts';
 import { recordClaudeInboxRoute } from '../repositories/claude-inbox-route-repository.ts';
 import { replaceNeoSessionSeen } from '../repositories/neo-session-seen-repository.ts';
 import {
+  editRemoteDaemonEndpoint,
   removeRemoteDaemonSecret,
   saveRemoteDaemonSecret,
-} from '../repositories/remote-daemon-secret-repository.ts';
+} from '../repositories/remote-daemon-secret-worker.ts';
 import {
   registerClient,
   unregisterClient,
@@ -259,7 +259,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     sessionGoalReviewReads,
     workerOwnershipFacts,
     workerOwnershipWrites,
-    anthropicRateLimitEventsRead,
     neoAskSettlementReads,
     neoAskSettlementWrites,
     neoAskTurnedSettleReads,
@@ -364,6 +363,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     replaceNeoSessionSeen,
     saveRemoteDaemonSecret,
     removeRemoteDaemonSecret,
+    editRemoteDaemonEndpoint,
     registerClient,
     unregisterClient,
     recordAgentChild,

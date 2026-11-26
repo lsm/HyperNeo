@@ -197,7 +197,8 @@ export async function deliverCodingPrEvents(
         continue;
       }
       if (!owner) continue;
-      const review = row.state === 'failing' && !!event?.findings?.length;
+      const review =
+        row.state === 'merged' || (row.state === 'failing' && !!event?.findings?.length);
       const receipt = event && review ? codingFailingReviewReceiptKey(event.key, owner) : null;
       const told = event
         ? (receipt !== null && (await repo.reviewSent(receipt))) ||
@@ -209,7 +210,7 @@ export async function deliverCodingPrEvents(
       if (told) await repo.acceptEvent(row, owner);
       if (!event) continue;
       log.warn(
-        `PR event ${event.key} to ${owner.adapter}:${owner.id}: ${told ? 'told' : 'not told'}`
+        `PR event ${event.key} to ${owner.adapter}:${owner.id}: ${told === 'gone' ? 'owner gone, dropped' : told ? 'told' : 'not told'}`
       );
     }
   });

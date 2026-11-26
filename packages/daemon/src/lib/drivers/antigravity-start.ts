@@ -4,8 +4,10 @@ import { basename, isAbsolute } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { JsonRpcRequestTimeoutError, ProcessJsonRpcTransport } from '../process-json-rpc.ts';
+import { withOwnReplySender } from '../messaging/session-reply.ts';
 import { buildSafeProcessEnv } from '../safe-process-env.ts';
 import { compactAntigravity } from './antigravity-compact.ts';
+import { antigravityPermissionOutcome } from './antigravity-permission.ts';
 import {
   AntigravityConfig,
   antigravityIdentity,
@@ -169,9 +171,9 @@ export function createAntigravityStart(
       replaceEnv: true,
       requestTimeoutMs: TURN_TIMEOUT_MINUTES * 60_000,
       onStderr: () => {},
-      onRequest: ({ id, method }) => {
+      onRequest: ({ id, method, params }) => {
         if (method === 'session/request_permission')
-          transport.sendResponse(id, { outcome: { outcome: 'cancelled' } });
+          transport.sendResponse(id, antigravityPermissionOutcome(params));
         else transport.sendErrorResponse(id, { code: -32601, message: 'Method not supported' });
       },
       onNotification: ({ method, params }) => {
@@ -411,7 +413,7 @@ export function createAntigravityStart(
       const work = launchTurn(
         configured.value,
         { title: request.sessionTitle ?? request.title, place: request.place },
-        request.message
+        withOwnReplySender(request.message, `${adapter}:${id}`)
       );
       return { ok: true, value: work };
     } finally {

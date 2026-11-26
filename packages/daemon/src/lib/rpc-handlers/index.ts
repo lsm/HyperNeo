@@ -1,5 +1,6 @@
 import type { NeoAttentionEvent } from '../neo/attention/decide.ts';
 import { createNeoFrontHandler } from '../neo/front-job.ts';
+import { createStagedImages, stagedAttachmentDirectory } from './attachment-upload-route.ts';
 import { readCodingTodoWorker } from '../neo/packs/coding/worker-read.ts';
 import { codingProjectIdentity } from '../neo/packs/coding/project-cleanup.ts';
 import { createPeerMessageRoute } from '../../routes/neo-peer-message.ts';
@@ -25,6 +26,8 @@ import type { createCodexSetup } from '../drivers/codex-setup.ts';
 import { sharedLiveSessions } from '../drivers/claude-desktop-adapter.ts';
 import { spawnProcess } from '../runtime-spawn/index.ts';
 import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
+import { createRemoteSendForwarder } from '../remote-daemons/forward-send.ts';
+import { remoteDaemons } from '../remote-daemons/registry.ts';
 import { join, resolve } from 'node:path';
 import { collectFamilyOperations, type FamilyOperationContext } from './family-operations/index.ts';
 import type { SpaceRpc, SpaceRpcFactory } from './space-rpc.ts';
@@ -384,6 +387,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
     readGithubReviewThreads: (url, workspacePath) =>
       neoService.readReviewThreads(url, workspacePath),
   });
+  const stagedImages = createStagedImages(stagedAttachmentDirectory(deps.config.dbPath));
   setupSessionHandlers(
     deps.messageHub,
     deps.sessionManager,
@@ -392,6 +396,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
     undefined,
     {
       writeToolPreferences,
+      stagedImages,
       ensureSession: async (target) => {
         if (space) return space.ensureSession(target);
         const sessionId = target.kind === 'session' ? target.sessionId : null;
@@ -427,7 +432,9 @@ export async function setupRPCHandlers<SpaceServices = never>(
       const session = deps.sessionManager.getSessionFromDB(sessionId);
       return !!session && !['archived', 'ended'].includes(session.status);
     },
+    hasRemoteDaemon: (daemonId) => remoteDaemons.has(daemonId),
     handoff: (args) => handoffPromptToMailbox({ ...args, jobQueue: deps.jobQueue }),
+    forwardRemote: createRemoteSendForwarder(remoteDaemons),
     onError: (error) => log.warn('Claude inbox reply could not be persisted', error),
   });
   void claudeInbox.listen().catch((error) => log.warn('Claude reply inbox not reopened', error));
@@ -519,7 +526,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
     ...(space?.familyOperations(boundFamilyContext) ?? []),
     ...deps.extensions.operations(),
     createDaemonExtensionsOperation(deps.extensions),
-    ...createNeoOperations(neoService, codingProjectIdentity, readCodingTodoWorker),
+    ...createNeoOperations(neoService, codingProjectIdentity, readCodingTodoWorker, stagedImages),
     ...createVoiceTestOperations(deps.settingsManager, providerCredentialManager),
     ...createNeoHomeOperations(neoService, neoHome),
     createNeoHomeGithubOperation(neoService, neoHome),

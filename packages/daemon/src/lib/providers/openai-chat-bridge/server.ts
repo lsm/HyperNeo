@@ -1,3 +1,4 @@
+import { collapseDesktopObservations } from '../desktop-observation-collapse.ts';
 import { sendJsonError, sendRetryableUpstreamError } from '../shared/json-error-response.js';
 import type { ThinkingOffEffort } from '@hyperneo/shared';
 import {
@@ -59,6 +60,7 @@ export type OpenAIChatBridgeConfig = {
   sessionTokenPrefix?: string;
   sessionHeaders?: (sessionId: string) => Record<string, string>;
   fetchImpl?: typeof fetch;
+  collapseDesktopObservations?: boolean;
   toolUseSupported?: boolean;
   visionSupported?: boolean;
   thinkingSupported?: boolean;
@@ -720,7 +722,10 @@ export async function createOpenAIChatBridgeServer(
 
       if (url.pathname === '/v1/messages/count_tokens' && req.method === 'POST') {
         try {
-          const body = (await req.json()) as AnthropicRequest;
+          const request = (await req.json()) as AnthropicRequest;
+          const body = config.collapseDesktopObservations
+            ? collapseDesktopObservations(request)
+            : request;
           return new Response(
             JSON.stringify({ input_tokens: estimateAnthropicInputTokens(body) }),
             { headers: { 'Content-Type': 'application/json' } }
@@ -748,6 +753,8 @@ export async function createOpenAIChatBridgeServer(
           'Missing required fields: model and messages'
         );
       }
+
+      if (config.collapseDesktopObservations) body = collapseDesktopObservations(body);
 
       const sessionThinkingEntry = sessionThinkingConfigs.get(sessionId);
       if (sessionThinkingEntry?.thinking && (!body.thinking || body.thinking.type === 'adaptive')) {

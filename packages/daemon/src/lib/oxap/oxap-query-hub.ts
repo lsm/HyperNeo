@@ -1,9 +1,13 @@
 import { EventEmitter, on } from 'node:events';
 import { generateUUID } from '@hyperneo/shared';
-import { oxapSupportsImages } from '@hyperneo/shared/types/oxap-harnesses';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import {
+  type OxapHarnessId,
+  oxapHarness,
+  oxapSupportsImages,
+} from '@hyperneo/shared/types/oxap-harnesses';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { OxapHubRequestError, type OxapHubClient } from './oxap-hub-client.ts';
+import { type OxapHubClient, OxapHubRequestError } from './oxap-hub-client.ts';
 import type { OxapQueryHub } from './oxap-query.ts';
 
 type Event = { type: string; run_id: string; [key: string]: unknown };
@@ -99,6 +103,22 @@ const prepareSubmit = (superpipe({})('oap.query.submit') as PipelineAPI)
   modelId: string | undefined,
   images: boolean
 ) => ReturnType<typeof submitParameters>;
+
+export async function updateOxapReasoning(client: OxapHubClient, sessionId: string, level: string) {
+  const response = (await client.request('settings', {
+    session_id: sessionId,
+    request: envelope(generateUUID(), 'session.settings.update.request', sessionId, {
+      session_id: sessionId,
+      reasoning_level: level,
+    }),
+  })) as { type?: unknown; payload?: { session_id?: unknown; reasoning_level?: unknown } };
+  if (
+    response?.type !== 'session.settings.update.response' ||
+    response.payload?.session_id !== sessionId ||
+    response.payload.reasoning_level !== level
+  )
+    throw new Error('OXAP did not confirm the selected thinking level');
+}
 
 async function bindDeepSeekModel(client: OxapHubClient, sessionId: string, modelId: string) {
   const response = (await client.request('session.model.switch', {
@@ -201,10 +221,16 @@ const planResubmit = (superpipe({})('oap.query.reconcileSubmit') as PipelineAPI)
 
 export function createOxapQueryHub(
   client: OxapHubClient,
-  model?: { adapter: string; id: () => string | undefined }
+  model?: {
+    adapter: string;
+    harness?: OxapHarnessId;
+    id: () => string | undefined;
+    onFirstEvent?: (event: Event) => Promise<void>;
+  }
 ): OxapQueryHub {
   const uncertainSessions = new Set<string>();
   let selects: boolean | undefined;
+  let initialized = false;
   let active: Stream | undefined;
   let starting: { owner: symbol } | undefined;
   return {
@@ -234,7 +260,8 @@ export function createOxapQueryHub(
           uncertainSessions.delete(sessionId);
         }
         const selectedModel = model?.id();
-        const deepSeek = model?.adapter === 'deepseek';
+        const harness = model?.harness;
+        const deepSeek = harness && oxapHarness(harness).adapter === 'deepseek';
         let boundModel: string | undefined;
         if (deepSeek && selectedModel) {
           boundModel = await bindDeepSeekModel(client, sessionId, selectedModel);
@@ -246,7 +273,7 @@ export function createOxapQueryHub(
           generateUUID(),
           message,
           selects ? selectedModel : undefined,
-          deepSeek && oxapSupportsImages('oxap-deepseek', boundModel)
+          harness !== undefined && oxapSupportsImages(harness, boundModel)
         );
         const emitter = new EventEmitter();
         const events = on(emitter, 'event') as AsyncIterableIterator<[Event | Error]>;
@@ -303,7 +330,12 @@ export function createOxapQueryHub(
         for await (const [value] of stream.events) {
           if (value instanceof Error) throw value;
           if (typeof value.session_id === 'string' && value.session_id !== sessionId) continue;
-          if (value.run_id === expectedRunId) yield value;
+          if (value.run_id !== expectedRunId) continue;
+          if (!initialized && model?.onFirstEvent) {
+            await model.onFirstEvent(value);
+            initialized = true;
+          }
+          yield value;
         }
       } finally {
         signal.removeEventListener('abort', abort);

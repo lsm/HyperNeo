@@ -29,7 +29,7 @@ import {
   type NeoTodoPolicyScope,
   type NeoTodoRepositoryDraft,
 } from './pack-contract.ts';
-import { wireNeoTodoAdd } from './todo-add-operation.ts';
+import { requireNeoTodoAddAsk, wireNeoTodoAdd } from './todo-add-operation.ts';
 import {
   readNeoTodoCompletion,
   requireNeoTodoMayFinish,
@@ -142,7 +142,7 @@ const Add = TodoDraft.extend({
     'The topic of a new ask, up to 12 display cells. Joining an existing ask keeps its topic.'
   ),
   desktopApps: DesktopAppsSchema.optional().describe(
-    'Bundle ids of the apps on this Mac this todo drives. Each must be on its ask’s approved proposal card, or named by the human message in input. Only this todo gets them. For any other app, propose a new ask with desktopApps.'
+    'Bundle ids of the apps on this Mac this todo drives. Each must be on its ask’s approved proposal card with the visibility disclosure. Only this todo gets them. For any other app, propose a new ask with desktopApps.'
   ),
   after: z
     .array(Text)
@@ -170,14 +170,15 @@ export type NeoTodoPolicy = {
 export function planNeoTodoDraft<T extends Pick<NeoTodo, 'check' | 'instruction'>>(
   draft: T,
   packs: readonly NeoTodoPolicy[],
-  peers: readonly NeoTodo[] = []
+  peers?: readonly NeoTodo[],
+  boundWorker?: boolean
 ): Gate<T & { doneWhen: string; records?: string[] }> {
   const pack = draft.check && packs.find((item) => item.id === draft.check?.pack)?.todos;
   if (!draft.check || !pack)
     return fail('check_required: use a completion check from an installed pack.');
-  const refused = pack?.refuse?.(draft, peers);
+  const refused = pack.refuse?.({ ...draft, boundWorker }, peers);
   if (refused) return fail(`check_refused: ${refused}`);
-  const recorded = pack?.record?.(draft, peers);
+  const recorded = pack.record?.(draft, peers);
   const doneWhen = pack.doneWhen?.(draft.check);
   if (!doneWhen) return fail(`check_unsupported: ${draft.check.pack}.${draft.check.kind}.`);
   return {
@@ -282,11 +283,8 @@ export async function recordNeoTodo(
   if (placeless) return { ok: false, reason: placeless };
   const misplaced = neoEvidencePathRefusal(input.check, null, getDataDir());
   if (misplaced) return { ok: false, reason: misplaced };
-  if (ask.status !== 'open')
-    return {
-      ok: true,
-      records: [`ask_settled: ${ask.title} is settled; nothing was added.`],
-    };
+  const open = requireNeoTodoAddAsk(ask);
+  if ('reason' in open) return open.reason;
   const accepted = planNeoTodoDraft(draft, packs, peers);
   if ('reason' in accepted) return accepted.reason;
   const records = accepted.value.records ? { records: accepted.value.records } : {};
@@ -607,9 +605,10 @@ export function createNeoTodoOperations(
         },
       };
     const accepted = planNeoTodoDraft(
-      { ...plan.todo, check },
+      { ...plan.todo, check, instruction: input.instruction ?? plan.todo.instruction },
       packs(),
-      todos.listTodos(plan.todo.askId)
+      todos.listTodos(plan.todo.askId),
+      !!sessions.readRef(plan.todo.id)
     );
     if ('reason' in accepted) return accepted;
     const records = [
@@ -664,7 +663,12 @@ export function createNeoTodoOperations(
       if ('reason' in answered) return answered.reason;
     }
     if (plan.patch.check) {
-      const accepted = planNeoTodoDraft(plan.todo, packs(), todos.listTodos(plan.todo.askId));
+      const accepted = planNeoTodoDraft(
+        plan.todo,
+        packs(),
+        todos.listTodos(plan.todo.askId),
+        !!sessions.readRef(plan.todo.id)
+      );
       if ('reason' in accepted) return accepted.reason;
     }
     const todo = await controls.recompute(plan.todo, plan.patch);
@@ -680,18 +684,16 @@ export function createNeoTodoOperations(
       ? { ok: false, reason: `${failed}; the todo is unchanged, its session may still run.` }
       : write(plan);
   };
-  const admit = (ask: NeoAsk | null, todo?: NeoTodo) =>
+  const admit = (ask: NeoAsk | null, todo: NeoTodo) =>
     ask && ask.status !== 'open'
       ? {
           reason: {
             ok: true as const,
-            ...(todo ? { todo } : {}),
+            todo,
             records: [`ask_settled: this ask is ${ask.status}; no change was made.`],
           },
         }
-      : todo
-        ? requireNeoOpenTodo(todo, ask)
-        : requireNeoOpenAsk(ask);
+      : requireNeoOpenTodo(todo, ask);
   const owned = (pipeline: PipelineAPI) =>
     pipeline
       .input(['input', 'caller'])
@@ -714,7 +716,7 @@ export function createNeoTodoOperations(
     )
     .pipe(
       (binding: Awaited<ReturnType<typeof resolveNeoInputAsk>>) =>
-        'reason' in binding ? binding : admit(todos.getAsk(binding.value.askId)),
+        'reason' in binding ? binding : requireNeoTodoAddAsk(todos.getAsk(binding.value.askId)),
       'binding',
       'result:outcome'
     )

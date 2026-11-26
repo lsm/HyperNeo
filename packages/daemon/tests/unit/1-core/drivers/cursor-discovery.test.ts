@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createCursorDiscovery } from '../../../../src/lib/drivers/cursor-discovery.ts';
 
-const peer = vi.hoisted(() => ({ request: vi.fn(), close: vi.fn() }));
+const peer = vi.hoisted(() => ({ created: vi.fn(), request: vi.fn(), close: vi.fn() }));
 
 vi.mock('../../../../src/lib/process-json-rpc.ts', () => ({
   ProcessJsonRpcTransport: class {
+    constructor(options: unknown) {
+      peer.created(options);
+    }
     sendRequest = peer.request;
     close = peer.close;
   },
@@ -66,5 +69,24 @@ describe('Cursor CLI discovery', () => {
       .mockResolvedValueOnce({ result: { sessions: [{ sessionId: 'invalid', cwd: 'relative' }] } });
     await expect(adapter.find(query)).rejects.toThrow('invalid session metadata');
     expect(peer.close).toHaveBeenCalledOnce();
+  });
+
+  it('waits through a slow cursor-agent cold start before giving up on a request', async () => {
+    let answer!: (value: unknown) => void;
+    peer.request
+      .mockReturnValueOnce(new Promise((resolve) => (answer = resolve)))
+      .mockResolvedValueOnce({ result: { sessions: [first] } });
+    vi.useFakeTimers();
+    try {
+      const found = adapter.find(query);
+      await vi.advanceTimersByTimeAsync(12_000);
+      answer(handshake);
+      expect((await found).map(({ place }) => place.folder)).toEqual(['/first']);
+      expect(peer.created).toHaveBeenCalledWith(
+        expect.objectContaining({ requestTimeoutMs: 15_000 })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

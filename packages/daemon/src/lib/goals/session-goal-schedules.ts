@@ -1,13 +1,14 @@
 import { GOAL_SESSION_CYCLE, NEO_GOAL_CYCLE } from '@hyperneo/prompts';
 import { createHash } from 'node:crypto';
-import type { SessionGoal } from '@hyperneo/shared/types/session-goal';
+import type { GoalJournalEntry, SessionGoal } from '@hyperneo/shared/types/session-goal';
 import type { SessionGoalRepository } from '../../storage/repositories/session-goal-repository.ts';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { SessionScheduleCadence } from '../../storage/repositories/session-schedule-repository.ts';
 import type { NeoPack } from '../neo/pack-contract.ts';
 import type { ScheduleSource, SessionScheduler } from '../scheduler/session-schedules.ts';
-import { openHumanCard } from '../neo/human-card.ts';
-import type { NeoQuestion } from '@hyperneo/shared/types/neo-ask';
+import { choiceCard, openHumanCard } from '../neo/human-card.ts';
+import { isHumanWorkDecision } from '../neo/proposal.ts';
+import type { NeoAsk, NeoQuestion } from '@hyperneo/shared/types/neo-ask';
 import { metricKey, readMetric, readPoint } from './session-goal-metric.ts';
 
 export class SessionGoalSchedules implements ScheduleSource {
@@ -147,41 +148,99 @@ export class SessionGoalSchedules implements ScheduleSource {
     const config = this.goals.wakeSchedule(goal.id);
     if (!config) return;
     const limit = config.noEffectReviewLimit ?? 3;
-    const effects = this.goals.recentReviewEffects(goal.id, config.escalationReviewId, 100);
-    const firstEffect = effects.findIndex(({ effect }) => effect !== 'no');
-    const count = firstEffect < 0 ? effects.length : firstEffect;
+    const reviews = this.goals.listJournal(goal.id, null, 100, config.escalationReviewId ?? null);
+    const firstEffect = reviews.findIndex(({ effect }) => effect !== 'no');
+    const count = firstEffect < 0 ? reviews.length : firstEffect;
     this.goals.saveWakeSchedule(goal.id, { ...config, noEffectReviewCount: count });
     if (count < limit) return;
-    const neo = this.neoSession(goal.ownerSessionId);
-    if (!neo) throw new Error('Cannot ask the human without a Neo session');
-    const askId = crypto.randomUUID();
     const questionId = crypto.randomUUID();
-    const text = `The goal "${goal.title}" had ${limit} reviews without effect. What should change, or should it stop?`;
+    const text = `The goal "${goal.title}" had ${limit} reviews in a row without effect and is paused. Continue as is, stop it, or reply with what should change?`;
     const now = Date.now();
-    this.asks.openAsk({
-      id: askId,
-      goalId: goal.id,
-      sessionId: neo,
-      projectId: null,
-      originMessageId: null,
-      title: goal.title,
-      request: text,
-      createdAt: now,
-    });
     openHumanCard(
       this.asks,
       questionId,
-      askId,
-      { text, kind: 'reply', options: null, multiple: false, noLabel: null, yesLabel: null },
+      this.reviewAsk(goal, text, now).id,
+      {
+        ...choiceCard(text, ['Continue as is', 'Stop the goal']),
+        todos: [],
+        document: this.reviewContext(goal, reviews.slice(0, limit)),
+      },
       now
     );
     this.goals.saveWakeSchedule(goal.id, {
       ...config,
       noEffectReviewCount: count,
-      escalationReviewId: effects[0]!.id,
+      escalationReviewId: reviews[0]!.id,
       escalationQuestionId: questionId,
     });
     this.goals.update(goal, { status: 'paused' }, now, (updated) => this.sync(updated));
+  }
+
+  private reviewAsk(goal: SessionGoal, request: string, now: number): NeoAsk {
+    const neo = this.neoSession(goal.ownerSessionId);
+    if (!neo) throw new Error('Cannot ask the human without a Neo session');
+    const asks = this.asks.listGoalAsks(goal.id).filter((ask) => ask.sessionId === neo);
+    return (
+      asks.find(
+        (ask) =>
+          ask.status === 'open' &&
+          !this.asks
+            .listQuestions(ask.id)
+            .some((question) => question.state === 'open' && isHumanWorkDecision(question))
+      ) ??
+      this.asks.openAsk({
+        id: crypto.randomUUID(),
+        goalId: goal.id,
+        sessionId: neo,
+        projectId: asks[0]?.projectId ?? null,
+        topic: asks[0]?.topic ?? null,
+        originMessageId: null,
+        title: goal.title,
+        request,
+        createdAt: now,
+      })
+    );
+  }
+
+  goalAskProblem(askId: string, owner: string): string | null {
+    const ask = this.asks.getAsk(askId);
+    if (!ask || ask.sessionId !== this.neoSession(owner))
+      return 'ask_not_found: no such ask of this Neo.';
+    if (ask.status !== 'open') return `ask_settled: this ask is ${ask.status}.`;
+    return ask.goalId ? 'ask_has_goal: this ask already belongs to a goal.' : null;
+  }
+
+  linkAsk(askId: string, goalId: string, owner: string): void {
+    if (this.goalAskProblem(askId, owner) || !this.asks.linkAskGoal(askId, goalId, Date.now()))
+      throw new Error('The ask changed before the goal was created');
+  }
+
+  private reviewContext(goal: SessionGoal, reviews: readonly GoalJournalEntry[]): string {
+    const metric = readMetric(goal);
+    const latest = reviews.map(readPoint).find((point) => point !== null);
+    const inFlight = this.asks
+      .listTodosForAsks(this.asks.listGoalAsks(goal.id).map((ask) => ask.id))
+      .filter((todo) => todo.state !== 'done' && todo.state !== 'removed');
+    return [
+      ...(metric
+        ? [
+            `Metric: ${metric.name}; baseline ${metric.baseline}, latest ${latest?.value ?? 'not measured'}, target ${metric.target} (${metric.direction}).`,
+            '',
+          ]
+        : []),
+      'Recent reviews, newest first:',
+      ...reviews.map((entry) => {
+        const point = readPoint(entry);
+        return `- ${entry.done}${point ? ` (measured ${point.value})` : ''}`;
+      }),
+      '',
+      'In flight:',
+      ...(inFlight.length
+        ? inFlight.map((todo) => `- ${todo.title}: ${todo.state}`)
+        : ['- Nothing open.']),
+      '',
+      'A review counts as no effect when its reviewer saw none, even if a fix from that period is not measurable yet.',
+    ].join('\n');
   }
 
   requireAnsweredReview(goal: SessionGoal): boolean {
@@ -204,35 +263,23 @@ export class SessionGoalSchedules implements ScheduleSource {
       const question = this.reviewQuestion(goal);
       if (!question || question.state !== 'retired') return false;
       const config = this.goals.wakeSchedule(goal.id)!;
-      let ask = this.asks.getAsk(question.askId);
-      if (!ask || ask.status !== 'open') {
-        const neo = this.neoSession(goal.ownerSessionId);
-        if (!neo) throw new Error('Cannot ask the human without a Neo session');
-        ask = this.asks.openAsk({
-          id: crypto.randomUUID(),
-          goalId: goal.id,
-          sessionId: neo,
-          projectId: null,
-          originMessageId: null,
-          title: goal.title,
-          request: question.text,
-          createdAt: Date.now(),
-        });
-      }
+      const now = Date.now();
       const id = crypto.randomUUID();
       openHumanCard(
         this.asks,
         id,
-        ask.id,
+        this.reviewAsk(goal, question.text, now).id,
         {
           text: question.text,
-          kind: 'reply',
-          options: null,
-          multiple: false,
-          noLabel: null,
-          yesLabel: null,
+          kind: question.kind,
+          options: question.options,
+          multiple: question.multiple,
+          noLabel: question.noLabel,
+          yesLabel: question.yesLabel,
+          document: question.document,
+          todos: [],
         },
-        Date.now()
+        now
       );
       this.goals.saveWakeSchedule(goal.id, { ...config, escalationQuestionId: id });
       return true;

@@ -4,6 +4,7 @@ import {
   deliverCodingPrEvents,
 } from '../../../../src/lib/neo/packs/coding/pr-events.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
+import { runMigration425 } from '../../../../src/storage/schema/m425-message-send-receipts.ts';
 import { createNeoPackPreferencesTable } from '../../../../src/storage/schema/m426-neo-pack-preferences.ts';
 import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
@@ -13,6 +14,7 @@ for (const readOnly of [false, true]) {
     const main = new Database(':memory:'),
       writer = new Database(':memory:');
     for (const db of [main, writer]) {
+      runMigration425(db);
       createNeoPackPreferencesTable(db);
       createCodingPackTables(db, 0);
     }
@@ -51,7 +53,11 @@ for (const readOnly of [false, true]) {
     const fault = readOnly
       ? null
       : spyOn(main, 'prepare').mockImplementation(((sql: string) => {
-          if (/pack_coding_pr_ledger|neo_pack_preferences|pack_coding_repo_aliases/.test(sql))
+          if (
+            /pack_coding_pr_ledger|neo_pack_preferences|pack_coding_repo_aliases|message_send_receipts/.test(
+              sql
+            )
+          )
             throw new Error('PR delivery SQL on main');
           return prepare(sql);
         }) as typeof main.prepare);

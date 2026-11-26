@@ -21,7 +21,11 @@ import {
   type CodingPrState,
 } from './pr-ledger.ts';
 import type { CodingPrEventRepository } from './pr-events.ts';
-import type { CodingSweepDeps } from './pr-sweep.ts';
+import {
+  codingDeliveryKey,
+  codingFailingReviewReceiptKey,
+  type CodingSweepDeps,
+} from './pr-sweep.ts';
 import {
   codingMergeFactReadFailed,
   readCodingDaemonMergeFacts,
@@ -121,7 +125,14 @@ export function createCodingDaemonMergeSweep(
     const text = receipt.mergeCommit
       ? `Merge confirmed: ${receipt.url} head ${receipt.head}, commit ${receipt.mergeCommit}. Receipt executor ${receipt.actor}; confirmation sweep ${new Date(receipt.mergedAt!).toISOString()}.`
       : `Daemon merge held: ${receipt.url} head ${receipt.head}. The daemon started a merge on this head and never confirmed it, and the pull request is no longer open.${receipt.error ? ` Last error: ${receipt.error}.` : ''} Check on GitHub how it closed before any manual action.`;
-    const told = owner && (await delivery.tell(owner, key, text, receipt.url).catch(() => false));
+    const told =
+      !!owner && (await delivery.tell(owner, key, text, receipt.url).catch(() => false)) === true;
+    if (told && owner && receipt.mergeCommit) {
+      const eventKey = codingDeliveryKey(
+        `neo-pr-event:${org}/${repo}#${number}:${receipt.head}:merged`
+      );
+      await events.markReview(codingFailingReviewReceiptKey(eventKey, owner));
+    }
     const notified =
       told ||
       (await attend(

@@ -1,5 +1,10 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { parseAddress, renderAddress } from '../mailbox/address.ts';
+import {
+  parseAddress,
+  parseRemoteAddress,
+  renderAddress,
+  renderRemoteAddress,
+} from '../mailbox/address.ts';
 import { readClaudeInboxEndpoint, type ClaudeCliInboxEndpoint } from './claude-inbox-endpoint.ts';
 import type { ClaudeInboxSubmission, ClaudeInboxTarget } from './claude-inbox.ts';
 import type { ClaudeSessionIdentity, ClaudeSessionOwner } from './claude-session-owner.ts';
@@ -10,6 +15,7 @@ interface ClaudeInboxSubmitDeps {
   registrationsDir: string;
   liveSessions(): Promise<readonly (ClaudeSessionIdentity & { owner?: ClaudeSessionOwner })[]>;
   hasSession(sessionId: string): boolean;
+  hasRemoteDaemon(daemonId: string): boolean;
   write(
     target: ClaudeInboxTarget,
     returnTo: string,
@@ -32,6 +38,17 @@ export function requireClaudeReplyDestination(
   return deps.hasSession(destination.sessionId)
     ? { value: renderAddress(destination) }
     : { reason: reject('unreachable', 'The Claude inbox reply destination is unavailable.') };
+}
+
+export function requireClaudeInboxReplyDestination(
+  context: Pick<WorkCallContext, 'from'>,
+  deps: Pick<ClaudeInboxSubmitDeps, 'hasSession' | 'hasRemoteDaemon'>
+): { value: string } | { reason: Rejected } {
+  const remote = parseRemoteAddress(context.from);
+  if (remote === null) return requireClaudeReplyDestination(context, deps);
+  return deps.hasRemoteDaemon(remote.daemonId)
+    ? { value: renderRemoteAddress(remote) }
+    : { reason: reject('unreachable', 'The Claude inbox reply daemon is not attached.') };
 }
 
 async function requireSubmissionEndpoint(
@@ -69,7 +86,7 @@ export const submitClaudeInboxMessage = (
   .input(['sessionId', 'submission', 'context', 'deps'])
   .pipe(requireSubmissionEndpoint, ['sessionId', 'deps'], 'result:outcome')
   .pipe((target: ClaudeCliInboxEndpoint) => target, 'outcome', 'target')
-  .pipe(requireClaudeReplyDestination, ['context', 'deps'], 'result:outcome')
+  .pipe(requireClaudeInboxReplyDestination, ['context', 'deps'], 'result:outcome')
   .pipe(writeSubmission, ['target', 'outcome', 'submission', 'deps'], 'outcome')
   .endAsync('outcome') as (
   sessionId: string,

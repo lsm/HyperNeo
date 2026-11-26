@@ -628,7 +628,9 @@ describe('ProvidersSettings', () => {
 
   it('saves the selected harness through the OXAP operation', async () => {
     const provider = createMockProvider('1', 'anthropic-codex', { displayName: 'Codex' });
-    mockListProviders.mockResolvedValue({ providers: [provider] });
+    mockListProviders.mockResolvedValue({
+      providers: [{ ...provider, detectedHarnessExecutable: '/detected/codex' }],
+    });
     mockRequest.mockImplementation(async (method: string) =>
       method === 'operation.invoke'
         ? { accepted: true }
@@ -646,16 +648,17 @@ describe('ProvidersSettings', () => {
     );
     render(<ProvidersSettings />);
     fireEvent.click(await screen.findByText('Codex'));
-    fireEvent.change(screen.getByLabelText('Harness', { exact: true }), {
+    fireEvent.change(screen.getByLabelText('Client', { exact: true }), {
       target: { value: 'oxap-codex' },
     });
-    expect(screen.getByText('Hub not installed')).toBeTruthy();
-    expect(screen.getByPlaceholderText('Absolute path to OXAP Codex executable')).toBeTruthy();
-    expect(screen.getByText('An absolute path is required.')).toBeTruthy();
-    fireEvent.input(screen.getByLabelText('Harness executable'), {
+    expect(screen.getByText('OXAP is not installed')).toBeTruthy();
+    const field = screen.getByLabelText('Codex CLI path') as HTMLInputElement;
+    expect(field.placeholder).toBe('Absolute path to codex');
+    expect(field.value).toBe('/detected/codex');
+    fireEvent.input(field, {
       target: { value: '/synthetic/codex' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Save harness' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save client' }));
     await waitFor(() =>
       expect(mockRequest).toHaveBeenCalledWith(
         'operation.invoke',
@@ -684,13 +687,13 @@ describe('ProvidersSettings', () => {
     mockRequest.mockResolvedValue({ accepted: true });
     render(<ProvidersSettings />);
     fireEvent.click(await screen.findByText('DeepSeek'));
-    expect((screen.getByLabelText('Harness', { exact: true }) as HTMLSelectElement).value).toBe(
+    expect((screen.getByLabelText('Client', { exact: true }) as HTMLSelectElement).value).toBe(
       'sdk'
     );
-    const executable = screen.getByLabelText('Harness executable') as HTMLInputElement;
+    const executable = screen.getByLabelText('DeepSeek harness path') as HTMLInputElement;
     expect(executable.value).toBe('/synthetic/dsh');
     fireEvent.input(executable, { target: { value: '/synthetic/dsh-updated' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save harness' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save client' }));
     await waitFor(() =>
       expect(mockRequest).toHaveBeenCalledWith(
         'operation.invoke',
@@ -747,9 +750,9 @@ describe('ProvidersSettings', () => {
     });
   });
 
-  it('links the provider default explanation to Sessions & Harness', async () => {
+  it('links the provider default explanation to Sessions & Clients', async () => {
     render(<ProvidersSettings />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Sessions & Harness' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Sessions & Clients' }));
     expect(mockNavigateToSettings).toHaveBeenCalledWith('harness');
   });
 
@@ -1108,6 +1111,29 @@ describe('ProvidersSettings', () => {
     await waitFor(() => {
       expect(mockLoginProvider).toHaveBeenCalledWith('anthropic-copilot');
     });
+  });
+
+  it('shows the signed-in Claude account on the Anthropic provider row', async () => {
+    mockListProviders.mockResolvedValue({
+      providers: [createMockProvider('1', 'anthropic', { authType: 'oauth', available: true })],
+    });
+    mockListProviderAuthStatus.mockResolvedValue({
+      providers: [
+        {
+          id: 'anthropic',
+          displayName: 'Anthropic',
+          isAuthenticated: true,
+          method: 'oauth',
+          credentialSource: 'hyperneo',
+          user: { email: 'replacement@example.test' },
+        },
+      ],
+    });
+
+    render(<ProvidersSettings />);
+
+    expect(await screen.findByText('Signed in as replacement@example.test')).toBeTruthy();
+    expect(screen.getByText('Credential source: HyperNeo')).toBeTruthy();
   });
 
   it('shows OAuth logout button for authenticated OAuth provider', async () => {
