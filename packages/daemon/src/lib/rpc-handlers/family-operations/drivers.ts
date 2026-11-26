@@ -808,6 +808,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     health: health.read,
     remote: remoteDaemons,
     daemonName: machine,
+    replyDaemonId: context.deps.config.replyDaemonId,
     startPlace: neoStartPlace({
       db: db(),
       machine,

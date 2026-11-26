@@ -20,6 +20,11 @@ GET of `/ws` returns 204; the web app uses it to show pairing when necessary.
   A private Unix socket also requires this credential. Source address and Host
   headers never grant owner access.
 
+When a daemon sends work to a paired worker, it normally uses its OS hostname
+in the reply address. If the worker's reverse attachment has a different ID,
+set `HYPERNEO_DAEMON_ID` in the sending daemon's environment to that exact ID.
+The worker uses its existing paired attachment to route the reply.
+
 The local credential has owner privileges. Do not paste it into messages, logs,
 URLs or repository files. Symlinks, another user's files and group/world-readable
 credential files are refused. Restart reuses the credential and does not undo
