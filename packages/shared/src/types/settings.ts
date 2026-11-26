@@ -210,6 +210,7 @@ export interface DriverHealth {
 export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
   driverHealth?: Record<string, DriverHealth>;
   workerSandbox?: WorkerSandboxMode;
+  desktopObservationCollapse?: boolean;
   toolSelectionDefaults?: SessionToolSelection;
 
   settingSources: SettingSource[];

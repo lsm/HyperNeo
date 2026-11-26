@@ -60,7 +60,7 @@ export type OpenAIChatBridgeConfig = {
   sessionTokenPrefix?: string;
   sessionHeaders?: (sessionId: string) => Record<string, string>;
   fetchImpl?: typeof fetch;
-  collapseDesktopObservations?: boolean;
+  collapseDesktopObservations?: () => boolean;
   toolUseSupported?: boolean;
   visionSupported?: boolean;
   thinkingSupported?: boolean;
@@ -723,7 +723,7 @@ export async function createOpenAIChatBridgeServer(
       if (url.pathname === '/v1/messages/count_tokens' && req.method === 'POST') {
         try {
           const request = (await req.json()) as AnthropicRequest;
-          const body = config.collapseDesktopObservations
+          const body = config.collapseDesktopObservations?.()
             ? collapseDesktopObservations(request)
             : request;
           return new Response(
@@ -754,7 +754,7 @@ export async function createOpenAIChatBridgeServer(
         );
       }
 
-      if (config.collapseDesktopObservations) body = collapseDesktopObservations(body);
+      if (config.collapseDesktopObservations?.()) body = collapseDesktopObservations(body);
 
       const sessionThinkingEntry = sessionThinkingConfigs.get(sessionId);
       if (sessionThinkingEntry?.thinking && (!body.thinking || body.thinking.type === 'adaptive')) {
