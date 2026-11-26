@@ -84,10 +84,16 @@ so a content filter cannot be the boundary. The boundary is the app, and it fail
 
 - `desktop.call` refuses any action or capture outside the apps listed on the todo
   (`desktop/opt-in.ts`); nothing from another app reaches the model.
-- The approval says what it covers. Neo's line before the Mac's dialog
-  (`computer-use/instructions.md`) changes from "let HyperNeo control that app" to "the
-  worker and its model will see everything that app shows, on every page". An app the human
-  should not show in full is not approved, and the step goes to the human instead.
+- Only an app on an approved card counts. The card's app line (`desktopAppsLine`,
+  `desktop/app-scope.ts`) changes from the app names alone to the names plus "the worker and
+  its model will see everything these apps show, on every page", written by code, so every
+  surface shows it. Approving the card is the consent, per ask. Two paths that skip it today
+  close: a todo can no longer claim an app only because the human's message names it
+  (`neoTodoDesktopScope`, `neo/todo-add-operation.ts`), so it must be on the ask's approved
+  card (`neo_asks.desktop_apps`); and an existing Mac grant or Allow all no longer stands in
+  for it, because `readDesktopTodos` (`desktop/opt-in.ts`) treats a todo as allowed only when
+  each of its apps is on its ask's card. An app the human should not show in full is not
+  approved, and the step goes to the human instead.
 
 On top of that, and only as a second line, the accessibility text of each result is matched
 against known secret shapes (private key headers; token prefixes such as `sk-`, `ghp_`,
@@ -146,8 +152,10 @@ never the laptop. System map read for the planned files.
    list it; a desktop todo that is also coding work keeps the coding rules and merge policy; a
    coding todo and a Codex worker keep today's brief; a templated session is not reused for
    another todo and the reverse; `Read` of a protected file is refused; a result whose
-   accessibility text holds a token shape comes back with a marker and no screenshot.
-   Estimate: 8 files, 170 lines, 230 test lines.
+   accessibility text holds a token shape comes back with a marker and no screenshot; a todo
+   claiming an app only by the human's message is refused; a capture for an app the Mac
+   allows but the ask's card does not list is refused; the card shows the visibility line.
+   Estimate: 10 files, 190 lines, 270 test lines.
 2. **Top-level desktop tools and timing.** The template adds the catalog tools. Tests: the
    template session lists them and no Bash; a call reaches `desktop.call` with the same
    refusals, including an app that was not approved; results carry `at` and `ms`.
