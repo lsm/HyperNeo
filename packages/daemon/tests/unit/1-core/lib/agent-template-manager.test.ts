@@ -22,6 +22,7 @@ import { runMigration246 } from '../../../../src/storage/schema/m246-template-ve
 import { runMigration243 } from '../../../../src/storage/schema/m243-space-agent-template-space-key';
 import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/space-agent-templates';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import desktopCatalog from '../../../../src/lib/desktop/tool-catalog.json' with { type: 'json' };
 
 const OWNER = 'space-owner';
 
@@ -103,7 +104,13 @@ describe('SpaceAgentTemplateManager', () => {
 
     test('keeps the desktop worker template out of Spaces', () => {
       expect(getBuiltInSpaceAgentTemplates()).toContainEqual(
-        expect.objectContaining({ key: 'worker.desktop', tools: ['invoke'] })
+        expect.objectContaining({
+          key: 'worker.desktop',
+          tools: [
+            'invoke',
+            ...desktopCatalog.map(({ name }) => `mcp__hyperneo-operations__${name}`),
+          ],
+        })
       );
       expect(new SpaceAgentTemplateManager(repo).listIn(OWNER).map(({ key }) => key)).not.toContain(
         'worker.desktop'

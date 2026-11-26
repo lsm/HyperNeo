@@ -1,4 +1,5 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import desktopCatalog from '../desktop/tool-catalog.json' with { type: 'json' };
 import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
 import {
   createOperationMcpHandler,
@@ -22,7 +23,7 @@ export function createOperationMcpServer(
   registry: OperationRegistrySource,
   resolveCaller: (operation: string) => CallerIdentity | Promise<CallerIdentity>,
   recordRefusal?: (refusal: OperationRefusal) => void | Promise<void>,
-  descriptionRole?: OperationCallerRole
+  descriptionRole?: OperationCallerRole | 'desktop'
 ) {
   const invoke = createOperationMcpHandler(registry, resolveCaller, recordRefusal);
   const discovery =
@@ -59,6 +60,17 @@ export function createOperationMcpServer(
                 : family.actions[0];
             return invoke({ name: residentOperation(family, action), input: input.input });
           }
+        )
+      );
+    }
+  } else if (descriptionRole === 'desktop') {
+    for (const { name, description, inputSchema } of desktopCatalog) {
+      const schema = z.fromJSONSchema(
+        inputSchema as unknown as z.core.JSONSchema.JSONSchema
+      ) as z.ZodObject;
+      tools.push(
+        tool(name, description, schema.shape, (args) =>
+          invoke({ name: 'desktop.call', input: { tool: name, args } })
         )
       );
     }

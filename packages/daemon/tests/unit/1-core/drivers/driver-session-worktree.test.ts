@@ -17,6 +17,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ModelInfo } from '@hyperneo/shared';
+import desktopCatalog from '../../../../src/lib/desktop/tool-catalog.json' with { type: 'json' };
 import {
   type CreateSessionParams,
   ModelUnavailableError,
@@ -579,7 +580,7 @@ describe('createDriverSession', () => {
     ]);
   });
 
-  test('starts a desktop worker with invoke as its only tool and desktop instructions', async () => {
+  test('starts a desktop worker with the catalog tools, invoke and no shell', async () => {
     const { created, manager } = sessionManager(false);
     await createDriverSession(
       manager as never,
@@ -598,9 +599,11 @@ describe('createDriverSession', () => {
       toolProfile: 'desktop',
       config: {
         sdkToolsPreset: [],
-        allowedTools: ['mcp__hyperneo-operations__invoke'],
+        allowedTools: ['invoke', ...desktopCatalog.map(({ name }) => name)].map(
+          (name) => `mcp__hyperneo-operations__${name}`
+        ),
         disallowedTools: expect.arrayContaining(['Bash', 'Write']),
-        systemPrompt: { append: expect.stringContaining('desktop.call') },
+        systemPrompt: { append: expect.stringContaining('desktop tools') },
       },
     });
   });
