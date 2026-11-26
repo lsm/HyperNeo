@@ -429,12 +429,16 @@ export class AgentSession
       },
       this.recordOperationRefusal,
       desktop ? 'desktop' : this.operationCallerIdentity().role,
-      desktop ? () => desktopReportTarget(this.db.getDatabase(), this.session.id) : undefined,
+      desktop ? () => desktopReportTarget(this.operationDatabase, this.session.id) : undefined,
     ];
   }
 
+  private get operationDatabase() {
+    return this.db.getDatabase();
+  }
+
   private readonly recordOperationRefusal = (refusal: OperationRefusal) =>
-    gatewayFor(this.db.getDatabase()).run(recordOperationRefusal, {
+    gatewayFor(this.operationDatabase).run(recordOperationRefusal, {
       refusal,
       sessionId: this.session.id,
       at: Date.now(),
