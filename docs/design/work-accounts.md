@@ -94,43 +94,31 @@ This differs from `work_turns.complete`, which describes whether the turn was fu
 
 **Which todo a turn belongs to** is not stored with the turn, because a turn can be recorded
 after its todo has moved and the binding in `neo_todo_sessions` is gone (`reopen`, redispatch,
-retry). It is read from `work_delivery_inputs`, which those do not touch: one row for every
-start and send, with the todo, the worker and the time. An adoption gets a row there too,
-verb `adopt`, with no message and already delivered: the binding's `boundAt` is replaced by a
-rebind and cleared by a move, the row is not. Readers that match a message or wait for a
-delivery skip `adopt` rows. Coding already
-reads it for pull requests (`codingTurnTodos`); that decision moves to core as two steps:
+retry). It is read from proof of delivery only, never from time. Coding already reads
+`work_delivery_inputs` for pull requests (`codingTurnTodos`); the decision moves to core as two
+steps:
 
-1. The todo whose delivery receipt names an input of the turn. Two such todos: none.
-2. Otherwise, the todos that may have reached the worker when the turn started: the newest row
-   (`start`, `send` or `adopt`) observed delivered before that moment, or the todo that started
-   the worker (`work_started_sessions`) if there is none, plus every row for that worker
-   accepted before that moment and not observed before it, whether observed later or not yet
-   (`observed_at` null), plus every uncertain failure for that worker accepted before that
-   moment, however old. If they all name one todo, the turn has it; if not, or if there are none, it
-   has none.
+1. The todo whose delivery receipt (`outcome.receipt.inputId`) names an input of the turn. Two
+   such todos: none.
+2. Otherwise the todo that started the worker (`work_started_sessions.todo_id`), if no row of
+   another todo, other than a failure marked `notSent`, was accepted for that worker before the
+   turn started. Otherwise none.
 
-Acceptance is never taken as delivery. A row is in one of five states, and step 2 treats each
-so: **accepted, in flight** (no outcome, `observed_at` null): it may already have reached the
-worker, so it is a candidate; a row whose worker is not yet known (`start`, or `todo` without
-a ref) is a candidate for the worker bound to its todo. **Observed delivered** (an outcome
-with a ref and no `failure`; a queued send or a catch-up after a restart included): a
-candidate from acceptance on, and the newest such row before the turn is the base.
-**Failed, known not sent** (`failure` with `notSent: true`): never reached the worker, never a candidate.
-**Failed, uncertain** (any other `failure`: a timeout or a lost connection after dispatch may
-still have delivered it): a candidate, for the worker its target names, for every later turn.
-Acceptance order says nothing about delivery order, so no later delivery clears it. **Adopt**: written observed at the adoption, so it is the base from then
-on. Turns of an adopted session before its adoption
-have none.
+A turn with neither has none: an adopted session's turns, a turn after a send of another todo
+that left no receipt, a turn the human starts in a shared worker.
 
-Measured on 3677 turns of one week: 962 have a receipt, 3 of them of two todos. For the other
-959 the time rule alone gives the same todo 954 times. Over all 6462 turns of that week on
-workers with a delivery row, step 2 without uncertain failures finds two todos for 622 turns
-without a receipt (9.6%), which therefore have none; 484 turns (7%) have an uncertain failure
-before them, so at most 1106 (17%) have none. How often a single todo is right is part of **Done when**.
-All 987 started or sent todos of that week have a row. The worker and the daemon run on one
-machine and share its clock. The role is the worker's newest one for that todo in
-`neo_todo_roles`, else `do`.
+**Receipts for every adapter.** Claude Code, Claude Desktop and HyperNeo already return a
+receipt with each delivery. Codex Desktop returns one only when it confirms the input at once;
+a queued send (`queuedSubmissionId`) and an unconfirmed one have none. The Codex driver already
+matches a rollout user input to the sent message (`codex-desktop-adapter.ts`, the same text
+and a fresh input id). Its turn reader (`codex-turn-reader.ts`) does that match for the
+worker's rows that have no receipt yet, and writes the receipt to the row when the input
+starts a turn.
+
+Measured on the 6624 worker turns of one week: 713 (10.8%) have a receipt and 1165 (17.6%) get
+the starting todo, so 28% have a todo today. In the same week Codex Desktop had 1732 queued
+and 856 confirmed sends without a receipt, against 301 with one. The role is the worker's
+newest one for that todo in `neo_todo_roles`, else `do`.
 
 | Adapter | Source |
 |---|---|
@@ -168,49 +156,53 @@ context a todo adds by itself (`peak - first`) is recorded, to see work that was
 
 ## Changes
 
-Six PRs from `dev`, in order, failing tests first. System map read for the planned files.
+Seven PRs from `dev`, in order, failing tests first. System map read for the planned files.
 
-1. **Turn to todo.** The decision in core and the `adopt` row; coding uses it and keeps its stricter reading of an
+1. **Turn to todo.** The decision in core; coding uses it and keeps its stricter reading of an
    uncertain turn. Tests: a turn recorded after `reopen`, a redispatch, a retry and a restart
-   keeps its todo; a failed delivery gives nothing; a receipt beats the time; two todos in one
-   turn give none; a started worker's first turn, which begins before its receipt; an adopted
-   session's earlier turns have none; after an adoption, a rebind and a move keep the adopted
-   todo for the turns between; a turn that starts while a send of another todo is accepted
-   but not yet observed has none, direct or queued, also after a restart; a reviewer keeps its
+   keeps its todo; a receipt gives its todo; two receipts give none; a started worker's turns
+   keep its todo until a row of another todo is accepted for it, and a `notSent` failure does
+   not count; an adopted session's turns without a receipt have none; a reviewer keeps its
    role.
-   Estimate: 6 files, 110 lines, 200 test lines.
-2. **Kind and estimate.** Core kinds, the checks on the two operations, the fact, the Neo tool
+   Estimate: 5 files, 80 lines, 150 test lines.
+2. **Codex receipts.** The turn reader writes the receipt for a queued or unconfirmed send when
+   its input starts a turn. Tests on real rollout shapes: a queued send gets its receipt from
+   the turn it starts; a turn between queueing and delivery gives no receipt to it; a restart
+   catches up; an input that matches no row writes nothing.
+   Estimate: 3 files, 70 lines, 140 test lines.
+3. **Kind and estimate.** Core kinds, the checks on the two operations, the fact, the Neo tool
    text, and the estimate line in `AGENTS.md` for designs. Tests: missing or unknown kind is
    refused; a pack's kind is accepted only while the pack is on; changing an estimate after
    the todo is added is refused; a daemon-made todo without one is accepted; a todo with
    a kind matches the saved rules of that kind, and one without keeps today's fallbacks.
    Estimate: 8 files, 130 lines, 150 test lines.
-3. **Turn usage, Codex, and the column.** Migration and `usage` on `WorkTurnFact`. Tests on real
+4. **Turn usage, Codex, and the column.** Migration and `usage` on `WorkTurnFact`. Tests on real
    rollout shapes: cached input is not counted twice; a turn read in two parts has one total;
    an old row has no usage.
    Estimate: 6 files, 130 lines, 170 test lines.
-4. **Turn usage, Claude and HyperNeo.** Tests: several rows of one message count once; a
+5. **Turn usage, Claude and HyperNeo.** Tests: several rows of one message count once; a
    subagent turn is incomplete; another model in the same turn is kept apart.
    Estimate: 4 files, 110 lines, 180 test lines.
-5. **Size and rework.** The hook and coding's implementation. Tests: test and document paths,
+6. **Size and rework.** The hook and coding's implementation. Tests: test and document paths,
    lock files, more files than one page, a hand merge, a head counted once, a todo with two
    PRs.
    Estimate: 6 files, 150 lines, 200 test lines.
-6. **The read operation.** Tests: a failed todo, a todo with two workers, a missing pack hook,
+7. **The read operation.** Tests: a failed todo, a todo with two workers, a missing pack hook,
    an unattributed turn.
    Estimate: 4 files, 120 lines, 150 test lines.
 
 **Done when**, one week after the last PR: at least 95% of finished todos that had a worker of
 the three adapters have kind and an estimate when required (or the reviewed PR's size for a
 review); at least 95% have complete usage. Turns with omitted subagent cost count as incomplete,
-not zero. The share of unattributed turns is below 17%. For 20 turns without a receipt, picked at
-random, the todo read from the worker's own transcript matches the given todo at least 19 times;
-a wrong todo counts as a miss, not as attributed. For 20 todos with complete usage, picked
+not zero. At least 95% of delivered sends and starts of the three adapters have a receipt.
+The share of worker turns with a todo is reported against today's 28%. For 20 turns with a
+todo, picked at random, the todo read from the worker's own transcript matches at least 19
+times. For 20 todos with complete usage, picked
 at random, the totals match the harness's own records.
 
 ## Limits
 
-- A turn of two todos has none, and so has an uncertain start whose worker was never found. A
-  turn the human starts in a worker counts for that worker's newest todo.
+- A turn without a receipt in a worker that has served more than one todo has none, even when
+  the right todo is clear to a person.
 - Work Neo does in its own conversation has no todo and no account.
 - A worker on another daemon is recorded by that daemon.
