@@ -117,6 +117,10 @@ key and no delete. A worker started before the `work_adoptions` migration (its
 `migration_markers` time) has a history that cannot be known, so it gets no step 2 at all.
 
 Step 2 uses no time: a worker that two todos ever reached gets it for neither, before or after.
+Accounts are derived again on each read. A later delivery or adoption can therefore remove
+starting-todo attribution from earlier turns and make an earlier account incomplete. Other
+evidence, such as a late receipt or turn, can also change an account. A report that must be
+reproducible needs to retain its snapshot; the reporting design will decide how.
 `WorkDeliveryInputRepository.list(ref)` matches only `outcome.ref` today; it also matches
 `target.ref`. A turn the human starts in a worker that only one todo ever reached counts for that
 todo. This is attribution by the fallback, not proof: no delivery fact tells it from a send
@@ -140,8 +144,10 @@ Every Codex Desktop send path passes a fresh `clientUserMessageId` (the app-serv
 `thread/queue/add` and the Desktop `thread-follower-start-turn`), and when the message runs
 Codex writes an `item_completed` event whose user item carries it as `client_id`, with the
 `turn_id` of the turn it ran in. The daemon drops that id today. So the outcome keeps it as
-`clientMessageId`, the Codex turn reader adds each user item's `client_id` to the turn's
-inputs, and `deliveryKeys` matches the two. That is an exact id written by Codex, not time or
+`clientMessageId`, including when a Desktop handoff returns `uncertainDesktopInputId` in a
+rejection; the reply schema and `readDriverOutcome` preserve that id without changing the rejection. The Codex turn
+reader adds each user item's `client_id` to the turn's inputs, and `deliveryKeys` matches the
+two. That is an exact id written by Codex, not time or
 text, so it is a receipt. The `queuedSubmissionId` is not kept by Codex (0 of 1732 turn
 inputs in a week) and is not used. The stated limits:
 
@@ -225,12 +231,13 @@ Eight PRs from `dev`, in order, failing tests first. System map read for the pla
    todo; a start whose call returns no turn id still fails as today.
    Estimate: 4 files, 30 lines, 60 test lines.
 3. **Codex client message id.** Each Codex Desktop send keeps its `clientUserMessageId` in the
-   outcome as `clientMessageId`, queued or not; the Codex turn reader adds the `client_id` of
-   the turn's `item_completed` user items to its inputs; `deliveryKeys` reads both. Tests on
+   outcome as `clientMessageId`, including uncertain rejections; the Codex turn reader adds
+   the `client_id` of the turn's `item_completed` user items to its inputs; `deliveryKeys` reads both. Tests on
    real rollout shapes: a queued send that runs later gives its todo; two queued sends that run
-   in two turns each give their own; a `codex queue` fallback send has none; a user item without
+   in two turns each give their own; an unconfirmed rejection that runs later gives its todo;
+   a `codex queue` fallback send has none; a user item without
    `client_id` adds nothing.
-   Estimate: 4 files, 50 lines, 100 test lines.
+   Estimate: 5 files, 60 lines, 110 test lines.
 4. **Kind and estimate.** Core kinds, the checks on the two operations, the fact, the Neo tool
    text, and the estimate line in `AGENTS.md` for designs. Tests: missing or unknown kind is
    refused; a pack's kind is accepted only while the pack is on; changing an estimate after
