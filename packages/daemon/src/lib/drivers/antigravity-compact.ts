@@ -1,3 +1,4 @@
+import { WORKER_COMPACTION_TIMEOUT_MS } from './worker-compaction.ts';
 import { z } from 'zod';
 import { spawnProcess } from '../runtime-spawn/index.ts';
 import { buildSafeProcessEnv } from '../safe-process-env.ts';
@@ -116,11 +117,11 @@ export async function compactAntigravity(
         '--output-format',
         'stream-json',
         '--print-timeout',
-        '90s',
+        `${WORKER_COMPACTION_TIMEOUT_MS / 1000}s`,
       ],
       cwd,
       signal,
-      95_000
+      WORKER_COMPACTION_TIMEOUT_MS
     );
     if (output && confirmedCheckpoint(output, id)) return { ok: true, value: { compacted: true } };
   } catch {

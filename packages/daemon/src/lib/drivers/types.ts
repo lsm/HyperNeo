@@ -339,6 +339,7 @@ export interface StartRequest {
   provenance?: boolean;
   preparation?: z.infer<typeof workStartPreparation.schema>;
   model?: string;
+  provider?: string;
   effort?: string;
   copilotClient?: z.infer<typeof CopilotStartClientSchema>;
 }

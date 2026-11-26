@@ -1,3 +1,4 @@
+import { WORKER_COMPACTION_TIMEOUT_MS } from './worker-compaction.ts';
 import type { AgentSession } from '../agent/agent-session.ts';
 import { withWorkerProvenance } from './worker-provenance.ts';
 import { installClaudeNativeWrites } from './claude-native-writes.ts';
@@ -119,7 +120,7 @@ export async function compactHyperneoWorker(
   const timeout = setTimeout(() => {
     startup.abort();
     unconfirmed();
-  }, 60_000);
+  }, WORKER_COMPACTION_TIMEOUT_MS);
   try {
     const enqueue = async () => {
       if (!queue.isRunning()) await session.ensureQueryStarted(startup.signal);
@@ -161,7 +162,7 @@ export interface HyperneoSessionControl {
     inPlace?: boolean,
     prepared?: { sessionId: string; projectPath: string }
   ): Promise<string>;
-  resolveModel(model: string): Promise<{ id: string; provider: string } | null>;
+  resolveModel(model: string, provider?: string): Promise<{ id: string; provider: string } | null>;
   resolveDefaultModel?(): Promise<{ id: string; provider: string } | null>;
   reconfigure?(
     sessionId: string,
@@ -689,7 +690,7 @@ async function requireHyperneoStartConfiguration(
   const configured = { ...request, ...(thinking ? { effort: thinking.label.toLowerCase() } : {}) };
   if (request.model === undefined) return { value: configured };
   try {
-    const model = await deps.sessions.resolveModel(request.model);
+    const model = await deps.sessions.resolveModel(request.model, request.provider);
     return model
       ? { value: { ...configured, model: model.id, provider: model.provider } }
       : { reason: reject('unsupported_model', `No available model matches ${request.model}.`) };

@@ -1,6 +1,10 @@
 import { neoToolDescription } from '@hyperneo/prompts';
 import type { WorkerInput } from '../../storage/repositories/worker-input-worker.ts';
-import { compactBeforeReuse } from './worker-compaction.ts';
+import {
+  compactBeforeReuse,
+  planCleanWorker,
+  type WorkerReuseReason,
+} from './worker-compaction.ts';
 import { withWorkerProvenance } from './worker-provenance.ts';
 import type { DriverHealth } from '@hyperneo/shared/types/settings';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
@@ -134,6 +138,10 @@ export interface WorkVerbDeps {
     shareWith?: readonly string[]
   ) => Promise<boolean>;
   unclaimWorker?: (todoId: string, ref: WorkRef, role?: string) => Promise<void>;
+  recordWorkerReuse?: (
+    todoId: string,
+    value: { worker: WorkRef; result: 'compacted' | 'fresh'; reason?: WorkerReuseReason }
+  ) => Promise<void>;
   isOpenTodo?: (todoId: string, sessionId: string) => boolean;
   acceptedTodo?: (todoId: string) => boolean;
   noticeReply?: (ref: WorkRef, sessionId: string) => boolean;
@@ -224,6 +232,7 @@ export const StartWorkInputSchema = z.object({
   provenance: z.boolean().optional(),
   preparation: workStartPreparation.schema.optional(),
   model: z.string().trim().min(1).max(200).optional(),
+  provider: z.string().trim().min(1).max(200).optional(),
   effort: workStartConfiguration.schema.shape.effort,
   from: ForwardedOriginSchema,
 });
@@ -937,6 +946,14 @@ export async function reuseIdleWorker(
           'none';
         return reject('worker_busy', WORKER_BUSY_DETAIL[queued], true);
       }
+      if (todoId && (!decision.candidate.free || !adapter.compact)) {
+        await deps.recordWorkerReuse?.(todoId, {
+          worker: decision.candidate.work.ref,
+          result: 'fresh',
+          reason: !decision.candidate.free ? 'other_todo' : 'cannot_compact',
+        });
+        break;
+      }
       busy = decision.candidate;
       break;
     }
@@ -1011,15 +1028,40 @@ export async function reuseIdleWorker(
       }
       continue;
     }
-    await compactBeforeReuse(
-      {
-        ref: work.ref,
-        sameAsk: sameAsk(work.ref.id) && prior?.id !== work.ref.id && !canShare(work.ref.id),
-        compact: adapter.compact,
-      },
-      caller,
-      deps.warn ?? (() => {})
-    );
+    let clean = planCleanWorker({
+      sameTodo: !todoId || prior?.id === work.ref.id || canShare(work.ref.id),
+      named: false,
+      started: true,
+      remote: false,
+      sameAsk: sameAsk(work.ref.id),
+      released: false,
+      otherTodo: false,
+      canCompact: !!adapter.compact,
+    });
+    if (clean.action === 'compact') {
+      const confirmed = await compactBeforeReuse(
+        { ref: work.ref, sameAsk: true, compact: adapter.compact },
+        caller,
+        deps.warn ?? (() => {})
+      );
+      if (!confirmed) clean = { action: 'fresh', reason: 'not_confirmed' };
+      else if (todoId)
+        await deps.recordWorkerReuse?.(todoId, { worker: work.ref, result: 'compacted' });
+    }
+    if (clean.action === 'fresh') {
+      if (todoId) {
+        await deps.unclaimWorker?.(todoId, work.ref, input.role);
+        await deps.recordWorkerReuse?.(todoId, {
+          worker: work.ref,
+          result: 'fresh',
+          reason: clean.reason,
+        });
+      }
+      reuseHolds.delete(key);
+      const index = sameAskCandidates.indexOf(chosen);
+      if (index >= 0) sameAskCandidates.splice(index, 1);
+      continue;
+    }
     if (todoId && caller.sessionId && deps.isOpenTodo?.(todoId, caller.sessionId) === false) {
       reuseHolds.delete(key);
       await deps.unclaimWorker?.(todoId, work.ref, input.role);

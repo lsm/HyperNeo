@@ -163,9 +163,15 @@ async function readAvailableModels(): Promise<readonly ModelInfo[]> {
   return getAvailableModels('global');
 }
 
-export async function resolveDriverModel(models: readonly ModelInfo[], requested: string) {
+export async function resolveDriverModel(
+  models: readonly ModelInfo[],
+  requested: string,
+  provider?: string
+) {
   const { findInModels } = await import('../../model-service.ts');
-  const available = usableModels(models);
+  const available = usableModels(models).filter(
+    (model) => !provider || model.provider === provider
+  );
   const names = matchModelIdOrName(available, requested);
   if (names.length > 1)
     throw new ModelUnavailableError(
@@ -318,7 +324,8 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
         inPlace,
         prepared
       ),
-    resolveModel: async (model) => resolveDriverModel(await readAvailableModels(), model),
+    resolveModel: async (model, provider) =>
+      resolveDriverModel(await readAvailableModels(), model, provider),
     resolveDefaultModel: async () => {
       const { decision } = await resolveNewSessionModel(
         undefined,
@@ -962,6 +969,10 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       ),
     unclaimWorker: (todoId: string, ref: WorkRef, role?: string) =>
       new NeoTodoSessionRepository(db()).write('unclaimWorker', todoId, ref, role),
+    recordWorkerReuse: (
+      todoId: string,
+      value: Parameters<NonNullable<WorkVerbDeps['recordWorkerReuse']>>[1]
+    ) => new NeoTodoSessionRepository(db()).write('recordWorkerReuse', todoId, value),
     reportUncertain: async (report: WorkSendUncertainty) => {
       const to = sessionSender(report.from) ?? new NeoRepository(db()).defaultBinding()?.sessionId;
       if (!to) throw new Error('No originating session or default Neo for the uncertainty report.');

@@ -13,6 +13,7 @@ import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import {
   markWorkUnusable,
   readStartedWork,
+  readCleanWorkerRecord,
   readTrustedWorkers,
   readSameAskWorkers,
   recordWorkRelease,
@@ -116,6 +117,10 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     method: 'reuseFacts',
     todoId: string
   ): Promise<ReturnType<NeoTodoSessionRepository['reuseFacts']>>;
+  read(
+    method: 'cleanWorkerFacts',
+    todoId: string
+  ): Promise<ReturnType<NeoTodoSessionRepository['cleanWorkerFacts']>>;
   read(
     method: (typeof neoTodoSessionReads.methods)[number],
     key?: string | number | WorkRef | Record<string, string | null>
@@ -596,10 +601,17 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       )
     )
       return 'none';
+    const previous = this.get(todoId);
+    const checkout =
+      previous?.verb === 'start'
+        ? { preparationParameters: previous.preparationParameters ?? {}, sandbox: previous.sandbox }
+        : previous?.verb === 'send'
+          ? { preparationParameters: previous.preparationParameters, sandbox: previous.sandbox }
+          : {};
     this.db
       .prepare(`INSERT INTO neo_todo_sessions (todo_id, target) VALUES (?, ?)
         ON CONFLICT(todo_id) DO UPDATE SET target = excluded.target`)
-      .run(todoId, JSON.stringify({ verb: 'send', ref }));
+      .run(todoId, JSON.stringify({ verb: 'send', ref, ...checkout }));
     if (todo.state === 'doing')
       store.updateTodo(todo, { state: 'todo', startedAt: null }, Date.now());
     if (todo.instruction) return 'instruction';
@@ -874,6 +886,25 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     return releaseReuseFacts(this.db, todoId);
   }
 
+  cleanWorkerFacts(todoId: string) {
+    const todo = new NeoAskTodoRepository(this.db).getTodo(todoId);
+    const target = this.get(todoId);
+    if (!todo || target?.verb !== 'send') return null;
+    const ref = target.ref;
+    const { record, role, sameAsk } = readCleanWorkerRecord(this.db, todoId, todo.askId, ref);
+    return {
+      record,
+      sameTodo: neoWorkerKey(this.readRef(todoId)) === neoWorkerKey(ref) || !!role,
+      named: !!todo.named?.session,
+      sameAsk: !!sameAsk,
+      otherTodo: !!this.doingTodoOn(ref, null, ['doing', 'blocked'], todoId),
+    };
+  }
+
+  recordWorkerReuse(todoId: string, value: unknown): void {
+    this.writeCoreFact(todoId, 'worker_reuse', value);
+  }
+
   reusesAskWorker(todoId: string): boolean {
     const todo = new NeoAskTodoRepository(this.db).getTodo(todoId);
     const target = this.get(todoId);
@@ -931,6 +962,7 @@ export const neoTodoSessionReads = defineRepositoryOp(
     'finishedWorkers',
     'reuseFacts',
     'reusesAskWorker',
+    'cleanWorkerFacts',
   ]
 );
 export const neoTodoSessionWrites = defineRepositoryOp(
@@ -955,6 +987,7 @@ export const neoTodoSessionWrites = defineRepositoryOp(
     'claimWorker',
     'unclaimWorker',
     'recordReleased',
+    'recordWorkerReuse',
     'recordReleaseKept',
     'recordReleasePending',
   ]

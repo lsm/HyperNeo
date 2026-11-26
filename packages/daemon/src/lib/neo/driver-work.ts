@@ -48,6 +48,7 @@ const NeoStartWorkTarget = z.object({
       'For a Codex start, set a generic sessionTitle, never the task title. When omitted, the driver assigns the next free generic project name.'
     ),
   adapter: z.string().min(1).max(80),
+  provider: z.string().trim().min(1).max(200).optional(),
   copilotClient: CopilotStartClientSchema.optional(),
   name: z.string().trim().min(1).max(80).optional(),
   place: PlaceSchema.optional(),
@@ -65,7 +66,12 @@ const NeoStartWorkTarget = z.object({
   ...workStartConfiguration.schema.shape,
 });
 
-const NeoSendWorkTarget = z.object({ verb: z.literal('send'), ref: WorkRefSchema });
+const NeoSendWorkTarget = z.object({
+  verb: z.literal('send'),
+  ref: WorkRefSchema,
+  preparationParameters: NeoStartWorkTarget.shape.preparationParameters,
+  sandbox: NeoStartWorkTarget.shape.sandbox,
+});
 
 export const NeoTodoTargetSchema = z.discriminatedUnion('verb', [
   NeoStartWorkTarget,
@@ -148,6 +154,7 @@ export function driverWorkCall(
           message,
           ...(target.createFolder ? { createFolder: true } : {}),
           ...(target.model ? { model: target.model } : {}),
+          ...(target.provider ? { provider: target.provider } : {}),
           ...(target.effort ? { effort: target.effort } : {}),
         },
       }

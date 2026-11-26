@@ -1,13 +1,16 @@
 import { afterAll, describe, expect, spyOn, test } from 'bun:test';
-import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { cleanupOwnedWorktree } from '../../../../src/lib/drivers/work-placement.ts';
+import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox.ts';
 import type { WorkAdapter } from '../../../../src/lib/drivers/types.ts';
 import type { NeoDriverTarget } from '../../../../src/lib/neo/driver-work.ts';
+import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
+import { prepareCodingExecution } from '../../../../src/lib/neo/packs/coding/prepare-execution.ts';
 import {
   admitSessionArchive,
   NEO_TODO_RELEASE_PRINCIPAL,
@@ -91,6 +94,7 @@ function setup() {
   let folder = pushedCheckout();
   let next = worker;
   let onStart: ((input: Record<string, unknown>) => unknown) | undefined;
+  const packs: NeoPack[] = [];
   const reuse = (mode: string) =>
     db
       .prepare(
@@ -101,7 +105,7 @@ function setup() {
       .run(JSON.stringify(mode));
   reuse('per_todo');
   const invoke = recordedWorkInvoke(sessions.inputs, async (caller, name, input) => {
-    if (name === 'work.start' && onStart) return completed(onStart(input));
+    if (name === 'work.start' && onStart) return completed(await onStart(input));
     if (name === 'work.start')
       return completed({
         ok: true,
@@ -137,7 +141,7 @@ function setup() {
     sessions,
     invoke,
     workerCompact: () => ({ compact, cacheUntil }),
-    packs: () => [],
+    packs: () => packs,
     tell: async (_ask, _todo, note) => {
       notices.push(note);
     },
@@ -203,6 +207,7 @@ function setup() {
     setOnStart: (next: typeof onStart) => {
       onStart = next;
     },
+    packs,
     setOnStatus: (next: () => void) => {
       onStatus = next;
     },
@@ -284,10 +289,10 @@ describe('neo todo runner refresh releases finished workers', () => {
             value: { archived: true },
           }
       );
-      await h.finishTodo(h.add({ verb: 'send', ref: worker }));
       h.db
         .prepare('DELETE FROM work_started_sessions WHERE adapter = ? AND id = ?')
         .run(worker.adapter, worker.id);
+      await h.finishTodo(h.add({ verb: 'send', ref: worker }));
       await h.refresh();
       await h.refresh();
       expect(
@@ -317,7 +322,9 @@ describe('neo todo runner refresh releases finished workers', () => {
             value: { archived: true },
           }
       );
-      await h.finishTodo(h.add({ verb: 'send', ref: worker }));
+      const todo = h.add({ verb: 'send', ref: worker });
+      h.sessions.recordRef(todo.id, worker);
+      await h.finishTodo(todo);
       await h.refresh();
       expect(h.archived).toEqual([worker]);
       expect(h.released()).toHaveLength(1);
@@ -365,7 +372,9 @@ describe('neo todo runner refresh releases finished workers', () => {
     const h = setup();
     try {
       h.setArchive(() => ({ ok: false, reason: 'busy' }));
-      await h.finishTodo(h.add({ verb: 'send', ref: worker }));
+      const todo = h.add({ verb: 'send', ref: worker });
+      h.sessions.recordRef(todo.id, worker);
+      await h.finishTodo(todo);
       await h.refresh();
       expect(h.archived).toEqual([worker]);
       expect(h.released()).toEqual([]);
@@ -787,15 +796,39 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
         throw new Error('Synthetic failure');
       },
     ],
-  ])('still sends the next todo after a %s compaction', async (_name, compact) => {
+  ])('starts a fresh worker after a %s compaction', async (_name, compact) => {
     const h = setup();
     try {
       h.setCompact(compact);
       await h.finishTodo(h.add(started));
+      recordWorkerStarted(h.db, worker, {
+        startedBy: 'neo',
+        machine: 'laptop',
+        folder: h.folder(),
+        harness: worker.adapter,
+        provider: 'synthetic-provider',
+        model: 'synthetic-model',
+        effort: 'high',
+      });
+      const fresh = { adapter: 'hyperneo', id: 'fresh' };
+      let startInput: Record<string, unknown> | undefined;
+      h.setOnStart((input) => {
+        startInput = input;
+        return {
+          ok: true,
+          value: { ref: fresh, receipt: { executionId: fresh.id, inputId: 'i' } },
+        };
+      });
       const next = h.add({ verb: 'send', ref: worker });
       await h.start(next.id);
-      expect(h.events).toEqual([`send ${worker.id}`]);
-      expect(h.sessions.readRef(next.id)).toEqual(worker);
+      expect(h.events).toEqual([]);
+      expect(h.sessions.readRef(next.id)).toEqual(fresh);
+      expect(startInput?.excludeRefs).toContainEqual(worker);
+      expect(startInput).toMatchObject({
+        provider: 'synthetic-provider',
+        model: 'synthetic-model',
+        effort: 'high',
+      });
     } finally {
       h.db.close();
     }
@@ -872,7 +905,7 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
     }
   });
 
-  test('sends to another ask’s worker or a session the human named without compacting it', async () => {
+  test('sends to a session the human named without compacting it', async () => {
     const h = setup();
     try {
       await h.finishTodo(h.add(started));
@@ -883,6 +916,22 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
         { state: 'done', finishedAt: Date.now() },
         Date.now()
       );
+      expect(h.events).toEqual([`send ${worker.id}`]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('starts fresh for a worker from another ask', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      recordWorkerStarted(h.db, worker, {
+        startedBy: 'neo',
+        machine: 'laptop',
+        folder: h.folder(),
+        harness: worker.adapter,
+      });
       h.store.openAsk({
         id: 'other',
         projectId: null,
@@ -892,13 +941,331 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
         request: 'Other work',
         createdAt: 2,
       });
+      const fresh = { adapter: 'hyperneo', id: 'fresh' };
+      h.setOnStart(() => ({
+        ok: true,
+        value: { ref: fresh, receipt: { executionId: 'fresh', inputId: 'i' } },
+      }));
       const other = h.add({ verb: 'send', ref: worker }, null, 'other');
       await h.start(other.id);
-      expect(h.events).toEqual([`send ${worker.id}`, `send ${worker.id}`]);
+      expect(h.events).toEqual([]);
+      expect(h.sessions.readRef(other.id)).toEqual(fresh);
     } finally {
       h.db.close();
     }
   });
+
+  test('starts fresh for a released worker', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      recordWorkerStarted(h.db, worker, {
+        startedBy: 'neo',
+        machine: 'laptop',
+        folder: h.folder(),
+        harness: worker.adapter,
+      });
+      h.db
+        .prepare('UPDATE work_started_sessions SET released_at = ? WHERE adapter = ? AND id = ?')
+        .run(Date.now(), worker.adapter, worker.id);
+      const fresh = { adapter: 'hyperneo', id: 'fresh' };
+      h.setOnStart(() => ({
+        ok: true,
+        value: { ref: fresh, receipt: { executionId: 'fresh', inputId: 'i' } },
+      }));
+      const next = h.add({ verb: 'send', ref: worker });
+      await h.start(next.id);
+      expect(h.events).toEqual([]);
+      expect(h.sessions.readRef(next.id)).toEqual(fresh);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('starts a replacement from the project instead of the old linked worktree', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      const linked = join(scratch, crypto.randomUUID());
+      git(h.folder(), 'worktree', 'add', '--detach', linked, 'HEAD');
+      recordWorkerStarted(h.db, worker, {
+        startedBy: 'neo',
+        machine: 'laptop',
+        folder: linked,
+        harness: worker.adapter,
+      });
+      h.setCompact(undefined);
+      let place: unknown;
+      const fresh = { adapter: 'hyperneo', id: 'fresh' };
+      h.setOnStart((input) => {
+        place = input.place;
+        return { ok: true, value: { ref: fresh, receipt: { executionId: 'fresh', inputId: 'i' } } };
+      });
+      const next = h.add({ verb: 'send', ref: worker });
+      await h.start(next.id);
+      expect(h.events).toEqual([]);
+      expect(h.sessions.readRef(next.id)).toEqual(fresh);
+      expect(place).toMatchObject({ folder: realpathSync(h.folder()) });
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('clears the old worker wait reason when starting a replacement', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      recordWorkerStarted(h.db, worker, {
+        startedBy: 'neo',
+        machine: 'laptop',
+        folder: h.folder(),
+        harness: worker.adapter,
+      });
+      h.setCompact(undefined);
+      const fresh = { adapter: 'hyperneo', id: 'fresh' };
+      h.setOnStart(() => ({
+        ok: true,
+        value: { ref: fresh, receipt: { executionId: 'fresh', inputId: 'i' } },
+      }));
+      const next = h.add({ verb: 'send', ref: worker });
+      h.store.updateTodo(next, { reason: 'Waiting for worker hyperneo:worker-1.' }, Date.now());
+      await h.start(next.id);
+      expect(h.sessions.readRef(next.id)).toEqual(fresh);
+      expect(h.store.getTodo(next.id)).toMatchObject({ state: 'doing', reason: null });
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test.each(['doing', 'blocked'] as const)(
+    'starts fresh when the worker holds another %s todo',
+    async (state) => {
+      const h = setup();
+      try {
+        await h.finishTodo(h.add(started));
+        recordWorkerStarted(h.db, worker, {
+          startedBy: 'neo',
+          machine: 'laptop',
+          folder: h.folder(),
+          harness: worker.adapter,
+        });
+        const holding = h.add(started);
+        h.sessions.recordRef(holding.id, worker);
+        h.store.updateTodo(holding, { state, startedAt: Date.now() }, Date.now());
+        const fresh = { adapter: 'hyperneo', id: 'fresh' };
+        h.setOnStart(() => ({
+          ok: true,
+          value: { ref: fresh, receipt: { executionId: 'fresh', inputId: 'i' } },
+        }));
+        const next = h.add({ verb: 'send', ref: worker });
+        await h.start(next.id);
+        expect(h.events).toEqual([]);
+        expect(h.sessions.readRef(next.id)).toEqual(fresh);
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
+  test('blocks instead of starting unsandboxed when a prepared worker cannot be compacted', async () => {
+    const h = setup();
+    try {
+      configureWorkerSandbox(() => 'off');
+      await h.finishTodo(h.add(started));
+      recordWorkerStarted(h.db, worker, {
+        startedBy: 'neo',
+        machine: 'laptop',
+        folder: h.folder(),
+        harness: worker.adapter,
+        preparation: { pack: 'coding', sandbox: true, parameters: {} },
+      });
+      h.setCompact(undefined);
+      let starts = 0;
+      h.setOnStart(() => {
+        starts++;
+        return { ok: false, reason: 'not_delivered', detail: 'unexpected' };
+      });
+      const next = h.add({
+        verb: 'send',
+        ref: worker,
+        preparationParameters: { target: 'dev' },
+        sandbox: true,
+      } as NeoDriverTarget);
+      await h.start(next.id);
+      expect(h.events).toEqual([]);
+      expect(starts).toBe(0);
+      expect(h.store.getTodo(next.id)?.state).toBe('blocked');
+      expect(h.store.getTodo(next.id)?.blockedReason).toContain('sandbox');
+    } finally {
+      configureWorkerSandbox(() => 'off');
+      h.db.close();
+    }
+  });
+
+  test('keeps a replacement sandboxed when the setting permits it', async () => {
+    const h = setup();
+    try {
+      configureWorkerSandbox(() => 'on-demand');
+      await h.finishTodo(h.add(started));
+      recordWorkerStarted(h.db, worker, {
+        startedBy: 'neo',
+        machine: 'laptop',
+        folder: h.folder(),
+        harness: worker.adapter,
+        preparation: { pack: 'coding', sandbox: true, parameters: {} },
+      });
+      h.packs.push({
+        id: 'coding',
+        describe: 'coding',
+        instructions: () => null,
+        prepareExecution: async () => ({ ok: false, reason: 'unused' }),
+      });
+      h.setCompact(undefined);
+      let preparation: unknown;
+      const fresh = { adapter: 'hyperneo', id: 'fresh' };
+      h.setOnStart((input) => {
+        preparation = input.preparation;
+        return { ok: true, value: { ref: fresh, receipt: { executionId: 'fresh', inputId: 'i' } } };
+      });
+      const parameters = { target: 'dev' };
+      const next = h.add({
+        verb: 'send',
+        ref: worker,
+        preparationParameters: parameters,
+      } as NeoDriverTarget);
+      h.store.updateTodo(next, { check: { pack: 'coding', kind: 'pr', params: {} } }, Date.now());
+      await h.start(next.id);
+      expect(h.events).toEqual([]);
+      expect(h.sessions.readRef(next.id)).toEqual(fresh);
+      expect(preparation).toEqual({ pack: 'coding', parameters, sandbox: true });
+    } finally {
+      configureWorkerSandbox(() => 'off');
+      h.db.close();
+    }
+  });
+
+  test('blocks a prepared replacement without checkout parameters', async () => {
+    const h = setup();
+    try {
+      configureWorkerSandbox(() => 'on-demand');
+      await h.finishTodo(h.add(started));
+      recordWorkerStarted(h.db, worker, {
+        startedBy: 'neo',
+        machine: 'laptop',
+        folder: h.folder(),
+        harness: worker.adapter,
+        preparation: { pack: 'coding', sandbox: true, parameters: {} },
+      });
+      h.packs.push({
+        id: 'coding',
+        describe: 'coding',
+        instructions: () => null,
+        prepareExecution: prepareCodingExecution,
+      });
+      h.setCompact(undefined);
+      let starts = 0;
+      h.setOnStart(() => {
+        starts++;
+        return { ok: false, reason: 'not_delivered', detail: 'unexpected' };
+      });
+      const next = h.add({ verb: 'send', ref: worker });
+      h.store.updateTodo(next, { check: { pack: 'coding', kind: 'pr', params: {} } }, Date.now());
+      await h.start(next.id);
+      expect(h.events).toEqual([]);
+      expect(starts).toBe(0);
+      expect(h.store.getTodo(next.id)?.state).toBe('blocked');
+    } finally {
+      configureWorkerSandbox(() => 'off');
+      h.db.close();
+    }
+  });
+
+  test.each(['pinned', 'moved', 'missing-prerequisite'] as const)(
+    'a queued %s review prepares only its pinned checkout',
+    async (scenario) => {
+      const h = setup();
+      let cleanup: (() => Promise<void>) | undefined;
+      try {
+        configureWorkerSandbox(() => 'on-demand');
+        await h.finishTodo(h.add(started));
+        recordWorkerStarted(h.db, worker, {
+          startedBy: 'neo',
+          machine: 'laptop',
+          folder: h.folder(),
+          harness: worker.adapter,
+          preparation: { pack: 'coding', sandbox: true, parameters: {} },
+        });
+        h.setCompact(undefined);
+        const head = execFileSync('git', ['rev-parse', 'HEAD'], {
+          cwd: h.folder(),
+          encoding: 'utf8',
+        }).trim();
+        git(h.folder(), 'push', '-q', 'origin', 'HEAD:refs/pull/7/head');
+        const parameters = {
+          pullRequest: 7,
+          head: scenario === 'moved' ? 'f'.repeat(40) : head,
+          role: 'review',
+          prerequisiteCommits: [scenario === 'missing-prerequisite' ? '0'.repeat(40) : head],
+        };
+        h.packs.push({
+          id: 'coding',
+          describe: 'coding',
+          instructions: () => null,
+          prepareExecution: prepareCodingExecution,
+        });
+        let opened = false;
+        let checkoutHead: string | null = null;
+        h.setOnStart(async (input) => {
+          const preparation = input.preparation as { parameters: Record<string, unknown> };
+          const destination = join(scratch, crypto.randomUUID());
+          const result = await prepareCodingExecution(
+            { directory: h.folder(), destination, parameters: preparation.parameters },
+            {
+              run: async (command, cwd) => {
+                const child = spawnSync(command[0], command.slice(1), { cwd, encoding: 'utf8' });
+                return {
+                  code: child.status ?? 1,
+                  stdout: child.stdout ?? '',
+                  stderr: child.stderr ?? '',
+                };
+              },
+            }
+          );
+          if (!result.ok) return { ok: false, reason: 'not_delivered', detail: result.reason };
+          cleanup = result.value.release;
+          checkoutHead = execFileSync('git', ['rev-parse', 'HEAD'], {
+            cwd: result.value.directory,
+            encoding: 'utf8',
+          }).trim();
+          opened = true;
+          return {
+            ok: true,
+            value: {
+              ref: { adapter: 'hyperneo', id: 'fresh' },
+              receipt: { executionId: 'fresh', inputId: 'i' },
+            },
+          };
+        });
+        const next = h.add({
+          verb: 'start',
+          adapter: 'hyperneo',
+          preparationParameters: parameters,
+          sandbox: true,
+        });
+        h.store.updateTodo(next, { check: { pack: 'coding', kind: 'pr', params: {} } }, Date.now());
+        h.queueOn(next.id);
+        await h.start(next.id);
+        expect(h.events).toEqual([]);
+        expect(opened).toBe(scenario === 'pinned');
+        if (scenario === 'pinned') expect(String(checkoutHead)).toBe(head);
+        else expect(h.store.getTodo(next.id)?.state).toBe('blocked');
+      } finally {
+        if (cleanup) await cleanup();
+        configureWorkerSandbox(() => 'off');
+        h.db.close();
+      }
+    }
+  );
 
   test('releases a kept worker whose prompt cache went cold', async () => {
     const h = setup();

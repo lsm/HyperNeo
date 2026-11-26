@@ -1,3 +1,4 @@
+import { WORKER_COMPACTION_TIMEOUT_MS } from './worker-compaction.ts';
 import { workInput } from './work-messages.ts';
 import { workerWorkEnvironment, workerWorkLocationsBrief } from '../work-locations.ts';
 import { CopilotClient, RuntimeConnection, type SessionEvent } from '@github/copilot-sdk';
@@ -389,7 +390,7 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
     },
     async compact() {
       requireOpen();
-      const result = await bounded(session.rpc.history.compact(), Math.max(timeoutMs, 60_000));
+      const result = await bounded(session.rpc.history.compact(), WORKER_COMPACTION_TIMEOUT_MS);
       return result.success === true;
     },
     async withdraw(inputId: string) {
