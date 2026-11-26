@@ -14,8 +14,10 @@ transcript. No provider or model mock is used.
 The first remote `work.send` has no reverse attachment. Its refusal must name
 the missing reply daemon, and the peer must receive zero frames. Pair the
 reverse route under an alias that differs from the sender's OS hostname. Neither
-daemon has a reply ID set in its environment. Restart both daemons with their
-saved attachments. The next send must write exactly one inbox frame and return
+daemon has a reply ID set in its environment. Remove the reply-identity migration
+marker from the stopped worker's database to represent an interruption after
+adding the column. Restart both daemons with their saved attachments and check
+that the worker records the marker again. The next send must write exactly one inbox frame and return
 a matching transcript-confirmed receipt. A reply on the private socket must
 reach the sender's mailbox through that same paired route.
 

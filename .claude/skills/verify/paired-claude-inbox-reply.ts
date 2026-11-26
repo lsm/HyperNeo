@@ -241,8 +241,29 @@ if (process.argv.includes('--daemon')) {
 
     await attach(target, source, alias);
     await Promise.all([source.stop(), target.stop()]);
+    const workerDb = join(worker, 'data/daemon.db');
+    const migrationMarker = 'migration_536';
+    const interruptedDb = new Database(workerDb);
+    try {
+      assert.equal(
+        interruptedDb.prepare('DELETE FROM migration_markers WHERE key = ?').run(migrationMarker)
+          .changes,
+        1
+      );
+    } finally {
+      interruptedDb.close();
+    }
     source = await start(home, source.port);
     target = await start(worker, target.port);
+    const restartedDb = new Database(workerDb, { readonly: true });
+    try {
+      assert(
+        restartedDb.prepare('SELECT 1 FROM migration_markers WHERE key = ?').get(migrationMarker)
+      );
+      evidence.migrationRecovered = true;
+    } finally {
+      restartedDb.close();
+    }
     evidence.restarted = true;
     const delivered = await send(text);
     evidence.delivered = delivered;
