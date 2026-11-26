@@ -16,8 +16,8 @@ reuse what exists.
 
 The choices for a provider and model are `sdk` (Claude Code) plus every row of
 `OXAP_HARNESSES` whose `providers` includes that provider id and, when the row
-lists `models`, whose `models` includes the session's model. The web already
-filters this way in `SessionsPage.tsx`. A new harness becomes selectable by
+lists `models`, whose `models` includes the session's model. The web filters by
+provider in `SessionsPage.tsx` today; slice 5 adds the model. A new harness becomes selectable by
 adding its row; nothing else lists harnesses.
 
 A row is selectable only when it is ready for a new session: its `settings`
@@ -41,7 +41,8 @@ OXAP id means that harness. Creation resolves it once:
 - `session.create` takes an optional top-level `harness` (not `config.harness`,
   which stays rejected and stripped from SDK query options).
 - `session-lifecycle` uses `params.harness ?? newSessionDefault(provider, model)`.
-  Omitted means the provider default, so every current caller is unchanged.
+  Omitted uses the model-aware new-session default, so every current caller is
+  unchanged.
 - The resolved value, whether requested or the default, must be `sdk` or a row
   that lists the provider (and the model, when the row lists models), and must
   be ready for a new session. Otherwise creation fails with a plain message.
@@ -147,14 +148,17 @@ Each slice works on its own: nothing is reachable before what it needs exists.
 4. Prove both first-batch pairs end to end on one daemon: provider default
    chat and SDK override chat, then the reverse.
 5. OpenCode Go with DSH, Flash only: the `models` field, the row and its
-   overlay, model-aware eligibility in the dialog and creation,
+   overlay, model-aware eligibility in the dialog and creation (the picker lists
+   by model, and a model change that makes the chosen harness ineligible clears
+   the choice and shows the model-aware default),
    `newSessionDefault`, and the row in the model lock. Tests: a Flash override
    is admitted and its first turn reaches the Go endpoint with the OpenCode key
    and no `DEEPSEEK_API_KEY`; an override for another Go model is refused; with
    the row as default, Flash uses DSH and another Go model uses `sdk`; with the
    row as default but not ready, a Flash session is refused, not moved to `sdk`;
    with the row as default, OpenCode stays out of the SDK failover pool;
-   switching a DSH chat to another model is refused.
+   switching a DSH chat to another model is refused; in the dialog, choosing DSH
+   on Flash and then another Go model shows `sdk` and submits no `harness`.
 6. Later, one PR each: other pairs once each is proven.
 
 Measuring quota use between SDK and OXAP Codex is separate work and not part
