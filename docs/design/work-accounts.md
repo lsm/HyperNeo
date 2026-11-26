@@ -130,14 +130,19 @@ week every confirmed delivery had one (Claude Desktop 917 of 917, Claude Code 73
 HyperNeo 372 of 372, Codex Desktop sends 629 of 629, starts 301 of 301), but the code does not
 promise it on every path, so no adapter change is made and these are stated limits:
 
-- A Claude Desktop send through the relay is confirmed without a receipt when the relay returns
-  no input id (`claude-desktop-adapter.ts`).
+- A Claude Desktop send through the relay already returns the input id whenever the relay has
+  one (`claude-desktop-adapter.ts`). It has none only when the receiver logged just a queue
+  line, which carries no id (`claudeRelayedInput`); then the send is confirmed without a
+  receipt. This happened to 0 of 5914 delivered Claude Desktop sends since October, so there
+  is no available receipt left to return and no adapter slice.
 - A Codex Desktop steer has no receipt; its `steeredIntoTurnId` is its key.
 - A queued or unconfirmed Codex send has no key, and nothing links it to its row: neither its
   `queuedSubmissionId` (0 of 1732 turn inputs in a week) nor the `clientUserMessageId` the
   daemon sends is kept in the rollout, and pairing by time or text is not a receipt.
 
-Such turns have a todo only through step 2. This is a known limit, not guessed around.
+A delivery without a key (the relay case and the queued or unconfirmed Codex send) gives its
+turn a todo only through step 2. A steer has its key and is assigned in step 1. This is a known
+limit, not guessed around.
 
 Measured on the 6624 worker turns of one week: 713 (10.8%) have a receipt and 1165 (17.6%) get
 the starting todo, so 28% have a todo today. In the same week Codex Desktop had 1732 queued
@@ -220,8 +225,9 @@ Six PRs from `dev`, in order, failing tests first. System map read for the plann
 the three adapters have kind and an estimate when required (or the reviewed PR's size for a
 review); at least 95% have complete usage. Turns with omitted subagent cost count as incomplete,
 not zero. Of all confirmed sends and starts, at least 95% have a delivery key; the denominator
-includes the limited paths, and each (Claude Desktop relay sends without an input id, Codex
-steers, queued and unconfirmed Codex sends) is also reported on its own line.
+includes the limited paths. Receipt coverage, a receipt alone, is reported on its own line next
+to it, and each limited path (Claude Desktop relay sends without an input id, Codex steers,
+queued and unconfirmed Codex sends) on its own line too.
 The share of worker turns with a todo is reported against today's 28%. For 20 turns with a
 todo, picked at random, the todo read from the worker's own transcript matches at least 19
 times, with turns the human started counted apart. For 20 todos with complete usage, picked
