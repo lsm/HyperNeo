@@ -895,7 +895,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         maxTokens: config.maxTokens,
         temperature: config.temperature,
         disableWorktrees: config.disableWorktrees,
-        readOxapProviderKey: oxapSettings.key,
+        oxapCredentials: oxapSettings,
       },
       jobQueue,
       jobProcessor,

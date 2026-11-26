@@ -73,7 +73,7 @@ export interface SessionLifecycleConfig {
   maxTokens: number;
   temperature: number;
   disableWorktrees?: boolean;
-  readOxapProviderKey?: OxapSettingsDeps['key'];
+  oxapCredentials?: Pick<OxapSettingsDeps, 'key' | 'environment'>;
   titleGenerationQueryForTesting?: SdkQueryFunction;
   titleGenerationProviderServiceForTesting?: TitleGenerationProviderService;
 }
@@ -196,7 +196,7 @@ export class SessionLifecycle {
           provider,
           providerRecord(),
           globalSettings.oxapHub,
-          this.config.readOxapProviderKey
+          this.config.oxapCredentials
         ));
       if (refusal) throw new OxapSessionAdmissionError(refusal);
     }

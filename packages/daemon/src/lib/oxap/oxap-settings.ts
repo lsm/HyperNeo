@@ -104,7 +104,7 @@ export async function newSessionOxapRefusal(
   provider: string,
   record: Pick<ProviderRecord, 'configJson'> | null,
   installed: OxapHubBinary | undefined,
-  readKey: OxapSettingsDeps['key'] | undefined
+  credentials: Pick<OxapSettingsDeps, 'key' | 'environment'> | undefined
 ): Promise<string | undefined> {
   const row = oxapHarness(harness);
   if (!row.providers.includes(provider)) return `${provider} cannot run on ${harness}`;
@@ -114,7 +114,9 @@ export async function newSessionOxapRefusal(
   const executable = saved.settings.executable;
   if (executable && !(await isExecutableFile(executable)))
     return `${provider} needs an executable file; check Settings → Providers`;
-  if (!saved.modelProvider && row.key && !(await readKey?.(provider))?.trim())
+  if (saved.modelProvider === 'opencode-go' && !credentials?.environment.OPENCODE_API_KEY?.trim())
+    return `${provider} needs OPENCODE_API_KEY in the daemon environment for OpenCode Go`;
+  if (!saved.modelProvider && row.key && !(await credentials?.key(provider))?.trim())
     return `${provider} needs ${row.key}`;
   return undefined;
 }
