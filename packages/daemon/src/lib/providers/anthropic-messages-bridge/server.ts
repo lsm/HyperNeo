@@ -99,12 +99,20 @@ function enforceThinking(
   disableThinkingWithChatTemplate: boolean
 ): ArrayBuffer {
   const text = new TextDecoder().decode(bodyBytes);
-  const body: Partial<AnthropicRequest> & { chat_template_kwargs?: Record<string, unknown> } =
-    JSON.parse(text);
+  const body: Partial<AnthropicRequest> & {
+    chat_template_kwargs?: Record<string, unknown>;
+    output_config?: { effort?: unknown };
+    reasoning_effort?: unknown;
+  } = JSON.parse(text);
   if (desired?.type === 'disabled') {
     body.thinking = desired;
     if (disableThinkingWithChatTemplate) {
       body.chat_template_kwargs = { ...body.chat_template_kwargs, enable_thinking: false };
+      delete body.output_config?.effort;
+      if (body.output_config && Object.keys(body.output_config).length === 0) {
+        delete body.output_config;
+      }
+      delete body.reasoning_effort;
     }
   } else if (desired === undefined) {
     delete body.thinking;
