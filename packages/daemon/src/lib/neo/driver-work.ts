@@ -37,7 +37,6 @@ import type { OperationCaller } from '../operations/registry.ts';
 import { NeoReadWorkTarget } from './read-work.ts';
 
 const NeoStartWorkTarget = z.object({
-  planStepIds: z.array(z.string()).optional(),
   verb: z.literal('start'),
   sessionTitle: z
     .string()
@@ -97,6 +96,9 @@ export const NeoDriverTargetSchema = z.discriminatedUnion('verb', [
 ]);
 
 export type NeoDriverTarget = z.infer<typeof NeoDriverTargetSchema>;
+export type NeoDeliveryTarget =
+  | (Extract<NeoDriverTarget, { verb: 'start' }> & { planStepIds?: string[] })
+  | Extract<NeoDriverTarget, { verb: 'send' }>;
 const DriverReplySchema = z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),

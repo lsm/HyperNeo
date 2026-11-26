@@ -1,7 +1,10 @@
 import { getAvailableModels } from '../model-service.ts';
 import { workStartedSessionReads } from '../../storage/repositories/work-started-sessions-worker.ts';
 import { chooseLine } from './pack-selection.ts';
-import { livePlanSteps, samePlanSteps } from './todo-follow-up.ts';
+import {
+  neoPlanCheckReads,
+  neoPlanCheckWrites,
+} from '../../storage/repositories/neo-plan-check-worker.ts';
 import { workerInputWrites } from '../../storage/repositories/worker-input-worker.ts';
 import { selectSendOrigin } from '../messaging/message-send.ts';
 import { frontSessionId, isPublicationSpeaker, frontModeNote } from './front-mode.ts';
@@ -907,18 +910,16 @@ export class NeoService {
     sender: string
   ): Promise<void> {
     if (input.check?.verdict !== 'pass') return;
-    const db = this.db.getDatabase();
     const remote = parseRemoteAddress(sender);
     const local = sessionWorkerRef(remote?.sessionId ?? sender, !!this.db.getSession(sender));
     const ref = remote ? { ...local, daemon: remote.daemonId } : local;
-    const delivery = new WorkDeliveryInputRepository(db)
-      .list(ref)
-      .findLast(
-        ({ target, originSessionId }) =>
-          target.verb === 'start' &&
-          target.planStepIds &&
-          sessionSender(originSessionId) === input.sessionId
-      );
+    const deliveries = await this.db.gateway.call(neoPlanCheckReads, 'deliveries', ref);
+    const delivery = deliveries.findLast(
+      ({ target, originSessionId }) =>
+        target.verb === 'start' &&
+        target.planStepIds &&
+        sessionSender(originSessionId) === input.sessionId
+    );
     if (!delivery?.todoId || delivery.target.verb !== 'start') return;
     const model = delivery.outcome && 'ref' in delivery.outcome && delivery.outcome.model;
     const todo = this.todos.getCheckable(delivery.todoId);
@@ -944,18 +945,13 @@ export class NeoService {
     });
     const anotherModelUsable = ranking.ranked.length > 0;
     if (anotherModelUsable && model === doer.model) return;
-    this.todos.inTransaction(() => {
-      if (
-        !this.todos.getCheckable(todo.id) ||
-        !samePlanSteps(stepIds, livePlanSteps(todo.id, this.todos.listFamilyTodos(todo.askId)))
-      )
-        return;
-      db.prepare('UPDATE neo_todos SET plan_check_json = ? WHERE id = ?').run(
-        JSON.stringify({ session: sender, model, anotherModelUsable, stepIds }),
-        todo.id
-      );
+    const recorded = await this.db.gateway.call(neoPlanCheckWrites, 'record', todo.id, {
+      session: sender,
+      model,
+      anotherModelUsable,
+      stepIds,
     });
-    this.notifyChanged();
+    if (recorded) this.notifyChanged();
   }
 
   readonly handleWorkerQuestion = (superpipe({})('neo.workerQuestionReport') as PipelineAPI)

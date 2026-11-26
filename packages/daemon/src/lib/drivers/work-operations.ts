@@ -24,7 +24,7 @@ import {
   type OperationCaller,
   type OperationDefinition,
 } from '../operations/registry.ts';
-import type { NeoDriverTarget } from '../neo/driver-work.ts';
+import type { NeoDeliveryTarget } from '../neo/driver-work.ts';
 import type { RemoteDaemons } from './find-operation.ts';
 import { stampWork } from './places.ts';
 import { workStartConfiguration } from './start-configuration.ts';
@@ -361,7 +361,7 @@ type StartInput = StartDraft & { place: z.infer<typeof PlaceSchema> } & Pick<
     'inPlace' | 'prepareFolder'
   > & { planStepIds?: string[] };
 type SendInput = z.infer<typeof SendWorkInputSchema>;
-type WorkTarget = Extract<NeoDriverTarget, { verb: 'start' | 'send' }>;
+type WorkTarget = NeoDeliveryTarget;
 type RefInput = z.infer<typeof WorkRefInputSchema>;
 type StatusInput = z.infer<typeof WorkStatusInputSchema>;
 type StartResult = z.infer<typeof StartWorkResultSchema>;
