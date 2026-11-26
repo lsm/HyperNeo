@@ -1569,7 +1569,12 @@ export class NeoService {
     );
   }
 
-  async sendToRef(ref: WorkRef, key: string, text: string, todoId?: string): Promise<boolean> {
+  async sendToRef(
+    ref: WorkRef,
+    key: string,
+    text: string,
+    todoId?: string
+  ): Promise<boolean | 'gone'> {
     const root = this.defaultSessionId();
     if (!root) return false;
     const sent = await invokeOperation(
@@ -1578,7 +1583,10 @@ export class NeoService {
       { ref, message: text, idempotencyKey: key, ...(todoId ? { todoId } : { notice: true }) },
       driverWorkCaller({ originSessionId: root })
     );
-    return sent.kind === 'completed' && (sent.value as { ok?: unknown } | null)?.ok === true;
+    if (sent.kind !== 'completed') return false;
+    const value = sent.value as { ok?: unknown; reason?: unknown } | null;
+    if (value?.ok === false && value.reason === 'not_found') return 'gone';
+    return value?.ok === true;
   }
 
   attend(event: Parameters<typeof this.attention>[0]) {

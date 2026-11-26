@@ -210,7 +210,7 @@ export async function deliverCodingPrEvents(
       if (told) await repo.acceptEvent(row, owner);
       if (!event) continue;
       log.warn(
-        `PR event ${event.key} to ${owner.adapter}:${owner.id}: ${told ? 'told' : 'not told'}`
+        `PR event ${event.key} to ${owner.adapter}:${owner.id}: ${told === 'gone' ? 'owner gone, dropped' : told ? 'told' : 'not told'}`
       );
     }
   });
