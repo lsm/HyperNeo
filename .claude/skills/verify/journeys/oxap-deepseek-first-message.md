@@ -51,3 +51,5 @@ With `routed-web`, use the browser setup above to save the setting in Providers,
 reload to check the saved setting and official API key field, and select DeepSeek
 V4 Pro in the new chat picker without an official key. The fixture then sends a
 message through the authenticated RPC and checks the same routed reply.
+Switch to Claude Code in the picker and check that the routed models disappear
+and the start button is disabled until an available model or client is chosen.

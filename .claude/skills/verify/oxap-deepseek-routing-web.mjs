@@ -39,7 +39,18 @@ try {
   await page.getByRole('button', { name: /^Model(?: & thinking)?,/ }).click();
   await page.getByRole('button', { name: /^DeepSeek V4 Pro/ }).click();
   assert.equal(await picker.getAttribute('aria-description'), 'Client: OXAP DeepSeek');
-  console.log(JSON.stringify({ settingsSaved: 1, modelSelections: 1, officialKeyField: true }));
+  await page.keyboard.press('Escape');
+  await picker.click();
+  await page.getByRole('button', { name: 'Client, OXAP DeepSeek' }).click();
+  await page.getByRole('button', { name: 'Claude Code', exact: true }).click();
+  await picker.click();
+  await page.getByRole('button', { name: /^Model(?: & thinking)?,/ }).click();
+  await page.getByRole('group', { name: 'Models' }).waitFor();
+  assert.equal(await page.getByRole('button', { name: /^DeepSeek V4/ }).count(), 0);
+  await page.keyboard.press('Escape');
+  await page.getByPlaceholder('Ask anything to start a new chat...').fill('Check availability');
+  assert.equal(await page.getByRole('button', { name: 'Start chat' }).isDisabled(), true);
+  console.log(JSON.stringify({ settingsSaved: 1, modelSelections: 1, officialKeyField: true, sdkRouteHidden: true, sdkStartDisabled: true }));
 } finally {
   await browser.close();
 }
