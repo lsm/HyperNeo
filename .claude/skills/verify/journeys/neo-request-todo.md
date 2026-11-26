@@ -43,7 +43,9 @@ works no open todo. Observe `neo-request-todo.json` and the mailbox queue:
   that request ask and leaves its reply todo intact.
 
 The helper also sends a request through the session CLI with a synthetic
-`CLAUDE_CODE_SESSION_ID` and closes it through `neo.todo.done`. Run the real
+`CLAUDE_CODE_SESSION_ID` and closes it through `neo.todo.done`. Check that
+`desktopAddress` records the canonical Desktop address in both the delivered
+envelope and the todo's `requestFrom`. Run the real
 reply job and one worker-input processor tick. The synthetic Desktop peer must
 receive exactly one answer on the live inbox and Neo must get zero failure
 notices. Check `desktop.result`, `desktop.inputs` and the wrapper exit code.
