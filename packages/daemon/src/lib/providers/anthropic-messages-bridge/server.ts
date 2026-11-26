@@ -1,4 +1,5 @@
 import { anthropicErrorTypeForHttpStatus } from '@hyperneo/shared/provider/error-taxonomy';
+import { collapseDesktopObservations } from '../desktop-observation-collapse.ts';
 import { Logger } from '../../logger.js';
 import { createHttpWsServer } from '../../runtime-server/index.js';
 import type { AnthropicRequest } from '../provider-anthropic-compat/translator.js';
@@ -30,6 +31,7 @@ export type AnthropicMessagesBridgeConfig = {
   apiKey?: string;
   headers?: Record<string, string>;
   fetchImpl?: typeof fetch;
+  collapseDesktopObservations?: boolean;
   models?: AnthropicMessagesBridgeModel[];
   thinkingSupported?: boolean;
   disableThinkingWithChatTemplate?: boolean;
@@ -181,6 +183,12 @@ export async function createAnthropicMessagesBridgeServer(
       let bodyBytes: ArrayBuffer;
       try {
         bodyBytes = await req.arrayBuffer();
+        if (config.collapseDesktopObservations) {
+          const body: AnthropicRequest = JSON.parse(new TextDecoder().decode(bodyBytes));
+          const collapsed = collapseDesktopObservations(body);
+          if (collapsed !== body)
+            bodyBytes = new TextEncoder().encode(JSON.stringify(collapsed)).buffer;
+        }
       } catch {
         return sendJsonError(400, 'invalid_request_error', 'Bad Request');
       }
