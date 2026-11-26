@@ -7,6 +7,7 @@ import {
 } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
 import { codingTurnSessionKey } from '../../../../src/lib/neo/packs/coding/turn-owner.ts';
 import { CodingTurnPrRepository } from '../../../../src/lib/neo/packs/coding/turn-prs.ts';
+import { readDriverOutcome } from '../../../../src/lib/neo/driver-work.ts';
 import {
   recordWorkTurns,
   WorkTurnRepository,
@@ -151,6 +152,22 @@ describe('coding turn PRs', () => {
       'desktop-pending:abc123': 'a',
       t2: 'b',
     });
+    db.close();
+  });
+
+  test('a Codex start whose rollout read missed gives its todo by the opening turn id', () => {
+    const { db, record } = setup();
+    const outcome = readDriverOutcome(
+      { verb: 'start', adapter: 'codex-desktop', place: { machine: 'laptop', folder: '/w' } },
+      { kind: 'completed', value: { ok: true, value: { ref, startedTurnId: 't-open' } } }
+    );
+    db.prepare(
+      `INSERT INTO work_delivery_inputs
+        (id, todo_id, origin_session_id, target, message, accepted_at, deadline_at, outcome)
+       VALUES ('d1', 'a', 'neo', '{}', 'work', 1, 2, ?)`
+    ).run(JSON.stringify(outcome));
+    record(fact('t-open', [], [url], 100), fact('t-later', [], [url], 200));
+    expect(new CodingTurnPrRepository(db).own('a').map(({ id }) => id)).toEqual(['t-open']);
     db.close();
   });
 
