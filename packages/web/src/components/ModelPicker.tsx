@@ -36,6 +36,7 @@ interface ModelPickerProps {
   newChatHarness?: {
     label: string;
     readyProviders?: readonly string[];
+    unavailableProvider?: string;
     options: {
       label: string;
       selected: boolean;
@@ -141,14 +142,16 @@ export function ModelPicker({
 
   const activeProvider = activeModelInfo?.provider;
   const readyProviders = newChatHarness?.readyProviders;
+  const unavailableProvider = newChatHarness?.unavailableProvider;
   const models = filterModelsForPicker(
-    availableModels.filter((model) =>
-      isOxapHarness(harness)
+    availableModels.filter((model) => {
+      if (unavailableProvider && model.provider === unavailableProvider) return false;
+      return isOxapHarness(harness)
         ? model.provider === provider
         : harness === undefined ||
-          model.provider === (provider ?? activeProvider) ||
-          (oxapProviders !== null && !oxapProviders.has(model.provider))
-    ),
+            model.provider === (provider ?? activeProvider) ||
+            (oxapProviders !== null && !oxapProviders.has(model.provider));
+    }),
     isOxapHarness(harness)
       ? new Map()
       : readyProviders?.length

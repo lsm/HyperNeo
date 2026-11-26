@@ -4,6 +4,7 @@ import {
   isOxapHarness,
   oxapHarness,
   oxapCodexDefaultThinking,
+  oxapModelProvider,
   oxapThinkingOptions,
   oxapHarnessesForProvider,
   type OxapHarnessId,
@@ -47,6 +48,7 @@ type NewChatWorktreeMode = 'worktree' | 'direct';
 type NewChatHarness = 'sdk' | OxapHarnessId;
 
 const HARNESS_SETUP = 'Set up in Settings → Providers';
+const DEEPSEEK_SDK_SETUP = 'Claude Code needs DEEPSEEK_API_KEY for DeepSeek';
 const CHAT_ICON_CONTROL =
   'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border sm:pointer-coarse:size-11';
 
@@ -73,6 +75,17 @@ const DEFAULT_NEW_CHAT_SELECTION: NewChatSelection = {
   thinkingLevel: null,
   sandbox: null,
 };
+
+function readProviderHarnessConfig(record: ListedProvider | undefined): {
+  harness?: unknown;
+  harnessSettings?: Record<string, string>;
+} {
+  try {
+    return JSON.parse(record?.configJson ?? '{}') ?? {};
+  } catch {
+    return {};
+  }
+}
 
 function loadNewChatSelection(): NewChatSelection {
   try {
@@ -192,10 +205,7 @@ export function SessionsPage() {
   const eligibleHarnesses = oxapHarnessesForProvider(providerId ?? '');
   const mayUseOxap = eligibleHarnesses.length > 0;
   const provider = providers?.find((record) => record.providerId === providerId);
-  let configuredHarness: unknown;
-  try {
-    configuredHarness = JSON.parse(provider?.configJson ?? '{}').harness;
-  } catch {}
+  const { harness: configuredHarness, harnessSettings } = readProviderHarnessConfig(provider);
   const defaultHarness =
     isOxapHarness(configuredHarness) && eligibleHarnesses.includes(configuredHarness)
       ? configuredHarness
@@ -205,7 +215,23 @@ export function SessionsPage() {
   const engine = isOxapHarness(harness) ? oxapHarness(harness) : undefined;
   const isOxap = engine !== undefined;
   const ready = (id: OxapHarnessId) => provider?.readyHarnesses?.includes(id) === true;
-  const harnessUnavailable = isOxapHarness(harness) && !ready(harness);
+  const sdkUnavailable =
+    harness === 'sdk' &&
+    provider?.providerId === 'deepseek' &&
+    provider.available === false &&
+    !!oxapModelProvider(harnessSettings ?? {});
+  const harnessRefusal = sdkUnavailable
+    ? DEEPSEEK_SDK_SETUP
+    : isOxapHarness(harness) && !ready(harness)
+      ? HARNESS_SETUP
+      : undefined;
+  const readyProviders = providers
+    ?.filter((record) => {
+      const selected =
+        record.providerId === providerId ? harness : readProviderHarnessConfig(record).harness;
+      return isOxapHarness(selected) && record.readyHarnesses?.includes(selected);
+    })
+    .map((record) => record.providerId);
   const harnessLabel = engine?.label ?? 'Claude Code';
   const thinkingOptions = oxapThinkingOptions(harness, activeModelInfo);
   const supportedThinking = thinkingOptions.some(({ value }) => value === selectedThinking)
@@ -426,7 +452,7 @@ export function SessionsPage() {
 
   const handleSubmit = async () => {
     const content = text.trim();
-    if (!content || submitting || harnessUnavailable || (mayUseOxap && providers === null)) return;
+    if (!content || submitting || harnessRefusal || (mayUseOxap && providers === null)) return;
     if (!canCreate) {
       toast.error('Not connected to server. Please wait...');
       return;
@@ -523,9 +549,8 @@ export function SessionsPage() {
                   align="trigger"
                   newChatHarness={{
                     label: harnessLabel,
-                    readyProviders: providers
-                      ?.filter((record) => record.readyHarnesses?.length)
-                      .map((record) => record.providerId),
+                    readyProviders,
+                    unavailableProvider: sdkUnavailable ? providerId : undefined,
                     options:
                       mayUseOxap && providers !== null
                         ? [
@@ -599,7 +624,7 @@ export function SessionsPage() {
                   submitting ||
                   !canCreate ||
                   waitingForProjectGit ||
-                  harnessUnavailable ||
+                  !!harnessRefusal ||
                   (mayUseOxap && providers === null)
                 }
                 title="Start chat"
@@ -636,8 +661,8 @@ export function SessionsPage() {
             </div>
           </div>
 
-          {harnessUnavailable && providers !== null && (
-            <p class="mt-2 px-1 text-xs text-fg-muted">{HARNESS_SETUP}</p>
+          {harnessRefusal && providers !== null && (
+            <p class="mt-2 px-1 text-xs text-fg-muted">{harnessRefusal}</p>
           )}
           {providersError && (
             <p role="alert" class="mt-2 px-1 text-sm text-danger">
