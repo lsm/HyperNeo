@@ -825,15 +825,19 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
         [],
         context.neoPacks()
       );
-      return facts.plan
-        ? {
-            value: {
-              ...input,
-              message: neoPlanCheckBrief(todo, facts.steps, input.message),
-              planStepIds: facts.steps.map((step) => step.id),
-            },
-          }
-        : { reason: reject('todo_required', 'Choose an open plan on your ask.', true) };
+      if (!facts.plan)
+        return { reason: reject('todo_required', 'Choose an open plan on your ask.', true) };
+      if (!facts.steps.length)
+        return {
+          reason: reject('todo_required', 'Add dependent steps before checking the plan.', true),
+        };
+      return {
+        value: {
+          ...input,
+          message: neoPlanCheckBrief(todo, facts.steps, input.message),
+          planStepIds: facts.steps.map((step) => step.id),
+        },
+      };
     }) satisfies NonNullable<WorkVerbDeps['preparePlanCheck']>,
     startPlace: neoStartPlace({
       db: db(),

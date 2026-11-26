@@ -487,6 +487,9 @@ const workTarget = (input: StartInput | SendInput): WorkTarget =>
     : {
         verb: 'start',
         ...(input.planStepIds ? { planStepIds: input.planStepIds } : {}),
+        ...(input.place.daemon && !input.checkPlan && (input.role ?? 'do') === 'do'
+          ? { role: 'do' as const }
+          : {}),
         adapter: input.adapter,
         place: input.place,
         ...(input.createFolder === undefined ? {} : { createFolder: input.createFolder }),

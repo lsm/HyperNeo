@@ -74,17 +74,18 @@ export function neoPlanRefusal({ todo, plan, steps, cards }: PlanFacts): string 
   if (!steps.length) return 'plan_steps_missing: Add the plan steps as dependent todos.';
   if (todo.state === 'done') return null;
   if (!currentPlanCheck(todo, steps)) return 'plan_check_missing: Check the current plan steps.';
-  const signed = cards.some(
-    (card) =>
+  const signed = cards.some((card) => {
+    const picked = [card.answer].flat();
+    return (
       card.cause === NEO_PLAN_SIGNOFF &&
       card.kind === 'choice' &&
       card.options?.length === 1 &&
       card.answeredBy !== null &&
-      Array.isArray(card.answer) &&
-      card.answer.length === 1 &&
-      card.answer[0] === card.options[0] &&
+      picked.length === 1 &&
+      picked[0] === card.options[0] &&
       samePlanSteps(card.todos, steps)
-  );
+    );
+  });
   return signed ? null : 'plan_signoff_missing: Ask the human to sign off on the current steps.';
 }
 

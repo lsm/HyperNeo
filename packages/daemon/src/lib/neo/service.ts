@@ -1,5 +1,4 @@
 import { getAvailableModels } from '../model-service.ts';
-import { workStartedSessionReads } from '../../storage/repositories/work-started-sessions-worker.ts';
 import { chooseLine } from './pack-selection.ts';
 import {
   neoPlanCheckReads,
@@ -934,9 +933,12 @@ export class NeoService {
       !offered.every((id) => stepIds.includes(id))
     )
       return;
-    const roles = await this.db.gateway.call(workStartedSessionReads, 'todoRoles', todo.id);
-    const doer = roles.find((role) => role.role === 'do');
-    if (!doer?.model || (doer.adapter === ref.adapter && doer.id === ref.id)) return;
+    const doer = await this.db.gateway.call(neoPlanCheckReads, 'doer', todo.id);
+    if (
+      !doer?.model ||
+      (doer.ref.adapter === ref.adapter && doer.ref.id === ref.id && doer.ref.daemon === ref.daemon)
+    )
+      return;
     const alternatives = getAvailableModels('global')
       .filter((line) => line.available && line.id !== doer.model)
       .map(({ id, provider }) => ({ model: id, provider }));
