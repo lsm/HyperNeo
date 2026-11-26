@@ -27,7 +27,8 @@ and thinking level (`agents/template-manager.ts`, built-ins in `agents/seed-agen
 `getBuiltInSpaceAgentTemplates` serves it. The desktop operator is one more built-in of the
 same kind, handle `desktop`, key `worker.desktop`. It is added beside `workerPresetTemplates()`
 in `getLongHorizonAgentTemplates`, not to `getPresetAgentTemplates`: migrations 170 and 172
-call that list live and would seed it into Spaces. Its handle is added to the reserved handles
+call that list live and would seed it into Spaces. Migration 231 reads the keys of
+`getLongHorizonAgentTemplates` only to resolve workflow references, and none names this one. Its handle is added to the reserved handles
 (`RESERVED_SPACE_AGENT_HANDLES`, `agents/slug.ts`), so `SpaceAgentTemplateManager.listIn` does not offer it in
 Spaces, where desktop control does not exist.
 
