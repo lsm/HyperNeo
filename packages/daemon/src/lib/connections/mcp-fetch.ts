@@ -88,7 +88,8 @@ function errorReply(status: number, body: string) {
 }
 
 function redirectReply(response: Response, url: URL, init?: RequestInit) {
-  const target = URL.parse(response.headers.get('location') ?? '', url.href);
+  const location = response.headers.get('location');
+  const target = location ? URL.parse(location, url.href) : null;
   const followable =
     (init?.method ?? 'GET').toUpperCase() === 'GET' && target?.origin === url.origin;
   return followable
