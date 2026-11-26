@@ -103,13 +103,19 @@ reads it for pull requests (`codingTurnTodos`); that decision moves to core with
 
 1. The todo whose delivery receipt names an input of the turn. Two such todos: none.
 2. Otherwise the todo of the worker's newest delivered row (`start`, `send` or `adopt`)
-   accepted before the turn started.
+   that reached the worker before the turn started. A row sent straight in reached it when it
+   was accepted. A row that waited in a queue (`queued` in its outcome, which a catch-up after
+   a restart also is) is known to have reached it only when it is observed (`observed_at`); a
+   turn that starts in between takes the row before it (or step 3), and has none if that todo
+   differs from the queued row's.
 3. Before any of those, the todo that started the worker (`work_started_sessions`). Turns of an
    adopted session before its adoption have none.
 
 Measured on 3677 turns of one week: 962 have a receipt, 3 of them of two todos. For the other
 959 the time rule alone gives the same todo 954 times. The 2715 without a receipt all get a
-todo, but nothing checks it yet; how often that todo is right is part of **Done when**.
+todo, but nothing checks it yet; how often that todo is right is part of **Done when**. In the
+same week 1619 turns started while a queued row was still unobserved; for 134 of them the row
+before it had another todo, so they have none.
 All 987 started or sent todos of that week have a row. The worker and the daemon run on one
 machine and share its clock. The role is the worker's newest one for that todo in
 `neo_todo_roles`, else `do`.
@@ -157,7 +163,8 @@ Six PRs from `dev`, in order, failing tests first. System map read for the plann
    keeps its todo; a failed delivery gives nothing; a receipt beats the time; two todos in one
    turn give none; a started worker's first turn, which begins before its receipt; an adopted
    session's earlier turns have none; after an adoption, a rebind and a move keep the adopted
-   todo for the turns between; a reviewer keeps its role.
+   todo for the turns between; a turn that starts while a queued send of another todo is
+   unobserved has none, also after a restart; a reviewer keeps its role.
    Estimate: 6 files, 110 lines, 200 test lines.
 2. **Kind and estimate.** Core kinds, the checks on the two operations, the fact, the Neo tool
    text, and the estimate line in `AGENTS.md` for designs. Tests: missing or unknown kind is
