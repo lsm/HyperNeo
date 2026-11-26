@@ -206,6 +206,7 @@ import {
   refreshModels,
 } from '../model-service.ts';
 import { getProviderService } from '../provider-service.ts';
+import { CustomEndpointProvider } from '../providers/custom-endpoint-provider.ts';
 import {
   getProviderRegistry,
   initializeProviders,
@@ -429,6 +430,10 @@ export class AgentSession
       this.session.config.toolProfile === 'desktop'
         ? 'desktop'
         : this.operationCallerIdentity().role,
+      () => {
+        const provider = getProviderRegistry().get(this.providerId());
+        return provider instanceof CustomEndpointProvider && provider.collapseDesktopObservations;
+      },
     ];
   }
 

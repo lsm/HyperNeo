@@ -31,13 +31,25 @@ type OperationMcpRegistration = [
   resolveCaller: (operation: string) => CallerIdentity | Promise<CallerIdentity>,
   recordRefusal?: (refusal: OperationRefusal) => void | Promise<void>,
   descriptionRole?: OperationCallerRole | 'desktop',
+  fullDesktopSnapshots?: () => boolean,
 ];
 
 export function registerOperationMcpTools(
   register: RegisterOperationTool,
-  ...[registry, resolveCaller, recordRefusal, descriptionRole]: OperationMcpRegistration
+  ...[
+    registry,
+    resolveCaller,
+    recordRefusal,
+    descriptionRole,
+    fullDesktopSnapshots,
+  ]: OperationMcpRegistration
 ) {
-  const invoke = createOperationMcpHandler(registry, resolveCaller, recordRefusal);
+  const invoke = createOperationMcpHandler(
+    registry,
+    resolveCaller,
+    recordRefusal,
+    fullDesktopSnapshots
+  );
   const discovery =
     descriptionRole === 'neo'
       ? 'operations.list {prefix,cursor?}; operations.describe {name}. message.send acceptance means durable mailbox persistence, not an agent reply.'
