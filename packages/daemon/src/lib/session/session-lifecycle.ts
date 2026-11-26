@@ -1,3 +1,4 @@
+import { OperationMcpHttpServer } from '../operations/operation-http-server.ts';
 import {
   cleanupOwnedWorktree,
   releaseRemovedWorkerFolders,
@@ -103,6 +104,7 @@ export interface CreateSessionParams {
 }
 
 export class SessionLifecycle {
+  private readonly operationMcp = new OperationMcpHttpServer();
   private readonly resourceOperations = new Map<string, Promise<unknown>>();
   private logger: Logger;
 
@@ -646,6 +648,18 @@ export class SessionLifecycle {
     }
   }
 
+  grantOperationMcp(session: ReturnType<AgentSessionFactory>) {
+    const { id } = session.getSessionData();
+    const stored = this.db.getSession(id);
+    if (this.resourceOperations.has(id) || !stored || stored.status === 'archived')
+      throw new Error('Operations MCP requires an open session.');
+    return this.operationMcp.grant(session);
+  }
+
+  closeOperationMcp() {
+    return this.operationMcp.close();
+  }
+
   unarchive(sessionId: string): Promise<UnarchiveSessionResponse> {
     return this.withSessionResources(sessionId, async () => {
       const session = this.db.getSession(sessionId);
@@ -733,6 +747,7 @@ export class SessionLifecycle {
     sessionId: string,
     trigger: ArchiveResourcesTrigger
   ): Promise<WorktreeCleanup | undefined> {
+    await this.operationMcp.revoke(sessionId);
     const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
     const session = this.db.getSession(sessionId);
     if (!session) {
@@ -862,6 +877,7 @@ export class SessionLifecycle {
     sessionId: string,
     trigger: DeleteResourcesTrigger
   ): Promise<void> {
+    await this.operationMcp.revoke(sessionId);
     const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
     const session = this.db.getSession(sessionId);
 

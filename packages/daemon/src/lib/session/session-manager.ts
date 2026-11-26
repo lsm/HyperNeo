@@ -799,6 +799,12 @@ export class SessionManager {
     return this.sessionLifecycle.cleanupArchivedWorktree(sessionId);
   }
 
+  async grantOperationMcp(sessionId: string) {
+    const session = await this.getSessionForControl(sessionId);
+    if (!session) throw new Error('Operations MCP requires an open session.');
+    return this.sessionLifecycle.grantOperationMcp(session);
+  }
+
   async archiveSessionResources(sessionId: string, trigger: ArchiveResourcesTrigger) {
     const inFlight = this.workflowMcpProvisioning.get(sessionId);
     if (inFlight) {
@@ -958,6 +964,7 @@ export class SessionManager {
     this.cleanupState = CleanupState.CLEANING;
 
     try {
+      await this.sessionLifecycle.closeOperationMcp();
       for (const unsubscribe of this.internalEventBusUnsubscribers) {
         try {
           unsubscribe();

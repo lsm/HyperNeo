@@ -19,23 +19,36 @@ export interface PairRouteDeps {
 
 const MAX_BODY_BYTES = 4 * 1024;
 
-export async function readBoundedText(req: Request): Promise<string | null> {
-  if (Number(req.headers.get('content-length') ?? 0) > MAX_BODY_BYTES) return null;
+export async function readBoundedText(
+  req: Request,
+  maxBytes = MAX_BODY_BYTES,
+  signal?: AbortSignal
+): Promise<string | null> {
+  if (signal?.aborted || Number(req.headers.get('content-length') ?? 0) > maxBytes) return null;
   const reader = req.body?.getReader();
   if (!reader) return '';
+  const cancel = () => {
+    void reader.cancel().catch(() => {});
+  };
+  signal?.addEventListener('abort', cancel, { once: true });
   const chunks: Uint8Array[] = [];
   let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > MAX_BODY_BYTES) {
-      await reader.cancel();
-      return null;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > maxBytes) {
+        cancel();
+        return null;
+      }
+      chunks.push(value);
     }
-    chunks.push(value);
+    return signal?.aborted ? null : Buffer.concat(chunks).toString('utf8');
+  } finally {
+    signal?.removeEventListener('abort', cancel);
+    reader.releaseLock();
   }
-  return Buffer.concat(chunks).toString('utf8');
 }
 
 const parseJson = (text: string): unknown => {
