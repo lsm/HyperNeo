@@ -24,7 +24,10 @@ function extractParentToolUseId(content: string | MessageContent[]): string | nu
   return toolResult?.tool_use_id ?? null;
 }
 
-function isUserCompactCommand(content: string | MessageContent[]): boolean {
+export const COMPACT_SUMMARY_COMMAND =
+  '/compact Keep the summary near 2,000 tokens, with only the goal, the state reached, open steps, and the last observation.';
+
+export function isCompactCommand(content: string | MessageContent[]): boolean {
   const text =
     typeof content === 'string'
       ? content
@@ -103,7 +106,7 @@ export class MessageQueue {
       this.internalCompactionBuffered = this.outstandingCompactionBoundaries.length > 0;
       this.outstandingCompactionBoundaries.push({ kind: 'daemon', id: message.id });
     } else {
-      if (isUserCompactCommand(message.content)) {
+      if (isCompactCommand(message.content)) {
         this.outstandingCompactionBoundaries.push({ kind: 'user' });
       }
     }
@@ -113,7 +116,7 @@ export class MessageQueue {
     return (
       message.internal === true &&
       typeof message.content === 'string' &&
-      message.content === '/compact'
+      isCompactCommand(message.content)
     );
   }
 

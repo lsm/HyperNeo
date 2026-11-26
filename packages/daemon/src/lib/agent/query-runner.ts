@@ -43,7 +43,7 @@ import type { AskUserQuestionHandler } from './ask-user-question-handler.ts';
 import { createFlagSettingsFileWriter } from './flag-settings-file.ts';
 import { assessLimitError, type LimitRetryHint } from './limit-error-classifier.ts';
 import { drainDeliveryWaitersOnTerminalSDKMessage } from './message-delivery.ts';
-import type { MessageQueue } from './message-queue.ts';
+import { isCompactCommand, type MessageQueue } from './message-queue.ts';
 import { isNetworkUnreachableError } from './network-outage-pause.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
 import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-token.ts';
@@ -2599,7 +2599,8 @@ export class QueryRunner {
             : undefined;
       const startsDaemonTurn =
         isInternal &&
-        (promptText === '/compact' || promptText === TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE);
+        promptText !== undefined &&
+        (isCompactCommand(promptText) || promptText === TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE);
 
       if (startsDaemonTurn && stateManager.getState().status !== 'processing') {
         await stateManager.setProcessing(queuedMessage.uuid ?? 'unknown', 'initializing');

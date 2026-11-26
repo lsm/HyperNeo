@@ -8,7 +8,7 @@ import {
   decideContextBudgetCompaction,
 } from './context-budget-decision.ts';
 import type { ContextTracker } from './context-tracker.ts';
-import type { MessageQueue } from './message-queue.ts';
+import { COMPACT_SUMMARY_COMMAND, type MessageQueue } from './message-queue.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
 import { NATIVE_CONTEXT_WINDOW_PROVIDER_IDS } from './query-options-builder.js';
 
@@ -75,7 +75,7 @@ export function enqueueBudgetCompaction(
       `${ctx.contextInfo.totalUsed} >= ${ctx.budgetKey} tokens)`
   );
   void ctx.messageQueue
-    .enqueue('/compact', true, { durable: true, prepend: true })
+    .enqueue(COMPACT_SUMMARY_COMMAND, true, { durable: true, prepend: true })
     .catch((error) => {
       if (ctx.messageQueue.hasOutstandingInternalCompaction()) {
         return;
