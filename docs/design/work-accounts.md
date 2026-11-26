@@ -109,11 +109,13 @@ that left no receipt, a turn the human starts in a shared worker.
 
 **Receipts for every adapter.** Claude Code, Claude Desktop and HyperNeo already return a
 receipt with each delivery. Codex Desktop returns one only when it confirms the input at once;
-a queued send (`queuedSubmissionId`) and an unconfirmed one have none. The Codex driver already
-matches a rollout user input to the sent message (`codex-desktop-adapter.ts`, the same text
-and a fresh input id). Its turn reader (`codex-turn-reader.ts`) does that match for the
-worker's rows that have no receipt yet, and writes the receipt to the row when the input
-starts a turn.
+a queued send (`queuedSubmissionId`) and an unconfirmed one have none. Text alone cannot link
+an input to a row: two sends can carry the same text, and a human can type it. So every
+message to a Codex worker starts with a line naming its row, `Delivery: <work_delivery_inputs.id>`.
+The id is chosen before the message is written into the row, and it replaces the random id
+of today's `Worker delivery:` line (`drivers/worker-provenance.ts`). The Codex turn reader
+(`codex-turn-reader.ts`) writes a receipt to a row only when a user input of the turn begins
+with that row's line and the row has no receipt yet. An input without the line writes nothing.
 
 Measured on the 6624 worker turns of one week: 713 (10.8%) have a receipt and 1165 (17.6%) get
 the starting todo, so 28% have a todo today. In the same week Codex Desktop had 1732 queued
@@ -165,11 +167,11 @@ Seven PRs from `dev`, in order, failing tests first. System map read for the pla
    not count; an adopted session's turns without a receipt have none; a reviewer keeps its
    role.
    Estimate: 5 files, 80 lines, 150 test lines.
-2. **Codex receipts.** The turn reader writes the receipt for a queued or unconfirmed send when
-   its input starts a turn. Tests on real rollout shapes: a queued send gets its receipt from
-   the turn it starts; a turn between queueing and delivery gives no receipt to it; a restart
-   catches up; an input that matches no row writes nothing.
-   Estimate: 3 files, 70 lines, 140 test lines.
+2. **Codex receipts.** The `Delivery:` line and the turn reader writing the receipt. Tests on
+   real rollout shapes: a queued send gets its receipt from the turn it starts; a turn between
+   queueing and delivery gives no receipt to it; two queued sends with the same text each get
+   their own; a human input with the same text writes nothing; a restart catches up.
+   Estimate: 4 files, 80 lines, 160 test lines.
 3. **Kind and estimate.** Core kinds, the checks on the two operations, the fact, the Neo tool
    text, and the estimate line in `AGENTS.md` for designs. Tests: missing or unknown kind is
    refused; a pack's kind is accepted only while the pack is on; changing an estimate after
