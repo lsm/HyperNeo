@@ -2,7 +2,10 @@ import { chmod, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { connect } from 'node:net';
 import { join } from 'node:path';
+import { z } from 'zod';
 import { getDataDir } from '../data-dir.ts';
+import { resolveClaudeRef } from '../drivers/claude-code-adapter.ts';
+import type { ClaudeDesktopRecord } from '../drivers/claude-desktop-adapter.ts';
 import { invokeOperation } from '../operations/invoke.ts';
 import type { OperationCaller, OperationRegistry } from '../operations/registry.ts';
 import { SESSION_DOOR_PRINCIPAL } from '../pairing/pairing-operations.ts';
@@ -27,6 +30,10 @@ const DOOR_OPERATIONS = new Set([
   'device.would_refuse.list',
 ]);
 const MAX_BODY_BYTES = 256 * 1024;
+const CLAUDE_CODE_PREFIX = 'claude-code:';
+const ClaudeSessionId = z.uuid();
+
+type ReadDesktopRecords = () => Promise<readonly ClaudeDesktopRecord[]>;
 
 export function sessionDoorPath(): string {
   return join(getDataDir(), 'session-door.sock');
@@ -35,7 +42,9 @@ export function sessionDoorPath(): string {
 export function planSessionDoorCall(
   body: unknown,
   device?: UpgradeIdentity
-): { value: { name: string; input: unknown; caller: OperationCaller } } | { reason: string } {
+):
+  | { value: { name: string; input: unknown; caller: OperationCaller & { sessionId: string } } }
+  | { reason: string } {
   const { sender, name, input } = (body ?? {}) as Record<string, unknown>;
   if (typeof sender !== 'string' || !sender.trim())
     return { reason: 'no_sender: the session door needs the calling session id.' };
@@ -58,6 +67,15 @@ export function planSessionDoorCall(
   };
 }
 
+async function canonicalSender(sender: string, readDesktopRecords: ReadDesktopRecords) {
+  if (!sender.startsWith(CLAUDE_CODE_PREFIX)) return sender;
+  const id = sender.slice(CLAUDE_CODE_PREFIX.length);
+  if (!ClaudeSessionId.safeParse(id).success) return sender;
+  const records = (await readDesktopRecords()).filter((record) => record.desktopRegistered);
+  const resolved = resolveClaudeRef({ adapter: 'claude-code', id }, records);
+  return 'value' in resolved ? `${resolved.value.adapter}:${resolved.value.id}` : sender;
+}
+
 function doorAnswers(path: string): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = connect(path);
@@ -72,7 +90,8 @@ function doorAnswers(path: string): Promise<boolean> {
 export async function startSessionDoor(
   registry: () => OperationRegistry,
   authenticate: (request: Request, remoteAddress: string | null) => Promise<UpgradeIdentity | null>,
-  path = sessionDoorPath()
+  path = sessionDoorPath(),
+  readDesktopRecords?: ReadDesktopRecords
 ) {
   if (await doorAnswers(path)) throw new Error(`another daemon already serves ${path}`);
   await rm(path, { force: true });
@@ -111,7 +130,10 @@ export async function startSessionDoor(
       const plan = planSessionDoorCall(parsed, device);
       if ('reason' in plan) return reply(400, { error: plan.reason });
       const { name, input, caller } = plan.value;
-      reply(200, await invokeOperation(registry(), name, input, caller));
+      const sessionId = readDesktopRecords
+        ? await canonicalSender(caller.sessionId, readDesktopRecords)
+        : caller.sessionId;
+      reply(200, await invokeOperation(registry(), name, input, { ...caller, sessionId }));
     });
   });
   await new Promise<void>((resolve, reject) => {

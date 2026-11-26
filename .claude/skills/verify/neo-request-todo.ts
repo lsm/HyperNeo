@@ -385,7 +385,7 @@ try {
   assert.deepEqual(todos.listTodos(splitAsk.id).map((todo) => todo.title), [split]);
   (evidence.checks as unknown[]).push({ name: 'request cannot accept work', envelope, report, filed });
   const desktopTitle = 'Answer the synthetic Desktop request';
-  const desktopSender = `claude-code:${claudeId}`;
+  const desktopSender = 'claude-desktop:local_fixture';
   assert.equal(
     await runSessionCommand(['send', root, '--kind', 'question', desktopTitle], {
       CLAUDE_CODE_SESSION_ID: claudeId,
@@ -394,6 +394,10 @@ try {
   );
   const desktopAsk = requestAsks().find((ask) => ask.title === desktopTitle)!;
   const [desktopTodo] = todos.listTodos(desktopAsk.id);
+  const desktopEnvelope = inbox(root).find((entry) => entry.text.includes(desktopTitle))?.text;
+  evidence.desktopAddress = { requestFrom: desktopTodo?.named?.requestFrom, envelope: desktopEnvelope };
+  assert.equal(desktopTodo?.named?.requestFrom, desktopSender);
+  assert.ok(desktopEnvelope?.startsWith(`<session-message from-session="${desktopSender}"`));
   const desktopClosed = await invokeOperation(
     registry,
     'neo.todo.done',

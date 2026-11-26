@@ -1,3 +1,4 @@
+import { neoPlanCheckReads, neoPlanCheckWrites } from '../repositories/neo-plan-check-worker.ts';
 import { workerOwnershipWrites } from '../repositories/worker-ownership-write-worker.ts';
 import { workerOwnershipFacts } from '../repositories/worker-ownership-read-worker.ts';
 import { workerInputReads, workerInputWrites } from '../repositories/worker-input-worker.ts';
@@ -374,6 +375,8 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     workerInputWrites,
     acceptWorkDeliveryInput,
     findWorkDeliveryInput,
+    neoPlanCheckReads,
+    neoPlanCheckWrites,
     recordWorkDeliveryOutcome,
     recordWorkTurns,
     jobEnqueueWrites,

@@ -1,3 +1,4 @@
+import { livePlanSteps, NEO_PLAN_SIGNOFF, samePlanSteps } from './todo-follow-up.ts';
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { planNeoDaemonCardPrune } from './daemon-cards.ts';
 import { NEO_REMOVED_PREREQUISITE } from './todo-removal.ts';
@@ -74,6 +75,12 @@ export function planNeoQuestionPrune(
       todo.id === question.todoId && todo.askId === question.askId && todo.state !== 'removed'
   );
   if (question.todoId && !active) return { value: { retire: 'todo no longer active' } };
+  if (
+    question.cause === NEO_PLAN_SIGNOFF &&
+    question.todoId &&
+    !samePlanSteps(question.todos, livePlanSteps(question.todoId, family))
+  )
+    return { value: { retire: 'plan steps changed' } };
   if (
     question.cause === NEO_REMOVED_PREREQUISITE &&
     !family.some(

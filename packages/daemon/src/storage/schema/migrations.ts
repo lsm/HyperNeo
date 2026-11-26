@@ -1,3 +1,4 @@
+import { runMigration537 } from './m537-neo-todo-plan.ts';
 import { runMigration528 } from './m528-retire-session-strategy.ts';
 import { runMigration529 } from './m529-work-start-record.ts';
 import { runMigration526 } from './m526-neo-front-failure-reason.ts';
@@ -1107,6 +1108,7 @@ export function runMigrations(
   run(migrationMarkerKey(534), () => runMigration534(db));
   run(migrationMarkerKey(535), () => runMigration535(db));
   run(migrationMarkerKey(536), () => runMigration536(db));
+  run(migrationMarkerKey(537), () => runMigration537(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

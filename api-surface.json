@@ -21235,6 +21235,29 @@
             ],
             "type": "object"
           },
+          "check": {
+            "properties": {
+              "stepIds": {
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "verdict": {
+                "enum": [
+                  "pass",
+                  "fail"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "verdict",
+              "stepIds"
+            ],
+            "type": "object"
+          },
           "deliveryMode": {
             "enum": [
               "immediate",
@@ -36773,6 +36796,11 @@
                     ],
                     "type": "object"
                   },
+                  "signoff": {
+                    "const": true,
+                    "description": "Ask the human to sign off on a plan.",
+                    "type": "boolean"
+                  },
                   "sourceSession": {
                     "properties": {
                       "adapter": {
@@ -36802,6 +36830,15 @@
                     "description": "The todo this card belongs to.",
                     "minLength": 1,
                     "type": "string"
+                  },
+                  "todos": {
+                    "description": "Exact live step IDs for a plan sign-off.",
+                    "items": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "type": "array"
                   }
                 },
                 "required": [
@@ -59611,6 +59648,10 @@
           "adapter": {
             "minLength": 1,
             "type": "string"
+          },
+          "checkPlan": {
+            "const": true,
+            "type": "boolean"
           },
           "copilotClient": {
             "enum": [
