@@ -43,6 +43,8 @@ describe('Neo daemon notes', () => {
         policy: { safetyClass: 'write' },
         execute: async (input) => {
           sends.push(input);
+          if ((input as { ref: { id: string } }).ref.id === 'deleted')
+            return { ok: false, reason: 'not_found', detail: 'No such session.' };
           return { ok: true, value: { delivered: true } };
         },
       }),
@@ -220,6 +222,12 @@ describe('Neo daemon notes', () => {
       { ref, message: 'FYI', idempotencyKey: 'notice-key', notice: true },
     ]);
     expect(queued('nudge-key')).toEqual([]);
+  });
+
+  test('sendToRef reports a deleted worker as gone', async () => {
+    expect(
+      await service.sendToRef({ adapter: 'claude-desktop', id: 'deleted' }, 'gone-key', 'FYI')
+    ).toBe('gone');
   });
 
   test('a burst of 20 unstructured worker notes does not start Neo', async () => {
