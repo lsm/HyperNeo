@@ -283,7 +283,7 @@ describe('neo.ask.propose and neo.ask.settle', () => {
       turn('apps')
     );
     if (!result.ok) throw new Error(result.reason);
-    const chrome = { bundleId: 'com.google.Chrome', name: 'Google Chrome', seen: 'all' };
+    const chrome = { bundleId: 'com.google.Chrome', name: 'Google Chrome', seen: 'all' as const };
     expect(store.getAsk(result.ask.id)).toMatchObject({
       request: 'Find the March invoice',
       desktopApps: [chrome],

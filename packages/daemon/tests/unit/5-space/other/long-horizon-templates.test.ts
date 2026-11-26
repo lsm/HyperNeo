@@ -31,7 +31,7 @@ describe('long-horizon agent templates', () => {
     expect(templates.map((template) => template.displayName)).toEqual(['Space Manager']);
   });
 
-  test('registers the worker presets as code built-ins under the worker namespace', () => {
+  test('registers the worker built-ins under the worker namespace', () => {
     const workerTemplates = getLongHorizonAgentTemplates().filter((template) =>
       template.key.startsWith(WORKER_TEMPLATE_KEY_PREFIX)
     );
@@ -41,6 +41,7 @@ describe('long-horizon agent templates', () => {
       'worker.research',
       'worker.reviewer',
       'worker.qa',
+      'worker.desktop',
     ]);
     for (const template of workerTemplates) {
       expect(template.instructions.length).toBeGreaterThan(0);
