@@ -95,7 +95,10 @@ a row may name the models it serves.
   `--profile sdk --patch <overlay>`. The daemon writes the overlay into its own
   state directory: one `opencode-go` provider with that endpoint, the API key read
   from `OPENCODE_API_KEY`, and that one model. The key is the OpenCode provider's
-  own key, loaded for the row's `key` as for every row. `DEEPSEEK_API_KEY` is never
+  own key, resolved as the provider resolves it (`OpencodeProvider.getApiKey`:
+  `OPENCODE_API_KEY`, then `OPENCODE_GO_API_KEY`, then the stored credential),
+  not by the OXAP loader's stored-credential read alone, so a setup that works
+  today is ready. `DEEPSEEK_API_KEY` is never
   set for it.
 - **Selection and admission.** A row with `models` is eligible only when the
   session's model is in that list. The dialog lists it only then. `session.create`
@@ -109,7 +112,10 @@ a row may name the models it serves.
   default passes the same readiness check as a Flash override; if it is not
   ready, creation is refused and does not fall back to `sdk`. The runtime SDK
   failover pool (`sdkFallbackProviders`) still calls `engineForProvider`, so it
-  keeps excluding OpenCode while its default is this row.
+  keeps excluding OpenCode while its default is this row. The provider-switch
+  gate (`decideSwitch`, and `engineOf` in `create-session-config.ts`) also stays
+  on `engineForProvider`, so an existing SDK chat cannot switch to OpenCode for
+  any model while its default is this row, as for any OXAP default today.
 - **Model change.** The thread lock that already fixes the model of a started
   DeepSeek thread (`isOxapModelLocked`, today `oxap-deepseek` only) also names
   this row. Before the first turn, a switch to a model outside the list is
@@ -156,7 +162,9 @@ Each slice works on its own: nothing is reachable before what it needs exists.
    and no `DEEPSEEK_API_KEY`; an override for another Go model is refused; with
    the row as default, Flash uses DSH and another Go model uses `sdk`; with the
    row as default but not ready, a Flash session is refused, not moved to `sdk`;
-   with the row as default, OpenCode stays out of the SDK failover pool;
+   with the row as default, OpenCode stays out of the SDK failover pool and an
+   SDK chat cannot switch to OpenCode; a key set only as `OPENCODE_GO_API_KEY`
+   makes the row ready and reaches DSH as `OPENCODE_API_KEY`;
    switching a DSH chat to another model is refused; in the dialog, choosing DSH
    on Flash and then another Go model shows `sdk` and submits no `harness`.
 6. Later, one PR each: other pairs once each is proven.
