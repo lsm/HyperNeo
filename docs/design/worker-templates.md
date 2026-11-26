@@ -29,15 +29,17 @@ handle `desktop`, key `worker.desktop`. Its handle is added to the reserved hand
 (`RESERVED_SPACE_AGENT_HANDLES`, `agents/slug.ts`), so `SpaceAgentTemplateManager.listIn` does not offer it in
 Spaces, where desktop control does not exist.
 
-**How a todo worker reads it.** `resolveEffectiveSpaceAgentTemplate(key, '', repo)`
-(`agents/template-manager.ts`): a row of `space_agent_templates` with `space_id = ''` (the
-column's default) wins, else the built-in. The core preset list owns it. Editing goes through
-`SpaceAgentTemplateRepository` in scope `''`; the existing RPCs need a Space and do not reach
-it, so in this step only a code change or a migration edits it. No new table, column or
-registry.
+**How a todo worker reads it.** From `getBuiltInSpaceAgentTemplates()`
+(`agents/template-manager.ts`) by key, the built-in only. No row is read or written: a row
+with `space_id = ''` is the sentinel that migration 249 moves or deletes, so it is not a
+place to keep an override. The core preset list owns the template, and only a code change
+edits it in this step. No new table, column or registry.
 
-**Who picks it.** Core, not Neo: a todo with desktop apps on the HyperNeo adapter starts with
-`worker.desktop`. The Claude Code and Codex adapters start as today.
+**Who picks it.** A generic pack hook, `workerTemplate?(todo): string | undefined`, next to
+`workerContext` in `neo/pack-contract.ts`. Core only passes the key a pack returns to the
+start; it knows nothing about desktops. The computer-use pack returns `worker.desktop` when the
+todo has desktop apps. Two packs returning different keys: none is used. Only the HyperNeo
+adapter applies a template now; the Claude Code and Codex adapters start as today.
 
 **What it changes in the session.** `createDriverSession`
 (`rpc-handlers/family-operations/drivers.ts`) maps the template as space agents do
@@ -77,19 +79,21 @@ not started with.
   reported to Neo with the app and the screen, never worked around with a shell. The
   computer-use worker text moves here.
 
-**What it can see.** A prompt cannot keep a secret out of a screenshot, so two checks run in
-code before a result reaches the model:
+**What it can see.** No code can tell a secret in an image or in a format it does not know,
+so a content filter cannot be the boundary. The boundary is the app, and it fails closed:
 
-- The app list. `desktop.call` already refuses any action or capture outside the apps the
-  human approved for the todo (`desktop/opt-in.ts`).
-- The screen content. In `desktop/call-operation.ts`, the accessibility text of each result is
-  matched against known secret shapes (private key headers, and token prefixes such as
-  `sk-`, `ghp_`, `github_pat_`, `xox`, `AKIA`). A match replaces that text with a marker and
-  drops the result's screenshot, with one line saying why. Secure text fields are already
-  masked by macOS.
+- `desktop.call` refuses any action or capture outside the apps listed on the todo
+  (`desktop/opt-in.ts`); nothing from another app reaches the model.
+- The approval says what it covers. Neo's line before the Mac's dialog
+  (`computer-use/instructions.md`) changes from "let HyperNeo control that app" to "the
+  worker and its model will see everything that app shows, on every page". An app the human
+  should not show in full is not approved, and the step goes to the human instead.
 
-A secret drawn only as pixels, with no accessibility text, is not caught. That is the limit
-of this step, and the human's app approval covers it.
+On top of that, and only as a second line, the accessibility text of each result is matched
+against known secret shapes (private key headers; token prefixes such as `sk-`, `ghp_`,
+`github_pat_`, `xox`, `AKIA`); a match replaces the text with a marker and drops the
+screenshot. Secure text fields are masked by macOS. Both are in the first slice, before any
+templated desktop worker starts.
 
 Neo then writes only the goal and the done-when for a desktop todo.
 
@@ -134,19 +138,20 @@ Four PRs from `dev`, failing tests first. Heavy builds and tests run on CI or th
 never the laptop. System map read for the planned files.
 
 1. **Template for a todo worker.** The `desktop` preset with `Read` and `invoke` only (desktop
-   still through `invoke desktop.call`, as today), its reserved handle, resolution in scope
-   `''`, the session config, the secret read rules, the brief and reuse rules. Works alone: a
-   desktop worker starts with two tools and the short prompt. Tests: a desktop todo on HyperNeo
-   starts with the template's tools and prompt; a row in scope `''` overrides the built-in;
-   Spaces do not list it; a desktop todo that is also coding work keeps the coding rules and
-   merge policy; a coding todo and a Codex worker keep today's brief; a templated session is
-   not reused for another todo and the reverse; `Read` of a protected file is refused.
-   Estimate: 7 files, 150 lines, 200 test lines.
+   still through `invoke desktop.call`, as today), its reserved handle, the `workerTemplate`
+   hook and computer-use's answer, the session config, the secret read rules, the approval
+   wording, the secret-shape check, the brief and reuse rules. Works alone: a desktop worker
+   starts with two tools and the short prompt. Tests: a desktop todo on HyperNeo starts with
+   the template's tools and prompt; with computer-use off no template is used; Spaces do not
+   list it; a desktop todo that is also coding work keeps the coding rules and merge policy; a
+   coding todo and a Codex worker keep today's brief; a templated session is not reused for
+   another todo and the reverse; `Read` of a protected file is refused; a result whose
+   accessibility text holds a token shape comes back with a marker and no screenshot.
+   Estimate: 8 files, 170 lines, 230 test lines.
 2. **Top-level desktop tools and timing.** The template adds the catalog tools. Tests: the
    template session lists them and no Bash; a call reaches `desktop.call` with the same
-   refusals, including an app that was not approved; results carry `at` and `ms`; a result
-   whose accessibility text holds a token shape comes back with a marker and no screenshot.
-   Estimate: 4 files, 120 lines, 150 test lines.
+   refusals, including an app that was not approved; results carry `at` and `ms`.
+   Estimate: 4 files, 90 lines, 120 test lines.
 3. **Trim old observations.** Tests: below the threshold nothing changes; past it all but the
    last 3 become a line; the next request keeps the same lines; non-desktop results are kept;
    two sessions on one bridge keep their own sets; no window set means no trim; both bridges.
@@ -162,4 +167,5 @@ compaction on the same daemon writes a real compact boundary with a summary near
 a capture of an app that was not approved is refused; a password typed in a Safari page
 appears masked in both the screenshot and the accessibility tree; a Safari page showing a
 fake `ghp_` token returns the marker and no screenshot; `Read` of a file under `~/.ssh` is
-refused.
+refused. A token in an unknown format, or one shown only as an image, in an approved app does
+reach the model: the proof shows it, which is what the approval wording says.
