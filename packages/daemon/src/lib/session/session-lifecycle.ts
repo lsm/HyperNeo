@@ -43,6 +43,7 @@ import {
   thinkingRefusal,
 } from '../agent/session-engine.ts';
 import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
+import { savedOxapAdapter } from '../oxap/oxap-hub-config.ts';
 import { newSessionOxapRefusal, type OxapSettingsDeps } from '../oxap/oxap-settings.ts';
 import type { AgentSessionFactory, SessionCache } from './session-cache.ts';
 import {
@@ -201,6 +202,15 @@ export class SessionLifecycle {
           this.config.oxapCredentials
         ));
       if (refusal) throw new OxapSessionAdmissionError(refusal);
+    } else if (provider === 'deepseek') {
+      const record = providerRecord();
+      if (
+        record &&
+        savedOxapAdapter(record)?.modelProvider &&
+        !(await getProviderService().isProviderAvailable(provider))
+      ) {
+        throw new OxapSessionAdmissionError('Claude Code needs DEEPSEEK_API_KEY for DeepSeek');
+      }
     }
 
     const providedTitle = params.title?.trim();
