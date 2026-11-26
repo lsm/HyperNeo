@@ -98,8 +98,9 @@ retry). It is read from proof of delivery only, never from time. Coding already 
 `work_delivery_inputs` for pull requests (`codingTurnTodos`); the decision moves to core as two
 steps:
 
-1. The todo whose delivery receipt (`outcome.receipt.inputId`) names an input of the turn. Two
-   such todos: none.
+1. The todo whose delivery keys match the turn's id or inputs, using the same keys as
+   `codingTurnTodos`: the normalized receipt input id, `startedTurnId` and `steeredIntoTurnId`.
+   Two such todos: none.
 2. Otherwise the todo that started the worker (`work_started_sessions.todo_id`), if no row of
    another todo, other than a failure marked `notSent`, was accepted for that worker before the
    turn started. Otherwise none.
@@ -159,7 +160,8 @@ Six PRs from `dev`, in order, failing tests first. System map read for the plann
 
 1. **Turn to todo.** The decision in core; coding uses it and keeps its stricter reading of an
    uncertain turn. Tests: a turn recorded after `reopen`, a redispatch, a retry and a restart
-   keeps its todo; a receipt gives its todo; two receipts give none; a started worker's turns
+   keeps its todo; desktop-pending receipts and started or steered turn ids give their todo;
+   two matching todos give none; a started worker's turns
    keep its todo until a row of another todo is accepted for it, and a `notSent` failure does
    not count; an adopted session's turns without a receipt have none; a reviewer keeps its
    role.
