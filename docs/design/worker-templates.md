@@ -70,6 +70,11 @@ not started with.
   file, and the secret read rules (`neo/secret-read-rules.ts`) are a deny list that misses the
   daemon's own data and other harnesses' auth files, so a desktop worker reads nothing from
   disk. No Bash, Write, Task, Cron, Skill or plan tools.
+- `invoke` reaches every operation the worker may call, some of which read files. The session
+  gets a new tool profile, `desktop` (`SessionToolProfile`, beside `worker`), and
+  `isOperationAdmitted` (`operations/invoke.ts`) admits only `desktop.call`, `message.send`,
+  `operations.list` and `operations.describe` for it; anything else is `forbidden`, whatever
+  the input. `isAdvertisedToProfile` (`tools/session-tool-profiles.ts`) lists the same four.
 - Desktop tools are top-level: one tool per entry of `desktop/tool-catalog.json`
   (`list_windows`, `get_window_state`, `launch_app`, `click`, ..., `zoom`), each calling
   `desktop.call {tool, args}`. This is the Neo resident-tool pattern in
@@ -158,7 +163,8 @@ never the laptop. System map read for the planned files.
    the template's tools and prompt; with computer-use off no template is used; Spaces do not
    list it; migrations 170 and 172 do not seed it; a desktop todo that is also coding work keeps the coding rules and merge policy; a
    coding todo and a Codex worker keep today's brief; a templated session is not reused for
-   another todo and the reverse; the session has no file tool; a result whose
+   another todo and the reverse; the session has no file tool, and `invoke` of any operation
+   outside the four is refused; a result whose
    accessibility text holds a token shape comes back with a marker and no screenshot; a todo
    claiming an app only by the human's message is refused; a capture for an app the Mac
    allows but the ask's card does not list is refused; the card shows the visibility line; a
@@ -184,5 +190,5 @@ compaction on the same daemon writes a real compact boundary with a summary near
 a capture of an app that was not approved is refused; a password typed in a Safari page
 appears masked in both the screenshot and the accessibility tree; a Safari page showing a
 fake `ghp_` token returns the marker and no screenshot; asked to read the daemon's database
-or another harness's auth file, the worker has no tool that can. A token in an unknown format, or one shown only as an image, in an approved app does
+or another harness's auth file, the worker has no tool or operation that can. A token in an unknown format, or one shown only as an image, in an approved app does
 reach the model: the proof shows it, which is what the approval wording says.
