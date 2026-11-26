@@ -138,9 +138,10 @@ import { parkDeliveryJob } from '../repositories/job-delivery-parking.ts';
 import { recordClaudeInboxRoute } from '../repositories/claude-inbox-route-repository.ts';
 import { replaceNeoSessionSeen } from '../repositories/neo-session-seen-repository.ts';
 import {
+  editRemoteDaemonEndpoint,
   removeRemoteDaemonSecret,
   saveRemoteDaemonSecret,
-} from '../repositories/remote-daemon-secret-repository.ts';
+} from '../repositories/remote-daemon-secret-worker.ts';
 import {
   registerClient,
   unregisterClient,
@@ -362,6 +363,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     replaceNeoSessionSeen,
     saveRemoteDaemonSecret,
     removeRemoteDaemonSecret,
+    editRemoteDaemonEndpoint,
     registerClient,
     unregisterClient,
     recordAgentChild,
