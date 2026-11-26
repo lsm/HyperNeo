@@ -106,14 +106,15 @@ steps:
    send row has, also while pending or after a failure) nor as its outcome (`outcome.ref`,
    which a start row gets). Only a failure marked `notSent` does not count. A start row of
    another todo without a ref cannot name the worker, because a start always makes a new
-   session. Nor may another todo have held the worker in `neo_todo_roles`. Otherwise none.
+   session. Nor may another todo have adopted it. Otherwise none.
 
-Adoption leaves no delivery row, and its binding in `neo_todo_sessions` is overwritten when the
-todo rebinds. So both adopt writes (`create` and `bind` in `neo-todo-session-repository.ts`)
-also append the todo's role to `neo_todo_roles` through `recordTodoRole`, as a claim already
-does; that table is append-only, so the fact survives a rebind. Adoptions made before this
-change left no such row in most cases (12 of 254 have one), so a worker started before it
-gets step 2 only if no current binding of another todo names it either.
+Adoption leaves no delivery row, its binding in `neo_todo_sessions` is overwritten when the
+todo rebinds, and `neo_todo_roles` is no record either (`unclaimTodoWorker` deletes rows, and
+a todo's deletion cascades). So a new table, `work_adoptions (todo_id, adapter, id, daemon,
+at)`, with no foreign key and no delete anywhere, gets one row from each adopt write (`create`
+and `bind` in `neo-todo-session-repository.ts`). `work_delivery_inputs` already has no foreign
+key and no delete. A worker started before that table's migration (its `migration_markers`
+time) has a history that cannot be known, so it gets no step 2 at all.
 
 Step 2 uses no time: a worker that two todos ever reached gets it for neither, before or after.
 `WorkDeliveryInputRepository.list(ref)` matches only `outcome.ref` today; it also matches
@@ -176,16 +177,17 @@ context a todo adds by itself (`peak - first`) is recorded, to see work that was
 
 Six PRs from `dev`, in order, failing tests first. System map read for the planned files.
 
-1. **Turn to todo.** The decision in core; coding uses it and keeps its stricter reading of an
+1. **Turn to todo.** The decision in core, and the `work_adoptions` migration; coding uses it and keeps its stricter reading of an
    uncertain turn. Tests: a turn recorded after `reopen`, a redispatch, a retry and a restart
    keeps its todo; desktop-pending receipts and started or steered turn ids give their todo;
    two matching todos give none; a started worker's turns keep its todo while no row of another
    todo names it; a pending send and a failed send without an outcome ref of another todo each
    take step 2 away from every turn of that worker, earlier ones too; so does another todo's
-   adoption, also after that todo rebinds elsewhere; a `notSent`
+   adoption, also after that todo rebinds elsewhere, is unclaimed or is deleted; a worker
+   started before the migration gets no step 2; a `notSent`
    failure does not; a human-started turn in a worker one todo reached keeps that todo; an adopted session's turns without a receipt have none; a reviewer keeps its
    role.
-   Estimate: 6 files, 95 lines, 170 test lines.
+   Estimate: 8 files, 120 lines, 200 test lines.
 2. **Kind and estimate.** Core kinds, the checks on the two operations, the fact, the Neo tool
    text, and the estimate line in `AGENTS.md` for designs. Tests: missing or unknown kind is
    refused; a pack's kind is accepted only while the pack is on; changing an estimate after
