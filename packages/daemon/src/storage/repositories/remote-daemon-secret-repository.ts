@@ -1,36 +1,12 @@
+import type { DaemonAttachment } from '../../lib/remote-daemons/registry.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
-import { defineDbOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
-
-export const saveRemoteDaemonSecret = defineDbOp({
-  name: 'remoteDaemon.secret.save',
-  mode: 'write',
-  run: (
-    db: Database,
-    secret: {
-      daemonId: string;
-      url: string;
-      credential: string;
-      now: number;
-      peerDaemonId?: string;
-    }
-  ): void => {
-    db.prepare(
-      `INSERT INTO remote_daemon_secrets (daemon_id, url, credential, created_at, peer_daemon_id)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT (daemon_id) DO UPDATE SET url = excluded.url, credential = excluded.credential,
-         created_at = excluded.created_at, peer_daemon_id = excluded.peer_daemon_id`
-    ).run(secret.daemonId, secret.url, secret.credential, secret.now, secret.peerDaemonId ?? null);
-  },
-});
-
-export const removeRemoteDaemonSecret = defineDbOp({
-  name: 'remoteDaemon.secret.remove',
-  mode: 'write',
-  run: (db: Database, daemonId: string): void => {
-    db.prepare('DELETE FROM remote_daemon_secrets WHERE daemon_id = ?').run(daemonId);
-  },
-});
+import {
+  editRemoteDaemonEndpoint,
+  removeRemoteDaemonSecret,
+  saveRemoteDaemonSecret,
+} from './remote-daemon-secret-worker.ts';
+import { invalidateGlobalSettings } from './settings-repository.ts';
 
 export class RemoteDaemonSecretRepository {
   constructor(private readonly db: Database) {}
@@ -58,15 +34,18 @@ export class RemoteDaemonSecretRepository {
     return row?.credential ?? null;
   }
 
-  updateEndpoint(daemonId: string, previousUrl: string, url: string, persist: () => void): boolean {
-    return this.db.transaction(() => {
-      const result = this.db
-        .prepare('UPDATE remote_daemon_secrets SET url = ? WHERE daemon_id = ? AND url = ?')
-        .run(url, daemonId, previousUrl);
-      if (result.changes === 0) return false;
-      persist();
-      return true;
-    })();
+  async updateEndpoint(
+    edited: DaemonAttachment,
+    previousUrl: string,
+    attachments: DaemonAttachment[]
+  ): Promise<boolean> {
+    const updated = await gatewayFor(this.db).run(editRemoteDaemonEndpoint, {
+      edited,
+      previousUrl,
+      attachments,
+    });
+    if (updated) invalidateGlobalSettings(this.db);
+    return updated;
   }
 
   routesForPeer(peerDaemonId: string): { daemonId: string; url: string }[] {

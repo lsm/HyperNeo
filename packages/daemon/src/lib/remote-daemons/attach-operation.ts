@@ -104,7 +104,7 @@ export async function attachRemoteDaemon(
   registry: RemoteDaemonRegistry
 ): Promise<AttachResult> {
   if (input.edit) {
-    if (!registry.edit(input.daemonId, input.url, input.edit.displayName)) {
+    if (!(await registry.edit(input.daemonId, input.url, input.edit.displayName))) {
       return { kind: 'rejected', reason: 'This daemon is no longer paired.' };
     }
   } else {

@@ -17,9 +17,10 @@ import {
   recordClaudeInboxRoute,
 } from '../../../../src/storage/repositories/claude-inbox-route-repository';
 import {
+  editRemoteDaemonEndpoint,
   removeRemoteDaemonSecret,
   saveRemoteDaemonSecret,
-} from '../../../../src/storage/repositories/remote-daemon-secret-repository';
+} from '../../../../src/storage/repositories/remote-daemon-secret-worker';
 import {
   registerClient,
   unregisterClient,
@@ -367,6 +368,7 @@ describe('DbGateway', () => {
     expect(DB_OPS.get(recordClaudeInboxRoute.name)).toBe(recordClaudeInboxRoute);
     expect(DB_OPS.get(saveRemoteDaemonSecret.name)).toBe(saveRemoteDaemonSecret);
     expect(DB_OPS.get(removeRemoteDaemonSecret.name)).toBe(removeRemoteDaemonSecret);
+    expect(DB_OPS.get(editRemoteDaemonEndpoint.name)).toBe(editRemoteDaemonEndpoint);
     expect(DB_OPS.get(registerClient.name)).toBe(registerClient);
     expect(DB_OPS.get(unregisterClient.name)).toBe(unregisterClient);
     expect(DB_OPS.get(recordAgentChild.name)).toBe(recordAgentChild);

@@ -56,13 +56,18 @@ export interface RemoteDaemonSecrets {
     peerDaemonId?: string
   ): Promise<void>;
   credentialFor(daemonId: string, url: string): string | null;
-  updateEndpoint(daemonId: string, previousUrl: string, url: string, persist: () => void): boolean;
+  updateEndpoint(
+    edited: DaemonAttachment,
+    previousUrl: string,
+    attachments: DaemonAttachment[]
+  ): Promise<boolean>;
   routesForPeer(peerDaemonId: string): DaemonAttachment[];
   remove(daemonId: string): Promise<void>;
 }
 
 export class RemoteDaemonRegistry {
   private readonly attachments = new Map<string, DaemonAttachment>();
+  private pendingWrite = Promise.resolve();
   private localDaemonId: string | undefined;
   private persist: ((attachments: DaemonAttachment[]) => void) | null = null;
   private secrets: RemoteDaemonSecrets | null = null;
@@ -98,16 +103,22 @@ export class RemoteDaemonRegistry {
     return `${PAIRED_DAEMON_PREFIX}${this.localDaemonId}`;
   }
 
-  async attach(
-    daemonId: string,
-    url: string,
-    credential?: string,
-    peerDaemonId?: string
-  ): Promise<void> {
-    if (credential) await this.secrets?.save(daemonId, url, credential, this.now(), peerDaemonId);
-    this.attachments.set(daemonId, { ...this.attachments.get(daemonId), daemonId, url });
-    this.forget(daemonId);
-    this.persist?.(this.list());
+  private write<T>(update: () => Promise<T>): Promise<T> {
+    const result = this.pendingWrite.then(update);
+    this.pendingWrite = result.then(
+      () => {},
+      () => {}
+    );
+    return result;
+  }
+
+  attach(daemonId: string, url: string, credential?: string, peerDaemonId?: string): Promise<void> {
+    return this.write(async () => {
+      if (credential) await this.secrets?.save(daemonId, url, credential, this.now(), peerDaemonId);
+      this.attachments.set(daemonId, { ...this.attachments.get(daemonId), daemonId, url });
+      this.forget(daemonId);
+      this.persist?.(this.list());
+    });
   }
 
   list(): DaemonAttachment[] {
@@ -118,19 +129,19 @@ export class RemoteDaemonRegistry {
     return Boolean(this.secrets?.credentialFor(daemonId, url));
   }
 
-  edit(daemonId: string, url: string, displayName: string): boolean {
-    const current = this.attachments.get(daemonId);
-    if (!current) return false;
-    const edited = { daemonId, url, displayName };
-    const updated = this.secrets?.updateEndpoint(daemonId, current.url, url, () => {
-      this.persist?.(
-        this.list().map((attachment) => (attachment === current ? edited : attachment))
+  edit(daemonId: string, url: string, displayName: string): Promise<boolean> {
+    return this.write(async () => {
+      const current = this.attachments.get(daemonId);
+      if (!current || !this.secrets) return false;
+      const edited = { daemonId, url, displayName };
+      const attachments = this.list().map((attachment) =>
+        attachment === current ? edited : attachment
       );
+      if (!(await this.secrets.updateEndpoint(edited, current.url, attachments))) return false;
+      this.attachments.set(daemonId, edited);
+      if (url !== current.url) this.forget(daemonId);
+      return true;
     });
-    if (!updated) return false;
-    this.attachments.set(daemonId, edited);
-    if (url !== current.url) this.forget(daemonId);
-    return true;
   }
 
   private route(id: string): string | undefined {
@@ -145,12 +156,14 @@ export class RemoteDaemonRegistry {
     return this.route(id) !== undefined;
   }
 
-  async detach(daemonId: string): Promise<boolean> {
-    await this.secrets?.remove(daemonId);
-    const wasAttached = this.attachments.delete(daemonId);
-    this.forget(daemonId);
-    if (wasAttached) this.persist?.(this.list());
-    return wasAttached;
+  detach(daemonId: string): Promise<boolean> {
+    return this.write(async () => {
+      await this.secrets?.remove(daemonId);
+      const wasAttached = this.attachments.delete(daemonId);
+      this.forget(daemonId);
+      if (wasAttached) this.persist?.(this.list());
+      return wasAttached;
+    });
   }
 
   private open(daemonId: string, url: string): RemoteAttempt {

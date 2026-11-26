@@ -209,7 +209,7 @@ describe('remembering attached daemons', () => {
       {
         save: () => {},
         credentialFor: () => null,
-        updateEndpoint: () => false,
+        updateEndpoint: async () => false,
         routesForPeer: () => [],
         remove: () => {},
       }
