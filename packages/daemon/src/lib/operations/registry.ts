@@ -24,6 +24,7 @@ export interface OperationCaller {
   readonly spaceId?: string;
   readonly role?: OperationCallerRole;
   readonly profile?: SessionToolProfile;
+  readonly workerTemplate?: string;
   readonly agentId?: string;
   readonly agentName?: string;
   readonly hookReplay?: {

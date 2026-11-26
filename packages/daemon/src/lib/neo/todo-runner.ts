@@ -93,6 +93,7 @@ export interface NeoTodoRunnerDeps {
     origin: string,
     ref?: WorkRef
   ) => Promise<string>;
+  workerTemplate?: (ref: WorkRef) => string | undefined;
   workerNames?: () => NeoWorkerNameSource | undefined;
   workerCompact?: WorkerCompact;
   store: NeoAskTodoRepository;
@@ -347,7 +348,14 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   const formatGoal = (instruction: string, goal: NeoWorkGoal | null) =>
     (deps.packs().find((pack) => pack.workGoal)?.workGoal ?? withWorkGoal)(instruction, goal);
   const { store, sessions } = deps;
-  const workerBrief = (todo: NeoTodo, instruction: string, harness: string, existing = true) => {
+  const enabledPacks = () => deps.enabledPacks?.() ?? deps.packs();
+  const workerBrief = (
+    todo: NeoTodo,
+    instruction: string,
+    harness: string,
+    existing: boolean,
+    template?: string
+  ) => {
     if (
       todo.check?.pack === 'core' &&
       todo.check.kind === 'evidence' &&
@@ -357,7 +365,9 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     }
     instruction += `\n\nEven when told to stay quiet, report questions or blockers requiring a human decision with message.send {to: the sending Neo, kind: question or blocked, text: original report, question: {todoId: "${todo.id}", title: short question, options: 2–6 short options, language: en or zh-Hans}} in the human's configured language. Do not keep working while waiting for that answer.`;
     instruction = [
-      ...(deps.enabledPacks?.() ?? deps.packs()).map((pack) => pack.workerContext?.()),
+      ...enabledPacks().map((pack) =>
+        template && pack.workerTemplate?.(todo) === template ? null : pack.workerContext?.()
+      ),
       instruction,
     ]
       .filter(Boolean)
@@ -453,8 +463,25 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   };
 
   const dispatch = async ({ todo, ask, target, moved, replaced }: Startable) => {
+    const templates = new Set(
+      enabledPacks().flatMap((pack) => {
+        const key = pack.workerTemplate?.(todo);
+        return key ? [key] : [];
+      })
+    );
+    const template = templates.size === 1 ? templates.values().next().value : undefined;
+    const localTemplate = (adapter: string, daemon?: string) =>
+      adapter === 'hyperneo' && !daemon ? template : undefined;
     let excluded: WorkRef | undefined;
     if (target.verb === 'send') {
+      if (
+        deps.workerTemplate?.(target.ref) !== localTemplate(target.ref.adapter, target.ref.daemon)
+      )
+        return startFailed(
+          todo,
+          ask,
+          'Start a new worker for this todo. The session uses a different worker template.'
+        );
       const facts = await sessions.read('cleanWorkerFacts', todo.id);
       const compact = deps.workerCompact?.(target.ref.adapter)?.compact;
       let decision = planCleanWorker({
@@ -530,6 +557,10 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     const exclusions =
       target.verb === 'start' ? await prepare?.workerStartExclusions?.(todo) : undefined;
     if (exclusions && 'reason' in exclusions) return startFailed(todo, ask, exclusions.reason);
+    const workerTemplate =
+      target.verb === 'start'
+        ? localTemplate(target.adapter, target.place?.daemon)
+        : deps.workerTemplate?.(target.ref);
     const card = neoTodoCard(todo, ask, prepare?.workerRules);
     card.instruction = workerBrief(
       todo,
@@ -537,7 +568,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         .filter(Boolean)
         .join('\n\n'),
       target.verb === 'start' ? target.adapter : target.ref.adapter,
-      target.verb === 'send'
+      target.verb === 'send',
+      workerTemplate
     );
     const localStart = target.verb === 'start' && !target.place?.daemon;
     const names = localStart ? deps.workerNames?.() : undefined;
@@ -598,7 +630,11 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         message,
         probe,
         baseline,
-        outcome: await deps.invoke(caller(ask), call.name, call.input),
+        outcome: await deps.invoke(
+          { ...caller(ask), ...(workerTemplate ? { workerTemplate } : {}) },
+          call.name,
+          call.input
+        ),
       };
     };
     const { message, probe, baseline, outcome } = await (target.verb === 'start' && names
@@ -1194,8 +1230,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         const ref = sessions.readRef(todo.id);
         const ask = store.getAsk(todo.askId);
         return ((todo.state === 'doing' && todo.report) ||
-          (todo.state === 'blocked' &&
-            ['worker', 'stalled', 'environment', 'needs-human'].includes(todo.blockedBy ?? ''))) &&
+          (todo.state === 'blocked' && todo.blockedBy !== 'held')) &&
           ref &&
           ask?.status === 'open'
           ? { value: { ref, ask } }
@@ -1215,6 +1250,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         });
         await observe(todo.id, outcome, target.ref);
         const live = readDriverLive(outcome);
+        if (live && todo.state === 'blocked')
+          await sessions.write('noteWorkerStatus', todo.id, target.ref, live.status, now);
         if (
           todo.blockedBy === 'needs-human' &&
           neoTurnQuestionGone(sessions.readNudge(todo.id)?.turnQuestion, live) &&
@@ -1228,7 +1265,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           deps.changed();
           return;
         }
-        if (['environment', 'needs-human'].includes(todo.blockedBy ?? '')) return;
+        if (todo.state === 'blocked' && !['worker', 'stalled'].includes(todo.blockedBy ?? ''))
+          return;
         await sessions.write(
           'recordProgress',
           todo.id,
@@ -1443,7 +1481,13 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     .pipe(
       async (context: NudgeContext, now: number) => {
         const live = await workerLive(context.ask, context.ref);
-        await sessions.write('noteWorkerStatus', context.todo.id, live?.status ?? 'unknown', now);
+        await sessions.write(
+          'noteWorkerStatus',
+          context.todo.id,
+          context.ref,
+          live?.status ?? 'unknown',
+          now
+        );
         return live;
       },
       ['admission', 'now'],

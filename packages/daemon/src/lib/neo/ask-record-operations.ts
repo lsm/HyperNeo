@@ -297,7 +297,7 @@ export function createNeoAskRecordOperations(
             const reason = neoEvidencePathRefusal(todo.check, null, getDataDir());
             return reason
               ? { reason: { ok: false as const, reason } }
-              : planNeoTodoDraft(todo, policies);
+              : planNeoTodoDraft(todo, policies, []);
           })
           .find((planned) => 'reason' in planned);
         if (refused && 'reason' in refused) return refused.reason;
@@ -389,7 +389,9 @@ export function createNeoAskRecordOperations(
               topic: input.topic ?? null,
               request: input.request,
               createdAt: now,
-              ...(desktop ? { desktopApps: desktop.value } : {}),
+              ...(desktop
+                ? { desktopApps: desktop.value.map((app) => ({ ...app, seen: 'all' })) }
+                : {}),
             });
             openHumanCard(
               store,

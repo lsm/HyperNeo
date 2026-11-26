@@ -1,3 +1,4 @@
+import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
 import { workerWorkEnvironment, workerWorkLocationsBrief } from '../work-locations.ts';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { neoPlanContextHooks } from './neo-plan-hook.ts';
@@ -406,14 +407,17 @@ export class QueryOptionsBuilder {
     inputs = this.canonicalToolInputs(),
     config = this.admittedConfig()
   ): Record<string, SdkMcpServerConfig> | undefined {
+    const operationServer =
+      this.ctx.session.config.operationTools === false
+        ? undefined
+        : (this.operationServer ?? this.ctx.getOperationMcpServer?.());
+    if (this.ctx.session.config.toolProfile === 'desktop')
+      return operationServer ? { [OPERATIONS_MCP_SERVER_NAME]: operationServer } : undefined;
     const { servers, renamed } = mergeSessionMcpServers<SdkMcpServerConfig>({
       registryServers: inputs ? this.canonicalMcpServers(inputs) : this.getMcpServersFromRegistry(),
       skillServers: inputs ? {} : this.getMcpServersFromSkills(),
       runtimeServers: this.getMcpServers() as Record<string, SdkMcpServerConfig> | undefined,
-      operationServer:
-        this.ctx.session.config.operationTools === false
-          ? undefined
-          : (this.operationServer ?? this.ctx.getOperationMcpServer?.()),
+      operationServer,
     });
     for (const { from, to } of renamed) this.warnReservedMcpServerName(from, to);
     const exa = this.exaWebToolsActivation;
@@ -454,13 +458,15 @@ export class QueryOptionsBuilder {
     await contextManager.ensureContextReady(session);
     const providerContext = contextManager.createContext(session);
     const providerId = providerContext.provider.id;
-    this.exaWebToolsActivation = config.disallowedTools?.includes('mcp__exa')
-      ? undefined
-      : await resolveExaWebToolsActivation({
-          settings: this.ctx.settingsManager.getGlobalSettings(),
-          db: this.ctx.db,
-          nativeWebTools: providerContext.provider.capabilities.nativeWebTools === true,
-        });
+    const desktop = session.config.toolProfile === 'desktop';
+    this.exaWebToolsActivation =
+      desktop || config.disallowedTools?.includes('mcp__exa')
+        ? undefined
+        : await resolveExaWebToolsActivation({
+            settings: this.ctx.settingsManager.getGlobalSettings(),
+            db: this.ctx.db,
+            nativeWebTools: providerContext.provider.capabilities.nativeWebTools === true,
+          });
     const { modelInfo } = await resolveSessionContextModelInfo(session);
     const sdkModelId = providerContext.getSdkModelId();
     let sdkFallbackModel: string | undefined;
@@ -543,10 +549,12 @@ export class QueryOptionsBuilder {
       workerSandbox?.permissions.disableBypassPermissionsMode === 'disable'
         ? 'default'
         : requestedPermissionMode;
-    const pluginsFromSkills = [
-      ...this.buildPluginsFromSkills(toolInputs),
-      ...this.buildPluginsFromBuiltinSkills(toolInputs),
-    ];
+    const pluginsFromSkills = desktop
+      ? []
+      : [
+          ...this.buildPluginsFromSkills(toolInputs),
+          ...this.buildPluginsFromBuiltinSkills(toolInputs),
+        ];
     const sessionHasAutoCompactWindow = hasExplicitAutoCompactWindow(config);
     const providerSettings = buildProviderSettings(
       providerId,
@@ -728,7 +736,7 @@ export class QueryOptionsBuilder {
       this.ctx.session.type ?? 'worker'
     );
 
-    if (permissionMode === 'bypassPermissions') {
+    if (permissionMode === 'bypassPermissions' && !desktop) {
       delete queryOptions.allowedTools;
     }
 

@@ -1,3 +1,4 @@
+import { DESKTOP_OPERATIONS } from '../tools/session-tool-profiles.ts';
 import { enabledOperationPacks } from './registry.ts';
 import { isLocalUser } from './caller.ts';
 import { normalizeOperationInput } from './normalize-input.ts';
@@ -74,11 +75,21 @@ function unknownOperationMessage(
     : `Unknown operation: ${name}. Did you mean: ${suggestions.join(', ')}?`;
 }
 
+const forbiddenOperation = (name: string): { reason: OperationFailure } => ({
+  reason: {
+    kind: 'failed',
+    code: 'forbidden',
+    message: `Operation ${name} is not available to this caller`,
+  },
+});
+
 export function resolveOperation(
   registry: OperationRegistry,
   name: string,
   caller?: OperationCaller
 ): Gate<OperationDefinition> {
+  if (caller?.profile === 'desktop' && !DESKTOP_OPERATIONS.has(name))
+    return forbiddenOperation(name);
   const operation = registry.get(name);
   return operation
     ? { value: operation }
@@ -164,6 +175,7 @@ export function isOperationAdmitted(
       (!policy?.roles || policy.roles.includes('neo')) &&
       (!operation.pack || enabledPacks.includes(operation.pack.id)));
   return (
+    (caller.profile !== 'desktop' || DESKTOP_OPERATIONS.has(operation.name)) &&
     neoAdmitted &&
     isDeviceAdmitted(operation, caller) &&
     (operation.policy?.caller !== 'local_user' || isLocalUser(caller))
@@ -178,13 +190,7 @@ export function admitOperationCaller(
   const enabled = caller.role === 'neo' && operation.pack ? enabledOperationPacks(registry) : [];
   return isOperationAdmitted(operation, caller, enabled)
     ? { value: operation }
-    : {
-        reason: {
-          kind: 'failed',
-          code: 'forbidden',
-          message: `Operation ${operation.name} is not available to this caller`,
-        },
-      };
+    : forbiddenOperation(operation.name);
 }
 
 export async function executeOperation(

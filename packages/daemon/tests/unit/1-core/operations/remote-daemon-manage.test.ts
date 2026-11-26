@@ -206,7 +206,7 @@ describe('remembering attached daemons', () => {
       (list) => {
         saved.push(list);
       },
-      { save: () => {}, credentialFor: () => null, remove: () => {} }
+      { save: () => {}, credentialFor: () => null, routesForPeer: () => [], remove: () => {} }
     );
     expect(daemons.list()).toEqual([{ daemonId: 'laptop', url: 'ws://laptop:9283/ws' }]);
     expect(saved).toEqual([]);

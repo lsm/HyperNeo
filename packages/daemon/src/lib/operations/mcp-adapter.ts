@@ -25,14 +25,14 @@ function mcpResult(value: unknown, isError = false): McpResult {
   };
 }
 
-function desktopCallResult(value: unknown): McpResult {
+function desktopCallResult(value: unknown, timing: { at: string; ms: number }): McpResult {
   const { content = [], ...rest } = value as {
     content?: CallToolResult['content'];
     reason?: unknown;
   };
   return {
     content: [
-      mcpResult(rest).content[0],
+      mcpResult({ ...rest, ...timing }).content[0],
       ...content.map((block) =>
         block.type === 'image' &&
         typeof block.data === 'string' &&
@@ -76,6 +76,12 @@ export function createOperationMcpHandler(
     if (!parsed.success) {
       return mcpResult({ code: 'invalid_input', message: parsed.error.message }, true);
     }
+    const started = performance.now();
+    const timing = () => ({
+      at: new Date().toISOString(),
+      ms: Math.round(performance.now() - started),
+    });
+    const desktop = parsed.data.name === 'desktop.call';
     try {
       const caller = await resolveCaller(parsed.data.name);
       const outcome = await invokeOperation(
@@ -100,18 +106,22 @@ export function createOperationMcpHandler(
             }
           }
       }
-      if (outcome.kind === 'completed' && parsed.data.name === 'desktop.call')
-        return desktopCallResult(outcome.value);
+      if (outcome.kind === 'completed' && desktop)
+        return desktopCallResult(outcome.value, timing());
       return outcome.kind === 'completed'
         ? mcpResult(
             parsed.data.name.startsWith('neo.') ? explainNeoRefusal(outcome.value) : outcome.value
           )
-        : mcpResult({ code: outcome.code, message: outcome.message }, true);
+        : mcpResult(
+            { code: outcome.code, message: outcome.message, ...(desktop ? timing() : {}) },
+            true
+          );
     } catch (error) {
       return mcpResult(
         {
           code: 'invocation_failed',
           message: error instanceof Error ? error.message : String(error),
+          ...(desktop ? timing() : {}),
         },
         true
       );

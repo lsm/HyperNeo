@@ -117,21 +117,53 @@ Neo then writes only the goal and the done-when for a desktop todo.
 
 ## 2. Old observations on custom endpoints
 
-Each request to a custom endpoint passes a bridge that parses the Anthropic request. Two of
-them know the session: `providers/anthropic-messages-bridge` (from the request) and
-`openai-chat-bridge` (from its session token). The Ollama bridge does not, so it is left out.
-One shared function runs in the two before the request is converted:
+One shared function runs before conversion in `providers/anthropic-messages-bridge` and
+`openai-chat-bridge`. The native Ollama bridge rejects image tool results, including the
+latest screenshot this rule would keep, so screenshot-based workers on that route are out
+of scope. Its text-only desktop results remain untrimmed in this slice.
 
-- The model's window is set per session at the call that already sets its thinking
-  (`setSessionThinkingConfig`, from `agent/query-runner.ts`). A session with no window set is
-  not trimmed. Its state is dropped when the session's query stops.
-- When the estimated input of a session passes 60% of the model's window, every desktop
-  observation except the last 3 is replaced by one line: tool, time, and "call
-  get_window_state for the current screen". Observations are the results of desktop tools:
-  screenshots and accessibility trees.
-- The replaced ids are kept per session, and later requests replace the same ones, so the
-  prefix stays the same and the endpoint's cache holds until the next crossing. A restart loses
-  the set; the next request trims again, which costs one cold read.
+- A desktop result is a `tool_result` whose `tool_use_id` names a desktop tool call in the
+  request. The reads are `list_windows`, `get_window_state` and `zoom`; every other desktop
+  tool is an action. One rule decides what stays as the bridge receives it: the results of
+  the newest assistant message with a desktop call, and the newest failed desktop result
+  while no action after it has succeeded. Every other desktop result is collapsed to one
+  line. A newer failure replaces the older one: the older one loses this extra retention and
+  collapses once it is outside the newest batch; two failures inside that batch both stay. For example, failed
+  click, full read, successful click: before the second click the failure and the read stay
+  in full; after it both collapse and only the click's result stays. Non-desktop turns do
+  not move this point, and non-desktop results are never changed, also inside a parallel
+  batch. Nothing is rolled back.
+- Start the line with the tool name. Add the call's present target arguments as `key=value`
+  in this order: `bundle_id`, `pid`, `window_id`, `element_token`, `x`, `y`, `from_x`,
+  `from_y`, `to_x`, `to_y`, `x1`, `y1`, `x2`, `y2`. A call with no target fields has just
+  the tool and status. Omit action payloads such as typed text, values, and keys. End the
+  line with `ok` or `failed` and the reason when supplied. A failure is `is_error` or a body
+  with `ok: false`. Drop the rest of the result body, including screenshots and accessibility
+  text.
+- "As the bridge receives it" differs by bridge: the messages bridge forwards screenshots, and
+  the OpenAI chat bridge already turns any image inside a `tool_result` into the text `[image]`,
+  even with vision on, so there the latest result is its text and that marker.
+- The rewrite runs before conversion on `/v1/messages` and on `/v1/messages/count_tokens` in
+  both bridges (one forwards the count upstream, the other estimates it), so the count the SDK
+  budgets with measures the collapsed body.
+- Prefix: the rewrite changes no block of the conversation before the earliest result that
+  collapsed since the previous request (one step can collapse two). Other request bytes can still change on their own: the messages bridge forwards
+  the SDK's cache controls, and a breakpoint may move between turns. A cache hit is claimed
+  only from cache-read usage: the messages bridge passes the provider's usage through, and the
+  chat bridge reports only prompt and completion totals, so there the evidence must come from
+  the upstream endpoint's own usage.
+- The rule depends only on the request, so it needs no session state, a restart changes
+  nothing, and context grows by one line and the model's own text per step, not by a screen.
+- The newest accessibility snapshot must be self-contained, because a collapsed older
+  snapshot takes the map from visible controls to handles with it. A replay of 88 recorded
+  steps showed this: with only a delta current, the worker clicked the wrong Calculator key,
+  and a full current snapshot fixed it. So a session with collapse reads full snapshots:
+  its `get_window_state` ignores `since`. Before an action whose target is not in the
+  newest full snapshot, the worker reads a fresh full snapshot first; the template's
+  instructions say so.
+- Exact text the worker will need goes into its own reply before any action that may remove
+  it from the screen (dismiss, close, navigate); its own text is never collapsed. In the same
+  replay, a one-time receipt was lost without that note and kept with it.
 - Nothing is changed in the stored conversation; only the request is.
 
 **Summary size.** The daemon's own compaction (`agent/context-budget-enforcement.ts`,
@@ -141,14 +173,14 @@ Today `MessageQueue.isInternalCompaction` and the check in `agent/query-runner.t
 `/compact` exactly, which drives deduplication and the wait for the compact boundary. Both
 change to match the command word, as the queue's own `isUserCompactCommand` already does, so one
 queued compaction of either form still counts once and still waits for its boundary. The
-SDK's own auto-compaction keeps its prompt; the trim is what keeps desktop sessions below its
+SDK's own auto-compaction keeps its prompt; collapsing is what keeps desktop sessions below its
 threshold.
 
 ## Not in this step
 
 No template choice by Neo, no templates for Claude Code or Codex workers, no coding template,
-no editing of worker templates, no settings page. Trimming is for desktop observations on the
-two bridges that know the session. No redaction inside an approved app.
+no editing of worker templates, no settings page. Collapsing is for desktop observations on
+the two bridges. No redaction inside an approved app.
 
 ## Changes
 
@@ -175,10 +207,23 @@ never the laptop. System map read for the planned files.
    template session lists them and no Bash; a call reaches `desktop.call` with the same
    refusals, including an app that was not approved; results carry `at` and `ms`.
    Estimate: 4 files, 90 lines, 120 test lines.
-3. **Trim old observations.** Tests: below the threshold nothing changes; past it all but the
-   last 3 become a line; the next request keeps the same lines; non-desktop results are kept;
-   two sessions on one bridge keep their own sets; no window set means no trim; both bridges.
-   Estimate: 5 files, 120 lines, 180 test lines.
+3. **Collapse old observations.** Tests: the newest desktop call's results stay as received;
+   older lines keep the tool, status, and only the defined target fields, covering a token,
+   a point, a drag, a zoom, an app launch, and a call with no target fields; a failure by
+   `is_error` and one by `ok: false` keep the reason; a line holds no image and no
+   accessibility text; non-desktop turns after a desktop result leave it in full; a parallel
+   batch keeps its non-desktop results; failed click, full read, successful click keeps the
+   failure and the read in full before the click and only the click after it; a second
+   failure replaces the first, and two failures in the newest batch both stay; `since` on
+   `get_window_state` is ignored in a collapse session; on append-only fixtures, two
+   requests one step apart have the same conversation blocks before the earliest newly
+   collapsed result; `count_tokens` measures the collapsed body; the stored conversation is unchanged;
+   both bridges. Collapse ships off, behind a constant in code, not a setting. A one-line PR turns it on,
+   only after a replay of the
+   recorded Calculator, TextEdit and Safari steps with full current snapshots picks the
+   recorded target at every step whose target is in the current snapshot, with exact
+   next-call agreement reported per task.
+   Estimate: 4 files, 120 lines, 200 test lines.
 4. **Summary size.** Tests: both enqueue sites send the line; a queued `/compact` with text
    dedupes with a plain one and waits for the boundary.
    Estimate: 4 files, 40 lines, 70 test lines.

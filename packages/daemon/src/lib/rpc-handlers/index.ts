@@ -432,7 +432,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
       const session = deps.sessionManager.getSessionFromDB(sessionId);
       return !!session && !['archived', 'ended'].includes(session.status);
     },
-    hasRemoteDaemon: (daemonId) => remoteDaemons.list().some((d) => d.daemonId === daemonId),
+    hasRemoteDaemon: (daemonId) => remoteDaemons.has(daemonId),
     handoff: (args) => handoffPromptToMailbox({ ...args, jobQueue: deps.jobQueue }),
     forwardRemote: createRemoteSendForwarder(remoteDaemons),
     onError: (error) => log.warn('Claude inbox reply could not be persisted', error),

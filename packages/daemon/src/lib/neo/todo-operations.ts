@@ -142,7 +142,7 @@ const Add = TodoDraft.extend({
     'The topic of a new ask, up to 12 display cells. Joining an existing ask keeps its topic.'
   ),
   desktopApps: DesktopAppsSchema.optional().describe(
-    'Bundle ids of the apps on this Mac this todo drives. Each must be on its ask’s approved proposal card, or named by the human message in input. Only this todo gets them. For any other app, propose a new ask with desktopApps.'
+    'Bundle ids of the apps on this Mac this todo drives. Each must be on its ask’s approved proposal card with the visibility disclosure. Only this todo gets them. For any other app, propose a new ask with desktopApps.'
   ),
   after: z
     .array(Text)
@@ -170,14 +170,15 @@ export type NeoTodoPolicy = {
 export function planNeoTodoDraft<T extends Pick<NeoTodo, 'check' | 'instruction'>>(
   draft: T,
   packs: readonly NeoTodoPolicy[],
-  peers: readonly NeoTodo[] = []
+  peers?: readonly NeoTodo[],
+  boundWorker?: boolean
 ): Gate<T & { doneWhen: string; records?: string[] }> {
   const pack = draft.check && packs.find((item) => item.id === draft.check?.pack)?.todos;
   if (!draft.check || !pack)
     return fail('check_required: use a completion check from an installed pack.');
-  const refused = pack?.refuse?.(draft, peers);
+  const refused = pack.refuse?.({ ...draft, boundWorker }, peers);
   if (refused) return fail(`check_refused: ${refused}`);
-  const recorded = pack?.record?.(draft, peers);
+  const recorded = pack.record?.(draft, peers);
   const doneWhen = pack.doneWhen?.(draft.check);
   if (!doneWhen) return fail(`check_unsupported: ${draft.check.pack}.${draft.check.kind}.`);
   return {
@@ -604,9 +605,10 @@ export function createNeoTodoOperations(
         },
       };
     const accepted = planNeoTodoDraft(
-      { ...plan.todo, check },
+      { ...plan.todo, check, instruction: input.instruction ?? plan.todo.instruction },
       packs(),
-      todos.listTodos(plan.todo.askId)
+      todos.listTodos(plan.todo.askId),
+      !!sessions.readRef(plan.todo.id)
     );
     if ('reason' in accepted) return accepted;
     const records = [
@@ -661,7 +663,12 @@ export function createNeoTodoOperations(
       if ('reason' in answered) return answered.reason;
     }
     if (plan.patch.check) {
-      const accepted = planNeoTodoDraft(plan.todo, packs(), todos.listTodos(plan.todo.askId));
+      const accepted = planNeoTodoDraft(
+        plan.todo,
+        packs(),
+        todos.listTodos(plan.todo.askId),
+        !!sessions.readRef(plan.todo.id)
+      );
       if ('reason' in accepted) return accepted.reason;
     }
     const todo = await controls.recompute(plan.todo, plan.patch);

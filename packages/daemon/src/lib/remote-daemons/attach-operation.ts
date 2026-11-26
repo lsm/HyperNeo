@@ -33,6 +33,7 @@ export const AttachDaemonResultSchema = z.discriminatedUnion('kind', [
 
 type AttachInput = z.infer<typeof AttachDaemonInputSchema>;
 type AttachResult = z.infer<typeof AttachDaemonResultSchema>;
+type Pairing = { credential: string; peerDaemonId?: string };
 
 export function requireRpcAttachCaller(
   input: AttachInput,
@@ -49,10 +50,7 @@ export function requireRpcAttachCaller(
       };
 }
 
-export type RedeemCode = (
-  url: string,
-  code: string
-) => Promise<{ credential: string } | { reason: string }>;
+export type RedeemCode = (url: string, code: string) => Promise<Pairing | { reason: string }>;
 
 export const redeemRemotePairingCode: RedeemCode = async (url, code) => {
   const endpoint = new URL('/pair', url.replace(/^ws/, 'http'));
@@ -65,29 +63,35 @@ export const redeemRemotePairingCode: RedeemCode = async (url, code) => {
     return { reason: `could not reach ${endpoint.origin}: ${String(response.error)}` };
   const body = (await response.json().catch(() => ({}))) as {
     credential?: unknown;
+    kind?: unknown;
+    daemonId?: unknown;
     error?: unknown;
   };
+  const peer = z.uuid().safeParse(body.daemonId);
   return response.ok && typeof body.credential === 'string'
-    ? { credential: body.credential }
+    ? {
+        credential: body.credential,
+        ...(body.kind === 'daemon' && peer.success ? { peerDaemonId: peer.data } : {}),
+      }
     : { reason: `pairing refused (${response.status} ${String(body.error ?? 'no reason')})` };
 };
 
 export async function pairRemoteDaemon(
   input: AttachInput,
   redeem: RedeemCode
-): Promise<{ value: AttachInput & { credential?: string } } | { reason: AttachResult }> {
+): Promise<{ value: AttachInput & Partial<Pairing> } | { reason: AttachResult }> {
   if (!input.code) return { value: input };
   const paired = await redeem(input.url, input.code);
   return 'credential' in paired
-    ? { value: { ...input, credential: paired.credential } }
+    ? { value: { ...input, ...paired } }
     : { reason: { kind: 'rejected', reason: `${input.daemonId}: ${paired.reason}` } };
 }
 
 export async function attachRemoteDaemon(
-  input: AttachInput & { credential?: string },
+  input: AttachInput & Partial<Pairing>,
   registry: RemoteDaemonRegistry
 ): Promise<AttachResult> {
-  await registry.attach(input.daemonId, input.url, input.credential);
+  await registry.attach(input.daemonId, input.url, input.credential, input.peerDaemonId);
   return {
     kind: 'attached',
     daemonId: input.daemonId,

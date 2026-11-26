@@ -388,7 +388,10 @@ export class AgentSession
     inputOrigin?: () => { messageId: string } | null,
     desktopTurn?: () => DesktopTurn | null
   ): ReturnType<typeof createOperationMcpServer> {
-    const descriptionRole = this.operationCallerIdentity().role;
+    const descriptionRole =
+      this.session.config.toolProfile === 'desktop'
+        ? 'desktop'
+        : this.operationCallerIdentity().role;
     const descriptionKey =
       descriptionRole === 'neo'
         ? JSON.stringify([descriptionRole, enabledOperationPacks(this.resolveOperationRegistry())])

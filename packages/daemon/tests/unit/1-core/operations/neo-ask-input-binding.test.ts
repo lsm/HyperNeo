@@ -129,48 +129,13 @@ describe('neo ask binding from human input', () => {
     }
   });
 
-  test('an app reaches only the todo whose human message names it or whose ask card approved it', async () => {
+  test('a human message cannot grant desktop access without an approved ask card', async () => {
     const f = setup();
     try {
-      const chrome = { bundleId: 'com.google.Chrome', name: 'Google Chrome' };
       const input = f.human('Use Chrome to find the March invoice');
-      const refused = await f.add({ input, desktopApps: ['com.google.Chrome', 'com.apple.mail'] });
-      expect(refused).toMatchObject({
-        ok: false,
-        reason: expect.stringContaining('Mail is not on'),
-      });
-      const added = await f.add({ input, desktopApps: ['com.google.Chrome'] });
-      if (!added.ok || !added.todo) throw new Error('add failed');
-      const askId = added.todo.askId;
-      expect(f.store.listTodos(askId).map((todo) => todo.desktopApps ?? null)).toEqual([[chrome]]);
-      expect(f.store.getAsk(askId)?.desktopApps).toBeUndefined();
-      expect(f.store.listQuestions(askId)).toEqual([]);
-      const sibling = await f.add({ askId, title: 'Sibling step' });
-      expect(sibling.ok).toBe(true);
-      const claimed = await f.add({
-        askId,
-        title: 'Claim step',
-        desktopApps: ['com.google.Chrome'],
-      });
-      expect(claimed).toMatchObject({
+      expect(await f.add({ input, desktopApps: ['com.google.Chrome'] })).toMatchObject({
         ok: false,
         reason: expect.stringContaining('desktop_app_not_approved'),
-      });
-      await f.store.addAskDesktopApps(askId, [chrome], 2);
-      const pooled = await f.add({
-        askId,
-        title: 'Pooled step',
-        desktopApps: ['com.google.Chrome'],
-      });
-      expect(pooled.ok).toBe(true);
-      expect(
-        Object.fromEntries(
-          f.store.listTodos(askId).map((todo) => [todo.title, todo.desktopApps ?? null])
-        )
-      ).toEqual({
-        'Fix the two Open buttons': [chrome],
-        'Sibling step': null,
-        'Pooled step': [chrome],
       });
     } finally {
       f.db.close();

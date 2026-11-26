@@ -36,10 +36,10 @@ export function getBuiltInSpaceAgentTemplates(): SpaceAgentTemplate[] {
       suggestedAutonomyLevel: template.suggestedAutonomyLevel,
       suggestedEventSubscriptions: template.suggestedEventSubscriptions,
       reminderDefaults: template.reminderDefaults,
-      model: null,
+      model: template.model ?? null,
       provider: null,
       modelPool: null,
-      thinkingLevel: null,
+      thinkingLevel: template.thinkingLevel ?? null,
       settingSources: null,
       tools: Array.isArray(presetTools)
         ? presetTools.filter((tool): tool is string => typeof tool === 'string')
