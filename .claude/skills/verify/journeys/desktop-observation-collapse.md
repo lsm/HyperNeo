@@ -30,5 +30,18 @@ The SDK and synthetic host must show a collapsed older result and a full
 snapshot request without `since`. The stored transcript keeps the original
 result.
 
+To check the Settings switch, build the web bundle and run the helper on a free port
+(never 8399). Set `PLAYWRIGHT_NODE_PATH` to a Playwright `node_modules` when the default
+is missing:
+
+```bash
+TMPDIR=/tmp/claude-501 bash .claude/skills/verify/desktop-observation-collapse-setting.sh 9347
+```
+
+It starts an isolated daemon with `launch.sh` and opens `/settings?tab=harness`. The
+switch must read off with nothing stored, store `true` when pressed, still read on after
+a reload, and store `false` when pressed again. It writes `collapse-setting.json` and
+`collapse-setting-1280.png` and `collapse-setting-390.png`, which you look at.
+
 This checks endpoint behavior and full-snapshot dispatch. The separate rollout
 requires the recorded Calculator, TextEdit and Safari model replay in the design.
