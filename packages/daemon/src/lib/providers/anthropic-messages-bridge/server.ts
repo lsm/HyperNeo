@@ -109,6 +109,9 @@ function enforceThinking(
     if (disableThinkingWithChatTemplate) {
       body.chat_template_kwargs = { ...body.chat_template_kwargs, enable_thinking: false };
       delete body.output_config?.effort;
+      if (body.output_config && Object.keys(body.output_config).length === 0) {
+        delete body.output_config;
+      }
       delete body.reasoning_effort;
     }
   } else if (desired === undefined) {
