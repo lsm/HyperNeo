@@ -93,7 +93,7 @@ if (process.argv.includes('--daemon')) {
     });
   });
 
-  async function start(dir: string, daemonId?: string) {
+  async function start(dir: string) {
     for (const part of ['bin', 'data', 'home', 'tmp']) {
       mkdirSync(join(dir, part), { recursive: true });
     }
@@ -107,7 +107,6 @@ if (process.argv.includes('--daemon')) {
         NODE_ENV: 'test',
         PATH: `${join(dir, 'bin')}:${process.env.PATH}`,
         LOG_LEVEL: 'warn',
-        ...(daemonId === undefined ? {} : { HYPERNEO_DAEMON_ID: daemonId }),
       },
       stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
     });
@@ -210,7 +209,7 @@ if (process.argv.includes('--daemon')) {
     await new Promise<void>((done, fail) => peer.listen(socketPath, done).once('error', fail));
     chmodSync(socketPath, 0o600);
 
-    const source = await start(home, alias);
+    const source = await start(home);
     const target = await start(worker);
     await attach(source, target, ref.daemon);
     const send = (message: string) =>
