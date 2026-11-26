@@ -14,8 +14,9 @@ reuse what exists.
 
 ## Where the list comes from
 
-The choices for a provider are `sdk` (Claude Code) plus every row of
-`OXAP_HARNESSES` whose `providers` includes that provider id. The web already
+The choices for a provider and model are `sdk` (Claude Code) plus every row of
+`OXAP_HARNESSES` whose `providers` includes that provider id and, when the row
+lists `models`, whose `models` includes the session's model. The web already
 filters this way in `SessionsPage.tsx`. A new harness becomes selectable by
 adding its row; nothing else lists harnesses.
 
@@ -39,9 +40,10 @@ OXAP id means that harness. Creation resolves it once:
 
 - `session.create` takes an optional top-level `harness` (not `config.harness`,
   which stays rejected and stripped from SDK query options).
-- `session-lifecycle` uses `params.harness ?? engineForProvider(provider)`.
+- `session-lifecycle` uses `params.harness ?? newSessionDefault(provider, model)`.
   Omitted means the provider default, so every current caller is unchanged.
-- The requested value must be `sdk` or a row that lists the provider, and must
+- The resolved value, whether requested or the default, must be `sdk` or a row
+  that lists the provider (and the model, when the row lists models), and must
   be ready for a new session. Otherwise creation fails with a plain message.
 
 A clone passes its source session's harness (`sdk` when none is stored) as
@@ -98,9 +100,15 @@ a row may name the models it serves.
   session's model is in that list. The dialog lists it only then. `session.create`
   refuses an override to it for any other model with a plain message. A row
   without `models` is unchanged.
-- **Default.** When this row is the saved default for OpenCode, a Flash session
-  uses it. Any other Go model resolves to `sdk`, today's OpenCode path. No other
-  fallback is added. `engineForProvider` takes the model for this.
+- **Default.** `engineForProvider` stays per provider and is unchanged. A new
+  `newSessionDefault(provider, model)`, used only when a session is created,
+  returns `sdk` when the saved default is a row whose `models` omit that model.
+  So with this row as OpenCode's default, a Flash session uses it, and any other
+  Go model gets `sdk`, today's OpenCode path. No other fallback is added. A Flash
+  default passes the same readiness check as a Flash override; if it is not
+  ready, creation is refused and does not fall back to `sdk`. The runtime SDK
+  failover pool (`sdkFallbackProviders`) still calls `engineForProvider`, so it
+  keeps excluding OpenCode while its default is this row.
 - **Model change.** The thread lock that already fixes the model of a started
   DeepSeek thread (`isOxapModelLocked`, today `oxap-deepseek` only) also names
   this row. Before the first turn, a switch to a model outside the list is
@@ -139,12 +147,14 @@ Each slice works on its own: nothing is reachable before what it needs exists.
 4. Prove both first-batch pairs end to end on one daemon: provider default
    chat and SDK override chat, then the reverse.
 5. OpenCode Go with DSH, Flash only: the `models` field, the row and its
-   overlay, model-aware eligibility in the dialog, creation and
-   `engineForProvider`, and the row in the model lock. Tests: a Flash override
+   overlay, model-aware eligibility in the dialog and creation,
+   `newSessionDefault`, and the row in the model lock. Tests: a Flash override
    is admitted and its first turn reaches the Go endpoint with the OpenCode key
    and no `DEEPSEEK_API_KEY`; an override for another Go model is refused; with
-   the row as default, Flash uses DSH and another Go model uses `sdk`; switching
-   a DSH chat to another model is refused.
+   the row as default, Flash uses DSH and another Go model uses `sdk`; with the
+   row as default but not ready, a Flash session is refused, not moved to `sdk`;
+   with the row as default, OpenCode stays out of the SDK failover pool;
+   switching a DSH chat to another model is refused.
 6. Later, one PR each: other pairs once each is proven.
 
 Measuring quota use between SDK and OXAP Codex is separate work and not part
