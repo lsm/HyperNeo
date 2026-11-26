@@ -4,13 +4,24 @@ Run this journey on a build host with the pinned Bun from SKILL.md. It starts an
 isolated daemon on a random port with its own HOME and database, then calls the
 real session's hyperneo-operations MCP server against a fake desktop host. The
 session keeps the daemon's own caller role, as a todo worker Neo starts does. It
-uses no model provider and sends no real GUI input. Worktrees are disabled in
+routes the template turn to a scripted loopback model and sends no real GUI input. Worktrees are disabled in
 the daemon config, and the job processor is stopped before fixture seeding.
 
 ```bash
 TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh \
   /absolute/fresh/evidence-directory .claude/skills/verify/desktop-call.ts
 ```
+
+The journey first proposes a Finder todo through Neo's MCP operation and answers
+its disclosure card through the human WebSocket door. The real work start must
+create a Desktop template session. The actual SDK request to the loopback model
+must expose only `invoke`, carry the system instructions, and omit their copy
+from the brief. The session MCP door must list exactly four operations and refuse
+a file read. The fake host sends a synthetic token in both accessibility fields
+and a screenshot. The MCP result must contain just a redaction marker after the
+normal status. An app missing from the card and legacy cards with or without
+recorded approval must refuse capture before dispatch. Pass prints `desktop worker template journey PASS` and saves
+`desktop-worker-template.json`. The signed host and its dialogs remain a separate journey.
 
 Pass prints `desktop.call journey PASS host_requests=11 no_scope_refused=1 sibling_isolated=1 sibling_own_scope=1 host_busy=1 host_timeout=1 host_locked=1 resumed=1 initial_audit_rows=2
 blocked_allowed=1 pending_allowed=1 current_preferred=1 ambiguous_refused=1 blocked_with_queued_allowed=1 finished_refused=1 driver_error_body=1 refused_paths=5 described_tools=12`: operations.describe lists every catalog tool.

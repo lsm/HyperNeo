@@ -6,6 +6,7 @@ import type {
 } from '@hyperneo/shared';
 import { setModelsCache } from '../../../../src/lib/model-service';
 import {
+  getBuiltInSpaceAgentTemplates,
   resolveEffectiveSpaceAgentTemplate,
   runCreateTemplate,
   runDeleteTemplate,
@@ -97,6 +98,15 @@ describe('SpaceAgentTemplateManager', () => {
     test('includes built-in templates', () => {
       expect(manager.listIn(OWNER).some((template) => template.key === 'builtin.default')).toBe(
         true
+      );
+    });
+
+    test('keeps the desktop worker template out of Spaces', () => {
+      expect(getBuiltInSpaceAgentTemplates()).toContainEqual(
+        expect.objectContaining({ key: 'worker.desktop', tools: ['invoke'] })
+      );
+      expect(new SpaceAgentTemplateManager(repo).listIn(OWNER).map(({ key }) => key)).not.toContain(
+        'worker.desktop'
       );
     });
 

@@ -283,13 +283,15 @@ describe('neo.ask.propose and neo.ask.settle', () => {
       turn('apps')
     );
     if (!result.ok) throw new Error(result.reason);
-    const chrome = { bundleId: 'com.google.Chrome', name: 'Google Chrome' };
+    const chrome = { bundleId: 'com.google.Chrome', name: 'Google Chrome', seen: 'all' };
     expect(store.getAsk(result.ask.id)).toMatchObject({
       request: 'Find the March invoice',
       desktopApps: [chrome],
     });
     expect(store.listQuestions(result.ask.id)).toMatchObject([
-      { text: 'Find the March invoice\n\n🖥 Google Chrome' },
+      {
+        text: 'Find the March invoice\n\n🖥 Google Chrome. The worker and its model will see everything these apps show, on every page.',
+      },
     ]);
     const later = await call(
       'neo.ask.propose',

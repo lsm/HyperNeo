@@ -37,7 +37,7 @@ beforeEach(() => {
     title: 'Errands',
     request: '',
     createdAt: 1,
-    desktopApps: [{ bundleId: 'com.google.Chrome', name: 'Chrome' }],
+    desktopApps: [{ bundleId: 'com.google.Chrome', name: 'Chrome', seen: 'all' }],
   });
   for (const [index, [todo, worker, named]] of (
     [
@@ -93,7 +93,7 @@ test('approved apps merge by bundle id and only on an open ask', async () => {
     2
   );
   expect(ask?.desktopApps).toEqual([
-    { bundleId: 'com.google.Chrome', name: 'Chrome' },
+    { bundleId: 'com.google.Chrome', name: 'Chrome', seen: 'all' },
     { bundleId: 'com.apple.mail', name: 'Mail' },
   ]);
   db.prepare("UPDATE neo_asks SET status = 'done'").run();

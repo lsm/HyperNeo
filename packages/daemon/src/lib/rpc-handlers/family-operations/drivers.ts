@@ -1,3 +1,5 @@
+import { getBuiltInSpaceAgentTemplates } from '../../agents/template-manager.ts';
+import { deriveWorkerDisallowedTools } from '../../agents/tool-policy.ts';
 import { renderRemoteAddress } from '../../mailbox/address.ts';
 import { proposalQuestionId, requireAcceptedAsk } from '../../neo/proposal.ts';
 import { NeoSessionMessageRepository } from '../../../storage/repositories/neo-session-message-repository.ts';
@@ -189,13 +191,31 @@ export async function createDriverSession(
   provider?: string,
   effort?: string,
   inPlace = false,
-  prepared?: { sessionId: string; projectPath: string }
+  prepared?: { sessionId: string; projectPath: string },
+  workerTemplate?: string
 ): Promise<string> {
   const gitRoot = inPlace
     ? null
     : (await sessionManager.getWorktreeManager().detectGitSupport(workspacePath)).gitRoot;
   const placement = planWorkPlacement(await checkoutAt(gitRoot));
-  const thinkingLevel = resolveHyperneoThinking(effort)?.value;
+  const template = workerTemplate
+    ? getBuiltInSpaceAgentTemplates().find(({ key }) => key === workerTemplate)
+    : undefined;
+  if (workerTemplate && !template) throw new Error(`Unknown worker template ${workerTemplate}.`);
+  model ??= template?.model ?? undefined;
+  const thinkingLevel = resolveHyperneoThinking(effort)?.value ?? template?.thinkingLevel;
+  const templateConfig: Partial<SessionConfig> | undefined = template
+    ? {
+        systemPrompt: { type: 'preset', preset: 'claude_code', append: template.instructions },
+        sdkToolsPreset: [],
+        coordinatorMode: false,
+        allowedTools: template.tools?.map((tool) =>
+          tool === 'invoke' ? 'mcp__hyperneo-operations__invoke' : tool
+        ),
+        disallowedTools: deriveWorkerDisallowedTools(template.tools),
+        settingSources: [],
+      }
+    : undefined;
   const create = (config?: Partial<SessionConfig>) =>
     sessionManager.createSession({
       workspacePath,
@@ -204,9 +224,10 @@ export async function createDriverSession(
         ? { sessionId: prepared.sessionId, executionProjectPath: prepared.projectPath }
         : {}),
       worktreeMode: placement.kind === 'worktree' ? 'worktree' : 'direct',
-      toolProfile: 'worker',
-      ...(config || thinkingLevel
-        ? { config: { ...config, ...(thinkingLevel ? { thinkingLevel } : {}) } }
+      toolProfile: template?.key === 'worker.desktop' ? 'desktop' : 'worker',
+      ...(template ? { workerTemplate: template.key } : {}),
+      ...(config || thinkingLevel || templateConfig
+        ? { config: { ...templateConfig, ...config, ...(thinkingLevel ? { thinkingLevel } : {}) } }
         : {}),
     });
   const selected = model
@@ -312,7 +333,7 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
         (await cleanupPrepared());
       return { ok: true, value: { archived: true, ...(worktree ? { worktree } : {}) } };
     },
-    create: (workspacePath, title, model, provider, effort, inPlace, prepared) =>
+    create: (workspacePath, title, model, provider, effort, inPlace, prepared, workerTemplate) =>
       createDriverSession(
         sessionManager,
         workspacePath,
@@ -322,7 +343,8 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
         provider,
         effort,
         inPlace,
-        prepared
+        prepared,
+        workerTemplate
       ),
     resolveModel: async (model, provider) =>
       resolveDriverModel(await readAvailableModels(), model, provider),
@@ -874,6 +896,10 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
           sessionId
         )
       ),
+    workerTemplate: (ref: WorkRef) =>
+      ref.adapter === 'hyperneo' && !ref.daemon
+        ? context.deps.sessionManager.getSessionFromDB(ref.id)?.metadata.workerTemplate
+        : undefined,
     reusePolicy: async (adapter: string, todoId: string | undefined, caller: OperationCaller) => {
       const facts =
         todoId && caller.sessionId

@@ -123,6 +123,13 @@ describe('Migration 172: re-backfill orphaned preset agent template tracking', (
     } catch {}
   });
 
+  test('does not seed the desktop worker in an empty Space', () => {
+    runMigration172(db);
+    expect(
+      db.prepare("SELECT COUNT(*) AS count FROM space_agents WHERE name = 'Desktop'").get()
+    ).toEqual({ count: 0 });
+  });
+
   test('preset-named row that diverges → left as an orphan (not re-attached)', () => {
     insertAgent(db, {
       id: 'a-1',

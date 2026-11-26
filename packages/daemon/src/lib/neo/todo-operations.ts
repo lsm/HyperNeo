@@ -142,7 +142,7 @@ const Add = TodoDraft.extend({
     'The topic of a new ask, up to 12 display cells. Joining an existing ask keeps its topic.'
   ),
   desktopApps: DesktopAppsSchema.optional().describe(
-    'Bundle ids of the apps on this Mac this todo drives. Each must be on its ask’s approved proposal card, or named by the human message in input. Only this todo gets them. For any other app, propose a new ask with desktopApps.'
+    'Bundle ids of the apps on this Mac this todo drives. Each must be on its ask’s approved proposal card with the visibility disclosure. Only this todo gets them. For any other app, propose a new ask with desktopApps.'
   ),
   after: z
     .array(Text)

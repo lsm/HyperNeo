@@ -349,6 +349,7 @@ export interface ModelLimit {
 }
 
 export interface SessionMetadata {
+  workerTemplate?: string;
   queryFailureEpisode?: {
     id: string;
     failures: number;

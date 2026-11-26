@@ -106,6 +106,7 @@ export interface WorkVerbDeps {
     | ReadonlySet<string>
     | ReadonlyMap<string, WorkerReuseFacts>
     | Promise<ReadonlySet<string> | ReadonlyMap<string, WorkerReuseFacts>>;
+  workerTemplate?: (ref: WorkRef) => string | undefined;
   reusePolicy?: (
     adapter: string,
     todoId: string | undefined,
@@ -818,7 +819,8 @@ export async function reuseIdleWorker(
     : undefined;
   if (input.preparation && !context) return null;
   const assigned = context?.roles.find((row) => row.role === role);
-  if (todoId && assigned && assigned.adapter !== adapter.id) {
+  const workerTemplate = caller.source === 'internal' ? caller.workerTemplate : undefined;
+  if (!workerTemplate && todoId && assigned && assigned.adapter !== adapter.id) {
     const priorAdapter = deps.adapters().find((candidate) => candidate.id === assigned.adapter);
     const priorContext = await deps.roleContext?.(
       todoId,
@@ -843,9 +845,12 @@ export async function reuseIdleWorker(
   }
   const matches = (id: string) => {
     const entry = context?.preparations.find((item) => item.id === id);
-    return context
-      ? !!entry && matchingPreparation(entry.preparation, input.preparation, context.perRoundFields)
-      : true;
+    return (
+      deps.workerTemplate?.({ adapter: adapter.id, id }) === workerTemplate &&
+      (!context ||
+        (!!entry &&
+          matchingPreparation(entry.preparation, input.preparation, context.perRoundFields)))
+    );
   };
   const previous = context?.roles.find((row) => row.role === role && row.adapter === adapter.id);
   const prior = previous && matches(previous.id) ? previous : undefined;

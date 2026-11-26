@@ -1,5 +1,8 @@
+import { withCodingWorkGoal } from '../../../../src/lib/neo/packs/coding/work-goal.ts';
+import { withCodingMergeContext } from '../../../../src/lib/neo/packs/coding/merge-context.ts';
 import { deliverNeoTurnReport } from '../../../../src/lib/neo/turn-report.ts';
 import { withCodingWorkerStartBrief } from '../../../../src/lib/neo/packs/coding/worker-worktree-brief';
+import { createComputerUsePack } from '../../../../src/lib/neo/packs/computer-use/pack.ts';
 import { createDelegationPack } from '../../../../src/lib/neo/packs/delegation/pack.ts';
 import { createPackPreferenceOperations } from '../../../../src/lib/neo/preference-operations.ts';
 import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
@@ -106,7 +109,7 @@ function setup(
     request: 'Redo the iOS card',
     createdAt: 1,
   });
-  const calls: { name: string; input: Record<string, unknown> }[] = [];
+  const calls: { name: string; input: Record<string, unknown>; workerTemplate?: string }[] = [];
   const told: string[] = [];
   const toldKeys: (string | undefined)[] = [];
   const events: NeoAttentionEvent[] = [];
@@ -154,9 +157,13 @@ function setup(
     write: gatewayFor(db).run.bind(gatewayFor(db)),
     store,
     sessions,
-    invoke: recordedWorkInvoke(sessions.inputs, async (_caller, name, input) => {
+    invoke: recordedWorkInvoke(sessions.inputs, async (caller, name, input) => {
       await beforeInvoke?.(name);
-      calls.push({ name, input });
+      calls.push({
+        name,
+        input,
+        ...(caller.workerTemplate ? { workerTemplate: caller.workerTemplate } : {}),
+      });
       if (name === 'work.start')
         return completed({
           ok: true,
@@ -172,7 +179,11 @@ function setup(
 
     changed: () => {},
   });
-  const add = (check: NeoTodo['check'] = null, instruction: string | null = 'Build the rows.') => {
+  const add = (
+    check: NeoTodo['check'] = null,
+    instruction: string | null = 'Build the rows.',
+    adapter = 'hyperneo'
+  ) => {
     const todo = store.addTodo(
       crypto.randomUUID(),
       'ask',
@@ -189,7 +200,7 @@ function setup(
     );
     sessions.create(todo.id, {
       verb: 'start',
-      adapter: 'hyperneo',
+      adapter,
       place: { machine: 'laptop', name: 'repo', folder: '/repo' },
     });
     return todo;
@@ -222,6 +233,56 @@ function setup(
     },
   };
 }
+
+test.each([
+  ['hyperneo', true, true],
+  ['hyperneo', false, false],
+  ['hyperneo', null, false],
+  ['codex-desktop', true, false],
+] as const)(
+  'dispatch keeps coding rules with %s desktop scope %s',
+  async (adapter, desktop, templated) => {
+    const h = setup();
+    try {
+      h.packs.push(
+        createComputerUsePack(),
+        createDelegationPack(() => h.db)
+      );
+      h.packs[0].workGoal = (brief, goal) =>
+        withCodingMergeContext(withCodingWorkGoal(brief, goal), [
+          {
+            repo: 'example/project',
+            policy: { mergePolicy: 'review_bot', mergeBy: 'daemon' },
+          },
+        ]);
+      const todo = h.add(
+        { pack: 'coding', kind: 'pr_merged', params: {} },
+        'Build the rows.',
+        adapter
+      );
+      if (desktop !== null)
+        h.db
+          .prepare('UPDATE neo_todos SET desktop_apps = ?, named = ? WHERE id = ?')
+          .run(
+            '[{"bundleId":"com.apple.finder","name":"Finder"}]',
+            JSON.stringify({ desktopControl: desktop }),
+            todo.id
+          );
+      await h.runner.start(todo.id);
+      const call = h.calls.find(({ name }) => name === 'work.start');
+      expect(call?.workerTemplate).toBe(templated ? 'worker.desktop' : undefined);
+      const brief = String(call?.input.message);
+      expect(brief).toContain('Rules for this work: prove it by running it.');
+      expect(brief).toContain('example/project merge policy: review_bot');
+      expect(brief).toContain('Delegation preferences');
+      expect(brief).toContain('PR merged');
+      expect(brief.includes('desktop_permissions_required')).toBe(!templated);
+      expect(brief).toContain('Build the rows.');
+    } finally {
+      h.db.close();
+    }
+  }
+);
 
 describe('neo todo runner', () => {
   test('long worker instructions retain shared delegation data after message truncation', async () => {
