@@ -24,8 +24,10 @@ and thinking level (`agents/template-manager.ts`, built-ins in `agents/seed-agen
 **Where it lives.** Worker templates already exist: every preset in `agents/seed-agents.ts`
 (`getPresetAgentTemplates`, tools in `PRESET_AGENT_TOOLS`) becomes a built-in template
 `worker.<handle>` through `workerPresetTemplates` in `agents/long-horizon-templates.ts`, and
-`getBuiltInSpaceAgentTemplates` serves it. The desktop operator is one more preset there,
-handle `desktop`, key `worker.desktop`. Its handle is added to the reserved handles
+`getBuiltInSpaceAgentTemplates` serves it. The desktop operator is one more built-in of the
+same kind, handle `desktop`, key `worker.desktop`. It is added beside `workerPresetTemplates()`
+in `getLongHorizonAgentTemplates`, not to `getPresetAgentTemplates`: migrations 170 and 172
+call that list live and would seed it into Spaces. Its handle is added to the reserved handles
 (`RESERVED_SPACE_AGENT_HANDLES`, `agents/slug.ts`), so `SpaceAgentTemplateManager.listIn` does not offer it in
 Spaces, where desktop control does not exist.
 
@@ -63,11 +65,10 @@ not started with.
 
 **`worker.desktop`.**
 
-- Tools: `Read` and the desktop tools. No Bash, Write, Task, Cron, Skill or plan tools. An
-  edited copy may list `Bash`.
-- `Read` gets the secret read rules (`neo/secret-read-rules.ts`, `neoSecretReadRules`), which
-  today only Neo's own sessions get (`agent/query-options-builder.ts`, `getDisallowedTools`);
-  a templated session gets them too.
+- Tools: the desktop tools and `invoke`, nothing else. No file tool: `Read` could open any
+  file, and the secret read rules (`neo/secret-read-rules.ts`) are a deny list that misses the
+  daemon's own data and other harnesses' auth files, so a desktop worker reads nothing from
+  disk. No Bash, Write, Task, Cron, Skill or plan tools.
 - Desktop tools are top-level: one tool per entry of `desktop/tool-catalog.json`
   (`list_windows`, `get_window_state`, `launch_app`, `click`, ..., `zoom`), each calling
   `desktop.call {tool, args}`. This is the Neo resident-tool pattern in
@@ -148,15 +149,15 @@ two bridges that know the session. No redaction inside an approved app.
 Four PRs from `dev`, failing tests first. Heavy builds and tests run on CI or the build Mac,
 never the laptop. System map read for the planned files.
 
-1. **Template for a todo worker.** The `desktop` preset with `Read` and `invoke` only (desktop
+1. **Template for a todo worker.** The `desktop` built-in with `invoke` only (desktop
    still through `invoke desktop.call`, as today), its reserved handle, the `workerTemplate`
-   hook and computer-use's answer, the session config, the secret read rules, the approval
+   hook and computer-use's answer, the session config, the approval
    wording, the secret-shape check, the brief and reuse rules. Works alone: a desktop worker
-   starts with two tools and the short prompt. Tests: a desktop todo on HyperNeo starts with
+   starts with one tool and the short prompt. Tests: a desktop todo on HyperNeo starts with
    the template's tools and prompt; with computer-use off no template is used; Spaces do not
-   list it; a desktop todo that is also coding work keeps the coding rules and merge policy; a
+   list it; migrations 170 and 172 do not seed it; a desktop todo that is also coding work keeps the coding rules and merge policy; a
    coding todo and a Codex worker keep today's brief; a templated session is not reused for
-   another todo and the reverse; `Read` of a protected file is refused; a result whose
+   another todo and the reverse; the session has no file tool; a result whose
    accessibility text holds a token shape comes back with a marker and no screenshot; a todo
    claiming an app only by the human's message is refused; a capture for an app the Mac
    allows but the ask's card does not list is refused; the card shows the visibility line; a
@@ -181,6 +182,6 @@ Bash call; context stays below 60% of the window, with no SDK auto-compaction; a
 compaction on the same daemon writes a real compact boundary with a summary near 2,000 tokens;
 a capture of an app that was not approved is refused; a password typed in a Safari page
 appears masked in both the screenshot and the accessibility tree; a Safari page showing a
-fake `ghp_` token returns the marker and no screenshot; `Read` of a file under `~/.ssh` is
-refused. A token in an unknown format, or one shown only as an image, in an approved app does
+fake `ghp_` token returns the marker and no screenshot; asked to read the daemon's database
+or another harness's auth file, the worker has no tool that can. A token in an unknown format, or one shown only as an image, in an approved app does
 reach the model: the proof shows it, which is what the approval wording says.
