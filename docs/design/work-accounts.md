@@ -125,16 +125,21 @@ without a receipt. The transcript check below counts such turns apart.
 A turn with neither has none: an adopted session's turns, and any turn without a receipt in a
 worker that two todos reached, whether a send or the human started it.
 
-**Receipts.** A delivery key is a receipt, a `startedTurnId` or a `steeredIntoTurnId`. In one
-week every confirmed delivery had one (Claude Desktop 917 of 917, Claude Code 73 of 73,
-HyperNeo 372 of 372, Codex Desktop sends 629 of 629, starts 301 of 301), but the code does not
-promise it on every path, so no adapter change is made and these are stated limits:
+**Receipts.** A receipt is the harness's own id, returned by the call, for the input or for the
+turn that input started: the input id, or a Codex `startedTurnId`. A delivery key is a receipt
+or a `steeredIntoTurnId`. In one week of confirmed deliveries: Claude Desktop 1080 of 1080
+(sends and starts), Claude Code 73 of 73, HyperNeo 518 of 518, Codex Desktop sends that
+started a turn 625 of 625, but Codex Desktop starts only 301 of 492. A Codex start already
+receives the opening turn's id and checks it, then drops it (`startCodexDesktopTurn` in
+`drivers/codex-desktop-handoff.ts`, and the app-server `turn/start` branch in
+`codex-desktop-adapter.ts`); the receipt it returns is found afterwards by reading the
+rollout, which can miss. Returning that turn id is the one adapter change. The stated limits:
 
 - A Claude Desktop send through the relay already returns the input id whenever the relay has
   one (`claude-desktop-adapter.ts`). It has none only when the receiver logged just a queue
   line, which carries no id (`claudeRelayedInput`); then the send is confirmed without a
-  receipt. This happened to 0 of 5914 delivered Claude Desktop sends since October, so there
-  is no available receipt left to return and no adapter slice.
+  receipt. This happened to 0 of 5914 delivered Claude Desktop sends since October; there is
+  no id left to return.
 - A Codex Desktop steer has no receipt; its `steeredIntoTurnId` is its key.
 - A queued or unconfirmed Codex send has no key, and nothing links it to its row: neither its
   `queuedSubmissionId` (0 of 1732 turn inputs in a week) nor the `clientUserMessageId` the
@@ -185,7 +190,7 @@ context a todo adds by itself (`peak - first`) is recorded, to see work that was
 
 ## Changes
 
-Six PRs from `dev`, in order, failing tests first. System map read for the planned files.
+Seven PRs from `dev`, in order, failing tests first. System map read for the planned files.
 
 1. **Turn to todo.** The decision in core, and the `work_adoptions` migration; coding uses it and keeps its stricter reading of an
    uncertain turn. Tests: a turn recorded after `reopen`, a redispatch, a retry and a restart
@@ -200,24 +205,29 @@ Six PRs from `dev`, in order, failing tests first. System map read for the plann
    failure does not; a human-started turn in a worker one todo reached keeps that todo; an adopted session's turns without a receipt have none; a reviewer keeps its
    role.
    Estimate: 8 files, 120 lines, 200 test lines.
-2. **Kind and estimate.** Core kinds, the checks on the two operations, the fact, the Neo tool
+2. **Codex start turn id.** The Codex Desktop start returns the opening turn's id from both
+   branches as `startedTurnId`, and the start outcome keeps it, so `deliveryKeys` reads it as
+   for a send. Tests: a start whose rollout read misses still has its turn id and gives its
+   todo; a start whose call returns no turn id still fails as today.
+   Estimate: 4 files, 30 lines, 60 test lines.
+3. **Kind and estimate.** Core kinds, the checks on the two operations, the fact, the Neo tool
    text, and the estimate line in `AGENTS.md` for designs. Tests: missing or unknown kind is
    refused; a pack's kind is accepted only while the pack is on; changing an estimate after
    the todo is added is refused; a daemon-made todo without one is accepted; a todo with
    a kind matches the saved rules of that kind, and one without keeps today's fallbacks.
    Estimate: 8 files, 130 lines, 150 test lines.
-3. **Turn usage, Codex, and the column.** Migration and `usage` on `WorkTurnFact`. Tests on real
+4. **Turn usage, Codex, and the column.** Migration and `usage` on `WorkTurnFact`. Tests on real
    rollout shapes: cached input is not counted twice; a turn read in two parts has one total;
    an old row has no usage.
    Estimate: 6 files, 130 lines, 170 test lines.
-4. **Turn usage, Claude and HyperNeo.** Tests: several rows of one message count once; a
+5. **Turn usage, Claude and HyperNeo.** Tests: several rows of one message count once; a
    subagent turn is incomplete; another model in the same turn is kept apart.
    Estimate: 4 files, 110 lines, 180 test lines.
-5. **Size and rework.** The hook and coding's implementation. Tests: test and document paths,
+6. **Size and rework.** The hook and coding's implementation. Tests: test and document paths,
    lock files, more files than one page, a hand merge, a head counted once, a todo with two
    PRs.
    Estimate: 6 files, 150 lines, 200 test lines.
-6. **The read operation.** Tests: a failed todo, a todo with two workers, a missing pack hook,
+7. **The read operation.** Tests: a failed todo, a todo with two workers, a missing pack hook,
    an unattributed turn.
    Estimate: 4 files, 120 lines, 150 test lines.
 
