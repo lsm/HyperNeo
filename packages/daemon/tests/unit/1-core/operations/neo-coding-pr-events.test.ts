@@ -284,6 +284,7 @@ describe('PR ledger events', () => {
       let attempts = 0;
       const gone = {
         ...deps,
+        host: 'github.com',
         tell: async () => {
           attempts += 1;
           return 'gone' as const;
