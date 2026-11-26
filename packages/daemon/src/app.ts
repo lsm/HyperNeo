@@ -129,6 +129,7 @@ import {
   disableBuiltInProvidersWithoutEnabledRecord,
 } from './lib/providers/factory.js';
 import { releaseSessionKeyBridges } from './lib/providers/provider-key-bridge.js';
+import { OpencodeProvider } from './lib/providers/opencode-provider.ts';
 import { getProviderRegistry } from './lib/providers/registry.js';
 import { OAuthRefreshScheduler } from './lib/credentials/oauth-refresh-scheduler.js';
 import { createGoogleConnectionRefreshLoop } from './lib/connections/refresh-loop.ts';
@@ -866,6 +867,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         });
       },
       key: async (providerId) => {
+        const provider = providerRegistry.get(providerId);
+        if (provider instanceof OpencodeProvider) return provider.getApiKey();
         const credentials = await credentialManager.getCredentials(providerId);
         return credentials?.type === 'api_key' ? credentials.apiKey : undefined;
       },
