@@ -3,7 +3,7 @@ import type { MessageContent, MessageHub, Session } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
 import { reserveBasedThreshold } from '../../../../src/lib/agent/context-tracker';
-import { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import { COMPACT_SUMMARY_COMMAND, MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
 import { buildProviderSettings } from '../../../../src/lib/agent/query-options-builder';
@@ -413,7 +413,7 @@ describe('N4: literal /compact never enters the transcript or provider request',
     expect(harness.getContextUsageSpy).toHaveBeenCalledTimes(1);
     expect(harness.shouldCompactAtSpy).not.toHaveBeenCalled();
     expect(harness.markCompactionTriggeredSpy).not.toHaveBeenCalled();
-    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true, {
+    expect(harness.enqueueSpy).not.toHaveBeenCalledWith(COMPACT_SUMMARY_COMMAND, true, {
       durable: true,
       prepend: true,
     });
@@ -449,7 +449,7 @@ describe('N4: literal /compact never enters the transcript or provider request',
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(harness.shouldCompactAtSpy).not.toHaveBeenCalled();
-    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true);
+    expect(harness.enqueueSpy).not.toHaveBeenCalled();
   });
 
   it('Kimi K3 (1M) session near capacity enqueues /compact exactly once (daemon backstop)', async () => {
@@ -485,7 +485,7 @@ describe('N4: literal /compact never enters the transcript or provider request',
     expect(harness.getContextUsageSpy).toHaveBeenCalledTimes(1);
     expect(harness.shouldCompactAtSpy).not.toHaveBeenCalled();
     expect(harness.markCompactionTriggeredSpy).toHaveBeenCalledTimes(1);
-    expect(harness.enqueueSpy).toHaveBeenCalledWith('/compact', true, {
+    expect(harness.enqueueSpy).toHaveBeenCalledWith(COMPACT_SUMMARY_COMMAND, true, {
       durable: true,
       prepend: true,
     });
@@ -540,7 +540,7 @@ describe('N4: literal /compact never enters the transcript or provider request',
       await new Promise((resolve) => setTimeout(resolve, 0));
       if (c.provider === 'kimi') {
         expect(harness.enqueueSpy, `${c.provider}/${c.model}`).toHaveBeenCalledWith(
-          '/compact',
+          COMPACT_SUMMARY_COMMAND,
           true,
           { durable: true, prepend: true }
         );
@@ -550,7 +550,7 @@ describe('N4: literal /compact never enters the transcript or provider request',
         ).toHaveBeenCalledTimes(1);
       } else {
         expect(harness.enqueueSpy, `${c.provider}/${c.model}`).not.toHaveBeenCalledWith(
-          '/compact',
+          COMPACT_SUMMARY_COMMAND,
           true,
           { durable: true, prepend: true }
         );
@@ -752,7 +752,7 @@ describe('N4: literal /compact never enters the transcript or provider request',
     expect(harness.getContextUsageSpy).toHaveBeenCalledTimes(1);
     expect(harness.shouldCompactAtSpy).not.toHaveBeenCalled();
     expect(harness.markCompactionTriggeredSpy).toHaveBeenCalledTimes(1);
-    expect(harness.enqueueSpy).toHaveBeenCalledWith('/compact', true, {
+    expect(harness.enqueueSpy).toHaveBeenCalledWith(COMPACT_SUMMARY_COMMAND, true, {
       durable: true,
       prepend: true,
     });
@@ -791,7 +791,7 @@ describe('N4: literal /compact never enters the transcript or provider request',
     expect(harness.getContextUsageSpy).toHaveBeenCalledTimes(1);
     expect(harness.shouldCompactAtSpy).not.toHaveBeenCalled();
     expect(harness.markCompactionTriggeredSpy).not.toHaveBeenCalled();
-    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true, {
+    expect(harness.enqueueSpy).not.toHaveBeenCalledWith(COMPACT_SUMMARY_COMMAND, true, {
       durable: true,
       prepend: true,
     });
@@ -835,7 +835,7 @@ describe('N4: literal /compact never enters the transcript or provider request',
 
     expect(harness.getContextUsageSpy).toHaveBeenCalled();
     expect(harness.markCompactionTriggeredSpy).not.toHaveBeenCalled();
-    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true, {
+    expect(harness.enqueueSpy).not.toHaveBeenCalledWith(COMPACT_SUMMARY_COMMAND, true, {
       durable: true,
       prepend: true,
     });
@@ -871,7 +871,7 @@ describe('N4: literal /compact never enters the transcript or provider request',
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(harness.markCompactionTriggeredSpy).toHaveBeenCalledTimes(1);
-    expect(harness.enqueueSpy).toHaveBeenCalledWith('/compact', true, {
+    expect(harness.enqueueSpy).toHaveBeenCalledWith(COMPACT_SUMMARY_COMMAND, true, {
       durable: true,
       prepend: true,
     });
