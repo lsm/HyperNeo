@@ -151,7 +151,7 @@ describe('forwarding message.send to an attached daemon', () => {
   }
 
   test('lands a forwarded send in the attached daemon mailbox, not the local one', async () => {
-    daemons.attach('b', remote.url);
+    await daemons.attach('b', remote.url);
 
     const outcome = await send('daemon:b::session:session-on-b');
 
@@ -181,11 +181,11 @@ describe('forwarding message.send to an attached daemon', () => {
   });
 
   test('closes the previous socket when the same daemon is attached again', async () => {
-    daemons.attach('b', remote.url);
+    await daemons.attach('b', remote.url);
     await send('daemon:b::session:session-on-b');
     expect(remote.clientCount()).toBe(1);
 
-    daemons.attach('b', remote.url);
+    await daemons.attach('b', remote.url);
     await send('daemon:b::session:session-on-b');
 
     await waitFor(() => remote.clientCount() === 1);
@@ -193,7 +193,7 @@ describe('forwarding message.send to an attached daemon', () => {
   });
 
   test('returns the remote daemon own rejection for a session it does not know', async () => {
-    daemons.attach('b', remote.url);
+    await daemons.attach('b', remote.url);
 
     const outcome = await send('daemon:b::session:session-ghost');
 
@@ -206,7 +206,7 @@ describe('forwarding message.send to an attached daemon', () => {
   });
 
   test('applies the local provenance gate before anything leaves this daemon', async () => {
-    daemons.attach('b', remote.url);
+    await daemons.attach('b', remote.url);
 
     const outcome = await invokeOperation(
       localRegistry(),
@@ -238,7 +238,7 @@ describe('forwarding message.send to an attached daemon', () => {
 
   test('rejects without persisting when the attached daemon is unreachable', async () => {
     await remote.stop();
-    daemons.attach('b', remote.url);
+    await daemons.attach('b', remote.url);
 
     const outcome = await send('daemon:b::session:session-on-b');
 
@@ -254,7 +254,7 @@ describe('forwarding message.send to an attached daemon', () => {
   });
 
   test('leaves a local send on the local mailbox with the remote path never consulted', async () => {
-    daemons.attach('b', remote.url);
+    await daemons.attach('b', remote.url);
 
     const outcome = await send('session-on-a');
 
@@ -356,11 +356,11 @@ describe('tearing down a failed connection', () => {
   test('leaves alone a connection that replaced the one the failed invoke used', async () => {
     const remote = await startRemoteDaemon('session-on-b');
     const daemons = new RemoteDaemonRegistry();
-    daemons.attach('b', remote.url);
+    await daemons.attach('b', remote.url);
     await daemons.invoke('b', 'message.send', { sessionId: 'session-on-b', message });
 
     const stale = settled(daemons.invoke('b', 'no.such.operation', {}));
-    daemons.attach('b', remote.url);
+    await daemons.attach('b', remote.url);
     const fresh = daemons.invoke('b', 'message.send', { sessionId: 'session-on-b', message });
 
     expect(await stale).toBeInstanceOf(Error);
@@ -390,7 +390,7 @@ describe('connect deadline on a forwarded send', () => {
     const silent = await startSilentServer();
     const local = createMailboxTestDb();
     const daemons = new RemoteDaemonRegistry({ connectTimeoutMs: 100 });
-    daemons.attach('stuck', silent.url);
+    await daemons.attach('stuck', silent.url);
     const registry = createOperationRegistry([
       createSendMessageOperation(
         local.jobQueue,
@@ -421,10 +421,10 @@ describe('connect deadline on a forwarded send', () => {
   test('abandons a connect still in flight when the same daemon is attached again', async () => {
     const silent = await startSilentServer();
     const daemons = new RemoteDaemonRegistry({ connectTimeoutMs: 30000 });
-    daemons.attach('stuck', silent.url);
+    await daemons.attach('stuck', silent.url);
     const inFlight = settled(daemons.invoke('stuck', 'message.send', {}));
 
-    daemons.attach('stuck', silent.url);
+    await daemons.attach('stuck', silent.url);
 
     expect(await inFlight).toBeInstanceOf(Error);
     daemons.forget('stuck');
@@ -474,7 +474,7 @@ describe('remembering a failed connection', () => {
     await remote.stop();
     let now = 0;
     const daemons = new RemoteDaemonRegistry({ connectTimeoutMs: 200, now: () => now });
-    daemons.attach('b', url);
+    await daemons.attach('b', url);
     const call = () => settled(daemons.invoke('b', 'message.send', { sessionId: 's', message }));
 
     const first = (await call()) as Error;
@@ -487,7 +487,7 @@ describe('remembering a failed connection', () => {
     now = 60_000;
     expect(((await call()) as Error).message).not.toContain('not retried');
 
-    daemons.attach('b', url);
+    await daemons.attach('b', url);
     expect(((await call()) as Error).message).not.toContain('not retried');
   });
 });
