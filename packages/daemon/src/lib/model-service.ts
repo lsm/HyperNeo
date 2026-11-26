@@ -873,6 +873,9 @@ async function loadProviderModels(
   try {
     const record = providerRepositoryRef?.getProviderByProviderId(provider.id);
     const saved = record && savedOxapAdapter(record);
+    if (saved?.modelProvider) {
+      return { status: 'loaded', models: withCuratedEntries(provider.id, DeepSeekProvider.MODELS) };
+    }
     if (saved?.harness === 'oxap-codex') {
       const models = await nativeOxapCodexModels(provider.id, saved.settings.executable).catch(
         () => []

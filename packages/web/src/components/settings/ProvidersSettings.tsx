@@ -199,7 +199,7 @@ export function ProvidersSettings() {
   };
   const [hubBinary, setHubBinary] = useState<GlobalSettings['oxapHub']>();
   const [harnessDrafts, setHarnessDrafts] = useState<
-    Record<string, { harness: string; executable: string }>
+    Record<string, { harness: string; executable: string; modelProvider: string }>
   >({});
   const [providers, setProviders] = useState<EnrichedProvider[]>([]);
   const [loading, setLoading] = useState(true);
@@ -803,8 +803,9 @@ export function ProvidersSettings() {
 
   const saveHarness = async (
     provider: EnrichedProvider,
-    draft: { harness: string; executable: string },
-    hasExecutableField: boolean
+    draft: { harness: string; executable: string; modelProvider: string },
+    hasExecutableField: boolean,
+    hasModelProviderField: boolean
   ) => {
     setPendingId(provider.id);
     try {
@@ -817,7 +818,10 @@ export function ProvidersSettings() {
           {
             providerId: provider.providerId,
             harness: draft.harness,
-            settings: hasExecutableField ? { executable: draft.executable } : {},
+            settings: {
+              ...(hasExecutableField ? { executable: draft.executable } : {}),
+              ...(hasModelProviderField ? { model_provider: draft.modelProvider.trim() } : {}),
+            },
           },
           { timeout: 300_000 }
         )
@@ -972,7 +976,7 @@ export function ProvidersSettings() {
                   try {
                     return JSON.parse(provider.configJson ?? '{}') as {
                       harness?: string;
-                      harnessSettings?: { executable?: string };
+                      harnessSettings?: { executable?: string; model_provider?: string };
                     };
                   } catch {
                     return {};
@@ -985,6 +989,7 @@ export function ProvidersSettings() {
                   harness: config.harness ?? 'sdk',
                   executable:
                     config.harnessSettings?.executable || provider.detectedHarnessExecutable || '',
+                  modelProvider: config.harnessSettings?.model_provider ?? '',
                 };
                 const selectedOxap = isOxapHarness(draft.harness)
                   ? oxapHarness(draft.harness)
@@ -995,6 +1000,7 @@ export function ProvidersSettings() {
                 const hasExecutableField =
                   executableHarness?.settings.includes('executable') ?? false;
                 const codexExecutable = executableHarness?.adapter === 'codex';
+                const hasModelProviderField = executableHarness?.adapter === 'deepseek';
                 const executableLabel = codexExecutable
                   ? 'Codex CLI path'
                   : 'DeepSeek harness path';
@@ -1200,6 +1206,29 @@ export function ProvidersSettings() {
                                 </span>
                               </label>
                             )}
+                            {hasModelProviderField && (
+                              <label class="block text-sm">
+                                Model provider (optional)
+                                <input
+                                  placeholder="opencode-go"
+                                  value={draft.modelProvider}
+                                  onInput={(e) =>
+                                    setHarnessDrafts((prev) => ({
+                                      ...prev,
+                                      [provider.id]: {
+                                        ...draft,
+                                        modelProvider: e.currentTarget.value,
+                                      },
+                                    }))
+                                  }
+                                  class="block w-full bg-bg border border-line rounded px-2 py-1.5"
+                                />
+                                <span class="block text-xs text-fg-muted">
+                                  Leave blank for the official DeepSeek endpoint. OpenCode Go uses{' '}
+                                  <code>OPENCODE_API_KEY</code> from the daemon environment.
+                                </span>
+                              </label>
+                            )}
                             {selectedOxap && (
                               <div class="text-sm">
                                 <p>OXAP installation</p>
@@ -1232,7 +1261,14 @@ export function ProvidersSettings() {
                               size="sm"
                               variant="primary"
                               disabled={isPending}
-                              onClick={() => void saveHarness(provider, draft, hasExecutableField)}
+                              onClick={() =>
+                                void saveHarness(
+                                  provider,
+                                  draft,
+                                  hasExecutableField,
+                                  hasModelProviderField
+                                )
+                              }
                             >
                               Save client
                             </Button>

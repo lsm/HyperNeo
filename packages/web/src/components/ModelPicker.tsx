@@ -35,6 +35,7 @@ interface ModelPickerProps {
   align?: 'left' | 'right' | 'trigger';
   newChatHarness?: {
     label: string;
+    readyProviders?: readonly string[];
     options: {
       label: string;
       selected: boolean;
@@ -139,6 +140,7 @@ export function ModelPicker({
   }, [loadAuthStatuses, loadOxapProviders, harness, connectionState.value]);
 
   const activeProvider = activeModelInfo?.provider;
+  const readyProviders = newChatHarness?.readyProviders;
   const models = filterModelsForPicker(
     availableModels.filter((model) =>
       isOxapHarness(harness)
@@ -147,7 +149,13 @@ export function ModelPicker({
           model.provider === (provider ?? activeProvider) ||
           (oxapProviders !== null && !oxapProviders.has(model.provider))
     ),
-    isOxapHarness(harness) ? new Map() : providerAuthStatuses,
+    isOxapHarness(harness)
+      ? new Map()
+      : readyProviders?.length
+        ? new Map(
+            [...providerAuthStatuses].filter(([providerId]) => !readyProviders.includes(providerId))
+          )
+        : providerAuthStatuses,
     activeProvider,
     activeModelInfo?.id
   );

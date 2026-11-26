@@ -38,7 +38,8 @@ type Records = readonly Pick<ProviderRecord, 'providerId' | 'configJson'>[];
 async function readKeys(records: Records, deps: OxapSettingsDeps) {
   const keys: Record<string, string | undefined> = {};
   for (const record of records) {
-    if (savedOxapAdapter(record)?.row.key)
+    const saved = savedOxapAdapter(record);
+    if (saved?.row.key && !saved.modelProvider)
       keys[record.providerId] = await deps.key(record.providerId);
   }
   return keys;
@@ -113,7 +114,8 @@ export async function newSessionOxapRefusal(
   const executable = saved.settings.executable;
   if (executable && !(await isExecutableFile(executable)))
     return `${provider} needs an executable file; check Settings → Providers`;
-  if (row.key && !(await readKey?.(provider))?.trim()) return `${provider} needs ${row.key}`;
+  if (!saved.modelProvider && row.key && !(await readKey?.(provider))?.trim())
+    return `${provider} needs ${row.key}`;
   return undefined;
 }
 
@@ -132,7 +134,13 @@ function hubOptions(
   keys: Record<string, string | undefined>,
   binary: OxapHubBinary
 ): OxapEngineOptions {
-  const hub = buildHubConfig(records, OXAP_HARNESSES, deps.environment, keys);
+  const hub = buildHubConfig(
+    records,
+    OXAP_HARNESSES,
+    deps.environment,
+    keys,
+    join(deps.stateDirectory, 'dsh')
+  );
   if ('reason' in hub) throw new Error(hub.reason);
   return {
     binaryPath: binary.path,

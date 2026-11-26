@@ -523,6 +523,9 @@ export function SessionsPage() {
                   align="trigger"
                   newChatHarness={{
                     label: harnessLabel,
+                    readyProviders: providers
+                      ?.filter((record) => record.readyHarnesses?.length)
+                      .map((record) => record.providerId),
                     options:
                       mayUseOxap && providers !== null
                         ? [

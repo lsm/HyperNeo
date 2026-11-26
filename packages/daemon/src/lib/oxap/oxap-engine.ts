@@ -84,6 +84,13 @@ async function writeConfig(
 ): Promise<{ launch: OxapHubClientOptions; binary: typeof validated.binary }> {
   const { config, binary } = validated;
   try {
+    if (config.config.adapters.deepseek?.model_provider && config.environment.DSH_HOME) {
+      const home = config.environment.DSH_HOME;
+      await mkdir(home, { recursive: true, mode: 0o700 });
+      if ((await readdir(home)).includes('.credentials.yaml')) {
+        throw new Error('The managed OXAP DeepSeek home must be free of .credentials.yaml');
+      }
+    }
     await writeFile(join(options.stateDirectory, 'oap-serve.json'), JSON.stringify(config.config), {
       mode: 0o600,
     });

@@ -18,7 +18,7 @@ import { answerCodexProbeLocally, serveLocalRelease } from './oxap-codex-provide
 const [binary, version, sha256, ...args] = process.argv.slice(2);
 const mode = args.length === 2 ? args[0] : 'first';
 const runArgument = args.at(-1)!;
-assert(['first', 'routed', 'routed-with-key', 'recovery', 'pending', 'flash', 'image', 'flash-web', 'pro-web', 'flash-recovery', 'sdk-default', 'locked-recovery', 'refused-reopen', 'first-open-retry', 'no-replay'].includes(mode));
+assert(['first', 'routed', 'routed-with-key', 'routed-web', 'recovery', 'pending', 'flash', 'image', 'flash-web', 'pro-web', 'flash-recovery', 'sdk-default', 'locked-recovery', 'refused-reopen', 'first-open-retry', 'no-replay'].includes(mode));
 const run = resolve(runArgument);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -26,7 +26,7 @@ assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert.deepEqual(await checkOxapBinary(binary, { version, sha256 }), { ok: true });
 const workspace = join(run, 'workspace');
 const peer = join(run, 'dsh');
-const routed = mode === 'routed' || mode === 'routed-with-key';
+const routed = mode.startsWith('routed');
 mkdirSync(workspace);
 if (routed) writeFileSync(join(workspace, 'verify-model-provider'), '');
 const nativePromptCount = join(workspace, 'verify-native-prompt-count');
@@ -65,6 +65,39 @@ const connect = () => new WebSocketClientTransport({
 });
 let transport = connect();
 const evidence: Record<string, unknown> = { version, sha256, mode };
+async function runBrowser(hub: MessageHub, script: string, ...args: string[]) {
+  const dist = resolve('packages/web/dist');
+  const preview = Bun.serve({
+    hostname: '127.0.0.1',
+    port: 0,
+    async fetch(request, server) {
+      const refusal = await app.guardRequest(request);
+      if (refusal) return refusal;
+      const url = new URL(request.url);
+      if (url.pathname === '/pair' && request.method === 'POST') return app.handlePair(request);
+      if (url.pathname === '/ws') {
+        const device = await app.authenticateUpgrade(request, '127.0.0.1');
+        if (server.upgrade(request, { data: { connectionSessionId: 'global', device } })) return;
+        return new Response('Upgrade failed', { status: 500 });
+      }
+      const page = /^\/(session\/|sessions$|settings$)/.test(url.pathname);
+      const file = Bun.file(join(dist, page ? 'index.html' : url.pathname));
+      return await file.exists() ? new Response(file) : new Response('Not found', { status: 404 });
+    },
+    websocket: createWebSocketHandlers(app.transport, app.sessionManager),
+  });
+  try {
+    const pairing = await hub.request<{ ok: boolean; code: string }>('operation.invoke', {
+      name: 'device.pair.create', input: { kind: 'human', name: 'Synthetic DeepSeek browser' },
+    });
+    assert(pairing.ok);
+    const browser = Bun.spawn([process.execPath, `.claude/skills/verify/${script}`,
+      String(preview.port), pairing.code, ...args, run], { stdout: 'inherit', stderr: 'inherit' });
+    assert.equal(await browser.exited, 0, 'The browser journey failed');
+  } finally {
+    preview.stop(true);
+  }
+}
 try {
   let hub = new MessageHub({ defaultSessionId: 'global' });
   hub.registerTransport(transport);
@@ -79,25 +112,30 @@ try {
       isDefault: true,
       sortOrder: 0,
     },
-    ...(mode === 'routed' ? {} : { credentials: { apiKey: 'synthetic-deepseek-proof' } }),
+    ...(routed && mode !== 'routed-with-key' ? {} : { credentials: { apiKey: 'synthetic-deepseek-proof' } }),
   });
-  const saved = await hub.request('operation.invoke', {
-    name: 'oxap.settings.save',
-    input: {
-      providerId: 'deepseek',
-      harness: 'oxap-deepseek',
-      settings: { executable: peer, ...(routed ? { model_provider: 'opencode-go' } : {}) },
-    },
-  });
-  evidence.harnessSave = saved;
-  assert.deepEqual(saved, { accepted: true });
+  if (mode === 'routed-web') {
+    await runBrowser(hub, 'oxap-deepseek-routing-web.mjs', peer);
+    evidence.settingsSavedInBrowser = true;
+  } else {
+    const saved = await hub.request('operation.invoke', {
+      name: 'oxap.settings.save',
+      input: {
+        providerId: 'deepseek',
+        harness: 'oxap-deepseek',
+        settings: { executable: peer, ...(routed ? { model_provider: 'opencode-go' } : {}) },
+      },
+    });
+    evidence.harnessSave = saved;
+    assert.deepEqual(saved, { accepted: true });
+  }
   assert.deepEqual(releaseRequests, ['SHA256SUMS.txt', `${version}.tar.gz`]);
   if (routed) {
     const { models } = await hub.request<{ models: { id: string; provider: string; available: boolean }[] }>('models.list', { useCache: true });
     assert(models.some(({ id, provider, available }) => id === 'deepseek-v4-pro' && provider === 'deepseek' && available), 'The new chat model picker needs an available DeepSeek V4 Pro');
   }
   const flash = ['flash', 'image', 'flash-web', 'flash-recovery', 'locked-recovery', 'refused-reopen'].includes(mode);
-  const web = mode.endsWith('-web');
+  const imageWeb = mode === 'flash-web' || mode === 'pro-web';
   const locked = mode === 'locked-recovery';
   const refusesReopen = mode === 'refused-reopen';
   if (locked || mode === 'flash-recovery') writeFileSync(join(workspace, 'verify-native-lease'), '');
@@ -146,37 +184,8 @@ try {
     params: [sessionId, 50],
     subscriptionId: 'deepseek-chat',
   });
-  if (web) {
-    const dist = resolve('packages/web/dist');
-    const preview = Bun.serve({
-      hostname: '127.0.0.1',
-      port: 0,
-      async fetch(request, server) {
-        const refusal = await app.guardRequest(request);
-        if (refusal) return refusal;
-        const url = new URL(request.url);
-        if (url.pathname === '/pair' && request.method === 'POST') return app.handlePair(request);
-        if (url.pathname === '/ws') {
-          const device = await app.authenticateUpgrade(request, '127.0.0.1');
-          if (server.upgrade(request, { data: { connectionSessionId: 'global', device } })) return;
-          return new Response('Upgrade failed', { status: 500 });
-        }
-        const file = Bun.file(join(dist, url.pathname.startsWith('/session/') ? 'index.html' : url.pathname));
-        return await file.exists() ? new Response(file) : new Response('Not found', { status: 404 });
-      },
-      websocket: createWebSocketHandlers(app.transport, app.sessionManager),
-    });
-    try {
-      const pairing = await hub.request<{ ok: boolean; code: string }>('operation.invoke', {
-        name: 'device.pair.create', input: { kind: 'human', name: 'Synthetic DeepSeek browser' },
-      });
-      assert(pairing.ok);
-      const browser = Bun.spawn([process.execPath, '.claude/skills/verify/oxap-deepseek-images-web.mjs',
-        String(preview.port), pairing.code, sessionId, mode, png, run], { stdout: 'inherit', stderr: 'inherit' });
-      assert.equal(await browser.exited, 0, 'The browser journey failed');
-    } finally {
-      preview.stop(true);
-    }
+  if (imageWeb) {
+    await runBrowser(hub, 'oxap-deepseek-images-web.mjs', sessionId, mode, png);
   } else {
     await hub.request('message.send', {
       sessionId,

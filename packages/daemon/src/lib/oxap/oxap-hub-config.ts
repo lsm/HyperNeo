@@ -1,6 +1,10 @@
 import { isAbsolute } from 'node:path';
 import type { ProviderRecord } from '@hyperneo/shared';
-import { OXAP_HARNESSES, type OxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
+import {
+  OXAP_HARNESSES,
+  oxapModelProvider,
+  type OxapHarness,
+} from '@hyperneo/shared/types/oxap-harnesses';
 
 export interface OxapHubConfig {
   adapters: Record<string, Record<string, unknown>>;
@@ -31,7 +35,8 @@ export function savedOxapAdapter(
   );
   if (!entry || missingSetting(entry[1], settings)) return undefined;
   const [harness, row] = entry;
-  return { harness, row, settings };
+  const modelProvider = row.adapter === 'deepseek' ? oxapModelProvider(settings) : undefined;
+  return { harness, row, settings, modelProvider };
 }
 
 export function missingSetting(
@@ -48,17 +53,26 @@ export function buildHubConfig(
   records: Records,
   harnesses: Readonly<Record<string, OxapHarness>>,
   environment: Readonly<Record<string, string | undefined>>,
-  keys: Readonly<Record<string, string | undefined>>
+  keys: Readonly<Record<string, string | undefined>>,
+  routedDeepSeekHome?: string
 ): { value: OxapHubConfig } | { reason: string } {
   const config: OxapHubConfig = { adapters: {}, environment: {} };
   const owners: Record<string, string> = {};
   for (const record of records) {
     const saved = savedOxapAdapter(record, harnesses);
     if (!saved) continue;
-    const { row, settings } = saved;
-    const names = row.environment.filter((name) => environment[name] !== undefined);
-    for (const name of names) config.environment[name] = environment[name]!;
-    if (row.key && keys[record.providerId] !== undefined) {
+    const { row, settings, modelProvider } = saved;
+    const names: string[] = [];
+    for (const name of row.environment) {
+      const value = name === 'DSH_HOME' && modelProvider ? routedDeepSeekHome : environment[name];
+      if (value === undefined) continue;
+      config.environment[name] = value;
+      names.push(name);
+    }
+    if (modelProvider && environment.OPENCODE_API_KEY !== undefined) {
+      config.environment.OPENCODE_API_KEY = environment.OPENCODE_API_KEY;
+    }
+    if (!modelProvider && row.key && keys[record.providerId] !== undefined) {
       const owner = owners[row.key];
       if (owner && config.environment[row.key] !== keys[record.providerId])
         return {

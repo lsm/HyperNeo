@@ -73,6 +73,7 @@ import {
   type InternalCommandBus,
 } from './lib/internal-command-bus.ts';
 import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-query-bus.ts';
+import { clearCacheAndNotifyProvidersChanged } from './lib/rpc-handlers/auth-handlers.ts';
 import { setupRPCHandlers } from './lib/rpc-handlers/index.ts';
 import { DaemonExtensions } from './lib/extensions/contract.ts';
 import { isSpaceEnabled, registerSchemaExtension } from './storage/schema/extensions.ts';
@@ -860,6 +861,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         await providerWriter(db.providers).call(providerRpcWrites, 'updateProvider', id, {
           configJson,
         });
+        await clearCacheAndNotifyProvidersChanged(internalEventBus);
       },
       key: async (providerId) => {
         const credentials = await credentialManager.getCredentials(providerId);
