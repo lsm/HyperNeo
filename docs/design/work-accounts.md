@@ -224,10 +224,11 @@ Six PRs from `dev`, in order, failing tests first. System map read for the plann
 **Done when**, one week after the last PR: at least 95% of finished todos that had a worker of
 the three adapters have kind and an estimate when required (or the reviewed PR's size for a
 review); at least 95% have complete usage. Turns with omitted subagent cost count as incomplete,
-not zero. Of all confirmed sends and starts, at least 95% have a delivery key; the denominator
-includes the limited paths. Receipt coverage, a receipt alone, is reported on its own line next
-to it, and each limited path (Claude Desktop relay sends without an input id, Codex steers,
-queued and unconfirmed Codex sends) on its own line too.
+not zero. Receipts: at least 95% of confirmed sends and starts on the adapters that return a
+receipt (Claude Code, Claude Desktop, HyperNeo, Codex Desktop), leaving out the stated limits
+(Claude Desktop relay sends without an input id, Codex steers, queued and unconfirmed Codex
+sends), have a receipt. Keys: at least 95% of all confirmed sends and starts, limits included,
+have a delivery key. Each limited path is reported on its own line.
 The share of worker turns with a todo is reported against today's 28%. For 20 turns with a
 todo, picked at random, the todo read from the worker's own transcript matches at least 19
 times, with turns the human started counted apart. For 20 todos with complete usage, picked
