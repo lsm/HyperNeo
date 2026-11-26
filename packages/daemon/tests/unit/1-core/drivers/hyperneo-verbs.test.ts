@@ -51,9 +51,12 @@ describe('compactHyperneoWorker', () => {
           return unsubscribe;
         }
       );
-      expect(await enqueued.promise).toBe('/compact');
       expect(ensureQueryStarted).toHaveBeenCalledTimes(1);
+      const command = await enqueued.promise;
       complete();
+      expect(command).toBe(
+        '/compact Keep the summary near 2,000 tokens, with only the goal, the state reached, open steps, and the last observation.'
+      );
       expect(await pending).toEqual({ ok: true, value: { compacted: true } });
       expect(unsubscribe).toHaveBeenCalledTimes(1);
     } finally {
