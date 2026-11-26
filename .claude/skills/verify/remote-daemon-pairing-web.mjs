@@ -8,14 +8,14 @@ assert(localPort && remotePort && run, 'usage: <local-port> <remote-port> <run>'
 const rpc = (port, dir, name, input) => execFileSync('bun', [
   '.claude/skills/verify/rpc.ts', name, JSON.stringify(input),
 ], { encoding: 'utf8', env: { ...process.env, VERIFY_PORT: port, HYPERNEO_DATA_DIR: join(run, dir, 'data') } });
-const createCode = (port, dir) => {
-  const text = rpc(port, dir, 'device.pair.create', { kind: 'human', name: 'Synthetic pairing' });
+const createCode = (port, dir, kind) => {
+  const text = rpc(port, dir, 'device.pair.create', { kind, name: 'Synthetic pairing' });
   const code = text.match(/"code":\s*"([^"]+)"/)?.[1];
   assert(code, 'pairing code missing');
   return code;
 };
-const browserCode = createCode(localPort, 'local');
-const remoteCode = createCode(remotePort, 'remote');
+const browserCode = createCode(localPort, 'local', 'human');
+const remoteCode = createCode(remotePort, 'remote', 'daemon');
 const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}) });
 try {
@@ -47,4 +47,8 @@ try {
   await page.getByText('daemon:synthetic::session:<sessionId>').waitFor();
   assert.equal(await page.getByLabel('Pairing code (optional)').inputValue(), '');
   console.log('PASS: wrong code refused visibly; valid code attached and cleared at 1280 and 390 widths');
+  const edit = page.getByRole('button', { name: 'Edit', exact: true });
+  const editCount = await edit.count();
+  console.log(`Paired daemon Edit buttons: ${editCount}`);
+  assert.equal(editCount, 1, 'The paired daemon should offer Edit');
 } finally { await browser.close(); }
