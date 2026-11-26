@@ -3,6 +3,10 @@ import { NEO_FRONT_INFERENCE } from './lib/job-queue-constants.ts';
 import { NEO_DRIVER_REFRESH } from './lib/neo/driver-refresh.ts';
 import { createPeerPairRoute } from './routes/neo-peer.ts';
 import { collectDaemonScratch } from './lib/drivers/daemon-scratch.ts';
+import {
+  readClaudeDesktopRecords,
+  type ClaudeRecordCache,
+} from './lib/drivers/claude-desktop-adapter.ts';
 import { setProviderRepository } from './lib/model-service.ts';
 import { createCodexSetupHost } from './lib/drivers/codex-setup-host.ts';
 import { createCodexSetup } from './lib/drivers/codex-setup.ts';
@@ -74,6 +78,7 @@ import {
   type InternalCommandBus,
 } from './lib/internal-command-bus.ts';
 import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-query-bus.ts';
+import { CLAUDE_DESKTOP_SESSIONS } from './lib/rpc-handlers/family-operations/drivers.ts';
 import { setupRPCHandlers } from './lib/rpc-handlers/index.ts';
 import { DaemonExtensions } from './lib/extensions/contract.ts';
 import { isSpaceEnabled, registerSchemaExtension } from './storage/schema/extensions.ts';
@@ -1765,12 +1770,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     logInfo('[Daemon] Mailbox expiration job processor started');
     messageDeliveryProcessor.start();
     logInfo('[Daemon] Message-delivery job processor started');
+    const sessionDoorDesktopCache: ClaudeRecordCache = new Map();
     sessionDoor =
       process.env.NODE_ENV === 'test' && !process.env.HYPERNEO_DATA_DIR
         ? null
         : await startSessionDoor(
             () => sessionManager.getOperationRegistry(),
-            authenticateUpgrade
+            authenticateUpgrade,
+            undefined,
+            () => readClaudeDesktopRecords(CLAUDE_DESKTOP_SESSIONS, sessionDoorDesktopCache)
           ).catch((error: unknown) => {
             logError('[Daemon] Session door not started:', error);
             return null;
