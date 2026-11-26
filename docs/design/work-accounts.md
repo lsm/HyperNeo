@@ -114,8 +114,12 @@ an input to a row: two sends can carry the same text, and a human can type it. S
 message to a Codex worker starts with a line naming its row, `Delivery: <work_delivery_inputs.id>`.
 The id is chosen before the message is written into the row, and it replaces the random id
 of today's `Worker delivery:` line (`drivers/worker-provenance.ts`). The Codex turn reader
-(`codex-turn-reader.ts`) writes a receipt to a row only when a user input of the turn begins
-with that row's line and the row has no receipt yet. An input without the line writes nothing.
+(`codex-turn-reader.ts`) writes a receipt to a row only when all three hold: the input is in
+the thread the row was sent to (the reader reads one thread, and the row names it), the
+whole input equals the row's stored message, and the row has no receipt yet, so only the
+first such input counts. Another worker's thread never matches. A human who pastes the whole
+message into the same worker gives that worker the same instruction for the same todo, so the
+todo is still right; any edit to it writes nothing.
 
 Measured on the 6624 worker turns of one week: 713 (10.8%) have a receipt and 1165 (17.6%) get
 the starting todo, so 28% have a todo today. In the same week Codex Desktop had 1732 queued
@@ -170,7 +174,9 @@ Seven PRs from `dev`, in order, failing tests first. System map read for the pla
 2. **Codex receipts.** The `Delivery:` line and the turn reader writing the receipt. Tests on
    real rollout shapes: a queued send gets its receipt from the turn it starts; a turn between
    queueing and delivery gives no receipt to it; two queued sends with the same text each get
-   their own; a human input with the same text writes nothing; a restart catches up.
+   their own; a human input with the same text writes nothing; the same line in another
+   worker's thread writes nothing; an input that changes the message writes nothing; a second
+   copy does not move the receipt; a restart catches up.
    Estimate: 4 files, 80 lines, 160 test lines.
 3. **Kind and estimate.** Core kinds, the checks on the two operations, the fact, the Neo tool
    text, and the estimate line in `AGENTS.md` for designs. Tests: missing or unknown kind is
