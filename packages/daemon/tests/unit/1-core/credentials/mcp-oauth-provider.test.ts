@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { auth } from '@modelcontextprotocol/sdk/client/auth.js';
+import { InvalidGrantError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { runMigration467 } from '../../../../src/storage/schema/m467-google-connections.ts';
 import { DatabaseCredentialStore } from '../../../../src/lib/credentials/credential-store.ts';
 import { ConnectionVault } from '../../../../src/lib/connections/vault.ts';
 import { createMcpOAuthProvider } from '../../../../src/lib/connections/mcp-oauth-provider.ts';
 import type { McpOAuthPreset } from '../../../../src/lib/connections/mcp-fetch.ts';
-import { startFakeMcpOAuthServer } from '../../../helpers/fake-mcp-oauth-server.ts';
+import { echoedSecret, startFakeMcpOAuthServer } from '../../../helpers/fake-mcp-oauth-server.ts';
 
 type Fake = Awaited<ReturnType<typeof startFakeMcpOAuthServer>>;
 
@@ -33,6 +34,7 @@ function start(preset: McpOAuthPreset, onAuthorize?: (url: URL) => void) {
     generation: 1,
     redirectUrl: 'http://127.0.0.1:9/callback',
     attempt: { authorize: onAuthorize ?? (() => {}) },
+    timeoutMs: 1000,
   });
 }
 
@@ -134,10 +136,66 @@ describe('MCP OAuth provider', () => {
     expect((await vault.readMcp('server-1'))?.scopes).toEqual(['read', 'search']);
   });
 
-  test('a Slack ok:false reply fails the login', async () => {
+  test('a Slack ok:false reply fails the login with the mapped OAuth error', async () => {
     fake.switches.slackError = 'invalid_code';
+    await expect(connect(presetFor(fake, { slackTokens: true }))).rejects.toBeInstanceOf(
+      InvalidGrantError
+    );
+    expect(await vault.readMcp('server-1')).toBeNull();
+  });
+
+  test('a Slack HTTP failure stays a failure even with a token-shaped body', async () => {
+    fake.switches.slack = true;
+    fake.switches.tokenStatus = 503;
     await expect(connect(presetFor(fake, { slackTokens: true }))).rejects.toThrow();
     expect(await vault.readMcp('server-1')).toBeNull();
+  });
+
+  test('a stalled server fails at the deadline instead of holding sign-in open', async () => {
+    fake.switches.stall = 'headers';
+    expect((await attemptUrl(presetFor(fake))).outcome).toBe('request_failed');
+    fake.switches.stall = 'body';
+    expect((await attemptUrl(presetFor(fake))).outcome).toBe('request_failed');
+  });
+
+  test('credentials go only to their exact bound URL, also across a same-origin redirect', async () => {
+    fake.switches.redirectToken = true;
+    await expect(connect()).rejects.toThrow();
+    expect(fake.requests.filter((request) => request.path === '/token' && request.search)).toEqual(
+      []
+    );
+    const attempt = start(presetFor(fake));
+    const sent = fake.requests.length;
+    await expect(
+      attempt.fetch(`${fake.url}?moved=1`, { headers: { Authorization: 'Bearer synthetic' } })
+    ).rejects.toThrow('request_failed');
+    await expect(
+      attempt.fetch(`${fake.base}/register`, {
+        method: 'POST',
+        body: new URLSearchParams({ refresh_token: 'synthetic' }),
+      })
+    ).rejects.toThrow('request_failed');
+    expect(fake.requests.length).toBe(sent);
+  });
+
+  test('a stored grant is served only for the same resource, endpoint and scope maximum', async () => {
+    await connect();
+    expect((await reuse(presetFor(fake)).provider.tokens())?.access_token).toStartWith('access-');
+    for (const changed of [
+      { url: `${fake.base}/other` },
+      { authorizationEndpoint: `${fake.base}/authorize-elsewhere` },
+      { scopes: ['read'] },
+    ])
+      expect(await reuse(presetFor(fake, changed)).provider.tokens()).toBeUndefined();
+  });
+
+  test('upstream OAuth error text never reaches the thrown error', async () => {
+    for (const shape of ['oauth', 'raw'] as const) {
+      fake.switches.echoError = shape;
+      const failure = await connect().catch((error: Error) => error);
+      expect(failure).toBeInstanceOf(Error);
+      expect(`${String(failure)} ${(failure as Error).stack}`).not.toContain(echoedSecret);
+    }
   });
 
   test('a 401 pointing at another authorization server sends it nothing', async () => {
@@ -152,6 +210,15 @@ describe('MCP OAuth provider', () => {
     });
     const { consent } = await attemptUrl(presetFor(fake), { resourceMetadataUrl: elsewhere });
     expect(consent?.origin).toBe(fake.base);
+    const fresh = reuse(presetFor(fake), new ConnectionVault(store, 'instance-2'));
+    await expect(
+      auth(fresh.provider, {
+        serverUrl: fake.url,
+        scope: 'read search',
+        resourceMetadataUrl: elsewhere,
+        fetchFn: fresh.fetch,
+      })
+    ).rejects.toThrow('reconnect_needed');
     expect(other.requests).toEqual([]);
   });
 
@@ -200,6 +267,8 @@ describe('MCP OAuth provider', () => {
   });
 
   test('oversized metadata or token bodies fail with response_too_large', async () => {
+    fake.switches.oversized = 'resource';
+    expect((await attemptUrl(presetFor(fake))).outcome).toBe('response_too_large');
     fake.switches.oversized = 'metadata';
     expect((await attemptUrl(presetFor(fake))).outcome).toBe('response_too_large');
     fake.switches.oversized = 'token';

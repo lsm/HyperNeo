@@ -11,10 +11,22 @@ export type FakeMcpOAuthSwitches = {
   authorizationEndpoint?: string;
   authorizationServer?: string;
   redirectMetadataTo?: string;
-  oversized?: 'metadata' | 'token';
+  oversized?: 'metadata' | 'resource' | 'token';
+  stall?: 'headers' | 'body';
+  redirectToken?: boolean;
+  echoError?: 'oauth' | 'raw';
+  tokenStatus?: number;
 };
 
-export type FakeRequest = { method: string; path: string; params: URLSearchParams; auth: string };
+export const echoedSecret = 'echoed-synthetic-secret';
+
+export type FakeRequest = {
+  method: string;
+  path: string;
+  search: string;
+  params: URLSearchParams;
+  auth: string;
+};
 
 const allScopes = ['read', 'search', 'write', 'admin'];
 
@@ -30,6 +42,9 @@ export async function startFakeMcpOAuthServer(switches: FakeMcpOAuthSwitches = {
   const padding = () => 'x'.repeat(300000);
   const tokenReply = (scope: string, includeScope: boolean) => {
     if (switches.slackError) return json({ ok: false, error: switches.slackError });
+    if (switches.echoError === 'oauth')
+      return json({ error: 'invalid_grant', error_description: `rejected ${echoedSecret}` }, 400);
+    if (switches.echoError === 'raw') return json({ message: `rejected ${echoedSecret}` }, 400);
     const access = `access-${randomUUID()}`;
     const refresh = `refresh-${randomUUID()}`;
     accessTokens.add(access);
@@ -42,13 +57,19 @@ export async function startFakeMcpOAuthServer(switches: FakeMcpOAuthSwitches = {
       ...(switches.oversized === 'token' ? { padding: padding() } : {}),
     };
     if (switches.slack)
-      return json({
-        ok: true,
-        ...tokens,
-        token_type: 'user',
-        authed_user: { scope: granted.split(' ').join(',') },
-      });
-    return json({ ...tokens, token_type: 'Bearer', ...(includeScope ? { scope: granted } : {}) });
+      return json(
+        {
+          ok: true,
+          ...tokens,
+          token_type: 'user',
+          authed_user: { scope: granted.split(' ').join(',') },
+        },
+        switches.tokenStatus
+      );
+    return json(
+      { ...tokens, token_type: 'Bearer', ...(includeScope ? { scope: granted } : {}) },
+      switches.tokenStatus
+    );
   };
   const handle = async (request: Request) => {
     const url = new URL(request.url);
@@ -58,7 +79,16 @@ export async function startFakeMcpOAuthServer(switches: FakeMcpOAuthSwitches = {
         : url.search
     );
     const auth = request.headers.get('authorization') ?? '';
-    requests.push({ method: request.method, path: url.pathname, params, auth });
+    requests.push({ method: request.method, path: url.pathname, search: url.search, params, auth });
+    if (url.pathname === '/.well-known/oauth-authorization-server' && switches.stall === 'headers')
+      await new Promise(() => {});
+    if (url.pathname === '/.well-known/oauth-authorization-server' && switches.stall === 'body')
+      return new Response(
+        new ReadableStream({
+          start: (controller) => controller.enqueue(new TextEncoder().encode('{')),
+        }),
+        { headers: { 'content-type': 'application/json' } }
+      );
     if (url.pathname === '/.well-known/oauth-protected-resource/mcp' && switches.redirectMetadataTo)
       return new Response(null, {
         status: 307,
@@ -69,6 +99,7 @@ export async function startFakeMcpOAuthServer(switches: FakeMcpOAuthSwitches = {
         resource: `${base}/mcp`,
         authorization_servers: [switches.authorizationServer ?? base],
         scopes_supported: switches.advertiseAllScopes ? allScopes : ['read', 'search'],
+        ...(switches.oversized === 'resource' ? { padding: padding() } : {}),
       });
     if (url.pathname === '/.well-known/oauth-authorization-server')
       return json({
@@ -98,6 +129,8 @@ export async function startFakeMcpOAuthServer(switches: FakeMcpOAuthSwitches = {
       target.searchParams.set('state', params.get('state') ?? '');
       return new Response(null, { status: 302, headers: { location: target.href } });
     }
+    if (url.pathname === '/token' && switches.redirectToken && !url.search)
+      return new Response(null, { status: 307, headers: { location: '/token?moved=1' } });
     if (url.pathname === '/token') {
       if (params.get('grant_type') === 'authorization_code') {
         const entry = codes.get(params.get('code') ?? '');
