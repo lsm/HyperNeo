@@ -69,7 +69,8 @@ export function operationRefusal(
 export function createOperationMcpHandler(
   registry: OperationRegistrySource,
   resolveCaller: (operation: string) => CallerIdentity | Promise<CallerIdentity>,
-  recordRefusal: (refusal: OperationRefusal) => void | Promise<void> = () => {}
+  recordRefusal: (refusal: OperationRefusal) => void | Promise<void> = () => {},
+  fullDesktopSnapshots?: () => boolean
 ) {
   return async (args: unknown) => {
     const parsed = OperationMcpInvocationSchema.safeParse(args);
@@ -84,10 +85,18 @@ export function createOperationMcpHandler(
     const desktop = parsed.data.name === 'desktop.call';
     try {
       const caller = await resolveCaller(parsed.data.name);
+      let input = parsed.data.input;
+      if (desktop && input?.tool === 'get_window_state' && fullDesktopSnapshots?.()) {
+        const read = z.looseObject({ since: z.unknown().optional() }).safeParse(input.args);
+        if (read.success) {
+          const { since: _since, ...full } = read.data;
+          input = { ...input, args: full };
+        }
+      }
       const outcome = await invokeOperation(
         resolveOperationRegistry(registry),
         parsed.data.name,
-        parsed.data.input,
+        input,
         {
           ...caller,
           source: 'mcp',

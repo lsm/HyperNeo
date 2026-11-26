@@ -38,6 +38,8 @@ import {
 } from './ollama-native-bridge/server.js';
 import { PROVIDER_REQUEST_TIMEOUT_MS } from './shared/request-timeout.ts';
 
+const ENABLE_DESKTOP_OBSERVATION_COLLAPSE = false;
+
 export const CUSTOM_ENDPOINT_PROVIDER_PREFIX = 'custom:';
 
 export function customProviderIdFor(endpointId: string): string {
@@ -158,6 +160,10 @@ export class CustomEndpointProvider implements Provider {
       functionCalling,
       vision,
     };
+  }
+
+  get collapseDesktopObservations(): boolean {
+    return ENABLE_DESKTOP_OBSERVATION_COLLAPSE && this.type !== 'ollama-native';
   }
 
   async isAvailable(): Promise<boolean> {
@@ -425,6 +431,7 @@ export class CustomEndpointProvider implements Provider {
           headers: this.config.headers,
           thinkingSupported: caps.thinking,
           disableThinkingWithChatTemplate: this.config.llamaCppThinkingOff,
+          collapseDesktopObservations: this.collapseDesktopObservations,
           ...(fetchImpl ? { fetchImpl } : {}),
         });
       }
@@ -453,6 +460,7 @@ export class CustomEndpointProvider implements Provider {
           headers: this.config.headers,
           toolUseSupported: caps.toolUse,
           visionSupported: caps.vision,
+          collapseDesktopObservations: this.collapseDesktopObservations,
           thinkingSupported: caps.thinking,
           streamUsageSupported: caps.streamUsage,
           modelContextWindow: caps.maxContextTokens,

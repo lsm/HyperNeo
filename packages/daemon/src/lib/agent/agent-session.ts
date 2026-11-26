@@ -207,6 +207,7 @@ import {
   refreshModels,
 } from '../model-service.ts';
 import { getProviderService } from '../provider-service.ts';
+import { CustomEndpointProvider } from '../providers/custom-endpoint-provider.ts';
 import {
   getProviderRegistry,
   initializeProviders,
@@ -430,6 +431,10 @@ export class AgentSession
       this.recordOperationRefusal,
       desktop ? 'desktop' : this.operationCallerIdentity().role,
       desktop ? () => desktopReportTarget(this.operationDatabase, this.session.id) : undefined,
+      () => {
+        const provider = getProviderRegistry().get(this.providerId());
+        return provider instanceof CustomEndpointProvider && provider.collapseDesktopObservations;
+      },
     ];
   }
 

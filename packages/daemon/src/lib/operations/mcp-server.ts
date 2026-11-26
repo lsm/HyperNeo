@@ -33,6 +33,7 @@ type OperationMcpRegistration = [
   recordRefusal?: (refusal: OperationRefusal) => void | Promise<void>,
   descriptionRole?: OperationCallerRole | 'desktop',
   reportTarget?: () => { to: string; todoId: string } | undefined,
+  fullDesktopSnapshots?: () => boolean,
 ];
 
 const DesktopReport = z.object({
@@ -55,9 +56,15 @@ export function registerOperationMcpTools(
     recordRefusal,
     descriptionRole,
     reportTarget,
+    fullDesktopSnapshots,
   ]: OperationMcpRegistration
 ) {
-  const invoke = createOperationMcpHandler(registry, resolveCaller, recordRefusal);
+  const invoke = createOperationMcpHandler(
+    registry,
+    resolveCaller,
+    recordRefusal,
+    fullDesktopSnapshots
+  );
   if (descriptionRole === 'desktop') {
     for (const { name, description, inputSchema } of desktopCatalog) {
       const schema = z.fromJSONSchema(
