@@ -21,7 +21,7 @@ Steps 2 and 3 get their own designs after a week of data.
 
 | Fact | Where |
 |---|---|
-| who did it: harness, model, effort, role | `neo_todo_sessions`, `neo_todo_roles`; recorded today |
+| who did it: harness, model, effort, role | `work_started_sessions` (harness); `neo_todo_sessions`, `neo_todo_roles` (model, effort, role); recorded today |
 | kind of work | `named.workKind`; exists, rarely filled |
 | estimated size | new core fact `estimate` |
 | tokens, rounds, context, time | new `usage` on `work_turns` |
@@ -113,8 +113,8 @@ todo rebinds, and `neo_todo_roles` is no record either (`unclaimTodoWorker` dele
 a todo's deletion cascades). So a new table, `work_adoptions (todo_id, adapter, id, daemon,
 at)`, with no foreign key and no delete anywhere, gets one row from each adopt write (`create`
 and `bind` in `neo-todo-session-repository.ts`). `work_delivery_inputs` already has no foreign
-key and no delete. A worker started before that table's migration (its `migration_markers`
-time) has a history that cannot be known, so it gets no step 2 at all.
+key and no delete. A worker started before the `work_adoptions` migration (its
+`migration_markers` time) has a history that cannot be known, so it gets no step 2 at all.
 
 Step 2 uses no time: a worker that two todos ever reached gets it for neither, before or after.
 `WorkDeliveryInputRepository.list(ref)` matches only `outcome.ref` today; it also matches
@@ -150,9 +150,10 @@ turn a todo only through step 2. A steer has its key and is assigned in step 1. 
 limit, not guessed around.
 
 Measured on the 6624 worker turns of one week: 713 (10.8%) have a receipt and 1165 (17.6%) get
-the starting todo, so 28% have a todo today. In the same week Codex Desktop had 1732 queued
-and 856 confirmed sends without a receipt, against 301 with one. The role is the worker's
-newest one for that todo in `neo_todo_roles`, else `do`.
+the starting todo, so 28% have a todo today. Turn counts and delivery counts above measure
+different things: a turn can include more than one delivery, and not every delivery is matched
+to a recorded turn. The role is the worker's newest one for that todo in `neo_todo_roles`,
+else `do`.
 
 | Adapter | Source |
 |---|---|
@@ -238,8 +239,8 @@ Seven PRs from `dev`, in order, failing tests first. System map read for the pla
    Estimate: 4 files, 130 lines, 170 test lines.
 
 **Done when**, one week after the last PR: at least 95% of finished todos that had a worker of
-the three adapters have kind and an estimate when required (or the reviewed PR's size for a
-review); at least 95% have complete usage. Turns with omitted subagent cost count as incomplete,
+Claude Code, Claude Desktop, HyperNeo or Codex Desktop have kind and an estimate when required
+(or the reviewed PR's size for a review); at least 95% have complete usage. Turns with omitted subagent cost count as incomplete,
 not zero. Receipts: at least 95% of confirmed sends and starts on the adapters that return a
 receipt (Claude Code, Claude Desktop, HyperNeo, Codex Desktop), leaving out the stated limits
 (Claude Desktop relay sends without an input id, Codex steers, queued and unconfirmed Codex
