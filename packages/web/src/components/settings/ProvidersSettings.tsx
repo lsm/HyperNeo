@@ -199,7 +199,7 @@ export function ProvidersSettings() {
   };
   const [hubBinary, setHubBinary] = useState<GlobalSettings['oxapHub']>();
   const [harnessDrafts, setHarnessDrafts] = useState<
-    Record<string, { harness: string; executable: string; modelProvider: string }>
+    Record<string, { harness: string; executable: string; modelProvider?: string }>
   >({});
   const [providers, setProviders] = useState<EnrichedProvider[]>([]);
   const [loading, setLoading] = useState(true);
@@ -803,7 +803,7 @@ export function ProvidersSettings() {
 
   const saveHarness = async (
     provider: EnrichedProvider,
-    draft: { harness: string; executable: string; modelProvider: string },
+    draft: { harness: string; executable: string; modelProvider?: string },
     hasExecutableField: boolean,
     hasModelProviderField: boolean
   ) => {
@@ -820,7 +820,9 @@ export function ProvidersSettings() {
             harness: draft.harness,
             settings: {
               ...(hasExecutableField ? { executable: draft.executable } : {}),
-              ...(hasModelProviderField ? { model_provider: draft.modelProvider.trim() } : {}),
+              ...(hasModelProviderField && draft.modelProvider !== undefined
+                ? { model_provider: draft.modelProvider.trim() }
+                : {}),
             },
           },
           { timeout: 300_000 }
@@ -989,7 +991,7 @@ export function ProvidersSettings() {
                   harness: config.harness ?? 'sdk',
                   executable:
                     config.harnessSettings?.executable || provider.detectedHarnessExecutable || '',
-                  modelProvider: config.harnessSettings?.model_provider ?? '',
+                  modelProvider: config.harnessSettings?.model_provider,
                 };
                 const selectedOxap = isOxapHarness(draft.harness)
                   ? oxapHarness(draft.harness)
@@ -1211,7 +1213,7 @@ export function ProvidersSettings() {
                                 Model provider (optional)
                                 <input
                                   placeholder="opencode-go"
-                                  value={draft.modelProvider}
+                                  value={draft.modelProvider ?? ''}
                                   onInput={(e) =>
                                     setHarnessDrafts((prev) => ({
                                       ...prev,
