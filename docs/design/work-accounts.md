@@ -165,6 +165,11 @@ A Claude turn that started a subagent has its cost in another file. It is not re
 turn gets `usageComplete: false`, so the account says it is too low. Rows from before the change
 have no `usage`.
 
+A todo's usage is complete only when every turn it has is complete and no worker it reached (by
+a delivery row, a start or an adoption) has a turn without a todo. Such a turn may be this
+todo's work, so its cost is unknown, not zero; this is where queued and unconfirmed Codex sends
+show up.
+
 ## 3. Size and rework from packs
 
 A new optional pack hook returns, for a list of todos, `{files, lines, testLines}` and
@@ -179,7 +184,7 @@ A new optional pack hook returns, for a list of todos, `{files, lines, testLines
 ## 4. Reading
 
 One read operation, `neo.todo.accounts {since, until}`, returns the rows and the share of
-recorded worker turns in that interval with no todo. Neo may call it.
+recorded worker turns in that interval with no todo, per adapter. Neo may call it.
 Step 2 is its first consumer; until then it proves that the records are complete.
 
 ## Not in this step
@@ -228,8 +233,9 @@ Seven PRs from `dev`, in order, failing tests first. System map read for the pla
    PRs.
    Estimate: 6 files, 150 lines, 200 test lines.
 7. **The read operation.** Tests: a failed todo, a todo with two workers, a missing pack hook,
-   an unattributed turn.
-   Estimate: 4 files, 120 lines, 150 test lines.
+   an unattributed turn in a worker the todo reached makes its usage incomplete, one in another
+   worker does not; the share with no todo per adapter.
+   Estimate: 4 files, 130 lines, 170 test lines.
 
 **Done when**, one week after the last PR: at least 95% of finished todos that had a worker of
 the three adapters have kind and an estimate when required (or the reviewed PR's size for a
@@ -239,7 +245,7 @@ receipt (Claude Code, Claude Desktop, HyperNeo, Codex Desktop), leaving out the 
 (Claude Desktop relay sends without an input id, Codex steers, queued and unconfirmed Codex
 sends), have a receipt. Keys: at least 95% of all confirmed sends and starts, limits included,
 have a delivery key. Each limited path is reported on its own line.
-The share of worker turns with a todo is reported against today's 28%. For 20 turns with a
+The share of worker turns with a todo is reported per adapter against today's 28%. For 20 turns with a
 todo, picked at random, the todo read from the worker's own transcript matches at least 19
 times, with turns the human started counted apart. For 20 todos with complete usage, picked
 at random, the totals match the harness's own records.
