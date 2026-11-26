@@ -141,7 +141,8 @@ a URL, a scope set and, where the vendor requires it, a client ID.
    already has when a name stays registered, so a reconnect cannot swap the
    proxy. The proxy therefore holds no grant and no generation: on each call it
    asks the daemon-held client for the row's current admitted generation and uses
-   it. After a reconnect the same proxy calls under the new generation, and a
+   it. That client is one per row, shared by every session and kept across
+   reconciles, not one per session. After a reconnect the same proxy calls under the new generation, and a
    result that arrives for a call begun under a retired generation is dropped
    with `reconnect_needed`. The
    token never reaches session config, the harness, prompts or logs, and a
