@@ -10,7 +10,8 @@ TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh \
 The helper submits synthetic desktop steps to both real bridge HTTP endpoints.
 It records upstream requests and compares full and collapsed bodies, the latest
 failure, the order of retained target fields, the unchanged prefix and non-desktop
-content, and the count request or estimate. Pass prints
+content, and the count request or estimate. Results without a clear status
+summarize as `unknown` and leave the most recent confirmed failure in full. Pass prints
 `desktop observation collapse PASS` and writes `desktop-observation-collapse.json`.
 
 While the rollout flag is off, run the [desktop call journey](desktop-call.md) to check

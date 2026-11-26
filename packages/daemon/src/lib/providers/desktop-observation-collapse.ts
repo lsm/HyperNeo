@@ -49,13 +49,16 @@ function desktopStatus(result: AnthropicContentBlockToolResult & { is_error?: bo
     try {
       status = JSON.parse(text);
     } catch {
-      return { failed: result.is_error === true };
+      status = undefined;
     }
   }
-  return {
-    failed: result.is_error === true || status?.ok === false,
-    reason: status?.reason ?? status?.code,
-  };
+  const outcome =
+    result.is_error === true || status?.ok === false
+      ? 'failed'
+      : status?.ok === true
+        ? 'ok'
+        : 'unknown';
+  return { outcome, reason: status?.reason ?? status?.code };
 }
 
 export function collapseDesktopObservations(body: AnthropicRequest): AnthropicRequest {
@@ -85,17 +88,19 @@ export function collapseDesktopObservations(body: AnthropicRequest): AnthropicRe
       if (block?.type !== 'tool_result') continue;
       const call = calls.get(block.tool_use_id);
       if (!call) continue;
-      const { failed, reason } = desktopStatus(block);
-      const keepFailure = failed && retainFailure;
-      if (failed || !reads.has(call.name)) retainFailure = false;
+      const { outcome, reason } = desktopStatus(block);
+      const keepFailure = outcome === 'failed' && retainFailure;
+      if (outcome === 'failed' || (outcome === 'ok' && !reads.has(call.name))) {
+        retainFailure = false;
+      }
       if (call.batch === newestBatch || keepFailure) continue;
       const fields = [call.name];
       for (const key of targets) {
         const value = call.input?.[key];
         if (typeof value === 'number' || typeof value === 'string') fields.push(`${key}=${value}`);
       }
-      fields.push(failed ? 'failed' : 'ok');
-      if (failed && typeof reason === 'string' && reason) fields.push(reason);
+      fields.push(outcome);
+      if (outcome === 'failed' && typeof reason === 'string' && reason) fields.push(reason);
       content ??= message.content.slice();
       content[j] = { ...block, content: fields.join(' ').replace(/[\r\n]+/g, ' ') };
     }
