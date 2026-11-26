@@ -2,8 +2,6 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { auth } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/client/auth.js';
-import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
-import type { AppMcpServer } from '../../../packages/shared/src/mod.ts';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createCredentialStore } from '../../../packages/daemon/src/lib/credentials/credential-store.ts';
@@ -28,17 +26,10 @@ const config = () => getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, '
 const evidence: Record<string, unknown> = {};
 const secrets: string[] = [];
 let app = await createDaemonApp({ config: config(), verbose: false });
-const rpc = async <T>(method: string, params: object) => {
-  const hub = new MessageHub({ defaultSessionId: 'global' });
-  const transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
-  hub.registerTransport(transport);
-  await transport.initialize();
-  try { return await hub.request<T>(method, params); } finally { await transport.close(); }
-};
 try {
   await app.jobProcessor.stop();
   const vault = () => new ConnectionVault(createCredentialStore(app.db.getDatabase()), 'proof-instance');
-  const { server: row } = await rpc<{ server: AppMcpServer }>('mcp.registry.create', { name: 'Fake OAuth server', sourceType: 'http', url: fake.url, enabled: false });
+  const row = app.db.appMcpServers.create({ name: 'Fake OAuth server', sourceType: 'http', url: fake.url, enabled: false });
   let consent: URL | undefined;
   const attempt = createMcpOAuthProvider({ vault: vault(), serverId: row.id, preset, generation: 1, redirectUrl: 'http://127.0.0.1:9/callback', attempt: { authorize: (url) => { consent = url; } } });
   const options = { serverUrl: fake.url, scope: 'read search', fetchFn: attempt.fetch };
@@ -63,7 +54,7 @@ try {
   evidence.afterRestart = { grantScopes: grant.scopes, generation: grant.generation, tablesScanned: tables.length, tokenInAnyRow: secrets.some((secret) => rows.includes(secret)) };
   assert.deepEqual(grant.scopes, ['read', 'search']);
   assert.equal((evidence.afterRestart as { tokenInAnyRow: boolean }).tokenInAnyRow, false);
-  const registry = JSON.stringify(await rpc('mcp.registry.list', {}));
+  const registry = JSON.stringify({ servers: app.db.appMcpServers.list() });
   evidence.registryRead = { listsRow: registry.includes(row.id), tokenInRead: secrets.some((secret) => registry.includes(secret)) };
   assert(registry.includes(row.id));
   assert(!secrets.some((secret) => registry.includes(secret)));
