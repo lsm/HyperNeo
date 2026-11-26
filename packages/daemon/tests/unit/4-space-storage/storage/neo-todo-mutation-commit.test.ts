@@ -81,6 +81,25 @@ describe('Atomic todo mutation commits', () => {
       3
     );
 
+  test('refuses to finish a plan or take away its only step', async () => {
+    db.prepare("UPDATE neo_todos SET plan = 1 WHERE id = 'first'").run();
+    expect(await commit({ kind: 'done', todoId: 'first' })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('plan_steps_missing:'),
+    });
+    store.updateTodo(store.getTodo('peer')!, { dependsOn: ['first'] }, 2);
+    const before = snapshot();
+    expect(await commit({ kind: 'remove', todoId: 'peer', reason: 'Obsolete' })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('plan_steps_missing:'),
+    });
+    expect(await commit({ kind: 'edit', todoId: 'peer', after: [] })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('plan_steps_missing:'),
+    });
+    expect(snapshot()).toEqual(before);
+  });
+
   test('returns the entire committed report and announces before the caller resumes', async () => {
     const report = 'Whole report 🦊\n'.repeat(20000);
     const result = await commit({
