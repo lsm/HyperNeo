@@ -14,16 +14,18 @@ content, and the count request or estimate. Results without a clear status
 summarize as `unknown` and leave the most recent confirmed failure in full. Pass prints
 `desktop observation collapse PASS` and writes `desktop-observation-collapse.json`.
 
-While the rollout flag is off, run the [desktop call journey](desktop-call.md) to check
-that the SDK sends the original result and the host receives `since: latest`.
-Run the enabled case through the isolated proof runner:
+Collapse is the `desktopObservationCollapse` global setting, off by default, shown as
+"Collapse older desktop observations" under Settings > Sessions & Clients > All Neo workers.
+Run the [desktop call journey](desktop-call.md) without `--collapse` to check that the SDK
+sends the original result and the host receives `since: latest`. With `--collapse` the
+helper turns the setting on through `settings.global.update` after the endpoint's bridge
+has started, so it also shows the change applies without a restart:
 
 ```bash
 TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh \
-  /absolute/fresh/evidence-directory .claude/skills/verify/desktop-call-collapse.ts --collapse
+  /absolute/fresh/evidence-directory .claude/skills/verify/desktop-call.ts --collapse
 ```
 
-The runner substitutes the enabled constant in memory for that test process.
 The SDK and synthetic host must show a collapsed older result and a full
 snapshot request without `since`. The stored transcript keeps the original
 result.

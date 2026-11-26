@@ -159,7 +159,7 @@ try {
     baseUrl: `http://127.0.0.1:${mock.port}`, models: [{ id: model, name: 'Synthetic desktop model', capabilities: { toolUse: true } }],
   } });
   await hub.request('models.list', { forceRefresh: true });
-  await hub.request('settings.global.update', { updates: { coordinatorMode: true } });
+  await hub.request('settings.global.update', { updates: { coordinatorMode: true, desktopObservationCollapse: collapse } });
   const sql = app.db.getDatabase();
   const now = Date.now();
   const root = `neo:${crypto.randomUUID()}`;

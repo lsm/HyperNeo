@@ -72,7 +72,7 @@ async function verify(bridge: 'messages' | 'chat', collapseDesktopObservations: 
   const captured: UpstreamBody[] = [];
   const options = {
     baseUrl: 'http://127.0.0.1:1',
-    collapseDesktopObservations,
+    collapseDesktopObservations: () => collapseDesktopObservations,
     toolUseSupported: true,
     visionSupported: true,
     fetchImpl: Object.assign(async (url: string | URL | Request, init?: RequestInit) => {
