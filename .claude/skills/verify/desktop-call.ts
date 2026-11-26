@@ -221,8 +221,14 @@ try {
     terminalSlashCommands: init.terminal_slash_commands,
     agents: init.agents,
     composerCommands: commandsData.availableCommands,
+    systemPrompt: JSON.parse(outbound.system),
+    taskBrief: JSON.parse(outbound.brief),
   };
   writeFileSync(join(run, 'evidence/desktop-worker-inventory.json'), JSON.stringify(inventory, null, 2));
+  const expectedDesktopTools = ['report', ...catalog.map(({ name }) => name)]
+    .map(name => 'mcp__desktop__' + name).sort();
+  assert.deepEqual([...outbound.tools].sort(), expectedDesktopTools);
+  assert.doesNotMatch(outbound.system + outbound.brief, /\bneo\b|hyperneo|operations\.describe|message\.send/i);
   assert.deepEqual([...init.tools].sort(), [...modelTools].sort());
   assert.deepEqual(init.skills, []);
   assert.deepEqual(init.slash_commands, []);
