@@ -1,3 +1,4 @@
+import { COMPACT_SUMMARY_COMMAND } from '../agent/message-queue.ts';
 import { WORKER_COMPACTION_TIMEOUT_MS } from './worker-compaction.ts';
 import type { AgentSession } from '../agent/agent-session.ts';
 import { withWorkerProvenance } from './worker-provenance.ts';
@@ -131,7 +132,10 @@ export async function compactHyperneoWorker(
       }
       if (!queue.isRunning()) return unconfirmed();
       enqueued = true;
-      await queue.enqueueWithId(id, '/compact', true, { durable: true, prepend: true });
+      await queue.enqueueWithId(id, COMPACT_SUMMARY_COMMAND, true, {
+        durable: true,
+        prepend: true,
+      });
     };
     void enqueue().catch(() => {
       if (!queue.hasOutstandingInternalCompaction()) unconfirmed();

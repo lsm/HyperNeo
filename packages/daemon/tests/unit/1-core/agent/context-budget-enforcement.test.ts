@@ -14,6 +14,9 @@ import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import { Logger } from '../../../../src/lib/logger';
 
+const COMPACT_WITH_SUMMARY_LIMIT =
+  '/compact Keep the summary near 2,000 tokens, with only the goal, the state reached, open steps, and the last observation.';
+
 function enforcementHarness(overrides?: {
   providerId?: string;
   totalUsed?: number;
@@ -114,7 +117,10 @@ describe('enforce-context-budget stages', () => {
     });
     expect(ctx.compactionEnqueued).toBe(true);
     expect(markCompactionTriggered).toHaveBeenCalledWith(900_000);
-    expect(enqueue).toHaveBeenCalledWith('/compact', true, { durable: true, prepend: true });
+    expect(enqueue).toHaveBeenCalledWith(COMPACT_WITH_SUMMARY_LIMIT, true, {
+      durable: true,
+      prepend: true,
+    });
   });
 });
 
@@ -143,7 +149,10 @@ describe('enforce-context-budget pipeline', () => {
           }).compactionEnqueued
         ).toBe(false);
         expect(enforceContextBudget(input).compactionEnqueued).toBe(true);
-        expect(enqueue).toHaveBeenCalledWith('/compact', true, { durable: true, prepend: true });
+        expect(enqueue).toHaveBeenCalledWith(COMPACT_WITH_SUMMARY_LIMIT, true, {
+          durable: true,
+          prepend: true,
+        });
       }
     }
   );
@@ -159,7 +168,10 @@ describe('enforce-context-budget pipeline', () => {
     const { input, enqueue } = enforcementHarness({ queueRunning: false, reason: 'model-switch' });
     const outcome = enforceContextBudget(input);
     expect(outcome.compactionEnqueued).toBe(true);
-    expect(enqueue).toHaveBeenCalledWith('/compact', true, { durable: true, prepend: true });
+    expect(enqueue).toHaveBeenCalledWith(COMPACT_WITH_SUMMARY_LIMIT, true, {
+      durable: true,
+      prepend: true,
+    });
   });
 
   it.each([
@@ -246,7 +258,10 @@ describe('reevaluate-context-budget pipeline', () => {
     }));
     const outcome = await runContextBudgetReevaluation(input);
     expect(outcome.compactionEnqueued).toBe(true);
-    expect(enqueue).toHaveBeenCalledWith('/compact', true, { durable: true, prepend: true });
+    expect(enqueue).toHaveBeenCalledWith(COMPACT_WITH_SUMMARY_LIMIT, true, {
+      durable: true,
+      prepend: true,
+    });
   });
 
   it('halts when the model fence changes while the catalog resolves', async () => {

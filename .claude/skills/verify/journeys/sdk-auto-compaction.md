@@ -28,7 +28,16 @@ The 45% case first reports 300K, between 45% of the window applied twice (about 
 and the 450K threshold the daemon shows, then 460K. The SDK debug log must name only
 threshold 450000, so the SDK compacts at the threshold the daemon shows.
 
-Evidence: evidence/sdk-auto-compaction-{ordinary,neo,opus1m,opus-native,neo45}.json contains actual model requests, tool
+The daemon and worker cases cover explicit compaction. In the daemon case,
+disable SDK auto-compaction and report usage above the configured daemon budget.
+In the worker case, complete one turn below budget and call the HyperNeo worker
+compaction adapter on the idle session. Hold the model's summary response while
+a follow-up is sent via RPC. Each case must send the 2,000-token guidance to
+the model, record one manual compact boundary in message history, and then
+deliver the follow-up to the model. The loopback model returns a fixed summary,
+so the run measures delivery of the guidance and the boundary.
+
+Evidence: evidence/sdk-auto-compaction-{ordinary,neo,opus1m,opus-native,neo45,daemon,worker}.json contains actual model requests, tool
 receipts, SDK messages, built compaction settings and durable input rows;
 evidence/sdk-debug-<case>.log holds each SDK debug log. sdk.log
 contains the run result; the JSON names the isolated run and SDK debug log.
