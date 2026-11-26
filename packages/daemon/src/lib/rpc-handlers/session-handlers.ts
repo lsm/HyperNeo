@@ -47,6 +47,7 @@ import {
 } from '../agent/session-engine.ts';
 import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import { validateImageSizes } from '../session/message-persistence.ts';
+import type { StagedImages } from './attachment-upload-route.ts';
 import {
   hasRuntimeWorkerOperations,
   isWorkflowSubSessionIdentity,
@@ -118,6 +119,7 @@ export interface SessionHandlerDeps {
   listClones?: (parentId: string) => Session[];
   primaryAgentFor?: (sessionId: string) => { id: string; displayName: string } | null;
   runsGoal?: (sessionId: string) => boolean;
+  stagedImages?: StagedImages;
 }
 
 function goalSessionRefusal(
@@ -633,13 +635,16 @@ export function setupSessionHandlers(
       throw new Error('Invalid deliveryMode');
     }
 
-    if (images && images.length > 0) {
-      validateImageSizes(images);
-    }
-
     const outcome = await deps?.ensureSession({ kind: 'session', sessionId: targetSessionId });
     if (outcome?.kind !== 'resolved') {
       throw new Error('Session not found');
+    }
+
+    const staged = images && deps?.stagedImages ? await deps.stagedImages(images) : null;
+    if (staged && 'reason' in staged) throw new Error(staged.reason);
+    const resolvedImages = staged?.value ?? images;
+    if (resolvedImages && resolvedImages.length > 0) {
+      validateImageSizes(resolvedImages);
     }
 
     const messageId = generateUUID();
@@ -648,7 +653,7 @@ export function setupSessionHandlers(
       sessionId: outcome.sessionId,
       messageId,
       content,
-      images,
+      images: resolvedImages,
       deliveryMode,
     });
 

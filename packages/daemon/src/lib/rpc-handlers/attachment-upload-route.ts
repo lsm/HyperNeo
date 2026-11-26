@@ -1,8 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { lstatSync, renameSync, unlinkSync } from 'node:fs';
-import { mkdir, open, opendir, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, open, opendir, readFile, rm } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import type { ImageContent } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { z } from 'zod';
 import type { UpgradeIdentity } from '../pairing/upgrade-auth.ts';
 import { MAX_IMAGE_BASE64_SIZE } from '../session/message-persistence.ts';
 
@@ -25,6 +27,86 @@ const IMAGE_SIGNATURES = new Map<string, (head: Buffer) => boolean>([
 const response = (body: string | null, status: number) =>
   new Response(body, { status, headers: { 'Cache-Control': 'no-store' } });
 const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === 'ENOENT';
+const MAX_UPLOAD_MESSAGE_IMAGES = 6;
+
+export const UploadImageSchema = z
+  .object({
+    type: z.literal('image'),
+    source: z
+      .object({
+        type: z.literal('upload'),
+        media_type: z.enum(['image/png', 'image/jpeg', 'image/gif', 'image/webp']),
+        sha256: z.string().regex(/^[a-f0-9]{64}$/),
+      })
+      .strict(),
+  })
+  .strict();
+type UploadImage = z.infer<typeof UploadImageSchema>;
+type Resolved<T> = { value: Array<Exclude<T, UploadImage> | ImageContent> } | { reason: string };
+export type StagedImages = <T>(
+  blocks: readonly T[],
+  stored?: readonly unknown[]
+) => Promise<Resolved<T>>;
+
+export const stagedAttachmentDirectory = (dbPath: string) =>
+  join(dirname(dbPath), 'staged-attachments');
+
+const isUpload = (block: unknown): block is UploadImage =>
+  UploadImageSchema.safeParse(block).success;
+
+function inlineImage(block: UploadImage, bytes: Buffer | null): ImageContent | null {
+  const signature = IMAGE_SIGNATURES.get(block.source.media_type);
+  return bytes &&
+    bytes.length <= MAX_IMAGE_BYTES &&
+    signature?.(bytes) &&
+    createHash('sha256').update(bytes).digest('hex') === block.source.sha256
+    ? {
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: block.source.media_type,
+          data: bytes.toString('base64'),
+        },
+      }
+    : null;
+}
+
+function storedBytes(block: unknown): Buffer | null {
+  const source = (block as { source?: { type?: unknown; data?: unknown } } | undefined)?.source;
+  return source?.type === 'base64' && typeof source.data === 'string'
+    ? Buffer.from(source.data, 'base64')
+    : null;
+}
+
+export function createStagedImages(directory: string): StagedImages {
+  return async <T>(blocks: readonly T[], stored?: readonly unknown[]) => {
+    if (!blocks.some(isUpload)) return { value: blocks as Array<Exclude<T, UploadImage>> };
+    if (
+      blocks.filter((block) => (block as { type?: unknown }).type !== 'text').length >
+      MAX_UPLOAD_MESSAGE_IMAGES
+    )
+      return { reason: `A message can include at most ${MAX_UPLOAD_MESSAGE_IMAGES} images.` };
+    const resolved: Array<Exclude<T, UploadImage> | ImageContent> = [];
+    for (const [index, block] of blocks.entries()) {
+      if (!isUpload(block)) {
+        resolved.push(block as Exclude<T, UploadImage>);
+        continue;
+      }
+      const image =
+        inlineImage(block, storedBytes(stored?.[index])) ??
+        inlineImage(
+          block,
+          await readFile(join(directory, block.source.sha256)).catch((error: unknown) => {
+            if (!missing(error)) throw error;
+            return null;
+          })
+        );
+      if (!image) return { reason: 'An attached image is missing or invalid. Upload it again.' };
+      resolved.push(image);
+    }
+    return { value: resolved };
+  };
+}
 
 export function createAttachmentUpload(
   directory: string,

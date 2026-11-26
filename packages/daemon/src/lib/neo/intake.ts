@@ -19,9 +19,14 @@ import {
 import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { toMailboxMessage } from '../mailbox/entry.ts';
-import { MessageSessionIdSchema, SessionContentSchema } from '../messaging/message-send.ts';
+import {
+  ContentBlockSchema,
+  MessageSessionIdSchema,
+  type SessionContentSchema,
+} from '../messaging/message-send.ts';
 import { attribute, escapeSessionText } from '../messaging/session-envelope.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import { type StagedImages, UploadImageSchema } from '../rpc-handlers/attachment-upload-route.ts';
 import { voiceDiagnostic } from '../voice/diagnostics.ts';
 import { snapshotNeoCardQuote } from './card-quote.ts';
 import { NeoReplyRefSchema } from './conversation-ask.ts';
@@ -32,11 +37,23 @@ import { NeoPreviewContextSchema, NeoPreviewReferenceSchema } from './preview-co
 import { isHumanWorkDecision } from './proposal.ts';
 import { planNeoRemovedPrerequisiteAnswer } from './todo-removal.ts';
 
+function projectionIssue(content: z.infer<typeof SessionContentSchema>): string | null {
+  const projected = toMailboxMessage({
+    type: 'user',
+    parent_tool_use_id: null,
+    message: { content },
+  });
+  return 'reason' in projected ? projected.reason : null;
+}
+
 const Input = z
   .object({
     sessionId: MessageSessionIdSchema,
     requestId: z.uuid(),
-    content: SessionContentSchema,
+    content: z.union([
+      z.string().min(1),
+      z.array(z.union([ContentBlockSchema, UploadImageSchema])).min(1),
+    ]),
     thumbnails: z
       .array(
         z
@@ -57,12 +74,13 @@ const Input = z
     inputMode: z.enum(['text', 'dictation', 'live_voice']).optional(),
   })
   .superRefine((input, context) => {
-    const projected = toMailboxMessage({
-      type: 'user',
-      parent_tool_use_id: null,
-      message: { content: input.content },
-    });
-    if ('reason' in projected) context.addIssue({ code: 'custom', message: projected.reason });
+    if (
+      typeof input.content !== 'string' &&
+      input.content.some((block) => block.type === 'image' && block.source.type === 'upload')
+    )
+      return;
+    const issue = projectionIssue(input.content as z.infer<typeof SessionContentSchema>);
+    if (issue) context.addIssue({ code: 'custom', message: issue });
   });
 const Result = z.discriminatedUnion('ok', [
   z.object({
@@ -74,9 +92,12 @@ const Result = z.discriminatedUnion('ok', [
   }),
   z.object({ ok: z.literal(false), reason: z.string() }),
 ]);
-type IntakeInput = Omit<z.infer<typeof Input>, 'replyTo'> & {
+type NeoIntakeRequest = Omit<z.infer<typeof Input>, 'replyTo'> & {
   replyTo?: NeoReplyTo;
   retryOf?: string;
+};
+type IntakeInput = Omit<NeoIntakeRequest, 'content'> & {
+  content: z.infer<typeof SessionContentSchema>;
 };
 type IntakeResult = z.infer<typeof Result>;
 type Gate<T> = { value: T } | { reason: Extract<IntakeResult, { ok: false }> };
@@ -484,6 +505,21 @@ function notifyNeoIntakeAcceptance(
 
 type IntakeTarget = { binding: NeoBinding; target: Target; conversationId: string };
 
+export async function resolveNeoIntakeImages(
+  input: NeoIntakeRequest,
+  stored: NeoConversationAsk | null,
+  images?: StagedImages
+): Promise<Gate<IntakeInput>> {
+  if (typeof input.content === 'string') return { value: { ...input, content: input.content } };
+  const resolved = images
+    ? await images(input.content, Array.isArray(stored?.content) ? stored.content : undefined)
+    : { value: input.content };
+  if ('reason' in resolved) return { reason: { ok: false, reason: resolved.reason } };
+  const content = resolved.value as z.infer<typeof SessionContentSchema>;
+  const issue = projectionIssue(content);
+  return issue ? { reason: { ok: false, reason: issue } } : { value: { ...input, content } };
+}
+
 const readNeoIntakeTarget = (superpipe({})('neo-intake-target') as PipelineAPI)
   .input(['input', 'db', 'repo'])
   .pipe(
@@ -522,7 +558,7 @@ function admitNeoIntakeTarget(
 }
 
 const runIntake = (superpipe({})('neo.message.send') as PipelineAPI)
-  .input(['input', 'caller', 'db', 'repo', 'notify', 'store'])
+  .input(['input', 'caller', 'db', 'repo', 'notify', 'store', 'images'])
   .pipe(admitNeoIntake, ['input', 'caller'], 'result:receipt')
   .pipe(
     (input: IntakeInput, store: NeoAskTodoRepository) => readNeoReply(input.replyTo, store),
@@ -576,6 +612,16 @@ const runIntake = (superpipe({})('neo.message.send') as PipelineAPI)
     'result:receipt'
   )
   .pipe((root: IntakeTarget) => root, 'receipt', 'root')
+  .pipe(
+    (
+      input: NeoIntakeRequest,
+      asks: { stored: NeoConversationAsk | null },
+      images: StagedImages | undefined
+    ) => resolveNeoIntakeImages(input, asks.stored, images),
+    ['input', 'asks', 'images'],
+    'result:receipt'
+  )
+  .pipe((input: IntakeInput) => input, 'receipt', 'input')
   .pipe(
     (
       input: IntakeInput,
@@ -655,12 +701,13 @@ const runIntake = (superpipe({})('neo.message.send') as PipelineAPI)
   )
   .pipe(notifyNeoIntakeAcceptance, ['receipt', 'notify', 'root', 'reply'], 'receipt')
   .endAsync('receipt') as (
-  input: IntakeInput,
+  input: NeoIntakeRequest,
   caller: OperationCaller,
   db: Database,
   repo: NeoRepository,
   notify: NeoIntakeNotifier,
-  store: NeoAskTodoRepository
+  store: NeoAskTodoRepository,
+  images?: StagedImages
 ) => Promise<IntakeResult>;
 
 export const retryNeoIntake = runIntake;
@@ -669,7 +716,8 @@ export function createNeoIntakeOperation(
   db: Database,
   repo: NeoRepository,
   notify: NeoIntakeNotifier = noNotification,
-  store: NeoAskTodoRepository = new NeoAskTodoRepository(db.getDatabase())
+  store: NeoAskTodoRepository = new NeoAskTodoRepository(db.getDatabase()),
+  images?: StagedImages
 ) {
   return defineOperation({
     name: 'neo.message.send',
@@ -677,6 +725,6 @@ export function createNeoIntakeOperation(
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'human_only' },
-    execute: (input, caller) => runIntake(input, caller, db, repo, notify, store),
+    execute: (input, caller) => runIntake(input, caller, db, repo, notify, store, images),
   });
 }

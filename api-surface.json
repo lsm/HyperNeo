@@ -30920,32 +30920,74 @@
               },
               {
                 "items": {
-                  "oneOf": [
+                  "anyOf": [
                     {
-                      "properties": {
-                        "text": {
-                          "minLength": 1,
-                          "type": "string"
-                        },
-                        "type": {
-                          "const": "text",
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "type",
-                        "text"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "properties": {
-                        "source": {
+                      "oneOf": [
+                        {
                           "properties": {
-                            "data": {
+                            "text": {
                               "minLength": 1,
                               "type": "string"
                             },
+                            "type": {
+                              "const": "text",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "text"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "properties": {
+                            "source": {
+                              "properties": {
+                                "data": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "media_type": {
+                                  "enum": [
+                                    "image/png",
+                                    "image/jpeg",
+                                    "image/gif",
+                                    "image/webp"
+                                  ],
+                                  "type": "string"
+                                },
+                                "type": {
+                                  "const": "base64",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "type",
+                                "media_type",
+                                "data"
+                              ],
+                              "type": "object"
+                            },
+                            "type": {
+                              "const": "image",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "source"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "source": {
+                          "additionalProperties": false,
+                          "properties": {
                             "media_type": {
                               "enum": [
                                 "image/png",
@@ -30955,15 +30997,19 @@
                               ],
                               "type": "string"
                             },
+                            "sha256": {
+                              "pattern": "^[a-f0-9]{64}$",
+                              "type": "string"
+                            },
                             "type": {
-                              "const": "base64",
+                              "const": "upload",
                               "type": "string"
                             }
                           },
                           "required": [
                             "type",
                             "media_type",
-                            "data"
+                            "sha256"
                           ],
                           "type": "object"
                         },

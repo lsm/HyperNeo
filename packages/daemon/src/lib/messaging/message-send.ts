@@ -24,7 +24,7 @@ import { AgentReferenceSchema } from './agent-reference-schema.ts';
 import { sessionUnavailable } from '../session-resolution/session-lookup.ts';
 import { wrapSessionContent } from './session-envelope.ts';
 
-const ContentBlockSchema = z.discriminatedUnion('type', [
+export const ContentBlockSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('text'), text: z.string().min(1) }),
   z.object({
     type: z.literal('image'),
