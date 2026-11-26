@@ -14,10 +14,9 @@ reuse what exists.
 
 ## Where the list comes from
 
-The choices for a provider and model are `sdk` (Claude Code) plus every row of
-`OXAP_HARNESSES` whose `providers` includes that provider id and, when the row
-lists `models`, whose `models` includes the session's model. The web filters by
-provider in `SessionsPage.tsx` today; slice 5 adds the model. A new harness becomes selectable by
+The choices for a provider are `sdk` (Claude Code) plus every row of
+`OXAP_HARNESSES` whose `providers` includes that provider id. The web already
+filters this way in `SessionsPage.tsx`. A new harness becomes selectable by
 adding its row; nothing else lists harnesses.
 
 A row is selectable only when it is ready for a new session: its `settings`
@@ -28,10 +27,10 @@ An eligible row that is not ready still shows, disabled, with "Set up in
 Settings → Providers". `sdk` is always selectable.
 
 First batch: OpenAI Codex offers SDK and OXAP Codex; DeepSeek offers SDK and
-OXAP DeepSeek. OpenCode Go with DSH is proven for Flash only (below). Each other
-pair is a table row added only after that pair is proven (endpoint, auth, model
-ids). Until then a pair
-is simply absent from the list.
+OXAP DeepSeek; OpenCode Go offers SDK and DSH (below). A harness applies to the
+whole provider. HyperNeo does not check which of the provider's models a
+harness handles; that is between the provider and the user. Each other pair is
+a table row added when it is wired up.
 
 ## Where the override is stored
 
@@ -40,11 +39,9 @@ OXAP id means that harness. Creation resolves it once:
 
 - `session.create` takes an optional top-level `harness` (not `config.harness`,
   which stays rejected and stripped from SDK query options).
-- `session-lifecycle` uses `params.harness ?? newSessionDefault(provider, model)`.
-  Omitted uses the model-aware new-session default, so every current caller is
-  unchanged.
-- The resolved value, whether requested or the default, must be `sdk` or a row
-  that lists the provider (and the model, when the row lists models), and must
+- `session-lifecycle` uses `params.harness ?? engineForProvider(provider)`.
+  Omitted means the provider default, so every current caller is unchanged.
+- The requested value must be `sdk` or a row that lists the provider, and must
   be ready for a new session. Otherwise creation fails with a plain message.
 
 A clone passes its source session's harness (`sdk` when none is stored) as
@@ -81,45 +78,22 @@ provider-id name and `harnessSettings` stay flat. That includes OpenCode Go
 with DSH, whose first row this would be. A naming scheme for two OXAP rows on
 one provider is decided only when a second pairing needs it.
 
-## OpenCode Go with DSH, Flash only
+## OpenCode Go with DSH
 
-DSH 0.2.2-rc.2 is proven on OpenCode Go for one model only: `deepseek-v4.1-flash`
-answered with HTTP 200 through a DSH profile overlay that points at the Go
-endpoint the daemon already uses (`OpenCodeProvider.CHAT_BASE_URL`). DSH's
-built-in Go profile failed the same check, so it is not used. Matching by
-provider alone would offer DSH for every Go model, so this pair adds one thing:
-a row may name the models it serves.
+One new row, `oxap-opencode-dsh`: provider `opencode`, key `OPENCODE_API_KEY`.
+It is chosen like any other row, as OpenCode's default in Settings or as a
+per-session override.
 
-- **The row.** `oxap-opencode-dsh`: provider `opencode`, `models:
-  ['deepseek-v4.1-flash']`, key `OPENCODE_API_KEY`. Its entry starts DSH with
-  `--profile sdk --patch <overlay>`. The daemon writes the overlay into its own
-  state directory: one `opencode-go` provider with that endpoint, the API key read
-  from `OPENCODE_API_KEY`, and that one model. The key is the OpenCode provider's
-  own key, resolved as the provider resolves it (`OpencodeProvider.getApiKey`:
-  `OPENCODE_API_KEY`, then `OPENCODE_GO_API_KEY`, then the stored credential),
-  not by the OXAP loader's stored-credential read alone, so a setup that works
-  today is ready. `DEEPSEEK_API_KEY` is never
-  set for it.
-- **Selection and admission.** A row with `models` is eligible only when the
-  session's model is in that list. The dialog lists it only then. `session.create`
-  refuses an override to it for any other model with a plain message. A row
-  without `models` is unchanged.
-- **Default.** `engineForProvider` stays per provider and is unchanged. A new
-  `newSessionDefault(provider, model)`, used only when a session is created,
-  returns `sdk` when the saved default is a row whose `models` omit that model.
-  So with this row as OpenCode's default, a Flash session uses it, and any other
-  Go model gets `sdk`, today's OpenCode path. No other fallback is added. A Flash
-  default passes the same readiness check as a Flash override; if it is not
-  ready, creation is refused and does not fall back to `sdk`. The runtime SDK
-  failover pool (`sdkFallbackProviders`) still calls `engineForProvider`, so it
-  keeps excluding OpenCode while its default is this row. The provider-switch
-  gate (`decideSwitch`, and `engineOf` in `create-session-config.ts`) also stays
-  on `engineForProvider`, so an existing SDK chat cannot switch to OpenCode for
-  any model while its default is this row, as for any OXAP default today.
-- **Model change.** The thread lock that already fixes the model of a started
-  DeepSeek thread (`isOxapModelLocked`, today `oxap-deepseek` only) also names
-  this row. Before the first turn, a switch to a model outside the list is
-  refused by the same eligibility check. The chat keeps its harness.
+- **Endpoint.** DSH's built-in Go profile does not reach the Go endpoint, so the
+  entry starts DSH with `--profile sdk --patch <overlay>`. The daemon writes the
+  overlay into its own state directory: one `opencode-go` provider at the
+  endpoint the daemon already uses (`OpenCodeProvider.CHAT_BASE_URL`), with the
+  key read from `OPENCODE_API_KEY`. The session's model is passed through
+  unchanged.
+- **Key.** It is the OpenCode provider's own key, resolved as the provider
+  resolves it (`OpencodeProvider.getApiKey`: `OPENCODE_API_KEY`, then
+  `OPENCODE_GO_API_KEY`, then the stored credential), so a setup that works
+  today is ready. `DEEPSEEK_API_KEY` is never set for it.
 
 ## What happens when the harness is not installed
 
@@ -153,21 +127,11 @@ Each slice works on its own: nothing is reachable before what it needs exists.
    (disabled when not ready), send `harness` only when the user overrides.
 4. Prove both first-batch pairs end to end on one daemon: provider default
    chat and SDK override chat, then the reverse.
-5. OpenCode Go with DSH, Flash only: the `models` field, the row and its
-   overlay, model-aware eligibility in the dialog and creation (the picker lists
-   by model, and a model change that makes the chosen harness ineligible clears
-   the choice and shows the model-aware default),
-   `newSessionDefault`, and the row in the model lock. Tests: a Flash override
-   is admitted and its first turn reaches the Go endpoint with the OpenCode key
-   and no `DEEPSEEK_API_KEY`; an override for another Go model is refused; with
-   the row as default, Flash uses DSH and another Go model uses `sdk`; with the
-   row as default but not ready, a Flash session is refused, not moved to `sdk`;
-   with the row as default, OpenCode stays out of the SDK failover pool and an
-   SDK chat cannot switch to OpenCode; a key set only as `OPENCODE_GO_API_KEY`
-   makes the row ready and reaches DSH as `OPENCODE_API_KEY`;
-   switching a DSH chat to another model is refused; in the dialog, choosing DSH
-   on Flash and then another Go model shows `sdk` and submits no `harness`.
-6. Later, one PR each: other pairs once each is proven.
+5. OpenCode Go with DSH: the row, its overlay and key. Tests: a DSH session on
+   OpenCode reaches the Go endpoint with the OpenCode key and no
+   `DEEPSEEK_API_KEY`; a key set only as `OPENCODE_GO_API_KEY` makes the row
+   ready.
+6. Later, one PR each: other pairs.
 
 Measuring quota use between SDK and OXAP Codex is separate work and not part
 of this build.
