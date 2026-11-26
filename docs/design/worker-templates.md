@@ -121,23 +121,34 @@ Each request to a custom endpoint passes a bridge that parses the Anthropic requ
 `providers/anthropic-messages-bridge` and `openai-chat-bridge`; the Ollama bridge stays out of
 this step. One shared function runs in the two before the request is converted:
 
-- Every desktop observation except the latest is collapsed to one line as soon as the model
-  has taken its next step, that is, when a later desktop tool call follows it in the request.
-  Observations are the results of desktop tools: screenshots and accessibility trees. A failed
-  step collapses the same way; nothing is rolled back.
-- The line keeps the tool, its target (app and window, element or point, from the call's own
-  arguments), ok or failed, and the error text on a failure, for example `click "Save" in
-  TextEdit: ok` or `click at 410,220 in Safari: failed, element not found`. No screenshot and no
-  accessibility text.
-- Cache: each step changes only the last two or three messages (the previous observation
-  becomes its line, the new call and result are added); the prefix before them is unchanged,
-  so the endpoint's cache keeps hitting.
+- A desktop result is a `tool_result` whose `tool_use_id` names a desktop tool call in the
+  request. The results of the newest assistant message with a desktop call stay as the bridge
+  receives them; every older desktop result is collapsed to one line. Non-desktop turns do not
+  move this point, and non-desktop results are never changed, also inside a parallel batch.
+  A failed step collapses the same way; nothing is rolled back.
+- The line is built from the call's own arguments and the result's status, with no label
+  lookup: the tool, `pid`, `window_id`, `element_token` or `x,y`, and `ok` or `failed:
+  <reason>`, where a failure is `is_error` or a body with `ok: false` and its `reason`. For
+  example `click pid=812 window=3 token=e14: ok` or `click pid=812 window=3 at 410,220: failed:
+  invalid_arguments`. The result body is dropped: no screenshot and no accessibility text.
+- "As the bridge receives it" differs by bridge: the messages bridge forwards screenshots, and
+  the OpenAI chat bridge already turns any image inside a `tool_result` into the text `[image]`,
+  even with vision on, so there the latest result is its text and that marker.
+- The rewrite runs before conversion on `/v1/messages` and on `/v1/messages/count_tokens` in
+  both bridges (one forwards the count upstream, the other estimates it), so the count the SDK
+  budgets with measures the collapsed body.
+- Prefix: each request is byte-identical to the previous one up to the result that was just
+  collapsed; only that result and what follows change. Whether the endpoint's cache then hits
+  depends on it holding that prefix (the chat bridge leaves caching to the endpoint), so a hit
+  is claimed only from the provider's cache-read usage.
 - The rule depends only on the request, so it needs no session state, a restart changes
   nothing, and context grows by one line and the model's own text per step, not by a screen.
-- Text the model needs from a screen is used in the step it arrives: the model carries it in
-  its own reply or next call, which is never collapsed, or calls `get_window_state` again.
-- After a failure the failed observation is the latest, so the model sees it in full to
-  recover; it collapses only once the model has acted on it.
+- Text the model needs from a screen goes into its own reply or call before its next desktop
+  call when the screen may change; its own text is never collapsed. Otherwise it calls
+  `get_window_state` again.
+- After a failure the failed result belongs to the newest desktop call, so the model sees it in
+  full; it collapses once the model makes its next desktop call, for example a fresh
+  `get_window_state`, whose result then stays in full for the next action.
 - Nothing is changed in the stored conversation; only the request is.
 
 **Summary size.** The daemon's own compaction (`agent/context-budget-enforcement.ts`,
@@ -181,12 +192,15 @@ never the laptop. System map read for the planned files.
    template session lists them and no Bash; a call reaches `desktop.call` with the same
    refusals, including an app that was not approved; results carry `at` and `ms`.
    Estimate: 4 files, 90 lines, 120 test lines.
-3. **Collapse old observations.** Tests: the latest observation stays in full; an earlier one
-   becomes its line with tool, target and ok; a failed one keeps its error text; a line holds no
-   image and no accessibility text; two requests one step apart differ only in their last
-   messages; the observation after a failure stays in full until the next call; non-desktop
-   results are kept; the stored conversation is unchanged; both bridges.
-   Estimate: 4 files, 90 lines, 150 test lines.
+3. **Collapse old observations.** Tests: the newest desktop call's results stay as received;
+   an older one becomes its line with tool, pid, window and token or point, and ok; a failure by
+   `is_error` and one by `ok: false` keep the reason; a line holds no image and no
+   accessibility text; non-desktop turns after a desktop result leave it in full; a parallel
+   batch keeps its non-desktop results; failure, then a fresh `get_window_state`, then the next
+   action collapses the failure and keeps the fresh state; two requests one step apart are
+   identical up to the newly collapsed result; `count_tokens` measures the collapsed body; the
+   stored conversation is unchanged; both bridges.
+   Estimate: 4 files, 110 lines, 180 test lines.
 4. **Summary size.** Tests: both enqueue sites send the line; a queued `/compact` with text
    dedupes with a plain one and waits for the boundary.
    Estimate: 4 files, 40 lines, 70 test lines.
