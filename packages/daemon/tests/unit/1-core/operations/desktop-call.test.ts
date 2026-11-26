@@ -184,7 +184,7 @@ test.each([1, null])(
   }
 );
 
-test('a desktop worker can discover and invoke only its four operations', async () => {
+test('a desktop worker cannot invoke operation discovery or unrelated operations', async () => {
   let operations: OperationRegistry;
   const trivial = (name: 'message.send' | 'work.read') =>
     defineOperation({
@@ -202,16 +202,7 @@ test('a desktop worker can discover and invoke only its four operations', async 
   ]);
   const desktop = { ...caller, profile: 'desktop' as const };
   const invoke = (name: string, args: unknown) => invokeOperation(operations, name, args, desktop);
-  const all = await invoke('operations.list', { all: true });
-  expect(all.kind).toBe('completed');
-  expect(
-    all.kind === 'completed' && (all.value as { name: string }[]).map(({ name }) => name).sort()
-  ).toEqual(['desktop.call', 'message.send', 'operations.describe', 'operations.list']);
-  expect(await invoke('operations.describe', { name: 'work.read' })).toMatchObject({
-    kind: 'completed',
-    value: { found: false },
-  });
-  for (const name of ['work.read', 'unregistered.read'])
+  for (const name of ['operations.list', 'operations.describe', 'work.read', 'unregistered.read'])
     expect(await invoke(name, {})).toMatchObject({ kind: 'failed', code: 'forbidden' });
   expect(await invoke('message.send', {})).toMatchObject({ kind: 'completed' });
 });

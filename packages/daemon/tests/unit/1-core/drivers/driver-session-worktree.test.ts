@@ -580,7 +580,7 @@ describe('createDriverSession', () => {
     ]);
   });
 
-  test('starts a desktop worker with the catalog tools, invoke and no shell', async () => {
+  test('starts a desktop worker with the catalog tools and report', async () => {
     const { created, manager } = sessionManager(false);
     await createDriverSession(
       manager as never,
@@ -599,11 +599,11 @@ describe('createDriverSession', () => {
       toolProfile: 'desktop',
       config: {
         sdkToolsPreset: [],
-        allowedTools: ['invoke', ...desktopCatalog.map(({ name }) => name)].map(
-          (name) => `mcp__hyperneo-operations__${name}`
+        allowedTools: ['report', ...desktopCatalog.map(({ name }) => name)].map(
+          (name) => `mcp__desktop__${name}`
         ),
         disallowedTools: expect.arrayContaining(['Bash', 'Write']),
-        systemPrompt: { append: expect.stringContaining('desktop tools') },
+        systemPrompt: expect.stringContaining('desktop tools'),
       },
     });
   });

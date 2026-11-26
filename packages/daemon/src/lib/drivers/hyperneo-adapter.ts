@@ -53,6 +53,7 @@ import {
 } from './work-messages.ts';
 import { reject } from './work-operations.ts';
 import { readWorkerLastTurn } from '../../storage/repositories/work-started-sessions-worker.ts';
+import { DESKTOP_WORKER_TEMPLATE_KEY } from '../desktop/worker-profile.ts';
 
 const OPEN = `status IN ('active', 'paused', 'pending_worktree_choice')`;
 const OWN_SESSIONS = `space_id IS NULL AND room_id IS NULL AND id NOT LIKE 'neo:%' AND type IN ('worker', 'general')`;
@@ -92,6 +93,7 @@ export interface HyperneoSessionRow {
   folder: string | null;
   processing: string | null;
   lastActiveAt: string | null;
+  toolProfile?: string | null;
   branch?: string | null;
   directory?: string | null;
   queryFailureId?: string | null;
@@ -447,7 +449,8 @@ export function hyperneoSessionBusy(row: HyperneoSessionRow): boolean {
 export function readHyperneoSession(db: BunDatabase, id: string): HyperneoSessionRow | null {
   const row = db
     .prepare(
-      `SELECT ${SESSION_COLUMNS}, COALESCE(worktree_branch, git_branch) AS branch,
+      `SELECT ${SESSION_COLUMNS}, json_extract(config, '$.toolProfile') AS toolProfile,
+         COALESCE(worktree_branch, git_branch) AS branch,
          COALESCE(worktree_path, workspace_path) AS directory
          FROM sessions WHERE id = ? AND ${OWN_SESSIONS}`
     )
@@ -605,7 +608,7 @@ export async function deliverToHyperneo(
   const inputId = context.idempotencyKey ?? crypto.randomUUID();
   const outcome = await deps.handoff(
     row.id,
-    withReplyLine(message, context.from),
+    row.toolProfile === 'desktop' ? message : withReplyLine(message, context.from),
     context.from,
     inputId,
     deliveryMode,
@@ -736,17 +739,21 @@ export async function openHyperneoWork(
   deps: HyperneoAdapterDeps
 ): Promise<Result<WorkStarted>> {
   const { sessionId, model, effort } = confirmed;
-  const message = request.provenance
-    ? withWorkerProvenance(request.message, {
-        model,
-        effort: effort ?? null,
-        harness: 'hyperneo',
-      })
-    : request.message;
+  const desktop =
+    context.caller.source === 'internal' &&
+    context.caller.workerTemplate === DESKTOP_WORKER_TEMPLATE_KEY;
+  const message =
+    request.provenance && !desktop
+      ? withWorkerProvenance(request.message, {
+          model,
+          effort: effort ?? null,
+          harness: 'hyperneo',
+        })
+      : request.message;
   const inputId = crypto.randomUUID();
   const outcome = await deps.handoff(
     sessionId,
-    withReplyLine(message, context.from),
+    desktop ? message : withReplyLine(message, context.from),
     context.from,
     inputId
   );

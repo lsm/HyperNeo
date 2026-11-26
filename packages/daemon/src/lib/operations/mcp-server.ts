@@ -1,5 +1,6 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import desktopCatalog from '../desktop/tool-catalog.json' with { type: 'json' };
+import { DESKTOP_MCP_SERVER_NAME } from '../desktop/worker-profile.ts';
 import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
 import {
   createOperationMcpHandler,
@@ -31,13 +32,70 @@ type OperationMcpRegistration = [
   resolveCaller: (operation: string) => CallerIdentity | Promise<CallerIdentity>,
   recordRefusal?: (refusal: OperationRefusal) => void | Promise<void>,
   descriptionRole?: OperationCallerRole | 'desktop',
+  reportTarget?: () => { to: string; todoId: string } | undefined,
 ];
+
+const DesktopReport = z.object({
+  kind: z.enum(['done', 'question', 'blocked', 'failed']),
+  text: z.string().trim().min(1),
+  question: z
+    .object({
+      title: z.string().trim().min(1).max(80),
+      options: z.array(z.string().trim().min(1).max(80)).min(2).max(6),
+      language: z.enum(['en', 'zh-Hans']),
+    })
+    .optional(),
+});
 
 export function registerOperationMcpTools(
   register: RegisterOperationTool,
-  ...[registry, resolveCaller, recordRefusal, descriptionRole]: OperationMcpRegistration
+  ...[
+    registry,
+    resolveCaller,
+    recordRefusal,
+    descriptionRole,
+    reportTarget,
+  ]: OperationMcpRegistration
 ) {
   const invoke = createOperationMcpHandler(registry, resolveCaller, recordRefusal);
+  if (descriptionRole === 'desktop') {
+    for (const { name, description, inputSchema } of desktopCatalog) {
+      const schema = z.fromJSONSchema(
+        inputSchema as unknown as z.core.JSONSchema.JSONSchema
+      ) as z.ZodObject;
+      register(name, description, schema.shape, (args) =>
+        invoke({ name: 'desktop.call', input: { tool: name, args } })
+      );
+    }
+    register(
+      'report',
+      'Send a result, question or blocker for the assigned task.',
+      DesktopReport.shape,
+      async (args) => {
+        const { kind, text, question } = DesktopReport.parse(args);
+        const target = reportTarget?.();
+        if (!target || (question && kind !== 'question' && kind !== 'blocked')) {
+          return {
+            isError: true,
+            content: [{ type: 'text', text: 'Report needs an active task and a valid kind.' }],
+          };
+        }
+        const receipt = await invoke({
+          name: 'message.send',
+          input: {
+            to: target.to,
+            kind,
+            text,
+            ...(question ? { question: { ...question, todoId: target.todoId } } : {}),
+          },
+        });
+        return JSON.parse(receipt.content[0].text)?.kind === 'accepted'
+          ? { content: [{ type: 'text', text: 'Report received.' }] }
+          : { isError: true, content: [{ type: 'text', text: 'Report was not delivered.' }] };
+      }
+    );
+    return;
+  }
   const discovery =
     descriptionRole === 'neo'
       ? 'operations.list {prefix,cursor?}; operations.describe {name}. message.send acceptance means durable mailbox persistence, not an agent reply.'
@@ -63,20 +121,14 @@ export function registerOperationMcpTools(
       };
       register(family.name, residentToolDescription(family, operations), schema.shape, run);
     }
-  } else if (descriptionRole === 'desktop') {
-    for (const { name, description, inputSchema } of desktopCatalog) {
-      const schema = z.fromJSONSchema(
-        inputSchema as unknown as z.core.JSONSchema.JSONSchema
-      ) as z.ZodObject;
-      register(name, description, schema.shape, (args) =>
-        invoke({ name: 'desktop.call', input: { tool: name, args } })
-      );
-    }
   }
 }
 
 export function createOperationMcpServer(...registration: OperationMcpRegistration) {
   const tools: NonNullable<Parameters<typeof createSdkMcpServer>[0]['tools']> = [];
   registerOperationMcpTools((...args) => tools.push(tool(...args)), ...registration);
-  return createSdkMcpServer({ name: OPERATIONS_MCP_SERVER_NAME, tools });
+  return createSdkMcpServer({
+    name: registration[3] === 'desktop' ? DESKTOP_MCP_SERVER_NAME : OPERATIONS_MCP_SERVER_NAME,
+    tools,
+  });
 }

@@ -69,6 +69,7 @@ import {
 import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
 import { operationsCapabilityContribution } from '../operations/door-briefing.ts';
 import { createOperationMcpServer } from '../operations/mcp-server.ts';
+import { desktopReportTarget } from '../desktop/opt-in.ts';
 import {
   enabledOperationPacks,
   type OperationRegistry,
@@ -409,6 +410,7 @@ export class AgentSession
     inputOrigin?: () => { messageId: string } | null,
     desktopTurn?: () => DesktopTurn | null
   ): Parameters<typeof createOperationMcpServer> {
+    const desktop = this.session.config.toolProfile === 'desktop';
     return [
       () => this.resolveOperationRegistry(),
       (operation) => {
@@ -426,9 +428,8 @@ export class AgentSession
         };
       },
       this.recordOperationRefusal,
-      this.session.config.toolProfile === 'desktop'
-        ? 'desktop'
-        : this.operationCallerIdentity().role,
+      desktop ? 'desktop' : this.operationCallerIdentity().role,
+      desktop ? () => desktopReportTarget(this.db.getDatabase(), this.session.id) : undefined,
     ];
   }
 

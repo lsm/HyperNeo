@@ -3,6 +3,7 @@ import { NEO_PACK_DELEGATION_INSTRUCTIONS } from '@hyperneo/prompts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import type { NeoPack, NeoPackBrief, NeoPackPreferenceDeclaration } from '../../pack-contract.ts';
 import { getNeoPackPreference } from '../../preferences.ts';
+import { DESKTOP_WORKER_TEMPLATE_KEY } from '../../../desktop/worker-profile.ts';
 
 const preference = (
   en: string,
@@ -66,24 +67,27 @@ const briefing = (superpipe({})('delegation.briefing') as PipelineAPI)
   .end('text') as (facts: Record<string, { value: unknown; configured: boolean }>) => string;
 
 export function createDelegationPack(database: () => Database): NeoPack {
-  const context = () =>
-    briefing(
-      Object.fromEntries(
-        Object.entries(preferences).map(([key, declaration]) => {
-          const saved = getNeoPackPreference(
-            database(),
-            'delegation',
-            { kind: 'global', key: '' },
-            key
-          );
-          return [key, { value: saved?.value ?? declaration.default, configured: saved !== null }];
-        })
-      )
+  const facts = () =>
+    Object.fromEntries(
+      Object.entries(preferences).map(([key, declaration]) => {
+        const saved = getNeoPackPreference(
+          database(),
+          'delegation',
+          { kind: 'global', key: '' },
+          key
+        );
+        return [key, { value: saved?.value ?? declaration.default, configured: saved !== null }];
+      })
     );
+  const context = () => briefing(facts());
   return {
     ...DELEGATION_PACK_BRIEF,
     preferences,
     instructions: context,
     workerContext: context,
+    workerTemplateContext: (template) =>
+      template === DESKTOP_WORKER_TEMPLATE_KEY
+        ? `Delegation preferences (data):\n${JSON.stringify(facts())}`
+        : null,
   };
 }

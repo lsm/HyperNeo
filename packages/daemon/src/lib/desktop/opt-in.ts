@@ -8,6 +8,7 @@ export type DesktopTodoRow = {
   named: string | null;
   apps?: string | null;
   askApps?: string | null;
+  ownerSession?: string;
   open?: number;
   active: number;
   finished?: number;
@@ -18,7 +19,7 @@ export function readDesktopTodos(db: Pick<Database, 'prepare'>, worker?: string)
   return db
     .prepare(
       `SELECT * FROM (SELECT json_extract(s.ref, '$.id') AS worker, t.id, t.title, t.named, t.desktop_apps AS apps,
-        a.desktop_apps AS askApps,
+        a.desktop_apps AS askApps, a.session_id AS ownerSession,
         (a.status = 'open' AND t.state IN ('todo', 'doing', 'blocked')) AS open,
         (t.state IN ('todo', 'doing', 'blocked') AND t.approved_at IS NOT NULL AND a.status = 'open') AS active,
         (t.state IN ('done', 'removed')) AS finished,
@@ -51,4 +52,12 @@ export function desktopAllowed(rows: readonly DesktopTodoRow[], worker: string) 
   const doing = own.filter((row) => row.doing);
   const candidates = doing.length ? doing : own.filter(desktopAllowedRow);
   return candidates.length === 1 && desktopAllowedRow(candidates[0]) ? candidates[0] : null;
+}
+
+export function desktopReportTarget(db: Pick<Database, 'prepare'>, worker: string) {
+  const active = readDesktopTodos(db, worker).filter((row) => row.active);
+  const doing = active.filter((row) => row.doing);
+  const candidates = doing.length ? doing : active;
+  const target = candidates.length === 1 ? candidates[0] : undefined;
+  return target?.ownerSession ? { to: target.ownerSession, todoId: target.id } : undefined;
 }

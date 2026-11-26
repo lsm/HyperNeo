@@ -1,4 +1,5 @@
 import { getBuiltInSpaceAgentTemplates } from '../../agents/template-manager.ts';
+import { DESKTOP_WORKER_TEMPLATE_KEY } from '../../desktop/worker-profile.ts';
 import { deriveWorkerDisallowedTools } from '../../agents/tool-policy.ts';
 import { qualifyRemoteOrigin, renderRemoteAddress } from '../../mailbox/address.ts';
 import { proposalQuestionId, requireAcceptedAsk } from '../../neo/proposal.ts';
@@ -206,7 +207,10 @@ export async function createDriverSession(
   const thinkingLevel = resolveHyperneoThinking(effort)?.value ?? template?.thinkingLevel;
   const templateConfig: Partial<SessionConfig> | undefined = template
     ? {
-        systemPrompt: { type: 'preset', preset: 'claude_code', append: template.instructions },
+        systemPrompt:
+          template.key === DESKTOP_WORKER_TEMPLATE_KEY
+            ? template.instructions
+            : { type: 'preset', preset: 'claude_code', append: template.instructions },
         sdkToolsPreset: [],
         coordinatorMode: false,
         allowedTools: template.tools?.map((tool) =>
@@ -224,7 +228,7 @@ export async function createDriverSession(
         ? { sessionId: prepared.sessionId, executionProjectPath: prepared.projectPath }
         : {}),
       worktreeMode: placement.kind === 'worktree' ? 'worktree' : 'direct',
-      toolProfile: template?.key === 'worker.desktop' ? 'desktop' : 'worker',
+      toolProfile: template?.key === DESKTOP_WORKER_TEMPLATE_KEY ? 'desktop' : 'worker',
       ...(template ? { workerTemplate: template.key } : {}),
       ...(config || thinkingLevel || templateConfig
         ? { config: { ...templateConfig, ...config, ...(thinkingLevel ? { thinkingLevel } : {}) } }
