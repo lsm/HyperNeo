@@ -104,9 +104,10 @@ steps:
 2. Otherwise the todo that started the worker (`work_started_sessions.todo_id`), if no row of
    any other todo names that worker, ever: neither as its target (`target.ref`, which every
    send row has, also while pending or after a failure) nor as its outcome (`outcome.ref`,
-   which a start row gets). Only a failure marked `notSent` does not count. A start row of
-   another todo without a ref cannot name the worker, because a start always makes a new
-   session. Nor may another todo have adopted it. Otherwise none.
+   which a start row gets). Only a failure marked `notSent` does not count. A `work.start`
+   may reuse an existing worker: its delivery row retains the actual reuse ref even when the
+   send fails uncertainly, along with any available delivery key. Successful reuse retains
+   the send's keys too. Nor may another todo have adopted it. Otherwise none.
 
 Adoption leaves no delivery row, its binding in `neo_todo_sessions` is overwritten when the
 todo rebinds, and `neo_todo_roles` is no record either (`unclaimTodoWorker` deletes rows, and
@@ -145,10 +146,11 @@ Every Codex Desktop send path passes a fresh `clientUserMessageId` (the app-serv
 Codex writes an `item_completed` event whose user item carries it as `client_id`, with the
 `turn_id` of the turn it ran in. The daemon drops that id today. So the outcome keeps it as
 `clientMessageId`, including when a Desktop handoff returns `uncertainDesktopInputId` in a
-rejection; the reply schema and `readDriverOutcome` preserve that id without changing the rejection. The Codex turn
-reader adds each user item's `client_id` to the turn's inputs, and `deliveryKeys` matches the
-two. That is an exact id written by Codex, not time or
-text, so it is a receipt. The `queuedSubmissionId` is not kept by Codex (0 of 1732 turn
+rejection, or an app-server queue add returns `not_delivered` without `notSent` after a
+transport error or unusable acknowledgement. The reply schema and `readDriverOutcome` preserve
+that id without changing the rejection. The Codex turn reader adds each user item's `client_id`
+to the turn's inputs, and `deliveryKeys` matches the two. That is an exact id written by Codex,
+not time or text, so it is a receipt. The `queuedSubmissionId` is not kept by Codex (0 of 1732 turn
 inputs in a week) and is not used. The stated limits:
 
 - A Claude Desktop send through the relay already returns the input id whenever the relay has
@@ -218,7 +220,9 @@ Eight PRs from `dev`, in order, failing tests first. System map read for the pla
    two matching todos give none; a started worker's turns keep its todo while no row of another
    todo names it; a pending send and a failed send without an outcome ref of another todo each
    take step 2 away from every turn of that worker, earlier ones too; so does another todo's
-   adoption, also after that todo rebinds elsewhere, is unclaimed or is deleted; a Codex steer
+   adoption, also after that todo rebinds elsewhere, is unclaimed or is deleted; two todos
+   where an uncertain reused send and its late turn prevent credit to the first todo; a
+   successful reuse propagates its send key; a Codex steer
    gives its todo by `steeredIntoTurnId`; a Claude Desktop relay send without an input id gives
    none by step 1; a worker
    started before the migration gets no step 2; a `notSent`
@@ -228,14 +232,15 @@ Eight PRs from `dev`, in order, failing tests first. System map read for the pla
 2. **Codex start turn id.** The Codex Desktop start returns the opening turn's id from both
    branches as `startedTurnId`, and the start outcome keeps it, so `deliveryKeys` reads it as
    for a send. Tests: a start whose rollout read misses still has its turn id and gives its
-   todo; a start whose call returns no turn id still fails as today.
+   todo; a missing turn id fails as it already does in Desktop IPC and now does in the
+   app-server branch.
    Estimate: 4 files, 30 lines, 60 test lines.
 3. **Codex client message id.** Each Codex Desktop send keeps its `clientUserMessageId` in the
    outcome as `clientMessageId`, including uncertain rejections; the Codex turn reader adds
    the `client_id` of the turn's `item_completed` user items to its inputs; `deliveryKeys` reads both. Tests on
    real rollout shapes: a queued send that runs later gives its todo; two queued sends that run
-   in two turns each give their own; an unconfirmed rejection that runs later gives its todo;
-   a `codex queue` fallback send has none; a user item without
+   in two turns each give their own; uncertain Desktop and app-server rejections that run later
+   give their todo while the operation still reports failure; a `codex queue` fallback send has none; a user item without
    `client_id` adds nothing.
    Estimate: 5 files, 60 lines, 110 test lines.
 4. **Kind and estimate.** Core kinds, the checks on the two operations, the fact, the Neo tool
