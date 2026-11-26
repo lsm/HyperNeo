@@ -85,7 +85,11 @@ try {
       if (!query.adapters?.includes(remoteRef.adapter)) return op.execute(input, caller);
       if (query.idPrefix === remoteRef.id) remoteLookups++;
       const groups = buildClaudeDesktopGroups(remoteRecords, [], toFindQuery(query), { machine: 'synthetic-remote' });
-      return { places: stampDaemon(groups.map((group) => ({ ...group, place: { ...group.place, remotes: remoteRemotes } })), remoteRef.daemon), unreachable: [] };
+      return { places: stampDaemon(groups.map((group) => ({
+        ...group,
+        place: { ...group.place, remotes: remoteRemotes },
+        work: group.work.map((work) => ({ ...work, place: { ...work.place, remotes: remoteRemotes } })),
+      })), remoteRef.daemon), unreachable: [] };
     } };
     return op;
   }));
@@ -148,19 +152,28 @@ try {
   assert.equal((await add({ check: { pack: 'core', kind: 'human_confirmed', params: { questionId: 'synthetic-question' } }, instruction: 'Non-coding task', target: { verb: 'send', ref: refs[1] } })).ok, true);
   const discovery = await call('work.find', { adapters: [remoteRef.adapter] });
   assert.deepEqual(discovery.places[0].work.map((work: { ref: unknown }) => work.ref), [remoteRef]);
-  assert.deepEqual(discovery.places[0].place.remotes, remoteRemotes);
+  assert.deepEqual(discovery.places[0].work[0].place.remotes, remoteRemotes);
+  const history = await call('work.find', { adapters: [remoteRef.adapter], idPrefix: remoteRef.id, includeClosed: true });
+  assert.equal(history.places[0].work.length, 20);
+  assert(!history.places[0].work.some((work: { ref: { id: string } }) => work.ref.id === remoteRef.id));
+  assert.deepEqual(history.places[0].place.remotes, remoteRemotes);
   const remoteAdded = await add({ instruction: 'Remote coding task', target: { verb: 'send', ref: remoteRef } });
   assert.equal(remoteAdded.ok, true, JSON.stringify(remoteAdded));
   assert(remoteLookups > 0);
   for (const remotes of [['https://github.com/example/other.git'], []]) {
     remoteRemotes = remotes;
-    refusal(await add({ instruction: 'Remote coding task', target: { verb: 'send', ref: remoteRef } }));
+    const before = todos.listTodos('ask').length;
+    const rejected = await add({ instruction: 'Remote coding task', target: { verb: 'send', ref: remoteRef } });
+    refusal(rejected);
+    assert.match(rejected.reason, remotes.length ? /is in github\.com\/example\/other;/ : /is in unknown;/);
+    assert.equal(todos.listTodos('ask').length, before);
   }
   assert.equal(sends, 0);
   const requests = readFileSync(join(run, 'evidence/gh.log'), 'utf8').trim().split('\n').sort();
   evidence.push({ githubReads: requests.length, githubRequests: requests });
   console.log(`githubReads=${requests.length}`);
   evidence.push({ remoteLookups, sends, deliveryInputs: db.prepare('SELECT COUNT(*) AS n FROM work_delivery_inputs').get().n });
+  console.log('remote: matching accepted=1; different refused=1; unknown refused=1');
   console.log(`PASS: same and renamed repositories accepted; failed lookup refused; other/unknown refused on add/edit/bind/continue; non-coding accepted; sends=${sends}; deliveryInputs=0`);
 } finally {
   await app.cleanup();

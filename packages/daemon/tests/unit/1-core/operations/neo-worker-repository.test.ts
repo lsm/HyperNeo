@@ -220,12 +220,24 @@ test.each([
   { daemon: 'remote-owner', remotes: ['git@github.com:example/repo.git'], accepted: true },
   { daemon: 'remote-owner', remotes: ['git@github.com:example/other.git'], accepted: false },
   { daemon: 'other-owner', remotes: ['git@github.com:example/repo.git'], accepted: false },
+  {
+    daemon: 'remote-owner',
+    workspaceFolder: '/synthetic/other-workspace',
+    remotes: ['git@github.com:example/repo.git'],
+    accepted: false,
+  },
 ])(
   'checks the reported remote workspace when the worker is outside the list',
-  async ({ daemon, remotes, accepted }) => {
+  async ({ daemon, workspaceFolder, remotes, accepted }) => {
     const ref = { adapter: 'claude-desktop' as const, daemon: 'remote-owner', id: 'local_worker' };
     const folder = '/synthetic/worker-repository';
-    const workspace = { machine: 'synthetic', daemon, folder, name: 'Repository', remotes };
+    const workspace = {
+      machine: 'synthetic',
+      daemon,
+      folder: workspaceFolder ?? folder,
+      name: 'Repository',
+      remotes,
+    };
     const resolved = await resolveNeoTodoDraft(
       { ...draft, target: { verb: 'send', ref }, priority: 'normal' },
       (candidate) =>
