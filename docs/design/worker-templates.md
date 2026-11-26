@@ -35,13 +35,15 @@ Claude Code and Codex adapters start as today.
 **What it changes in the session.** `createDriverSession`
 (`rpc-handlers/family-operations/drivers.ts`) builds the config from the template the same way
 `buildAgentSessionConfig` does for space agents: `instructions` are appended to the system
-prompt, `tools` become `sdkToolsPreset`, and `model` and `thinkingLevel` apply when the todo
-names none. The fetch and Exa servers are not attached. The session records the template key
-in its metadata.
+prompt, and `model` and `thinkingLevel` apply when the todo names none. The template
+tools drive `allowedTools` and `disallowedTools` using the existing `deriveWorkerDisallowedTools`
+policy. Unlike a space agent, the worker uses a restricted SDK builtin preset so Bash and the
+other unlisted builtins are not exposed. MCP tools remain subject to operation admission. The
+fetch and Exa servers are not attached. The session records the template key in its metadata.
 
 **The brief.** Only the text the template replaces is left out, and only for a session started
-with that template: the computer-use `workerContext` and the coding merge policy. The other
-packs' `workerContext` (delegation preferences among them), the instruction, the done-when line
+with that template: the computer-use `workerContext` from `neo/todo-runner.ts` and the coding
+merge policy. The other packs' `workerContext` (delegation preferences among them), the instruction, the done-when line
 and the core reply and blocker rules stay. Every other worker, on any adapter, gets the brief
 as today.
 
@@ -52,7 +54,7 @@ not started with.
 **`desktop-operator`.**
 
 - Tools: `Read` and the desktop tools. No Bash, Write, Task, Cron, Skill or plan tools. A
-  human-edited copy may list `Bash`.
+  future editable template may list `Bash`.
 - Desktop tools are top-level: one tool per entry of `desktop/tool-catalog.json`
   (`list_windows`, `get_window_state`, `launch_app`, `click`, ..., `zoom`), each calling
   `desktop.call {tool, args}`. This is the Neo resident-tool pattern in
