@@ -1019,6 +1019,53 @@ test('daemon execution suppresses owner merge events and reminders', async () =>
   expect(messages[0]).toContain('Merge confirmed:');
 });
 
+test.each(['delivered', 'unreachable', 'owner changed'])(
+  'merge notice reaches the right owner once: %s',
+  async (scenario) => {
+    const first = { adapter: 'hyperneo', id: 'first-owner' };
+    const second = { adapter: 'hyperneo', id: 'second-owner' };
+    db.prepare('UPDATE pack_coding_pr_ledger SET owner=?').run(JSON.stringify(first));
+    const messages: { owner: string; text: string }[] = [];
+    let reachable = scenario !== 'unreachable';
+    const tell: CodingSweepDeps['tell'] = async (owner, _key, text) => {
+      if (!reachable) return false;
+      messages.push({ owner: owner.id, text });
+      return true;
+    };
+    const attend = async () => true;
+    await sweep(spawn, { tell, attend })(10);
+    expect(merges()).toHaveLength(1);
+    if (scenario === 'owner changed')
+      db.prepare('UPDATE pack_coding_pr_ledger SET owner=?').run(JSON.stringify(second));
+    reachable = true;
+    const rows = await ledger.read('list');
+    const transitions = await ledger.write(
+      'replace',
+      'synthetic/merge',
+      [{ ...rows[0], state: 'merged', closedAt: 11 }],
+      11
+    );
+    const events = new CodingPrEventRepository(db);
+    const delivery = { host: 'github.com', tell, wake: async () => true };
+    await deliverCodingPrEvents(events, transitions, delivery);
+    await deliverCodingPrEvents(events, [], delivery);
+    if (scenario === 'delivered') {
+      expect(messages).toEqual([
+        { owner: first.id, text: expect.stringContaining('Merge confirmed:') },
+      ]);
+    } else if (scenario === 'unreachable') {
+      expect(messages).toEqual([
+        { owner: first.id, text: expect.stringContaining('was merged on head') },
+      ]);
+    } else {
+      expect(messages).toEqual([
+        { owner: first.id, text: expect.stringContaining('Merge confirmed:') },
+        { owner: second.id, text: expect.stringContaining('was merged on head') },
+      ]);
+    }
+  }
+);
+
 test.each(['batch', 'final', 'receipt'])(
   'an unreadable first PR at %s does not block a mergeable sibling',
   async (stage) => {

@@ -279,7 +279,10 @@ describe('planCodingPrNudge', () => {
         minutes * MIN
       );
     expect(row('approved_pending', 19)).toBeNull();
-    expect(row('approved_pending', 20)).toEqual({ kind: 'remind', nudges: 1 });
+    expect(row('approved_pending', 20)).toBeNull();
+    expect(row('waiting_ci', 40)).toBeNull();
+    expect(row('approved_pending', 60)).toEqual({ kind: 'escalate', nudges: 3 });
+    expect(row('waiting_ci', 60)).toEqual({ kind: 'escalate', nudges: 3 });
     expect(row('waiting_review', 19)).toBeNull();
     expect(row('waiting_review', 20)).toEqual({ kind: 'remind', nudges: 1 });
     expect(row('merged', 600)).toBeNull();

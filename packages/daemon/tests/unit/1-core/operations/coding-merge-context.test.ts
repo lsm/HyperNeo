@@ -193,14 +193,15 @@ test('owned PR events and retried deliveries include the current saved facts', a
   }
 });
 
-test('PR reminders and Neo escalation carry the same saved merge facts', async () => {
+test('pending CI escalation carries the saved merge facts', async () => {
   const f = fixture();
   try {
     await f.pack.sweep!(100);
     f.own();
     for (const minutes of [20, 40, 60]) await f.pack.sweep!(100 + minutes * 60_000);
-    expect(f.told).toHaveLength(2);
-    for (const message of [...f.told, ...f.woken]) expect(message.text).toContain(facts);
+    expect(f.told).toHaveLength(0);
+    expect(f.woken).toHaveLength(1);
+    expect(f.woken[0].text).toContain(facts);
     expect(f.woken.some((message) => message.text.includes('has made no progress'))).toBe(true);
   } finally {
     f.db.close();
