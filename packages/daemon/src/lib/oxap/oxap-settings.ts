@@ -196,7 +196,7 @@ function planSave(input: Save, records: ProviderRecord[]) {
   const next = records.map((entry) => (entry === record ? { ...entry, configJson } : entry));
   const harness = row ? input.harness : saved?.harness;
   const executable =
-    settings.executable && (harness === 'oxap-codex' || harness === 'oxap-deepseek')
+    settings.executable && settingsRow?.settings.includes('executable') && isOxapHarness(harness)
       ? { path: settings.executable, harness }
       : undefined;
   return { value: { id: record.id, configJson, next, executable } };
