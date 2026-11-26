@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { auth } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/client/auth.js';
+import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
+import type { AppMcpServer } from '../../../packages/shared/src/mod.ts';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createCredentialStore } from '../../../packages/daemon/src/lib/credentials/credential-store.ts';
@@ -26,11 +28,19 @@ const config = () => getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, '
 const evidence: Record<string, unknown> = {};
 const secrets: string[] = [];
 let app = await createDaemonApp({ config: config(), verbose: false });
+const rpc = async <T>(method: string, params: object) => {
+  const hub = new MessageHub({ defaultSessionId: 'global' });
+  const transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
+  hub.registerTransport(transport);
+  await transport.initialize();
+  try { return await hub.request<T>(method, params); } finally { await transport.close(); }
+};
 try {
   await app.jobProcessor.stop();
   const vault = () => new ConnectionVault(createCredentialStore(app.db.getDatabase()), 'proof-instance');
+  const { server: row } = await rpc<{ server: AppMcpServer }>('mcp.registry.create', { name: 'Fake OAuth server', sourceType: 'http', url: fake.url, enabled: false });
   let consent: URL | undefined;
-  const attempt = createMcpOAuthProvider({ vault: vault(), serverId: 'row-1', preset, generation: 1, redirectUrl: 'http://127.0.0.1:9/callback', attempt: { authorize: (url) => { consent = url; } } });
+  const attempt = createMcpOAuthProvider({ vault: vault(), serverId: row.id, preset, generation: 1, redirectUrl: 'http://127.0.0.1:9/callback', attempt: { authorize: (url) => { consent = url; } } });
   const options = { serverUrl: fake.url, scope: 'read search', fetchFn: attempt.fetch };
   assert.equal(await auth(attempt.provider, options), 'REDIRECT');
   assert(consent);
@@ -44,7 +54,7 @@ try {
   await app.cleanup();
   app = await createDaemonApp({ config: config(), verbose: false });
   await app.jobProcessor.stop();
-  const grant = await vault().readMcp('row-1');
+  const grant = await vault().readMcp(row.id);
   assert(grant);
   secrets.push(grant.tokens.access_token, String(grant.tokens.refresh_token));
   const db = app.db.getDatabase();
@@ -53,12 +63,16 @@ try {
   evidence.afterRestart = { grantScopes: grant.scopes, generation: grant.generation, tablesScanned: tables.length, tokenInAnyRow: secrets.some((secret) => rows.includes(secret)) };
   assert.deepEqual(grant.scopes, ['read', 'search']);
   assert.equal((evidence.afterRestart as { tokenInAnyRow: boolean }).tokenInAnyRow, false);
-  evidence.otherInstanceReads = await new ConnectionVault(createCredentialStore(db), 'other-instance').readMcp('row-1');
-  evidence.otherRowReads = await vault().readMcp('row-2');
+  const registry = JSON.stringify(await rpc('mcp.registry.list', {}));
+  evidence.registryRead = { listsRow: registry.includes(row.id), tokenInRead: secrets.some((secret) => registry.includes(secret)) };
+  assert(registry.includes(row.id));
+  assert(!secrets.some((secret) => registry.includes(secret)));
+  evidence.otherInstanceReads = await new ConnectionVault(createCredentialStore(db), 'other-instance').readMcp(row.id);
+  evidence.otherRowReads = await vault().readMcp(`${row.id}-other`);
   assert.equal(evidence.otherInstanceReads, null);
   assert.equal(evidence.otherRowReads, null);
 
-  const existing = createMcpOAuthProvider({ vault: vault(), serverId: 'row-1', preset, generation: 1, redirectUrl: 'http://127.0.0.1:9/callback' });
+  const existing = createMcpOAuthProvider({ vault: vault(), serverId: row.id, preset, generation: 1, redirectUrl: 'http://127.0.0.1:9/callback' });
   const refreshed = await auth(existing.provider, { serverUrl: fake.url, scope: 'read search', resourceMetadataUrl: new URL(`${other.base}/.well-known/oauth-protected-resource/mcp`), fetchFn: existing.fetch });
   evidence.foreign401 = { refreshed, requestsToOtherServer: other.requests.length };
   assert.equal(other.requests.length, 0);
@@ -70,4 +84,4 @@ try {
 const text = JSON.stringify({ testedHead, surface: 'real SDK auth() in an isolated test-daemon process against a loopback fake MCP OAuth server; vault on the daemon database; no connect RPC yet', evidence, resourcesClosed: true }, null, 2);
 assert(!secrets.some((secret) => text.includes(secret)));
 writeFileSync(join(run, 'evidence/mcp-oauth-provider.json'), text);
-console.log('PASS: discovery, DCR and PKCE through the real SDK; grant only in the vault and readable after restart; other instance and row read nothing; foreign 401 reached no other server');
+console.log('PASS: discovery, DCR and PKCE through the real SDK; grant only in the vault and readable after restart; registry read lists the row without tokens; other instance and row read nothing; foreign 401 reached no other server');

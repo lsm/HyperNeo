@@ -8,7 +8,7 @@ type Draft = Partial<Omit<McpGrant, 'generation'>> & { verifier?: string };
 const sameUrl = (a: string | undefined, b: string) =>
   !!a && new URL(a).href.replace(/\/$/, '') === new URL(b).href.replace(/\/$/, '');
 const boundTo = (preset: McpOAuthPreset, binding: McpGrant['binding']) =>
-  sameUrl(binding.resource, preset.url) &&
+  new URL(binding.resource).href === new URL(preset.url).href &&
   sameUrl(binding.authorizationServerUrl, preset.issuer) &&
   sameUrl(binding.authorizationServerMetadata.issuer, preset.issuer) &&
   binding.authorizationServerMetadata.authorization_endpoint === preset.authorizationEndpoint;

@@ -87,6 +87,15 @@ function errorReply(status: number, body: string) {
   return { status, body: JSON.stringify({ error: code }) };
 }
 
+function redirectReply(response: Response, url: URL, init?: RequestInit) {
+  const target = URL.parse(response.headers.get('location') ?? '', url.href);
+  const followable =
+    (init?.method ?? 'GET').toUpperCase() === 'GET' && target?.origin === url.origin;
+  return followable
+    ? new Response(null, { status: response.status, headers: { location: target.href } })
+    : new Response(errorReply(400, '').body, { status: 400 });
+}
+
 function tokenReply(body: string, slack: boolean) {
   const data = parse(body);
   if (!slack) return { status: 200, body };
@@ -136,6 +145,7 @@ export function createMcpFetch(options: {
       tooLarge = error instanceof Error && error.message === 'response_too_large';
       throw new Error(tooLarge ? 'response_too_large' : 'request_failed');
     }
+    if (response.status >= 300 && response.status < 400) return redirectReply(response, url, init);
     const reply =
       response.status >= 400
         ? errorReply(response.status, body)
@@ -143,7 +153,7 @@ export function createMcpFetch(options: {
           ? tokenReply(body, !!options.preset.slackTokens)
           : {
               status: response.status,
-              body: [204, 205, 304].includes(response.status) ? null : body,
+              body: [204, 205].includes(response.status) ? null : body,
             };
     const replyHeaders = new Headers(response.headers);
     replyHeaders.delete('content-length');
