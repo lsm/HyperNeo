@@ -273,12 +273,14 @@ export function createOxapRuntime(
                 if (slot.deleted) throw new Error('Codex session was deleted');
                 const query = engine.createQueryHub(client, {
                   adapter,
+                  harness: isOxapHarness(session.config.harness)
+                    ? session.config.harness
+                    : undefined,
                   onFirstEvent: (event) =>
                     recordOxapInit(
                       client,
                       plan,
                       session,
-                      record && savedOxapAdapter(record),
                       event.payload,
                       db,
                       messageHub,

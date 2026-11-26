@@ -8,8 +8,8 @@ import type { GlobalSettings, ProviderRecord } from '@hyperneo/shared';
 import {
   isOxapHarness,
   OXAP_HARNESSES,
-  oxapHarness,
   type OxapHarnessId,
+  oxapHarness,
 } from '@hyperneo/shared/types/oxap-harnesses';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -19,7 +19,7 @@ import { defineOperation, type OperationDefinition } from '../operations/registr
 import { withProviderLock } from '../rpc-handlers/provider-mutation-lock.ts';
 import type { OxapEngine, OxapEngineOptions } from './oxap-engine.ts';
 import { buildHubConfig, missingSetting, savedOxapAdapter } from './oxap-hub-config.ts';
-import { releaseName, type OxapHubBinary } from './oxap-install.ts';
+import { type OxapHubBinary, releaseName } from './oxap-install.ts';
 
 export interface OxapSettingsDeps {
   readonly settings: () => Pick<GlobalSettings, 'oxapHub'>;
@@ -132,7 +132,7 @@ function hubOptions(
   keys: Record<string, string | undefined>,
   binary: OxapHubBinary
 ): OxapEngineOptions {
-  const hub = buildHubConfig(records, OXAP_HARNESSES, deps.environment, keys);
+  const hub = buildHubConfig(records, OXAP_HARNESSES, deps.environment, keys, deps.stateDirectory);
   if ('reason' in hub) throw new Error(hub.reason);
   return {
     binaryPath: binary.path,
@@ -196,14 +196,14 @@ function planSave(input: Save, records: ProviderRecord[]) {
   const next = records.map((entry) => (entry === record ? { ...entry, configJson } : entry));
   const harness = row ? input.harness : saved?.harness;
   const executable =
-    settings.executable && (harness === 'oxap-codex' || harness === 'oxap-deepseek')
+    settings.executable && settingsRow?.settings.includes('executable') && isOxapHarness(harness)
       ? { path: settings.executable, harness }
       : undefined;
   return { value: { id: record.id, configJson, next, executable } };
 }
 
-function checkHub(plan: Plan, keys: Record<string, string | undefined>) {
-  const hub = buildHubConfig(plan.next, OXAP_HARNESSES, {}, keys);
+function checkHub(plan: Plan, keys: Record<string, string | undefined>, deps: OxapSettingsDeps) {
+  const hub = buildHubConfig(plan.next, OXAP_HARNESSES, {}, keys, deps.stateDirectory);
   return 'reason' in hub ? hub : { value: plan };
 }
 
@@ -220,7 +220,7 @@ const commitSave = (superpipe({})('oxap.settings.commit') as PipelineAPI)
   .pipe((deps: OxapSettingsDeps) => deps.records(), 'deps', 'records')
   .pipe(planSave, ['input', 'records'], 'result:plan')
   .pipe((plan: Plan, deps: OxapSettingsDeps) => readKeys(plan.next, deps), ['plan', 'deps'], 'keys')
-  .pipe(checkHub, ['plan', 'keys'], 'result:plan')
+  .pipe(checkHub, ['plan', 'keys', 'deps'], 'result:plan')
   .pipe(writeSave, ['deps', 'binary', 'plan'], 'saved')
   .pipe((deps: OxapSettingsDeps, _saved: true) => deps.engine.restart(), ['deps', 'saved'], 'done')
   .pipe(() => ({ accepted: true as const }), undefined, 'plan')
@@ -236,7 +236,7 @@ const saveSettings = (superpipe({})('oxap.settings.save') as PipelineAPI)
   .pipe(planSave, ['input', 'records'], 'result:plan')
   .pipe(checkExecutable, 'plan', 'result:plan')
   .pipe((plan: Plan, deps: OxapSettingsDeps) => readKeys(plan.next, deps), ['plan', 'deps'], 'keys')
-  .pipe(checkHub, ['plan', 'keys'], 'result:plan')
+  .pipe(checkHub, ['plan', 'keys', 'deps'], 'result:plan')
   .pipe(readBinary, ['input', 'deps'], 'binary')
   .pipe(
     (input: Save, deps: OxapSettingsDeps, binary: OxapHubBinary | undefined) =>

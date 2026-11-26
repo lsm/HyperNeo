@@ -2,7 +2,6 @@ import { generateUUID, type Session } from '@hyperneo/shared';
 import type { SDKSystemMessage } from '@hyperneo/shared/sdk';
 import type { OxapInitDetails } from '@hyperneo/shared/types/oxap-harnesses';
 import type { OxapHubClient } from './oxap-hub-client.ts';
-import type { savedOxapAdapter } from './oxap-hub-config.ts';
 import { OXAP_VERSION } from './oxap-install.ts';
 import { publishOxapMessage } from './oxap-notice.ts';
 import {
@@ -34,7 +33,6 @@ export async function recordOxapInit(
   client: OxapHubClient,
   plan: OxapOpenPlan,
   session: Session,
-  adapter: ReturnType<typeof savedOxapAdapter> | null,
   eventPayload: unknown,
   db: OxapReopenStore,
   hub: OxapReopenEvents,
@@ -54,11 +52,10 @@ export async function recordOxapInit(
   const runModel = (eventPayload as { model_id?: unknown } | undefined)?.model_id;
   const model = (typeof runModel === 'string' && runModel) || state?.current_model_id;
   const contextWindow = models?.models?.find(({ id }) => id === model)?.context_window;
-  const settings = adapter?.row.entry(adapter.settings, []);
-  const permissionMode =
-    typeof settings?.approval_policy === 'string' ? settings.approval_policy : undefined;
+  const harness = sessionHarness(session);
+  const permissionMode = harness.approvalPolicy;
   const oxap: OxapInitDetails = {
-    client: capabilities?.endpoint?.name || sessionHarness(session).label,
+    client: capabilities?.endpoint?.name || harness.label,
     version: OXAP_VERSION,
     contextWindow,
   };
