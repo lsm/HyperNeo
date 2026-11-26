@@ -217,6 +217,49 @@ test.each([
 );
 
 test.each([
+  { daemon: 'remote-owner', remotes: ['git@github.com:example/repo.git'], accepted: true },
+  { daemon: 'remote-owner', remotes: ['git@github.com:example/other.git'], accepted: false },
+  { daemon: 'other-owner', remotes: ['git@github.com:example/repo.git'], accepted: false },
+])(
+  'checks the reported remote workspace when the worker is outside the list',
+  async ({ daemon, remotes, accepted }) => {
+    const ref = { adapter: 'claude-desktop' as const, daemon: 'remote-owner', id: 'local_worker' };
+    const folder = '/synthetic/worker-repository';
+    const workspace = { machine: 'synthetic', daemon, folder, name: 'Repository', remotes };
+    const resolved = await resolveNeoTodoDraft(
+      { ...draft, target: { verb: 'send', ref }, priority: 'normal' },
+      (candidate) =>
+        resolveNeoTodoTarget(candidate, async (name) => ({
+          kind: 'completed',
+          value:
+            name === 'work.status'
+              ? { ok: true, value: { ref, place: { folder } } }
+              : {
+                  places: [
+                    {
+                      place: workspace,
+                      lastActivityAt: 1,
+                      openCount: 1,
+                      archivedCount: 0,
+                      adapters: [ref.adapter],
+                      work: [],
+                    },
+                  ],
+                  unreachable: [],
+                },
+        }))
+    );
+    if ('reason' in resolved) throw new Error(resolved.reason.reason);
+    const reason = policy.refuse(resolved.value, [], {
+      ask: null,
+      workerRemotes: resolved.value.workerRemotes,
+    });
+    if (accepted) expect(reason).toBeNull();
+    else expect(reason).toContain('worker_repository_mismatch:');
+  }
+);
+
+test.each([
   { succeeds: true, repository: 'repo', accepted: true },
   { succeeds: false, repository: 'repo', accepted: false },
   { succeeds: true, repository: 'old-name', accepted: true },
