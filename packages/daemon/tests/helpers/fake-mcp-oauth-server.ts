@@ -15,6 +15,7 @@ export type FakeMcpOAuthSwitches = {
   stall?: 'headers' | 'body';
   redirectToken?: boolean;
   redirectTokenAway?: boolean;
+  redirectWithoutLocation?: boolean;
   echoError?: 'oauth' | 'raw';
   tokenStatus?: number;
 };
@@ -81,6 +82,11 @@ export async function startFakeMcpOAuthServer(switches: FakeMcpOAuthSwitches = {
     );
     const auth = request.headers.get('authorization') ?? '';
     requests.push({ method: request.method, path: url.pathname, search: url.search, params, auth });
+    if (
+      url.pathname === '/.well-known/oauth-authorization-server' &&
+      switches.redirectWithoutLocation
+    )
+      return new Response(null, { status: 302 });
     if (url.pathname === '/.well-known/oauth-authorization-server' && switches.stall === 'headers')
       await new Promise(() => {});
     if (url.pathname === '/.well-known/oauth-authorization-server' && switches.stall === 'body')

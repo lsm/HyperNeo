@@ -199,6 +199,15 @@ describe('MCP OAuth provider', () => {
     }
   });
 
+  test('a redirect without a Location is not retried as a self-redirect', async () => {
+    fake.switches.redirectWithoutLocation = true;
+    expect((await attemptUrl(presetFor(fake))).consent).toBeUndefined();
+    const hits = fake.requests.filter(
+      (request) => request.path === '/.well-known/oauth-authorization-server'
+    );
+    expect(hits.length).toBe(1);
+  });
+
   test('an unfollowed redirect on a credential request leaks no upstream text', async () => {
     fake.switches.redirectTokenAway = true;
     const failure = await connect().catch((error: Error) => error);
