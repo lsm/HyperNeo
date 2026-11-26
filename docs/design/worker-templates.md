@@ -89,8 +89,9 @@ so a content filter cannot be the boundary. The boundary is the app, and it fail
   its model will see everything these apps show, on every page", written by code, so every
   surface shows it. Approving the card is the consent, per ask. Two paths that skip it today
   close: a todo can no longer claim an app only because the human's message names it
-  (`neoTodoDesktopScope`, `neo/todo-add-operation.ts`), so it must be on the ask's approved
-  card (`neo_asks.desktop_apps`); and an existing Mac grant or Allow all no longer stands in
+  (`neoTodoDesktopScope`, `neo/todo-add-operation.ts`; Neo's step for it in
+  `computer-use/instructions.md` goes too), so it must be on the ask's approved card
+  (`neo_asks.desktop_apps`); and an existing Mac grant or Allow all no longer stands in
   for it, because `readDesktopTodos` (`desktop/opt-in.ts`) treats a todo as allowed only when
   each of its apps is on its ask's card. An app the human should not show in full is not
   approved, and the step goes to the human instead.
