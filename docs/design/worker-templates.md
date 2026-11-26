@@ -148,12 +148,19 @@ of scope. Its text-only desktop results remain untrimmed in this slice.
   the upstream endpoint's own usage.
 - The rule depends only on the request, so it needs no session state, a restart changes
   nothing, and context grows by one line and the model's own text per step, not by a screen.
-- Text the model needs from a screen goes into its own reply or call before its next desktop
-  call when the screen may change; its own text is never collapsed. Otherwise it calls
-  `get_window_state` again.
-- After a failure the failed result belongs to the newest desktop call, so the model sees it in
-  full; it collapses once the model makes its next desktop call, for example a fresh
-  `get_window_state`, whose result then stays in full for the next action.
+- The newest accessibility snapshot must be self-contained, because a collapsed older
+  snapshot takes the map from visible controls to handles with it. A replay of 88 recorded
+  steps showed this: with only a delta current, the worker clicked the wrong Calculator key,
+  and a full current snapshot fixed it. So a session with collapse reads full snapshots:
+  its `get_window_state` ignores `since`. Before an action whose target is not in the
+  newest full snapshot, the worker reads a fresh full snapshot first; the template's
+  instructions say so.
+- Exact text the worker will need goes into its own reply before any action that may remove
+  it from the screen (dismiss, close, navigate); its own text is never collapsed. In the same
+  replay, a one-time receipt was lost without that note and kept with it.
+- The latest failed desktop result stays in full, beside the newest results, until a later
+  desktop action succeeds, so a fresh `get_window_state` after a failure does not hide the
+  failure the worker is recovering from.
 - Nothing is changed in the stored conversation; only the request is.
 
 **Summary size.** The daemon's own compaction (`agent/context-budget-enforcement.ts`,
@@ -202,12 +209,17 @@ never the laptop. System map read for the planned files.
    a point, a drag, a zoom, an app launch, and a call with no target fields; a failure by
    `is_error` and one by `ok: false` keep the reason; a line holds no image and no
    accessibility text; non-desktop turns after a desktop result leave it in full; a parallel
-   batch keeps its non-desktop results; failure, then a fresh `get_window_state`, then the next
-   action collapses the failure and keeps the fresh state; on append-only fixtures, two
+   batch keeps its non-desktop results; failure, then a fresh `get_window_state`, keeps both
+   in full, and the next successful action collapses the failure; `since` on
+   `get_window_state` is ignored in a collapse session; on append-only fixtures, two
    requests one step apart have the same conversation blocks up to the newly collapsed
    result; `count_tokens` measures the collapsed body; the stored conversation is unchanged;
-   both bridges.
-   Estimate: 4 files, 110 lines, 180 test lines.
+   both bridges. Collapse ships off, behind a constant in code, not a setting. A one-line PR turns it on,
+   only after a replay of the
+   recorded Calculator, TextEdit and Safari steps with full current snapshots picks the
+   recorded target at every step whose target is in the current snapshot, with exact
+   next-call agreement reported per task.
+   Estimate: 4 files, 120 lines, 200 test lines.
 4. **Summary size.** Tests: both enqueue sites send the line; a queued `/compact` with text
    dedupes with a plain one and waits for the boundary.
    Estimate: 4 files, 40 lines, 70 test lines.
