@@ -107,9 +107,11 @@ steps:
    which a start row gets). Only a failure marked `notSent` does not count. A `work.start`
    may reuse an existing worker: before dispatch, its existing delivery row records the
    selected reuse ref in `target.ref`, so an interruption or uncertain failure still names that worker. An
-   available delivery key stays on the outcome, including for successful reuse. If a `notSent`
-   candidate is passed over, its ref is replaced for another candidate or cleared before a
-   fresh start. Nor may another todo have adopted the worker. Otherwise none.
+   available delivery key stays on the outcome, including for successful reuse. If a candidate
+   is passed over after `notSent` or a proven pre-send `not_open` or `not_found` rejection,
+   its ref is replaced before dispatch to another candidate or cleared before a fresh start.
+   An ambiguous or interrupted dispatch keeps its ref. Nor may another todo have adopted the
+   worker. Otherwise none.
 
 Adoption leaves no delivery row, its binding in `neo_todo_sessions` is overwritten when the
 todo rebinds, and `neo_todo_roles` is no record either (`unclaimTodoWorker` deletes rows, and
@@ -224,8 +226,9 @@ Eight PRs from `dev`, in order, failing tests first. System map read for the pla
    take step 2 away from every turn of that worker, earlier ones too; so does another todo's
    adoption, also after that todo rebinds elsewhere, is unclaimed or is deleted; two todos
    where an uncertain reused send and its late turn prevent credit to the first todo; a late
-   turn after interruption before acknowledgment also prevents that credit; a `notSent` reuse
-   followed by a fresh start leaves no stale ref; a
+   turn after interruption before acknowledgment also prevents that credit; a `notSent` or
+   unflagged pre-send `not_open` or `not_found` followed by a fresh start leaves no stale ref
+   and the first worker keeps its eligible starting-todo credit; a
    successful reuse propagates its send key; a Codex steer
    gives its todo by `steeredIntoTurnId`; a Claude Desktop relay send without an input id gives
    none by step 1; a worker
