@@ -134,6 +134,20 @@ async function verify(bridge: 'messages' | 'chat', collapseDesktopObservations: 
     const afterFailures = await post(latestRead);
     assert.deepEqual(readResult(afterFailures, 'fail2'), collapseDesktopObservations ? 'click x=0 y=10 failed busy' : full(laterFailure));
     assert.deepEqual(readResult(afterFailures, 'fail3'), full(extraFailure));
+    const unclassified = ['Desktop driver exited before reporting status', '{invalid', '{"reason":"busy"}'];
+    const unknownActions = step(
+      unclassified.map((_, index) => call(`unknown-${index}`, 'click', { x: index })),
+      unclassified.map((content, index) => ({ ...result(`unknown-${index}`), content }))
+    );
+    const afterUnknown = await post([
+      ...before,
+      ...unknownActions,
+      ...step([call('fresh-read', 'list_windows')], [result('fresh-read')]),
+    ]);
+    for (const [index, content] of unclassified.entries()) {
+      assert.equal(readResult(afterUnknown, `unknown-${index}`), collapseDesktopObservations ? `click x=${index} unknown` : content);
+    }
+    assert.deepEqual(readResult(afterUnknown, 'fail'), full(failure));
     for (const [id, line] of [
       ['list', 'list_windows ok'],
       ['drag', 'drag from_x=5 from_y=0 to_x=7 to_y=8 ok'],
