@@ -74,9 +74,7 @@ export class OperationMcpHttpServer {
   }
 
   private authenticate(request: Request) {
-    const credential = /^Bearer ([A-Za-z0-9_-]{43})$/i.exec(
-      request.headers.get('authorization') ?? ''
-    );
+    const credential = request.headers.get('authorization')?.match(/^Bearer ([A-Za-z0-9_-]{43})$/i);
     if (!credential) return undefined;
     const bearer = Buffer.from(credential[1]);
     let matched: Grant | undefined;
