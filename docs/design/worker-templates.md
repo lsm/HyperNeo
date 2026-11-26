@@ -93,7 +93,11 @@ so a content filter cannot be the boundary. The boundary is the app, and it fail
   `computer-use/instructions.md` goes too), so it must be on the ask's approved card
   (`neo_asks.desktop_apps`); and an existing Mac grant or Allow all no longer stands in
   for it, because `readDesktopTodos` (`desktop/opt-in.ts`) treats a todo as allowed only when
-  each of its apps is on its ask's card. An app the human should not show in full is not
+  each of its apps is on its ask's card with the disclosure. The propose path that writes the
+  line also writes `"seen": "all"` into each app entry of `neo_asks.desktop_apps`; the line and
+  the mark come from the same code, so a card has both or neither. A card created before
+  this change, approved or pending, has no mark and does not count: its todos are refused
+  with `desktop_consent_outdated`, and Neo proposes a fresh card. No migration. An app the human should not show in full is not
   approved, and the step goes to the human instead.
 
 On top of that, and only as a second line, the accessibility text of each result is matched
@@ -155,7 +159,9 @@ never the laptop. System map read for the planned files.
    another todo and the reverse; `Read` of a protected file is refused; a result whose
    accessibility text holds a token shape comes back with a marker and no screenshot; a todo
    claiming an app only by the human's message is refused; a capture for an app the Mac
-   allows but the ask's card does not list is refused; the card shows the visibility line.
+   allows but the ask's card does not list is refused; the card shows the visibility line; a
+   todo under an approved card without the mark, and one under a pending card created before
+   the change, are refused until a fresh card is approved.
    Estimate: 10 files, 190 lines, 270 test lines.
 2. **Top-level desktop tools and timing.** The template adds the catalog tools. Tests: the
    template session lists them and no Bash; a call reaches `desktop.call` with the same
