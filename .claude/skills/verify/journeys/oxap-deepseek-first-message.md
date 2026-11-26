@@ -37,6 +37,10 @@ daemon-owned home without a managed credential file, and deliver a chat reply.
 The served document must contain the provider ID and no key values. These
 modes exercise OXAP routing without contacting OpenCode Go.
 
+With `routed-missing-key`, save the OpenCode Go route and omit its environment
+key. Check that the provider is no longer ready for OXAP and that creating a
+chat returns a refusal naming `OPENCODE_API_KEY`.
+
 With `routed-web`, use the browser setup above to save the setting in Providers,
 reload to check the saved setting and official API key field, and select DeepSeek
 V4 Pro in the new chat picker without an official key. The fixture then sends a

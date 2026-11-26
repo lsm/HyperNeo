@@ -18,7 +18,7 @@ import { answerCodexProbeLocally, serveLocalRelease } from './oxap-codex-provide
 const [binary, version, sha256, ...args] = process.argv.slice(2);
 const mode = args.length === 2 ? args[0] : 'first';
 const runArgument = args.at(-1)!;
-assert(['first', 'routed', 'routed-with-key', 'routed-web', 'recovery', 'pending', 'flash', 'image', 'flash-web', 'pro-web', 'flash-recovery', 'sdk-default', 'locked-recovery', 'refused-reopen', 'first-open-retry', 'no-replay'].includes(mode));
+assert(['first', 'routed', 'routed-with-key', 'routed-web', 'routed-missing-key', 'recovery', 'pending', 'flash', 'image', 'flash-web', 'pro-web', 'flash-recovery', 'sdk-default', 'locked-recovery', 'refused-reopen', 'first-open-retry', 'no-replay'].includes(mode));
 const run = resolve(runArgument);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -27,6 +27,7 @@ assert.deepEqual(await checkOxapBinary(binary, { version, sha256 }), { ok: true 
 const workspace = join(run, 'workspace');
 const peer = join(run, 'dsh');
 const routed = mode.startsWith('routed');
+const missingRouteKey = mode === 'routed-missing-key';
 mkdirSync(workspace);
 if (routed) writeFileSync(join(workspace, 'verify-model-provider'), '');
 const nativePromptCount = join(workspace, 'verify-native-prompt-count');
@@ -53,7 +54,7 @@ const boot = () => createDaemonApp({
   verbose: false,
 });
 let app = await boot();
-if (routed) {
+if (routed && !missingRouteKey) {
   Object.assign(app.oxapSettings, {
     environment: { ...process.env, OPENCODE_API_KEY: 'synthetic-route-proof', DSH_HOME: join(run, 'home') },
   });
@@ -98,7 +99,7 @@ async function runBrowser(hub: MessageHub, script: string, ...args: string[]) {
     preview.stop(true);
   }
 }
-try {
+async function verify() {
   let hub = new MessageHub({ defaultSessionId: 'global' });
   hub.registerTransport(transport);
   await transport.initialize();
@@ -142,11 +143,23 @@ try {
   const withImage = mode === 'image' || mode === 'flash-web';
   const model = flash ? 'deepseek-v4-flash' : 'deepseek-v4-pro';
   const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a4NEAAAAASUVORK5CYII=';
-  const { sessionId } = await hub.request<{ sessionId: string }>('session.create', {
+  const create = () => hub.request<{ sessionId: string }>('session.create', {
     workspacePath: workspace,
     title: 'Synthetic DeepSeek first message',
     config: { provider: 'deepseek', model },
   });
+  if (missingRouteKey) {
+    const { providers } = await hub.request<{ providers: { providerId: string; readyHarnesses: string[] }[] }>('providers.list', { forNewSession: true });
+    const deepseek = providers.find(({ providerId }) => providerId === 'deepseek');
+    assert(deepseek);
+    evidence.readyHarnesses = deepseek.readyHarnesses;
+    await assert.rejects(create(), /OPENCODE_API_KEY/, 'Session creation must refuse the missing OpenCode Go key');
+    assert.deepEqual(deepseek.readyHarnesses, []);
+    Object.assign(evidence, { refused: 1, pass: true });
+    console.log(JSON.stringify(evidence));
+    return;
+  }
+  const { sessionId } = await create();
   if (mode === 'first-open-retry') {
     assert(!app.db.getSession(sessionId)?.sdkSessionId);
     await app.db.saveUserMessage(sessionId, {
@@ -374,6 +387,9 @@ try {
 
   Object.assign(evidence, { opened: 1, firstMessageReplies: replies.length, modelSwitch, pass: true });
   console.log(JSON.stringify(evidence));
+}
+try {
+  await verify();
 } finally {
   await transport.close();
   await app.cleanup();
