@@ -215,6 +215,21 @@ async function verify() {
     ...(go ? { harness } : {}),
     config: { provider: providerId, model },
   });
+  if (mode === 'routed' || mode === 'routed-with-key') {
+    const createSdk = () => hub.request<{ sessionId: string }>('session.create', {
+      workspacePath: workspace,
+      title: 'Synthetic DeepSeek Claude Code override',
+      harness: 'sdk',
+      config: { provider: 'deepseek', model },
+    });
+    if (mode === 'routed') {
+      await assert.rejects(createSdk(), /Claude Code needs DEEPSEEK_API_KEY/);
+      evidence.sdkWithoutOfficialKeyRefused = true;
+    } else {
+      assert((await createSdk()).sessionId);
+      evidence.sdkWithOfficialKeyAccepted = true;
+    }
+  }
   if (missingRouteKey) {
     const { providers } = await hub.request<{ providers: { providerId: string; readyHarnesses: string[] }[] }>('providers.list', { forNewSession: true });
     const deepseek = providers.find(({ providerId }) => providerId === 'deepseek');

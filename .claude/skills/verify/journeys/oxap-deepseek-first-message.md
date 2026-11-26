@@ -36,6 +36,8 @@ require the local dsh peer to receive the translated endpoint and key, use the
 daemon-owned home without a managed credential file, and deliver a chat reply.
 The served document must contain the provider ID and no key values. These
 modes exercise OXAP routing without contacting OpenCode Go.
+The same runs also exercise an explicit Claude Code override. Creation is
+refused without the official DeepSeek key and succeeds with it.
 
 With `routed-missing-key`, save the OpenCode Go route and omit its environment
 key. Check that the provider is no longer ready for OXAP and that creating a
