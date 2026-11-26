@@ -426,7 +426,9 @@ export class AgentSession
         };
       },
       this.recordOperationRefusal,
-      this.operationCallerIdentity().role,
+      this.session.config.toolProfile === 'desktop'
+        ? 'desktop'
+        : this.operationCallerIdentity().role,
     ];
   }
 

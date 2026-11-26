@@ -66,10 +66,8 @@ export class OperationMcpHttpServer {
   async close() {
     this.closed = true;
     const revocations = [...this.grants.keys()].map((id) => this.revoke(id));
-    await this.listener?.then(
-      (listener) => listener.stop(true),
-      () => {}
-    );
+    const listener = await this.listener?.catch(() => undefined);
+    listener?.stop(true);
     await Promise.all(revocations);
   }
 

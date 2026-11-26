@@ -389,7 +389,9 @@ export function createNeoAskRecordOperations(
               topic: input.topic ?? null,
               request: input.request,
               createdAt: now,
-              ...(desktop ? { desktopApps: desktop.value } : {}),
+              ...(desktop
+                ? { desktopApps: desktop.value.map((app) => ({ ...app, seen: 'all' })) }
+                : {}),
             });
             openHumanCard(
               store,

@@ -4,6 +4,7 @@ import NodeWebSocket from 'ws';
 const DEFAULT_CONNECT_TIMEOUT_MS = 5000;
 const DEFAULT_PROBE_REQUEST_TIMEOUT_MS = 4000;
 const CONNECT_FAILURE_MEMORY_MS = 60_000;
+const PAIRED_DAEMON_PREFIX = 'paired:';
 
 export class RemoteNotSentError extends Error {
   readonly name = 'RemoteNotSentError';
@@ -46,13 +47,21 @@ export interface DaemonAttachment {
 }
 
 export interface RemoteDaemonSecrets {
-  save(daemonId: string, url: string, credential: string, now: number): Promise<void>;
+  save(
+    daemonId: string,
+    url: string,
+    credential: string,
+    now: number,
+    peerDaemonId?: string
+  ): Promise<void>;
   credentialFor(daemonId: string, url: string): string | null;
+  routesForPeer(peerDaemonId: string): DaemonAttachment[];
   remove(daemonId: string): Promise<void>;
 }
 
 export class RemoteDaemonRegistry {
   private readonly urls = new Map<string, string>();
+  private localDaemonId: string | undefined;
   private persist: ((attachments: DaemonAttachment[]) => void) | null = null;
   private secrets: RemoteDaemonSecrets | null = null;
   private readonly attempts = new Map<string, RemoteAttempt>();
@@ -72,15 +81,28 @@ export class RemoteDaemonRegistry {
   restore(
     attachments: readonly DaemonAttachment[],
     persist: (attachments: DaemonAttachment[]) => void,
-    secrets: RemoteDaemonSecrets
+    secrets: RemoteDaemonSecrets,
+    localDaemonId?: string
   ): void {
     for (const { daemonId, url } of attachments) this.urls.set(daemonId, url);
     this.persist = persist;
     this.secrets = secrets;
+    this.localDaemonId = localDaemonId;
   }
 
-  async attach(daemonId: string, url: string, credential?: string): Promise<void> {
-    if (credential) await this.secrets?.save(daemonId, url, credential, this.now());
+  get replyDaemonId(): string {
+    if (this.localDaemonId === undefined)
+      throw new Error('Daemon identity has not been initialized');
+    return `${PAIRED_DAEMON_PREFIX}${this.localDaemonId}`;
+  }
+
+  async attach(
+    daemonId: string,
+    url: string,
+    credential?: string,
+    peerDaemonId?: string
+  ): Promise<void> {
+    if (credential) await this.secrets?.save(daemonId, url, credential, this.now(), peerDaemonId);
     this.urls.set(daemonId, url);
     this.forget(daemonId);
     this.persist?.(this.list());
@@ -88,6 +110,18 @@ export class RemoteDaemonRegistry {
 
   list(): DaemonAttachment[] {
     return [...this.urls].map(([daemonId, url]) => ({ daemonId, url }));
+  }
+
+  private route(id: string): string | undefined {
+    if (!id.startsWith(PAIRED_DAEMON_PREFIX)) return this.urls.has(id) ? id : undefined;
+    const matches = this.secrets
+      ?.routesForPeer(id.slice(PAIRED_DAEMON_PREFIX.length))
+      .filter(({ daemonId, url }) => this.urls.get(daemonId) === url);
+    return matches?.length === 1 ? matches[0].daemonId : undefined;
+  }
+
+  has(id: string): boolean {
+    return this.route(id) !== undefined;
   }
 
   async detach(daemonId: string): Promise<boolean> {
@@ -190,13 +224,15 @@ export class RemoteDaemonRegistry {
   ): Promise<unknown> => this.request(daemonId, 'operation.invoke', { name, input }, options);
 
   readonly request = async (
-    daemonId: string,
+    id: string,
     method: string,
     data: unknown,
     options?: { timeoutMs?: number }
   ): Promise<unknown> => {
-    const url = this.urls.get(daemonId);
-    if (url === undefined) throw new RemoteNotSentError(`No attached daemon: ${daemonId}`);
+    const daemonId = this.route(id);
+    const url = daemonId === undefined ? undefined : this.urls.get(daemonId);
+    if (daemonId === undefined || url === undefined)
+      throw new RemoteNotSentError(`No attached daemon: ${id}`);
     const failed = this.connectFailures.get(daemonId);
     if (failed && this.now() - failed.at < CONNECT_FAILURE_MEMORY_MS)
       throw new RemoteNotSentError(

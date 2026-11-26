@@ -101,6 +101,7 @@ export interface CreateSessionParams {
   currentTaskId?: string;
   promptProvenance?: SessionMetadata['promptProvenance'];
   toolProfile?: SessionToolProfile;
+  workerTemplate?: string;
 }
 
 export class SessionLifecycle {
@@ -274,6 +275,7 @@ export class SessionLifecycle {
         ...(params.toolProfile ? { toolProfile: params.toolProfile } : {}),
       },
       metadata: {
+        ...(params.workerTemplate ? { workerTemplate: params.workerTemplate } : {}),
         ...(params.executionProjectPath
           ? { executionProjectPath: params.executionProjectPath }
           : {}),

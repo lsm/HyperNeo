@@ -1,4 +1,5 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import desktopCatalog from '../desktop/tool-catalog.json' with { type: 'json' };
 import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
 import {
   createOperationMcpHandler,
@@ -29,7 +30,7 @@ type OperationMcpRegistration = [
   registry: OperationRegistrySource,
   resolveCaller: (operation: string) => CallerIdentity | Promise<CallerIdentity>,
   recordRefusal?: (refusal: OperationRefusal) => void | Promise<void>,
-  descriptionRole?: OperationCallerRole,
+  descriptionRole?: OperationCallerRole | 'desktop',
 ];
 
 export function registerOperationMcpTools(
@@ -56,18 +57,19 @@ export function registerOperationMcpTools(
         family.actions.length === 1
           ? z.object({ input: z.looseObject({}), action: z.never().optional() })
           : z.object({ action: z.enum(family.actions), input: z.looseObject({}) });
-      register(
-        family.name,
-        residentToolDescription(family, operations),
-        schema.shape,
-        async (args) => {
-          const input = schema.parse(args);
-          const action =
-            'action' in input && typeof input.action === 'string'
-              ? input.action
-              : family.actions[0];
-          return invoke({ name: residentOperation(family, action), input: input.input });
-        }
+      const run = async (args: unknown) => {
+        const { action, input } = schema.parse(args);
+        return invoke({ name: residentOperation(family, action ?? family.actions[0]), input });
+      };
+      register(family.name, residentToolDescription(family, operations), schema.shape, run);
+    }
+  } else if (descriptionRole === 'desktop') {
+    for (const { name, description, inputSchema } of desktopCatalog) {
+      const schema = z.fromJSONSchema(
+        inputSchema as unknown as z.core.JSONSchema.JSONSchema
+      ) as z.ZodObject;
+      register(name, description, schema.shape, (args) =>
+        invoke({ name: 'desktop.call', input: { tool: name, args } })
       );
     }
   }

@@ -46,6 +46,7 @@ export interface NeoTopicLabel {
 }
 
 export interface NeoDesktopApp {
+  seen?: 'all';
   bundleId: string;
   name: string;
 }

@@ -1203,6 +1203,8 @@ export class QueryRunner {
           optionsBuilder.getEffectiveThinkingLevel()
         );
         setKeyBridgeThinkingOff(session.id, queryOptions.thinking?.type === 'disabled');
+        if (session.config.toolProfile === 'desktop')
+          providerEnvVars = { ...providerEnvVars, ENABLE_TOOL_SEARCH: 'false' };
         const extraProviderManagedEnvVars = NON_ANTHROPIC_PREFIX_PROVIDER_VARS.filter(
           (key) => providerEnvVars[key] !== undefined
         );

@@ -72,20 +72,26 @@ export const resolveNeoTodoTarget = (superpipe({})('neo.todo.resolve-target') as
     async (target: Result, invoke: Invoke): Promise<Result> => {
       if ('reason' in target || !target.value.daemon || target.place?.remotes?.length)
         return target;
+      const folder = target.place?.folder;
       const found = await invoke('work.find', {
         idPrefix: target.value.id,
+        ...(folder ? { folder } : {}),
         adapters: [target.value.adapter],
         includeClosed: true,
         limit: 50,
       });
       const result = found.kind === 'completed' && FindWorkResultSchema.safeParse(found.value);
-      const worker =
-        result && result.success
-          ? result.data.places
-              .flatMap((place) => place.work)
-              .find((work) => work.ref.id === target.value.id && sameOwner(work.ref, target.value))
-          : undefined;
-      return { ...target, place: { ...target.place, remotes: worker?.place.remotes } };
+      if (!result || !result.success) return target;
+      const worker = result.data.places
+        .flatMap((group) => group.work)
+        .find((work) => work.ref.id === target.value.id && sameOwner(work.ref, target.value));
+      const workspace = folder
+        ? result.data.places
+            .flatMap((group) => group.workspaces ?? [group.place])
+            .find((place) => place.daemon === target.value.daemon && place.folder === folder)
+        : undefined;
+      const remotes = worker?.place.remotes ?? workspace?.remotes;
+      return { ...target, place: { ...target.place, remotes } };
     },
     ['target', 'invoke'],
     'target'

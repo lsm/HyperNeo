@@ -98,6 +98,7 @@ export interface WorkVerbDeps {
   health?: () => Record<string, DriverHealth> | Promise<Record<string, DriverHealth>>;
   remote: RemoteDaemons;
   daemonName: string;
+  qualifyReplyOrigin?: (from: string) => string;
   freeWorkers?: (
     adapter: string,
     todoId?: string,
@@ -106,6 +107,7 @@ export interface WorkVerbDeps {
     | ReadonlySet<string>
     | ReadonlyMap<string, WorkerReuseFacts>
     | Promise<ReadonlySet<string> | ReadonlyMap<string, WorkerReuseFacts>>;
+  workerTemplate?: (ref: WorkRef) => string | undefined;
   reusePolicy?: (
     adapter: string,
     todoId: string | undefined,
@@ -539,6 +541,10 @@ function withTodoRecords<T>(outcome: Result<T>, records: string[]): Result<T> {
     : outcome;
 }
 
+function qualifyWorkOrigin(from: string, deps: WorkVerbDeps): string {
+  return deps.qualifyReplyOrigin?.(from) ?? qualifyRemoteOrigin(from, deps.daemonName);
+}
+
 export function workReplyInput<
   T extends StartInput | SendInput | z.infer<typeof WithdrawWorkInputSchema>,
 >(input: T, from: string, caller: OperationCaller, deps: WorkVerbDeps): T {
@@ -550,7 +556,7 @@ export function workReplyInput<
     ...input,
     message: withReplyLine(
       input.message,
-      remote ? qualifyRemoteOrigin(from, deps.daemonName) : from,
+      remote ? qualifyWorkOrigin(from, deps) : from,
       'cli',
       'ref' in input ? `${adapter}:${input.ref.id}` : undefined
     ),
@@ -763,7 +769,7 @@ export async function startWork(
               .map(({ daemon: _daemon, ...ref }) => ref),
           }
         : {}),
-      from: qualifyRemoteOrigin(from, deps.daemonName),
+      from: qualifyWorkOrigin(from, deps),
     },
     StartWorkResultSchema,
     deps.remote,
@@ -818,7 +824,8 @@ export async function reuseIdleWorker(
     : undefined;
   if (input.preparation && !context) return null;
   const assigned = context?.roles.find((row) => row.role === role);
-  if (todoId && assigned && assigned.adapter !== adapter.id) {
+  const workerTemplate = caller.source === 'internal' ? caller.workerTemplate : undefined;
+  if (!workerTemplate && todoId && assigned && assigned.adapter !== adapter.id) {
     const priorAdapter = deps.adapters().find((candidate) => candidate.id === assigned.adapter);
     const priorContext = await deps.roleContext?.(
       todoId,
@@ -843,9 +850,12 @@ export async function reuseIdleWorker(
   }
   const matches = (id: string) => {
     const entry = context?.preparations.find((item) => item.id === id);
-    return context
-      ? !!entry && matchingPreparation(entry.preparation, input.preparation, context.perRoundFields)
-      : true;
+    return (
+      deps.workerTemplate?.({ adapter: adapter.id, id }) === workerTemplate &&
+      (!context ||
+        (!!entry &&
+          matchingPreparation(entry.preparation, input.preparation, context.perRoundFields)))
+    );
   };
   const previous = context?.roles.find((row) => row.role === role && row.adapter === adapter.id);
   const prior = previous && matches(previous.id) ? previous : undefined;
@@ -1140,7 +1150,7 @@ export async function sendWork(
       message: input.message,
       ...(input.mode ? { mode: input.mode } : {}),
       ...idempotency,
-      from: qualifyRemoteOrigin(from, deps.daemonName),
+      from: qualifyWorkOrigin(from, deps),
     },
     SendWorkResultSchema,
     deps.remote,
@@ -1435,7 +1445,7 @@ async function changeQueuedInput(
   const forwarded = {
     ...input,
     ref: localRef(input.ref),
-    from: qualifyRemoteOrigin(from, deps.daemonName),
+    from: qualifyWorkOrigin(from, deps),
   };
   const result =
     'message' in input

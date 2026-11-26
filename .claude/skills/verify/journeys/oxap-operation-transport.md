@@ -9,7 +9,8 @@ bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
 
 The proof starts an isolated daemon and attaches an MCP client to each of two
 chat grants. It compares the HTTP and Claude SDK tool catalogs, discovery
-results and audited operation refusal. It checks that swapping bearers is
+results and audited operation refusal. Catalog parity covers ordinary chats,
+Neo, and the desktop tool profile. It checks that swapping bearers is
 refused, and exercises the Origin, Host, media type and body size checks.
 
 An MCP detach leaves its chat grant usable. Archiving and deleting the chat

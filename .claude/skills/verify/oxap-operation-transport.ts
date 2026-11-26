@@ -16,7 +16,7 @@ const app = await createDaemonApp({
   config: { ...getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), disableWorktrees: true },
   verbose: false,
 });
-const counts = { catalog: 0, neoCatalog: 0, calls: 0, refusals: 0, detach: 0, shutdown: 0 };
+const counts = { catalog: 0, neoCatalog: 0, desktopCatalog: 0, calls: 0, refusals: 0, detach: 0, shutdown: 0 };
 const clients: Client[] = [];
 let stopped = false;
 try {
@@ -69,6 +69,15 @@ try {
   assert.deepEqual(neoTools, wire((await (await connectClaude(neoSession)).listTools()).tools));
   assert(neoTools.length > 1, 'Neo sees resident tools');
   counts.neoCatalog = neoTools.length;
+  const desktopId = await manager.createSession({ title: 'Desktop catalog', toolProfile: 'desktop' });
+  const desktopSession = await manager.getSessionForControl(desktopId);
+  assert(desktopSession);
+  const desktopGrant = await manager.grantOperationMcp(desktopId);
+  const desktopTools = (await (await connect(desktopGrant.bearer)).client.listTools()).tools;
+  assert.deepEqual(desktopTools, wire((await (await connectClaude(desktopSession)).listTools()).tools));
+  assert(desktopTools.some(({ name }) => name === 'get_window_state'));
+  counts.desktopCatalog = desktopTools.length;
+
   const invoke = (name: string, input = {}) => ({ name: 'invoke', arguments: { name, input } });
   for (const call of [
     invoke('operations.list'),

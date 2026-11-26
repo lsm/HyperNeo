@@ -42227,7 +42227,7 @@
             "type": "object"
           },
           "desktopApps": {
-            "description": "Bundle ids of the apps on this Mac this todo drives. Each must be on its ask’s approved proposal card, or named by the human message in input. Only this todo gets them. For any other app, propose a new ask with desktopApps.",
+            "description": "Bundle ids of the apps on this Mac this todo drives. Each must be on its ask’s approved proposal card with the visibility disclosure. Only this todo gets them. For any other app, propose a new ask with desktopApps.",
             "items": {
               "pattern": "^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$",
               "type": "string"

@@ -13,11 +13,10 @@ Before you add a todo that needs an app:
 1. Tell the human in one short line that a dialog on their Mac will ask to let
    HyperNeo control that app, and that they should choose Allow.
 2. Call desktop.access.request {app}, with the bundle id or the English app name.
-3. ok: it returns the bundleId; pass it in desktopApps. If the human's message
-   asks for the app by name ("use Chrome"), add the todo with input and
-   desktopApps. If the app is only mentioned, or the intent is unclear, propose
-   the work with desktopApps and add each todo with its apps after yes. Use a
-   local HyperNeo worker and leave desktopControl out.
+3. ok: propose the work with the returned bundleId in desktopApps. After the
+   human approves the card, add each todo with its apps. Use a local HyperNeo
+   worker and leave desktopControl out.
+   desktop_consent_outdated: propose a fresh card with desktopApps and wait for yes.
    owner_declined: take another route or hand the step to the human.
    waiting_for_owner: tell the human the dialog may be behind other windows,
    then call again. app_not_found: ask the human which app they mean.

@@ -11,6 +11,7 @@ import {
   desktopAllowed,
   desktopAllowedRow,
   desktopApps,
+  desktopConsent,
   readDesktopTodos,
   type DesktopTodoRow,
 } from './opt-in.ts';
@@ -43,10 +44,12 @@ type Facts = {
   workDir: string | null;
   finished?: boolean;
   ambiguous?: boolean;
+  consentOutdated?: boolean;
 };
 
 export function decideDesktopCall(facts: Facts) {
   if (!facts.todo && facts.ambiguous) return refuse('todo_ambiguous');
+  if (!facts.todo && facts.consentOutdated) return refuse('desktop_consent_outdated');
   if (!facts.todo && facts.finished) return refuse('todo_not_active');
   if (!facts.todo || !facts.workDir) return refuse('desktop_not_enabled');
   return {
@@ -56,6 +59,24 @@ export function decideDesktopCall(facts: Facts) {
       workDir: facts.workDir,
       apps: desktopApps(facts.todo),
     },
+  };
+}
+
+const SECRET_SHAPE =
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{12,}|github_pat_[A-Za-z0-9_]{12,}|xox[a-z]-[A-Za-z0-9-]{12,}|AKIA[A-Z0-9]{16})\b/;
+
+function redactDesktopResult(reply: z.infer<typeof DesktopDispatchReply>) {
+  const text = reply.content?.some(
+    (block) =>
+      block.type === 'text' && typeof block.text === 'string' && SECRET_SHAPE.test(block.text)
+  );
+  if (!text && !SECRET_SHAPE.test(JSON.stringify(reply.structuredContent ?? null))) return reply;
+  return {
+    ...reply,
+    content: [
+      { type: 'text', text: 'Desktop observation redacted because it contains a possible secret.' },
+    ],
+    structuredContent: undefined,
   };
 }
 
@@ -89,10 +110,14 @@ export function createDesktopCallOperation(
         const rows = readDesktopTodos(db, worker);
         const todo = desktopAllowed(rows, worker);
         const active = rows.filter((row) => row.active);
+        const doing = active.filter((row) => row.doing);
+        const eligible = doing.length ? doing : rows.filter((row) => row.open);
         return {
           todo,
-          ambiguous:
-            !active.some((row) => row.doing) && active.filter(desktopAllowedRow).length > 1,
+          ambiguous: !doing.length && active.filter(desktopAllowedRow).length > 1,
+          consentOutdated: eligible.some(
+            (row) => desktopConsent(row) === 'desktop_consent_outdated'
+          ),
           finished: !todo && !active.length && rows.some((row) => row.finished),
           worker,
           workDir: session?.worktree?.worktreePath ?? session?.workspacePath ?? null,
@@ -143,7 +168,10 @@ export function createDesktopCallOperation(
             dispatched: reply.dispatched,
           }),
         });
-        return { ...reply, ok: reply.decision === 'allowed' && reply.reason === null };
+        return {
+          ...redactDesktopResult(reply),
+          ok: reply.decision === 'allowed' && reply.reason === null,
+        };
       },
       ['input', 'outcome', 'reply', 'caller'],
       'outcome'
