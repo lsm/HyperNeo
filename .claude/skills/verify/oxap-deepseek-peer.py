@@ -13,8 +13,19 @@ if sys.argv[1:] == ['--help']:
     print('Usage: dsh [--profile] <name> [options]')
     sys.exit(0)
 
-assert sys.argv[1:] == ['--profile', 'sdk']
-if os.path.exists('verify-model-provider'):
+provider = 'deepseek-official'
+if sys.argv[3:4] == ['--patch']:
+    assert sys.argv[1:3] == ['--profile', 'sdk'] and len(sys.argv) == 5
+    with open(sys.argv[4]) as overlay:
+        patches = json.load(overlay)
+    routes = next(patch['config']['providers'] for patch in patches if patch['id'] == 'llm-pi-ai')
+    provider = 'opencode-go'
+    assert routes[provider]['baseURL'] == 'https://opencode.ai/zen/go/v1'
+    assert routes[provider]['apiKeyEnv'] == 'OPENCODE_API_KEY'
+    assert os.environ.get('OPENCODE_API_KEY') == 'synthetic-opencode-go-proof'
+    assert 'DEEPSEEK_API_KEY' not in os.environ
+elif os.path.exists('verify-model-provider'):
+    assert sys.argv[1:] == ['--profile', 'sdk']
     assert 'OPENCODE_API_KEY' not in os.environ
     assert os.environ.get('DEEPSEEK_API_KEY') == 'synthetic-route-proof'
     with open('verify-model-provider') as fixture:
@@ -28,6 +39,7 @@ if os.path.exists('verify-model-provider'):
     assert os.path.isdir(home)
     assert not os.path.lexists(os.path.join(home, '.credentials.yaml'))
 else:
+    assert sys.argv[1:] == ['--profile', 'sdk']
     assert os.environ.get('DEEPSEEK_API_KEY') == 'synthetic-deepseek-proof'
 
 lease = None
@@ -50,7 +62,7 @@ for line in sys.stdin:
     request = json.loads(line)
     method = request["method"]
     if method == "initialize":
-        assert request["params"]["provider"] == "deepseek-official"
+        assert request["params"]["provider"] == provider
         model = request["params"]["model"]
         assert request["params"]["cwd"] == os.getcwd()
         emit(id=request["id"], result={
@@ -109,7 +121,7 @@ for line in sys.stdin:
             "message": {
                 "id": f"assistant-{turn_id}", "role": "assistant",
                 "source": {
-                    "kind": "model", "model": model, "provider": "deepseek-official",
+                    "kind": "model", "model": model, "provider": provider,
                 },
                 "content": [{"type": "text", "text": reply}],
             },

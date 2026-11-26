@@ -1,4 +1,4 @@
-import { isAbsolute } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import type { ProviderRecord } from '@hyperneo/shared';
 import {
   OXAP_HARNESSES,
@@ -42,7 +42,7 @@ export function savedOxapAdapter(
   );
   if (!entry || missingSetting(entry[1], settings)) return undefined;
   const [harness, row] = entry;
-  const modelProvider = row.adapter === 'deepseek' ? oxapModelProvider(settings) : undefined;
+  const modelProvider = harness === 'oxap-deepseek' ? oxapModelProvider(settings) : undefined;
   return { harness, row, settings, modelProvider };
 }
 
@@ -61,7 +61,7 @@ export function buildHubConfig(
   harnesses: Readonly<Record<string, OxapHarness>>,
   environment: Readonly<Record<string, string | undefined>>,
   keys: Readonly<Record<string, string | undefined>>,
-  routedDeepSeekHome?: string
+  stateDirectory: string
 ): { value: OxapHubConfig } | { reason: string } {
   const config: OxapHubConfig = { adapters: {}, environment: {} };
   const owners: Record<string, string> = {};
@@ -69,27 +69,28 @@ export function buildHubConfig(
     const saved = savedOxapAdapter(record, harnesses);
     if (!saved || deepSeekModelProviderRefusal(saved.modelProvider)) continue;
     const { row, settings, modelProvider } = saved;
+    const keyName = modelProvider ? 'OPENCODE_API_KEY' : row.key;
+    const key = modelProvider ? environment.OPENCODE_API_KEY : keys[record.providerId];
+    if (modelProvider && !key?.trim()) continue;
     const names: string[] = [];
     for (const name of row.environment) {
-      const value = name === 'DSH_HOME' && modelProvider ? routedDeepSeekHome : environment[name];
+      const value =
+        name === 'DSH_HOME' && modelProvider ? join(stateDirectory, 'dsh') : environment[name];
       if (value === undefined) continue;
       config.environment[name] = value;
       names.push(name);
     }
-    if (modelProvider && environment.OPENCODE_API_KEY !== undefined) {
-      config.environment.OPENCODE_API_KEY = environment.OPENCODE_API_KEY;
-    }
-    if (!modelProvider && row.key && keys[record.providerId] !== undefined) {
-      const owner = owners[row.key];
-      if (owner && config.environment[row.key] !== keys[record.providerId])
+    if (keyName && key !== undefined) {
+      const owner = owners[keyName];
+      if (owner && config.environment[keyName] !== key)
         return {
-          reason: `${owner} and ${record.providerId} both set ${row.key} to different keys`,
+          reason: `${owner} and ${record.providerId} both set ${keyName} to different keys`,
         };
-      owners[row.key] = record.providerId;
-      config.environment[row.key] = keys[record.providerId]!;
-      names.push(row.key);
+      owners[keyName] = record.providerId;
+      config.environment[keyName] = key;
+      if (!modelProvider) names.push(keyName);
     }
-    config.adapters[record.providerId] = row.entry(settings, names);
+    config.adapters[record.providerId] = row.entry(settings, names, stateDirectory);
   }
   return { value: config };
 }

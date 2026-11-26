@@ -1002,7 +1002,8 @@ export function ProvidersSettings() {
                 const hasExecutableField =
                   executableHarness?.settings.includes('executable') ?? false;
                 const codexExecutable = executableHarness?.adapter === 'codex';
-                const hasModelProviderField = executableHarness?.adapter === 'deepseek';
+                const hasModelProviderField =
+                  executableHarness !== undefined && provider.providerId === 'deepseek';
                 const executableLabel = codexExecutable
                   ? 'Codex CLI path'
                   : 'DeepSeek harness path';

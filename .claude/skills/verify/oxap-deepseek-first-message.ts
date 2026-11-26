@@ -6,6 +6,8 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { checkOxapBinary } from '../../../packages/daemon/src/lib/oxap/oxap-binary.ts';
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
 import { readHubOptions } from '../../../packages/daemon/src/lib/oxap/oxap-settings.ts';
+import { OpencodeProvider } from '../../../packages/daemon/src/lib/providers/opencode-provider.ts';
+import { getProviderRegistry } from '../../../packages/daemon/src/lib/providers/registry.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import {
@@ -18,7 +20,7 @@ import { answerCodexProbeLocally, serveLocalRelease } from './oxap-codex-provide
 const [binary, version, sha256, ...args] = process.argv.slice(2);
 const mode = args.length === 2 ? args[0] : 'first';
 const runArgument = args.at(-1)!;
-assert(['first', 'routed', 'routed-with-key', 'routed-web', 'routed-missing-key', 'routed-zen', 'routed-zen-missing-key', 'routed-unknown', 'recovery', 'pending', 'flash', 'image', 'flash-web', 'pro-web', 'flash-recovery', 'sdk-default', 'locked-recovery', 'refused-reopen', 'first-open-retry', 'no-replay'].includes(mode));
+assert(['first', 'routed', 'routed-with-key', 'routed-web', 'routed-missing-key', 'routed-zen', 'routed-zen-missing-key', 'routed-unknown', 'recovery', 'pending', 'flash', 'image', 'flash-web', 'pro-web', 'flash-recovery', 'sdk-default', 'locked-recovery', 'refused-reopen', 'first-open-retry', 'no-replay', 'opencode-go', 'opencode-go-alias', 'opencode-go-with-unkeyed-route'].includes(mode));
 const run = resolve(runArgument);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -117,6 +119,51 @@ async function verify() {
     },
     ...(routed && mode !== 'routed-with-key' ? {} : { credentials: { apiKey: 'synthetic-deepseek-proof' } }),
   });
+  const aliasKey = mode === 'opencode-go-alias';
+  const unkeyedRoute = mode === 'opencode-go-with-unkeyed-route';
+  const go = mode === 'opencode-go' || aliasKey || unkeyedRoute;
+  if (go) {
+    assert.deepEqual(await hub.request('operation.invoke', {
+      name: 'oxap.settings.save',
+      input: { providerId: 'deepseek', harness: 'oxap-deepseek', settings: { executable: peer, ...(unkeyedRoute ? { model_provider: 'opencode-go' } : {}) } },
+    }), { accepted: true });
+    await hub.request('providers.create', {
+      params: {
+        providerId: 'opencode',
+        displayName: 'Synthetic OpenCode Go',
+        kind: 'built_in',
+        authType: 'api_key',
+        isEnabled: true,
+        isDefault: false,
+        sortOrder: 1,
+      },
+      ...(aliasKey ? {} : { credentials: { apiKey: 'synthetic-opencode-go-proof' } }),
+    });
+    if (aliasKey) {
+      const registry = getProviderRegistry();
+      registry.unregister('opencode');
+      registry.register(new OpencodeProvider({ OPENCODE_GO_API_KEY: 'synthetic-opencode-go-proof' }));
+    }
+  }
+  const providerId = go ? 'opencode' : 'deepseek';
+  const harness = go ? 'oxap-opencode-dsh' : 'oxap-deepseek';
+  if (go) {
+    const missing = join(run, 'missing-dsh');
+    const rejected = [];
+    for (const [executable, reason] of [
+      [missing, `DeepSeek harness path "${missing}" must point to an executable file.`],
+      [process.execPath, `"${process.execPath}" did not respond as the DeepSeek harness. Enter the path to dsh.`],
+    ]) {
+      const outcome = await hub.request('operation.invoke', {
+        name: 'oxap.settings.save',
+        input: { providerId, harness, settings: { executable } },
+      });
+      rejected.push((outcome as { accepted: boolean }).accepted);
+      assert.deepEqual(outcome, { accepted: false, reason });
+    }
+    evidence.invalidExecutableAccepted = rejected;
+    assert.equal(JSON.parse(app.db.providers.getProviderByProviderId(providerId)?.configJson ?? '{}').harnessSettings, undefined);
+  }
   if (mode === 'routed-web') {
     await runBrowser(hub, 'oxap-deepseek-routing-web.mjs', peer);
     evidence.settingsSavedInBrowser = true;
@@ -124,8 +171,8 @@ async function verify() {
     const saved = await hub.request('operation.invoke', {
       name: 'oxap.settings.save',
       input: {
-        providerId: 'deepseek',
-        harness: 'oxap-deepseek',
+        providerId,
+        harness,
         settings: { executable: peer, ...(routed ? { model_provider: route } : {}) },
       },
     });
@@ -144,18 +191,29 @@ async function verify() {
     const { models } = await hub.request<{ models: { id: string; provider: string; available: boolean }[] }>('models.list', { useCache: true });
     assert(models.some(({ id, provider, available }) => id === 'deepseek-v4-pro' && provider === 'deepseek' && available), 'The new chat model picker needs an available DeepSeek V4 Pro');
   }
+  if (go) {
+    assert.deepEqual(await hub.request('operation.invoke', {
+      name: 'oxap.settings.save',
+      input: { providerId, harness: 'sdk' },
+    }), { accepted: true });
+    const { providers } = await hub.request<{
+      providers: { providerId: string; readyHarnesses?: string[] }[];
+    }>('providers.list', { forNewSession: true });
+    assert.deepEqual(providers.find((provider) => provider.providerId === providerId)?.readyHarnesses, [harness]);
+  }
   const flash = ['flash', 'image', 'flash-web', 'flash-recovery', 'locked-recovery', 'refused-reopen'].includes(mode);
   const imageWeb = mode === 'flash-web' || mode === 'pro-web';
   const locked = mode === 'locked-recovery';
   const refusesReopen = mode === 'refused-reopen';
   if (locked || mode === 'flash-recovery') writeFileSync(join(workspace, 'verify-native-lease'), '');
   const withImage = mode === 'image' || mode === 'flash-web';
-  const model = flash ? 'deepseek-v4-flash' : 'deepseek-v4-pro';
+  const model = go ? 'deepseek-v4.1-flash' : flash ? 'deepseek-v4-flash' : 'deepseek-v4-pro';
   const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a4NEAAAAASUVORK5CYII=';
   const create = () => hub.request<{ sessionId: string }>('session.create', {
     workspacePath: workspace,
     title: 'Synthetic DeepSeek first message',
-    config: { provider: 'deepseek', model },
+    ...(go ? { harness } : {}),
+    config: { provider: providerId, model },
   });
   if (missingRouteKey) {
     const { providers } = await hub.request<{ providers: { providerId: string; readyHarnesses: string[] }[] }>('providers.list', { forNewSession: true });
@@ -211,7 +269,7 @@ async function verify() {
   } else {
     await hub.request('message.send', {
       sessionId,
-      content: flash ? 'Verify model and images' : 'Synthetic DeepSeek prompt',
+      content: flash || go ? 'Verify model and images' : 'Synthetic DeepSeek prompt',
       ...(withImage ? { images: [{ data: png, media_type: 'image/png' }] } : {}),
     });
   }
@@ -234,10 +292,16 @@ async function verify() {
     assert(!document.includes('synthetic-deepseek-proof'));
     evidence.routedProvider = entry.model_provider;
   }
+  if (unkeyedRoute) {
+    const document = JSON.parse(readFileSync(join(run, 'data/oap/oap-serve.json'), 'utf8'));
+    assert.equal(document.adapters.deepseek, undefined);
+    assert.equal(document.adapters.opencode.provider, 'opencode-go');
+    evidence.unkeyedRouteOmitted = true;
+  }
   const nativeId = app.db.getSession(sessionId)?.sdkSessionId;
   assert(nativeId);
   assert.equal((status as { link?: string }).link, `deepseek://sessions/${nativeId}`);
-  const capabilities = (await client.request('capabilities', { adapter: 'deepseek' })) as {
+  const capabilities = (await client.request('capabilities', { adapter: providerId })) as {
     payload?: { features?: Record<string, { level?: string }> };
   };
   const modelSwitch = capabilities.payload?.features?.['session.model.switch']?.level;
@@ -252,7 +316,7 @@ async function verify() {
   evidence.reply = replyText;
   assert.deepEqual(
     replyText,
-    flash
+    flash || go
       ? [JSON.stringify({ model, images: withImage ? [{ type: 'image', data: png, mimeType: 'image/png' }] : [] })]
       : mode === 'first-open-retry'
         ? [
@@ -288,7 +352,7 @@ async function verify() {
     );
     evidence.existingSwitchRefused = true;
   }
-  if (['recovery', 'pending', 'flash-recovery', 'sdk-default', 'locked-recovery', 'refused-reopen'].includes(mode)) {
+  if (go || ['recovery', 'pending', 'flash-recovery', 'sdk-default', 'locked-recovery', 'refused-reopen'].includes(mode)) {
     while (app.sessionManager.getCachedSession(sessionId)?.queryPromise) {
       assert(Date.now() < deadline, 'The first query did not finish shutting down');
       await Bun.sleep(25);
@@ -353,14 +417,15 @@ async function verify() {
       assert.equal(evidence.chatReason, true, 'The worker chat should show the refusal reason');
       assert.equal(evidence.statusFailedWithReason, true, 'Work status should expose the refusal');
     } else {
-      if (mode === 'sdk-default') {
+      if (mode === 'sdk-default' || go) {
         assert.deepEqual(await hub.request('operation.invoke', {
-          name: 'oxap.settings.save', input: { providerId: 'deepseek', harness: 'sdk' },
+          name: 'oxap.settings.save',
+          input: go ? { providerId, harness, settings: { executable: peer } } : { providerId, harness: 'sdk' },
         }), { accepted: true });
       } else {
         await app.oxapEngine.restart();
       }
-      const verifyModel = mode === 'flash-recovery';
+      const verifyModel = mode === 'flash-recovery' || go;
       const expectedReply = verifyModel
         ? JSON.stringify({ model, images: [], reopened: true })
         : 'Synthetic DeepSeek reply after restart';
@@ -394,6 +459,10 @@ async function verify() {
     }
   }
 
+  if (go) {
+    evidence.endpoint = 'https://opencode.ai/zen/go/v1';
+    evidence.openCodeKeyIsolated = true;
+  }
   Object.assign(evidence, { opened: 1, firstMessageReplies: replies.length, modelSwitch, pass: true });
   console.log(JSON.stringify(evidence));
 }

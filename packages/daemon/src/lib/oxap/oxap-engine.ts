@@ -1,7 +1,9 @@
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
+import { OPENCODE_DSH_OVERLAY } from '@hyperneo/shared/types/oxap-harnesses';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { prepareOxapBinary, type PreparedOxapBinary, type BinaryIdentity } from './oxap-binary.ts';
+import { OpencodeProvider } from '../providers/opencode-provider.ts';
+import { type BinaryIdentity, type PreparedOxapBinary, prepareOxapBinary } from './oxap-binary.ts';
 import { OxapHubClient, type OxapHubClientOptions } from './oxap-hub-client.ts';
 import type { OxapHubConfig } from './oxap-hub-config.ts';
 import { createOxapQueryHub, type OxapQueryHub } from './oxap-query.ts';
@@ -78,6 +80,22 @@ function ensureValidBinary(
   return { config, binary: check };
 }
 
+const opencodeDshOverlay = JSON.stringify([
+  {
+    id: 'llm-pi-ai',
+    config: {
+      providers: {
+        'opencode-go': {
+          api: 'openai-completions',
+          apiKeyEnv: 'OPENCODE_API_KEY',
+          baseURL: OpencodeProvider.CHAT_BASE_URL,
+          compat: { supportsDeveloperRole: false, maxTokensField: 'max_tokens' },
+        },
+      },
+    },
+  },
+]);
+
 async function writeConfig(
   options: OxapEngineOptions,
   validated: ReturnType<typeof ensureValidBinary>
@@ -90,6 +108,11 @@ async function writeConfig(
       if ((await readdir(home)).includes('.credentials.yaml')) {
         throw new Error('The managed OXAP DeepSeek home must be free of .credentials.yaml');
       }
+    }
+    if (options.hub.adapters.opencode?.provider === 'opencode-go') {
+      await writeFile(join(options.stateDirectory, OPENCODE_DSH_OVERLAY), opencodeDshOverlay, {
+        mode: 0o600,
+      });
     }
     await writeFile(join(options.stateDirectory, 'oap-serve.json'), JSON.stringify(config.config), {
       mode: 0o600,
