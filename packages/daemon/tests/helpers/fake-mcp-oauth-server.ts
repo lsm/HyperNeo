@@ -14,6 +14,7 @@ export type FakeMcpOAuthSwitches = {
   oversized?: 'metadata' | 'resource' | 'token';
   stall?: 'headers' | 'body';
   redirectToken?: boolean;
+  redirectTokenAway?: boolean;
   echoError?: 'oauth' | 'raw';
   tokenStatus?: number;
 };
@@ -129,6 +130,11 @@ export async function startFakeMcpOAuthServer(switches: FakeMcpOAuthSwitches = {
       target.searchParams.set('state', params.get('state') ?? '');
       return new Response(null, { status: 302, headers: { location: target.href } });
     }
+    if (url.pathname === '/token' && switches.redirectTokenAway)
+      return Response.json(
+        { error: 'invalid_grant', error_description: `rejected ${echoedSecret}` },
+        { status: 302, headers: { location: `/elsewhere-${echoedSecret}` } }
+      );
     if (url.pathname === '/token' && switches.redirectToken && !url.search)
       return new Response(null, { status: 307, headers: { location: '/token?moved=1' } });
     if (url.pathname === '/token') {

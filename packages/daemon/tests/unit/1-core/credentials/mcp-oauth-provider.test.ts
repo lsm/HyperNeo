@@ -183,6 +183,7 @@ describe('MCP OAuth provider', () => {
     expect((await reuse(presetFor(fake)).provider.tokens())?.access_token).toStartWith('access-');
     for (const changed of [
       { url: `${fake.base}/other` },
+      { url: `${fake.url}/` },
       { authorizationEndpoint: `${fake.base}/authorize-elsewhere` },
       { scopes: ['read'] },
     ])
@@ -196,6 +197,14 @@ describe('MCP OAuth provider', () => {
       expect(failure).toBeInstanceOf(Error);
       expect(`${String(failure)} ${(failure as Error).stack}`).not.toContain(echoedSecret);
     }
+  });
+
+  test('an unfollowed redirect on a credential request leaks no upstream text', async () => {
+    fake.switches.redirectTokenAway = true;
+    const failure = await connect().catch((error: Error) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect(`${String(failure)} ${(failure as Error).stack}`).not.toContain(echoedSecret);
+    expect(await vault.readMcp('server-1')).toBeNull();
   });
 
   test('a 401 pointing at another authorization server sends it nothing', async () => {
