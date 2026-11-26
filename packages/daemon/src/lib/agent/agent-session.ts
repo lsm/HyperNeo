@@ -388,10 +388,8 @@ export class AgentSession
     inputOrigin?: () => { messageId: string } | null,
     desktopTurn?: () => DesktopTurn | null
   ): ReturnType<typeof createOperationMcpServer> {
-    const descriptionRole =
-      this.session.config.toolProfile === 'desktop'
-        ? 'desktop'
-        : this.operationCallerIdentity().role;
+    const registration = this.getOperationMcpRegistration(inputOrigin, desktopTurn);
+    const descriptionRole = registration[3];
     const descriptionKey =
       descriptionRole === 'neo'
         ? JSON.stringify([descriptionRole, enabledOperationPacks(this.resolveOperationRegistry())])
@@ -399,7 +397,19 @@ export class AgentSession
     const scoped = inputOrigin || desktopTurn;
     if (!scoped && this.operationMcpServer && this.operationMcpServerKey === descriptionKey)
       return this.operationMcpServer;
-    const server = createOperationMcpServer(
+    const server = createOperationMcpServer(...registration);
+    if (!scoped) {
+      this.operationMcpServer = server;
+      this.operationMcpServerKey = descriptionKey;
+    }
+    return server;
+  }
+
+  getOperationMcpRegistration(
+    inputOrigin?: () => { messageId: string } | null,
+    desktopTurn?: () => DesktopTurn | null
+  ): Parameters<typeof createOperationMcpServer> {
+    return [
       () => this.resolveOperationRegistry(),
       (operation) => {
         const turn =
@@ -416,13 +426,10 @@ export class AgentSession
         };
       },
       this.recordOperationRefusal,
-      descriptionRole
-    );
-    if (!scoped) {
-      this.operationMcpServer = server;
-      this.operationMcpServerKey = descriptionKey;
-    }
-    return server;
+      this.session.config.toolProfile === 'desktop'
+        ? 'desktop'
+        : this.operationCallerIdentity().role,
+    ];
   }
 
   private readonly recordOperationRefusal = (refusal: OperationRefusal) =>
