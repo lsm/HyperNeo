@@ -21,7 +21,7 @@ Steps 2 and 3 get their own designs after a week of data.
 
 | Fact | Where |
 |---|---|
-| who did it: harness, model, effort, role | `work_started_sessions` (harness); `neo_todo_sessions`, `neo_todo_roles` (model, effort, role); recorded today |
+| who did it: harness, model, effort, role | harness: the worker ref's `adapter`, on every turn, delivery row and adoption (`work_started_sessions.harness` exists only for started workers and, where set, equals it); `neo_todo_roles` (role, model, effort), `neo_todo_sessions` (`actual_model`, `actual_effort`); recorded today |
 | kind of work | `named.workKind`; exists, rarely filled |
 | estimated size | new core fact `estimate` |
 | tokens, rounds, context, time | new `usage` on `work_turns` |
@@ -240,8 +240,8 @@ Seven PRs from `dev`, in order, failing tests first. System map read for the pla
 
 **Done when**, one week after the last PR: at least 95% of finished todos that had a worker of
 Claude Code, Claude Desktop, HyperNeo or Codex Desktop have kind and an estimate when required
-(or the reviewed PR's size for a review); at least 95% have complete usage. Turns with omitted subagent cost count as incomplete,
-not zero. Receipts: at least 95% of confirmed sends and starts on the adapters that return a
+(or the reviewed PR's size for a review); at least 95% have complete usage. Turns with omitted
+subagent cost count as incomplete, not zero. Receipts: at least 95% of confirmed sends and starts on the adapters that return a
 receipt (Claude Code, Claude Desktop, HyperNeo, Codex Desktop), leaving out the stated limits
 (Claude Desktop relay sends without an input id, Codex steers, queued and unconfirmed Codex
 sends), have a receipt. Keys: at least 95% of all confirmed sends and starts, limits included,
