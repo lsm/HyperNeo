@@ -123,10 +123,15 @@ latest screenshot this rule would keep, so screenshot-based workers on that rout
 of scope. Its text-only desktop results remain untrimmed in this slice.
 
 - A desktop result is a `tool_result` whose `tool_use_id` names a desktop tool call in the
-  request. The results of the newest assistant message with a desktop call stay as the bridge
-  receives them; every older desktop result is collapsed to one line. Non-desktop turns do not
-  move this point, and non-desktop results are never changed, also inside a parallel batch.
-  A failed step collapses the same way; nothing is rolled back.
+  request. The reads are `list_windows`, `get_window_state` and `zoom`; every other desktop
+  tool is an action. One rule decides what stays as the bridge receives it: the results of
+  the newest assistant message with a desktop call, and the newest failed desktop result
+  while no action after it has succeeded. Every other desktop result is collapsed to one
+  line. A newer failure replaces the older one, which then collapses. For example, failed
+  click, full read, successful click: before the second click the failure and the read stay
+  in full; after it both collapse and only the click's result stays. Non-desktop turns do
+  not move this point, and non-desktop results are never changed, also inside a parallel
+  batch. Nothing is rolled back.
 - Start the line with the tool name. Add the call's present target arguments as `key=value`
   in this order: `bundle_id`, `pid`, `window_id`, `element_token`, `x`, `y`, `from_x`,
   `from_y`, `to_x`, `to_y`, `x1`, `y1`, `x2`, `y2`. A call with no target fields has just
@@ -140,8 +145,8 @@ of scope. Its text-only desktop results remain untrimmed in this slice.
 - The rewrite runs before conversion on `/v1/messages` and on `/v1/messages/count_tokens` in
   both bridges (one forwards the count upstream, the other estimates it), so the count the SDK
   budgets with measures the collapsed body.
-- Prefix: the rewrite changes no block of the conversation before the result it just
-  collapsed. Other request bytes can still change on their own: the messages bridge forwards
+- Prefix: the rewrite changes no block of the conversation before the earliest result that
+  collapsed since the previous request (one step can collapse two). Other request bytes can still change on their own: the messages bridge forwards
   the SDK's cache controls, and a breakpoint may move between turns. A cache hit is claimed
   only from cache-read usage: the messages bridge passes the provider's usage through, and the
   chat bridge reports only prompt and completion totals, so there the evidence must come from
@@ -158,9 +163,6 @@ of scope. Its text-only desktop results remain untrimmed in this slice.
 - Exact text the worker will need goes into its own reply before any action that may remove
   it from the screen (dismiss, close, navigate); its own text is never collapsed. In the same
   replay, a one-time receipt was lost without that note and kept with it.
-- The latest failed desktop result stays in full, beside the newest results, until a later
-  desktop action succeeds, so a fresh `get_window_state` after a failure does not hide the
-  failure the worker is recovering from.
 - Nothing is changed in the stored conversation; only the request is.
 
 **Summary size.** The daemon's own compaction (`agent/context-budget-enforcement.ts`,
@@ -209,11 +211,12 @@ never the laptop. System map read for the planned files.
    a point, a drag, a zoom, an app launch, and a call with no target fields; a failure by
    `is_error` and one by `ok: false` keep the reason; a line holds no image and no
    accessibility text; non-desktop turns after a desktop result leave it in full; a parallel
-   batch keeps its non-desktop results; failure, then a fresh `get_window_state`, keeps both
-   in full, and the next successful action collapses the failure; `since` on
+   batch keeps its non-desktop results; failed click, full read, successful click keeps the
+   failure and the read in full before the click and only the click after it; a second
+   failure replaces the first; `since` on
    `get_window_state` is ignored in a collapse session; on append-only fixtures, two
-   requests one step apart have the same conversation blocks up to the newly collapsed
-   result; `count_tokens` measures the collapsed body; the stored conversation is unchanged;
+   requests one step apart have the same conversation blocks before the earliest newly
+   collapsed result; `count_tokens` measures the collapsed body; the stored conversation is unchanged;
    both bridges. Collapse ships off, behind a constant in code, not a setting. A one-line PR turns it on,
    only after a replay of the
    recorded Calculator, TextEdit and Safari steps with full current snapshots picks the
