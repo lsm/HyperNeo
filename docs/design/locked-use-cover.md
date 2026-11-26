@@ -43,7 +43,7 @@ On the worker, open the returned path with `O_RDONLY | O_NOFOLLOW_ANY`. If that 
 
 Validate the successful descriptor with `fstat`: regular file, owned by root, at most 64 MiB. Read and decode from that descriptor, never by reopening its path; a failed validation leaves blue in place without a prompt.
 
-Read the bounded descriptor data into ImageIO off the main thread, with output capped to the display's pixel size and a two-second result deadline. Late results are discarded, as are results for a replaced display generation or an ending guardian. Swap a finished image into its existing opaque cover on the main thread. Never log or include the URL, path, metadata, image contents or decode error details in an artifact.
+Read the bounded descriptor data into ImageIO off the main thread with a two-second result deadline, decode only as large as each display's native-pixel aspect-fill crop requires and the source provides, and fall back to blue if that intermediate would exceed eight times the display's pixel count or 32 Mi pixels (owner decision, 2026-11-23). Late results are discarded, as are results for a replaced display generation or an ending guardian. Swap a finished image into its existing opaque cover on the main thread. Never log or include the URL, path, metadata, image contents or decode error details in an artifact.
 
 The shipped guardian's separate hardened-runtime signature has no entitlements (`locked-use/build.sh:11–12`). Whether TCC attributes access to it or to the responsible HyperNeo app, that identity grants no protected-file access and does not relax the allowlist. Never request a broader grant, retry a denied read or open a file picker.
 

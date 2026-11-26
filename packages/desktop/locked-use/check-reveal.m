@@ -103,9 +103,13 @@ static void fixturePost(CGEventTapLocation tap, CGEventRef event) {
 
 @interface FixtureLogin : NSObject
 @property(nonatomic, readonly) pid_t processIdentifier;
+@property(nonatomic, readonly) NSImage *icon;
++ (instancetype)runningApplicationWithProcessIdentifier:(pid_t)pid;
 @end
 
 @implementation FixtureLogin
++ (instancetype)runningApplicationWithProcessIdentifier:(pid_t)pid { return nil; }
+- (NSImage *)icon { return nil; }
 + (NSArray *)runningApplicationsWithBundleIdentifier:(NSString *)identifier {
     return [identifier isEqualToString:@"com.apple.loginwindow"] ? @[ [FixtureLogin new] ] : @[];
 }
