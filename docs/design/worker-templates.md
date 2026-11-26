@@ -140,10 +140,12 @@ of scope. Its text-only desktop results remain untrimmed in this slice.
 - The rewrite runs before conversion on `/v1/messages` and on `/v1/messages/count_tokens` in
   both bridges (one forwards the count upstream, the other estimates it), so the count the SDK
   budgets with measures the collapsed body.
-- Prefix: each request is byte-identical to the previous one up to the result that was just
-  collapsed; only that result and what follows change. Whether the endpoint's cache then hits
-  depends on it holding that prefix (the chat bridge leaves caching to the endpoint), so a hit
-  is claimed only from the provider's cache-read usage.
+- Prefix: the rewrite changes no block of the conversation before the result it just
+  collapsed. Other request bytes can still change on their own: the messages bridge forwards
+  the SDK's cache controls, and a breakpoint may move between turns. A cache hit is claimed
+  only from cache-read usage: the messages bridge passes the provider's usage through, and the
+  chat bridge reports only prompt and completion totals, so there the evidence must come from
+  the upstream endpoint's own usage.
 - The rule depends only on the request, so it needs no session state, a restart changes
   nothing, and context grows by one line and the model's own text per step, not by a screen.
 - Text the model needs from a screen goes into its own reply or call before its next desktop
@@ -201,9 +203,10 @@ never the laptop. System map read for the planned files.
    `is_error` and one by `ok: false` keep the reason; a line holds no image and no
    accessibility text; non-desktop turns after a desktop result leave it in full; a parallel
    batch keeps its non-desktop results; failure, then a fresh `get_window_state`, then the next
-   action collapses the failure and keeps the fresh state; two requests one step apart are
-   identical up to the newly collapsed result; `count_tokens` measures the collapsed body; the
-   stored conversation is unchanged; both bridges.
+   action collapses the failure and keeps the fresh state; on append-only fixtures, two
+   requests one step apart have the same conversation blocks up to the newly collapsed
+   result; `count_tokens` measures the collapsed body; the stored conversation is unchanged;
+   both bridges.
    Estimate: 4 files, 110 lines, 180 test lines.
 4. **Summary size.** Tests: both enqueue sites send the line; a queued `/compact` with text
    dedupes with a plain one and waits for the boundary.
