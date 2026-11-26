@@ -13,12 +13,19 @@ failure, the order of retained target fields, the unchanged prefix and non-deskt
 content, and the count request or estimate. Pass prints
 `desktop observation collapse PASS` and writes `desktop-observation-collapse.json`.
 
-Run the [desktop call journey](desktop-call.md) on the shipping tree to check
+While the rollout flag is off, run the [desktop call journey](desktop-call.md) to check
 that the SDK sends the original result and the host receives `since: latest`.
-In the build host's disposable proof source only, switch the code constant to
-true and rerun that journey with `--collapse` after the helper path. The live SDK
-and synthetic host must now show a collapsed old result and a full snapshot
-request without `since`. The transcript must still retain the original result. Restore the shipping source after the run.
+Run the enabled case through the isolated proof runner:
+
+```bash
+TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh \
+  /absolute/fresh/evidence-directory .claude/skills/verify/desktop-call-collapse.ts --collapse
+```
+
+The runner substitutes the enabled constant in memory for that test process.
+The SDK and synthetic host must show a collapsed older result and a full
+snapshot request without `since`. The stored transcript keeps the original
+result.
 
 This checks endpoint behavior and full-snapshot dispatch. The separate rollout
 requires the recorded Calculator, TextEdit and Safari model replay in the design.
