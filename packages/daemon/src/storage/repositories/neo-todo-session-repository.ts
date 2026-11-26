@@ -485,7 +485,8 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       this.recordNudge(todoId, { ...current, nudges });
   }
 
-  noteWorkerStatus(todoId: string, status: string, now: number): void {
+  noteWorkerStatus(todoId: string, ref: WorkRef, status: string, now: number): void {
+    if (neoWorkerKey(this.readRef(todoId)) !== neoWorkerKey(ref)) return;
     const prior = this.readNudge(todoId);
     if (prior?.live !== status)
       this.recordNudge(todoId, {

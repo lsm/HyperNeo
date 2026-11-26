@@ -16,8 +16,9 @@ No test-only RPC, provider turn, external command or network endpoint is added.
 The synthetic fixture has an open human card, two todos and a large Unicode
 report; it never copies a live database.
 
-Pass requires a title/URL proposal to preserve current peer-ownership bookkeeping, and a
-core-check proposal to derive its label without observing external completion facts.
+Pass requires the planner to refuse a PR URL another live merge todo owns,
+allow a different PR URL, and derive a core-check label without observing
+external completion facts.
 Remove is also only a proposal. The public full card must keep its original title, open
 human card and entire stored report/hash. Completion plans with an unanswered
 todo-specific human card must be refused without changing the card. Final writer

@@ -107,9 +107,8 @@ for (const factory of factories)
       const peer = todos.updateTodo(todo('owner', [url(2)]), { state }, 2);
       const target = todo('target', [url(1)]);
       const check = policy.addUrls(target, [url(2)]);
-      expect(policy.refuse({ ...target, check }, [peer, target])).toBeNull();
-      expect(policy.record({ ...target, check }, [peer, target])).toBe(
-        `pr_already_tracked: ${url(2)} is already tracked by todo owner "Title owner". Use neo.todo.edit addUrls on that todo.`
+      expect(policy.refuse({ ...target, check }, [peer, target])).toBe(
+        `pr_already_tracked: ${url(2)} is already tracked by todo owner "Title owner". Continue that todo. For reviews, use core.evidence pointing at the review comment.`
       );
     });
 
@@ -119,13 +118,13 @@ for (const factory of factories)
         const peer = todo('owner', [url(2)]);
         const settled = todos.updateTodo(peer, { state }, 3);
         expect(settled.state).toBe(state);
-        expect(policy.record(todo('target', [url(2)]), [settled])).toBeNull();
+        expect(policy.refuse(todo('target', [url(2)]), [settled])).toBeNull();
       }
     );
 
     test('editing the current owner never conflicts with its own named PR', () => {
       const current = todo('owner', [url(2)]);
-      expect(policy.record(current, [current])).toBeNull();
+      expect(policy.refuse(current, [current])).toBeNull();
     });
 
     test('an issue-tracking owner points duplicate PR edits back to the original todo', () => {

@@ -297,7 +297,7 @@ export function createNeoAskRecordOperations(
             const reason = neoEvidencePathRefusal(todo.check, null, getDataDir());
             return reason
               ? { reason: { ok: false as const, reason } }
-              : planNeoTodoDraft(todo, policies);
+              : planNeoTodoDraft(todo, policies, []);
           })
           .find((planned) => 'reason' in planned);
         if (refused && 'reason' in refused) return refused.reason;

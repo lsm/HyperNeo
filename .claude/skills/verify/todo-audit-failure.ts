@@ -51,7 +51,11 @@ try {
       };
       if (phase === 'initial') {
         store.openAsk({ id: 'ask', title: 'Synthetic audit failure', request: 'Preserve the committed result', sessionId: 'neo', projectId: null, originMessageId: null, createdAt: Date.now() });
-        store.addTodo('original', 'ask', { title: 'Original', doneWhen: 'Merged', check, instruction: null, named: null }, Date.now());
+        store.addTodo('original', 'ask', {
+          title: 'Original', doneWhen: 'Issue closed',
+          check: { ...check, kind: 'issue_closed', params: { ...check.params, issue: 'synthetic/proof#1' } },
+          instruction: null, named: null,
+        }, Date.now());
         const added = await invoke('neo.todo.add', { after: [], askId: 'ask', title: 'Follow-up', doneWhen: 'Merged', check });
         created = added.todo.id;
         const edited = await invoke('neo.todo.edit', { todoId: created, title: 'Edited despite audit failure', addUrls: check.params.urls });

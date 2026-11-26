@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import type { ContextInfo, MessageHub, ModelInfo, Session } from '@hyperneo/shared';
 import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
+import { COMPACT_SUMMARY_COMMAND } from '../../../../src/lib/agent/message-queue.ts';
 import type {
   DaemonInternalEventMap,
   InternalEventBus,
@@ -100,7 +101,7 @@ describe('AgentSession model-switch context budget re-evaluation', () => {
 
     await session.reevaluateContextBudgetAfterModelSwitch();
 
-    expect(enqueueSpy).toHaveBeenCalledWith('/compact', true, {
+    expect(enqueueSpy).toHaveBeenCalledWith(COMPACT_SUMMARY_COMMAND, true, {
       durable: true,
       prepend: true,
     });
@@ -132,7 +133,7 @@ describe('AgentSession model-switch context budget re-evaluation', () => {
 
     expect(cooldownClearSpy).toHaveBeenCalledTimes(1);
     expect(enqueueSpy).toHaveBeenCalledTimes(1);
-    expect(enqueueSpy).toHaveBeenCalledWith('/compact', true, {
+    expect(enqueueSpy).toHaveBeenCalledWith(COMPACT_SUMMARY_COMMAND, true, {
       durable: true,
       prepend: true,
     });

@@ -2492,12 +2492,15 @@ describe('QueryRunner', () => {
       expect(publishSpy).not.toHaveBeenCalled();
     });
 
-    it('marks the runtime continue follow-up turn as processing', async () => {
+    it.each([
+      ['continue', TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE],
+      ['compaction', '/compact with summary instructions'],
+    ])('marks an internal %s turn as processing', async (kind, text) => {
       async function* mockMessageGenerator() {
         yield {
           message: {
-            uuid: 'continue-1',
-            message: { role: 'user', content: TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE },
+            uuid: kind,
+            message: { role: 'user', content: [{ type: 'text', text }] },
             internal: true,
           },
           onSent: () => {},
@@ -2513,7 +2516,7 @@ describe('QueryRunner', () => {
       for await (const _msg of runner.createMessageGeneratorWrapper(0)) {
       }
 
-      expect(setProcessingSpy).toHaveBeenCalledWith('continue-1', 'initializing');
+      expect(setProcessingSpy).toHaveBeenCalledWith(kind, 'initializing');
     });
 
     it('should skip processing state for internal messages', async () => {

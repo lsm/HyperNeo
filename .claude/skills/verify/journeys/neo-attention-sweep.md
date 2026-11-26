@@ -24,6 +24,9 @@ clock. Observe `neo-attention-sweep.json` and the mailbox queue it reads:
   the later of its creation and its last prerequisite finishing, then is one
   "its check has not passed for 24 hours" wake, and one more at its 1 h rung.
 
+- a worker recorded as running is now stopped, so a refresh followed by two
+  sweeps wakes Neo once for each environment- and check-blocked todo. A held
+  todo with the same worker produces no wake.
+
 This does not show the wake being consumed by a model turn, the pack `waiting`
-answer on a real pull request, or live worker status from a driver; the unit
-tests cover the idle-worker, pack and queue-hold rows on recorded facts.
+answer on a real pull request, or status from an external driver.

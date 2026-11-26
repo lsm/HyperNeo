@@ -6,7 +6,10 @@ import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
 import type { LimitRetryHint } from '../../../../src/lib/agent/limit-error-classifier';
 import { waitForDeliveryConsumption } from '../../../../src/lib/agent/message-delivery';
-import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import {
+  COMPACT_SUMMARY_COMMAND,
+  type MessageQueue,
+} from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
 import { markBuiltFallbackIdentity } from '../../../../src/lib/agent/query-options-builder';
@@ -5376,7 +5379,7 @@ describe('SDKMessageHandler', () => {
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
         expect(markCompactionTriggeredSpy).toHaveBeenCalledTimes(1);
-        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+        expect(enqueueMessageSpy).toHaveBeenCalledWith(COMPACT_SUMMARY_COMMAND, true, {
           durable: true,
           prepend: true,
         });
@@ -5423,7 +5426,7 @@ describe('SDKMessageHandler', () => {
 
         expect(getContextUsageSpy).toHaveBeenCalled();
         expect(setDeliveryGateSpy).toHaveBeenCalled();
-        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+        expect(enqueueMessageSpy).toHaveBeenCalledWith(COMPACT_SUMMARY_COMMAND, true, {
           durable: true,
           prepend: true,
         });
@@ -5478,7 +5481,7 @@ describe('SDKMessageHandler', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(markCompactionTriggeredSpy).toHaveBeenCalledTimes(1);
-        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+        expect(enqueueMessageSpy).toHaveBeenCalledWith(COMPACT_SUMMARY_COMMAND, true, {
           durable: true,
           prepend: true,
         });
@@ -5580,7 +5583,7 @@ describe('SDKMessageHandler', () => {
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(2);
         expect(markCompactionTriggeredSpy).toHaveBeenCalledTimes(1);
-        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+        expect(enqueueMessageSpy).toHaveBeenCalledWith(COMPACT_SUMMARY_COMMAND, true, {
           durable: true,
           prepend: true,
         });
@@ -5602,7 +5605,7 @@ describe('SDKMessageHandler', () => {
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
         expect(markCompactionTriggeredSpy).toHaveBeenCalled();
-        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+        expect(enqueueMessageSpy).toHaveBeenCalledWith(COMPACT_SUMMARY_COMMAND, true, {
           durable: true,
           prepend: true,
         });
@@ -5869,7 +5872,7 @@ describe('SDKMessageHandler', () => {
           } as unknown as SDKMessage);
         }
         await new Promise((resolve) => setTimeout(resolve, 0));
-        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+        expect(enqueueMessageSpy).toHaveBeenCalledWith(COMPACT_SUMMARY_COMMAND, true, {
           durable: true,
           prepend: true,
         });
@@ -5941,7 +5944,7 @@ describe('SDKMessageHandler', () => {
         }
         await h.handleMessage(sessionState('idle'));
         await new Promise((resolve) => setTimeout(resolve, 0));
-        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+        expect(enqueueMessageSpy).toHaveBeenCalledWith(COMPACT_SUMMARY_COMMAND, true, {
           durable: true,
           prepend: true,
         });
@@ -6071,7 +6074,7 @@ describe('SDKMessageHandler', () => {
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
         expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
-        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true, {
+        expect(enqueueMessageSpy).not.toHaveBeenCalledWith(COMPACT_SUMMARY_COMMAND, true, {
           durable: true,
           prepend: true,
         });
@@ -6135,7 +6138,7 @@ describe('SDKMessageHandler', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
-        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true, {
+        expect(enqueueMessageSpy).not.toHaveBeenCalledWith(COMPACT_SUMMARY_COMMAND, true, {
           durable: true,
           prepend: true,
         });
@@ -6199,7 +6202,7 @@ describe('SDKMessageHandler', () => {
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
         expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
-        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true, {
+        expect(enqueueMessageSpy).not.toHaveBeenCalledWith(COMPACT_SUMMARY_COMMAND, true, {
           durable: true,
           prepend: true,
         });

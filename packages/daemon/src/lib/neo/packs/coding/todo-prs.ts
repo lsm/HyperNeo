@@ -433,7 +433,7 @@ export function codingTodoDoneWhen(check: NeoTodoCheck): string | null {
 }
 
 export function codingTodoCheckRefusal(
-  draft: Pick<NeoTodo, 'check' | 'instruction'>
+  draft: Parameters<NonNullable<NeoTodoPack['refuse']>>[0]
 ): string | null {
   if (draft.check?.kind === 'pr_approved')
     return codingApprovalUrl(draft.check.params.url)
@@ -457,7 +457,10 @@ export function codingTodoCheckRefusal(
     (!Array.isArray(urls) || urls.some((url) => typeof url !== 'string' || !codingPrKey(url)))
   )
     return 'pr_merged_invalid_urls: every URL must name a pull request.';
-  return !draft.instruction && !codingCheckRefs(draft.check).length
+  return !draft.instruction?.trim() &&
+    !draft.boundWorker &&
+    draft.target?.verb !== 'bind' &&
+    !codingCheckRefs(draft.check).length
     ? 'pr_merged_needs_urls: a todo with no instruction opens no pull request; name each one in params.urls.'
     : null;
 }
@@ -490,6 +493,28 @@ export function createCodingTodoPolicy(
       scope && 'todo' in scope ? [] : todo.id ? repo.urls(todo.id) : [],
       scope && readPlace(scope)
     );
+  const duplicateClaim = (
+    draft: Parameters<NonNullable<NeoTodoPack['refuse']>>[0],
+    peers: readonly NeoTodo[] | undefined,
+    merge: boolean
+  ) => {
+    if (draft.check?.kind !== 'pr_merged' || !peers?.length) return null;
+    const urls = Array.isArray(draft.check.params.urls) ? draft.check.params.urls : [];
+    const keys = new Set(urls.flatMap((url) => codingPrKey(url) ?? []));
+    if (!keys.size) return null;
+    for (const peer of peers) {
+      if (peer.id === draft.id || ['done', 'removed'].includes(peer.state)) continue;
+      const coding = peer.check?.pack === 'coding';
+      if ((coding && peer.check?.kind === 'pr_merged') !== merge) continue;
+      const named = coding && Array.isArray(peer.check?.params.urls) ? peer.check.params.urls : [];
+      const duplicate = [...named, ...repo.urls(peer.id)].find(
+        (url) => typeof url === 'string' && keys.has(codingPrKey(url) ?? '')
+      );
+      if (duplicate)
+        return `pr_already_tracked: ${duplicate} is already tracked by todo ${peer.id} "${peer.title}".`;
+    }
+    return null;
+  };
   return {
     writerAdd: true,
     repository,
@@ -511,7 +536,7 @@ export function createCodingTodoPolicy(
             },
           }
         : null,
-    refuse: (draft, _peers, scope) => {
+    refuse: (draft, peers, scope) => {
       if (scope) {
         const candidate = { ...draft, named: draft.named ?? null };
         const place = readPlace(scope);
@@ -546,31 +571,17 @@ export function createCodingTodoPolicy(
           : null;
       }
       const refused = codingTodoCheckRefusal(draft);
-      return refused?.startsWith('pr_merged_needs_urls:') ? null : refused;
+      if (refused) return !peers && refused.startsWith('pr_merged_needs_urls:') ? null : refused;
+      const duplicate = duplicateClaim(draft, peers, true);
+      return duplicate
+        ? `${duplicate} Continue that todo. For reviews, use core.evidence pointing at the review comment.`
+        : null;
     },
-    record: (draft, peers = []) => {
+    record: (draft, peers) => {
       const refused = codingTodoCheckRefusal(draft);
-      if (refused || draft.check?.kind !== 'pr_merged') return refused;
-      const urls = Array.isArray(draft.check.params.urls) ? draft.check.params.urls : [];
-      const keys = new Set(urls.flatMap((url) => codingPrKey(url) ?? []));
-      for (const peer of peers) {
-        if (peer.id === draft.id || ['done', 'removed'].includes(peer.state)) continue;
-        const named =
-          peer.check?.pack === 'coding' && Array.isArray(peer.check.params.urls)
-            ? peer.check.params.urls
-            : [];
-        const duplicate = [...named, ...repo.urls(peer.id)].find(
-          (url) => typeof url === 'string' && keys.has(codingPrKey(url) ?? '')
-        );
-        if (duplicate) {
-          const next =
-            peer.check?.kind === 'pr_merged'
-              ? 'Use neo.todo.edit addUrls on that todo.'
-              : 'Continue that todo instead.';
-          return `pr_already_tracked: ${duplicate} is already tracked by todo ${peer.id} "${peer.title}". ${next}`;
-        }
-      }
-      return null;
+      if (!peers && refused) return refused;
+      const duplicate = duplicateClaim(draft, peers, false);
+      return duplicate ? `${duplicate} Continue that todo instead.` : null;
     },
   };
 }
