@@ -92,6 +92,10 @@ try {
   evidence.harnessSave = saved;
   assert.deepEqual(saved, { accepted: true });
   assert.deepEqual(releaseRequests, ['SHA256SUMS.txt', `${version}.tar.gz`]);
+  if (routed) {
+    const { models } = await hub.request<{ models: { id: string; provider: string; available: boolean }[] }>('models.list', { useCache: true });
+    assert(models.some(({ id, provider, available }) => id === 'deepseek-v4-pro' && provider === 'deepseek' && available), 'The new chat model picker needs an available DeepSeek V4 Pro');
+  }
   const flash = ['flash', 'image', 'flash-web', 'flash-recovery', 'locked-recovery', 'refused-reopen'].includes(mode);
   const web = mode.endsWith('-web');
   const locked = mode === 'locked-recovery';
