@@ -4,6 +4,7 @@ import { createHttpWsServer } from '../../src/lib/runtime-server/index.ts';
 export type FakeMcpOAuthSwitches = {
   port?: number;
   beforeCodeReply?: () => Promise<void>;
+  beforeRefreshReply?: () => Promise<Response | undefined>;
   advertiseAllScopes?: boolean;
   grantScope?: string;
   omitRefreshScope?: boolean;
@@ -158,8 +159,10 @@ export async function startFakeMcpOAuthServer(switches: FakeMcpOAuthSwitches = {
         return tokenReply(entry.scope, true);
       }
       const scope = refreshTokens.get(params.get('refresh_token') ?? '');
-      refreshTokens.delete(params.get('refresh_token') ?? '');
       if (scope === undefined) return json({ error: 'invalid_grant' }, 400);
+      const reply = await switches.beforeRefreshReply?.();
+      if (reply) return reply;
+      refreshTokens.delete(params.get('refresh_token') ?? '');
       return tokenReply(scope, !switches.omitRefreshScope);
     }
     if (url.pathname === '/mcp' && !accessTokens.has(auth.replace(/^Bearer /, '')))

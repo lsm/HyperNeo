@@ -4,8 +4,12 @@ import { join, resolve } from 'node:path';
 import { MessageHub, WebSocketClientTransport, type AppMcpServer } from '../../../packages/shared/src/mod.ts';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { createMcpOAuthOperations } from '../../../packages/daemon/src/lib/connections/mcp-oauth-operations.ts';
+import { ConnectionVault } from '../../../packages/daemon/src/lib/connections/vault.ts';
+import { createCredentialStore } from '../../../packages/daemon/src/lib/credentials/credential-store.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
+import { artifactIdentityWrites } from '../../../packages/daemon/src/storage/repositories/artifact-file-identity-write.ts';
 import { startFakeMcpOAuthServer } from '../../../packages/daemon/tests/helpers/fake-mcp-oauth-server.ts';
 
 const run = resolve(process.argv.at(-1) ?? '');
@@ -56,7 +60,8 @@ const fake = await startFakeMcpOAuthServer({
 const other = await startFakeMcpOAuthServer();
 const lifecycle = process.argv[3] === 'lifecycle';
 const rowWrites = process.argv[3] === 'row-writes';
-const proofName = lifecycle ? 'mcp-oauth-lifecycle' : rowWrites ? 'mcp-oauth-row-writes' : 'mcp-oauth-connect';
+const refresh = process.argv[3] === 'refresh';
+const proofName = refresh ? 'mcp-oauth-refresh' : lifecycle ? 'mcp-oauth-lifecycle' : rowWrites ? 'mcp-oauth-row-writes' : 'mcp-oauth-connect';
 const readStatus = (hub: MessageHub, id: string) =>
   invoke(hub, 'mcp.registry.status', { id });
 const reopen = (hub: MessageHub, id: string) =>
@@ -267,6 +272,111 @@ try {
       evidence.replacementAfterRestart = 'disconnected';
     });
   }
+  if (refresh) {
+    const rejectedId = await withDaemon(async (hub, app) => {
+      let now = Date.now();
+      const store = createCredentialStore(app.db.getDatabase());
+      const service = createMcpOAuthOperations(app.db, store, () => {}, () => now);
+      assert.equal(typeof service.refresh, 'function', 'Missing the daemon-held MCP refresh entry point');
+      const refreshRequests = () => fake.requests.filter(({ params }) => params.get('grant_type') === 'refresh_token');
+      const held = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      fake.switches.beforeRefreshReply = async () => {
+        held.resolve();
+        await release.promise;
+      };
+      const parallel = [service.refresh(id), service.refresh(id), service.refresh(id)];
+      await Promise.race([held.promise, parallel[0].then(() => { throw new Error('Refresh ended before the token request'); })]);
+      release.resolve();
+      assert.deepEqual(await Promise.all(parallel), Array(3).fill({ ok: true }));
+      assert.equal(refreshRequests().length, 1);
+      assert.deepEqual(await readStatus(hub, id), healthy);
+      evidence.singleFlightRequests = 1;
+
+      const slackId = (await hub.request<{ server: AppMcpServer }>('mcp.registry.create', {
+        name: 'oauth-slack-proof', url: fake.url, sourceType: 'http', enabled: false,
+      })).server.id;
+      const { authorizeUrl } = await invoke<{ authorizeUrl: string }>(hub, 'mcp.registry.connect', { id: slackId, preset: 'test-slack' });
+      assert.equal((await fetch(await callbackUrl(authorizeUrl))).status, 200);
+      const vault = new ConnectionVault(store, await app.db.gateway.call(artifactIdentityWrites, 'ensure', 'proof-instance'));
+      const grant = await vault.readMcp(slackId);
+      assert(grant);
+      await vault.replaceMcp(slackId, { ...grant, client: { ...grant.client, client_secret: crypto.randomUUID(), token_endpoint_auth_method: 'client_secret_post' } });
+
+      const transient = [
+        { label: 'network', reply: () => Response.error(), reason: 'request_failed' },
+        { label: '429', reply: () => new Response('', { status: 429 }), reason: 'rate_limited' },
+        { label: '503', reply: () => new Response('', { status: 503 }), reason: 'request_failed' },
+        { label: 'malformed', reply: () => new Response('{'), reason: 'request_failed' },
+        { label: 'oversize', reply: () => new Response('x'.repeat(300000)), reason: 'response_too_large' },
+        { label: 'slack_rate_limit', reply: () => Response.json({ ok: false, error: 'ratelimited' }), reason: 'rate_limited', id: slackId },
+      ];
+      for (const scenario of transient) {
+        const target = scenario.id ?? id;
+        const count = refreshRequests().length;
+        fake.switches.beforeRefreshReply = async () => scenario.reply();
+        const failure = { ok: false, reason: scenario.reason };
+        assert.deepEqual(await service.refresh(target), failure, scenario.label);
+        now += 59999;
+        assert.deepEqual(await service.refresh(target), failure, scenario.label);
+        assert.equal(refreshRequests().length, count + 1, scenario.label);
+        assert.deepEqual(await readStatus(hub, target), healthy);
+        now += 1;
+      }
+      evidence.transient = transient.map(({ label, reason }) => ({ label, reason }));
+      assert(refreshRequests().at(-1)?.params.has('client_secret'));
+
+      fake.switches.beforeRefreshReply = async () => Response.json({ ok: false, error: 'invalid_refresh_token' });
+      const count = refreshRequests().length;
+      assert.deepEqual(await service.refresh(slackId), { ok: false, reason: 'reconnect_needed' });
+      assert.deepEqual(await service.refresh(slackId), { ok: false, reason: 'reconnect_needed' });
+      assert.equal(refreshRequests().length, count + 1);
+      assert.deepEqual(await readStatus(hub, slackId), reconnectNeeded);
+
+      const started = Promise.withResolvers<void>();
+      const finish = Promise.withResolvers<void>();
+      fake.switches.beforeRefreshReply = async () => {
+        started.resolve();
+        await finish.promise;
+      };
+      const late = service.refresh(id);
+      try {
+        await Promise.race([started.promise, late.then(() => { throw new Error('Refresh ended before the token request'); })]);
+        const retire = service.operations.find(({ name }) => name === 'mcp.registry.disconnect');
+        assert(retire);
+        assert.deepEqual(await retire.execute({ id }, { source: 'rpc' }), { ok: true });
+      } finally {
+        finish.resolve();
+      }
+      assert.deepEqual(await late, { ok: false, reason: 'reconnect_needed' });
+      assert.deepEqual(await readStatus(hub, id), disconnected);
+      assert.equal(grantCount(app), 0);
+      evidence.lateRefresh = disconnected.health;
+
+      const fresh = await invoke<{ authorizeUrl: string }>(hub, 'mcp.registry.connect', { id, preset: 'test' });
+      assert.equal((await fetch(await callbackUrl(fresh.authorizeUrl))).status, 200);
+      app.db.getDatabase().exec(`
+        CREATE TRIGGER proof_fail_grant_erase BEFORE DELETE ON provider_credentials
+        BEGIN SELECT RAISE(ABORT, 'synthetic erase failure'); END
+      `);
+      fake.switches.beforeRefreshReply = async () => Response.json({ error: 'invalid_grant' }, { status: 400 });
+      const rejected = refreshRequests().length;
+      assert.deepEqual(await service.refresh(id), { ok: false, reason: 'reconnect_needed' });
+      assert.equal(refreshRequests().length, rejected + 1);
+      assert.deepEqual(await readStatus(hub, id), reconnectNeeded);
+      assert.equal(grantCount(app), 1);
+      assert.equal(fake.authorizeScopes.length, 3);
+      return id;
+    });
+    await withDaemon(async (hub, app) => {
+      const service = createMcpOAuthOperations(app.db, createCredentialStore(app.db.getDatabase()), () => {});
+      const requests = fake.requests.length;
+      assert.deepEqual(await service.refresh(rejectedId), { ok: false, reason: 'reconnect_needed' });
+      assert.deepEqual(await readStatus(hub, rejectedId), reconnectNeeded);
+      assert.equal(fake.requests.length, requests);
+      evidence.failedEraseAfterRestart = reconnectNeeded.health;
+    });
+  }
   evidence.pass = true;
 } finally {
   tokenRelease.resolve();
@@ -274,7 +384,7 @@ try {
   other.stop();
   writeFileSync(join(run, `evidence/${proofName}.json`), JSON.stringify(evidence, null, 2));
 }
-console.log(lifecycle
+console.log(refresh ? 'PASS: one refresh under concurrency, transient backoff, rejected grants stay fenced across restart, and a late refresh cannot undo disconnect' : lifecycle
   ? 'PASS: human reconnect and disconnect, cancelled consent, delayed callback, failed erase and interrupted activation'
   : rowWrites
     ? 'PASS: registry URL replacement denied the agent, fenced delayed consent and stayed disconnected after restart'
