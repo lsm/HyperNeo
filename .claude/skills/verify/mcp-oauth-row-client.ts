@@ -23,6 +23,7 @@ let bearer: string | null = null;
 let expired: string | null = null;
 let holdCall = false;
 let challengeScope = false;
+let oversized = false;
 let initializations = 0;
 let expiredRequests = 0;
 const fake = await startFakeMcpOAuthServer({
@@ -44,6 +45,10 @@ const fake = await startFakeMcpOAuthServer({
         status: 403, headers: { 'www-authenticate': 'Bearer error="insufficient_scope", scope="write"' },
       });
     if (id === undefined) return new Response(null, { status: 202 });
+    if (oversized && method === 'tools/call')
+      return new Response(`data: ${'x'.repeat(65536)}\n\n`, {
+        headers: { 'content-type': 'text/event-stream' },
+      });
     let result: unknown = toolResult;
     if (method === 'initialize') {
       initializations++;
@@ -129,6 +134,12 @@ try {
   assert.deepEqual(await call(), toolResult);
   assert.equal(initializations, 2);
 
+  oversized = true;
+  await assert.rejects(call(), { message: 'response_too_large' });
+  oversized = false;
+  assert.deepEqual(await call(), toolResult);
+  assert.equal(initializations, 3);
+
   assert.deepEqual(await operation('mcp.registry.disconnect', {}), { ok: true });
   const requests = fake.requests.length;
   await assert.rejects(call(), { message: 'reconnect_needed' });
@@ -137,7 +148,7 @@ try {
   writeFileSync(join(run, 'evidence/mcp-oauth-row-client.json'), JSON.stringify({
     testedHead: process.argv[2], initializations, expiredRequests, refreshRequests: 1,
     consentRequests: fake.authorizeScopes.length, retiredCallRefused: true,
-    disconnectedContact: 0, pass: true,
+    disconnectedContact: 0, oversized: 'response_too_large', pass: true,
   }, null, 2));
   console.log('PASS: one SDK connection per generation, one refresh under concurrency, retired result refused, disconnected row made zero requests');
 } finally {

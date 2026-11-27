@@ -12,6 +12,8 @@ and exercises the daemon's SDK client before session wiring. Concurrent lists
 share one initialization. Three expired calls share one token exchange and
 succeed. A write-scope challenge is refused without opening consent. Reconnect
 rejects a delayed result from the old generation and starts a new client on
-the same row. After disconnect the retained caller makes no upstream request.
+the same row. An oversized SSE event fails with `response_too_large` and the
+next call opens a usable client. After disconnect the retained caller makes
+no upstream request.
 
 Require exit 0 and `pass: true` in `mcp-oauth-row-client.json`.

@@ -1,6 +1,6 @@
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import { createMcpFetch, type McpOAuthPreset, type McpRefreshFailure } from './mcp-fetch.ts';
-import { mcpGrant, type McpGrant } from './status.ts';
+import { type McpGrant, mcpGrant } from './status.ts';
 import type { ConnectionVault } from './vault.ts';
 
 type Draft = Partial<Omit<McpGrant, 'generation'>> & { verifier?: string };
@@ -15,6 +15,18 @@ const boundTo = (preset: McpOAuthPreset, binding: McpGrant['binding']) =>
 const withinMaximum = (preset: McpOAuthPreset, scopes: string[]) =>
   scopes.every((scope) => preset.scopes.includes(scope));
 const scopeList = (scope: string | null | undefined) => scope?.split(/\s+/).filter(Boolean);
+
+export function admitsMcpGrant(
+  preset: McpOAuthPreset,
+  generation: number,
+  grant: McpGrant | null
+): grant is McpGrant {
+  return (
+    grant?.generation === generation &&
+    boundTo(preset, grant.binding) &&
+    withinMaximum(preset, grant.scopes)
+  );
+}
 
 export function createMcpOAuthProvider(options: {
   vault: ConnectionVault;
@@ -32,12 +44,7 @@ export function createMcpOAuthProvider(options: {
   const ready = attempt
     ? Promise.resolve()
     : options.vault.readMcp(options.serverId).then((grant) => {
-        if (
-          grant?.generation === options.generation &&
-          boundTo(preset, grant.binding) &&
-          withinMaximum(preset, grant.scopes)
-        )
-          draft = grant;
+        if (admitsMcpGrant(preset, options.generation, grant)) draft = grant;
       });
   const persist = async () => {
     const { client, tokens, binding, scopes } = draft;

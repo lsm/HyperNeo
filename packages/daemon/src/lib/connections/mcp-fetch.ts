@@ -83,7 +83,8 @@ function capEventStream(
   body: ReadableStream<Uint8Array>,
   maxBytes: number,
   maxEventBytes: number,
-  signal: AbortSignal
+  signal: AbortSignal,
+  oversized: () => never
 ) {
   let size = 0;
   let eventSize = 0;
@@ -93,12 +94,12 @@ function capEventStream(
     new TransformStream<Uint8Array, Uint8Array>({
       transform(chunk, controller) {
         size += chunk.byteLength;
-        if (size > maxBytes) throw new Error('response_too_large');
+        if (size > maxBytes) oversized();
         for (const byte of chunk) {
           const crlfTail = previousCR && byte === 10;
           previousCR = byte === 13;
           if (crlfTail && eventSize === 0) continue;
-          if (++eventSize > maxEventBytes) throw new Error('response_too_large');
+          if (++eventSize > maxEventBytes) oversized();
           if (crlfTail) continue;
           if (byte === 10 || byte === 13) {
             if (!lineHasData) eventSize = 0;
@@ -161,6 +162,7 @@ export function createMcpFetch(options: {
   preset: McpOAuthPreset;
   tokenEndpoint: () => string | undefined;
   onRefreshFailure?: (reason: McpRefreshFailure) => void;
+  onResponseTooLarge?: () => void;
   maxBytes?: number;
   maxSseEventBytes?: number;
   timeoutMs?: number;
@@ -205,13 +207,17 @@ export function createMcpFetch(options: {
         mediaType === 'text/event-stream'
       ) {
         return new Response(
-          capEventStream(response.body, maxBytes, options.maxSseEventBytes ?? 65536, signal),
+          capEventStream(response.body, maxBytes, options.maxSseEventBytes ?? 65536, signal, () => {
+            options.onResponseTooLarge?.();
+            throw new Error('response_too_large');
+          }),
           { status: response.status, headers: decodedHeaders(response) }
         );
       }
       body = await readCapped(response, maxBytes, signal);
     } catch (error) {
       tooLarge = error instanceof Error && error.message === 'response_too_large';
+      if (tooLarge) options.onResponseTooLarge?.();
       const reason = tooLarge ? 'response_too_large' : 'request_failed';
       recordFailure?.(reason);
       throw new Error(reason);
