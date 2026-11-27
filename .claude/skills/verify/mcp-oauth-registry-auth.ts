@@ -80,10 +80,11 @@ try {
   try {
     if (!baseline) {
       assert(marker(offline));
-      offline.exec(`DELETE FROM migration_markers WHERE key = 'migration_539';
+      offline.exec(`DELETE FROM migration_markers WHERE key = 'migration_540';
         ALTER TABLE neo_todos DROP COLUMN plan_check_json;
         ALTER TABLE neo_todos DROP COLUMN plan;`);
       assert(offline.prepare("SELECT 1 FROM migration_markers WHERE key = 'migration_537'").get());
+      assert(marker(offline));
     }
   } finally {
     offline.close();
@@ -92,7 +93,7 @@ try {
   if (!baseline) {
     await withDaemon(async (hub, db) => {
       assert.deepEqual(todoPlan(db), planColumns);
-      assert(marker(db));
+      assert(db.prepare("SELECT 1 FROM migration_markers WHERE key = 'migration_540'").get());
       assert.deepEqual((await list(hub)).find(({ id }) => id === legacy.id), legacy);
       evidence.todoPlanRecoveredWith537AlreadyMarked = true;
     });

@@ -31,12 +31,12 @@ function columns(db: Database, table: string) {
   );
 }
 
+const migrationKeys = ['migration_537', 'migration_539', 'migration_540'];
+
 function markers(db: Database) {
   return db
-    .prepare(
-      "SELECT key, applied_at FROM migration_markers WHERE key IN ('migration_537', 'migration_539') ORDER BY key"
-    )
-    .all() as { key: string; applied_at: number }[];
+    .prepare('SELECT key, applied_at FROM migration_markers WHERE key IN (?, ?, ?) ORDER BY key')
+    .all(...migrationKeys) as { key: string; applied_at: number }[];
 }
 
 test('fresh database has both schemas and migration markers', () => {
@@ -45,18 +45,23 @@ test('fresh database has both schemas and migration markers', () => {
     initialize(db);
     expect(columns(db, 'neo_todos')).toEqual(expect.arrayContaining(['plan', 'plan_check_json']));
     expect(columns(db, 'app_mcp_servers')).toContain('auth');
-    expect(markers(db).map(({ key }) => key)).toEqual(['migration_537', 'migration_539']);
+    expect(markers(db).map(({ key }) => key)).toEqual(migrationKeys);
   } finally {
     db.close();
   }
 });
 
-for (const previous of ['pre-537', 'todo plan only', 'OAuth only'] as const) {
+for (const previous of [
+  'pre-537',
+  'todo plan only',
+  'OAuth only',
+  'OAuth only with marker 539',
+] as const) {
   test(`upgrades a ${previous} database and keeps existing data on repeat startup`, () => {
     const db = new Database(':memory:');
     try {
       initialize(db);
-      db.exec("DELETE FROM migration_markers WHERE key IN ('migration_537', 'migration_539')");
+      db.prepare('DELETE FROM migration_markers WHERE key IN (?, ?, ?)').run(...migrationKeys);
       for (const column of ['plan', 'plan_check_json']) {
         if (columns(db, 'neo_todos').includes(column))
           db.exec(`ALTER TABLE neo_todos DROP COLUMN ${column}`);
@@ -66,7 +71,8 @@ for (const previous of ['pre-537', 'todo plan only', 'OAuth only'] as const) {
         INSERT INTO neo_todos (id, ask_id, position, title, done_when, created_at, updated_at)
         VALUES ('todo', 'ask', 0, 'Todo', 'Complete', 1, 1);
         INSERT INTO app_mcp_servers (id, name, source_type) VALUES ('mcp', 'Registry', 'http');`);
-      if (previous === 'OAuth only') {
+      const hadOAuth = previous.startsWith('OAuth only');
+      if (hadOAuth) {
         db.exec(`UPDATE app_mcp_servers SET auth = '{"kind":"oauth"}' WHERE id = 'mcp'`);
       } else {
         db.exec('ALTER TABLE app_mcp_servers DROP COLUMN auth');
@@ -79,10 +85,12 @@ for (const previous of ['pre-537', 'todo plan only', 'OAuth only'] as const) {
       }
       if (previous !== 'pre-537')
         db.exec("INSERT INTO migration_markers VALUES ('migration_537', 1)");
+      if (previous === 'OAuth only with marker 539')
+        db.exec("INSERT INTO migration_markers VALUES ('migration_539', 1)");
 
       initialize(db);
       const applied = markers(db);
-      expect(applied.map(({ key }) => key)).toEqual(['migration_537', 'migration_539']);
+      expect(applied.map(({ key }) => key)).toEqual(migrationKeys);
       initialize(db);
       expect(markers(db)).toEqual(applied);
       expect(
@@ -94,7 +102,7 @@ for (const previous of ['pre-537', 'todo plan only', 'OAuth only'] as const) {
       );
       expect(db.prepare("SELECT name, auth FROM app_mcp_servers WHERE id = 'mcp'").get()).toEqual({
         name: 'Registry',
-        auth: previous === 'OAuth only' ? '{"kind":"oauth"}' : null,
+        auth: hadOAuth ? '{"kind":"oauth"}' : null,
       });
     } finally {
       db.close();

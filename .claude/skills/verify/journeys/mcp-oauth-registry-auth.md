@@ -12,9 +12,9 @@ Require exit 1 at the delete reply assertion. The base accepts deletion and
 lets workspace import retarget and prune rows with synthetic OAuth metadata.
 
 The proof checks the todo plan columns on first boot and creates a plain row
-through the registry RPC. It then recreates the migration collision by removing
-the plan columns and marker 539 from the stopped, synthetic database while
-leaving marker 537 and the registry intact. Restarting restores the plan columns
+through the registry RPC. It then recreates a database affected by the collision
+by removing the plan columns and recovery marker 540 while leaving markers 537
+and 539 and the registry intact. Restarting records 540, restores the plan columns
 and preserves the registry row. The proof also starts from a database without
 the `auth` column or marker 539 and checks that the OAuth migration applies.
 The helper imports an HTTP server with `workspace.add` and
