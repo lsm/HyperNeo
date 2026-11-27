@@ -346,7 +346,13 @@ export class VoiceStream {
     select: () => Uint8Array,
     size: number,
     appendEmpty: boolean,
-    timing: { startedAt: number; decodeMs: number; offset?: number } = {
+    timing: {
+      startedAt: number;
+      decodeMs: number;
+      offset?: number;
+      capturedAt?: unknown;
+      sentAt?: unknown;
+    } = {
       startedAt: Date.now(),
       decodeMs: 0,
     }
@@ -361,6 +367,8 @@ export class VoiceStream {
       timing.offset >= 0
         ? { offset: timing.offset }
         : {}),
+      ...(Number.isFinite(timing.capturedAt) ? { clientCapturedAt: timing.capturedAt } : {}),
+      ...(Number.isFinite(timing.sentAt) ? { clientSentAt: timing.sentAt } : {}),
     };
     this.inputBytesReceived += size;
     this.lastChunkAt = timing.startedAt;

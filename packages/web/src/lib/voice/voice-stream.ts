@@ -49,7 +49,8 @@ export function openVoiceStream(
   let opusPackets: Uint8Array[] = [];
   let queuedChunks = 0;
   let rate = STREAM_SAMPLE_RATE;
-  let sending: Promise<void> = Promise.resolve();
+  let capturedAt = 0;
+  const sending = new Set<Promise<void>>();
   const unsubscribe = hub.onEvent<VoiceStreamTextEvent>('voice.stream.text', (event) => {
     if (!closed && streamId && event?.streamId === streamId) onText(event.text ?? '');
   });
@@ -70,15 +71,17 @@ export function openVoiceStream(
     queuedChunks++;
     const id = streamId;
     const audioBase64 = bytesToBase64(audio);
-    sending = sending
-      .then(() => (live ? hub.request('voice.stream.chunk', { streamId: id, audioBase64 }) : null))
+    const sent = hub
+      .request('voice.stream.chunk', { streamId: id, audioBase64, capturedAt, sentAt: Date.now() })
       .then(
         () => undefined,
         (error: unknown) => fail(error)
       )
       .finally(() => {
         queuedChunks--;
+        sending.delete(sent);
       });
+    sending.add(sent);
   };
   const flushPackets = () => {
     if (!opusPackets.length) return;
@@ -97,6 +100,7 @@ export function openVoiceStream(
   };
   const flush = () => {
     if (!streamId || !live || !pendingSamples) return;
+    capturedAt = Date.now();
     const pcm = downsampleChunks(pending, pendingSamples, rate, STREAM_SAMPLE_RATE);
     pending = [];
     pendingSamples = 0;
@@ -181,7 +185,7 @@ export function openVoiceStream(
             fail(error);
           }
         }
-        await sending;
+        await Promise.all(sending);
       });
       await finished;
       if (!live || !streamId) return null;
