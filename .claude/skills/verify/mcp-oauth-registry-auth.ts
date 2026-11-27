@@ -45,7 +45,12 @@ async function withDaemon<T>(
 }
 
 const marker = (db: Database) =>
-  db.prepare("SELECT applied_at FROM migration_markers WHERE key = 'migration_537'").get();
+  db.prepare("SELECT applied_at FROM migration_markers WHERE key = 'migration_539'").get();
+const todoPlan = (db: Database) =>
+  db.prepare(
+    "SELECT name FROM pragma_table_info('neo_todos') WHERE name IN ('plan', 'plan_check_json') ORDER BY name"
+  ).all();
+const planColumns = [{ name: 'plan' }, { name: 'plan_check_json' }];
 const list = async (hub: MessageHub) =>
   (await hub.request<{ servers: AppMcpServer[] }>('mcp.registry.list', {})).servers;
 const oldUrl = 'https://original.example.test/mcp';
@@ -60,7 +65,8 @@ const auth = { kind: 'oauth', preset: 'synthetic', generation: 1, active: false 
 const evidence: Record<string, unknown> = { testedHead: process.argv[3] };
 
 try {
-  const legacy = await withDaemon(async (hub) => {
+  const legacy = await withDaemon(async (hub, db) => {
+    if (!baseline) assert.deepEqual(todoPlan(db), planColumns);
     const { server } = await hub.request<{ server: AppMcpServer }>('mcp.registry.create', {
       name: 'legacy-proof',
       sourceType: 'http',
@@ -74,13 +80,35 @@ try {
   try {
     if (!baseline) {
       assert(marker(offline));
-      offline.exec("DELETE FROM migration_markers WHERE key = 'migration_537'");
-      offline.exec('ALTER TABLE app_mcp_servers DROP COLUMN auth');
+      offline.exec(`DELETE FROM migration_markers WHERE key = 'migration_540';
+        ALTER TABLE neo_todos DROP COLUMN plan_check_json;
+        ALTER TABLE neo_todos DROP COLUMN plan;`);
+      assert(offline.prepare("SELECT 1 FROM migration_markers WHERE key = 'migration_537'").get());
+      assert(marker(offline));
     }
-    assert(!(offline.prepare('PRAGMA table_info(app_mcp_servers)').all() as { name: string }[])
-      .some(({ name }) => name === 'auth'));
   } finally {
     offline.close();
+  }
+
+  if (!baseline) {
+    await withDaemon(async (hub, db) => {
+      assert.deepEqual(todoPlan(db), planColumns);
+      assert(db.prepare("SELECT 1 FROM migration_markers WHERE key = 'migration_540'").get());
+      assert.deepEqual((await list(hub)).find(({ id }) => id === legacy.id), legacy);
+      evidence.todoPlanRecoveredWith537AlreadyMarked = true;
+    });
+  }
+
+  const beforeUpgrade = new Database(dbPath);
+  try {
+    if (!baseline) {
+      beforeUpgrade.exec(`DELETE FROM migration_markers WHERE key = 'migration_539';
+        ALTER TABLE app_mcp_servers DROP COLUMN auth;`);
+    }
+    assert(!(beforeUpgrade.prepare('PRAGMA table_info(app_mcp_servers)').all() as { name: string }[])
+      .some(({ name }) => name === 'auth'));
+  } finally {
+    beforeUpgrade.close();
   }
 
   const migratedMarker = await withDaemon(async (hub, db) => {
