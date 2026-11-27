@@ -228,13 +228,18 @@ compares the recorded triple against the todo target.
   session a confirmed triple.
 - Session lifecycle: `SessionManager.createSession`
   (`session-lifecycle.ts:286`) refuses any new session whose config lacks the
-  recorded triple. Effort is required only where thinking applies: for a
-  provider whose thinking mode is `off` (`types.ts:175-187` — minimax, ollama,
-  ollama-cloud, anthropic-copilot) or the `oxap-codex` harness, which
-  deliberately stores no thinking level (`session-lifecycle.ts:295`), the
-  recorded effort is the explicit value `off` — a stated fact the gate,
-  receipts and reuse compare like any other, not an absent field. Each door
-  supplies its triple from a named source:
+  recorded triple. The recorded effort is always the value execution uses.
+  Only providers whose thinking mode is `off` and that run no reasoning at all
+  (minimax, ollama, ollama-cloud — `types.ts:175-187`) record the explicit
+  value `off`. Providers and harnesses that map levels to real reasoning
+  values record the mapped value instead: `anthropic-copilot` turns every
+  level, `off` included, into `low`–`xhigh` (`reasoning-effort.ts:7-15`), and
+  the `oxap-codex` harness — which deliberately stores no UI thinking level
+  (`session-lifecycle.ts:295`) — executes model-specific reasoning `low`–`max`
+  from its own level mapping (`oxap-harnesses.ts:138-159`), where `off` is
+  recorded only when the model truly runs with reasoning `none`. The gate
+  requires that executed value; `off` never stands in for a reasoning effort
+  that exists. Each door supplies its triple from a named source:
   - UI sessions: the workspace composer sends the model and thinking selection
     it displays. Quick create has no picker (`default-commands.ts:23-29` sends
     only a workspace path), so it gains an explicit source: the client reads
