@@ -313,6 +313,17 @@ export class AppMcpServerRepository {
     return this.get(id);
   }
 
+  replaceOAuthUrl(id: string, url: string | null): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE app_mcp_servers SET url = ?, updated_at = ?, last_attach_error = NULL
+         WHERE id = ? AND source_type = 'http' AND json_extract(auth, '$.active') = 0`
+      )
+      .run(url, Date.now(), id);
+    if (result.changes > 0) this.reactiveDb.notifyChange('app_mcp_servers');
+    return result.changes > 0;
+  }
+
   deleteOAuth(id: string): boolean {
     return this.remove(`DELETE FROM app_mcp_servers WHERE id = ? AND auth IS NOT NULL`, id);
   }

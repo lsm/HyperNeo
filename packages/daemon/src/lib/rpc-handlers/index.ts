@@ -279,7 +279,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
   const writeToolPreferences: SessionToolPreferenceWriter = (id, request, tools) =>
     exclusiveToolPreferences(id, () => persistToolPreferences(id, request, tools));
   setupMessageHandlers(deps.messageHub, deps.sessionManager, deps.db);
-  setupOperationHandlers(
+  const { invoke } = setupOperationHandlers(
     deps.messageHub,
     () => deps.sessionManager.getOperationRegistry(),
     deps.deviceOf
@@ -359,6 +359,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
   registerAppMcpHandlers(deps.messageHub, {
     db: deps.db,
     internalEventBus: deps.internalEventBus,
+    invoke,
   });
 
   setupAppMcpHandlers(deps.messageHub, deps.internalEventBus, deps.db, writeToolPreferences);

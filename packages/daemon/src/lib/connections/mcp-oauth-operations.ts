@@ -25,6 +25,7 @@ const testPresets = {
 const policy = { safetyClass: 'human_only', caller: 'local_user' } as const;
 const statusInput = z.strictObject({ id: z.string().min(1) });
 const connectInput = statusInput.extend({ preset: z.string().min(1) });
+const replaceInput = statusInput.extend({ url: z.string().nullable() });
 const connectResult = z.union([
   z.object({ authorizeUrl: z.string() }),
   z.object({ reason: z.string() }),
@@ -152,13 +153,15 @@ export function createMcpOAuthOperations(
   const connect = ({ id, preset }: z.infer<typeof connectInput>) => openConsent(id, preset);
   const reconnect = ({ id }: z.infer<typeof statusInput>) => openConsent(id);
 
-  function disconnect({ id }: z.infer<typeof statusInput>) {
+  function retire({ id }: z.infer<typeof statusInput>, replacement?: { url: string | null }) {
     const active = pending.get(id);
-    active?.controller.abort();
+    if (!replacement) active?.controller.abort();
     return serial(id, async (): Promise<z.infer<typeof disconnectResult>> => {
+      const row = registry.get(id);
+      if (replacement && !row?.auth) return { ok: false, reason: 'not_connected' };
+      if (replacement && row?.url === (replacement.url ?? undefined)) return { ok: true };
       const flow = pending.get(id) ?? active;
       flow?.controller.abort();
-      const row = registry.get(id);
       const auth =
         row?.auth ??
         (flow && row?.sourceType === 'http' && row.url === testPresets[flow.preset].url
@@ -169,6 +172,12 @@ export function createMcpOAuthOperations(
       changed();
       try {
         await (await vault()).removeMcp(id);
+        if (replacement) {
+          if (!registry.replaceOAuthUrl(id, replacement.url)) {
+            return { ok: false, reason: 'request_failed' };
+          }
+          changed();
+        }
         return { ok: true };
       } catch {
         return { ok: false, reason: 'request_failed' };
@@ -200,10 +209,16 @@ export function createMcpOAuthOperations(
     .input('input')
     .pipe(reconnect, 'input', 'result')
     .endAsync('result') as typeof reconnect;
+  const disconnect = (input: z.infer<typeof statusInput>) => retire(input);
   const runDisconnect = (superpipe({})('mcp.registry.disconnect') as PipelineAPI)
     .input('input')
     .pipe(disconnect, 'input', 'result')
     .endAsync('result') as typeof disconnect;
+  const replace = (input: z.infer<typeof replaceInput>) => retire(input, input);
+  const runReplace = (superpipe({})('mcp.registry.replace') as PipelineAPI)
+    .input('input')
+    .pipe(replace, 'input', 'result')
+    .endAsync('result') as typeof replace;
   const readStatus = (superpipe({})('mcp.registry.status') as PipelineAPI)
     .input('input')
     .pipe(status, 'input', 'result')
@@ -232,6 +247,14 @@ export function createMcpOAuthOperations(
       inputSchema: statusInput,
       resultSchema: disconnectResult,
       execute: runDisconnect,
+    }),
+    defineOperation({
+      name: 'mcp.registry.replace',
+      description: 'Disconnect a remote MCP registry row before changing its URL.',
+      policy,
+      inputSchema: replaceInput,
+      resultSchema: disconnectResult,
+      execute: runReplace,
     }),
     defineOperation({
       name: 'mcp.registry.status',

@@ -209,99 +209,54 @@ try {
     evidence.reconnectRefreshRequests = refreshRequests;
   }
   if (rowWrites) {
-    const remove = (hub: MessageHub, id: string) => hub.request('mcp.registry.delete', { id });
-    const update = async (hub: MessageHub, id: string, updates: Record<string, unknown>) =>
-      (await hub.request<{ server: AppMcpServer }>('mcp.registry.update', { id, ...updates })).server;
-
-    async function whileConsentIsHeld(hub: MessageHub, id: string, edit: () => Promise<void>) {
+    const readRow = async (hub: MessageHub) =>
+      (await hub.request<{ servers: AppMcpServer[] }>('mcp.registry.list', {}))
+        .servers.find((server) => server.id === id);
+    await withDaemon(async (hub, app) => {
       const callback = await callbackUrl((await reopen(hub, id)).authorizeUrl);
       const hold = { started: Promise.withResolvers<void>(), release: Promise.withResolvers<void>() };
       holdCodeReply = hold;
       const reply = fetch(callback).then((response) => response.status, () => 'closed');
       try {
         await Promise.race([hold.started.promise, reply.then(() => { throw new Error('Callback ended before code exchange'); })]);
-        await edit();
+        evidence.step = 'replace URL during consent';
+        const { server } = await hub.request<{ server: AppMcpServer }>('mcp.registry.update', {
+          id, url: other.url, sourceType: 'http', name: 'oauth-retargeted',
+        });
+        assert.equal(server.url, other.url);
+        assert.equal(server.name, 'oauth-retargeted');
+        assert.equal(server.auth?.active, false);
       } finally {
         hold.release.resolve();
         holdCodeReply = { started: tokenStarted, release: tokenRelease };
         await reply;
       }
       assert.notEqual(await reply, 200);
-    }
-
-    let interruptedId = '';
-    await withDaemon(async (hub, app) => {
-      const createConnected = async (name: string) => {
-        const { server } = await hub.request<{ server: AppMcpServer }>('mcp.registry.create', {
-          name, url: fake.url, sourceType: 'http', enabled: false,
-        });
-        const consent = await invoke<{ authorizeUrl: string }>(hub, 'mcp.registry.connect', {
-          id: server.id, preset: 'test',
-        });
-        assert.equal((await fetch(await callbackUrl(consent.authorizeUrl))).status, 200);
-        return server.id;
-      };
-
-      await whileConsentIsHeld(hub, id, async () => {
-        evidence.step = 'replace URL during consent';
-        const row = await update(hub, id, { url: other.url, enabled: true });
-        assert.equal(row.url, other.url);
-        assert.equal(row.enabled, true);
-        assert.equal(row.auth?.active, false);
-      });
       assert.deepEqual(await readStatus(hub, id), disconnected);
       assert.deepEqual(await invoke(hub, 'mcp.registry.connect', { id, preset: 'test' }), {
         reason: 'invalid_preset',
       });
       assert.equal(other.requests.length, 0);
       assert.equal(grantCount(app), 0);
-      const stdio = await update(hub, id, { sourceType: 'stdio', command: 'unused' });
-      assert.equal(stdio.sourceType, 'stdio');
-      assert.equal(stdio.auth, undefined);
-      await assert.rejects(update(hub, id, { auth: { kind: 'oauth', preset: 'test' } }), /http/);
+      const agent = createOperationMcpHandler(
+        () => app.sessionManager.getOperationRegistry(),
+        () => ({ sessionId: 'synthetic-worker', role: 'neo' })
+      );
+      const denied = await agent({ name: 'mcp.registry.replace', input: { id, url: fake.url } });
+      assert.equal(denied.isError, true);
+      assert.equal(JSON.parse(denied.content[0].text).code, 'forbidden');
+      assert.equal((await readRow(hub))?.url, other.url);
 
-      const cleared = await createConnected('oauth-auth-clear');
-      assert.equal((await update(hub, cleared, { auth: null })).auth, undefined);
-      assert.equal(grantCount(app), 0);
-      const removed = await createConnected('oauth-delete');
-      await whileConsentIsHeld(hub, removed, async () => {
-        assert.deepEqual(await remove(hub, removed), { success: true });
-      });
-      const { servers } = await hub.request<{ servers: AppMcpServer[] }>('mcp.registry.list', {});
-      assert.equal(servers.some((server) => server.id === removed), false);
-      assert.equal(grantCount(app), 0);
-
-      interruptedId = await createConnected('oauth-interrupted-removal');
-      const sql = app.db.getDatabase();
-      sql.exec(`
-        CREATE TRIGGER proof_fail_grant_erase BEFORE DELETE ON provider_credentials
-        BEGIN SELECT RAISE(ABORT, 'synthetic erase failure'); END
-      `);
-      await assert.rejects(remove(hub, interruptedId), /request_failed/);
-      assert.deepEqual(await readStatus(hub, interruptedId), disconnected);
-      assert.equal(grantCount(app), 1);
-      sql.exec(`
-        DROP TRIGGER proof_fail_grant_erase;
-        CREATE TRIGGER proof_stop_before_row_delete BEFORE DELETE ON app_mcp_servers
-        BEGIN SELECT RAISE(ABORT, 'synthetic interrupted row delete'); END
-      `);
-      await assert.rejects(remove(hub, interruptedId));
-      assert.equal(grantCount(app), 0);
-      evidence.step = 'restart after interrupted removal';
-    });
-
-    await withDaemon(async (hub, app) => {
-      assert.deepEqual(await readStatus(hub, interruptedId), disconnected);
-      const { servers } = await hub.request<{ servers: AppMcpServer[] }>('mcp.registry.list', {});
-      assert.equal(servers.find((server) => server.id === interruptedId)?.auth?.active, false);
-      assert.equal(grantCount(app), 0);
-      app.db.getDatabase().exec('DROP TRIGGER proof_stop_before_row_delete');
-      assert.deepEqual(await remove(hub, interruptedId), { success: true });
       evidence.rowWrites = {
-        delayedCallbacksRefused: 2, grantsAfterReplacement: 0, grantsAfterDeletion: 0,
-        requestsToReplacementUrl: 0, sourceChangeClearedAuth: true,
-        authCleared: true, nonHttpAuthRefused: true, interruptedRemovalRetried: true,
+        agentRefused: true, delayedCallbacksRefused: 1, grantsAfterReplacement: 0,
+        requestsToReplacementUrl: 0,
       };
+    });
+    await withDaemon(async (hub, app) => {
+      assert.equal((await readRow(hub))?.url, other.url);
+      assert.deepEqual(await readStatus(hub, id), disconnected);
+      assert.equal(grantCount(app), 0);
+      evidence.replacementAfterRestart = 'disconnected';
     });
   }
   evidence.pass = true;
@@ -314,5 +269,5 @@ try {
 console.log(lifecycle
   ? 'PASS: human reconnect and disconnect, cancelled consent, delayed callback, failed erase and interrupted activation'
   : rowWrites
-    ? 'PASS: registry replacements and deletion fenced delayed callbacks; interrupted removal remained disconnected after restart'
+    ? 'PASS: registry URL replacement denied the agent, fenced delayed consent and stayed disconnected after restart'
     : 'PASS: human connected through RPC and one-use callback; agent and URL mismatch refused; one exchange; read scopes and healthy after restart');

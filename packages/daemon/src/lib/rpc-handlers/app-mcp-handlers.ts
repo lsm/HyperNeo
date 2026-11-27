@@ -1,6 +1,6 @@
 import { writeToolDefaults, writeSpaceMcpDefault } from '../tools/write-tool-defaults.ts';
 import type { SessionToolPreferenceWriter } from '../tools/write-session-tool-preferences.ts';
-import type { MessageHub } from '@hyperneo/shared';
+import type { MessageHub, RequestHandler } from '@hyperneo/shared';
 import type {
   AppMcpServer,
   CreateAppMcpServerRequest,
@@ -29,6 +29,7 @@ const log = new Logger('app-mcp-handlers');
 export interface AppMcpHandlerContext {
   db: Pick<Database, 'appMcpServers' | 'gateway'>;
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
+  invoke?: RequestHandler;
 }
 
 function requireUnreservedName(name: string): void {
@@ -46,7 +47,7 @@ export function emitChanged(internalEventBus: InternalEventBus<DaemonInternalEve
 }
 
 export function registerAppMcpHandlers(messageHub: MessageHub, ctx: AppMcpHandlerContext): void {
-  const { db, internalEventBus } = ctx;
+  const { db, internalEventBus, invoke } = ctx;
 
   messageHub.onRequest('mcp.registry.list', async () => {
     const servers = db.appMcpServers.list();
@@ -74,7 +75,7 @@ export function registerAppMcpHandlers(messageHub: MessageHub, ctx: AppMcpHandle
     return { server } satisfies { server: AppMcpServer };
   });
 
-  messageHub.onRequest('mcp.registry.update', async (data) => {
+  messageHub.onRequest('mcp.registry.update', async (data, context) => {
     const params = data as UpdateAppMcpServerRequest;
 
     if (!params.id) {
@@ -83,8 +84,27 @@ export function registerAppMcpHandlers(messageHub: MessageHub, ctx: AppMcpHandle
 
     const { id, ...updates } = params;
     if (updates.name !== undefined) requireUnreservedName(updates.name.trim());
-    if (!db.appMcpServers.get(id)) {
-      throw new Error(`MCP server not found: ${id}`);
+    const current = db.appMcpServers.get(id);
+    if (!current) throw new Error(`MCP server not found: ${id}`);
+    if (
+      invoke &&
+      current.auth &&
+      !('auth' in updates) &&
+      (updates.sourceType === undefined || updates.sourceType === 'http') &&
+      'url' in updates &&
+      (updates.url ?? undefined) !== current.url
+    ) {
+      const reply = (await invoke(
+        { name: 'mcp.registry.replace', input: { id, url: updates.url ?? null } },
+        context
+      )) as { ok: true } | { ok: false; reason: string };
+      if (!reply.ok) throw new Error(reply.reason);
+      delete updates.url;
+      if (Object.keys(updates).length === 0) {
+        const server = db.appMcpServers.get(id);
+        if (!server) throw new Error(`MCP server not found: ${id}`);
+        return { server };
+      }
     }
 
     const result = await writeToolDefaults(db, {

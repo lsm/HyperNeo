@@ -9,6 +9,7 @@ export const SETTINGS_OPERATION_NAMES = [
   'mcp.registry.connect',
   'mcp.registry.disconnect',
   'mcp.registry.reconnect',
+  'mcp.registry.replace',
   'mcp.registry.status',
   'oxap.settings.save',
   'settings.model.get',

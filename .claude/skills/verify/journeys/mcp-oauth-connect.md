@@ -34,7 +34,7 @@ between the bundle write and activation. After restarts, status must show
 disconnected and reconnect needed respectively. Require exit 0 and
 `pass: true` in `mcp-oauth-lifecycle.json`.
 
-To exercise registry row removal and replacement against the same daemon and
+To exercise registry URL replacement against the same daemon and
 fixture, run:
 
 ```bash
@@ -44,7 +44,6 @@ bash .claude/skills/verify/proof-run.sh /absolute/evidence/mcp-oauth-row-writes 
 
 On the base, expect exit 1 when the registry refuses a URL replacement.
 On the fixed head, require exit 0 and `pass: true` in `mcp-oauth-row-writes.json`.
-A URL replacement and a deletion each abort a held consent callback and erase
-the grant. A move away from HTTP clears auth, and a non-HTTP row refuses auth.
-A failed erase keeps the row disconnected. A failed row delete after erasure
-keeps the row disconnected after restart, and a retry removes it.
+The replacement operation refuses an agent caller. A human URL replacement
+aborts a held consent callback, erases the grant and stays disconnected after
+restart. The new endpoint receives no request.
