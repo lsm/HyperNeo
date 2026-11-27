@@ -185,7 +185,14 @@ therefore labels its source instead of promising actuals it cannot bind:
     The proxy is the boundary that builds execution for this provider, so the
     confirmed value is the post-fit effort recorded where the proxy applies
     it; until the first request runs, the receipt is declared with the mapped
-    (pre-fit) value. Admission does not pre-refuse on this provider — it
+    (pre-fit) value. When the fit yields no effort — support empty or
+    unavailable, so the proxy omits the field entirely
+    (`reasoning-effort.ts:25`) — the effective reasoning level is the Copilot
+    runtime's own default, which the daemon cannot know: the receipt records
+    `omitted (support unknown)`, the effort field stays effective-unknown, it
+    is never recorded as `off` (reasoning still runs), and the worker counts
+    as not confirmed, so reuse treats it as not matching any explicit request.
+    Admission does not pre-refuse on this provider — it
     exposes no per-model effort levels to check against (`provider.ts:313-317`
     offers only the thinking mode) and support is live data — so a fit below
     the requested level shows in the receipt as a requested-vs-confirmed
