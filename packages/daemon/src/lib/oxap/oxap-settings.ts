@@ -10,6 +10,7 @@ import {
   OXAP_HARNESSES,
   type OxapHarnessId,
   oxapHarness,
+  oxapModelProvider,
 } from '@hyperneo/shared/types/oxap-harnesses';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -18,7 +19,12 @@ import { findExecutable } from '../drivers/find-executable.ts';
 import { defineOperation, type OperationDefinition } from '../operations/registry.ts';
 import { withProviderLock } from '../rpc-handlers/provider-mutation-lock.ts';
 import type { OxapEngine, OxapEngineOptions } from './oxap-engine.ts';
-import { buildHubConfig, missingSetting, savedOxapAdapter } from './oxap-hub-config.ts';
+import {
+  buildHubConfig,
+  deepSeekModelProviderRefusal,
+  missingSetting,
+  savedOxapAdapter,
+} from './oxap-hub-config.ts';
 import { type OxapHubBinary, releaseName } from './oxap-install.ts';
 
 export interface OxapSettingsDeps {
@@ -38,7 +44,8 @@ type Records = readonly Pick<ProviderRecord, 'providerId' | 'configJson'>[];
 async function readKeys(records: Records, deps: OxapSettingsDeps) {
   const keys: Record<string, string | undefined> = {};
   for (const record of records) {
-    if (savedOxapAdapter(record)?.row.key)
+    const saved = savedOxapAdapter(record);
+    if (saved?.row.key && !saved.modelProvider)
       keys[record.providerId] = await deps.key(record.providerId);
   }
   return keys;
@@ -103,7 +110,7 @@ export async function newSessionOxapRefusal(
   provider: string,
   record: Pick<ProviderRecord, 'configJson'> | null,
   installed: OxapHubBinary | undefined,
-  readKey: OxapSettingsDeps['key'] | undefined
+  credentials: Pick<OxapSettingsDeps, 'key' | 'environment'> | undefined
 ): Promise<string | undefined> {
   const row = oxapHarness(harness);
   if (!row.providers.includes(provider)) return `${provider} cannot run on ${harness}`;
@@ -113,7 +120,14 @@ export async function newSessionOxapRefusal(
   const executable = saved.settings.executable;
   if (executable && !(await isExecutableFile(executable)))
     return `${provider} needs an executable file; check Settings → Providers`;
-  if (row.key && !(await readKey?.(provider))?.trim()) return `${provider} needs ${row.key}`;
+  if (saved.modelProvider) {
+    const refusal = deepSeekModelProviderRefusal(saved.modelProvider);
+    if (refusal) return refusal;
+    if (!credentials?.environment.OPENCODE_API_KEY?.trim())
+      return `${provider} needs OPENCODE_API_KEY in the daemon environment for ${saved.modelProvider}`;
+  } else if (row.key && !(await credentials?.key(provider))?.trim()) {
+    return `${provider} needs ${row.key}`;
+  }
   return undefined;
 }
 
@@ -189,6 +203,9 @@ function planSave(input: Save, records: ProviderRecord[]) {
     const updated = { ...saved?.settings, ...settings };
     const missing = missingSetting(settingsRow, updated);
     if (missing) return { reason: `${record.providerId} needs an absolute ${missing} path` };
+    const reason =
+      record.providerId === 'deepseek' && deepSeekModelProviderRefusal(oxapModelProvider(updated));
+    if (reason) return { reason };
     rest.harnessSettings = updated;
   }
   if (row) rest.harness = input.harness;
@@ -203,7 +220,13 @@ function planSave(input: Save, records: ProviderRecord[]) {
 }
 
 function checkHub(plan: Plan, keys: Record<string, string | undefined>, deps: OxapSettingsDeps) {
-  const hub = buildHubConfig(plan.next, OXAP_HARNESSES, {}, keys, deps.stateDirectory);
+  const hub = buildHubConfig(
+    plan.next,
+    OXAP_HARNESSES,
+    deps.environment,
+    keys,
+    deps.stateDirectory
+  );
   return 'reason' in hub ? hub : { value: plan };
 }
 

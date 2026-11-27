@@ -24,6 +24,20 @@ if sys.argv[3:4] == ['--patch']:
     assert routes[provider]['apiKeyEnv'] == 'OPENCODE_API_KEY'
     assert os.environ.get('OPENCODE_API_KEY') == 'synthetic-opencode-go-proof'
     assert 'DEEPSEEK_API_KEY' not in os.environ
+elif os.path.exists('verify-model-provider'):
+    assert sys.argv[1:] == ['--profile', 'sdk']
+    assert 'OPENCODE_API_KEY' not in os.environ
+    assert os.environ.get('DEEPSEEK_API_KEY') == 'synthetic-route-proof'
+    with open('verify-model-provider') as fixture:
+        endpoint = {
+            'opencode-go': 'https://opencode.ai/inference/go',
+            'opencode-zen': 'https://opencode.ai/inference',
+        }[fixture.read()]
+    assert os.environ.get('DEEPSEEK_BASE_URL') == endpoint
+    home = os.environ['DSH_HOME']
+    assert home == os.path.join(os.path.dirname(os.environ['HOME']), 'data/oap/dsh')
+    assert os.path.isdir(home)
+    assert not os.path.lexists(os.path.join(home, '.credentials.yaml'))
 else:
     assert sys.argv[1:] == ['--profile', 'sdk']
     assert os.environ.get('DEEPSEEK_API_KEY') == 'synthetic-deepseek-proof'
