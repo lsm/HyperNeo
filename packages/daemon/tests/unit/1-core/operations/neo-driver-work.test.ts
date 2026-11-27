@@ -317,6 +317,24 @@ describe('driverWorkCaller', () => {
 });
 
 describe('readDriverOutcome', () => {
+  test('an uncertain rejection keeps its client message id without changing the failure', () => {
+    const ref = { adapter: 'codex-desktop', id: 'thread' };
+    const rejected = { ok: false, reason: 'not_delivered', detail: 'socket hang up' };
+    expect(
+      readDriverOutcome(
+        { verb: 'send', ref },
+        { kind: 'completed', value: { ...rejected, clientMessageId: 'client-1' } }
+      )
+    ).toEqual({
+      failure: 'not_delivered: socket hang up',
+      reason: 'not_delivered',
+      clientMessageId: 'client-1',
+    });
+    expect(
+      readDriverOutcome({ verb: 'send', ref }, { kind: 'completed', value: rejected })
+    ).toEqual({ failure: 'not_delivered: socket hang up', reason: 'not_delivered' });
+  });
+
   test('an accepted inbox receipt is unconfirmed input, not a queued submission', () => {
     const ref = { adapter: 'claude-code', id: 'owned-cli' };
     const receipt = { executionId: ref.id, inputId: 'inbox-input' };

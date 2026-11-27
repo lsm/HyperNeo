@@ -17,10 +17,8 @@ import {
   admitCodexSteerTurn,
   codexExchange,
   codexInputEvidence,
-  codexQueueDelivery,
   codexRecentInputs,
   codexTurnState,
-  codexUserInputIds,
   createCodexDesktopAdapter,
   queueCodexMessage,
 } from '../../../../src/lib/drivers/codex-desktop-adapter';
@@ -62,6 +60,21 @@ const heardAs = (id: string, text: string, at = '2026-10-04T11:00:00.000Z') =>
     timestamp: at,
     payload: { type: 'message', role: 'user', id, content: [{ type: 'input_text', text }] },
   });
+const ranAs = (clientId: string, text: string, at = '2026-10-04T11:00:01.000Z') =>
+  JSON.stringify({
+    type: 'event_msg',
+    timestamp: at,
+    payload: {
+      type: 'item_completed',
+      turn_id: 'turn-saved',
+      item: {
+        type: 'UserMessage',
+        id: 'item-saved',
+        client_id: clientId,
+        content: [{ type: 'text', text, text_elements: [] }],
+      },
+    },
+  });
 const saidAt = (text: string, at = '2026-10-04T11:00:05.000Z') =>
   JSON.stringify({
     type: 'response_item',
@@ -79,38 +92,6 @@ afterEach(() => {
   sandbox.configureWorkerSandbox(() => 'off');
   rmSync(workerDataDir, { recursive: true, force: true });
   delete process.env.HYPERNEO_DATA_DIR;
-});
-
-describe('codexQueueDelivery', () => {
-  test('a queued message is receipted by the user message id it appended, not an older copy', () => {
-    const before = [heardAs('msg_old', 'next step')];
-    const after = [...before, saidAt('ok'), heardAs('msg_new', 'next step\nwith detail')];
-    expect(
-      codexQueueDelivery(
-        after,
-        'next step\nwith detail',
-        't1',
-        codexUserInputIds(before),
-        'msg_new'
-      )
-    ).toEqual({
-      delivered: true,
-      receipt: { executionId: 't1', inputId: 'msg_new' },
-    });
-    expect(
-      codexQueueDelivery(before, 'next step', 't1', codexUserInputIds(before), 'msg_old')
-    ).toEqual({
-      delivered: false,
-    });
-    expect(codexQueueDelivery([heard('next step')], 'next step', 't1', new Set(), 'no-id')).toEqual(
-      {
-        delivered: false,
-      }
-    );
-    expect(
-      codexQueueDelivery(after, 'next step\nwith detail', 't1', new Set(), 'other-sender')
-    ).toEqual({ delivered: false });
-  });
 });
 
 describe('codexInputEvidence', () => {
@@ -803,6 +784,7 @@ describe('codex-desktop adapter status and send', () => {
     const path = join(dir, 'unloaded.sock');
     let loaded = false;
     let consumed = 0;
+    let clientId = '';
     const calls: string[] = [];
     const policy = vi
       .spyOn(sandbox, 'resumeWorkerSandbox')
@@ -843,9 +825,10 @@ describe('codex-desktop adapter status and send', () => {
         }
         if (request.method === 'thread/queue/add') {
           consumed++;
+          clientId = request.params.clientUserMessageId;
           appendFileSync(
             join(dir, 'finished.jsonl'),
-            `\n${heardAs(request.params.clientUserMessageId, request.params.input[0].text)}\n${saidAt('Received saved work.')}`
+            `\n${heardAs('msg_saved', request.params.input[0].text)}\n${ranAs(clientId, request.params.input[0].text)}\n${saidAt('Received saved work.')}`
           );
           reply({ queuedSubmission: { id: 'saved-queue' } });
           return;
@@ -868,16 +851,12 @@ describe('codex-desktop adapter status and send', () => {
         });
         expect(consumed).toBe(0);
       } else {
-        expect(result).toMatchObject({
+        expect(result).toEqual({
           ok: true,
-          value: { delivered: true, queuedSubmissionId: 'saved-queue' },
+          value: { delivered: false, queuedSubmissionId: 'saved-queue', clientMessageId: clientId },
         });
         expect(consumed).toBe(1);
-        const status = await driver.status!(
-          ref('idle'),
-          undefined,
-          result.ok ? result.value.receipt : undefined
-        );
+        const status = await driver.status!(ref('idle'));
         expect(JSON.stringify(status)).toContain('Received saved work.');
         expect(calls.filter((method) => method !== 'initialize')).toEqual([
           'permissionProfile/list',
@@ -940,6 +919,30 @@ describe('codex-desktop adapter status and send', () => {
         });
         expect(calls).toEqual(['thread/queue/add', 'thread/queue/add']);
       }
+    }
+  );
+
+  test.each([
+    ['a transport error', () => Promise.reject(new Error('socket hang up'))],
+    ['an unusable acknowledgement', () => Promise.resolve({})],
+  ])(
+    'an uncertain queue add after %s still reports failure and keeps its client id',
+    async (_, answer) => {
+      const driver = adapter(0, '', async () => ({
+        call: async (method) => {
+          if (method === 'thread/queue/add') return answer();
+          if (method === 'thread/resume') return {};
+          throw new Error(`Unexpected app-server call ${method}`);
+        },
+        close: () => {},
+      }));
+      const result = await driver.send!(ref('idle'), 'continue held work', user);
+      expect(result).toMatchObject({
+        ok: false,
+        reason: 'not_delivered',
+        clientMessageId: 'abcd1234-0000',
+      });
+      expect(result.ok || result.notSent).toBeFalsy();
     }
   );
 

@@ -1506,8 +1506,12 @@ describe('withCodexDesktopIpc', () => {
                 ok: false,
                 reason: 'not_delivered',
                 detail: expect.stringContaining('start unavailable'),
+                clientMessageId: 'input-1',
               }
-            : { ok: true, value: { delivered: true, startedTurnId: 'new-turn' } },
+            : {
+                ok: true,
+                value: { delivered: true, startedTurnId: 'new-turn', clientMessageId: 'input-1' },
+              },
         });
         expect(f.seen.at(-1)).toMatchObject({
           method: 'thread-follower-start-turn',
