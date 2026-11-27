@@ -1610,7 +1610,9 @@ describe('card reply notice navigation', () => {
   );
 
   it('does not open a late reference after returning to chat', async () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
     const { model } = mountCard('answered');
+    fireEvent.click(screen.getByRole('button', { name: 'Close work list' }));
     const full = model.value.snapshot.todoAsks[0];
     let finish!: (value: unknown) => void;
     const request = vi.fn((_method: string, params: { name: string }) =>
@@ -1831,8 +1833,12 @@ describe('card reply notice navigation', () => {
             screen.getByRole('tab', { name: 'Your work · 1' }).getAttribute('aria-selected')
           ).toBe('true');
         expect(screen.getByRole('button', { name: /Approve/ })).toBeTruthy();
-        fireEvent.click(screen.getByRole('button', { name: 'Back to chat' }));
-        expect(container.querySelector('[data-card-reply-focus]')).toBeNull();
+        const back = screen.queryByRole('button', { name: 'Back to chat' });
+        expect(!!back).toBe(reference && width < 2400);
+        if (back) {
+          fireEvent.click(back);
+          expect(container.querySelector('[data-card-reply-focus]')).toBeNull();
+        }
         expect(screen.getByRole('dialog')).toBe(preview);
       } finally {
         act(() => closeArtifactPreview());
@@ -1854,6 +1860,10 @@ describe('card reply notice navigation', () => {
     await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-question-q1'));
     expect(screen.getByRole('button', { name: /Approve/ })).toBeTruthy();
     expect(container.querySelector('[data-card-reply-focus]')).toBeTruthy();
+    if (desktop) {
+      expect(screen.queryByRole('button', { name: 'Back to chat' })).toBeNull();
+      return;
+    }
     rail.scrollTop = 900;
     fireEvent.click(screen.getByRole('button', { name: 'Back to chat' }));
     await waitFor(() => expect(rail.scrollTop).toBe(175));

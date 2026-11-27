@@ -38,7 +38,8 @@ async function checkLateReference(context) {
   const queue = page.locator('[data-human-queue]');
   await queue.getByRole('button', { name: 'Finance 2', exact: true }).click();
   await page.getByRole('button', { name: /I replied · View card/ }).click();
-  await page.getByRole('button', { name: 'Back to chat', exact: true }).waitFor();
+  await page.locator('[data-ask="trip"]').first().waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Back to chat', exact: true }).count(), 0);
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   assert.equal(await queue.getByRole('button', { name: 'Held 0' }).getAttribute('aria-pressed'), 'false');
   hideHeldCard = false;

@@ -23,10 +23,11 @@ Inspect all six screenshots for readable selected rows, viewport fit and usable
 scrolling. Existing open-question controls and replacement links must still work.
 
 Import verifyWorkReferenceRecovery from the same browser helper. In separate
-contexts at both widths it checks repeated activation, a synthetic read refusal
-followed by retry, and Back to chat while an exact read is held. It releases the
-real request and waits for its response before asserting the late result cannot
-reopen Work. Save browser.json with phase after and passed
+contexts at both widths it checks repeated activation and a synthetic read
+refusal followed by retry. Desktop shows no Back to chat, since the chat stays
+visible. On touch it also uses Back to chat while an exact read is held, releases
+the real request and waits for its response before asserting the late result
+cannot reopen Work. Save browser.json with phase after and passed
 true only after functional and visual review. Close owned contexts, signal the
 helper PID with SIGUSR1 and require wrapper exit zero. Run Work-scene, card and
 public-conversation suites, build and full checks. Deployment smoke requires an

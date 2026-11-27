@@ -54,31 +54,34 @@ export async function verifyWorkReferenceRecovery(page, fixture, { evidence, tou
   await page.goto(fixture.url);
   await use(link);
   await page.getByText('This card is no longer available.', { exact: true }).waitFor();
-  await use(back);
-  hold = true;
-  await use(link);
-  await page.getByText('Opening work…', { exact: true }).waitFor();
-  await page.waitForFunction(() => document.body.textContent.includes('Opening work…'));
-  assert(held.length > 0);
-  await use(back);
-  hold = false;
-  for (const release of held.splice(0)) release();
-  for (let attempt = 0; !received.has(heldId) && attempt < 100; attempt++) await page.waitForTimeout(20);
-  assert(received.has(heldId));
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  assert.equal(await dialog.count(), 0);
-  assert.equal(await page.locator('[data-ask="nav-history"]').count(), 0);
+  if (!touch) assert.equal(await back.count(), 0, 'Back to chat shows beside a visible chat');
+  if (touch) {
+    await use(back);
+    hold = true;
+    await use(link);
+    await page.getByText('Opening work…', { exact: true }).waitFor();
+    await page.waitForFunction(() => document.body.textContent.includes('Opening work…'));
+    assert(held.length > 0);
+    await use(back);
+    hold = false;
+    for (const release of held.splice(0)) release();
+    for (let attempt = 0; !received.has(heldId) && attempt < 100; attempt++) await page.waitForTimeout(20);
+    assert(received.has(heldId));
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await dialog.count(), 0);
+    assert.equal(await page.locator('[data-ask="nav-history"]').count(), 0);
+  }
   await use(link);
   await dialog.waitFor();
   await page.waitForFunction(() => document.activeElement?.id === 'neo-ref-question-nav-answered');
   await page.keyboard.press('Escape');
-  await use(back);
+  if (touch) await use(back);
   await use(link);
   await dialog.waitFor();
   await page.waitForFunction(() => document.activeElement?.id === 'neo-ref-question-nav-answered');
   await settle(page);
   await page.screenshot({ path: `${evidence}/${touch ? 'mobile' : 'desktop'}-reference-retry.png`, scale: 'css' });
-  return { touch, refusalVisible: true, cancelledReadStayedClosed: true, retryOpenedTarget: true, repeatedActivation: true };
+  return { touch, refusalVisible: true, cancelledReadStayedClosed: touch, retryOpenedTarget: true, repeatedActivation: true };
 }
 
 export async function verifyWorkItemNavigation(page, fixture, { phase, evidence, touch = false }) {
