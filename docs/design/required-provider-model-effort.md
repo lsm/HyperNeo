@@ -244,8 +244,12 @@ compares the recorded triple against the todo target.
   gate's per-adapter facts. The step is keyed on `caller.role === 'neo'` — the
   identity the todo runner also dispatches under (`driver-work.ts:174`) — so
   non-Neo agent callers of `work.start` (MCP agents and daemon devices) and
-  `checkPlan: true` plan checks, which dispatch no worker, keep today's
-  behavior, matching this design's scope. Until the coding-and-remote slice
+  `checkPlan: true` plan checks, which dispatch no worker, are not required to
+  carry the triple. What changes for every caller is the adapter-level
+  acceptance: `claude-desktop` and `cursor` stop refusing explicit model and
+  effort and receipt them as `requested …, effective unknown` instead —
+  adapter facts are caller-independent, and threading the caller into adapter
+  admission would be plumbing for no gain. Until the coding-and-remote slice
   lands, this gate step applies to local routes only: `admitRemoteStartModel` (`:614-623`)
   refuses any explicit model on a remote route without `verifiedCopilotStart`,
   so requiring the triple on remote starts earlier would make every remote
@@ -309,7 +313,13 @@ compares the recorded triple against the todo target.
 - Coding pack: `CodingStageTarget` (`stage-preferences.ts:9`) requires model
   and effort in every candidate, so `planCodingStageTarget`'s fallback retry
   (`assign-operation.ts:269`) can only land on a candidate that carries the
-  full triple. The start call's override that substitutes the previous
+  full triple. This ~5-line schema change and the `neo.coding.assign.md`
+  prompt land in the start-and-reuse slice, not the coding slice:
+  `neo.coding.assign` invokes `work.start` under a Neo caller
+  (`assign-operation.ts:229-255`), so from the moment the start gate merges,
+  candidates without identity would be refused `identity_required` — a reason
+  the fallback retry list does not cover (`assign-operation.ts:259-266`) —
+  and every coding review/verify assign would fail until the coding slice. The start call's override that substitutes the previous
   reviewer's model for the selected candidate's model
   (`assign-operation.ts:233`) is deleted — it can dispatch a different model,
   provider or incompatible effort than the gate validated. Reviewer-model
@@ -386,8 +396,13 @@ holds per door from the moment its slice merges.
    (~40), the HyperNeo admission executable-set check
    (`hyperneo-adapter.ts:698-717`, ~35), query-layer recording of the
    executed identity on every turn (`query-options-builder.ts` plus the
-   session facts write, ~35), and the receipt label plumbing through
-   `recordStarted` (`work-operations.ts:752`, ~20).
+   session facts write, ~35), the receipt label plumbing through
+   `recordStarted` (`work-operations.ts:752`, ~20), and the required
+   `CodingStageTarget` fields (`stage-preferences.ts:9`, ~5) with the
+   `neo.coding.assign.md` prompt — `neo.coding.assign` dispatches through
+   `work.start` as a Neo caller, so its candidates must carry the triple from
+   the moment this gate merges (contract addition: coding assigns keep
+   working).
 3. **Wire: send, queue and todo admission** (contract: new-todo sends,
    queues and local todo targets pass the gate; remote todo targets keep
    today's admission until slice 4, matching the start gate's staging; ≈95
@@ -396,10 +411,9 @@ holds per door from the moment its slice merges.
    identity check wired into `runSendWork` and `runQueueWork` (`:1394`,
    `:1509`, ~45), and `neo.todo.add`/`neo.todo.edit` admission for local
    targets (`todo-operations.ts`, ~40).
-4. **Wire: coding pack and remote** (contract: coding candidates,
-   remote-routed starts and remote todo targets pass the gate; ≈105
-   production lines): required
-   `CodingStageTarget` fields (`stage-preferences.ts:9`, ~5), the override
+4. **Wire: coding pack and remote** (contract: coding continuity and
+   remote-routed starts and remote todo targets pass the gate; ≈100
+   production lines): the override
    deletion (`assign-operation.ts:233`, 1 line) and continuity-by-ordering
    (~15), and the remote advertisement schema plus forwarding admission that
    extend the gate step to remote routes and replace
