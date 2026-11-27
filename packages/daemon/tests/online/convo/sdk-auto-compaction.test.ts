@@ -95,7 +95,14 @@ test.each([
       let content: Array<Record<string, unknown>>;
       let usage = 1000;
       if (active) {
-        turn += 1;
+        const history = JSON.stringify(body.messages);
+        turn = manual
+          ? turn + 1
+          : history.includes('compact-read-2')
+            ? 3
+            : history.includes('compact-read-1')
+              ? 2
+              : 1;
         if (turn === 2) {
           held = true;
           await gate;
