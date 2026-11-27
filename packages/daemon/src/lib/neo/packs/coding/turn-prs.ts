@@ -38,7 +38,8 @@ const PENDING_RECEIPT = /^desktop-pending:\d+:([a-f0-9]+)$/;
 function deliveryKeys({ outcome }: Delivery): string[] {
   const reply = outcome as {
     receipt?: { inputId?: string };
-    delivery?: { startedTurnId?: string; steeredIntoTurnId?: string };
+    clientMessageId?: string;
+    delivery?: { startedTurnId?: string; steeredIntoTurnId?: string; clientMessageId?: string };
   } | null;
   const input = reply?.receipt?.inputId;
   const pending = input && PENDING_RECEIPT.exec(input);
@@ -46,6 +47,8 @@ function deliveryKeys({ outcome }: Delivery): string[] {
     ...(pending ? [`desktop-pending:${pending[1]}`] : input ? [input] : []),
     ...(reply?.delivery?.startedTurnId ? [reply.delivery.startedTurnId] : []),
     ...(reply?.delivery?.steeredIntoTurnId ? [reply.delivery.steeredIntoTurnId] : []),
+    ...(reply?.delivery?.clientMessageId ? [reply.delivery.clientMessageId] : []),
+    ...(reply?.clientMessageId ? [reply.clientMessageId] : []),
   ];
 }
 

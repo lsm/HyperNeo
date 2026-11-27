@@ -904,9 +904,9 @@ describe('withCodexDesktopIpc', () => {
         value: {
           ok: true,
           value: {
-            delivered: true,
+            delivered: false,
             queuedSubmissionId: 'existing-queue',
-            receipt: { executionId: 'thread-1', inputId: 'existing-input' },
+            clientMessageId: 'existing-input',
           },
         },
       });
@@ -954,7 +954,11 @@ describe('withCodexDesktopIpc', () => {
           kind: 'completed',
           value: {
             ok: true,
-            value: { delivered: true, queuedSubmissionId: 'existing-queue' },
+            value: {
+              delivered: false,
+              queuedSubmissionId: 'existing-queue',
+              clientMessageId: 'existing-input',
+            },
           },
         });
         expect(calls).toEqual(['thread/loaded/list', 'thread/settings/update', 'thread/queue/add']);

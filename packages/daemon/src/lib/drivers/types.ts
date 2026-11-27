@@ -159,6 +159,11 @@ export function workResultSchema<Value extends z.ZodType>(value: Value) {
         .describe(
           'Client input ID of an uncertain Desktop handoff; not a delivery receipt. Reconcile before retrying.'
         ),
+      clientMessageId: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('Client message ID Codex writes when an uncertain input runs.'),
       notSent: z
         .literal(true)
         .optional()
@@ -195,6 +200,7 @@ export const WorkDeliverySchema = z.object({
   queuedSubmissionId: z.string().min(1).optional(),
   steeredIntoTurnId: z.string().min(1).optional(),
   startedTurnId: z.string().min(1).optional(),
+  clientMessageId: z.string().min(1).optional(),
   confirmedAt: z.number().optional(),
   remoteControl: z
     .boolean()
@@ -293,6 +299,7 @@ export type Rejected = {
   detail: string;
   notSent?: true;
   uncertainDesktopInputId?: string;
+  clientMessageId?: string;
 };
 export type Result<T> = { ok: true; value: T; records?: string[] } | Rejected;
 

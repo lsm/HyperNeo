@@ -78,6 +78,16 @@ export function foldCodexTurnLine(
   }
   if (entry.type === 'event_msg' && payload.type === 'turn_aborted')
     return { turn: null, fact: turnFact(turn, 'aborted', turn.lastAt, turn.complete, lineEnd) };
+  if (entry.type === 'event_msg' && payload.type === 'item_completed') {
+    const item = payload.item as { type?: unknown; client_id?: unknown } | undefined;
+    const clientId = item?.type === 'UserMessage' ? item.client_id : undefined;
+    return {
+      turn:
+        typeof clientId === 'string' && clientId
+          ? { ...turn, inputs: [...turn.inputs, clientId] }
+          : turn,
+    };
+  }
   if (entry.type !== 'response_item') return { turn };
   if (TOOL_OUTPUTS.has(String(payload.type))) return { turn: withUrls(turn, payload.output) };
   const input = codexUserInput(entry);

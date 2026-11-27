@@ -637,29 +637,6 @@ export async function describeCodexThread(
 type CodexReceipt = NonNullable<WorkDelivery['receipt']>;
 type CodexInputEvidence = NonNullable<WorkDetail['inputEvidence']>;
 
-export function codexUserInputIds(lines: readonly string[]): Set<string> {
-  return new Set(lines.flatMap((line) => codexUserInput(parseLine(line))?.id ?? []));
-}
-
-export function codexQueueDelivery(
-  lines: readonly string[],
-  message: string,
-  threadId: string,
-  before: ReadonlySet<string>,
-  inputId: string
-): WorkDelivery {
-  const fresh = lines
-    .map((line) => codexUserInput(parseLine(line)))
-    .findLast(
-      (input) =>
-        !!input && input.id === inputId && !before.has(input.id) && input.text === message.trim()
-    );
-  return {
-    delivered: !!fresh,
-    ...(fresh ? { receipt: { executionId: threadId, inputId: fresh.id } } : {}),
-  };
-}
-
 export function codexStartReceipt(
   lines: readonly string[],
   message: string,
@@ -885,15 +862,19 @@ function admitCodexQueuePreparation(error: unknown, threadId: string, step: stri
     : reject('not_delivered', `${step}: ${String(error)}`, true);
 }
 
-function planCodexQueueAddFailure(error: unknown, threadId: string): 'cli' | Rejected {
+function planCodexQueueAddFailure(
+  error: unknown,
+  threadId: string,
+  clientMessageId: string
+): 'cli' | Rejected {
   if (/-32601|unknown method|method not found|unrecognized (?:request|method)/i.test(String(error)))
     return 'cli';
   if (codexAppHoldsThread(error, threadId))
     return reject('not_delivered', CODEX_APP_HOLDS_THREAD, true);
-  return reject('not_delivered', `thread/queue/add: ${String(error)}`);
+  return { ...reject('not_delivered', `thread/queue/add: ${String(error)}`), clientMessageId };
 }
 
-function readCodexQueuedSubmission(added: unknown): Gate<string> {
+function readCodexQueuedSubmission(added: unknown, clientMessageId: string): Gate<string> {
   const parsed = z
     .object({
       queuedSubmission: z.object({ id: z.string().min(1) }),
@@ -901,7 +882,12 @@ function readCodexQueuedSubmission(added: unknown): Gate<string> {
     .safeParse(added);
   return parsed.success
     ? { value: parsed.data.queuedSubmission.id }
-    : { reason: reject('not_delivered', `thread/queue/add: ${parsed.error.message}`) };
+    : {
+        reason: {
+          ...reject('not_delivered', `thread/queue/add: ${parsed.error.message}`),
+          clientMessageId,
+        },
+      };
 }
 
 function queueOnCodexServer(
@@ -950,9 +936,6 @@ function queueOnCodexServer(
     } catch (error) {
       return admitCodexQueuePreparation(error, detail.thread.id, step);
     }
-    const before = codexUserInputIds(
-      await readRolloutTail(detail.thread.rolloutPath).catch(() => [])
-    );
     const clientUserMessageId = deps.newId();
     let added: unknown;
     try {
@@ -962,24 +945,17 @@ function queueOnCodexServer(
         input: [{ type: 'text', text: message }],
       });
     } catch (error) {
-      const failure = planCodexQueueAddFailure(error, detail.thread.id);
+      const failure = planCodexQueueAddFailure(error, detail.thread.id, clientUserMessageId);
       return failure === 'cli' ? queueCodexCliMessage(detail, message, deps) : failure;
     }
-    const submission = readCodexQueuedSubmission(added);
+    const submission = readCodexQueuedSubmission(added, clientUserMessageId);
     if ('reason' in submission) return submission.reason;
-    const delivery = codexQueueDelivery(
-      await readRolloutTail(detail.thread.rolloutPath).catch(() => []),
-      message,
-      detail.thread.id,
-      before,
-      clientUserMessageId
-    );
     return {
       ok: true,
       value: {
-        ...delivery,
-        delivered: !!delivery.receipt,
+        delivered: false,
         queuedSubmissionId: submission.value,
+        clientMessageId: clientUserMessageId,
       },
     };
   });
