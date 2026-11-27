@@ -9,7 +9,8 @@ bash .claude/skills/verify/proof-run.sh /absolute/evidence/mcp-oauth-streaming \
 
 The isolated daemon holds a synthetic grant obtained through real SDK OAuth
 against the loopback fixture. The real SDK client lists a tool while the HTTP
-response stays open. The fixture then sends an oversized SSE event and an
+response stays open, over both a POST response and a standalone GET stream.
+The fixture then sends an oversized SSE event and an
 oversized SSE response made up of small events. The SDK must see
 `response_too_large` for both and receive no tool list from either.
 

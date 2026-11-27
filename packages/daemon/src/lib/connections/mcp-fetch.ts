@@ -79,6 +79,48 @@ async function readCapped(response: Response, maxBytes: number, signal: AbortSig
   }
 }
 
+function capEventStream(
+  body: ReadableStream<Uint8Array>,
+  maxBytes: number,
+  maxEventBytes: number,
+  signal: AbortSignal
+) {
+  let size = 0;
+  let eventSize = 0;
+  let lineHasData = false;
+  let previousCR = false;
+  return body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        size += chunk.byteLength;
+        if (size > maxBytes) throw new Error('response_too_large');
+        for (const byte of chunk) {
+          const crlfTail = previousCR && byte === 10;
+          previousCR = byte === 13;
+          if (crlfTail && eventSize === 0) continue;
+          if (++eventSize > maxEventBytes) throw new Error('response_too_large');
+          if (crlfTail) continue;
+          if (byte === 10 || byte === 13) {
+            if (!lineHasData) eventSize = 0;
+            lineHasData = false;
+          } else {
+            lineHasData = true;
+          }
+        }
+        controller.enqueue(chunk);
+      },
+    }),
+    { signal }
+  );
+}
+
+function decodedHeaders(response: Response) {
+  const headers = new Headers(response.headers);
+  headers.delete('content-length');
+  headers.delete('content-encoding');
+  return headers;
+}
+
 function errorReply(status: number, body: string) {
   let error: unknown;
   try {
@@ -120,6 +162,7 @@ export function createMcpFetch(options: {
   tokenEndpoint: () => string | undefined;
   onRefreshFailure?: (reason: McpRefreshFailure) => void;
   maxBytes?: number;
+  maxSseEventBytes?: number;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
 }): FetchLike {
@@ -150,9 +193,23 @@ export function createMcpFetch(options: {
     ]);
     let response: Response;
     let body: string;
+    const maxBytes = options.maxBytes ?? 262144;
     try {
       response = await (options.fetchImpl ?? fetch)(url, { ...init, redirect: 'manual', signal });
-      body = await readCapped(response, options.maxBytes ?? 262144, signal);
+      const mediaType = response.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase();
+      if (
+        response.ok &&
+        response.body &&
+        sameUrl(url, options.preset.url) &&
+        !toToken &&
+        mediaType === 'text/event-stream'
+      ) {
+        return new Response(
+          capEventStream(response.body, maxBytes, options.maxSseEventBytes ?? 65536, signal),
+          { status: response.status, headers: decodedHeaders(response) }
+        );
+      }
+      body = await readCapped(response, maxBytes, signal);
     } catch (error) {
       tooLarge = error instanceof Error && error.message === 'response_too_large';
       const reason = tooLarge ? 'response_too_large' : 'request_failed';
@@ -188,9 +245,6 @@ export function createMcpFetch(options: {
               status: response.status,
               body: [204, 205].includes(response.status) ? null : body,
             };
-    const replyHeaders = new Headers(response.headers);
-    replyHeaders.delete('content-length');
-    replyHeaders.delete('content-encoding');
-    return new Response(reply.body, { status: reply.status, headers: replyHeaders });
+    return new Response(reply.body, { status: reply.status, headers: decodedHeaders(response) });
   };
 }

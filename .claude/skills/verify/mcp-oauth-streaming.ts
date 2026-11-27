@@ -22,8 +22,12 @@ for (const key of ['GH_TOKEN', 'GITHUB_TOKEN', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE
 const tools = [{ name: 'read', inputSchema: { type: 'object' } }];
 const encoder = new TextEncoder();
 let scenario = 'live';
+const standalone = Promise.withResolvers<ReadableStreamDefaultController<Uint8Array>>();
+const sseHeaders = { 'content-type': 'text/event-stream; charset=utf-8' };
 const fake = await startFakeMcpOAuthServer({
   mcpReply: async (request) => {
+    if (scenario === 'standalone' && request.method === 'GET')
+      return new Response(new ReadableStream({ start: standalone.resolve }), { headers: sseHeaders });
     if (request.method !== 'POST') return new Response(null, { status: 405 });
     const { id, method } = await request.json();
     if (method === 'initialize') return Response.json({
@@ -33,6 +37,11 @@ const fake = await startFakeMcpOAuthServer({
     });
     if (id === undefined) return new Response(null, { status: 202 });
     const result = `data: ${JSON.stringify({ jsonrpc: '2.0', id, result: { tools } })}\r\n\r\n`;
+    if (scenario === 'standalone') {
+      const stream = await standalone.promise;
+      stream.enqueue(encoder.encode(result));
+      return new Response(null, { status: 202 });
+    }
     const chunks = scenario === 'event-cap'
       ? [`data: ${'é'.repeat(140)}`]
       : scenario === 'body-cap'
@@ -42,7 +51,7 @@ const fake = await startFakeMcpOAuthServer({
       start(controller) {
         for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
       },
-    }), { headers: { 'content-type': 'text/event-stream; charset=utf-8' } });
+    }), { headers: sseHeaders });
   },
 });
 const app = await createDaemonApp({
@@ -75,12 +84,12 @@ try {
   assert(grant);
 
   const evidence: Record<string, string> = {};
-  for (scenario of ['live', 'event-cap', 'body-cap']) {
+  for (scenario of ['live', 'standalone', 'event-cap', 'body-cap']) {
     const transport = new StreamableHTTPClientTransport(new URL(fake.url), {
       requestInit: { headers: { Authorization: `Bearer ${grant.tokens.access_token}` } },
       fetch: createMcpFetch({
         preset, tokenEndpoint: () => undefined, maxBytes: 512,
-        ...{ maxSseEventBytes: 256 },
+        maxSseEventBytes: 256,
       }),
     });
     const client = new Client({ name: 'streaming-proof', version: '1' });
@@ -89,7 +98,7 @@ try {
       let fault = '';
       client.onerror = (error) => { if (error.message.includes('response_too_large')) fault = 'response_too_large'; };
       const result = await client.listTools(undefined, { timeout: 2000 }).catch(() => null);
-      if (scenario === 'live') {
+      if (scenario === 'live' || scenario === 'standalone') {
         assert(result, 'The SDK did not list tools while the SSE response stayed open');
         assert.deepEqual(result.tools, tools);
         evidence[scenario] = 'listed_while_stream_open';
@@ -106,7 +115,7 @@ try {
   writeFileSync(join(run, 'evidence/mcp-oauth-streaming.json'), JSON.stringify({
     testedHead: process.argv[2], evidence, pass: true,
   }, null, 2));
-  console.log('PASS: SDK listed tools before EOF and refused both oversized SSE events and responses');
+  console.log('PASS: SDK listed tools over open POST and GET streams and refused oversized SSE events and responses');
 } finally {
   fake.stop();
   await app.cleanup();
