@@ -70,6 +70,14 @@ const voiceChunkTail = (superpipe({})('voice-stream-chunk') as PipelineAPI)
   )
   .end('tail') as (audio: Uint8Array, offset: unknown, received: number) => Uint8Array | string;
 
+interface VoiceChunkRequest {
+  streamId: string;
+  audioBase64: string;
+  offset?: number;
+  capturedAt?: unknown;
+  sentAt?: unknown;
+}
+
 function admitVoiceStreamOwner(
   stream: OwnedVoiceStream | undefined,
   owner: string
@@ -323,40 +331,43 @@ export function registerVoiceHandlers(
     return { ok: true, receivedBytes: owned.stream.receivedBytes };
   });
 
-  messageHub.onRequest<{ streamId: string; audioBase64: string; offset?: number }>(
-    'voice.stream.chunk',
-    async (data, context) => {
-      const startedAt = Date.now();
-      const stream = ownedStream(data?.streamId, context);
-      if ((data.audioBase64 ?? '').length > MAX_CHUNK_BASE64_LENGTH)
-        throw new Error('Audio data exceeds the 10 MB voice input limit');
-      const decodingAt = performance.now();
-      const audio = Buffer.from(data.audioBase64 ?? '', 'base64');
-      const decodeMs = Math.max(0, performance.now() - decodingAt);
-      try {
-        const refused = await stream.writeInput(
-          () => {
-            const tail = voiceChunkTail(audio, data.offset, stream.receivedBytes);
-            if (typeof tail === 'string')
-              throw new MessageHubHandlerError('Invalid voice chunk offset: ' + tail, tail);
-            return tail;
-          },
-          audio.byteLength,
-          data.offset === undefined,
-          { startedAt, decodeMs, offset: data.offset }
-        );
-        if (refused) throw new Error(refused);
-      } catch (error) {
-        if (
-          error instanceof MessageHubHandlerError &&
-          ['VOICE_STREAM_INVALID_OPUS', 'VOICE_STREAM_DECODER_FAILED'].includes(error.code ?? '')
-        )
-          deleteVoiceStream(data.streamId);
-        throw error;
-      }
-      return { ok: true };
+  messageHub.onRequest<VoiceChunkRequest>('voice.stream.chunk', async (data, context) => {
+    const startedAt = Date.now();
+    const stream = ownedStream(data?.streamId, context);
+    if ((data.audioBase64 ?? '').length > MAX_CHUNK_BASE64_LENGTH)
+      throw new Error('Audio data exceeds the 10 MB voice input limit');
+    const decodingAt = performance.now();
+    const audio = Buffer.from(data.audioBase64 ?? '', 'base64');
+    const decodeMs = Math.max(0, performance.now() - decodingAt);
+    try {
+      const refused = await stream.writeInput(
+        () => {
+          const tail = voiceChunkTail(audio, data.offset, stream.receivedBytes);
+          if (typeof tail === 'string')
+            throw new MessageHubHandlerError('Invalid voice chunk offset: ' + tail, tail);
+          return tail;
+        },
+        audio.byteLength,
+        data.offset === undefined,
+        {
+          startedAt,
+          decodeMs,
+          offset: data.offset,
+          capturedAt: data.capturedAt,
+          sentAt: data.sentAt,
+        }
+      );
+      if (refused) throw new Error(refused);
+    } catch (error) {
+      if (
+        error instanceof MessageHubHandlerError &&
+        ['VOICE_STREAM_INVALID_OPUS', 'VOICE_STREAM_DECODER_FAILED'].includes(error.code ?? '')
+      )
+        deleteVoiceStream(data.streamId);
+      throw error;
     }
-  );
+    return { ok: true };
+  });
 
   messageHub.onRequest<{ streamId: string }>('voice.stream.stop', async (data, context) => {
     const stream = ownedStream(data?.streamId, context);

@@ -102,6 +102,24 @@ describe('VoiceStream receipt diagnostics', () => {
     }
   });
 
+  test('chunk receipts carry the client capture and send times next to the arrival time', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(5000);
+    for (const client of [
+      { capturedAt: 4000, sentAt: 4900 },
+      { capturedAt: 'x', sentAt: NaN },
+    ]) {
+      await stream.writeInput(() => new Uint8Array(2), 2, true, {
+        startedAt: Date.now(),
+        decodeMs: 0,
+        ...client,
+      });
+    }
+    const decoded = logs.filter((event) => event.message === 'voice.stream.chunk.decode');
+    expect(decoded[0].metadata).toMatchObject({ clientCapturedAt: 4000, clientSentAt: 4900 });
+    expect(decoded[1].metadata).not.toHaveProperty('clientCapturedAt');
+    expect(decoded[1].metadata).not.toHaveProperty('clientSentAt');
+  });
+
   test('cancel logs bytes received before clearing', async () => {
     await stream.writeInput(() => new Uint8Array(4), 4, true);
     await stream.cancel();

@@ -148,6 +148,29 @@ describe('openVoiceStream', () => {
     );
   });
 
+  it('keeps several chunks in flight with client timestamps and stops after all are acknowledged', async () => {
+    const acknowledgements: (() => void)[] = [];
+    const { hub, request } = fakeHub((method) =>
+      method === 'voice.stream.chunk'
+        ? new Promise((resolve) => acknowledgements.push(() => resolve({ ok: true })))
+        : streaming(method)
+    );
+    const onFormat = vi.fn();
+    const live = openVoiceStream(hub, vi.fn(), { onFormat });
+    await vi.waitFor(() => expect(onFormat).toHaveBeenCalledWith('pcm16'));
+    for (let i = 0; i < 3; i++) live.push(new Float32Array(3_200), 16_000);
+    await vi.waitFor(() => expect(calls(request, 'voice.stream.chunk')).toHaveLength(3));
+    for (const [, data] of calls(request, 'voice.stream.chunk')) {
+      const { capturedAt, sentAt } = data as { capturedAt: number; sentAt: number };
+      expect(sentAt).toBeGreaterThanOrEqual(capturedAt);
+    }
+    const finishing = live.finish();
+    await Promise.resolve();
+    expect(calls(request, 'voice.stream.stop')).toHaveLength(0);
+    for (const acknowledge of acknowledgements) acknowledge();
+    expect(await finishing).toBe('hello neo');
+  });
+
   it('downsamples 48 kHz capture before sending', async () => {
     const { hub, request } = fakeHub(streaming);
     const live = openVoiceStream(hub, vi.fn());

@@ -42,10 +42,10 @@ describe('Opus live voice', () => {
       encoding: 'opus',
       sampleRate: 16_000,
     });
-    expect(request).toHaveBeenCalledWith('voice.stream.chunk', {
-      streamId: 's',
-      audioBase64: btoa(String.fromCharCode(...packet)),
-    });
+    expect(request).toHaveBeenCalledWith(
+      'voice.stream.chunk',
+      expect.objectContaining({ streamId: 's', audioBase64: btoa(String.fromCharCode(...packet)) })
+    );
     expect(codec.finish).toHaveBeenCalledOnce();
     expect(request.mock.calls.map(([method]) => method)).toEqual([
       'voice.stream.start',
