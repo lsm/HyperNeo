@@ -58,7 +58,7 @@ finished todos return `todo_not_active` without dispatching.
 An active doing todo takes precedence over a blocked todo, and multiple opted-in
 unfinished todos with none doing return `todo_ambiguous` without dispatching.
 A queued todo without approved apps does not prevent dispatch for a blocked approved todo.
-A todo without approved apps is refused before dispatch. Each dispatch carries only its own todo's approved bundle ids. A sibling todo on the same ask without its own apps gets `desktop_not_enabled`; once it has its own app, its dispatch carries only that app.
+A todo without approved apps is refused before dispatch. Each dispatch carries only its own todo's approved bundle ids. The first allowed dispatch uses a todo bundle ID whose casing differs from the disclosure. A sibling todo on the same ask without its own apps gets `desktop_not_enabled`; once it has its own app, its dispatch carries only that app.
 The press_key description gives shifted-symbol guidance and names driver_error for unknown keys.
 A driver result with isError must come back as an MCP tool error (`isError: true`)
 with `ok: false, reason: driver_error`

@@ -39,7 +39,10 @@ export function desktopConsent(row: DesktopTodoRow) {
   if (!requested.length || JSON.parse(row.named ?? '{}').desktopControl === false)
     return 'desktop_not_enabled';
   const approved = JSON.parse(row.askApps ?? '[]') as NeoDesktopApp[];
-  const scope = requested.map((id) => approved.find((app) => app.bundleId === id));
+  const scope = requested.map((id) => {
+    const bundleId = id.toLowerCase();
+    return approved.find((app) => app.bundleId.toLowerCase() === bundleId);
+  });
   if (scope.some((app) => !app)) return 'desktop_not_enabled';
   if (scope.some((app) => app?.seen !== 'all')) return 'desktop_consent_outdated';
   return null;
