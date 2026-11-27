@@ -16,6 +16,7 @@ import { ConfirmModal } from '../ui/ConfirmModal.tsx';
 import { Button } from '../ui/Button.tsx';
 import { cn } from '../../lib/utils.ts';
 import { FORM_CONTROL_CLASS } from '../ui/FormField.tsx';
+import { AppMcpOAuthRow } from './AppMcpOAuthRow.tsx';
 
 interface FormData {
   name: string;
@@ -352,6 +353,7 @@ export function AppMcpServersSettings() {
                         Failed to attach: {server.lastAttachError}
                       </div>
                     )}
+                    {server.sourceType === 'http' && <AppMcpOAuthRow server={server} />}
                   </div>
 
                   <div class="flex items-center gap-2 flex-shrink-0">

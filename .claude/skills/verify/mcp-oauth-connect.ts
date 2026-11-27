@@ -46,7 +46,7 @@ async function withDaemon<T>(drive: (hub: MessageHub, app: Awaited<ReturnType<ty
 const invoke = <T>(hub: MessageHub, name: string, input: unknown) =>
   hub.request<T>('operation.invoke', { name, input });
 const healthy = { health: 'healthy', scopes: ['read', 'search'] };
-const disconnected = { health: 'disconnected', scopes: [] };
+const disconnected = { health: 'disconnected', scopes: [], preset: 'test' };
 const reconnectNeeded = { health: 'reconnect_needed', scopes: [] };
 const tokenStarted = Promise.withResolvers<void>();
 const tokenRelease = Promise.withResolvers<void>();
@@ -115,9 +115,7 @@ try {
       await Promise.race([tokenStarted.promise, completion.then(() => { throw new Error('Callback ended before code exchange'); })]);
       const replay = (await fetch(callback)).status;
       assert.equal(replay, 400);
-      assert.deepEqual(await invoke(hub, 'mcp.registry.status', { id }), {
-        health: 'disconnected', scopes: [],
-      });
+      assert.deepEqual(await invoke(hub, 'mcp.registry.status', { id }), disconnected);
       evidence.callback = { wrongState, replay };
     } finally {
       tokenRelease.resolve();
@@ -250,7 +248,7 @@ try {
         await reply;
       }
       assert.notEqual(await reply, 200);
-      assert.deepEqual(await readStatus(hub, id), disconnected);
+      assert.deepEqual(await readStatus(hub, id), { health: 'disconnected', scopes: [] });
       assert.deepEqual(await invoke(hub, 'mcp.registry.connect', { id, preset: 'test' }), {
         reason: 'invalid_preset',
       });
@@ -297,7 +295,7 @@ try {
     });
     await withDaemon(async (hub, app) => {
       assert.equal((await readRow(hub))?.url, other.url);
-      assert.deepEqual(await readStatus(hub, id), disconnected);
+      assert.deepEqual(await readStatus(hub, id), { health: 'disconnected', scopes: [] });
       assert.equal(grantCount(app), 0);
       evidence.replacementAfterRestart = 'disconnected';
     });

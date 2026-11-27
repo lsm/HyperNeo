@@ -11,6 +11,7 @@ SELECT
   headers,
   enabled,
   last_attach_error AS lastAttachError,
+  auth,
   created_at   AS createdAt,
   updated_at   AS updatedAt
 FROM app_mcp_servers
@@ -32,6 +33,7 @@ export function mapMcpServerRow(row: Record<string, unknown>): Record<string, un
       ? { headers: JSON.parse(row.headers as string) as Record<string, string> }
       : {}),
     ...(row.lastAttachError != null ? { lastAttachError: row.lastAttachError } : {}),
+    ...(row.auth != null ? { auth: JSON.parse(row.auth as string) as unknown } : {}),
     ...(row.createdAt != null ? { createdAt: row.createdAt } : {}),
     ...(row.updatedAt != null ? { updatedAt: row.updatedAt } : {}),
   };

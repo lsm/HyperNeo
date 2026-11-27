@@ -16,6 +16,8 @@ export const en = {
   'connections.description': 'Connect Google and Microsoft accounts for this instance.',
   'connections.connect': 'Connect Google',
   'connections.reconnect': 'Reconnect',
+  'connections.connectMcp': 'Connect',
+  'connections.continueMcp': 'Open the sign-in page',
   'connections.disconnect': 'Disconnect',
   'connections.empty': 'No accounts connected.',
   'connections.healthy': 'Connected',
