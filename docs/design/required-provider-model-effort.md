@@ -2,7 +2,7 @@
 
 ## 中文摘要
 
-范围按人类要求收窄：只管 Neo 自己能调用的派发入口，共 4 个——`neo.todo.add` 的 start 目标、`work.start`（含空闲工人复用和远程守护进程启动）、派发新 todo 工作的 `work.send`、编码包 `neo.coding.assign` 的审查/验证/编写目标。判断标准：`packages/prompts/src/neo/tools` 里有没有对应工具；`goal.session.create`、`session.clone.spawn`、界面建会话、Space 工作流、Neo 自身会话、直接任务都不在 Neo 工具列表里，全部出范围。规则不变：每个入口必须显式给出 provider、model、effort 三项，缺一项就由一个纯函数（superpipe 管线）在派发前拒绝并说明缺什么，不再悄悄回退。能应用并回读配置的适配器回执标 confirmed（HyperNeo 取查询层实际发送值，含 Copilot 代理 fit 后的值；fit 省略时记 omitted (support unknown)，永不算 confirmed、永不记 off）；Claude Desktop 和 Cursor 无法应用也无法预读生效值，照常启动，回执写 requested …, effective unknown，复用和新任务 send 按已记录的请求三项匹配并标 unverified。引导文案随第一个改行为的 PR 发出。不做自动选型引擎。
+范围按人类要求收窄：只管 Neo 自己能调用的派发入口，共 5 个——`neo.todo.add` 的 start/send 目标、`neo.todo.edit` 给未开工 todo 补写的 instruction+target、`work.start`（含空闲工人复用和远程守护进程启动）、派发新 todo 工作的 `work.send`、编码包 `neo.coding.assign` 的审查/验证/编写目标。判断标准：`packages/prompts/src/neo/tools` 里有没有对应工具；`neo.todo.retarget` 和 `neo.todo.continue` 只按已存储的 target 重新派发（该 target 在 add/edit 准入时已校验），不接收新的身份字段，所以不算新入口；`goal.session.create`、`session.clone.spawn`、界面建会话、Space 工作流、Neo 自身会话、直接任务都不在 Neo 工具列表里，全部出范围。规则不变：每个入口必须显式给出 provider、model、effort 三项，缺一项就由一个纯函数（superpipe 管线）在派发前拒绝并说明缺什么，不再悄悄回退。能应用并回读配置的适配器回执标 confirmed（HyperNeo 取查询层实际发送值，含 Copilot 代理 fit 后的值；fit 省略时记 omitted (support unknown)，永不算 confirmed、永不记 off）；Claude Desktop 和 Cursor 无法应用也无法预读生效值，照常启动，回执写 requested …, effective unknown，复用和新任务 send 按已记录的请求三项匹配并标 unverified。引导文案随第一个改行为的 PR 发出。不做自动选型引擎。
 
 Status: proposed. Investigation base: `50e22151753673c39998bacd3056aad0ba059c29`
 (`origin/dev`, 2026-11-27). Source references are repository-relative `file:line` at
@@ -43,6 +43,7 @@ replies) inherit the recorded identity and need no check.
 | Entry point | Where | How provider / model / effort are chosen today |
 | --- | --- | --- |
 | `neo.todo.add` start target | `packages/daemon/src/lib/neo/driver-work.ts:39` (schema), `:83` (add target), `:138` (`driverWorkCall`), dispatched by `packages/daemon/src/lib/neo/todo-runner.ts:479` | `provider`, `model`, `effort` all optional (`driver-work.ts:51,66`); omitted fields are dropped from the `work.start` input (`driver-work.ts:165`). The trigger. |
+| `neo.todo.edit` giving work to an unstarted todo | `packages/daemon/src/lib/neo/todo-operations.ts:329` (schema: `instruction` + `NeoTodoTargetSchema`), admission `:470-476` | Accepts a start or send target for a todo that has not started; the same optional-identity schema applies and nothing validates it at edit time — the runner dispatches the stored target later. `neo.todo.retarget` and `neo.todo.continue` re-dispatch only this stored, already-admitted target and accept no identity fields of their own, so they are covered by validating at add/edit. |
 | `work.start` operation | `packages/daemon/src/lib/drivers/work-operations.ts:210` (input), `:1302` (pipeline) | `model`/`provider`/`effort` optional (`:240-242`). Gates only reject values a route cannot confirm (`:614`, `:625`); absent values pass. Fresh start records whatever the adapter reports (`:752`). |
 | Worker reuse inside `work.start` | `work-operations.ts:811` (`reuseIdleWorker`), `:796` (`matchesRequested`) | Configuration is resolved only when `model` or `effort` was requested (`:896`); with neither, any recorded worker identity is accepted (`:1016`, `:1135`). Desktop worker templates strip model and provider from the resolved request (`:841`, `:901`). |
 | Remote daemon start | `work-operations.ts:614` (`admitRemoteStartModel`), `:625` (`admitStartEffort`), `:699` (`admitRemoteCopilotStart`) | A start forwarded to a paired daemon refuses any explicit model or effort unless the Copilot-client handshake marked the route `verifiedCopilotStart` (`:727`), so a remote start (e.g. `claude-desktop` on another machine) must omit the model entirely. |
@@ -251,16 +252,26 @@ target.
   contradicted observation (where one exists) disqualifies the worker the same
   way a failed confirmation does. `work.reconfigure`
   (`work-reconfigure.ts:26`) keeps recorded values current.
-- `neo.todo.add`: validate a start target with the same pure gate at
-  admission. Local targets use the local adapter registry; targets on a paired
-  daemon use that daemon's `work.adapters` catalog read at admission — the
-  local registry cannot supply another machine's facts. An unreachable remote
-  defers validation to dispatch, where the owning daemon's gate is
-  authoritative either way.
+- `neo.todo.add` and `neo.todo.edit`: validate a start or send target with the
+  same pure gate at admission, so an incomplete identity is rejected when the
+  work is assigned, not when the runner dispatches it later. Local targets use
+  the local adapter registry; targets on a paired daemon use that daemon's
+  `work.adapters` catalog read at admission — the local registry cannot supply
+  another machine's facts. An unreachable remote defers validation to
+  dispatch, where the owning daemon's gate is authoritative either way.
+  `neo.todo.retarget` and `neo.todo.continue` need no admission of their own:
+  they re-dispatch only the stored target this admission already validated.
 - Coding pack: `CodingStageTarget` (`stage-preferences.ts:9`) requires model
   and effort in every candidate, so `planCodingStageTarget`'s fallback retry
   (`assign-operation.ts:269`) can only land on a candidate that carries the
-  full triple.
+  full triple. The start call's override that substitutes the previous
+  reviewer's model for the selected candidate's model
+  (`assign-operation.ts:223-233`) is deleted in the Wire slice — it can
+  dispatch a different model, provider or incompatible effort than the one the
+  gate validated. Reviewer-model continuity across rounds becomes a
+  candidate-ordering concern the pack already owns through
+  `planCodingStageTarget`'s preference scoring; the retry path re-selects from
+  the same validated candidates, so it inherits the rule.
 - Remote daemon starts: the remote `work.adapters` catalog
   (`work-operations.ts:1645`, schema `:346`) gains the per-adapter identity
   facts (`fixedProvider`, `configurable`). The forwarding daemon admits the
@@ -300,12 +311,13 @@ target.
   effective unknown`, with unobserved fields never resolving on their own) and
   the remote-start rule (the required triple is admitted for any advertised
   adapter).
-- `packages/prompts/src/neo/tools/neo.todo.add.md:8`: the start target shape
+- `packages/prompts/src/neo/tools/neo.todo.add.md:8` and
+  `packages/prompts/src/neo/tools/neo.todo.edit.md`: the start target shape
   becomes `{verb:start,adapter,model,effort,provider?,place?}` — provider
   optional only where the adapter fixes or derives it; model and effort are
   required for every adapter, enforced where the adapter can and receipted
   `effective unknown` where it cannot. A send target that assigns new todo
-  work names the same triple.
+  work names the same triple, in both tools.
 - `packages/prompts/src/neo/tools/neo.coding.assign.md`: candidates name the
   full triple; the preference fallback explains when a preferred value was
   unavailable.
@@ -337,7 +349,10 @@ rung.
    `hyperneo-adapter.ts` 14, `drivers.ts` 3): the `work.start` pipeline step
    with triple write-back, the reuse rules, the `work.send` new-todo identity
    fields and check, query-layer recording of the executed HyperNeo identity,
-   `neo.todo.add` and coding-candidate admission, remote advertisement
+   `neo.todo.add`/`neo.todo.edit` and coding-candidate admission, deletion of
+   the assign start call's previous-reviewer-model override
+   (`assign-operation.ts:233`, one line, required for the validated candidate
+   triple to be what dispatches), remote advertisement
    replacing the model/effort admission role of
    `admitRemoteStartModel`/`verifiedCopilotStart` while preserving Copilot
    client validation, and the prompt changes above. Recorded merge-contract
