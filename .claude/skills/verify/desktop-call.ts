@@ -248,8 +248,15 @@ try {
     delay(30_000, undefined, { ref: false }).then(() => { throw new Error('No model request for the Calculator todo'); }),
   ]);
   assert.deepEqual([...outbound.tools].sort(), [...modelTools].sort());
+  assert.deepEqual({
+    desktopOnly: outbound.system.includes('Carry out only the desktop steps'),
+    neoPrepares: outbound.system.includes('Neo handles file reads, writes, and other preparation'),
+    reportsOnly: outbound.system.includes('only the report tool reaches them'),
+    noNarration: outbound.system.includes('Call tools without narrating or explaining them.'),
+    turnEnd: JSON.stringify(JSON.parse(outbound.system)).includes('End every turn with exactly \\"No response requested.\\" and nothing else.'),
+  }, { desktopOnly: true, neoPrepares: true, reportsOnly: true, noNarration: true, turnEnd: true });
   assert.match(outbound.system, /using the desktop tools in approved apps/);
-  assert.match(outbound.system, /Put any exact text you will need in your own reply/);
+  assert.match(outbound.system, /capture any exact text you will need/);
   assert(!outbound.brief.includes('desktop_permissions_required'));
   const results = await Promise.race([
     modelResults.promise,
@@ -306,7 +313,8 @@ try {
   const expectedDesktopTools = ['report', ...catalog.map(({ name }) => name)]
     .map(name => 'mcp__desktop__' + name).sort();
   assert.deepEqual([...outbound.tools].sort(), expectedDesktopTools);
-  assert.doesNotMatch((outbound.system + outbound.brief).replaceAll(run, '<fixture>'), /\bneo\b|hyperneo|operations\.describe|message\.send|Most non-coding tasks/i);
+  assert.doesNotMatch(outbound.brief.replaceAll(run, '<fixture>'), /\bneo\b/i);
+  assert.doesNotMatch((outbound.system + outbound.brief).replaceAll(run, '<fixture>'), /hyperneo|operations\.describe|message\.send|Most non-coding tasks/i);
   assert.deepEqual([...init.tools].sort(), [...modelTools].sort());
   assert.deepEqual(init.skills, []);
   assert.deepEqual(init.slash_commands, []);
