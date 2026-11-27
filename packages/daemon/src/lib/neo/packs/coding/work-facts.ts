@@ -139,7 +139,13 @@ export class CodingWorkFactsRepository {
   observe(url: string, revision: number, value: CodingWorkPr | null, at: number) {
     const before = this.row(url);
     if ((before?.observation_revision ?? 0) !== revision) return this.read(url, at);
-    const json = value ? JSON.stringify(value) : (before?.value_json ?? null);
+    const priorJson = before?.value_json ?? null;
+    if (value?.head && value.designChanged === undefined && priorJson) {
+      const prior = JSON.parse(priorJson) as CodingWorkPr;
+      if (value.head === prior.head && prior.designChanged !== undefined)
+        value = { ...value, designChanged: prior.designChanged };
+    }
+    const json = value ? JSON.stringify(value) : priorJson;
     this.db
       .prepare(`INSERT INTO pack_coding_work_facts
       (url,fact_revision,observation_revision,value_json,observed_at,attempted_at,reason)
