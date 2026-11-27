@@ -236,16 +236,22 @@ export async function createDriverSession(
         ? { config: { ...templateConfig, ...config, ...(thinkingLevel ? { thinkingLevel } : {}) } }
         : {}),
     });
+  const providerOnly = !model && !!provider && template?.key === DESKTOP_WORKER_TEMPLATE_KEY;
   const selected = model
     ? await resolveDriverModel(usableModels(await availableModels(), provider), model)
-    : null;
-  if (model && !selected) throw new ModelUnavailableError(`Model '${model}' is not available.`);
+    : providerOnly
+      ? newestAvailableModel(usableModels(await availableModels(), provider))
+      : null;
+  if ((model || providerOnly) && !selected)
+    throw new ModelUnavailableError(
+      model ? `Model '${model}' is not available.` : `No ${provider} model is available.`
+    );
   try {
     return await create(
       selected ? { model: selected.id, provider: selected.provider as Provider } : undefined
     );
   } catch (error) {
-    if (model || !(error instanceof ModelUnavailableError)) throw error;
+    if (selected || !(error instanceof ModelUnavailableError)) throw error;
     const newest = newestAvailableModel(await availableModels());
     if (!newest) throw error;
     return create({ model: newest.id, provider: newest.provider as Provider });

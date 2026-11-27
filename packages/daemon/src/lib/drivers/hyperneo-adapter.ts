@@ -20,6 +20,7 @@ import type { MailboxDeliveryMode } from '../mailbox/entry.ts';
 import { sessionUnavailable } from '../session-resolution/session-lookup.ts';
 import { withReplyLine } from '../messaging/session-reply.ts';
 import { ModelUnavailableError } from '../session/session-lifecycle.ts';
+import { DesktopModelsExhaustedError } from '../session/desktop-model-chain.ts';
 import { matchChatsBy } from './match-chats.ts';
 import { withChatEvidence } from './places.ts';
 import { selectLocalStartFolder } from './start-folder.ts';
@@ -674,7 +675,11 @@ export async function createHyperneoSession(
       context?.caller.source === 'internal' ? context.caller.workerTemplate : undefined
     );
   } catch (error) {
-    if (request.model !== undefined && error instanceof ModelUnavailableError)
+    if (
+      ((request.model !== undefined || request.provider !== undefined) &&
+        error instanceof ModelUnavailableError) ||
+      error instanceof DesktopModelsExhaustedError
+    )
       return { reason: reject('unsupported_model', error.message) };
     throw error;
   } finally {

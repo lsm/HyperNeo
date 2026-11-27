@@ -28,6 +28,7 @@ import {
   type HyperneoSessionControl,
 } from '../../../../src/lib/drivers/hyperneo-adapter';
 import { ModelUnavailableError } from '../../../../src/lib/session/session-lifecycle';
+import { DesktopModelsExhaustedError } from '../../../../src/lib/session/desktop-model-chain';
 import type { ArchiveAdmission } from '../../../../src/lib/drivers/types';
 import type { MailboxHandoffOutcome } from '../../../../src/lib/mailbox/handoff';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
@@ -1067,6 +1068,24 @@ describe('hyperneo adapter start and stop', () => {
       from
     );
     expect(result).toMatchObject({ ok: false, reason: 'unsupported_model' });
+    expect(handed).toEqual([]);
+  });
+
+  test('reports an exhausted desktop model list or an unavailable provider as a typed refusal', async () => {
+    for (const [error, request] of [
+      [new DesktopModelsExhaustedError('No listed model is available.'), {}],
+      [new ModelUnavailableError('No glm model is available.'), { provider: 'glm' }],
+    ] as const) {
+      const result = await adapter({
+        create: async () => {
+          throw error;
+        },
+      }).start!(
+        { place: place('/focus/notes'), title: 'essay', message: 'write it', ...request },
+        from
+      );
+      expect(result).toMatchObject({ ok: false, reason: 'unsupported_model' });
+    }
     expect(handed).toEqual([]);
   });
 

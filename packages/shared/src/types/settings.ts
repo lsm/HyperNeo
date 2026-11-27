@@ -235,6 +235,8 @@ export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
 
   fallbackModels?: FallbackModelEntry[];
 
+  desktopControlModels?: FallbackModelEntry[];
+
   modelFallbackMap?: Record<string, FallbackModelEntry[]>;
 
   customEndpoints?: CustomEndpointConfig[];

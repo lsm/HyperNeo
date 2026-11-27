@@ -1,6 +1,6 @@
 import type { ResolvedQuestion } from './state-types.ts';
 import type { SDKConfig, ToolsPresetConfig } from './types/sdk-config.ts';
-import type { ChatDisplayMode, SettingSource } from './types/settings.ts';
+import type { ChatDisplayMode, FallbackModelEntry, SettingSource } from './types/settings.ts';
 import type { DeclarativeToolGuard } from './types/space.ts';
 import type { OxapHarnessId } from './types/oxap-harnesses.ts';
 import type { SessionToolProfile, SessionToolSelection } from './types/session-tool-choice.ts';
@@ -351,6 +351,7 @@ export interface ModelLimit {
 
 export interface SessionMetadata {
   workerTemplate?: string;
+  desktopControlChain?: FallbackModelEntry[];
   queryFailureEpisode?: {
     id: string;
     failures: number;

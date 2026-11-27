@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 
 mock.module('@hyperneo/shared/sdk/type-guards', () => ({
   isSDKAssistantMessage: (msg: { type: string }) => msg.type === 'assistant',
@@ -31,11 +31,13 @@ mock.module('@hyperneo/shared/sdk/type-guards', () => ({
   isUserVisibleMessage: () => true,
 }));
 
+const availableProviders = new Set<string>();
+
 mock.module('../../../../src/lib/provider-service', () => ({
   getProviderService: () => ({
     getDefaultProvider: async () => 'anthropic',
     getProviderApiKey: () => undefined,
-    isProviderAvailable: async () => false,
+    isProviderAvailable: async (id: string) => availableProviders.has(id),
     getTitleGenerationConfig: async () => ({ modelId: 'claude-sonnet-4-20250514' }),
     getTitleGenerationModels: async (_p: string, sessionModelId: string) => ({
       providerModelId: sessionModelId,
@@ -45,7 +47,11 @@ mock.module('../../../../src/lib/provider-service', () => ({
   }),
 }));
 
-import type { MessageHub, Session, SessionConfig } from '@hyperneo/shared';
+import type { MessageHub, ModelInfo, Session, SessionConfig } from '@hyperneo/shared';
+import type { Provider } from '@hyperneo/shared/provider';
+import { setModelsCache } from '../../../../src/lib/model-service';
+import { getProviderRegistry } from '../../../../src/lib/providers/registry';
+import { DesktopModelsExhaustedError } from '../../../../src/lib/session/desktop-model-chain';
 import {
   admitCreateSessionConfig,
   admitUpdateSessionConfig,
@@ -431,9 +437,11 @@ describe('SessionLifecycle.create', () => {
   let createdSessions: Session[];
   let mockDb: Database;
   let detectGitSupport: ReturnType<typeof mock>;
+  let extraSettings: Record<string, unknown>;
 
   beforeEach(() => {
     createdSessions = [];
+    extraSettings = {};
     mockDb = {
       createSession: mock((session: Session) => {
         createdSessions.push(session);
@@ -447,6 +455,7 @@ describe('SessionLifecycle.create', () => {
         thinkingLevel: 'off',
         coordinatorMode: false,
         sandbox: { enabled: true },
+        ...extraSettings,
       })),
     } as unknown as Database;
 
@@ -572,5 +581,95 @@ describe('SessionLifecycle.create', () => {
       lifecycle.create({ config: { pathToClaudeCodeExecutable: '/tmp/evil' } })
     ).rejects.toThrow(/pathToClaudeCodeExecutable/);
     expect(createdSessions).toEqual([]);
+  });
+
+  describe('desktop-control model list', () => {
+    const seeing = (id: string) =>
+      ({
+        id,
+        capabilities: { vision: true, functionCalling: true },
+        isAvailable: () => availableProviders.has(id),
+      }) as unknown as Provider;
+    const listed = (id: string, provider: string) =>
+      ({ id, provider, alias: id, name: id, available: true }) as ModelInfo;
+
+    beforeEach(() => {
+      for (const id of ['desk-a', 'desk-b']) getProviderRegistry().register(seeing(id));
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              listed('a1', 'desk-a'),
+              listed('b1', 'desk-b'),
+              listed('claude-sonnet-4-6', 'anthropic'),
+            ],
+          ],
+        ])
+      );
+      availableProviders.clear();
+      availableProviders.add('desk-b');
+      extraSettings = {
+        desktopControlModels: [
+          { provider: 'desk-a', model: 'a1', thinkingLevel: 'think8k' },
+          { provider: 'desk-b', model: 'b1', thinkingLevel: 'think16k' },
+        ],
+      };
+    });
+
+    afterEach(() => {
+      for (const id of ['desk-a', 'desk-b']) getProviderRegistry().unregister(id);
+      setModelsCache(new Map());
+      availableProviders.clear();
+    });
+
+    it('starts a desktop worker on the first available listed model and keeps the list on the worker', async () => {
+      await lifecycle.create({ workerTemplate: 'worker.desktop' });
+
+      expect(createdSessions[0]!.config).toMatchObject({
+        model: 'b1',
+        provider: 'desk-b',
+        thinkingLevel: 'think16k',
+      });
+      expect(createdSessions[0]!.metadata.desktopControlChain).toEqual([
+        { provider: 'desk-a', model: 'a1', thinkingLevel: 'think8k' },
+        { provider: 'desk-b', model: 'b1', thinkingLevel: 'think16k' },
+      ]);
+    });
+
+    it('lets a requested effort win over the listed one', async () => {
+      await lifecycle.create({
+        workerTemplate: 'worker.desktop',
+        config: { thinkingLevel: 'think32k' },
+      });
+
+      expect(createdSessions[0]!.config.thinkingLevel).toBe('think32k');
+    });
+
+    it('refuses instead of using the default model when no listed model is available', async () => {
+      availableProviders.clear();
+
+      await expect(lifecycle.create({ workerTemplate: 'worker.desktop' })).rejects.toThrow(
+        DesktopModelsExhaustedError
+      );
+      expect(createdSessions).toEqual([]);
+    });
+
+    it('leaves explicit choices and other workers off the list', async () => {
+      await lifecycle.create({
+        workerTemplate: 'worker.desktop',
+        config: { model: 'a1', provider: 'desk-a' as SessionConfig['provider'] },
+      });
+      await lifecycle.create({ workerTemplate: 'worker.coder' });
+
+      expect(createdSessions.map((session) => session.config.model)).toEqual([
+        'a1',
+        'claude-sonnet-4-6',
+      ]);
+      expect(createdSessions.map((session) => session.metadata.desktopControlChain)).toEqual([
+        undefined,
+        undefined,
+      ]);
+    });
   });
 });
