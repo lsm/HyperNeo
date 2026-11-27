@@ -435,13 +435,22 @@ test.each(['ordinary', 'neo', 'opus1m', 'opus-native', 'neo45', 'daemon', 'worke
           'SELECT sdk_uuid, send_status FROM sdk_messages WHERE session_id = ? AND message_type = ?'
         )
         .all(sessionId, 'user');
+      const sdkLog = await readFile(join(run, 'sdk-debug.log'), 'utf8').catch(() => '');
       expect(
         messages.filter(
           (message) =>
             message.type === 'system' &&
             message.subtype === 'compact_boundary' &&
             message.compact_metadata.trigger === 'auto'
-        )
+        ),
+        JSON.stringify({
+          sdk: sdkLog.split('\n').filter((line) => /compact/i.test(line) && !line.includes(run)),
+          messages: messages.map((message) => [
+            message.type,
+            'subtype' in message ? message.subtype : null,
+          ]),
+          requests: requests.map(({ active, summary }) => ({ active, summary })),
+        })
       ).not.toHaveLength(0);
       const compacted = messages.findIndex(
         (message) => message.type === 'system' && message.subtype === 'compact_boundary'

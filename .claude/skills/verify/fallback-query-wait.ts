@@ -262,11 +262,15 @@ try {
   }
   await until(() => !agent.isLimitRecoveryPending(), 'Fallback recovery callback did not settle');
   await agent.replayPendingMessagesForImmediateMode({ waitForPostSettlementFlush: true });
-  const state = await hub.request<{ agentState: { status: string } }>('state.session', {
-    sessionId,
-  });
-  evidence.finalState = state.agentState;
-  if (!cancel) assert.equal(state.agentState.status, 'idle');
+  const status = async () => {
+    const state = await hub.request<{ agentState: { status: string } }>('state.session', {
+      sessionId,
+    });
+    evidence.finalState = state.agentState;
+    return state.agentState.status;
+  };
+  if (cancel) await status();
+  else await until(async () => (await status()) === 'idle', 'Recovered session never became idle');
   evidence.session = await read();
   if (cancel) {
     assert.equal(starts.length, 1);
