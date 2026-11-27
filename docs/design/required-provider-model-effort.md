@@ -2,7 +2,7 @@
 
 ## 中文摘要
 
-每一处能开新会话、派发新工作的入口（`neo.todo.add` 的 start 目标、`work.start`、编码包指派、目标会话、Neo 自身会话、Space 工作流工人、界面新建会话等）都必须显式给出 provider、model、effort 三项。缺任何一项，守护进程在派发前拒绝并说明缺什么，不再悄悄回退到全局默认或“最新可用模型”。校验是一个纯函数（superpipe 管线，类型化拒绝门），落在守护进程这个环境边界上，不靠提示词或 CLI 解析。能应用并回读配置的适配器，回执标注 confirmed（已确认），其中 HyperNeo 会话的 confirmed 取自查询层实际构造本轮执行时解析出的思考配置（配置回读不算数）；无法应用也无法在执行前读到生效值的适配器（Claude Desktop、Cursor），入口照样必须给出请求的三项，启动照常进行，回执如实写“requested …, effective unknown”；事后观测只作有条件的旁证（Claude 记录可能缺字段，Cursor 没有观测器，本设计也不新增），未观测到的字段永远保持 unknown，绝不猜测。复用时这类工人按已记录的请求三项匹配，回执标注 unverified，照常可复用；可配置适配器只认 confirmed。把新 todo 工作发给没有 confirmed 三项的既有会话（含历史会话）拒绝并新开工人，非可配置会话按 unverified 规则匹配。远程配对守护进程通过 `work.adapters` 目录广播各适配器的能力，转发方只按广播放行，最终校验和回执由拥有会话的那台守护进程完成。Neo 引导文案随第一个改动服务端行为的 PR 发出。不做自动选型引擎。
+每一处能开新会话、派发新工作的入口（`neo.todo.add` 的 start 目标、`work.start`、编码包指派、目标会话、Neo 自身会话、Space 工作流工人、界面新建会话等）都必须显式给出 provider、model、effort 三项。缺任何一项，守护进程在派发前拒绝并说明缺什么，不再悄悄回退到全局默认或“最新可用模型”。校验是一个纯函数（superpipe 管线，类型化拒绝门），落在守护进程这个环境边界上，不靠提示词或 CLI 解析。能应用并回读配置的适配器，回执标注 confirmed（已确认），其中 HyperNeo 会话的 confirmed 取自查询层实际构造本轮执行时解析出的思考配置（配置回读不算数）；无法应用也无法在执行前读到生效值的适配器（Claude Desktop、Cursor），入口照样必须给出请求的三项，启动照常进行，回执如实写“requested …, effective unknown”；事后观测只作有条件的旁证（Claude 记录可能缺字段，Cursor 没有观测器，本设计也不新增），未观测到的字段永远保持 unknown，绝不猜测。复用时这类工人按已记录的请求三项匹配，回执标注 unverified，照常可复用；可配置适配器只认 confirmed。派发新 todo 工作的 send 同样必须携带三项，由同一纯函数对照目标工人已记录的值校验——可配置会话缺 confirmed 三项（含全部历史会话）或非可配置会话与已记录请求不匹配，都拒绝并新开工人；续接消息不带三项、不受影响。远程配对守护进程通过 `work.adapters` 目录广播各适配器的能力，转发方只按广播放行，最终校验和回执由拥有会话的那台守护进程完成。Neo 引导文案随第一个改动服务端行为的 PR 发出。不做自动选型引擎。
 
 Status: proposed. Investigation base: `50e22151753673c39998bacd3056aad0ba059c29`
 (`origin/dev`, 2026-11-27). Source references are repository-relative `file:line` at
@@ -40,8 +40,9 @@ that owns sessions — the daemon — not in prompt text or CLI parsing.
 
 Every session can run turns, so every creation door is in scope. A dispatch
 onto an existing session is in scope too whenever it assigns *new* work (a
-todo send): the target must already hold a confirmed triple — or, for
-non-configurable adapters, a matching recorded request labeled `unverified` —
+todo send): the send names the required triple like a start, and the target
+must already hold a matching record — a confirmed triple, or, for
+non-configurable adapters, the requested values labeled `unverified` —
 recorded at its creation or reconfiguration. Pure continuations — resuming a session's own
 work, replies, notices — make no new identity decision and inherit the
 recorded triple.
@@ -88,8 +89,8 @@ is the CLI's own settings/account resolution, unreadable before launch, and
 `cursor`'s initialize/session-new exchange carries protocol and session id
 only (`cursor-start.ts:81-106`). Such adapters therefore take the requested
 triple as required entry data they cannot enforce, start, and receipt it
-plainly as `requested …, effective unknown` — never as actual — until the
-post-turn observation reports what really ran.
+plainly as `requested …, effective unknown` — never as actual. Fields stay
+unknown unless the harness happens to report them later; nothing is promised.
 
 | Adapter | provider | model | effort |
 | --- | --- | --- | --- |
@@ -141,8 +142,7 @@ Pure rules, each a small function piped in order:
    configuration. For a non-configurable adapter the values pass through as
    the recorded request the adapter cannot enforce; the receipt says so
    (`requested …, effective unknown`) rather than refusing a start the human's
-   workflow depends on, and the post-turn observation reports the effective
-   values.
+   workflow depends on, and unobserved fields simply stay unknown.
 3. Refusals reuse the existing vocabulary — `unsupported_model`,
    `unsupported_effort` — plus one new reason, `identity_required`, added to
    `WorkRejectionSchema` (`packages/daemon/src/lib/drivers/types.ts:128`), whose detail names every missing or
@@ -264,17 +264,22 @@ compares the recorded triple against the todo target.
   validation and the receipt happen on the daemon that owns the session; the
   forwarding daemon records that receipt verbatim.
 - New todo work sent to an existing session (`work.send` naming a todo the
-  worker is not already running) is a dispatch of new work, so it checks the
-  target's recorded identity: a configurable-adapter session without a
-  confirmed triple — every legacy session included — is refused
-  `identity_required`, and Neo starts a fresh worker instead; a
-  non-configurable session (`claude-desktop`, `cursor`) matches on its
-  recorded requested triple under the same `unverified` rule as reuse, so
-  their workers keep taking new todo work. Continuation keeps today's
-  semantics and needs no triple check: the same todo continuing on its worker,
-  notice replies to a session that messaged Neo, and the human messaging their
-  own sessions. `work.reconfigure` (HyperNeo) is the upgrade path that gives a
-  live legacy session a confirmed triple.
+  worker is not already running) is a dispatch of new work, so the send
+  carries the identity too: `SendWorkInputSchema`
+  (`work-operations.ts:245`) and `NeoSendWorkTarget`
+  (`packages/daemon/src/lib/neo/driver-work.ts:69`) gain the same optional
+  `provider`/`model`/`effort` fields, required exactly when the send assigns
+  new todo work, and the same pure gate checks them against the target's
+  recorded values — the confirmed triple for a configurable-adapter session,
+  the recorded requested triple (matched and labeled `unverified`) for
+  `claude-desktop`/`cursor`. A missing triple refuses `identity_required`; a
+  mismatch with the recorded values refuses the same way, and Neo starts a
+  fresh worker instead. A configurable-adapter session without a confirmed
+  triple — every legacy session included — is likewise refused, with
+  `work.reconfigure` (HyperNeo) as the upgrade path that records one.
+  Continuation keeps today's semantics and carries no triple: the same todo
+  continuing on its worker, notice replies to a session that messaged Neo, and
+  the human messaging their own sessions.
 - Session lifecycle: `SessionManager.createSession`
   (`session-lifecycle.ts:286`) refuses any new session whose config lacks the
   recorded triple. The recorded effort is always the value execution uses.
@@ -331,13 +336,15 @@ compares the recorded triple against the todo target.
   sentences with the required-triple rule, the `identity_required` refusal,
   the per-adapter fixed-provider note, the confirmed/declared receipt labels
   (including that `claude-desktop` and `cursor` receipts read `requested …,
-  effective unknown` until the first turn's observation) and the remote-start
-  rule (the required triple is admitted for any advertised adapter).
+  effective unknown`, with unobserved fields never resolving on their own) and
+  the remote-start rule (the required triple is admitted for any advertised
+  adapter).
 - `packages/prompts/src/neo/tools/neo.todo.add.md:8`: the start target shape
   becomes `{verb:start,adapter,model,effort,provider?,place?}` — provider
   optional only where the adapter fixes or derives it; model and effort are
   required for every adapter, enforced where the adapter can and receipted
-  `effective unknown` where it cannot.
+  `effective unknown` where it cannot. A send target that assigns new todo
+  work names the same triple.
 - A short difficulty table in `work.start.md` so Neo picks effort by task, no
   selection engine: trivial lookups → low, ordinary changes → medium, hard
   debugging or design → high, rare deepest work → max, with the adapter's
@@ -372,8 +379,8 @@ Delete rung, not by the Wire PRs.
    client validation, and the prompt changes above. `claude-desktop` and
    `cursor` starts keep working: the gate takes their required requested
    triple, their adapters record it without enforcing it, and the receipt
-   reads `requested …, effective unknown` until the first turn's observation.
-   Recorded merge-contract exception: removing the two
+   reads `requested …, effective unknown`, with unobserved fields staying
+   unknown. Recorded merge-contract exception: removing the two
    desktop stripping carve-outs (`work-operations.ts:841`, `:901`) rides this
    Wire PR under the repo's few-line Build+Wire allowance, because the wire
    cannot function for desktop-template workers while they strip the resolved
@@ -398,9 +405,10 @@ Delete rung, not by the Wire PRs.
   guidance table.
 - Cross-adapter model equivalence or capability negotiation beyond the
   existing catalogs.
-- Binding a non-configurable adapter's declared identity to its runtime, or
-  building pre-dispatch readers for effective desktop configuration; the
-  honest contract is `requested …, effective unknown` plus post-turn
-  observation, and reuse never trusts a declared identity.
+- Binding a non-configurable adapter's declared identity to its runtime,
+  building pre-dispatch readers for effective desktop configuration, or adding
+  identity observers; the honest contract is `requested …, effective unknown`,
+  with observation only as conditional corroboration where the harness already
+  reports it, and confirmed-only matching for configurable adapters.
 - Retrofitting identity onto sessions that already exist.
 - Human sign-in, payment and other delegation preferences; unrelated.
