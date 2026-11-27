@@ -39749,6 +39749,7 @@
                 "enum": [
                   "unsupported_model",
                   "unsupported_effort",
+                  "identity_required",
                   "unsupported_preparation",
                   "preparation_failed",
                   "unknown_adapter",
@@ -57903,6 +57904,21 @@
                     "id": {
                       "type": "string"
                     },
+                    "identity": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "configurable": {
+                          "type": "boolean"
+                        },
+                        "fixedProvider": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "configurable"
+                      ],
+                      "type": "object"
+                    },
                     "steerBehavior": {
                       "const": "best_effort",
                       "type": "string"
@@ -57969,6 +57985,7 @@
                 "enum": [
                   "unsupported_model",
                   "unsupported_effort",
+                  "identity_required",
                   "unsupported_preparation",
                   "preparation_failed",
                   "unknown_adapter",
@@ -58304,6 +58321,13 @@
                         ],
                         "type": "object"
                       },
+                      "identitySource": {
+                        "enum": [
+                          "confirmed",
+                          "declared"
+                        ],
+                        "type": "string"
+                      },
                       "lastActivityAt": {
                         "type": "number"
                       },
@@ -58464,6 +58488,9 @@
                           "failed",
                           "stopped"
                         ],
+                        "type": "string"
+                      },
+                      "thinkingLevel": {
                         "type": "string"
                       },
                       "title": {
@@ -59107,6 +59134,7 @@
                 "enum": [
                   "unsupported_model",
                   "unsupported_effort",
+                  "identity_required",
                   "unsupported_preparation",
                   "preparation_failed",
                   "unknown_adapter",
@@ -59505,6 +59533,7 @@
                 "enum": [
                   "unsupported_model",
                   "unsupported_effort",
+                  "identity_required",
                   "unsupported_preparation",
                   "preparation_failed",
                   "unknown_adapter",
@@ -59709,6 +59738,7 @@
                 "enum": [
                   "unsupported_model",
                   "unsupported_effort",
+                  "identity_required",
                   "unsupported_preparation",
                   "preparation_failed",
                   "unknown_adapter",
@@ -59848,6 +59878,7 @@
                 "enum": [
                   "unsupported_model",
                   "unsupported_effort",
+                  "identity_required",
                   "unsupported_preparation",
                   "preparation_failed",
                   "unknown_adapter",
@@ -60075,6 +60106,7 @@
                 "enum": [
                   "unsupported_model",
                   "unsupported_effort",
+                  "identity_required",
                   "unsupported_preparation",
                   "preparation_failed",
                   "unknown_adapter",
@@ -60509,6 +60541,13 @@
                     ],
                     "type": "object"
                   },
+                  "identitySource": {
+                    "enum": [
+                      "confirmed",
+                      "declared"
+                    ],
+                    "type": "string"
+                  },
                   "lastActivityAt": {
                     "type": "number"
                   },
@@ -60697,6 +60736,9 @@
                     ],
                     "type": "string"
                   },
+                  "thinkingLevel": {
+                    "type": "string"
+                  },
                   "title": {
                     "type": "string"
                   },
@@ -60779,6 +60821,7 @@
                 "enum": [
                   "unsupported_model",
                   "unsupported_effort",
+                  "identity_required",
                   "unsupported_preparation",
                   "preparation_failed",
                   "unknown_adapter",
@@ -61001,6 +61044,13 @@
                       "source"
                     ],
                     "type": "object"
+                  },
+                  "identitySource": {
+                    "enum": [
+                      "confirmed",
+                      "declared"
+                    ],
+                    "type": "string"
                   },
                   "inputEvidence": {
                     "oneOf": [
@@ -61372,6 +61422,9 @@
                     ],
                     "type": "string"
                   },
+                  "thinkingLevel": {
+                    "type": "string"
+                  },
                   "title": {
                     "type": "string"
                   },
@@ -61513,6 +61566,7 @@
                 "enum": [
                   "unsupported_model",
                   "unsupported_effort",
+                  "identity_required",
                   "unsupported_preparation",
                   "preparation_failed",
                   "unknown_adapter",
@@ -61640,6 +61694,7 @@
                 "enum": [
                   "unsupported_model",
                   "unsupported_effort",
+                  "identity_required",
                   "unsupported_preparation",
                   "preparation_failed",
                   "unknown_adapter",
@@ -61832,6 +61887,7 @@
                 "enum": [
                   "unsupported_model",
                   "unsupported_effort",
+                  "identity_required",
                   "unsupported_preparation",
                   "preparation_failed",
                   "unknown_adapter",
@@ -61979,6 +62035,7 @@
                 "enum": [
                   "unsupported_model",
                   "unsupported_effort",
+                  "identity_required",
                   "unsupported_preparation",
                   "preparation_failed",
                   "unknown_adapter",

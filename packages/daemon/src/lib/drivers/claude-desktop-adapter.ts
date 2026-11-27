@@ -1804,6 +1804,7 @@ export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): Work
   };
   return {
     id: 'claude-desktop',
+    identity: { fixedProvider: 'anthropic', configurable: false },
     readInput: async (id, marker) => {
       const record = (await loadClaudeDesktopRecords(deps, cache)).find(
         (row) => row.sessionId === id
