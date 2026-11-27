@@ -904,9 +904,9 @@ describe('withCodexDesktopIpc', () => {
         value: {
           ok: true,
           value: {
-            delivered: true,
+            delivered: false,
             queuedSubmissionId: 'existing-queue',
-            receipt: { executionId: 'thread-1', inputId: 'existing-input' },
+            clientMessageId: 'existing-input',
           },
         },
       });
@@ -954,7 +954,11 @@ describe('withCodexDesktopIpc', () => {
           kind: 'completed',
           value: {
             ok: true,
-            value: { delivered: true, queuedSubmissionId: 'existing-queue' },
+            value: {
+              delivered: false,
+              queuedSubmissionId: 'existing-queue',
+              clientMessageId: 'existing-input',
+            },
           },
         });
         expect(calls).toEqual(['thread/loaded/list', 'thread/settings/update', 'thread/queue/add']);
@@ -1506,8 +1510,12 @@ describe('withCodexDesktopIpc', () => {
                 ok: false,
                 reason: 'not_delivered',
                 detail: expect.stringContaining('start unavailable'),
+                clientMessageId: 'input-1',
               }
-            : { ok: true, value: { delivered: true, startedTurnId: 'new-turn' } },
+            : {
+                ok: true,
+                value: { delivered: true, startedTurnId: 'new-turn', clientMessageId: 'input-1' },
+              },
         });
         expect(f.seen.at(-1)).toMatchObject({
           method: 'thread-follower-start-turn',

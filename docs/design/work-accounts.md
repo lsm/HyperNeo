@@ -156,7 +156,16 @@ transport error or unusable acknowledgement. The reply schema and `readDriverOut
 that id without changing the rejection. The Codex turn reader adds each user item's `client_id`
 to the turn's inputs, and `deliveryKeys` matches the two. That is an exact id written by Codex,
 not time or text, so it is a receipt. The `queuedSubmissionId` is not kept by Codex (0 of 1732 turn
-inputs in a week) and is not used. The stated limits:
+inputs in a week) and is not used.
+
+Queued sends are Codex's main path, and none of them has a receipt today: in one week 1941 of
+2195 successful Codex Desktop sends (88%) were queued, and every queued send ever recorded (2025)
+has `delivered: false`. The queue path looked for a receipt by comparing the rollout's user
+message id (`msg_...`) with the daemon's `clientUserMessageId`, which Codex writes only as the
+`client_id` of `item_completed`. The two never match (145 user message ids and 138 client ids in
+one real rollout, none shared), and the test passed only because it used one value for both.
+That comparison is removed; a queued send's receipt is its `clientMessageId`, found when the
+message runs. The stated limits:
 
 - A Claude Desktop send through the relay already returns the input id whenever the relay has
   one (`claude-desktop-adapter.ts`). It has none only when the receiver logged just a queue
@@ -280,8 +289,9 @@ Claude Code, Claude Desktop, HyperNeo or Codex Desktop have kind and an estimate
 subagent cost count as incomplete, not zero. Receipts: at least 95% of confirmed sends and
 starts on the adapters that return a receipt (Claude Code, Claude Desktop, HyperNeo, Codex
 Desktop), leaving out the stated limits (Claude Desktop relay sends without an input id, Codex
-steers, `codex queue` fallback sends), have a receipt. Queued and unconfirmed Codex sends are on their own line: the share that got a
-receipt once their message ran. Keys: at least 95% of all confirmed sends and starts, limits included,
+steers, `codex queue` fallback sends), have a receipt. Queued and unconfirmed Codex sends have
+their own target: at least 95% of those whose message ran have a receipt by their
+`clientMessageId`, reported on its own line. Keys: at least 95% of all confirmed sends and starts, limits included,
 have a delivery key. Each limited path is reported on its own line.
 The share of worker turns with a todo is reported per adapter against today's 28%. For 20
 turns with a todo, picked at random, the todo read from the worker's own transcript matches at least 19

@@ -39577,6 +39577,11 @@
           {
             "additionalProperties": false,
             "properties": {
+              "clientMessageId": {
+                "description": "Client message ID Codex writes when an uncertain input runs.",
+                "minLength": 1,
+                "type": "string"
+              },
               "detail": {
                 "type": "string"
               },
@@ -57792,6 +57797,11 @@
           {
             "additionalProperties": false,
             "properties": {
+              "clientMessageId": {
+                "description": "Client message ID Codex writes when an uncertain input runs.",
+                "minLength": 1,
+                "type": "string"
+              },
               "detail": {
                 "type": "string"
               },
@@ -58840,6 +58850,10 @@
               "value": {
                 "additionalProperties": false,
                 "properties": {
+                  "clientMessageId": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
                   "confirmedAt": {
                     "type": "number"
                   },
@@ -58921,6 +58935,11 @@
           {
             "additionalProperties": false,
             "properties": {
+              "clientMessageId": {
+                "description": "Client message ID Codex writes when an uncertain input runs.",
+                "minLength": 1,
+                "type": "string"
+              },
               "detail": {
                 "type": "string"
               },
@@ -59314,6 +59333,11 @@
           {
             "additionalProperties": false,
             "properties": {
+              "clientMessageId": {
+                "description": "Client message ID Codex writes when an uncertain input runs.",
+                "minLength": 1,
+                "type": "string"
+              },
               "detail": {
                 "type": "string"
               },
@@ -59513,6 +59537,11 @@
           {
             "additionalProperties": false,
             "properties": {
+              "clientMessageId": {
+                "description": "Client message ID Codex writes when an uncertain input runs.",
+                "minLength": 1,
+                "type": "string"
+              },
               "detail": {
                 "type": "string"
               },
@@ -59647,6 +59676,11 @@
           {
             "additionalProperties": false,
             "properties": {
+              "clientMessageId": {
+                "description": "Client message ID Codex writes when an uncertain input runs.",
+                "minLength": 1,
+                "type": "string"
+              },
               "detail": {
                 "type": "string"
               },
@@ -59784,6 +59818,10 @@
               "value": {
                 "additionalProperties": false,
                 "properties": {
+                  "clientMessageId": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
                   "confirmedAt": {
                     "type": "number"
                   },
@@ -59865,6 +59903,11 @@
           {
             "additionalProperties": false,
             "properties": {
+              "clientMessageId": {
+                "description": "Client message ID Codex writes when an uncertain input runs.",
+                "minLength": 1,
+                "type": "string"
+              },
               "detail": {
                 "type": "string"
               },
@@ -60486,6 +60529,11 @@
           {
             "additionalProperties": false,
             "properties": {
+              "clientMessageId": {
+                "description": "Client message ID Codex writes when an uncertain input runs.",
+                "minLength": 1,
+                "type": "string"
+              },
               "detail": {
                 "type": "string"
               },
@@ -61215,6 +61263,11 @@
           {
             "additionalProperties": false,
             "properties": {
+              "clientMessageId": {
+                "description": "Client message ID Codex writes when an uncertain input runs.",
+                "minLength": 1,
+                "type": "string"
+              },
               "detail": {
                 "type": "string"
               },
@@ -61337,6 +61390,11 @@
           {
             "additionalProperties": false,
             "properties": {
+              "clientMessageId": {
+                "description": "Client message ID Codex writes when an uncertain input runs.",
+                "minLength": 1,
+                "type": "string"
+              },
               "detail": {
                 "type": "string"
               },
@@ -61524,6 +61582,11 @@
           {
             "additionalProperties": false,
             "properties": {
+              "clientMessageId": {
+                "description": "Client message ID Codex writes when an uncertain input runs.",
+                "minLength": 1,
+                "type": "string"
+              },
               "detail": {
                 "type": "string"
               },
@@ -61666,6 +61729,11 @@
           {
             "additionalProperties": false,
             "properties": {
+              "clientMessageId": {
+                "description": "Client message ID Codex writes when an uncertain input runs.",
+                "minLength": 1,
+                "type": "string"
+              },
               "detail": {
                 "type": "string"
               },

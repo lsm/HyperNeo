@@ -35,6 +35,36 @@ beforeEach(() => {
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 describe('readCodexTurnFacts', () => {
+  test('adds the client id Codex writes for a user item that ran, and nothing without one', async () => {
+    const ranAs = (second: number, turn: string, clientId?: string) =>
+      event(second, {
+        type: 'item_completed',
+        thread_id: 'thread',
+        turn_id: turn,
+        item: {
+          type: 'UserMessage',
+          id: `item-${second}`,
+          ...(clientId ? { client_id: clientId } : {}),
+          content: [{ type: 'text', text: 'queued work', text_elements: [] }],
+        },
+      });
+    write(
+      started(1, 't1'),
+      said(2, 'msg_a', 'queued work'),
+      ranAs(3, 't1', 'client-a'),
+      completed(4, 't1'),
+      started(5, 't2'),
+      said(6, 'msg_b', 'typed by the human'),
+      ranAs(7, 't2'),
+      completed(8, 't2')
+    );
+    const turns = await readCodexTurnFacts(path);
+    expect(turns.map(({ id, inputs }) => ({ id, inputs }))).toEqual([
+      { id: 't1', inputs: ['msg_a', 'client-a'] },
+      { id: 't2', inputs: ['msg_b'] },
+    ]);
+  });
+
   test('reads a turn from real log shapes', async () => {
     write(
       JSON.stringify({ timestamp: at(0), type: 'session_meta', payload: { id: 'thread' } }),
