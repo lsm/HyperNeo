@@ -25,9 +25,30 @@ const testPreset = {
   scopes: ['read', 'search'],
 } satisfies McpOAuthPreset;
 const testPresets = { test: testPreset, 'test-slack': { ...testPreset, slackTokens: true } };
+const atlassian = 'https://auth.atlassian.com';
+const basecamp = 'https://app.basecamp.com';
+const vendorPresets = {
+  jira: {
+    url: 'https://mcp.atlassian.com/v2/mcp',
+    issuer: `${atlassian}/VCeDsk8ZHncYF1g234fKtc4lNipbBhu3`,
+    authorizationEndpoint: `${atlassian}/authorize`,
+    origins: ['https://mcp.atlassian.com', atlassian],
+    scopes: ['read:jira:agent-interface', 'search:jira:agent-interface', 'offline_access'],
+  },
+  basecamp: {
+    url: 'https://mcp.basecamp.com/mcp',
+    issuer: basecamp,
+    authorizationEndpoint: `${basecamp}/oauth/authorizations/new`,
+    origins: ['https://mcp.basecamp.com', basecamp],
+    scopes: ['read'],
+  },
+} satisfies Record<string, McpOAuthPreset>;
+type PresetName = keyof typeof testPresets | keyof typeof vendorPresets;
+const presets: Record<PresetName, McpOAuthPreset> = { ...testPresets, ...vendorPresets };
 function presetFor(name: string | undefined) {
+  if (name === 'jira' || name === 'basecamp') return { name, preset: presets[name] } as const;
   if (process.env.NODE_ENV === 'test' && (name === 'test' || name === 'test-slack')) {
-    return { name, preset: testPresets[name] } as const;
+    return { name, preset: presets[name] } as const;
   }
 }
 
@@ -64,10 +85,7 @@ export function createMcpOAuthOperations(
   changed: () => void,
   now = Date.now
 ) {
-  const pending = new Map<
-    string,
-    { controller: AbortController; preset: keyof typeof testPresets }
-  >();
+  const pending = new Map<string, { controller: AbortController; preset: PresetName }>();
   const refreshes = new Map<
     string,
     { controller: AbortController; result: Promise<RefreshResult> }
@@ -311,7 +329,7 @@ export function createMcpOAuthOperations(
       flow?.controller.abort();
       const auth =
         row?.auth ??
-        (flow && row?.sourceType === 'http' && row.url === testPresets[flow.preset].url
+        (flow && row?.sourceType === 'http' && row.url === presets[flow.preset].url
           ? { kind: 'oauth' as const, preset: flow.preset, generation: 0 }
           : undefined);
       if (!row || !auth) return { ok: false, reason: 'not_connected' };
@@ -358,7 +376,7 @@ export function createMcpOAuthOperations(
     id,
   }: z.infer<typeof statusInput>): Promise<z.infer<typeof statusResult>> {
     const row = registry.get(id);
-    const preset = (row?.auth ? [row.auth.preset] : Object.keys(testPresets)).find((name) => {
+    const preset = (row?.auth ? [row.auth.preset] : Object.keys(presets)).find((name) => {
       const found = presetFor(name);
       return row?.sourceType === 'http' && !!found && found.preset.url === row.url;
     });
