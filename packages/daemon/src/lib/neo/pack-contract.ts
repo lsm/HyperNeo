@@ -172,6 +172,8 @@ export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
   workerRules?: string;
   workerContext?(): string | null;
   workerTemplate?(todo: NeoTodo): string | undefined;
+  workerTemplateBrief?(todo: NeoTodo): string;
+  workerTemplateContext?(template: string): string | null;
   workerStartExclusions?(todo: NeoTodo): WorkerStartExclusions | Promise<WorkerStartExclusions>;
   workerTarget?(
     todo: NeoTodo,

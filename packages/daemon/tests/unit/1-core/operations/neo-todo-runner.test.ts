@@ -240,7 +240,7 @@ test.each([
   ['hyperneo', null, false],
   ['codex-desktop', true, false],
 ] as const)(
-  'dispatch keeps coding rules with %s desktop scope %s',
+  'dispatch scopes the task brief for %s desktop scope %s',
   async (adapter, desktop, templated) => {
     const h = setup();
     try {
@@ -272,8 +272,9 @@ test.each([
       const call = h.calls.find(({ name }) => name === 'work.start');
       expect(call?.workerTemplate).toBe(templated ? 'worker.desktop' : undefined);
       const brief = String(call?.input.message);
-      expect(brief).toContain('Rules for this work: prove it by running it.');
-      expect(brief).toContain('example/project merge policy: review_bot');
+      expect(brief.includes('Rules for this work: prove it by running it.')).toBe(!templated);
+      expect(brief.includes('example/project merge policy: review_bot')).toBe(!templated);
+      expect(/\bNeo\b|HyperNeo|message\.send/i.test(brief)).toBe(!templated);
       expect(brief).toContain('Delegation preferences');
       expect(brief).toContain('PR merged');
       expect(brief.includes('desktop_permissions_required')).toBe(!templated);

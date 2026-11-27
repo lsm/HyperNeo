@@ -51,11 +51,11 @@ beforeEach(async () => {
   body = {};
   await mkdir(join(root, 'desktop'));
   db = new Database(':memory:');
-  db.exec(`CREATE TABLE neo_asks(id TEXT, status TEXT, desktop_apps TEXT);
+  db.exec(`CREATE TABLE neo_asks(id TEXT, status TEXT, desktop_apps TEXT, session_id TEXT);
     CREATE TABLE neo_todos(id TEXT, ask_id TEXT, title TEXT, state TEXT, approved_at INTEGER, named TEXT, desktop_apps TEXT DEFAULT '[{"bundleId":"org.example.app","name":"app"}]');
     CREATE TABLE neo_todo_sessions(todo_id TEXT, ref TEXT);
     CREATE TABLE mcp_audit_log(id TEXT, timestamp INTEGER, agent_name TEXT, session_id TEXT, tool_name TEXT, params_summary TEXT, space_id TEXT, task_id TEXT, workflow_run_id TEXT);
-    INSERT INTO neo_asks VALUES('ask','open','[{"bundleId":"org.example.app","name":"app","seen":"all"}]');
+    INSERT INTO neo_asks(id, status, desktop_apps) VALUES('ask','open','[{"bundleId":"org.example.app","name":"app","seen":"all"}]');
     INSERT INTO neo_todos(id, ask_id, title, state, approved_at, named) VALUES('todo','ask','Synthetic action','doing',1,'{"desktopControl":true}');
     INSERT INTO neo_todo_sessions VALUES('todo','{"adapter":"hyperneo","id":"worker-a"}');`);
   requests = [];
@@ -184,7 +184,7 @@ test.each([1, null])(
   }
 );
 
-test('a desktop worker can discover and invoke only its four operations', async () => {
+test('a desktop worker cannot invoke operation discovery or unrelated operations', async () => {
   let operations: OperationRegistry;
   const trivial = (name: 'message.send' | 'work.read') =>
     defineOperation({
@@ -202,16 +202,7 @@ test('a desktop worker can discover and invoke only its four operations', async 
   ]);
   const desktop = { ...caller, profile: 'desktop' as const };
   const invoke = (name: string, args: unknown) => invokeOperation(operations, name, args, desktop);
-  const all = await invoke('operations.list', { all: true });
-  expect(all.kind).toBe('completed');
-  expect(
-    all.kind === 'completed' && (all.value as { name: string }[]).map(({ name }) => name).sort()
-  ).toEqual(['desktop.call', 'message.send', 'operations.describe', 'operations.list']);
-  expect(await invoke('operations.describe', { name: 'work.read' })).toMatchObject({
-    kind: 'completed',
-    value: { found: false },
-  });
-  for (const name of ['work.read', 'unregistered.read'])
+  for (const name of ['operations.list', 'operations.describe', 'work.read', 'unregistered.read'])
     expect(await invoke(name, {})).toMatchObject({ kind: 'failed', code: 'forbidden' });
   expect(await invoke('message.send', {})).toMatchObject({ kind: 'completed' });
 });

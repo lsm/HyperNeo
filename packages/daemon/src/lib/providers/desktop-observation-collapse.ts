@@ -1,4 +1,5 @@
 import catalog from '../desktop/tool-catalog.json' with { type: 'json' };
+import { DESKTOP_MCP_SERVER_NAME } from '../desktop/worker-profile.ts';
 import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
 import type {
   AnthropicContentBlockToolResult,
@@ -6,7 +7,8 @@ import type {
   AnthropicRequest,
 } from './provider-anthropic-compat/translator.ts';
 
-const prefix = `mcp__${OPERATIONS_MCP_SERVER_NAME}__`;
+const legacyPrefix = `mcp__${OPERATIONS_MCP_SERVER_NAME}__`;
+const desktopPrefix = `mcp__${DESKTOP_MCP_SERVER_NAME}__`;
 const desktopTools = new Set(catalog.map(({ name }) => name));
 const reads = new Set(['list_windows', 'get_window_state', 'zoom']);
 const targets = [
@@ -29,10 +31,16 @@ const targets = [
 type DesktopCall = { name: string; input: Record<string, unknown>; batch: number };
 
 function desktopCall(use: AnthropicContentBlockToolUse, batch: number): DesktopCall | undefined {
-  if (typeof use.name !== 'string' || !use.name.startsWith(prefix)) return;
+  if (typeof use.name !== 'string') return;
+  const prefix = use.name.startsWith(desktopPrefix)
+    ? desktopPrefix
+    : use.name.startsWith(legacyPrefix)
+      ? legacyPrefix
+      : undefined;
+  if (!prefix) return;
   const name = use.name.slice(prefix.length);
   if (desktopTools.has(name)) return { name, input: use.input, batch };
-  if (name === 'invoke' && use.input?.name === 'desktop.call') {
+  if (prefix === legacyPrefix && name === 'invoke' && use.input?.name === 'desktop.call') {
     const call = use.input.input as { tool?: string; args?: Record<string, unknown> } | undefined;
     if (call?.tool && desktopTools.has(call.tool)) {
       return { name: call.tool, input: call.args ?? {}, batch };

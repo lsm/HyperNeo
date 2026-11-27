@@ -1,4 +1,5 @@
 import { NEO_NON_CODING_FILES } from '@hyperneo/prompts';
+import { DESKTOP_WORKER_TEMPLATE_KEY } from '../desktop/worker-profile.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { homedir } from 'node:os';
 import { existsSync, mkdirSync } from 'node:fs';
@@ -141,7 +142,10 @@ export function neoStartPlace(deps: {
     return {
       value: {
         ...input,
-        message: `${input.message}\n\n${NEO_NON_CODING_FILES}`,
+        message:
+          caller.source === 'internal' && caller.workerTemplate === DESKTOP_WORKER_TEMPLATE_KEY
+            ? input.message
+            : `${input.message}\n\n${NEO_NON_CODING_FILES}`,
         place,
         prepareFolder,
         inPlace: local && folder === home,

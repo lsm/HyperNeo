@@ -575,16 +575,29 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       target.verb === 'start'
         ? localTemplate(target.adapter, target.place?.daemon)
         : deps.workerTemplate?.(target.ref);
+    const templateBrief = workerTemplate
+      ? enabledPacks()
+          .find((pack) => pack.workerTemplate?.(todo) === workerTemplate)
+          ?.workerTemplateBrief?.(todo)
+      : undefined;
     const card = neoTodoCard(todo, ask, prepare?.workerRules);
-    card.instruction = workerBrief(
-      todo,
-      [card.instruction, todo.report && `Latest worker report:\n${todo.report}`]
-        .filter(Boolean)
-        .join('\n\n'),
-      target.verb === 'start' ? target.adapter : target.ref.adapter,
-      target.verb === 'send',
-      workerTemplate
-    );
+    card.instruction =
+      templateBrief === undefined
+        ? workerBrief(
+            todo,
+            [card.instruction, todo.report && `Latest worker report:\n${todo.report}`]
+              .filter(Boolean)
+              .join('\n\n'),
+            target.verb === 'start' ? target.adapter : target.ref.adapter,
+            target.verb === 'send',
+            workerTemplate
+          )
+        : [
+            ...enabledPacks().map((pack) => pack.workerTemplateContext?.(workerTemplate!)),
+            templateBrief,
+          ]
+            .filter(Boolean)
+            .join('\n\n');
     const localStart = target.verb === 'start' && !target.place?.daemon;
     const names = localStart ? deps.workerNames?.() : undefined;
     const deliver = async () => {
@@ -597,12 +610,14 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           doneWhen: todo.doneWhen,
           checkKind: todo.check?.kind ?? null,
         },
-        formatGoal,
+        templateBrief === undefined
+          ? formatGoal
+          : (instruction) => instruction.slice(0, WORK_MESSAGE_MAX),
         target.verb === 'start' && !target.name
           ? await names?.(target.adapter, target.place)
           : undefined
       );
-      if (target.verb === 'start' && prepare?.workerStartBrief) {
+      if (target.verb === 'start' && templateBrief === undefined && prepare?.workerStartBrief) {
         const oldStatus =
           replaced && !replaced.daemon
             ? await deps.invoke(caller(ask), 'work.status', { ref: replaced }).catch(() => null)
@@ -627,7 +642,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       call.input.todoId = todo.id;
       if (target.verb === 'start') {
         call.input.role = 'do';
-        call.input.provenance = true;
+        call.input.provenance = templateBrief === undefined;
         if (exclusions || excluded)
           call.input.excludeRefs = [...(exclusions?.value ?? []), ...(excluded ? [excluded] : [])];
       }
