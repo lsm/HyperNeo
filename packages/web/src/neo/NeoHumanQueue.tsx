@@ -145,7 +145,11 @@ export function NeoHumanQueue({
   useEffect(() => {
     const request = revealed.current;
     if (!focus || !focused || !request || request.reveal !== reveal || request.done) return;
-    if ((neoHumanQueueTab(focused) ?? 'all') !== state || (topic !== null && topicKey(focused.askId) !== topic)) return;
+    if (
+      (neoHumanQueueTab(focused) ?? 'all') !== state ||
+      (topic !== null && topicKey(focused.askId) !== topic)
+    )
+      return;
     let restore = () => {};
     const frame = requestAnimationFrame(() => {
       const target = [
@@ -183,8 +187,7 @@ export function NeoHumanQueue({
   const overflow = choices.slice(SHOWN_TOPICS);
   const selectedOverflow = overflow.some(([key]) => key === topic) ? (topic ?? '') : '';
   const items = queue.items.filter(
-    (item) =>
-      neoHumanQueueTab(item) === state && (topic === null || topicKey(item.askId) === topic)
+    (item) => neoHumanQueueTab(item) === state && (topic === null || topicKey(item.askId) === topic)
   );
   const groups = [...new Set(items.map((item) => item.askId))];
   const runs: { id: string; first: boolean; items: NeoHumanQueueItem[] }[] = [];
@@ -289,54 +292,54 @@ export function NeoHumanQueue({
         ))}
       </div>
       {state !== 'all' && (
-      <div
-        role="group"
-        aria-label={t(queue.topics ? 'queue.topic' : 'queue.ask')}
-        class="flex items-center gap-2"
-      >
-        <div class="scrollbar-none flex min-w-0 flex-1 gap-2 overflow-x-auto">
-          <button
-            type="button"
-            class={`${chip} ${tone(topic === null)} shrink-0 whitespace-nowrap`}
-            aria-pressed={topic === null}
-            onClick={() => setTopic(null)}
-          >
-            {t('queue.allAsks')} {count(state, null)}
-          </button>
-          {choices.slice(0, SHOWN_TOPICS).map(([key, { label }]) => (
+        <div
+          role="group"
+          aria-label={t(queue.topics ? 'queue.topic' : 'queue.ask')}
+          class="flex items-center gap-2"
+        >
+          <div class="scrollbar-none flex min-w-0 flex-1 gap-2 overflow-x-auto">
             <button
-              key={key}
               type="button"
-              class={`${chip} ${tone(topic === key)} max-w-[12rem] shrink-0 truncate`}
-              aria-pressed={topic === key}
-              onClick={() => setTopic(key)}
+              class={`${chip} ${tone(topic === null)} shrink-0 whitespace-nowrap`}
+              aria-pressed={topic === null}
+              onClick={() => setTopic(null)}
             >
-              {label} {count(state, key)}
+              {t('queue.allAsks')} {count(state, null)}
             </button>
-          ))}
-        </div>
-        {overflow.length > 0 && (
-          <span
-            class={`${tone(!!selectedOverflow)} relative grid size-8 shrink-0 place-items-center rounded-full border focus-within:ring-2 focus-within:ring-inset focus-within:ring-accent`}
-          >
-            <NeoMoreIcon />
-            <select
-              aria-label={t('queue.more')}
-              title={t('queue.more')}
-              class="absolute inset-0 size-full cursor-pointer opacity-0"
-              value={selectedOverflow}
-              onChange={(event) => setTopic(event.currentTarget.value || null)}
+            {choices.slice(0, SHOWN_TOPICS).map(([key, { label }]) => (
+              <button
+                key={key}
+                type="button"
+                class={`${chip} ${tone(topic === key)} max-w-[12rem] shrink-0 truncate`}
+                aria-pressed={topic === key}
+                onClick={() => setTopic(key)}
+              >
+                {label} {count(state, key)}
+              </button>
+            ))}
+          </div>
+          {overflow.length > 0 && (
+            <span
+              class={`${tone(!!selectedOverflow)} relative grid size-8 shrink-0 place-items-center rounded-full border focus-within:ring-2 focus-within:ring-inset focus-within:ring-accent`}
             >
-              <option value="">{t('queue.more')}</option>
-              {overflow.map(([key, { label }]) => (
-                <option key={key} value={key}>
-                  {label} {count(state, key)}
-                </option>
-              ))}
-            </select>
-          </span>
-        )}
-      </div>
+              <NeoMoreIcon />
+              <select
+                aria-label={t('queue.more')}
+                title={t('queue.more')}
+                class="absolute inset-0 size-full cursor-pointer opacity-0"
+                value={selectedOverflow}
+                onChange={(event) => setTopic(event.currentTarget.value || null)}
+              >
+                <option value="">{t('queue.more')}</option>
+                {overflow.map(([key, { label }]) => (
+                  <option key={key} value={key}>
+                    {label} {count(state, key)}
+                  </option>
+                ))}
+              </select>
+            </span>
+          )}
+        </div>
       )}
       {runs.map(({ id, first, items: run }) => {
         const validated = renderAsk && id !== outside ? card(id) : undefined;

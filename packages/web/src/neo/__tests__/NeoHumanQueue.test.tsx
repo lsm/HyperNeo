@@ -1056,4 +1056,23 @@ describe('NeoHumanQueue states match the phone', () => {
     fireEvent.click(states.getByRole('button', { name: '已搁置 1' }));
     expect(view.getByText('Paused step')).toBeTruthy();
   });
+
+  it('counts each ask once under waiting on you, like the phone', () => {
+    const cards: Queue = {
+      items: ['q1', 'q2'].map((questionId) => ({
+        state: 'waiting' as const,
+        askId: 'idle',
+        questionId,
+        text: `Question ${questionId}`,
+        todos: [],
+      })),
+      counts: { idle: { waiting: 2, held: 0, progress: 0 } },
+    };
+    const view = render(
+      <NeoHumanQueue queue={cards} entries={asks} onHold={vi.fn()} onAnswer={vi.fn()} />
+    );
+    const states = within(view.getByRole('group', { name: 'State' }));
+    expect(states.getByRole('button', { name: 'Waiting on you 1' })).toBeTruthy();
+    expect(view.getByText('Question q2')).toBeTruthy();
+  });
 });

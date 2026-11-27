@@ -248,7 +248,8 @@ export function neoHumanQueueCounts(queue: Pick<NeoHumanQueue, 'items'>): NeoHum
   for (const item of queue.items) {
     const tab = neoHumanQueueTab(item);
     const ask = (counts[item.askId] ??= { waiting: 0, held: 0, progress: 0 });
-    if (tab) ask[tab]++;
+    if (tab === 'waiting') ask.waiting = 1;
+    else if (tab) ask[tab]++;
   }
   return counts;
 }
