@@ -173,7 +173,18 @@ therefore labels its source instead of promising actuals it cannot bind:
     (`query-options-builder.ts:865-872`): the thinking level whose config was
     sent — an enabled budget maps to its level (the kimi branch always sends
     the `think16k` budget), a disabled config records `off`;
-  - thinking mode `off`: the explicit value `off`.
+  - thinking mode `off` splits by what execution does. Providers that run no
+    reasoning at all (minimax, ollama, ollama-cloud) record the explicit value
+    `off`. `anthropic-copilot` is mode `off` in the UI sense
+    (`packages/shared/src/types.ts:185`) but its provider layer maps every
+    requested level to a real reasoning effort — `off`→`low` through
+    `think64k`→`xhigh` (`reasoning-effort.ts:7-15`) — so its confirmed value is
+    that mapped effort in the provider's vocabulary: a request of `Max`
+    records `xhigh`. The mapping is total and stated at admission — the
+    executable set for a requested level on this provider is exactly its
+    `LEVEL_EFFORTS` value, so nothing refuses, and the receipt and provenance
+    show the mapped value rather than the requested label, making the
+    translation stated instead of silent.
 
   This is the boundary because the builder resolves provider effort
   independently of session config (`query-options-builder.ts:830-842`) and a
@@ -193,7 +204,9 @@ therefore labels its source instead of promising actuals it cannot bind:
   modes and effort levels, as `work.reconfigure` uses them
   (`work-reconfigure.ts:90-100`) — and refuses a request the builder would
   remap with `unsupported_effort` naming the executable values, so a
-  confirmed identity always equals the request on a satisfied start.
+  confirmed identity always equals what the request resolves to on a satisfied
+  start: the request itself where no mapping applies, the stated
+  `LEVEL_EFFORTS` value on `anthropic-copilot`.
 
   For Codex, Copilot and Antigravity
   the adapter's own configuration API is that boundary — the existing
