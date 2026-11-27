@@ -31,7 +31,7 @@ export type ToolDefaultMutation =
     >)
   | ({ repository: 'registry' } & Calls<
       AppMcpServerRepository,
-      'create' | 'update' | 'delete' | 'replaceOAuthUrl'
+      'create' | 'update' | 'delete' | 'deleteOAuth' | 'replaceOAuthUrl'
     >)
   | { repository: 'overrides'; method: 'setOverride'; args: ['space', string, string, boolean] }
   | { repository: 'overrides'; method: 'clearOverride'; args: ['space', string, string] };
@@ -51,7 +51,7 @@ export type ToolDefaultTransitionResult =
 const methods = {
   imports: ['file', 'sources'],
   skills: ['insert', 'update', 'delete', 'setEnabled', 'setValidationStatus'],
-  registry: ['create', 'update', 'delete', 'replaceOAuthUrl'],
+  registry: ['create', 'update', 'delete', 'deleteOAuth', 'replaceOAuthUrl'],
   overrides: ['setOverride', 'clearOverride'],
 };
 function capture(db: Database, request: ToolDefaultTransition) {

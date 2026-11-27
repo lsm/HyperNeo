@@ -115,7 +115,7 @@ export function registerAppMcpHandlers(messageHub: MessageHub, ctx: AppMcpHandle
     return { server } satisfies { server: AppMcpServer };
   });
 
-  messageHub.onRequest('mcp.registry.delete', async (data) => {
+  messageHub.onRequest('mcp.registry.delete', async (data, context) => {
     const { id } = data as { id: string };
 
     if (!id) {
@@ -127,7 +127,12 @@ export function registerAppMcpHandlers(messageHub: MessageHub, ctx: AppMcpHandle
       throw new Error(`MCP server not found: ${id}`);
     }
     if (existing.auth) {
-      throw new Error(`MCP server "${existing.name}" uses OAuth; disconnect it first`);
+      if (!invoke) throw new Error(`MCP server "${existing.name}" uses OAuth; disconnect it first`);
+      const reply = (await invoke({ name: 'mcp.registry.remove', input: { id } }, context)) as
+        | { ok: true }
+        | { ok: false; reason: string };
+      if (!reply.ok) throw new Error(reply.reason);
+      return { success: true } satisfies { success: boolean };
     }
 
     await writeToolDefaults(db, {

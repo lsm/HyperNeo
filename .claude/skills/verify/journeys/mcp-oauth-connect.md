@@ -68,3 +68,18 @@ Transient replies keep the grant and report a bounded reason without retrying
 for one minute. Slack's pre-registered client path classifies a revoked grant
 without retry or consent. Disconnect fences a held refresh. An erase failure
 leaves the rejected bundle unadmitted after restart.
+
+To exercise deleting an OAuth row through the registry delete RPC, run:
+
+```bash
+bash .claude/skills/verify/proof-run.sh /absolute/evidence/mcp-oauth-remove \
+  .claude/skills/verify/mcp-oauth-connect.ts "$(git rev-parse HEAD)" remove
+```
+
+On the base, expect exit 1 because the delete RPC refuses an OAuth row. On the
+fixed head, require exit 0 and `pass: true` in `mcp-oauth-remove.json`. The
+agent caller is refused. Disposable SQLite triggers fail the grant erase and
+then the row delete; both leave the row disconnected, also after restart.
+Deleting during a held login callback, and during a held refresh, leaves no
+row and no grant. A tool proxy kept from before the delete refuses its next
+call with no request reaching the fixture.

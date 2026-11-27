@@ -5,6 +5,8 @@ import { MessageHub, WebSocketClientTransport, type AppMcpServer } from '../../.
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createMcpOAuthOperations } from '../../../packages/daemon/src/lib/connections/mcp-oauth-operations.ts';
+import { Client } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js';
+import { InMemoryTransport } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/inMemory.js';
 import { ConnectionVault } from '../../../packages/daemon/src/lib/connections/vault.ts';
 import { createCredentialStore } from '../../../packages/daemon/src/lib/credentials/credential-store.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
@@ -62,7 +64,8 @@ const other = await startFakeMcpOAuthServer();
 const lifecycle = process.argv[3] === 'lifecycle';
 const rowWrites = process.argv[3] === 'row-writes';
 const refresh = process.argv[3] === 'refresh';
-const proofName = refresh ? 'mcp-oauth-refresh' : lifecycle ? 'mcp-oauth-lifecycle' : rowWrites ? 'mcp-oauth-row-writes' : 'mcp-oauth-connect';
+const removal = process.argv[3] === 'remove';
+const proofName = removal ? 'mcp-oauth-remove' : refresh ? 'mcp-oauth-refresh' : lifecycle ? 'mcp-oauth-lifecycle' : rowWrites ? 'mcp-oauth-row-writes' : 'mcp-oauth-connect';
 const readStatus = (hub: MessageHub, id: string) =>
   invoke(hub, 'mcp.registry.status', { id });
 const reopen = (hub: MessageHub, id: string) =>
@@ -427,6 +430,106 @@ try {
       evidence.failedEraseAfterRestart = reconnectNeeded.health;
     });
   }
+  if (removal) {
+    const rowExists = (app: Awaited<ReturnType<typeof createDaemonApp>>) => !!app.db.appMcpServers.get(id);
+    const remove = (hub: MessageHub, target: string) => hub.request('mcp.registry.delete', { id: target });
+    await withDaemon(async (hub, app) => {
+      const agent = createOperationMcpHandler(
+        () => app.sessionManager.getOperationRegistry(),
+        () => ({ sessionId: 'synthetic-worker', role: 'neo' })
+      );
+      const denied = await agent({ name: 'mcp.registry.remove', input: { id } });
+      assert.equal(denied.isError, true);
+      assert.equal(JSON.parse(denied.content[0].text).code, 'forbidden');
+      assert(rowExists(app));
+      assert.deepEqual(await readStatus(hub, id), healthy);
+
+      evidence.step = 'erase failure keeps the row disconnected';
+      const raw = app.db.getDatabase();
+      raw.exec(`CREATE TRIGGER proof_fail_grant_erase BEFORE DELETE ON provider_credentials
+        BEGIN SELECT RAISE(ABORT, 'synthetic erase failure'); END`);
+      await assert.rejects(remove(hub, id), /request_failed/);
+      raw.exec('DROP TRIGGER proof_fail_grant_erase');
+      assert(rowExists(app));
+      assert.deepEqual(await readStatus(hub, id), disconnected);
+
+      evidence.step = 'stop before the row delete keeps the row disconnected';
+      raw.exec(`CREATE TRIGGER proof_stop_before_delete BEFORE DELETE ON app_mcp_servers
+        BEGIN SELECT RAISE(ABORT, 'synthetic interrupted delete'); END`);
+      await assert.rejects(remove(hub, id));
+      raw.exec('DROP TRIGGER proof_stop_before_delete');
+      assert(rowExists(app));
+      assert.equal(grantCount(app), 0);
+      assert.deepEqual(await readStatus(hub, id), disconnected);
+    });
+    await withDaemon(async (hub, app) => {
+      assert(rowExists(app));
+      assert.deepEqual(await readStatus(hub, id), disconnected);
+      evidence.interruptedRemovalAfterRestart = disconnected.health;
+
+      evidence.step = 'delete during a delayed login callback';
+      const { authorizeUrl } = await reopen(hub, id);
+      const callback = await callbackUrl(authorizeUrl);
+      const hold = { started: Promise.withResolvers<void>(), release: Promise.withResolvers<void>() };
+      holdCodeReply = hold;
+      const reply = fetch(callback).then((response) => response.status, () => 'closed');
+      try {
+        await Promise.race([hold.started.promise, reply.then(() => { throw new Error('Callback ended before code exchange'); })]);
+        assert.deepEqual(await remove(hub, id), { success: true });
+      } finally {
+        hold.release.resolve();
+        holdCodeReply = { started: tokenStarted, release: tokenRelease };
+      }
+      assert.notEqual(await reply, 200);
+      assert(!rowExists(app));
+      assert.equal(grantCount(app), 0);
+      evidence.delayedLogin = { rowDeleted: true, grants: 0 };
+
+      evidence.step = 'delete during a delayed refresh with a retained proxy';
+      const proxyId = (await hub.request<{ server: AppMcpServer }>('mcp.registry.create', {
+        name: 'oauth-remove-proxy', url: fake.url, sourceType: 'http', enabled: false,
+      })).server.id;
+      const service = createMcpOAuthOperations(app.db, createCredentialStore(app.db.getDatabase()), () => {});
+      const operation = (name: string, input: object) => {
+        const entry = service.operations.find((candidate) => candidate.name === name);
+        assert(entry, `Missing ${name}`);
+        return entry.execute(entry.inputSchema.parse(input), { source: 'rpc', principal: 'local' });
+      };
+      const consent = await operation('mcp.registry.connect', { id: proxyId, preset: 'test' }) as { authorizeUrl: string };
+      assert.equal((await fetch(await callbackUrl(consent.authorizeUrl))).status, 200);
+      assert.deepEqual(await readStatus(hub, proxyId), healthy);
+      const proxy = service.toolProxy(proxyId, 'oauth-remove-proxy');
+      const session = new Client({ name: 'fixture-session', version: '1' });
+      const [left, right] = InMemoryTransport.createLinkedPair();
+      await proxy.instance.connect(right);
+      await session.connect(left);
+
+      const started = Promise.withResolvers<void>();
+      const finish = Promise.withResolvers<void>();
+      fake.switches.beforeRefreshReply = async () => {
+        started.resolve();
+        await finish.promise;
+      };
+      const late = service.refresh(proxyId);
+      try {
+        await Promise.race([started.promise, late.then(() => { throw new Error('Refresh ended before the token request'); })]);
+        assert.deepEqual(await operation('mcp.registry.remove', { id: proxyId }), { ok: true });
+      } finally {
+        finish.resolve();
+        fake.switches.beforeRefreshReply = undefined;
+      }
+      assert.deepEqual(await late, { ok: false, reason: 'reconnect_needed' });
+      assert.equal(app.db.appMcpServers.get(proxyId), null);
+      assert.equal(grantCount(app), 0);
+      const requests = fake.requests.length;
+      const call = await session.callTool({ name: 'read', arguments: {} });
+      assert.equal(call.isError, true);
+      assert.equal(fake.requests.length, requests);
+      await session.close();
+      await proxy.instance.close();
+      evidence.delayedRefresh = { rowDeleted: true, grants: 0, proxyRequestsAfterDelete: 0 };
+    });
+  }
   evidence.pass = true;
 } finally {
   tokenRelease.resolve();
@@ -434,7 +537,7 @@ try {
   other.stop();
   writeFileSync(join(run, `evidence/${proofName}.json`), JSON.stringify(evidence, null, 2));
 }
-console.log(refresh ? 'PASS: one refresh under concurrency, transient backoff, rejected grants stay fenced across restart, and a late refresh cannot undo disconnect' : lifecycle
+console.log(removal ? 'PASS: human delete of an OAuth row tombstones, erases and deletes; failed or interrupted removal stays disconnected; late saves and a retained proxy stay fenced' : refresh ? 'PASS: one refresh under concurrency, transient backoff, rejected grants stay fenced across restart, and a late refresh cannot undo disconnect' : lifecycle
   ? 'PASS: human reconnect and disconnect, cancelled consent, delayed callback, failed erase and interrupted activation'
   : rowWrites
     ? 'PASS: registry URL replacement denied the agent, fenced delayed consent and stayed disconnected after restart'

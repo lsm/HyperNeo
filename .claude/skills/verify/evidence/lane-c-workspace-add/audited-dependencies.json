@@ -36,7 +36,7 @@
     {
       "file": "packages/daemon/src/storage/repositories/tool-default-transition.ts",
       "lines": 256,
-      "sha256": "7db3bda3bef8e1226301175fcc7fdf09c6e38bad06110162ec6b48e1f5f4e526"
+      "sha256": "341c024c29b6eef43c0d4814b950346326ee17debb0c4b8b2ae1816ab1ac9961"
     },
     {
       "file": "packages/daemon/src/storage/repositories/tool-preference-commit.ts",

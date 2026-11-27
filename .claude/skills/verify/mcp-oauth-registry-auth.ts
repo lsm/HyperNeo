@@ -142,12 +142,13 @@ try {
       assert.deepEqual(before?.auth, auth);
       assert.deepEqual(await read(), before);
     }
-    const deletion = await hub
-      .request('mcp.registry.delete', { id: baseline ? legacy.id : imported.id })
-      .then(() => 'accepted', (error: Error) => error.message);
-    evidence.deleteReply = deletion;
-    assert.match(deletion, /disconnect it first/);
-    assert.deepEqual(await read(), before);
+    if (baseline) {
+      const deletion = await hub
+        .request('mcp.registry.delete', { id: legacy.id })
+        .then(() => 'accepted', (error: Error) => error.message);
+      evidence.deleteReply = deletion;
+      assert.match(deletion, /disconnect it first/);
+    }
     assert.deepEqual(await hub.request('mcp.registry.delete', { id: legacy.id }), { success: true });
     evidence.plainDeleteAccepted = !(await list(hub)).some(({ id }) => id === legacy.id);
     assert(evidence.plainDeleteAccepted);
@@ -159,9 +160,14 @@ try {
     assert.deepEqual(marker(db), migratedMarker);
     assert.deepEqual((await list(hub)).find(({ sourcePath }) => sourcePath === file)?.auth, auth);
     evidence.restartRetainedAuth = true;
+    const imported = (await list(hub)).find(({ sourcePath }) => sourcePath === file);
+    assert(imported);
+    assert.deepEqual(await hub.request('mcp.registry.delete', { id: imported.id }), { success: true });
+    evidence.oauthDeleteRemoved = !(await list(hub)).some(({ id }) => id === imported.id);
+    assert(evidence.oauthDeleteRemoved);
   });
   evidence.pass = true;
-  console.log('PASS: migration applied once, OAuth import retarget and registry delete refused, plain delete accepted');
+  console.log('PASS: migration applied once, OAuth import retarget refused, plain delete accepted, OAuth delete removed after restart');
 } finally {
   writeFileSync(join(run, 'evidence/mcp-oauth-registry-auth.json'), JSON.stringify(evidence, null, 2));
 }
