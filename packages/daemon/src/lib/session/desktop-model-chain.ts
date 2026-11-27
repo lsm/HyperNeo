@@ -7,12 +7,15 @@ import type {
 import { resolveCustomEndpointType } from '@hyperneo/shared/types/custom-endpoint';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { entryKey } from '../agent/fallback-recovery.ts';
+import { Logger } from '../logger.ts';
 import {
   customProviderIdFor,
   isCustomEndpointProviderId,
   resolveModelCapabilities,
 } from '../providers/custom-endpoint-provider.ts';
 import { pickCatalogModel } from './new-session-model.ts';
+
+const log = new Logger('desktop-model-list');
 
 export class DesktopModelsExhaustedError extends Error {}
 
@@ -90,7 +93,8 @@ export interface DesktopModelSelection {
 async function readCatalog(sources: DesktopModelSources): Promise<ModelInfo[]> {
   try {
     return await sources.catalog();
-  } catch {
+  } catch (error) {
+    log.error('[desktop-model-list] Error getting models:', error);
     return [];
   }
 }
@@ -113,9 +117,11 @@ async function firstRunnable(
     if (await canRun(entry, models, sources.provider(entry.provider)))
       return { chain, selected: entry };
   throw new DesktopModelsExhaustedError(
-    chain.length
-      ? 'No model in the desktop-control model list is available right now.'
-      : 'No model in the desktop-control model list can see screenshots and use tools here.'
+    !models.length
+      ? 'The model catalog is not loaded yet, so no model in the desktop-control model list can be checked. Try again shortly.'
+      : chain.length
+        ? 'No model in the desktop-control model list is available right now.'
+        : 'No model in the desktop-control model list can see screenshots and use tools here.'
   );
 }
 

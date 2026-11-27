@@ -126,7 +126,7 @@ describe('selectDesktopControlModel', () => {
     const entries = [{ provider: 'a', model: 'one' }];
     await expect(
       selectDesktopControlModel(entries, [], sources([], { a: seeing() }))
-    ).rejects.toThrow(DesktopModelsExhaustedError);
+    ).rejects.toThrow(/model catalog is not loaded/);
     await expect(
       selectDesktopControlModel(entries, [], {
         catalog: () => {
@@ -134,9 +134,19 @@ describe('selectDesktopControlModel', () => {
         },
         provider: () => seeing(),
       })
-    ).rejects.toThrow(DesktopModelsExhaustedError);
+    ).rejects.toThrow(/model catalog is not loaded/);
     await expect(
       selectDesktopControlModel(entries, [], sources([model('one', 'a')], { a: seeing(false) }))
     ).rejects.toThrow(/available right now/);
+    await expect(
+      selectDesktopControlModel(
+        entries,
+        [],
+        sources([model('one', 'a')], { a: seeing(true, { sdk: false }) })
+      )
+    ).rejects.toThrow(/can see screenshots and use tools/);
+    await expect(
+      selectDesktopControlModel(entries, [], sources([], { a: seeing() }))
+    ).rejects.toThrow(DesktopModelsExhaustedError);
   });
 });
