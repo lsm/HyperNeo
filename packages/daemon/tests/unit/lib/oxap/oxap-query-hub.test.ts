@@ -21,7 +21,7 @@ const prompt = {
   message: { role: 'user', content: 'synthetic prompt' },
 } as SDKUserMessage;
 
-function fixture(mode: 'text' | 'failed-stream' | 'refused-submit' = 'text') {
+function fixture(mode: 'text' | 'failed-stream' | 'refused-submit' | 'session-state' = 'text') {
   const operations: string[] = [];
   let listener!: Listener;
   const unsubscribe = mock(async () => {});
@@ -44,6 +44,15 @@ function fixture(mode: 'text' | 'failed-stream' | 'refused-submit' = 'text') {
           });
         } else {
           for (const envelope of [
+            ...(mode === 'session-state'
+              ? [
+                  {
+                    type: 'session.state.updated',
+                    session_id: 'synthetic-session',
+                    payload: { status: 'running' },
+                  },
+                ]
+              : []),
             {
               type: 'content.delta',
               id: 'delta-1',
@@ -513,6 +522,16 @@ describe('OAP query hub transport', () => {
       })
     );
     releaseHub(hub);
+  });
+
+  test('preserves the chat reply after a session-scoped state update', async () => {
+    const host = fixture('session-state');
+    const hub = createOxapQueryHub(host.client);
+    const { runId } = await hub.submit('synthetic-session', prompt);
+    const events = [];
+    for await (const event of hub.events('synthetic-session', runId, new AbortController().signal))
+      events.push(event);
+    expect(events.map(({ type }) => type)).toEqual(['content.delta', 'run.completed']);
   });
 
   test('reports a stream failure without automatically resubmitting', async () => {
