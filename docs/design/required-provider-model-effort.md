@@ -2,36 +2,32 @@
 
 ## 中文摘要
 
-范围按人类要求收窄：只管 Neo 自己能调用的派发入口，共 5 个——`neo.todo.add` 的 start/send 目标、`neo.todo.edit` 给未开工 todo 补写的 instruction+target、`work.start`（含空闲工人复用和远程守护进程启动）、派发新 todo 工作的 `work.send`、编码包 `neo.coding.assign` 的审查/验证/编写目标。判断标准：`packages/prompts/src/neo/tools` 里有没有对应工具；`neo.todo.retarget` 和 `neo.todo.continue` 只按已存储的 target 重新派发（该 target 在 add/edit 准入时已校验），不接收新的身份字段，所以不算新入口；`goal.session.create`、`session.clone.spawn`、界面建会话、Space 工作流、Neo 自身会话、直接任务都不在 Neo 工具列表里，全部出范围。规则不变：每个入口必须显式给出 provider、model、effort 三项，缺一项就由一个纯函数（superpipe 管线）在派发前拒绝并说明缺什么，不再悄悄回退。能应用并回读配置的适配器回执标 confirmed（HyperNeo 取查询层实际发送值，含 Copilot 代理 fit 后的值；fit 省略时记 omitted (support unknown)，永不算 confirmed、永不记 off）；Claude Desktop 和 Cursor 无法应用也无法预读生效值，照常启动，回执写 requested …, effective unknown，复用和新任务 send 按已记录的请求三项匹配并标 unverified。引导文案随第一个改行为的 PR 发出。不做自动选型引擎。
+范围：Neo 工具能调用的派发入口，共 5 个——`neo.todo.add` 与 `neo.todo.edit` 的 start/send 目标、`work.start`（含空闲工人复用与远程启动）、派发新 todo 工作的 `work.send`、编码包 `neo.coding.assign` 的目标。判断标准：`packages/prompts/src/neo/tools` 里有对应工具；`neo.todo.retarget`/`neo.todo.continue` 只按已存储的 target 重新派发，不算新入口；Space、界面建会话、Neo 自身会话、目标会话、克隆、直接任务都不在 Neo 工具列表里，出范围。规则：每个入口必须显式给出 provider、model、effort，缺一项由纯函数（superpipe 管线）在派发前拒绝。可配置适配器回执标 confirmed：HyperNeo 取查询层每轮实际发送值，记录（思考等级，发送的 effort）二元组并按等级比对——level→effort 映射有损（think48k 与 think64k 都发 max），只记 effort 无法区分；Copilot 代理记 fit 后的值，fit 省略时记 omitted (support unknown)，永不算 confirmed、永不记 off。Claude Desktop/Cursor 无法应用也无法预读生效值，照常启动，回执写 requested …, effective unknown，复用与新任务 send 按已记录的请求等级匹配并标 unverified。编码审查的评审模型连续性改为候选排序优先匹配上一轮评审的三元组，不再用覆盖。切片：Build、Wire（start+复用 / send+todo 准入 / 编码+远程）、Delete，各带行数估算。不做自动选型引擎。
 
 Status: proposed. Investigation base: `50e22151753673c39998bacd3056aad0ba059c29`
-(`origin/dev`, 2026-11-27). Source references are repository-relative `file:line` at
-that base. This page changes no runtime behavior.
+(`origin/dev`, 2026-11-27). Source references are repository-relative `file:line`
+at that base. This page changes no runtime behavior.
 
 ## Problem
 
 A todo started a HyperNeo worker without `target.effort`. The recorded and
-executed efforts then disagreed, and nothing refused:
-
-- The session recorded `thinkingLevel` from global settings
-  (`packages/daemon/src/lib/session/session-lifecycle.ts:292`), whose receipt
-  label reads back as `medium` (`packages/shared/src/types.ts:168`,
-  `packages/daemon/src/lib/rpc-handlers/family-operations/drivers.ts:390`).
-- The executed effort is decided independently at query time
-  (`packages/daemon/src/lib/agent/query-options-builder.ts:830-875`): a
-  provider default applies only when no level was chosen anywhere (`:830-834`,
-  `:910-917`); a recorded level maps to a sent effort only for granular
-  thinking modes on models that publish effort levels (`:837-842`); and the
-  kimi fixed-budget branch clears the effort outright (`:865-872`). Wherever
-  that mapping yields no effort, the harness's own default applies, `high` for
-  the model in the trigger, while the receipt still read back the recorded
-  level's label.
-
-The requested, recorded and executed identities could all differ and no gate
-noticed, because every dispatch schema field is optional and every miss has a
-silent fallback. The fix is to make the identity triple a required, recorded
-fact at the one boundary Neo's dispatch passes through — the daemon's work
-operations — not in prompt text or CLI parsing.
+executed efforts disagreed and nothing refused: the session recorded
+`thinkingLevel` from global settings
+(`packages/daemon/src/lib/session/session-lifecycle.ts:292`), whose receipt
+label reads back as `medium` (`packages/shared/src/types.ts:168`,
+`packages/daemon/src/lib/rpc-handlers/family-operations/drivers.ts:390`),
+while the executed effort is decided independently at query time
+(`packages/daemon/src/lib/agent/query-options-builder.ts:830-875`): a provider
+default applies only when no level was chosen anywhere (`:830-834`,
+`:910-917`); a recorded level maps to a sent effort only for granular thinking
+modes on models that publish effort levels (`:837-842`); and the kimi
+fixed-budget branch clears the effort outright (`:865-872`). Wherever that
+mapping yields no effort, the harness's own default applies — `high` for the
+model in the trigger — while the receipt still read back the recorded level's
+label. Every dispatch schema field is optional and every miss has a silent
+fallback, so no gate noticed. The fix makes the identity triple a required,
+recorded fact at the one boundary Neo's dispatch passes through — the daemon's
+work operations — not in prompt text or CLI parsing.
 
 ## Entry points in scope: Neo's dispatch tools
 
@@ -42,51 +38,49 @@ replies) inherit the recorded identity and need no check.
 
 | Entry point | Where | How provider / model / effort are chosen today |
 | --- | --- | --- |
-| `neo.todo.add` start target | `packages/daemon/src/lib/neo/driver-work.ts:39` (schema), `:83` (add target), `:138` (`driverWorkCall`), dispatched by `packages/daemon/src/lib/neo/todo-runner.ts:479` | `provider`, `model`, `effort` all optional (`driver-work.ts:51,66`); omitted fields are dropped from the `work.start` input (`driver-work.ts:165`). The trigger. |
-| `neo.todo.edit` giving work to an unstarted todo | `packages/daemon/src/lib/neo/todo-operations.ts:329` (schema: `instruction` + `NeoTodoTargetSchema`), admission `:470-476` | Accepts a start or send target for a todo that has not started; the same optional-identity schema applies and nothing validates it at edit time — the runner dispatches the stored target later. `neo.todo.retarget` and `neo.todo.continue` re-dispatch only this stored, already-admitted target and accept no identity fields of their own, so they are covered by validating at add/edit. |
+| `neo.todo.add` start target | `packages/daemon/src/lib/neo/driver-work.ts:39` (schema), `:83`, `:138` (`driverWorkCall`), dispatched by `packages/daemon/src/lib/neo/todo-runner.ts:479` | `provider`, `model`, `effort` all optional (`driver-work.ts:51,66`); omitted fields are dropped from the `work.start` input (`driver-work.ts:165`). The trigger. |
+| `neo.todo.edit` giving work to an unstarted todo | `packages/daemon/src/lib/neo/todo-operations.ts:329` (schema), admission `:470-476` | Accepts a start or send target with the same optional-identity schema; nothing validates it at edit time and the runner dispatches the stored target later. `neo.todo.retarget` and `neo.todo.continue` re-dispatch only this stored, already-admitted target and accept no identity fields, so validating at add/edit covers them. |
 | `work.start` operation | `packages/daemon/src/lib/drivers/work-operations.ts:210` (input), `:1302` (pipeline) | `model`/`provider`/`effort` optional (`:240-242`). Gates only reject values a route cannot confirm (`:614`, `:625`); absent values pass. Fresh start records whatever the adapter reports (`:752`). |
-| Worker reuse inside `work.start` | `work-operations.ts:811` (`reuseIdleWorker`), `:796` (`matchesRequested`) | Configuration is resolved only when `model` or `effort` was requested (`:896`); with neither, any recorded worker identity is accepted (`:1016`, `:1135`). Desktop worker templates strip model and provider from the resolved request (`:841`, `:901`). |
-| Remote daemon start | `work-operations.ts:614` (`admitRemoteStartModel`), `:625` (`admitStartEffort`), `:699` (`admitRemoteCopilotStart`) | A start forwarded to a paired daemon refuses any explicit model or effort unless the Copilot-client handshake marked the route `verifiedCopilotStart` (`:727`), so a remote start (e.g. `claude-desktop` on another machine) must omit the model entirely. |
+| Worker reuse inside `work.start` | `work-operations.ts:811` (`reuseIdleWorker`), `:796` (`matchesRequested`) | Configuration is resolved only when `model` or `effort` was requested (`:896`); with neither, any recorded worker identity is accepted (`:1016`, `:1135`). Desktop worker templates strip model and provider (`:841`, `:901`); the reuse guards key on the `resolveStartConfiguration` hook (`:826`, `:895-897`); a mismatched worker is reconfigured in place and matched on the read-back with no turn in between (`:1016-1027`). |
+| Remote daemon start | `work-operations.ts:614` (`admitRemoteStartModel`), `:625` (`admitStartEffort`), `:699` (`admitRemoteCopilotStart`) | A forwarded start refuses any explicit model or effort unless the Copilot-client handshake marked the route `verifiedCopilotStart` (`:727`), so a remote start must omit the model entirely. |
 | `work.send` assigning new todo work | `work-operations.ts:1394` (`runSendWork`), input `:245`; `NeoSendWorkTarget` `driver-work.ts:69` | No identity fields at all: any open session, including legacy sessions with no recorded triple, can receive new todo work — a bypass of every start gate. |
-| Coding pack assign and write plan | `packages/daemon/src/lib/neo/packs/coding/assign-operation.ts:228`, `assignments.ts:48` | Candidates are `CodingStageTarget` = adapter/place/model/effort, model and effort optional (`stage-preferences.ts:9`). Preference scoring covers harness/effort only (`stage-preferences.ts:37`); the unavailability fallback retries a default candidate (`assign-operation.ts:269`) that may carry no identity at all. |
+| Coding pack assign and write plan | `packages/daemon/src/lib/neo/packs/coding/assign-operation.ts:228`, `assignments.ts:48` | Candidates are `CodingStageTarget`, model and effort optional (`stage-preferences.ts:9`); the start call overrides the selected candidate's model with the previous reviewer's (`assign-operation.ts:233`), and the fallback retry (`:269`) may land on a candidate carrying no identity. |
 
 ## Per-adapter identity mapping
 
 `provider` names the account/backend a worker runs on. Each adapter declares
 its identity facts once — `fixedProvider` and `configurable` — and the gate
-reads the declaration instead of branching on adapter ids. `configurable` is a
-behavioral fact, not the presence of `resolveStartConfiguration`: the adapter
+reads the declaration instead of branching on adapter ids. `configurable` is
+behavioral, not the presence of `resolveStartConfiguration`: the adapter
 validates request-supplied model/effort against its own options and applies
 them before the first turn, reading the applied values back. HyperNeo, Codex
 and Copilot do this through `resolveStartConfiguration`; Antigravity does it
-post-open — it applies the requested options and closes the session with a
-refusal when they do not take (`antigravity-start.ts:220-233`, validation in
-`antigravity-configuration.ts:56-82`) — so it declares `configurable` too. A
+post-open, closing the session with a refusal when the options do not take
+(`antigravity-start.ts:220-233`, `antigravity-configuration.ts:56-82`). A
 non-configurable adapter cannot apply or pre-verify model/effort, and for the
 two that matter no authoritative pre-dispatch source of the effective values
 exists: the `claude-desktop` launch passes no model flag and only an env-only
-`--settings` (`claude-desktop-adapter.ts:1706-1733`), so the effective model
-is the CLI's own settings/account resolution, unreadable before launch, and
-`cursor`'s initialize/session-new exchange carries protocol and session id
-only (`cursor-start.ts:81-106`). Such adapters therefore take the requested
-triple as required entry data they cannot enforce, start, and receipt it
-plainly as `requested …, effective unknown` — never as actual. Fields stay
-unknown unless the harness happens to report them later; nothing is promised.
+`--settings` (`claude-desktop-adapter.ts:1706-1733`), and `cursor`'s
+initialize/session-new exchange carries protocol and session id only
+(`cursor-start.ts:81-106`). Such adapters take the requested triple as
+required entry data they cannot enforce, start, and receipt it plainly as
+`requested …, effective unknown` — never as actual; fields stay unknown unless
+the harness happens to report them later, and nothing is promised.
 
 | Adapter | provider | model | effort |
 | --- | --- | --- | --- |
 | `hyperneo` | From the explicitly named model's catalog entry (`hyperneo-adapter.ts:708`) or the request; both must agree | Required by the gate; applied and read back (`hyperneo-adapter.ts:719`) | Required by the gate (thinking-level ID or label, `start-configuration.ts:21`) |
 | `codex-desktop` | Fixed: the Codex account | Required by the gate; resolved against the `model/list` catalog and confirmed applied (`codex-start-configuration.ts:46`, `codex-desktop-adapter.ts:1699`) | Required by the gate; resolved against the selected model's supported efforts |
 | `copilot-cli` / Copilot desktop | Fixed: GitHub Copilot | Required already today (`copilot-adapter.ts:115`) | Supported today, not required — an absent effort passes (`copilot-worker.ts:244` throws only for a named unsupported effort; `copilot-adapter.ts:154-156` records nothing when absent); the gate makes it required. Support flags: `copilot-adapter.ts:637`, `copilot-desktop-adapter.ts:155` |
-| `antigravity` | Fixed: the Antigravity account | Supported today, not required — a start with neither model nor effort returns the opened session unconfigured (`antigravity-start.ts:221`); the gate makes it required, validated against the opened session's options and applied before the first turn, the session closed on refusal (`antigravity-start.ts:220-233`, `antigravity-configuration.ts:56-82`) | Same as model; support flag `antigravity-adapter.ts:180` |
-| `claude-desktop` | Fixed: Anthropic | Required at entry as the requested value; the adapter cannot apply it (its override refusal at `claude-desktop-adapter.ts:1487` becomes accept-as-requested, not enforced) and no pre-dispatch source carries the effective model. Receipt: `requested …, effective unknown`; where the CLI transcript reports identity it corroborates, but it may report neither field (`claude-runtime-identity.ts:23-27`) and unobserved fields stay unknown | Same rule as model |
-| `cursor` | Fixed: the Cursor account | Same rule as `claude-desktop`: required at entry, not enforceable, no pre-dispatch source (`cursor-start.ts:81-106`). Receipt: `requested …, effective unknown` | Same as model |
+| `antigravity` | Fixed: the Antigravity account | Supported today, not required (`antigravity-start.ts:221` returns unconfigured when neither is given); the gate makes it required, validated and applied post-open with refusal on failure (`antigravity-start.ts:220-233`) | Same as model; support flag `antigravity-adapter.ts:180` |
+| `claude-desktop` | Fixed: Anthropic | Required at entry as the requested value; not enforceable (the override refusal at `claude-desktop-adapter.ts:1487` becomes accept-as-requested) and no pre-dispatch source exists. Receipt: `requested …, effective unknown`; the CLI transcript may corroborate but may report neither field (`claude-runtime-identity.ts:23-27`) | Same rule as model |
+| `cursor` | Fixed: the Cursor account | Same rule as `claude-desktop` (`cursor-start.ts:81-106`). Receipt: `requested …, effective unknown` | Same as model |
 
 There is no “start now, decide later”: a dispatch either carries a fully
 determined triple or it is refused. Determination is pre-dispatch; the
 `confirmed` label attaches when the adapter's execution-building boundary has
-produced the values (for HyperNeo, the first turn's query options), and
-receipts distinguish the two states honestly in between.
+produced the values (for HyperNeo, a turn's query options), and receipts
+distinguish the two states honestly in between.
 
 ## Design
 
@@ -111,9 +105,8 @@ Pure rules, each a small function piped in order:
    `facts.catalogProvider` (the unique catalog owner of an explicitly named
    model, looked up by the caller and passed in — the gate stays pure) must
    pairwise agree wherever more than one is present; the resolved provider is
-   that single value. A caller supplying a provider that contradicts the
-   adapter's fixed provider is refused, not silently overridden. No source at
-   all refuses.
+   that single value. A contradicting caller-supplied provider is refused, not
+   overridden. No source at all refuses.
 2. Model and effort: both must be present in the request, for every adapter —
    the entry requirement is uniform. For a configurable adapter the resolved
    values are written back into the pipeline input so reuse and start consume
@@ -137,13 +130,13 @@ inside the gate: those are exactly the fallbacks being removed.
 
 A configuration read is not proof of execution — settings can change between
 read and dispatch, and a harness can pick a different runtime. The receipt
-therefore labels its source instead of promising actuals it cannot bind:
+labels its source instead of promising actuals it cannot bind:
 
 - `confirmed`: the value observed at the boundary that builds execution, not
   a configuration echo. For HyperNeo sessions that boundary is the query
   layer, and the recorded identity is what the builder actually sends on every
   turn — so a `work.reconfigure` switch is upgraded from declared to confirmed
-  when the next turn runs — in the provider's own vocabulary, never empty:
+  when the next turn runs — never empty:
   - granular thinking modes with published effort levels: the effort string
     sent (`query-options-builder.ts:837-842`);
   - every path that sends a thinking config instead of an effort string —
@@ -180,28 +173,34 @@ therefore labels its source instead of promising actuals it cannot bind:
     level shows in the receipt as a requested-vs-confirmed mismatch, and reuse
     treats such a worker as not matching the request, starting fresh.
 
+  The recorded confirmed identity is the pair (thinking level, sent effort),
+  and comparisons run on the level: the level→effort mapping is lossy —
+  `think48k` and `think64k` both send `max`, `think32k` sends `xhigh`
+  (`packages/shared/src/types.ts:205-213`) — so the effort string alone cannot
+  distinguish a requested `think64k` from a worker running `think48k`, and a
+  strict string compare (`work-operations.ts:796-806`) would conflate them.
+  The effort string is recorded alongside for receipts and provenance. For
+  `anthropic-copilot`, whose recorded value is a post-fit effort, the
+  requested level's `LEVEL_EFFORTS` mapping is compared against it.
+
   This is the boundary because the builder resolves provider effort
   independently of session config (`query-options-builder.ts:830-842`) and a
   config read-back (`hyperneo-adapter.ts:719-729`) cannot prove what it sends
-  — that gap is the trigger. With the gate making effort explicit, the
-  builder's mapping is deterministic and the recorded query-layer value is
-  what receipts report and reuse compares.
-
-  Silent remaps are refused at admission, not recorded after the fact: the
-  builder downgrades a level to the nearest supported effort
-  (`packages/shared/src/types.ts:215`), forces the `think16k` budget for kimi
-  K2.7 whatever was asked (`query-options-builder.ts:865-872`) and turns an
-  `off` request on a non-anthropic granular model into the lowest effort
+  — that gap is the trigger. Silent remaps are refused at admission, not
+  recorded after the fact: the builder downgrades a level to the nearest
+  supported effort (`packages/shared/src/types.ts:215`), forces the `think16k`
+  budget for kimi K2.7 (`query-options-builder.ts:865-872`) and turns an `off`
+  request on a non-anthropic granular model into the lowest effort
   (`query-options-builder.ts:330-335`, `:840`). The HyperNeo start validation
   therefore checks the requested effort against the selected model's
   executable set — the provider registry already exposes per-model thinking
   modes and effort levels, as `work.reconfigure` uses them
   (`work-reconfigure.ts:90-100`) — and refuses a request the builder would
-  remap with `unsupported_effort` naming the executable values, so a
-  confirmed identity always equals what the request resolves to on a satisfied
-  start — the request itself where no mapping applies; on `anthropic-copilot`,
-  whose fit cannot be known at admission, the receipt instead shows the
-  post-fit value next to the request whenever they differ.
+  remap with `unsupported_effort` naming the executable values, so a confirmed
+  identity always equals what the request resolves to on a satisfied start —
+  the request itself where no mapping applies; on `anthropic-copilot`, whose
+  fit cannot be known at admission, the receipt instead shows the post-fit
+  value next to the request whenever they differ.
 
   For Codex, Copilot and Antigravity the adapter's own configuration API is
   that boundary — the existing `workStartConfiguration.confirm` shape
@@ -212,8 +211,8 @@ therefore labels its source instead of promising actuals it cannot bind:
   unverified rule below.
 - `declared`: anything short of that boundary, reported as `requested …,
   effective unknown` — a non-configurable adapter's recorded request it cannot
-  enforce, or a HyperNeo session's config values before its first turn's query
-  options exist. It is never presented as actual. Observation is conditional
+  enforce, or a HyperNeo session's config values before a turn's query options
+  exist for them. It is never presented as actual. Observation is conditional
   per field, never promised: where the harness reports identity after turns
   the existing `identityObservation`
   (`packages/daemon/src/lib/drivers/types.ts:83`) corroborates or contradicts
@@ -226,10 +225,10 @@ therefore labels its source instead of promising actuals it cannot bind:
 
 `WorkStarted` (`packages/daemon/src/lib/drivers/types.ts:238`) and the
 persisted start facts (`work-operations.ts:752`, `recordStarted`) carry the
-triple plus this source label for every daemon-started worker. The worker
-provenance brief (`worker-provenance.ts:12`) states the label, and
-`neo.todo.read` verification compares the recorded triple against the todo
-target.
+triple, the level pair where one exists, and this source label for every
+daemon-started worker. The worker provenance brief
+(`worker-provenance.ts:12`) states the label, and `neo.todo.read` verification
+compares the recorded triple against the todo target.
 
 ### Wiring
 
@@ -241,66 +240,69 @@ target.
   start with `unsupported_effort` before the new gate ran, leaving the
   declared receipt path unreachable; its remote branch keys on
   `verifiedCopilotStart` (`:627`). Both refusal roles are subsumed by the new
-  gate's per-adapter facts: configurable adapters confirm the required effort,
-  non-configurable ones record it as the declared request. The desktop
-  carve-outs that strip model and
+  gate's per-adapter facts. The desktop carve-outs that strip model and
   provider (`work-operations.ts:841`, `:901`) are deleted — a desktop worker
   template's ordered model list is recorded configuration and enters the
-  request like any other explicit value, resolved by the HyperNeo adapter like
-  any configurable start. Worker-template and coding-pack candidates count as
-  explicit sources the same way.
-- Reuse compares all three confirmed actuals for configurable adapters on
-  every path: the idle-reuse match (`work-operations.ts:796`, `:1016`) and the
-  queued/busy-worker confirmation (`:1135-1139`) run against the complete
-  requested triple, and a configurable worker whose recorded identity is
-  missing any field is not reused — a fresh start is. Two `reuseIdleWorker`
-  guards keyed on the `resolveStartConfiguration` hook are rewired in the same
-  slice: the early return at `work-operations.ts:826`
-  (`(input.model || input.effort) && !requestedAdapter.resolveStartConfiguration`)
-  and the resolution/dereference at `:895-897`. With the gate forcing the
-  triple on every start, those lines would exclude every adapter without the
-  hook — antigravity (configurable, but it validates post-open rather than
-  through the hook), claude-desktop and cursor — from reuse entirely. Instead,
-  reuse consumes the gate-resolved triple and compares it against each
-  candidate's recorded identity through `matchesRequested`; the hook stays a
-  start-time validation concern for the adapters that define it (hyperneo,
-  codex-desktop, copilot). The in-place switch-then-reuse path
-  (`work-operations.ts:1016-1027`) is dropped in the same slice: it
-  reconfigures a mismatched HyperNeo worker and matches on the status
-  read-back with no turn in between, and a post-switch read-back is a
-  declared-class config echo that can never satisfy confirmed-only matching —
-  predicting the next turn from config is exactly the conflation this design
-  removes. A worker that does not match is skipped and a fresh worker starts;
-  `work.reconfigure` plus a turn remains the way to move a live session to new
-  values. Non-configurable workers
-  (`claude-desktop`, `cursor`) stay reusable by matching on their recorded
-  requested triple instead: a new todo requesting the same provider, model and
-  effort reuses the worker, with the match labeled `unverified` in the receipt
-  and status — the daemon knows what was asked, not what ran, and says so. A
-  request that differs from the recorded request starts fresh, and a
-  contradicted observation (where one exists) disqualifies the worker the same
-  way a failed confirmation does. `work.reconfigure`
-  (`work-reconfigure.ts:26`) keeps recorded values current.
+  request like any other explicit value.
+- Reuse compares the requested triple against recorded identity on every path
+  — the idle-reuse match (`work-operations.ts:796`, `:1016`) and the
+  queued/busy-worker confirmation (`:1135-1139`) — on the thinking level where
+  one exists. Two `reuseIdleWorker` guards keyed on the
+  `resolveStartConfiguration` hook are rewired: the early return at
+  `work-operations.ts:826` and the resolution/dereference at `:895-897`; with
+  the gate forcing the triple they would exclude every adapter without the
+  hook (antigravity, claude-desktop, cursor) from reuse entirely. Reuse
+  consumes the gate-resolved triple and compares it against each candidate's
+  recorded identity through `matchesRequested`; the hook stays start-time
+  validation for the adapters that define it. The in-place switch-then-reuse
+  path (`work-operations.ts:1016-1027`) is dropped: a post-switch read-back is
+  a declared-class config echo that can never satisfy confirmed-only matching,
+  so a non-matching worker is skipped and a fresh worker starts;
+  `work.reconfigure` plus a turn remains the way to move a live session.
+  Non-configurable workers (`claude-desktop`, `cursor`) stay reusable by
+  matching on their recorded requested triple, labeled `unverified` in receipt
+  and status; a differing request starts fresh, and a contradicted observation
+  (where one exists) disqualifies the worker like a failed confirmation.
 - `neo.todo.add` and `neo.todo.edit`: validate a start or send target with the
   same pure gate at admission, so an incomplete identity is rejected when the
   work is assigned, not when the runner dispatches it later. Local targets use
   the local adapter registry; targets on a paired daemon use that daemon's
-  `work.adapters` catalog read at admission — the local registry cannot supply
-  another machine's facts. An unreachable remote defers validation to
-  dispatch, where the owning daemon's gate is authoritative either way.
+  `work.adapters` catalog read at admission; an unreachable remote defers
+  validation to dispatch, where the owning daemon's gate is authoritative.
   `neo.todo.retarget` and `neo.todo.continue` need no admission of their own:
   they re-dispatch only the stored target this admission already validated.
+- New todo work sent to an existing session (`work.send` naming a todo the
+  worker is not already running) carries the identity too:
+  `SendWorkInputSchema` (`work-operations.ts:245`) and `NeoSendWorkTarget`
+  (`driver-work.ts:69`) gain the same optional `provider`/`model`/`effort`
+  fields, required exactly when the send assigns new todo work, and the same
+  gate checks them against the target's recorded values — the confirmed triple
+  for a configurable-adapter session, the recorded requested triple (labeled
+  `unverified`) for `claude-desktop`/`cursor`. A missing triple or a mismatch
+  refuses `identity_required` and Neo starts a fresh worker. A
+  configurable-adapter session without a confirmed triple — every legacy
+  session included — is likewise refused. The upgrade path for such a
+  HyperNeo session is `work.reconfigure` plus its next turn: `switchSettings`
+  only switches config and reads it back (`work-reconfigure.ts:105-126`), a
+  declared-class read by this design's own definition, so reconfigure alone
+  does not unblock the session; the query-layer recorder upgrades the record
+  to confirmed when the next turn runs, which is also when the switched
+  settings take effect (`work-reconfigure.ts:124`). Continuation keeps today's
+  semantics and carries no triple: the same todo continuing on its worker,
+  notice replies, and the human messaging their own sessions.
 - Coding pack: `CodingStageTarget` (`stage-preferences.ts:9`) requires model
   and effort in every candidate, so `planCodingStageTarget`'s fallback retry
   (`assign-operation.ts:269`) can only land on a candidate that carries the
   full triple. The start call's override that substitutes the previous
   reviewer's model for the selected candidate's model
-  (`assign-operation.ts:223-233`) is deleted in the Wire slice — it can
-  dispatch a different model, provider or incompatible effort than the one the
-  gate validated. Reviewer-model continuity across rounds becomes a
-  candidate-ordering concern the pack already owns through
-  `planCodingStageTarget`'s preference scoring; the retry path re-selects from
-  the same validated candidates, so it inherits the rule.
+  (`assign-operation.ts:233`) is deleted — it can dispatch a different model,
+  provider or incompatible effort than the gate validated. Reviewer-model
+  continuity is kept by ordering, not override: only harness and effort are
+  declared stage preferences (`stage-preferences.ts:37`), so model scoring is
+  always zero today, and the assign step instead prefers, among the validated
+  candidates, the one whose full triple matches the previous reviewer's
+  recorded values; the retry path re-selects from the same validated
+  candidates and inherits the rule.
 - Remote daemon starts: the remote `work.adapters` catalog
   (`work-operations.ts:1645`, schema `:346`) gains the per-adapter identity
   facts (`fixedProvider`, `configurable`). The forwarding daemon admits the
@@ -309,33 +311,9 @@ target.
   unknown`; an adapter advertising neither fact refuses. This replaces the
   blanket refusal in `admitRemoteStartModel` (`:614`) and the model/effort
   role of `verifiedCopilotStart` (`:615`, `:627`). Copilot client selection
-  keeps its own validation unchanged (`admitRemoteCopilotStart`, `:699-727`)
-  — the identity advertisement does not vouch for the requested client. Final
-  validation and the receipt happen on the daemon that owns the session; the
-  forwarding daemon records that receipt verbatim.
-- New todo work sent to an existing session (`work.send` naming a todo the
-  worker is not already running) is a dispatch of new work, so the send
-  carries the identity too: `SendWorkInputSchema` (`work-operations.ts:245`)
-  and `NeoSendWorkTarget` (`driver-work.ts:69`) gain the same optional
-  `provider`/`model`/`effort` fields, required exactly when the send assigns
-  new todo work, and the same pure gate checks them against the target's
-  recorded values — the confirmed triple for a configurable-adapter session,
-  the recorded requested triple (matched and labeled `unverified`) for
-  `claude-desktop`/`cursor`. A missing triple refuses `identity_required`; a
-  mismatch with the recorded values refuses the same way, and Neo starts a
-  fresh worker instead. A configurable-adapter session without a confirmed
-  triple — every legacy session included — is likewise refused. The upgrade
-  path for such a HyperNeo session is `work.reconfigure` plus its next turn:
-  `switchSettings` only switches config and reads it back
-  (`work-reconfigure.ts:105-126`), which is a declared-class read by this
-  design's own definition, so reconfigure alone does not unblock the session;
-  the query-layer recorder — which records the executed identity on every
-  turn, not only the first — upgrades the record to confirmed when the next
-  turn runs, which is also when the switched settings take effect
-  (`work-reconfigure.ts:124`, `appliesFrom: 'next-turn'`). Continuation keeps
-  today's semantics and carries no triple: the same todo continuing on its
-  worker, notice replies to a session that messaged Neo, and the human
-  messaging their own sessions.
+  keeps its own validation unchanged (`admitRemoteCopilotStart`, `:699-727`).
+  Final validation and the receipt happen on the daemon that owns the session;
+  the forwarding daemon records that receipt verbatim.
 
 ### Neo guidance, same PR as the first server behavior
 
@@ -345,10 +323,9 @@ target.
   the per-adapter fixed-provider note, the confirmed/declared receipt labels
   (including that `claude-desktop` and `cursor` receipts read `requested …,
   effective unknown`, with unobserved fields never resolving on their own) and
-  the remote-start rule (the required triple is admitted for any advertised
-  adapter). The sentence “An idle local HyperNeo worker with another model or
-  effort is switched in place first and reused once the switch is confirmed”
-  is deleted with the dropped switch-then-reuse path.
+  the remote-start rule. The sentence “An idle local HyperNeo worker with
+  another model or effort is switched in place first and reused once the
+  switch is confirmed” is deleted with the dropped switch-then-reuse path.
 - `packages/prompts/src/neo/tools/neo.todo.add.md:8` and
   `packages/prompts/src/neo/tools/neo.todo.edit.md`: the start target shape
   becomes `{verb:start,adapter,model,effort,provider?,place?}` — provider
@@ -357,8 +334,8 @@ target.
   `effective unknown` where it cannot. A send target that assigns new todo
   work names the same triple, in both tools.
 - `packages/prompts/src/neo/tools/neo.coding.assign.md`: candidates name the
-  full triple; the preference fallback explains when a preferred value was
-  unavailable.
+  full triple; continuity with the previous reviewer is expressed by
+  candidate ordering.
 - A short difficulty table in `work.start.md` so Neo picks effort by task, no
   selection engine: trivial lookups → low, ordinary changes → medium, hard
   debugging or design → high, rare deepest work → max, with the adapter's
@@ -366,49 +343,48 @@ target.
 
 ## Slices
 
-Three merge contracts following the repo's Pin/Build/Wire/Delete rungs —
-construction, wiring and deletion stay separate. No standalone pin slice:
-the wiring PR carries its own failing-then-passing assertions. Caller
-surfaces measured with `bun run system-map impact` at the investigation base;
-every slice stays within the repo's ~300 production-line budget. The Wire
-gate refuses before any old fallback can run, so the invariant holds from the
-moment it merges; the now-unreachable fallback code is removed by the Delete
-rung.
+Six merge contracts following the repo's Pin/Build/Wire/Delete rungs. No
+standalone pin slice: each wiring PR carries its own failing-then-passing
+assertions. Production-line estimates are measured from the cited regions at
+the investigation base; prompts and tests do not count against the budget.
+The first Wire gate refuses before any old fallback can run, so the invariant
+holds per door from the moment its slice merges.
 
-1. **Build** (contract: gate + declarations only; measured surface:
-   `start-configuration.ts` 8 importers, `types.ts` 128 importers but the
-   change is additive — optional fields and one enum value — so no caller
-   churn): the pure gate, the `identity_required` reason, the receipt source
-   label and the per-adapter fact declarations including the `work.adapters`
-   catalog fields. Exported and tested, not yet called; nothing observable
-   changes.
-2. **Wire: dispatch** (contract: every in-scope entry point passes the gate;
-   measured surface: `work-operations.ts` 36 importers, `driver-work.ts` 15,
-   `hyperneo-adapter.ts` 14, `drivers.ts` 3): the `work.start` pipeline step
-   with triple write-back, the reuse rules including rewiring
-   `reuseIdleWorker`'s hook-keyed guards (`work-operations.ts:826`,
-   `:895-897`) to the recorded-triple match and dropping the
-   switch-then-reuse block (`:1016-1027`), the `work.send` new-todo identity
-   fields and check, query-layer recording of the executed HyperNeo identity,
-   `neo.todo.add`/`neo.todo.edit` and coding-candidate admission, deletion of
-   the assign start call's previous-reviewer-model override
-   (`assign-operation.ts:233`, one line, required for the validated candidate
-   triple to be what dispatches), the gate step replacing
-   `admitStartEffort`'s local `supportsStartEffort` refusal and remote
-   `verifiedCopilotStart` check (`work-operations.ts:626-627`) so
-   non-configurable adapters reach the declared path, remote advertisement
-   replacing the model/effort admission role of
-   `admitRemoteStartModel` while preserving Copilot
-   client validation, and the prompt changes above. Recorded merge-contract
-   exception: removing the two desktop stripping carve-outs
-   (`work-operations.ts:841`, `:901`) rides this Wire PR under the repo's
-   few-line Build+Wire allowance, because the wire cannot function for
-   desktop-template workers while they strip the resolved triple; it is two
-   lines, not a deletion rung.
-3. **Delete** (removal only): the dispatch-path fallbacks the gate made
-   unreachable — the `createDriverSession` newest-available retry and
-   provider-only pick (`drivers.ts:242-244`, `:253-258`), which serve only
-   `work.start` on the HyperNeo adapter.
+1. **Build** (≈200 production lines; measured surface: `start-configuration.ts`
+   8 importers, `types.ts` 128 importers with an additive-only change): the
+   pure gate (~120 lines in `start-configuration.ts`), the `identity_required`
+   reason and receipt-label/plus-level-pair fields (~10 in
+   `drivers/types.ts`), and the per-adapter fact declarations including the
+   `work.adapters` catalog fields (~70 across the seven adapters). Exported
+   and tested, not yet called.
+2. **Wire: start and reuse** (≈160 production lines): the `work.start`
+   pipeline step replacing `admitStartEffort` (`work-operations.ts:626-627`,
+   `:1323`, ~30), the desktop carve-out removal (`:841`, `:901`, 2 lines under
+   the few-line Build+Wire allowance), the reuse rewiring — hook-keyed guards
+   (`:826`, `:895-897`) and the dropped switch-then-reuse block (`:1016-1027`)
+   (~40), the HyperNeo admission executable-set check
+   (`hyperneo-adapter.ts:698-717`, ~35), query-layer recording of the
+   executed identity on every turn (`query-options-builder.ts` plus the
+   session facts write, ~35), and the receipt label plumbing through
+   `recordStarted` (`work-operations.ts:752`, ~20).
+3. **Wire: send and todo admission** (≈105 production lines): the
+   `SendWorkInputSchema`/`NeoSendWorkTarget` identity fields
+   (`work-operations.ts:245`, `driver-work.ts:69`, ~10), the new-todo send
+   check in `runSendWork` (`:1394`, ~30), and `neo.todo.add`/`neo.todo.edit`
+   admission including the remote catalog read (`todo-operations.ts`,
+   ~65).
+4. **Wire: coding pack and remote** (≈80 production lines): required
+   `CodingStageTarget` fields (`stage-preferences.ts:9`, ~5), the override
+   deletion (`assign-operation.ts:233`, 1 line) and continuity-by-ordering
+   (~15), the remote advertisement schema and forwarding admission replacing
+   `admitRemoteStartModel`/`verifiedCopilotStart`'s model/effort role
+   (`work-operations.ts:614-635`, `:346`, ~60) while preserving Copilot client
+   validation. The prompt changes above ride this slice, the last
+   behavior-changing one; slices 2 and 3 update the tool text they change in
+   the same PR as their behavior.
+5. **Delete** (removal only, ≈20 lines): the dispatch-path fallbacks the gates
+   made unreachable — the `createDriverSession` newest-available retry and
+   provider-only pick (`drivers.ts:242-244`, `:253-258`).
 
 ## Out of scope
 
