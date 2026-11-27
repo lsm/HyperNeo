@@ -240,7 +240,12 @@ compares the recorded triple against the todo target.
   start with `unsupported_effort` before the new gate ran, leaving the
   declared receipt path unreachable; its remote branch keys on
   `verifiedCopilotStart` (`:627`). Both refusal roles are subsumed by the new
-  gate's per-adapter facts. The desktop carve-outs that strip model and
+  gate's per-adapter facts. Until the coding-and-remote slice lands, this gate
+  step applies to local routes only: `admitRemoteStartModel` (`:614-623`)
+  refuses any explicit model on a remote route without `verifiedCopilotStart`,
+  so requiring the triple on remote starts earlier would make every remote
+  start impossible in between — remote-routed starts keep today's admission
+  until the remote slice replaces it. The desktop carve-outs that strip model and
   provider (`work-operations.ts:841`, `:901`) are deleted — a desktop worker
   template's ordered model list is recorded configuration and enters the
   request like any other explicit value.
@@ -357,8 +362,12 @@ holds per door from the moment its slice merges.
    `drivers/types.ts`), and the per-adapter fact declarations including the
    `work.adapters` catalog fields (~70 across the seven adapters). Exported
    and tested, not yet called.
-2. **Wire: start and reuse** (≈160 production lines): the `work.start`
-   pipeline step replacing `admitStartEffort` (`work-operations.ts:626-627`,
+2. **Wire: start and reuse** (contract: every local `work.start` and reuse
+   passes the gate; remote-routed starts keep today's admission until slice 4,
+   so no remote start is caught between a required model and a refused one;
+   ≈160 production lines): the `work.start`
+   pipeline step replacing `admitStartEffort` on local routes
+   (`work-operations.ts:626-627`,
    `:1323`, ~30), the desktop carve-out removal (`:841`, `:901`, 2 lines under
    the few-line Build+Wire allowance), the reuse rewiring — hook-keyed guards
    (`:826`, `:895-897`) and the dropped switch-then-reuse block (`:1016-1027`)
@@ -373,10 +382,12 @@ holds per door from the moment its slice merges.
    check in `runSendWork` (`:1394`, ~30), and `neo.todo.add`/`neo.todo.edit`
    admission including the remote catalog read (`todo-operations.ts`,
    ~65).
-4. **Wire: coding pack and remote** (≈80 production lines): required
+4. **Wire: coding pack and remote** (contract: coding candidates and
+   remote-routed starts pass the gate; ≈80 production lines): required
    `CodingStageTarget` fields (`stage-preferences.ts:9`, ~5), the override
    deletion (`assign-operation.ts:233`, 1 line) and continuity-by-ordering
-   (~15), the remote advertisement schema and forwarding admission replacing
+   (~15), and the remote advertisement schema plus forwarding admission that
+   extend the gate step to remote routes and replace
    `admitRemoteStartModel`/`verifiedCopilotStart`'s model/effort role
    (`work-operations.ts:614-635`, `:346`, ~60) while preserving Copilot client
    validation. The prompt changes above ride this slice, the last
