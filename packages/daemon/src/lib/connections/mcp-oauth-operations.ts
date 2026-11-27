@@ -9,20 +9,26 @@ import { defineOperation } from '../operations/registry.ts';
 import { requireUnreservedName } from '../rpc-handlers/app-mcp-handlers.ts';
 import { writeToolDefaults } from '../tools/write-tool-defaults.ts';
 import { startLoopbackLogin } from './loopback-login.ts';
-import type { McpOAuthPreset } from './mcp-fetch.ts';
+import type { McpOAuthPreset, McpRefreshFailure } from './mcp-fetch.ts';
 import { createMcpOAuthProvider } from './mcp-oauth-provider.ts';
 import { ConnectionVault } from './vault.ts';
 
 const loopback = 'http://127.0.0.1:18347';
-const testPresets = {
-  test: {
-    url: `${loopback}/mcp`,
-    issuer: loopback,
-    authorizationEndpoint: `${loopback}/authorize`,
-    origins: [loopback],
-    scopes: ['read', 'search'],
-  },
-} satisfies Record<string, McpOAuthPreset>;
+const testPreset = {
+  url: `${loopback}/mcp`,
+  issuer: loopback,
+  authorizationEndpoint: `${loopback}/authorize`,
+  origins: [loopback],
+  scopes: ['read', 'search'],
+} satisfies McpOAuthPreset;
+const testPresets = { test: testPreset, 'test-slack': { ...testPreset, slackTokens: true } };
+function presetFor(name: string | undefined) {
+  if (process.env.NODE_ENV === 'test' && (name === 'test' || name === 'test-slack')) {
+    return { name, preset: testPresets[name] } as const;
+  }
+}
+
+type RefreshResult = { ok: true } | { ok: false; reason: McpRefreshFailure };
 
 const policy = { safetyClass: 'human_only', caller: 'local_user' } as const;
 const statusInput = z.strictObject({ id: z.string().min(1) });
@@ -50,12 +56,18 @@ const disconnectResult = z.union([
 export function createMcpOAuthOperations(
   db: Database,
   store: CredentialStore,
-  changed: () => void
+  changed: () => void,
+  now = Date.now
 ) {
   const pending = new Map<
     string,
     { controller: AbortController; preset: keyof typeof testPresets }
   >();
+  const refreshes = new Map<
+    string,
+    { controller: AbortController; result: Promise<RefreshResult> }
+  >();
+  const retries = new Map<string, { until: number; reason: McpRefreshFailure }>();
   const writes = new Map<string, Promise<unknown>>();
   const { appMcpServers: registry, gateway } = db;
   const vault = async () =>
@@ -73,9 +85,9 @@ export function createMcpOAuthOperations(
 
   function reserve(id: string, requestedPreset?: string) {
     const row = registry.get(id);
-    const name = requestedPreset ?? row?.auth?.preset;
-    if (process.env.NODE_ENV !== 'test' || name !== 'test') return { reason: 'invalid_preset' };
-    const preset = testPresets[name];
+    const selection = presetFor(requestedPreset ?? row?.auth?.preset);
+    if (!selection) return { reason: 'invalid_preset' };
+    const { name, preset } = selection;
     const target = () => {
       const row = registry.get(id);
       if (
@@ -141,6 +153,8 @@ export function createMcpOAuthOperations(
 
             const previous =
               current.auth ?? ({ kind: 'oauth', preset: name, generation, active: false } as const);
+            refreshes.get(id)?.controller.abort();
+            retries.delete(id);
             if (!current.auth) registry.setAuth(id, previous);
             await commit();
             signal.throwIfAborted();
@@ -161,9 +175,100 @@ export function createMcpOAuthOperations(
   const connect = ({ id, preset }: z.infer<typeof connectInput>) => openConsent(id, preset);
   const reconnect = ({ id }: z.infer<typeof statusInput>) => openConsent(id);
 
+  async function runRefresh(id: string, signal: AbortSignal): Promise<RefreshResult> {
+    const row = registry.get(id);
+    const previous = row?.auth;
+    const selection = presetFor(previous?.preset);
+    if (
+      signal.aborted ||
+      !previous?.active ||
+      !selection ||
+      row?.sourceType !== 'http' ||
+      row.url !== selection.preset.url
+    )
+      return { ok: false, reason: 'reconnect_needed' };
+
+    const { preset } = selection;
+    const generation = previous.generation;
+    const current = () => {
+      const auth = registry.get(id)?.auth;
+      return !signal.aborted && auth?.active && auth.generation === generation;
+    };
+    const retry = retries.get(id);
+    if (retry && retry.until > now()) return { ok: false, reason: retry.reason };
+    retries.delete(id);
+
+    let reason: McpRefreshFailure = 'request_failed';
+    try {
+      const store = await vault();
+      const attempt = createMcpOAuthProvider({
+        vault: store,
+        serverId: id,
+        preset,
+        generation,
+        redirectUrl: 'http://127.0.0.1/oauth/mcp/callback',
+        onRefreshFailure: (failure) => {
+          reason = failure;
+        },
+        save: (grant) =>
+          serial(id, async () => {
+            if (!current()) throw new Error('reconnect_needed');
+            await store.replaceMcp(id, grant);
+          }),
+      });
+      if (!(await attempt.provider.tokens())?.refresh_token || !current())
+        return { ok: false, reason: 'reconnect_needed' };
+      const result = await auth(
+        {
+          ...attempt.provider,
+          invalidateCredentials: () => {
+            throw new Error('request_failed');
+          },
+        },
+        {
+          serverUrl: preset.url,
+          fetchFn: (url, init) => attempt.fetch(url, { ...init, signal }),
+        }
+      );
+      if (result === 'AUTHORIZED' && current()) return { ok: true };
+    } catch {}
+
+    return serial(id, async () => {
+      if (!current()) return { ok: false, reason: 'reconnect_needed' };
+      if (reason === 'reconnect_needed') {
+        registry.setAuth(id, { ...previous, generation: generation + 1 });
+        changed();
+        try {
+          await (await vault()).removeMcp(id);
+        } catch {}
+      } else {
+        retries.set(id, { until: now() + 60000, reason });
+      }
+      return { ok: false, reason };
+    });
+  }
+
+  function refresh(id: string) {
+    const active = refreshes.get(id);
+    if (active && !active.controller.signal.aborted) return active.result;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([gateway.closeSignal, controller.signal]);
+    const result = runRefresh(id, signal).catch(
+      (): RefreshResult => ({ ok: false, reason: 'request_failed' })
+    );
+    refreshes.set(id, { controller, result });
+    void result.then(() => {
+      if (refreshes.get(id)?.result === result) refreshes.delete(id);
+    });
+    return result;
+  }
+
   function retire({ id }: z.infer<typeof statusInput>, replacement?: z.infer<typeof replaceInput>) {
     const active = pending.get(id);
-    if (!replacement) active?.controller.abort();
+    if (!replacement) {
+      active?.controller.abort();
+      refreshes.get(id)?.controller.abort();
+    }
     return serial(id, async (): Promise<z.infer<typeof disconnectResult>> => {
       const row = registry.get(id);
       if (replacement) {
@@ -190,6 +295,8 @@ export function createMcpOAuthOperations(
           ? { kind: 'oauth' as const, preset: flow.preset, generation: 0 }
           : undefined);
       if (!row || !auth) return { ok: false, reason: 'not_connected' };
+      refreshes.get(id)?.controller.abort();
+      retries.delete(id);
       registry.setAuth(id, { ...auth, active: false, generation: auth.generation + 1 });
       changed();
       try {
@@ -245,7 +352,7 @@ export function createMcpOAuthOperations(
     .input('input')
     .pipe(status, 'input', 'result')
     .endAsync('result') as typeof status;
-  return [
+  const operations = [
     defineOperation({
       name: 'mcp.registry.connect',
       description: 'Start browser consent for a remote MCP registry row.',
@@ -287,4 +394,5 @@ export function createMcpOAuthOperations(
       execute: readStatus,
     }),
   ];
+  return { operations, refresh };
 }

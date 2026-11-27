@@ -48,3 +48,18 @@ A conflicting rename in the same request leaves the URL and grant intact.
 The replacement operation refuses an agent caller. A human URL replacement
 aborts a held consent callback, erases the grant and stays disconnected after
 restart. The new endpoint receives no request.
+
+To exercise daemon-held refresh with the real MCP SDK and the isolated registry:
+
+```bash
+bash .claude/skills/verify/proof-run.sh /absolute/evidence/mcp-oauth-refresh \
+  .claude/skills/verify/mcp-oauth-connect.ts "$(git rev-parse HEAD)" refresh
+```
+
+Require exit 0 and `pass: true` in `mcp-oauth-refresh.json`. The proof uses
+the internal refresh entry point for the future session transport and reads
+health through the real status RPC. Concurrent callers share one token request.
+Transient replies keep the grant and report a bounded reason without retrying
+for one minute. Slack's pre-registered client path classifies a revoked grant
+without retry or consent. Disconnect fences a held refresh. An erase failure
+leaves the rejected bundle unadmitted after restart.
