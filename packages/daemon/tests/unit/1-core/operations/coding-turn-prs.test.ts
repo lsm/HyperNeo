@@ -255,6 +255,35 @@ describe('coding turn PRs', () => {
     db.close();
   });
 
+  test('a rejected send whose message runs later gives its todo by its client id', () => {
+    const { db, record } = setup();
+    const target = { verb: 'send', ref };
+    db.prepare(
+      `INSERT INTO work_delivery_inputs
+        (id, todo_id, origin_session_id, target, message, accepted_at, deadline_at, outcome)
+       VALUES ('d1', 'a', 'neo', ?, 'work', 1, 2, ?)`
+    ).run(
+      JSON.stringify(target),
+      JSON.stringify(
+        readDriverOutcome(target as never, {
+          kind: 'completed',
+          value: {
+            ok: false,
+            reason: 'not_delivered',
+            detail: 'lost',
+            clientMessageId: 'client-a',
+          },
+        })
+      )
+    );
+    record(
+      fact('t-ran', ['msg_x', 'client-a'], [url], 100),
+      fact('t-other', ['msg_y'], [url], 200)
+    );
+    expect(new CodingTurnPrRepository(db).own('a').map(({ id }) => id)).toEqual(['t-ran']);
+    db.close();
+  });
+
   test('pr_merged passes on the PR the todo produced in its own turn', async () => {
     const { db, send, record } = setup();
     send('d1', 'a', 'receipt-a');
