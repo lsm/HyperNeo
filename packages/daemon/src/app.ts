@@ -80,6 +80,7 @@ import {
 import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-query-bus.ts';
 import { clearCacheAndNotifyProvidersChanged } from './lib/rpc-handlers/auth-handlers.ts';
 import { CLAUDE_DESKTOP_SESSIONS } from './lib/rpc-handlers/family-operations/drivers.ts';
+import { emitChanged } from './lib/rpc-handlers/app-mcp-handlers.ts';
 import { setupRPCHandlers } from './lib/rpc-handlers/index.ts';
 import { DaemonExtensions } from './lib/extensions/contract.ts';
 import { isSpaceEnabled, registerSchemaExtension } from './storage/schema/extensions.ts';
@@ -138,6 +139,7 @@ import { releaseSessionKeyBridges } from './lib/providers/provider-key-bridge.js
 import { OpencodeProvider } from './lib/providers/opencode-provider.ts';
 import { getProviderRegistry } from './lib/providers/registry.js';
 import { OAuthRefreshScheduler } from './lib/credentials/oauth-refresh-scheduler.js';
+import { createMcpOAuthOperations } from './lib/connections/mcp-oauth-operations.ts';
 import { createGoogleConnectionRefreshLoop } from './lib/connections/refresh-loop.ts';
 import { ProviderCredentialManager } from './lib/credentials/provider-credential-manager.js';
 import { KeychainUnavailableError } from './lib/credentials/credential-store.js';
@@ -891,6 +893,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       stateDirectory: oxapStateDirectory,
       environment: process.env,
     };
+    const mcpOAuth = createMcpOAuthOperations(db, credentialManager.getCredentialStore(), () =>
+      emitChanged(internalEventBus)
+    );
     startupTimer.start('session manager');
     sessionManager = new SessionManager(
       reactiveDb.db,
@@ -925,7 +930,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         reactiveDb.db,
         messageHub,
         (providerId) => db.providers.getProviderByProviderId(providerId)
-      )
+      ),
+      mcpOAuth.sessionProxy
     );
 
     sessionManager.setLoginRecovery(loginRecoveryPort);
@@ -1260,6 +1266,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         liveQueries,
         skillsManager,
         mcpImportService,
+        mcpOAuthOperations: mcpOAuth.operations,
         oxapSettings,
       },
       spaceModule && spaceManager && spaceExternalEvents

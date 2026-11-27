@@ -150,6 +150,9 @@ export interface RPCHandlerDependencies {
   liveQueries: LiveQueryEngine;
   skillsManager: SkillsManager;
   mcpImportService: McpImportService;
+  mcpOAuthOperations?: ReturnType<
+    typeof import('../connections/mcp-oauth-operations.ts').createMcpOAuthOperations
+  >['operations'];
   oxapSettings?: OxapSettingsDeps;
 }
 

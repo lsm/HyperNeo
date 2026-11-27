@@ -412,7 +412,7 @@ describe('QueryRunner startup gate', () => {
   it('applies MCP choices to the owning query and refreshes observed status without interruption', async () => {
     const { runner, controlled, ctx } = await startObservedRunner('activate-tools');
     const servers = { selected: { command: 'synthetic-not-executed' } };
-    ctx.optionsBuilder.getEffectiveMcpServers = () => servers;
+    ctx.optionsBuilder.getEffectiveMcpServers = async () => servers;
     controlled.queryObject.setMcpServers = mock(async () => ({
       added: ['selected'],
       removed: [],
