@@ -61,6 +61,13 @@ try {
   result.plainHttpControls = await page.getByTestId('mcp-oauth-plain-http').count();
   assert.equal(result.plainHttpControls, 0, 'a row without a matching preset shows OAuth controls');
   await shot('1-never-connected');
+  result.vendorRows = {};
+  for (const vendor of ['jira', 'basecamp']) {
+    const vendorRow = page.getByTestId(`mcp-oauth-${vendor}`);
+    await vendorRow.getByText('Disconnected', { exact: true }).waitFor({ timeout: 15000 });
+    result.vendorRows[vendor] = (await vendorRow.innerText()).split('\n');
+    assert.equal(await vendorRow.getByRole('button', { name: 'Connect' }).count(), 1, vendor);
+  }
 
   await consent('Connect');
   await shot('2-connected');

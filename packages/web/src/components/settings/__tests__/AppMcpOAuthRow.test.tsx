@@ -93,22 +93,25 @@ describe('AppMcpOAuthRow', () => {
     expect(container.textContent).toBe('');
   });
 
-  it('connects a row that has never connected with the preset status names', async () => {
-    request.mockImplementation(async (_method: string, { name }: Invocation) =>
-      name === 'mcp.registry.status'
-        ? { health: 'disconnected', scopes: [], preset: 'test' }
-        : { authorizeUrl: consentUrl }
-    );
-    const popup = { opener: {}, location: { href: '' }, close: vi.fn() };
-    vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window);
-    render(<AppMcpOAuthRow server={{ ...server(false), auth: undefined }} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Connect' }));
-    await waitFor(() => expect(popup.location.href).toBe(consentUrl));
-    expect(invocations('mcp.registry.connect')).toEqual([
-      { name: 'mcp.registry.connect', input: { id: 'row-1', preset: 'test' } },
-    ]);
-    expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
-  });
+  it.each(['test', 'jira', 'basecamp'])(
+    'connects a row that has never connected with the %s preset status names',
+    async (named) => {
+      request.mockImplementation(async (_method: string, { name }: Invocation) =>
+        name === 'mcp.registry.status'
+          ? { health: 'disconnected', scopes: [], preset: named }
+          : { authorizeUrl: consentUrl }
+      );
+      const popup = { opener: {}, location: { href: '' }, close: vi.fn() };
+      vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window);
+      render(<AppMcpOAuthRow server={{ ...server(false), auth: undefined }} />);
+      fireEvent.click(await screen.findByRole('button', { name: 'Connect' }));
+      await waitFor(() => expect(popup.location.href).toBe(consentUrl));
+      expect(invocations('mcp.registry.connect')).toEqual([
+        { name: 'mcp.registry.connect', input: { id: 'row-1', preset: named } },
+      ]);
+      expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
+    }
+  );
 
   it('shows nothing for an HTTP row without OAuth and without a matching preset', async () => {
     request.mockResolvedValue({ health: 'disconnected', scopes: [] });

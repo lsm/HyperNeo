@@ -29,6 +29,10 @@ rpc rpc:mcp.registry.create \
   '{"name":"oauth-fixture","sourceType":"http","url":"http://127.0.0.1:18347/mcp"}' > "$EVIDENCE/create.json"
 rpc rpc:mcp.registry.create \
   '{"name":"plain-http","sourceType":"http","url":"http://127.0.0.1:18348/mcp"}' > /dev/null
+rpc rpc:mcp.registry.create \
+  '{"name":"jira","sourceType":"http","url":"https://mcp.atlassian.com/v2/mcp"}' > /dev/null
+rpc rpc:mcp.registry.create \
+  '{"name":"basecamp","sourceType":"http","url":"https://mcp.basecamp.com/mcp"}' > /dev/null
 PAIR_CODE=$(env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
   HYPERNEO_SESSION_DOOR="$RUN/data/session-door.sock" bun run packages/cli/main.ts pair --kind human \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["code"])')
