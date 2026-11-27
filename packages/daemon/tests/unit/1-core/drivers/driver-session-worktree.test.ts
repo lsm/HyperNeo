@@ -603,9 +603,9 @@ describe('createDriverSession', () => {
           (name) => `mcp__desktop__${name}`
         ),
         disallowedTools: expect.arrayContaining(['Bash', 'Write']),
-        systemPrompt: expect.stringContaining('desktop tools'),
       },
     });
+    expect(created[0].config?.systemPrompt).toBeUndefined();
   });
 
   test('starts work in a linked worktree in place', async () => {

@@ -31,6 +31,7 @@ screenshot. The desktop tool and underlying operation results must contain just 
 after the normal status. An app missing from the card and legacy cards with or without
 recorded approval must refuse capture before dispatch. Pass prints `desktop worker template journey PASS` and saves
 `desktop-worker-template.json`. The signed host and its dialogs remain a separate journey.
+The desktop session has no second system prompt stored in its configuration.
 
 The runner also captures a non-desktop worker request. Compare
 `ordinary-worker-brief.txt` from the baseline and changed runs with `cmp`.
@@ -39,8 +40,8 @@ SDK's environment disclosure. The remaining task brief must match byte for byte.
 
 Pass `--long-brief` to the helper to send an oversized task with a configured
 payment preference and a seeded previous worker report. The provider must
-receive all six preferences as valid JSON with guidance for interpreting
-them, the completion condition, the previous report, and the start of the
+receive all six preferences as valid JSON with guidance for every value
+listed by the preference operation, the completion condition, the previous report, and the start of the
 task. Pass prints `long desktop brief PASS preferences=6 delegation_guidance=6
 completion=1 previous_report=1`.
 

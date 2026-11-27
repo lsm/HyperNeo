@@ -288,8 +288,14 @@ try {
     assert.match(brief, /payment self: The human handles the entire payment\./);
     assert.match(brief, /fillStop: Prepare the form and leave the final button to the human\./);
     assert.match(brief, /confirmed: Press the final button only after the human explicitly approves that payment\./);
-    for (const key of ['signIn', 'verificationCodes', 'formFill', 'commitments', 'humanStep'])
-      assert(brief.includes(`- ${key} `), `Missing desktop delegation guidance for ${key}`);
+    const { declarations } = await fromNeo('pack.preferences.list', { pack: 'delegation' });
+    assert.deepEqual(Object.keys(declarations).sort(), Object.keys(preferences).sort());
+    for (const [key, declaration] of Object.entries(declarations as Record<string, { valueLabels: Record<string, unknown> }>)) {
+      const guide = brief.split('\n').find((line: string) => line.startsWith(`- ${key} `));
+      assert(guide, `Missing desktop delegation guidance for ${key}`);
+      for (const value of Object.keys(declaration.valueLabels))
+        assert(guide.includes(` ${value}: `), `Missing desktop delegation guidance for ${key} ${value}`);
+    }
     assert(brief.includes('Check the displayed value.'));
     assert.deepEqual({
       completion: brief.includes(`Finish when ${added.todo.doneWhen}`),
@@ -308,6 +314,7 @@ try {
   assert.deepEqual(init.agents ?? [], []);
   assert.deepEqual(inventory.composerCommands, []);
   assert.doesNotMatch(outbound.system + outbound.brief, /deep-research|statusline-setup|Available agent types/i);
+  assert.equal(templated.getSessionData().config.systemPrompt, undefined, 'Desktop session stores a second system prompt');
   console.log(`desktop worker inventory PASS sdk_tools=${init.tools.length} model_tools=${outbound.tools.length} skills=0 slash_commands=0 agents=0 composer_commands=0`);
   assert.equal(results.length, 3);
   const [capture, refusal, sent] = results;
