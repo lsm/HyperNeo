@@ -34,7 +34,7 @@ function columns(db: Database, table: string) {
 function markers(db: Database) {
   return db
     .prepare(
-      "SELECT key, applied_at FROM migration_markers WHERE key IN ('migration_537', 'migration_538') ORDER BY key"
+      "SELECT key, applied_at FROM migration_markers WHERE key IN ('migration_537', 'migration_539') ORDER BY key"
     )
     .all() as { key: string; applied_at: number }[];
 }
@@ -45,7 +45,7 @@ test('fresh database has both schemas and migration markers', () => {
     initialize(db);
     expect(columns(db, 'neo_todos')).toEqual(expect.arrayContaining(['plan', 'plan_check_json']));
     expect(columns(db, 'app_mcp_servers')).toContain('auth');
-    expect(markers(db).map(({ key }) => key)).toEqual(['migration_537', 'migration_538']);
+    expect(markers(db).map(({ key }) => key)).toEqual(['migration_537', 'migration_539']);
   } finally {
     db.close();
   }
@@ -56,7 +56,7 @@ for (const previous of ['pre-537', 'todo plan only', 'OAuth only'] as const) {
     const db = new Database(':memory:');
     try {
       initialize(db);
-      db.exec("DELETE FROM migration_markers WHERE key IN ('migration_537', 'migration_538')");
+      db.exec("DELETE FROM migration_markers WHERE key IN ('migration_537', 'migration_539')");
       for (const column of ['plan', 'plan_check_json']) {
         if (columns(db, 'neo_todos').includes(column))
           db.exec(`ALTER TABLE neo_todos DROP COLUMN ${column}`);
@@ -82,7 +82,7 @@ for (const previous of ['pre-537', 'todo plan only', 'OAuth only'] as const) {
 
       initialize(db);
       const applied = markers(db);
-      expect(applied.map(({ key }) => key)).toEqual(['migration_537', 'migration_538']);
+      expect(applied.map(({ key }) => key)).toEqual(['migration_537', 'migration_539']);
       initialize(db);
       expect(markers(db)).toEqual(applied);
       expect(

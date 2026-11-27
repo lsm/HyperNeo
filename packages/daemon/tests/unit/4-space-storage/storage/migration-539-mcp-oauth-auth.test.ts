@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
-import { runMigration537 } from '../../../../src/storage/schema/m537-mcp-oauth-auth';
+import { runMigration539 } from '../../../../src/storage/schema/m539-mcp-oauth-auth';
 import { createTables } from '../../../../src/storage/schema';
 
 const columns = (db: BunDatabase) =>
@@ -8,7 +8,7 @@ const columns = (db: BunDatabase) =>
     (row) => row.name
   );
 
-describe('migration 537 - MCP OAuth auth column', () => {
+describe('migration 539 - MCP OAuth auth column', () => {
   let db: BunDatabase;
   beforeEach(() => {
     db = new BunDatabase(':memory:');
@@ -22,8 +22,8 @@ describe('migration 537 - MCP OAuth auth column', () => {
       'CREATE TABLE app_mcp_servers (id TEXT PRIMARY KEY, name TEXT UNIQUE NOT NULL, source_type TEXT NOT NULL)'
     );
     db.exec("INSERT INTO app_mcp_servers (id, name, source_type) VALUES ('srv', 'kept', 'http')");
-    runMigration537(db);
-    runMigration537(db);
+    runMigration539(db);
+    runMigration539(db);
     expect(columns(db)).toContain('auth');
     expect(db.prepare("SELECT auth FROM app_mcp_servers WHERE id = 'srv'").get()).toEqual({
       auth: null,
