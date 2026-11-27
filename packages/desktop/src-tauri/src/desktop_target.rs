@@ -320,3 +320,24 @@ pub(super) fn resolve(tool: &str, arguments: &Value, instance: Option<&Value>) -
     json!({"value": {"bundle_id": signer.bundle_id, "team_id": signer.team_id, "requirement": signer.requirement,
         "class": class, "instance": observed, "window_id": window}})
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn launch_resolves_mixed_case_bundle_id_to_signed_identity() {
+        let canonical = resolve(
+            "launch_app",
+            &json!({"bundle_id": "com.apple.calculator"}),
+            None,
+        );
+        assert_eq!(canonical["value"]["bundle_id"], "com.apple.calculator");
+        let mixed_case = resolve(
+            "launch_app",
+            &json!({"bundle_id": "com.apple.Calculator"}),
+            None,
+        );
+        assert_eq!(mixed_case, canonical);
+    }
+}

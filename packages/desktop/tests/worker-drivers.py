@@ -1291,6 +1291,21 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertTrue(alive(record['pid']))
         print('dispatch=allowed started=1 call=click reused_slot=1')
 
+    def test_dispatch_launch_accepts_case_variants_of_the_approved_app(self):
+        canonical = 'com.apple.calculator'
+        mixed_case = 'com.apple.Calculator'
+        self.assertIn('value', self.resolve('launch_app', {'bundle_id': canonical}, action='fixture-admit'))
+        refused = self.dispatch('launch_app', {'bundle_id': mixed_case}, apps=['com.apple.finder'],
+                                workDir=str(self.work))['result']
+        self.assertEqual((refused['reason'], refused['dispatched']), ('app_not_in_todo_scope', False), refused)
+        reply = self.dispatch('launch_app', {'bundle_id': mixed_case}, apps=[mixed_case],
+                              workDir=str(self.work))['result']
+        self.assertEqual((reply['decision'], reply['dispatched'], reply['bundle_id']),
+                         ('allowed', True, canonical), reply)
+        entry = next(self.work.glob('log-d-*')).read_text().splitlines()[-1]
+        self.assertEqual(entry, 'call launch_app ' + json.dumps({'bundle_id': mixed_case}))
+        print(f'launch_approved=1 other_app_refused=1 canonical_bundle_id={canonical}')
+
     def test_second_worker_waits_for_a_held_window_until_the_holder_stops(self):
         pid = finder()
         self.call('fixture-admit', tool='click', arguments={'pid': pid})
