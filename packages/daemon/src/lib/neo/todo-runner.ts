@@ -58,7 +58,12 @@ import type { NeoAttentionEvent } from './attention/decide.ts';
 import { neoPackWaiting } from './attention/sweep.ts';
 import { sameNeoTodoCheck } from './todo-completion.ts';
 import { planNudge } from './nudge.ts';
-import { isNeoTodoWorkerWait, planNeoTodoWaits } from './todo-worker-wait.ts';
+import {
+  isNeoTodoWorkerWait,
+  neoReservedWorkerWait,
+  neoTodoWorkerWaitKey,
+  planNeoTodoWaits,
+} from './todo-worker-wait.ts';
 import { planNeoTurnReportSweep } from './turn-report-sweep.ts';
 import { compactBeforeReuse, planCleanWorker } from '../drivers/worker-compaction.ts';
 import { releaseNeoTodoWorkers, type WorkerCompact } from './todo-release.ts';
@@ -257,8 +262,11 @@ const idleMinutes = (incident: { since: number }, now: number) =>
 const neoTodoIdleReason = (minutes: number) =>
   `its worker has been idle with no progress for ${minutes} min.`;
 
-const neoTodoStallNote = (todo: Pick<NeoTodo, 'title'>, reason: string) =>
-  `Todo "${todo.title}" is stalled: ${reason}\nNext: ${NEO_TODO_STALL_NEXT}`;
+const neoTodoStallNote = (
+  todo: Pick<NeoTodo, 'title'>,
+  reason: string,
+  next = NEO_TODO_STALL_NEXT
+) => `Todo "${todo.title}" is stalled: ${reason}\nNext: ${next}`;
 
 const neoTodoUnreachableNote = (todo: Pick<NeoTodo, 'id' | 'title'>) =>
   `Todo "${todo.title}" (${todo.id}) has nobody working on it and the daemon cannot restart it. Continue it, remove it, or ask the human with neo.question.ask only if they must decide.`;
@@ -738,16 +746,32 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     return busy;
   };
 
+  type WorkerWait = ReturnType<typeof planNeoTodoWaits>['waits'][number];
   const recordWaits = async (
-    { waits }: Pick<ReturnType<typeof planNeoTodoWaits>, 'waits'>,
+    { waits }: { waits: readonly (Pick<WorkerWait, 'id' | 'reason'> & Partial<WorkerWait>)[] },
     now: number
   ): Promise<void> => {
-    for (const { id, reason } of waits) {
+    const openPrs = new Map<string, string | null>();
+    for (const { id, worker, reservation, reason: working } of waits) {
+      const holder = reservation ? store.getTodo(reservation) : null;
+      let url = holder && openPrs.get(holder.id);
+      if (holder && url === undefined) {
+        const pack = deps.packs().find((pack) => pack.id === holder.check?.pack);
+        url =
+          (await pack?.todos?.openPr?.(holder.id).catch((error) => {
+            log.warn('Worker reservation check pending', { todoId: holder.id }, error);
+            return null;
+          })) ?? null;
+        openPrs.set(holder.id, url);
+      }
+      const reason =
+        worker && holder && url ? neoReservedWorkerWait(worker, holder.title, url) : working;
       const todo = store.getTodo(id);
       const ask = todo && store.getAsk(todo.askId);
       if (!todo || !ask) continue;
       const waited = isNeoTodoWorkerWait(todo.reason);
-      if (reason && !waited) restartLadder(id, now);
+      if (reason && neoTodoWorkerWaitKey(reason) !== neoTodoWorkerWaitKey(todo.reason))
+        restartLadder(id, now);
       if (reason !== todo.reason && (reason || waited)) {
         store.updateTodo(todo, { reason }, now);
         deps.changed();
@@ -757,7 +781,18 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       if (!incident || !reason || !plan) continue;
       sessions.recordNudge(id, { ...incident, nudges: plan.nudges });
       if (plan.kind === 'escalate')
-        await note('todo.stalled', todo, incident.since, neoTodoStallNote(todo, reason));
+        await note(
+          'todo.stalled',
+          todo,
+          incident.since,
+          neoTodoStallNote(
+            todo,
+            reason,
+            url
+              ? 'Wait for that PR, or add a replacement todo for another worker to the same ask first, then remove this todo with replacedBy so the ask keeps its link.'
+              : undefined
+          )
+        );
     }
   };
 

@@ -9,15 +9,17 @@ Read SKILL.md's shared isolation setup. This helper owns a real test daemon with
 a fresh database and home. No provider, model, GUI or port 8399.
 
 ```bash
-RUN=$(mktemp -d /private/tmp/hn-todo-waits-XXXXXX)
-mkdir -p "$RUN/home"
-env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin" \
-  NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
-  bun .claude/skills/verify/todo-waits-for-worker.ts "$RUN"
+bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
+  .claude/skills/verify/todo-waits-for-worker.ts
 ```
 
-The worker's turn is simulated by setting its session's processing state, and the
-stall by backdating the wait. Evidence: `$RUN/evidence/observed.json`.
+The worker's turn is simulated by setting its session's processing state. The
+authenticated `neo.snapshot` RPC shows the worker as working, queued, and then
+waiting for review. A GitHub stub supplies the open PR that keeps the idle
+worker reserved. The queued todo's reason names that PR. Backdate the wait,
+refresh twice and confirm one new Neo wake with the replacement instructions.
+The worker then frees up and the queued todo goes. Evidence is in `observed.json`
+and the wrapper records the exit code.
 
 Ordinary follow-up acceptance and post-turn delivery use the separate
 worker-input-delivery journey. This journey exercises the initial todo scheduler.

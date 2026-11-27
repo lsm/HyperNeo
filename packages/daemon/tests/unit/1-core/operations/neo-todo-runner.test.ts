@@ -4421,7 +4421,7 @@ describe('a todo for a busy worker', () => {
         pack.todos = {
           ...pack.todos!,
           openPr: async (id: string) => (id === holder.id ? open : null),
-        } as NonNullable<NeoPack['todos']>;
+        };
         const candidate = waitingOn(h);
         const sweep = async (minutes: number) => {
           clock.mockReturnValue(base + minutes * MIN);
@@ -4466,6 +4466,7 @@ describe('a todo for a busy worker', () => {
 
   test.each([
     ['running', 'pr_merged', true, pr],
+    ['queued', 'pr_merged', true, pr],
     ['needs_you', 'pr_merged', true, pr],
     ['failed', 'pr_merged', true, pr],
     [null, 'pr_merged', true, pr],
@@ -4478,10 +4479,14 @@ describe('a todo for a busy worker', () => {
       try {
         const holder = reserve(h, kind, bound);
         const pack = h.packs[0];
-        pack.todos = { ...pack.todos!, openPr: async () => open } as NonNullable<NeoPack['todos']>;
+        pack.todos = { ...pack.todos!, openPr: async () => open };
         const candidate = waitingOn(h);
         h.setStatus(status ? { ok: true, value: { status, lastActivityAt: 2 } } : null);
-        await h.runner.refresh(() => {});
+        if (bound) await h.runner.refresh(() => {});
+        else {
+          h.sessions.recordNudge(holder.id, { since: 1, nudges: 0, live: 'done' });
+          await h.runner.fill();
+        }
         expect(h.store.getTodo(holder.id)?.state).toBe('doing');
         expect(h.store.getTodo(candidate.id)?.reason).toContain('working on "Holder"');
       } finally {
@@ -4489,6 +4494,31 @@ describe('a todo for a busy worker', () => {
       }
     }
   );
+
+  test('switching to a different busy target restarts the wait', async () => {
+    const h = setup();
+    const clock = vi.spyOn(Date, 'now');
+    const base = Date.now();
+    try {
+      const todo = waitingOn(h);
+      h.setStatus(running);
+      await h.runner.fill();
+      clock.mockReturnValue(base + 50 * MIN);
+      h.sessions.queueOn(todo.id, { ...ref, id: 'worker-2' }, '');
+      await h.runner.fill();
+      expect(h.store.getTodo(todo.id)?.reason).toContain('worker-2');
+      const stalls = () => h.told.filter((note) => note.includes('is stalled'));
+      clock.mockReturnValue(base + 109 * MIN);
+      await h.runner.fill();
+      expect(stalls()).toEqual([]);
+      clock.mockReturnValue(base + 110 * MIN);
+      await h.runner.fill();
+      expect(stalls()).toEqual([expect.stringContaining('worker-2')]);
+    } finally {
+      clock.mockRestore();
+      h.db.close();
+    }
+  });
 
   test('a worker waiting on the human still gets its todo, as before', async () => {
     const h = setup();

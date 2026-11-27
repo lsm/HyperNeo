@@ -314,10 +314,13 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     const running = open.todos.flatMap((todo) => {
       if (todo.state !== 'doing') return [];
       const target = open.target(todo.id);
+      const ref = open.ref(todo.id);
+      const live = open.nudge(todo.id)?.live;
       return [
         {
+          reservation: ref && (live === 'done' || live === 'stopped') ? todo.id : null,
           group: asks.find((ask) => ask.id === todo.askId)?.projectId ?? null,
-          worker: neoWorkerKey(open.ref(todo.id) ?? (target?.verb === 'send' ? target.ref : null)),
+          worker: neoWorkerKey(ref ?? (target?.verb === 'send' ? target.ref : null)),
           title: todo.title,
           idle: open.idle(todo.id),
         },
@@ -404,11 +407,12 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
           failedAt: failedAt(todo),
           worker: open.ref(todo.id)
             ? {
-                status: ['running', 'queued'].includes(nudge?.live ?? '')
-                  ? 'running'
-                  : open.idle(todo.id)
-                    ? 'idle'
-                    : 'unknown',
+                status:
+                  nudge?.live === 'running' || nudge?.live === 'queued'
+                    ? nudge.live
+                    : open.idle(todo.id)
+                      ? 'idle'
+                      : 'unknown',
                 since: Math.max(
                   nudge?.since ?? 0,
                   nudge?.liveSince ?? 0,

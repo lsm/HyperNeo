@@ -170,7 +170,14 @@ describe('neoHumanQueue', () => {
       owners: new Map([['t1', owner]]),
     });
     expect(queue.items).toEqual([
-      { state: 'progress', askId: 'ask-a', todoId: 't1', title: 'Todo t1', owner: 'neo' },
+      {
+        state: 'progress',
+        askId: 'ask-a',
+        todoId: 't1',
+        title: 'Todo t1',
+        owner: 'neo',
+        step: 'neo',
+      },
     ]);
   });
 
