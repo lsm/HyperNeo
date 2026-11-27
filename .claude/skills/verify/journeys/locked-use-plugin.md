@@ -88,7 +88,7 @@ label without changing the Mac's unlock rule.
 ## Guardian
 
 The guardian `hyperneo-locked-use` (identifier `io.hyperneo.locked-use`) is the only
-process the plugin answers. It ships as `HyperNeo.app/Contents/MacOS/hyperneo-locked-use`
+process the plugin answers. It ships as the helper app `HyperNeo.app/Contents/Helpers/HyperNeo Locked Use.app`
 and starts only when its parent is signed `io.hyperneo.app` by team P5R65T296V, the
 plugin is installed, the screen is locked and it has Accessibility. While running it
 covers every display with "HyperNeo is using this Mac", keeps the display awake, and

@@ -16,7 +16,7 @@ fi
 export APPLE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:-Developer ID Application: ARCOBY, LLC (P5R65T296V)}"
 bash tests/cua-driver.sh
 bash prepare-cua-driver.sh
-bash locked-use/compile-guardian.sh src-tauri/binaries/hyperneo-locked-use
+bash locked-use/package-guardian.sh "src-tauri/binaries/HyperNeo Locked Use.app"
 bash locked-use/compile-plugin.sh src-tauri/binaries/HyperNeoLockedUse.bundle
 signing_dir="$(mktemp -d src-tauri/binaries/signing.XXXXXX)"
 trap 'rm -rf "$signing_dir"' EXIT

@@ -4,7 +4,7 @@
       "entitlements": "SignedEntitlements.plist",
       "files": {
         "MacOS/cua-driver": "binaries/cua-driver",
-        "MacOS/hyperneo-locked-use": "binaries/hyperneo-locked-use",
+        "Helpers/HyperNeo Locked Use.app": "binaries/HyperNeo Locked Use.app",
         "Resources/locked-use/HyperNeoLockedUse.bundle": "binaries/HyperNeoLockedUse.bundle",
         "Resources/locked-use/install.sh": "../locked-use/install.sh",
         "Resources/locked-use/uninstall.sh": "../locked-use/uninstall.sh",

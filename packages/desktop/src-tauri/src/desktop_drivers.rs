@@ -22,7 +22,7 @@ use std::{
     fs::{File, OpenOptions},
     os::fd::AsRawFd,
     os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex as StdMutex},
     time::Duration,
 };
@@ -184,6 +184,15 @@ struct Advert {
     started_at: u64,
 }
 
+/// The guardian ships as its own helper app so privacy settings show its name and icon.
+fn locked_use_guardian(driver: &Path) -> PathBuf {
+    driver
+        .parent()
+        .and_then(Path::parent)
+        .unwrap_or(Path::new(""))
+        .join("Helpers/HyperNeo Locked Use.app/Contents/MacOS/hyperneo-locked-use")
+}
+
 impl Control {
     pub(crate) async fn setup(
         base: Option<PathBuf>,
@@ -260,7 +269,7 @@ impl Control {
         #[cfg(test)]
         let lock_state = None;
         let (locked, gatekeeper) = locked_use::Gatekeeper::new(
-            binary.with_file_name("hyperneo-locked-use"),
+            locked_use_guardian(&binary),
             move |worker| record::ensure_enabled(&workers.join(worker)).is_ok(),
             lock_state,
         );
@@ -1245,6 +1254,13 @@ impl Drivers {
 #[cfg(test)]
 mod peer_tests {
     use super::*;
+    #[test]
+    fn the_guardian_is_the_bundled_helper_app() {
+        assert_eq!(
+            locked_use_guardian(Path::new("/Applications/HyperNeo.app/Contents/MacOS/cua-driver")),
+            Path::new("/Applications/HyperNeo.app/Contents/Helpers/HyperNeo Locked Use.app/Contents/MacOS/hyperneo-locked-use")
+        );
+    }
     #[test]
     fn reaped_sidecar_is_not_authorized() {
         let child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
