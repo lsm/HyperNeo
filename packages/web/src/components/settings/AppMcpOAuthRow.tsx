@@ -14,25 +14,30 @@ const call = async <T,>(name: Action | 'mcp.registry.status', input: unknown) =>
   invokeOperation<T>(await connectionManager.getHub(), name, input);
 
 export function AppMcpOAuthRow({ server }: { server: AppMcpServer }) {
-  const [status, setStatus] = useState<Status | null>(null);
+  const [status, setStatus] = useState<(Status & { key: string }) | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [consentUrl, setConsentUrl] = useState('');
   const { id, auth } = server;
+  const key = `${id}|${server.url}|${auth?.generation}|${auth?.active}`;
   useEffect(() => {
     let current = true;
+    setConsentUrl('');
     call<Status>('mcp.registry.status', { id }).then(
-      (next) => current && setStatus(next),
+      (next) => current && setStatus({ ...next, key }),
       (failure: unknown) => current && setError(String(failure))
     );
     return () => {
       current = false;
     };
-  }, [id, server.url, auth?.generation, auth?.active]);
-  if (!auth?.active && !status?.preset) return null;
+  }, [key]);
+  const fresh = status?.key === key ? status : null;
+  if (!auth?.active && !(fresh ? fresh.preset : (auth ?? status?.preset))) return null;
 
   const act = async (name: Action, input: Record<string, string>) => {
     setBusy(true);
     setError('');
+    setConsentUrl('');
     const desktop = isDesktopLinkHost();
     const popup =
       !desktop && name !== 'mcp.registry.disconnect' ? window.open('about:blank', '_blank') : null;
@@ -42,6 +47,7 @@ export function AppMcpOAuthRow({ server }: { server: AppMcpServer }) {
       if (receipt.authorizeUrl) {
         if (desktop) openExternalLink(receipt.authorizeUrl);
         else if (popup) popup.location.href = receipt.authorizeUrl;
+        else setConsentUrl(receipt.authorizeUrl);
         return;
       }
       if (receipt.reason) setError(receipt.reason);
@@ -55,7 +61,7 @@ export function AppMcpOAuthRow({ server }: { server: AppMcpServer }) {
 
   return (
     <div class="mt-2 flex flex-wrap items-center gap-2" data-testid={`mcp-oauth-${server.name}`}>
-      {status && <span class="text-xs text-fg-soft">{t(`connections.${status.health}`)}</span>}
+      {fresh && <span class="text-xs text-fg-soft">{t(`connections.${fresh.health}`)}</span>}
       {!auth && status?.preset ? (
         <Button
           variant="secondary"
@@ -84,6 +90,16 @@ export function AppMcpOAuthRow({ server }: { server: AppMcpServer }) {
         >
           {t('connections.disconnect')}
         </Button>
+      )}
+      {consentUrl && (
+        <a
+          class="text-xs text-accent hover:underline"
+          href={consentUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {t('connections.continueMcp')}
+        </a>
       )}
       {error && (
         <p role="alert" class="w-full text-xs text-danger">

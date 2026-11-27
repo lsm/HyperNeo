@@ -117,6 +117,23 @@ describe('AppMcpOAuthRow', () => {
     expect(container.textContent).toBe('');
   });
 
+  it('keeps the consent link when the browser blocks the new window', async () => {
+    vi.spyOn(window, 'open').mockReturnValue(null);
+    render(<AppMcpOAuthRow server={server(true)} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));
+    const link = await screen.findByRole('link', { name: 'Open the sign-in page' });
+    expect(link.getAttribute('href')).toBe(consentUrl);
+  });
+
+  it('keeps the row and hides stale health while status reloads after Disconnect', async () => {
+    const { rerender } = render(<AppMcpOAuthRow server={server(true)} />);
+    expect(await screen.findByText('Connected')).toBeTruthy();
+    request.mockImplementation(() => new Promise(() => {}));
+    rerender(<AppMcpOAuthRow server={server(false)} />);
+    expect(screen.getByRole('button', { name: 'Reconnect' })).toBeTruthy();
+    expect(screen.queryByText('Connected')).toBeNull();
+  });
+
   it('shows the failure reason when Reconnect returns no consent URL', async () => {
     request.mockImplementation(async (_method: string, { name }: Invocation) =>
       name === 'mcp.registry.status' ? { health, scopes: [] } : { reason: 'connect_pending' }

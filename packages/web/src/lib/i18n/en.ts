@@ -17,6 +17,7 @@ export const en = {
   'connections.connect': 'Connect Google',
   'connections.reconnect': 'Reconnect',
   'connections.connectMcp': 'Connect',
+  'connections.continueMcp': 'Open the sign-in page',
   'connections.disconnect': 'Disconnect',
   'connections.empty': 'No accounts connected.',
   'connections.healthy': 'Connected',
