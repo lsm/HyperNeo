@@ -588,7 +588,7 @@ describe('SessionLifecycle.create', () => {
       ({
         id,
         capabilities: { vision: true, functionCalling: true },
-        isAvailable: () => true,
+        isAvailable: () => availableProviders.has(id),
       }) as unknown as Provider;
     const listed = (id: string, provider: string) =>
       ({ id, provider, alias: id, name: id, available: true }) as ModelInfo;
