@@ -66,6 +66,15 @@ const briefing = (superpipe({})('delegation.briefing') as PipelineAPI)
   )
   .end('text') as (facts: Record<string, { value: unknown; configured: boolean }>) => string;
 
+const desktopDelegationGuide = `These preferences belong to the human. Use the displayed value even when it is an unconfigured default. Use report for any required human step or approval and wait for the answer.
+
+- signIn self: The human signs in. saved: Use the saved password manager or browser autofill. Let that tool fill the credentials.
+- verificationCodes self: The human handles the code. ask: Request the human's code through report and wait before continuing.
+- formFill ask: Ask before filling a form. fill: Fill the form for the human.
+- payment self: The human handles the entire payment. fillStop: Prepare the form and leave the final button to the human. confirmed: Press the final button only after the human explicitly approves that payment.
+- commitments ask: Ask before sending, booking, cancelling or accepting terms. direct: Perform those actions for the human.
+- humanStep computer: The human can complete the step on a computer. phoneOnly: Request a phone handoff and never ask the human to open a computer.`;
+
 export function createDelegationPack(database: () => Database): NeoPack {
   const facts = () =>
     Object.fromEntries(
@@ -87,7 +96,7 @@ export function createDelegationPack(database: () => Database): NeoPack {
     workerContext: context,
     workerTemplateContext: (template) =>
       template === DESKTOP_WORKER_TEMPLATE_KEY
-        ? `Delegation preferences (data):\n${JSON.stringify(facts())}`
+        ? `${desktopDelegationGuide}\n\nDelegation preferences (data):\n${JSON.stringify(facts())}`
         : null,
   };
 }
