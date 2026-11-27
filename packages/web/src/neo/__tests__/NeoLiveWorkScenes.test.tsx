@@ -726,6 +726,51 @@ describe('Neo public work scenes', () => {
     ]);
   });
 
+  it('shows under Waiting on you only the cards that wait on the human', () => {
+    const { model } = mount(true, true);
+    const a = testAskEntry('ask-a', 'Ask A', {
+      state: 'waiting',
+      todos: [testTodo('a-step', { askId: 'ask-a', state: 'todo' })],
+      questions: [card('a-open', 'ask-a', 100), card('a-held', 'ask-a', 120, 121)],
+    });
+    const running = testAskEntry('running', 'Running', {
+      state: 'doing',
+      todos: [testTodo('run-step', { askId: 'running', state: 'doing' })],
+    });
+    const done = testAskEntry('done', 'Done', { state: 'done' });
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [a, running, done],
+          humanQueue: {
+            items: [
+              waits('a-open', 'ask-a'),
+              waits('a-held', 'ask-a', true),
+              { state: 'progress', askId: 'ask-a', todoId: 'a-step', title: 'A step', owner: null },
+            ],
+            counts: { 'ask-a': { waiting: 1, held: 1, progress: 1 } },
+          },
+        } as never,
+      };
+    });
+    const scenes = screen.getByRole('region', { name: 'Work scenes' });
+    const shown = () =>
+      [...scenes.querySelectorAll('[id^="neo-ref-question-"], [data-ask-todo], [data-ask]')].map(
+        (node) =>
+          node.getAttribute('data-ask') ??
+          node.getAttribute('data-ask-todo') ??
+          node.id.replace('neo-ref-question-', '')
+      );
+    expect(shown()).toEqual(['ask-a', 'a-open']);
+    expect(scenes.querySelector('[data-scene-group]')).toBeNull();
+    fireEvent.click(within(scenes).getByRole('button', { name: /^Held/ }));
+    expect(shown()).toEqual(['ask-a', 'a-held']);
+    fireEvent.click(within(scenes).getByRole('button', { name: /^In progress/ }));
+    expect(shown()).toEqual(['ask-a', 'a-step', 'running', 'run-step', 'done']);
+  });
+
   it('shows the full document of a queued card once its ask is read', async () => {
     const { model } = mount(true, true);
     const preview = `${'x'.repeat(2000)}\n\n[Document preview truncated]`;
