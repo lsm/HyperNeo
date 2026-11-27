@@ -96,6 +96,27 @@ describe('NeoGoals', () => {
       expect(screen.getByText(text)).toBeTruthy();
     expect(container.querySelector('time')?.dateTime).toBe(new Date(at).toISOString());
   });
+  it('shows the next wake of a goal that runs in its own child session', async () => {
+    goals = [{ ...goal, id: 'own', ownerSessionId: 'child', title: 'Parental control' }];
+    request.mockImplementation(async (_method, { name, input }) => {
+      if (name === 'goal.session.list') return { accepted: true, goals };
+      if (name === 'schedule.session.list')
+        return {
+          ok: true,
+          schedules:
+            input.target.id === 'child'
+              ? [{ sourceKind: 'goal', sourceId: 'own', status: 'active', nextRunAt: at }]
+              : [],
+        };
+      if (name === 'goal.journal.list') return { accepted: true, entries: [] };
+      throw new Error(`Unexpected operation ${name}`);
+    });
+    const { container } = render(<NeoGoals sessionId="root" />);
+    await screen.findByText('Parental control');
+    await waitFor(() =>
+      expect(container.querySelector('time')?.dateTime).toBe(new Date(at).toISOString())
+    );
+  });
   it('opens scoped details with the explicit control and closes them again', async () => {
     render(<NeoGoals sessionId="root" />);
     await screen.findByText(effect);
