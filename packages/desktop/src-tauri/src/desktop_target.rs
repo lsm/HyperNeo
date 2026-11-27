@@ -152,7 +152,7 @@ fn signer(code: *const c_void) -> Result<Signer, &'static str> {
                     .map(|value| CFType::wrap_under_get_rule(*value))
             });
         match string(bundle) {
-            Some(bundle) if bundle == identifier => {}
+            Some(bundle) if bundle.eq_ignore_ascii_case(&identifier) => {}
             Some(_) => return Err("target_mismatch"),
             None => return Err("target_unverified"),
         }
@@ -186,8 +186,9 @@ pub(super) fn matches_app(path: &str, bundle_id: &str, requirement: &str) -> boo
     };
     let anchor = SecRequirement::from_str(ANCHOR).expect("valid anchor requirement");
     code.check_validity(Flags::STRICT_VALIDATE, &anchor).is_ok()
-        && signer(code.as_concrete_TypeRef() as _)
-            .is_ok_and(|signer| signer.bundle_id == bundle_id && signer.requirement == requirement)
+        && signer(code.as_concrete_TypeRef() as _).is_ok_and(|signer| {
+            signer.bundle_id.eq_ignore_ascii_case(bundle_id) && signer.requirement == requirement
+        })
 }
 
 fn owner(window: u32) -> Option<i32> {
@@ -257,7 +258,7 @@ pub(super) fn resolve(tool: &str, arguments: &Value, instance: Option<&Value>) -
             return refuse("target_unverified");
         };
         let signer = match signer(code.as_concrete_TypeRef() as _) {
-            Ok(signer) if signer.bundle_id == bundle => signer,
+            Ok(signer) if signer.bundle_id.eq_ignore_ascii_case(bundle) => signer,
             Ok(_) => return refuse("target_mismatch"),
             Err(reason) => return refuse(reason),
         };
@@ -323,10 +324,10 @@ pub(super) fn resolve(tool: &str, arguments: &Value, instance: Option<&Value>) -
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn launch_resolves_mixed_case_bundle_id_to_signed_identity() {
+        use super::{json, resolve};
+
         let canonical = resolve(
             "launch_app",
             &json!({"bundle_id": "com.apple.calculator"}),

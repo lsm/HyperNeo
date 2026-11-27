@@ -1302,8 +1302,9 @@ open(sys.argv[2], 'w').write(reply.decode())
                               workDir=str(self.work))['result']
         self.assertEqual((reply['decision'], reply['dispatched'], reply['bundle_id']),
                          ('allowed', True, canonical), reply)
+        self.assertIsNone(reply['reason'], reply)
         entry = next(self.work.glob('log-d-*')).read_text().splitlines()[-1]
-        self.assertEqual(entry, 'call launch_app ' + json.dumps({'bundle_id': mixed_case}))
+        self.assertEqual(entry, 'call launch_app ' + json.dumps({'bundle_id': canonical}))
         print(f'launch_approved=1 other_app_refused=1 canonical_bundle_id={canonical}')
 
     def test_second_worker_waits_for_a_held_window_until_the_holder_stops(self):

@@ -712,7 +712,7 @@ impl Drivers {
                 request
                     .apps
                     .as_ref()
-                    .is_some_and(|apps| apps.iter().any(|app| app == id))
+                    .is_some_and(|apps| apps.iter().any(|app| app.eq_ignore_ascii_case(id)))
             });
             let reason = if let Some(reason) = resolved["reason"].as_str() {
                 json!(reason)
@@ -995,12 +995,15 @@ impl Drivers {
                         )));
                     };
                     let active = worker.as_mut().unwrap();
+                    let mut arguments = request.arguments.clone();
+                    if let Some(arguments) = arguments.as_mut().filter(|_| class == "launch") {
+                        arguments["bundle_id"] = bundle.clone();
+                    }
                     let call = timeout_at(
                         deadline.min(Instant::now() + limit),
-                        active.channel.call(
-                            request.tool.as_deref().unwrap_or_default(),
-                            request.arguments.clone(),
-                        ),
+                        active
+                            .channel
+                            .call(request.tool.as_deref().unwrap_or_default(), arguments),
                     )
                     .await;
                     let sent = active.channel.sent;
