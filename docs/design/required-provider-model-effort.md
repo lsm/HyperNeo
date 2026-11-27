@@ -2,7 +2,7 @@
 
 ## 中文摘要
 
-范围：Neo 工具能调用的派发入口，共 5 个——`neo.todo.add` 与 `neo.todo.edit` 的 start/send 目标、`work.start`（含空闲工人复用与远程启动）、派发新 todo 工作的 `work.send`、编码包 `neo.coding.assign` 的目标。判断标准：`packages/prompts/src/neo/tools` 里有对应工具；`neo.todo.retarget`/`neo.todo.continue` 只按已存储的 target 重新派发，不算新入口；Space、界面建会话、Neo 自身会话、目标会话、克隆、直接任务都不在 Neo 工具列表里，出范围。规则：每个入口必须显式给出 provider、model、effort，缺一项由纯函数（superpipe 管线）在派发前拒绝。可配置适配器回执标 confirmed：HyperNeo 取查询层每轮实际发送值，记录（思考等级，发送的 effort）二元组并按等级比对——level→effort 映射有损（think48k 与 think64k 都发 max），只记 effort 无法区分；Copilot 代理记 fit 后的值，fit 省略时记 omitted (support unknown)，永不算 confirmed、永不记 off。Claude Desktop/Cursor 无法应用也无法预读生效值，照常启动，回执写 requested …, effective unknown，复用与新任务 send 按已记录的请求等级匹配并标 unverified。编码审查的评审模型连续性改为候选排序优先匹配上一轮评审的三元组，不再用覆盖。切片：Build、Wire（start+复用 / send+todo 准入 / 编码+远程）、Delete，各带行数估算。不做自动选型引擎。
+范围：Neo 工具能调用的派发入口，共 6 个——`neo.todo.add` 与 `neo.todo.edit` 的 start/send 目标、`work.start`（含空闲工人复用与远程启动）、派发新 todo 工作的 `work.send` 与 `work.queue`、编码包 `neo.coding.assign` 的目标。门槛只作用于 Neo 身份的调用（caller.role === 'neo'，todo runner 内部派发也是这个身份）；其他 MCP 代理与 checkPlan 计划检查保持现状。总结：6 个入口。判断标准：`packages/prompts/src/neo/tools` 里有对应工具；`neo.todo.retarget`/`neo.todo.continue` 只按已存储的 target 重新派发，不算新入口；Space、界面建会话、Neo 自身会话、目标会话、克隆、直接任务都不在 Neo 工具列表里，出范围。规则：每个入口必须显式给出 provider、model、effort，缺一项由纯函数（superpipe 管线）在派发前拒绝。可配置适配器回执标 confirmed：HyperNeo 取查询层每轮实际发送值，记录（思考等级，发送的 effort）二元组并按等级比对——level→effort 映射有损（think48k 与 think64k 都发 max），只记 effort 无法区分；Copilot 代理记 fit 后的值，fit 省略时记 omitted (support unknown)，永不算 confirmed、永不记 off。Claude Desktop/Cursor 无法应用也无法预读生效值，照常启动，回执写 requested …, effective unknown，复用与新任务 send 按已记录的请求等级匹配并标 unverified。编码审查的评审模型连续性改为候选排序优先匹配上一轮评审的三元组，不再用覆盖。切片：Build、Wire（start+复用 / send+todo 准入 / 编码+远程）、Delete，各带行数估算。不做自动选型引擎。
 
 Status: proposed. Investigation base: `50e22151753673c39998bacd3056aad0ba059c29`
 (`origin/dev`, 2026-11-27). Source references are repository-relative `file:line`
@@ -44,6 +44,7 @@ replies) inherit the recorded identity and need no check.
 | Worker reuse inside `work.start` | `work-operations.ts:811` (`reuseIdleWorker`), `:796` (`matchesRequested`) | Configuration is resolved only when `model` or `effort` was requested (`:896`); with neither, any recorded worker identity is accepted (`:1016`, `:1135`). Desktop worker templates strip model and provider (`:841`, `:901`); the reuse guards key on the `resolveStartConfiguration` hook (`:826`, `:895-897`); a mismatched worker is reconfigured in place and matched on the read-back with no turn in between (`:1016-1027`). |
 | Remote daemon start | `work-operations.ts:614` (`admitRemoteStartModel`), `:625` (`admitStartEffort`), `:699` (`admitRemoteCopilotStart`) | A forwarded start refuses any explicit model or effort unless the Copilot-client handshake marked the route `verifiedCopilotStart` (`:727`), so a remote start must omit the model entirely. |
 | `work.send` assigning new todo work | `work-operations.ts:1394` (`runSendWork`), input `:245`; `NeoSendWorkTarget` `driver-work.ts:69` | No identity fields at all: any open session, including legacy sessions with no recorded triple, can receive new todo work — a bypass of every start gate. |
+| `work.queue` assigning new todo work | `work-operations.ts:1509` (`runQueueWork`), same `SendWorkInputSchema` (`:1725`), Neo-discoverable (`packages/daemon/src/lib/operations/neo-discovery.ts:96`), tool prompt `work.queue.md` | A separate Neo-exposed pipeline that queues a message to any open ref with the same todoId semantics and no identity check — the same bypass as `work.send`. |
 | Coding pack assign and write plan | `packages/daemon/src/lib/neo/packs/coding/assign-operation.ts:228`, `assignments.ts:48` | Candidates are `CodingStageTarget`, model and effort optional (`stage-preferences.ts:9`); the start call overrides the selected candidate's model with the previous reviewer's (`assign-operation.ts:233`), and the fallback retry (`:269`) may land on a candidate carrying no identity. |
 
 ## Per-adapter identity mapping
@@ -240,8 +241,12 @@ compares the recorded triple against the todo target.
   start with `unsupported_effort` before the new gate ran, leaving the
   declared receipt path unreachable; its remote branch keys on
   `verifiedCopilotStart` (`:627`). Both refusal roles are subsumed by the new
-  gate's per-adapter facts. Until the coding-and-remote slice lands, this gate
-  step applies to local routes only: `admitRemoteStartModel` (`:614-623`)
+  gate's per-adapter facts. The step is keyed on `caller.role === 'neo'` — the
+  identity the todo runner also dispatches under (`driver-work.ts:174`) — so
+  non-Neo agent callers of `work.start` (MCP agents and daemon devices) and
+  `checkPlan: true` plan checks, which dispatch no worker, keep today's
+  behavior, matching this design's scope. Until the coding-and-remote slice
+  lands, this gate step applies to local routes only: `admitRemoteStartModel` (`:614-623`)
   refuses any explicit model on a remote route without `verifiedCopilotStart`,
   so requiring the triple on remote starts earlier would make every remote
   start impossible in between — remote-routed starts keep today's admission
@@ -280,12 +285,14 @@ compares the recorded triple against the todo target.
   validation to dispatch, where the owning daemon's gate is authoritative.
   `neo.todo.retarget` and `neo.todo.continue` need no admission of their own:
   they re-dispatch only the stored target this admission already validated.
-- New todo work sent to an existing session (`work.send` naming a todo the
-  worker is not already running) carries the identity too:
-  `SendWorkInputSchema` (`work-operations.ts:245`) and `NeoSendWorkTarget`
-  (`driver-work.ts:69`) gain the same optional `provider`/`model`/`effort`
-  fields, required exactly when the send assigns new todo work, and the same
-  gate checks them against the target's recorded values — the confirmed triple
+- New todo work sent to an existing session (`work.send` or `work.queue`
+  naming a todo the worker is not already running) carries the identity too:
+  `SendWorkInputSchema` (`work-operations.ts:245`) — shared by both pipelines
+  (`:1725`) — and `NeoSendWorkTarget` (`driver-work.ts:69`) gain the same
+  optional `provider`/`model`/`effort` fields, required exactly when the send
+  or queue assigns new todo work, and the same gate, wired into both
+  `runSendWork` (`:1394`) and `runQueueWork` (`:1509`), checks them against
+  the target's recorded values — the confirmed triple
   for a configurable-adapter session, the recorded requested triple (labeled
   `unverified`) for `claude-desktop`/`cursor`. A missing triple or a mismatch
   refuses `identity_required` and Neo starts a fresh worker. A
@@ -341,7 +348,8 @@ compares the recorded triple against the todo target.
   optional only where the adapter fixes or derives it; model and effort are
   required for every adapter, enforced where the adapter can and receipted
   `effective unknown` where it cannot. A send target that assigns new todo
-  work names the same triple, in both tools.
+  work names the same triple, in both tools; `work.queue.md` and
+  `work.send.md` state the same rule for direct sends and queues.
 - `packages/prompts/src/neo/tools/neo.coding.assign.md`: candidates name the
   full triple; continuity with the previous reviewer is expressed by
   candidate ordering.
@@ -380,13 +388,14 @@ holds per door from the moment its slice merges.
    executed identity on every turn (`query-options-builder.ts` plus the
    session facts write, ~35), and the receipt label plumbing through
    `recordStarted` (`work-operations.ts:752`, ~20).
-3. **Wire: send and todo admission** (contract: new-todo sends and local
-   todo targets pass the gate; remote todo targets keep today's admission
-   until slice 4, matching the start gate's staging; ≈80 production lines):
-   the `SendWorkInputSchema`/`NeoSendWorkTarget` identity fields
-   (`work-operations.ts:245`, `driver-work.ts:69`, ~10), the new-todo send
-   check in `runSendWork` (`:1394`, ~30), and `neo.todo.add`/`neo.todo.edit`
-   admission for local targets (`todo-operations.ts`, ~40).
+3. **Wire: send, queue and todo admission** (contract: new-todo sends,
+   queues and local todo targets pass the gate; remote todo targets keep
+   today's admission until slice 4, matching the start gate's staging; ≈95
+   production lines): the `SendWorkInputSchema`/`NeoSendWorkTarget` identity
+   fields (`work-operations.ts:245`, `driver-work.ts:69`, ~10), the new-todo
+   identity check wired into `runSendWork` and `runQueueWork` (`:1394`,
+   `:1509`, ~45), and `neo.todo.add`/`neo.todo.edit` admission for local
+   targets (`todo-operations.ts`, ~40).
 4. **Wire: coding pack and remote** (contract: coding candidates,
    remote-routed starts and remote todo targets pass the gate; ≈105
    production lines): required
