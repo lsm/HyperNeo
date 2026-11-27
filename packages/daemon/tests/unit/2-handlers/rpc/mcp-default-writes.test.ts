@@ -26,6 +26,7 @@ let overrides: McpEnablementRepository;
 let spaces: SpaceRepository;
 let sessions: SessionRepository;
 let handlers: Map<string, (data: unknown) => unknown>;
+let facade: Facade;
 let publish: ReturnType<typeof mock>;
 const selection = (selected = false) => ({
   version: 1,
@@ -66,7 +67,7 @@ beforeEach(() => {
     ...createTestSession('frozen'),
     config: { ...createTestSession('frozen').config, toolSelection: selection() },
   });
-  const facade = {
+  facade = {
     gateway,
     appMcpServers: registry,
     mcpEnablement: overrides,
@@ -105,7 +106,7 @@ describe('MCP default RPC writes', () => {
       expect(sessions.getSession('frozen')!.config.toolSelection).toEqual(selection());
     }
   );
-  it('refuses to delete an OAuth row and keeps it', async () => {
+  it('refuses to delete an OAuth row without the remove operation and keeps it', async () => {
     const server = registry.create({
       name: 'remote',
       sourceType: 'http',
@@ -116,6 +117,28 @@ describe('MCP default RPC writes', () => {
       'disconnect it first'
     );
     expect(registry.get(server.id)).not.toBeNull();
+  });
+  it('routes an OAuth row delete to the remove operation and reports its refusal', async () => {
+    const server = registry.create({
+      name: 'remote',
+      sourceType: 'http',
+      url: 'https://mcp.example.test/mcp',
+    });
+    registry.setAuth(server.id, { kind: 'oauth', preset: 'test', generation: 1, active: false });
+    const routed = new Map<string, (data: unknown, context?: unknown) => unknown>();
+    const replies = [{ ok: false, reason: 'request_failed' }, { ok: true }];
+    const invoke = mock(async (_request: { name: string; input: unknown }) => replies.shift());
+    registerAppMcpHandlers(
+      { onRequest: (method: string, handler: never) => routed.set(method, handler) } as never,
+      { db: facade, internalEventBus: { publish } as never, invoke: invoke as never }
+    );
+    const remove = () => Promise.resolve(routed.get('mcp.registry.delete')!({ id: server.id }));
+    await expect(remove()).rejects.toThrow('request_failed');
+    expect(await remove()).toEqual({ success: true });
+    expect(invoke.mock.calls.map(([request]) => request)).toEqual([
+      { name: 'mcp.registry.remove', input: { id: server.id } },
+      { name: 'mcp.registry.remove', input: { id: server.id } },
+    ]);
   });
   it('creates and deletes matching default choices', async () => {
     const { server } = (await call('mcp.registry.create', {
