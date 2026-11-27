@@ -19,6 +19,7 @@ import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/loca
 
 const run = resolve(process.argv.at(-1)!);
 const collapse = process.argv.includes('--collapse');
+const longBrief = process.argv.includes('--long-brief');
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -210,11 +211,18 @@ try {
     name: 'neo.question.answer', input: { questionId: card.id, answer: 'yes' },
   });
   assert(answered.ok, JSON.stringify(answered));
+  if (longBrief) {
+    const updated = await hub.request<{ ok: boolean }>('operation.invoke', {
+      name: 'pack.preferences.set',
+      input: { pack: 'delegation', scope: { kind: 'global', key: '' }, key: 'payment', value: 'fillStop' },
+    });
+    assert(updated.ok, JSON.stringify(updated));
+  }
   secretObservation = true;
   const added = await fromNeo('neo.todo.add', {
     askId: opened.ask.id, title: 'Identify the Calculator window', after: [],
     check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'evidence', 'complete') } },
-    instruction,
+    instruction: longBrief ? instruction + '\n\n' + 'Check the displayed value. '.repeat(1_000) : instruction,
     target: { verb: 'start', adapter: 'hyperneo', ...modelConfig, place: { machine: hostname(), folder: run, name: 'Synthetic workspace' } },
     desktopApps: [bundleId],
   });
@@ -257,6 +265,18 @@ try {
     taskBrief: JSON.parse(outbound.brief),
   };
   writeFileSync(join(run, 'evidence/desktop-worker-inventory.json'), JSON.stringify(inventory, null, 2));
+  if (longBrief) {
+    const task = inventory.taskBrief.find(({ role }: { role: string }) => role === 'user');
+    const brief = task.content.map(({ text }: { text?: string }) => text ?? '').join('\n');
+    const data = brief.split('Delegation preferences (data):\n')[1]?.split('\n')[0];
+    assert(data, 'Long desktop task brief lost the delegation preferences');
+    const preferences = JSON.parse(data);
+    assert.equal(Object.keys(preferences).length, 6);
+    assert.deepEqual(preferences.payment, { value: 'fillStop', configured: true });
+    assert.deepEqual(preferences.humanStep, { value: 'computer', configured: false });
+    assert(brief.includes('Check the displayed value.'));
+    console.log(`long desktop brief PASS preferences=${Object.keys(preferences).length}`);
+  }
   const expectedDesktopTools = ['report', ...catalog.map(({ name }) => name)]
     .map(name => 'mcp__desktop__' + name).sort();
   assert.deepEqual([...outbound.tools].sort(), expectedDesktopTools);
