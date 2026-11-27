@@ -1,26 +1,6 @@
 import type { NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoTodoPack } from './pack-contract.ts';
 
-type Step = Pick<NeoTodo, 'id' | 'title' | 'state' | 'producesFollowUp' | 'dependsOn'>;
-
-export function neoTodoWithoutFollowUp<T extends Step>(todos: readonly T[]): T | null {
-  return (
-    todos.find(
-      (todo) =>
-        todo.producesFollowUp &&
-        todo.state === 'done' &&
-        !todos.some((other) => other.state !== 'removed' && other.dependsOn?.includes(todo.id))
-    ) ?? null
-  );
-}
-
-export function neoTodoFollowUpRefusal(todos: readonly Step[]): string | null {
-  const gap = neoTodoWithoutFollowUp(todos);
-  return gap
-    ? `follow_up_missing: todo "${gap.title}" (${gap.id}) produces follow-up work and no todo follows it. Add each follow-up with neo.todo.add after:["${gap.id}"] (unstarted is fine) before settling done, or settle dropped.`
-    : null;
-}
-
 export const NEO_PLAN_SIGNOFF = 'plan-signoff';
 
 type PlanFacts = {
@@ -104,7 +84,10 @@ export function neoPlanRefusal(
   { todo, plan, steps, cards }: PlanFacts,
   through: 'steps' | 'check' | 'signoff' = 'signoff'
 ): string | null {
-  if (!plan) return steps.length ? null : neoTodoFollowUpRefusal([todo]);
+  if (!plan) {
+    if (steps.length || !todo.producesFollowUp || todo.state !== 'done') return null;
+    return `follow_up_missing: todo "${todo.title}" (${todo.id}) produces follow-up work and no todo follows it. Add each follow-up with neo.todo.add after:["${todo.id}"] (unstarted is fine) before settling done, or settle dropped.`;
+  }
   if (!steps.length) return 'plan_steps_missing: Add the plan steps as dependent todos.';
   if (through === 'steps' || todo.state === 'done') return null;
   if (!currentPlanCheck(todo, steps)) return 'plan_check_missing: Check the current plan steps.';

@@ -48,7 +48,7 @@ codesign --force --sign "$identity" ${keychain_args[@]+"${keychain_args[@]}"} \
     --timestamp --options runtime --identifier cua-driver \
     --entitlements src-tauri/CuaDriverEntitlements.plist src-tauri/binaries/cua-driver
 codesign --force --sign "$identity" ${keychain_args[@]+"${keychain_args[@]}"} \
-    --timestamp --options runtime --identifier io.hyperneo.locked-use src-tauri/binaries/hyperneo-locked-use
+    --timestamp --options runtime --identifier io.hyperneo.locked-use "src-tauri/binaries/HyperNeo Locked Use.app"
 codesign --force --sign "$identity" ${keychain_args[@]+"${keychain_args[@]}"} \
     --timestamp --options runtime src-tauri/binaries/HyperNeoLockedUse.bundle
 

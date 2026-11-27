@@ -104,7 +104,12 @@ const DriverReplySchema = z.discriminatedUnion('ok', [
     ok: z.literal(true),
     value: z.union([z.object({ ref: WorkRefSchema }).passthrough(), WorkDeliverySchema]),
   }),
-  z.object({ ok: z.literal(false), reason: z.string(), detail: z.string() }),
+  z.object({
+    ok: z.literal(false),
+    reason: z.string(),
+    detail: z.string(),
+    clientMessageId: z.string().min(1).optional(),
+  }),
 ]);
 
 export function withWorkGoal(
@@ -182,12 +187,16 @@ export function readDriverOutcome(
       receipt?: WorkDelivery['receipt'];
       delivery?: WorkDelivery;
     }
-  | { failure: string; reason?: string } {
+  | { failure: string; reason?: string; clientMessageId?: string } {
   if (outcome.kind === 'failed') return { failure: outcome.message };
   const reply = DriverReplySchema.safeParse(outcome.value);
   if (!reply.success) return { failure: 'The work operation returned an unusable reply.' };
   if (!reply.data.ok)
-    return { failure: `${reply.data.reason}: ${reply.data.detail}`, reason: reply.data.reason };
+    return {
+      failure: `${reply.data.reason}: ${reply.data.detail}`,
+      reason: reply.data.reason,
+      ...(reply.data.clientMessageId ? { clientMessageId: reply.data.clientMessageId } : {}),
+    };
   if ('ref' in reply.data.value) {
     const { ref, link, model, effort, lastActivityAt, receipt, status, watchHint, startedTurnId } =
       reply.data.value as {

@@ -167,7 +167,11 @@ async function openCodexDesktopOwner(
 }
 
 function uncertainDesktopInput(messageId: string, detail: string): Rejected {
-  return { ...reject('not_delivered', detail), uncertainDesktopInputId: messageId };
+  return {
+    ...reject('not_delivered', detail),
+    uncertainDesktopInputId: messageId,
+    clientMessageId: messageId,
+  };
 }
 
 const desktopSends = new Map<string, Promise<void>>();
@@ -376,7 +380,12 @@ async function sendDesktopTurn(
         );
         const startedTurnId = started.result?.result?.turn?.id;
         return started.resultType === 'success' && startedTurnId
-          ? { reason: { ok: true, value: { delivered: true, startedTurnId } } }
+          ? {
+              reason: {
+                ok: true,
+                value: { delivered: true, startedTurnId, clientMessageId: messageId },
+              },
+            }
           : {
               reason: uncertainDesktopInput(
                 messageId,

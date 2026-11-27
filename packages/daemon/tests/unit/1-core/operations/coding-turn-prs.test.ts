@@ -8,6 +8,10 @@ import {
 import { codingTurnSessionKey } from '../../../../src/lib/neo/packs/coding/turn-owner.ts';
 import { CodingTurnPrRepository } from '../../../../src/lib/neo/packs/coding/turn-prs.ts';
 import { readDriverOutcome } from '../../../../src/lib/neo/driver-work.ts';
+import { readCodexTurnFacts } from '../../../../src/lib/drivers/codex-turn-reader.ts';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   recordWorkTurns,
   WorkTurnRepository,
@@ -172,6 +176,82 @@ describe('coding turn PRs', () => {
     ).run(JSON.stringify(outcome));
     record(fact('t-open', [], [url], 100), fact('t-later', [], [url], 200));
     expect(new CodingTurnPrRepository(db).own('a').map(({ id }) => id)).toEqual(['t-open']);
+    db.close();
+  });
+
+  test('queued Codex sends give their todos by the client id of the turn they ran in', async () => {
+    const { db } = setup();
+    const dir = mkdtempSync(join(tmpdir(), 'codex-queued-'));
+    const rollout = join(dir, 'rollout.jsonl');
+    const at = (second: number) => `2026-11-27T04:00:${String(second).padStart(2, '0')}.000Z`;
+    const event = (second: number, payload: object) =>
+      JSON.stringify({ timestamp: at(second), type: 'event_msg', payload });
+    const user = (second: number, id: string, text: string) =>
+      JSON.stringify({
+        timestamp: at(second),
+        type: 'response_item',
+        payload: { type: 'message', id, role: 'user', content: [{ type: 'input_text', text }] },
+      });
+    const ran = (second: number, turn: string, clientId: string, text: string) =>
+      event(second, {
+        type: 'item_completed',
+        thread_id: 'thread',
+        turn_id: turn,
+        item: {
+          type: 'UserMessage',
+          id: `item-${second}`,
+          client_id: clientId,
+          content: [{ type: 'text', text, text_elements: [] }],
+        },
+      });
+    writeFileSync(
+      rollout,
+      `${[
+        event(1, { type: 'task_started', turn_id: 'turn-a' }),
+        user(2, 'msg_a', 'first queued'),
+        ran(3, 'turn-a', 'client-a', 'first queued'),
+        event(4, { type: 'task_complete', turn_id: 'turn-a', last_agent_message: url }),
+        event(5, { type: 'task_started', turn_id: 'turn-b' }),
+        user(6, 'msg_b', 'second queued'),
+        ran(7, 'turn-b', 'client-b', 'second queued'),
+        event(8, { type: 'task_complete', turn_id: 'turn-b', last_agent_message: url }),
+      ].join('\n')}\n`
+    );
+    const codex = { adapter: 'codex-desktop', id: 'thread' };
+    const queue = (id: string, todoId: string, clientMessageId: string) =>
+      db
+        .prepare(
+          `INSERT INTO work_delivery_inputs
+            (id, todo_id, origin_session_id, target, message, accepted_at, deadline_at, outcome)
+           VALUES (?, ?, 'neo', '{}', 'work', 1, 2, ?)`
+        )
+        .run(
+          id,
+          todoId,
+          JSON.stringify(
+            readDriverOutcome(
+              { verb: 'send', ref: codex },
+              {
+                kind: 'completed',
+                value: {
+                  ok: true,
+                  value: { delivered: false, queuedSubmissionId: `q-${id}`, clientMessageId },
+                },
+              }
+            )
+          )
+        );
+    queue('d1', 'a', 'client-a');
+    queue('d2', 'b', 'client-b');
+    recordWorkTurns.run(
+      db,
+      { ref: codex, turns: await readCodexTurnFacts(rollout) },
+      undefined as never
+    );
+    const turns = new CodingTurnPrRepository(db);
+    expect(turns.own('a').map(({ id }) => id)).toEqual(['turn-a']);
+    expect(turns.own('b').map(({ id }) => id)).toEqual(['turn-b']);
+    rmSync(dir, { recursive: true, force: true });
     db.close();
   });
 

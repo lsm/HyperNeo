@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import {
   NEO_PLAN_SIGNOFF,
+  neoAskPlanGap,
   neoPlanCheckBrief,
   neoPlanFacts,
   neoPlanRefusal,
-  neoTodoFollowUpRefusal,
 } from '../../../../src/lib/neo/todo-follow-up.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -35,24 +35,28 @@ function setup() {
   return { store, ask, plan };
 }
 
-describe('neoTodoFollowUpRefusal', () => {
-  test('refuses while the marked todo is done and last, and a removed later todo does not count', () => {
+describe('neoAskPlanGap', () => {
+  test('refuses while the marked todo is done and last, and a removed later todo does not count', async () => {
     const h = setup();
     h.store.updateTodo(h.plan, { state: 'done' }, 2);
     expect(h.store.getTodo('todo-plan')?.producesFollowUp).toBe(true);
-    expect(neoTodoFollowUpRefusal(h.store.listTodos(h.ask.id))).toContain('follow_up_missing');
+    expect((await neoAskPlanGap(h.ask.id, h.store.listTodos(h.ask.id), []))?.reason).toContain(
+      'follow_up_missing'
+    );
     const later = h.store.addTodo(
       'todo-build',
       h.ask.id,
       { ...draft, title: 'Build it', dependsOn: [h.plan.id] },
       3
     );
-    expect(neoTodoFollowUpRefusal(h.store.listTodos(h.ask.id))).toBeNull();
+    expect(await neoAskPlanGap(h.ask.id, h.store.listTodos(h.ask.id), [])).toBeNull();
     h.store.updateTodo(later, { state: 'removed', reason: 'dropped' }, 4);
-    expect(neoTodoFollowUpRefusal(h.store.listTodos(h.ask.id))).toContain('follow_up_missing');
+    expect((await neoAskPlanGap(h.ask.id, h.store.listTodos(h.ask.id), []))?.reason).toContain(
+      'follow_up_missing'
+    );
   });
 
-  test('refuses when an unrelated later todo hides a removed follow-up', () => {
+  test('refuses when an unrelated later todo hides a removed follow-up', async () => {
     const h = setup();
     h.store.updateTodo(h.plan, { state: 'done' }, 2);
     const followUp = h.store.addTodo(
@@ -63,10 +67,12 @@ describe('neoTodoFollowUpRefusal', () => {
     );
     h.store.updateTodo(followUp, { state: 'removed', reason: 'dropped' }, 4);
     h.store.addTodo('todo-other', h.ask.id, { ...draft, title: 'Other work', dependsOn: [] }, 5);
-    expect(neoTodoFollowUpRefusal(h.store.listTodos(h.ask.id))).toContain('follow_up_missing');
+    expect((await neoAskPlanGap(h.ask.id, h.store.listTodos(h.ask.id), []))?.reason).toContain(
+      'follow_up_missing'
+    );
   });
 
-  test('requires a dependent for every completed producer', () => {
+  test('requires a dependent for every completed producer', async () => {
     const h = setup();
     h.store.updateTodo(h.plan, { state: 'done' }, 2);
     const next = h.store.addTodo(
@@ -76,14 +82,16 @@ describe('neoTodoFollowUpRefusal', () => {
       3
     );
     h.store.updateTodo(next, { state: 'done' }, 4);
-    expect(neoTodoFollowUpRefusal(h.store.listTodos(h.ask.id))).toContain('todo-next');
+    expect((await neoAskPlanGap(h.ask.id, h.store.listTodos(h.ask.id), []))?.reason).toContain(
+      'todo-next'
+    );
     h.store.addTodo(
       'todo-build',
       h.ask.id,
       { ...draft, title: 'Build it', dependsOn: [next.id] },
       5
     );
-    expect(neoTodoFollowUpRefusal(h.store.listTodos(h.ask.id))).toBeNull();
+    expect(await neoAskPlanGap(h.ask.id, h.store.listTodos(h.ask.id), [])).toBeNull();
   });
 });
 
