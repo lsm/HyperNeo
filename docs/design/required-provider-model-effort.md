@@ -90,13 +90,16 @@ starts that need identity, rather than growing a confirmation layer.
 | `codex-desktop` | Fixed: the Codex account | Required; resolved against the `model/list` catalog and confirmed applied (`codex-start-configuration.ts:46`, `codex-desktop-adapter.ts:1699`) | Required; resolved against the selected model's supported efforts |
 | `copilot-cli` / Copilot desktop | Fixed: GitHub Copilot | Required already (`copilot-adapter.ts:115`) | Required (`copilot-adapter.ts:637`; desktop capability `copilot-desktop-adapter.ts:155`) |
 | `antigravity` | Fixed: the Antigravity account | Required; validated against the opened session's options and applied before the first turn, the session closed on refusal (`antigravity-start.ts:220-233`, `antigravity-configuration.ts:56-82`) | Required (`antigravity-adapter.ts:180`) |
-| `claude-desktop` | Fixed: Anthropic | Not settable — explicit overrides keep refusing `unsupported_model` (`claude-desktop-adapter.ts:1487`). The adapter reads the app's configured model before dispatch and reports it as a declared value; if no such read exists, the start refuses `identity_required` | Same rule as model. The transcript observer is corroboration only: it runs after the first turn and can observe neither field (`claude-runtime-identity.ts:18-27`) |
-| `cursor` | Fixed: the Cursor account | Same rule as `claude-desktop`: a pre-dispatch read of the CLI configuration, or refusal (`cursor-start.ts` has no model/effort parameters today) | Same as model |
+| `claude-desktop` | Fixed: Anthropic | Not settable — explicit overrides keep refusing `unsupported_model` (`claude-desktop-adapter.ts:1487`). No pre-dispatch configuration read exists today (the transcript observer is post-turn and can observe neither field, `claude-runtime-identity.ts:18-27`), so from the dispatch slice these starts refuse `identity_required` — intended interim behavior, stated in the prompt text, until a follow-up adds a `declaredRead` of the app's configuration | Same rule as model |
+| `cursor` | Fixed: the Cursor account | Same rule as `claude-desktop`: no pre-dispatch read exists (`cursor-start.ts` has no model/effort parameters today), so starts refuse `identity_required` until a follow-up adds one | Same as model |
 | Claude Code inbox / discovery-only adapters | Fixed per adapter | No start capability; nothing to validate | — |
 
-There is no “start now, confirm later”: a start either carries a fully
-determined triple before dispatch or it is refused. What differs per adapter
-is how truthful the receipt can be, which the receipt labels honestly.
+There is no “start now, decide later”: a start either carries a fully
+determined triple before dispatch or it is refused. Determination is
+pre-dispatch; the `confirmed` label attaches when the adapter's
+execution-building boundary has produced the values (for HyperNeo, the first
+turn's query options), and receipts distinguish the two states honestly in
+between.
 
 ## Design
 
@@ -154,21 +157,28 @@ therefore labels its source instead of promising actuals it cannot bind:
 
 - `confirmed`: the value observed at the boundary that builds execution, not
   a configuration echo. For HyperNeo sessions that boundary is the query
-  layer: the resolved thinking config and effort the query builder produces
-  for the dispatched turn (`query-options-builder.ts:875`) are recorded as the
-  session's executed identity, because the builder resolves provider effort
+  layer, and the recorded identity is what the builder actually sends, in the
+  provider's own vocabulary — never empty:
+  - granular thinking modes with published effort levels: the effort string
+    sent (`query-options-builder.ts:837-842`);
+  - budget modes (thinking mode `on`, including the kimi fixed-budget branch,
+    which always sends the `think16k` budget, `query-options-builder.ts:865-872`):
+    the thinking level whose budget config was sent, recorded under its
+    standard label;
+  - thinking mode `off`: the explicit value `off`.
+
+  This is the boundary because the builder resolves provider effort
   independently of session config (`query-options-builder.ts:830-842`) and a
   config read-back (`hyperneo-adapter.ts:719-729`) cannot prove what it sends
   — that gap is the trigger. With the gate making effort explicit, the
-  builder's level→effort mapping is deterministic and the recorded query-layer
-  value is what receipts report and reuse compares. For Codex, Copilot and
-  Antigravity the adapter's own configuration API is that boundary — the
-  existing `workStartConfiguration.confirm` shape
-  (`start-configuration.ts:102`) as used by the Codex path and Antigravity's
-  post-open option read-back (`antigravity-start.ts:222-229`) — so their
-  applied read-backs are confirmed. Only confirmed identities satisfy an
-  explicit request and only confirmed identities qualify a worker for reuse
-  matching.
+  builder's mapping is deterministic and the recorded query-layer value is
+  what receipts report and reuse compares. For Codex, Copilot and Antigravity
+  the adapter's own configuration API is that boundary — the existing
+  `workStartConfiguration.confirm` shape (`start-configuration.ts:102`) as
+  used by the Codex path and Antigravity's post-open option read-back
+  (`antigravity-start.ts:222-229`) — so their applied read-backs are
+  confirmed. Only confirmed identities satisfy an explicit request and only
+  confirmed identities qualify a worker for reuse matching.
 - `declared`: anything short of that boundary — a pre-dispatch configuration
   read on a non-configurable adapter, or a HyperNeo session's config values
   before its first turn's query options exist — recorded with its read time.
@@ -280,9 +290,11 @@ compares the recorded triple against the todo target.
 - `packages/prompts/src/neo/tools/work.start.md`: replace “Without model, a new
   HyperNeo session starts on the default model…” and the “Optional effort…”
   sentences with the required-triple rule, the `identity_required` refusal,
-  the per-adapter fixed-provider note, the confirmed/declared receipt labels
-  and the remote-start rule (explicit identity admitted when the remote
-  adapter advertises `configurable`).
+  the per-adapter fixed-provider note, the confirmed/declared receipt labels,
+  the remote-start rule (explicit identity admitted when the remote adapter
+  advertises `configurable`) and the interim notice that `claude-desktop` and
+  `cursor` starts refuse `identity_required` until a pre-dispatch
+  configuration read lands, so Neo plans work on configurable adapters.
 - `packages/prompts/src/neo/tools/neo.todo.add.md:8`: the start target shape
   becomes `{verb:start,adapter,model,effort,provider?,place?}` — provider
   optional only where the adapter fixes or derives it, model and effort
@@ -294,10 +306,14 @@ compares the recorded triple against the todo target.
 
 ## Slices
 
-Three merge contracts, each independently safe; no standalone pin slice —
+Four merge contracts following the repo's Pin/Build/Wire/Delete rungs —
+construction, wiring and deletion stay separate. No standalone pin slice:
 each wiring PR carries its own failing-then-passing assertions. Caller
 surfaces measured with `bun run system-map impact` at the investigation base;
-every slice stays within the repo's ~300 production-line budget.
+every slice stays within the repo's ~300 production-line budget. Each Wire
+gate refuses before any old fallback can run, so the invariant holds from the
+moment a gate merges; the now-unreachable fallback code is removed by the
+Delete rung, not by the Wire PRs.
 
 1. **Build** (contract: gate + declarations only; measured surface:
    `start-configuration.ts` 8 importers, `types.ts` 128 importers but the
@@ -306,27 +322,33 @@ every slice stays within the repo's ~300 production-line budget.
    label, per-adapter fact declarations including the `work.adapters` catalog
    fields. Exported and tested, not yet called; nothing observable changes.
 2. **Wire: work dispatch** (contract: every `work.start` path and every new
-   todo send requires confirmed identity and no fallback remains reachable
-   behind it; measured surface: `work-operations.ts` 36 importers,
-   `driver-work.ts` 15, `hyperneo-adapter.ts` 14, `drivers.ts` 3): the
-   pipeline step with triple write-back, the `work.send` new-todo identity
-   check, query-layer recording of the executed HyperNeo identity, deletion of
-   the desktop stripping carve-outs, `neo.todo.add` admission (local and
-   remote catalog), remote advertisement replacing the model/effort role of
+   todo send passes the gate; measured surface: `work-operations.ts` 36
+   importers, `driver-work.ts` 15, `hyperneo-adapter.ts` 14, `drivers.ts` 3):
+   the pipeline step with triple write-back, the `work.send` new-todo identity
+   check, query-layer recording of the executed HyperNeo identity,
+   `neo.todo.add` admission (local and remote catalog), remote advertisement
+   replacing the model/effort admission role of
    `admitRemoteStartModel`/`verifiedCopilotStart` while preserving Copilot
-   client validation, deletion of the `createDriverSession` fallbacks on this
-   path (`drivers.ts:242-244`, `:253-258`), and the prompt changes above.
-3. **Wire: session lifecycle** (contract: no creation door retains a default;
+   client validation, and the prompt changes above — including the notice
+   that `claude-desktop` and `cursor` starts refuse `identity_required` until
+   a `declaredRead` lands. Recorded merge-contract exception: removing the two
+   desktop stripping carve-outs (`work-operations.ts:841`, `:901`) rides this
+   Wire PR under the repo's few-line Build+Wire allowance, because the wire
+   cannot function for desktop-template workers while they strip the resolved
+   triple; it is two lines, not a deletion rung.
+3. **Wire: session lifecycle** (contract: every creation door passes the gate;
    measured surface: `session-lifecycle.ts` 3 importers, plus the web client
-   and space runtime call sites): the lifecycle gate, each door's named source
-   (UI clients, saved Neo and front preferences, goal/clone inheritance,
-   workflow slot admission, direct tasks), and in the same PR the deletions it
-   makes dead — the global thinking-level default (`session-lifecycle.ts:292`),
-   the new-session default-model chain for creation
-   (`new-session-model.ts:106-128`), the unsaved preference synthesis
-   (`model-preference.ts:77-89`) and the hard-coded long-horizon default
-   (`agent-session-config.ts:21`). Gate and fallback removal land together so
-   no fallback survives behind a merged gate.
+   and space runtime call sites): the lifecycle gate and each door's named
+   source (UI clients with quick create's explicit default or composer
+   fallback, saved Neo and front preferences, goal/clone inheritance,
+   workflow slot admission, direct tasks).
+4. **Delete** (removal only): the fallbacks the two gates made unreachable —
+   the `createDriverSession` newest-available retry and provider-only pick
+   (`drivers.ts:242-244`, `:253-258`), the global thinking-level default for
+   new sessions (`session-lifecycle.ts:292`), the new-session default-model
+   chain for creation (`new-session-model.ts:106-128`), the unsaved
+   preference synthesis (`model-preference.ts:77-89`) and the hard-coded
+   long-horizon default (`agent-session-config.ts:21`).
 
 ## Out of scope
 
