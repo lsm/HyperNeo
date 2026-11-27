@@ -2106,7 +2106,9 @@ describe('QueryOptionsBuilder', () => {
           baseUrl: 'http://127.0.0.1:8080',
           models: [{ id: 'bonsai', capabilities: namedEffort ? { namedEffort } : {} }],
         });
-      mockSession.config.provider = customProviderIdFor('local-llama') as Session['config']['provider'];
+      mockSession.config.provider = customProviderIdFor(
+        'local-llama'
+      ) as Session['config']['provider'];
       mockSession.config.model = 'bonsai';
       try {
         getProviderRegistry().register(endpoint(true));
