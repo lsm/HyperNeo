@@ -6,7 +6,7 @@ import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 
 const [port, directory, phase] = process.argv.slice(2);
-assert(port && port !== '8399' && directory && ['before', 'topic-before', 'layout-before', 'after', 'short-topics', 'late-reference'].includes(phase));
+assert(port && port !== '8399' && directory && ['before', 'topic-before', 'layout-before', 'after', 'short-topics', 'late-reference', 'waiting-only'].includes(phase));
 const run = resolve(directory);
 const evidence = join(run, 'evidence');
 const base = `http://127.0.0.1:${port}`;
@@ -58,6 +58,28 @@ async function checkLateReference(context) {
     await page.screenshot({ path: join(evidence, 'late-reference.png'), animations: 'disabled' });
     observations.push(result);
   }
+}
+async function checkWaitingOnly(context, theme) {
+  const page = await context.newPage();
+  page.setDefaultTimeout(15000);
+  await page.goto(`${base}/neo`);
+  const scenes = page.getByRole('region', { name: 'Work scenes' });
+  const queue = page.locator('[data-human-queue]');
+  await queue.locator('#neo-ref-question-hotel-card').getByRole('button', { name: 'Hold', exact: true }).waitFor();
+  const shown = async () => ({
+    sections: await scenes.locator('[data-scene-group]').evaluateAll((groups) => groups.map((group) => group.getAttribute('aria-label'))),
+    heldCard: await scenes.locator('#neo-ref-question-trip-card').count(),
+    uncoveredTodo: await scenes.getByText('Pack the bags', { exact: true }).count(),
+    finished: await scenes.getByText('Synthetic filed archive', { exact: true }).count(),
+  });
+  const waiting = await shown();
+  await page.screenshot({ path: join(evidence, `waiting-only-${theme}.png`), animations: 'disabled' });
+  await queue.getByRole('button', { name: /^In progress / }).click();
+  await queue.getByText('Pack the bags', { exact: true }).first().waitFor();
+  await scenes.getByText('Synthetic filed archive', { exact: true }).waitFor({ timeout: 5000 }).catch(() => {});
+  const progress = await shown();
+  await page.screenshot({ path: join(evidence, `waiting-only-progress-${theme}.png`), animations: 'disabled' });
+  observations.push({ theme, waiting, progress });
 }
 async function checkShortTopics(context, theme) {
   await context.addInitScript(() => {
@@ -149,6 +171,11 @@ try {
     await context.addInitScript((value) => localStorage.setItem('theme', value), theme);
     if (phase === 'late-reference') {
       await checkLateReference(context);
+      await context.close();
+      continue;
+    }
+    if (phase === 'waiting-only') {
+      await checkWaitingOnly(context, theme);
       await context.close();
       continue;
     }
@@ -328,9 +355,18 @@ if (phase === 'layout-before') {
   }
   assert.fail(`${observations.length} themes: extra header gap and a wrapping text More control`);
 }
+if (phase === 'waiting-only') {
+  const leaks = observations.filter(({ waiting }) =>
+    waiting.sections.length || waiting.heldCard || waiting.uncoveredTodo || waiting.finished);
+  assert.deepEqual(leaks, [], `Waiting on you lists work that is not waiting: ${JSON.stringify(leaks)}`);
+  for (const { progress } of observations) {
+    assert(progress.sections.includes('Recent outcomes'));
+    assert.equal(progress.finished, 1);
+  }
+}
 if (phase === 'topic-before') {
   for (const { savedTopic } of observations)
     assert.deepEqual(savedTopic, { state: 'In progress 1', badgeDisabled: false });
   assert.fail(`${observations.length} themes: the saved topic silently narrowed In progress to 1`);
 }
-console.log(`PASS: ${observations.length} themes, ${phase === 'late-reference' ? 'late queue reference selects Held and receives focus' : phase === 'short-topics' ? 'localized topic chips, overflow and grouped queue cards' : 'state and topic filters, Hold and Take back, and centered attachment hover'}`);
+console.log(`PASS: ${observations.length} themes, ${phase === 'late-reference' ? 'late queue reference selects Held and receives focus' : phase === 'waiting-only' ? 'Waiting on you lists only waiting cards; In progress keeps recent outcomes' : phase === 'short-topics' ? 'localized topic chips, overflow and grouped queue cards' : 'state and topic filters, Hold and Take back, and centered attachment hover'}`);

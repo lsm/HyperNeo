@@ -38,6 +38,7 @@ const tone = (on: boolean) =>
 
 export function NeoHumanQueue({
   queue,
+  onState,
   entries,
   disabled,
   onAnswer,
@@ -52,6 +53,7 @@ export function NeoHumanQueue({
   renderAsk,
 }: {
   queue: Queue;
+  onState?: (state: NeoHumanQueueState) => void;
   entries: readonly NeoAskEntry[];
   disabled?: boolean;
   onAnswer: (questionId: string, answer: NeoQuestionAnswer) => void;
@@ -66,6 +68,8 @@ export function NeoHumanQueue({
   renderAsk?: (entry: NeoAskEntry, refreshing?: boolean) => ComponentChildren;
 }) {
   const [state, setState] = useState<NeoHumanQueueState>('waiting');
+  useEffect(() => onState?.(state), [state]);
+  useEffect(() => () => onState?.('waiting'), []);
   const [topic, setTopic] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, NeoAskEntry>>({});
   const title = (id: string) => {
@@ -186,6 +190,20 @@ export function NeoHumanQueue({
         items: [item],
       });
   }
+  const inState = (entry: NeoAskEntry): NeoAskEntry => {
+    const own = items.filter((item) => item.askId === entry.ask.id);
+    return {
+      ...entry,
+      questions: entry.questions.filter((question) =>
+        own.some((item) => 'questionId' in item && item.questionId === question.id)
+      ),
+      todos: entry.todos.filter((todo) =>
+        own.some((item) =>
+          'todoId' in item ? item.todoId === todo.id : item.todos.some(({ id }) => id === todo.id)
+        )
+      ),
+    };
+  };
   const stale = groups.filter((id) => !card(id));
   useEffect(() => {
     if (!onLoadDetails) return;
@@ -338,7 +356,7 @@ export function NeoHumanQueue({
               </p>
             )}
             {showFull
-              ? renderAsk(full, !validated)
+              ? renderAsk(inState(full), !validated)
               : run.map((item) => (
                   <QueueItem
                     key={'questionId' in item ? item.questionId : item.todoId}

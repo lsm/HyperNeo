@@ -714,7 +714,7 @@ describe('NeoHumanQueue', () => {
         const shown = testAskEntry('trip', 'Plan the trip', {
           state: 'waiting',
           questions: [choice],
-          todos: [testTodo('t9', { askId: 'trip', title: 'Call the garage', state: 'doing' })],
+          todos: [testTodo('t1', { askId: 'trip', title: 'Call the garage', state: 'doing' })],
         });
         return {
           ...shown,

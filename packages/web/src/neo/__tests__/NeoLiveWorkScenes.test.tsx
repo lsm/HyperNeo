@@ -719,11 +719,52 @@ describe('Neo public work scenes', () => {
         )
       );
     }
-    expect(seen).toEqual([
-      ...['a100', 'a10', 'a-held', 'a-step', 'b80'],
-      ...['a100', 'a10', 'a-held', 'a-step'],
-      ...['a100', 'a10', 'a-held', 'a-step', 'run-step'],
-    ]);
+    expect(seen).toEqual([...['a100', 'a10', 'b80'], 'a-held', ...['a-step', 'run-step']]);
+  });
+
+  it('shows under Waiting on you only the cards that wait on the human', () => {
+    const { model } = mount(true, true);
+    const a = testAskEntry('ask-a', 'Ask A', {
+      state: 'waiting',
+      todos: [testTodo('a-step', { askId: 'ask-a', state: 'todo' })],
+      questions: [card('a-open', 'ask-a', 100), card('a-held', 'ask-a', 120, 121)],
+    });
+    const running = testAskEntry('running', 'Running', {
+      state: 'doing',
+      todos: [testTodo('run-step', { askId: 'running', state: 'doing' })],
+    });
+    const done = testAskEntry('done', 'Done', { state: 'done' });
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [a, running, done],
+          humanQueue: {
+            items: [
+              waits('a-open', 'ask-a'),
+              waits('a-held', 'ask-a', true),
+              { state: 'progress', askId: 'ask-a', todoId: 'a-step', title: 'A step', owner: null },
+            ],
+            counts: { 'ask-a': { waiting: 1, held: 1, progress: 1 } },
+          },
+        } as never,
+      };
+    });
+    const scenes = screen.getByRole('region', { name: 'Work scenes' });
+    const shown = () =>
+      [...scenes.querySelectorAll('[id^="neo-ref-question-"], [data-ask-todo], [data-ask]')].map(
+        (node) =>
+          node.getAttribute('data-ask') ??
+          node.getAttribute('data-ask-todo') ??
+          node.id.replace('neo-ref-question-', '')
+      );
+    expect(shown()).toEqual(['ask-a', 'a-open']);
+    expect(scenes.querySelector('[data-scene-group]')).toBeNull();
+    fireEvent.click(within(scenes).getByRole('button', { name: /^Held/ }));
+    expect(shown()).toEqual(['ask-a', 'a-held']);
+    fireEvent.click(within(scenes).getByRole('button', { name: /^In progress/ }));
+    expect(shown()).toEqual(['ask-a', 'a-step', 'running', 'run-step', 'done']);
   });
 
   it('shows the full document of a queued card once its ask is read', async () => {
@@ -1282,17 +1323,16 @@ describe('card reply notice navigation', () => {
           },
         };
       });
-      const child = document.querySelector('article[data-ask="hotel-ask"]') as HTMLElement;
-      expect(
-        within(child).getByRole('button', { name: 'Step actions: Fictional hotel' })
-      ).toBeTruthy();
       if (searching) {
         fireEvent.click(screen.getByRole('button', { name: 'Search work', exact: true }));
         fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'Fictional' } });
       }
       fireEvent.click(screen.getByRole('button', { name: /Quoted hotel target/ }));
       await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-todo-hotel'));
-      expect(document.activeElement?.closest('[data-ask="hotel-ask"]')).toBeTruthy();
+      const child = document.activeElement?.closest('[data-ask="hotel-ask"]') as HTMLElement;
+      expect(
+        within(child).getByRole('button', { name: 'Step actions: Fictional hotel' })
+      ).toBeTruthy();
       expect(document.querySelectorAll('[id="neo-ref-todo-hotel"]')).toHaveLength(1);
     }
   );
@@ -1495,8 +1535,10 @@ describe('card reply notice navigation', () => {
         } as never,
       };
     });
-    expect(document.querySelector('[data-ask="empty"]')).toBeTruthy();
+    expect(document.querySelector('[data-ask="empty"]')).toBeNull();
     expect(document.querySelector('article[data-ask="tax"]')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^In progress/ }));
+    expect(document.querySelector('[data-ask="empty"]')).toBeTruthy();
   });
 
   it('ignores a saved topic and makes topic badges read-only when queue filters are shown', () => {
