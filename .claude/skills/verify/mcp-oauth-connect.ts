@@ -57,6 +57,7 @@ const fake = await startFakeMcpOAuthServer({
     return holdCodeReply.release.promise;
   },
 });
+let fakeStopped = false;
 const other = await startFakeMcpOAuthServer();
 const lifecycle = process.argv[3] === 'lifecycle';
 const rowWrites = process.argv[3] === 'row-writes';
@@ -303,8 +304,15 @@ try {
       assert(grant);
       await vault.replaceMcp(slackId, { ...grant, client: { ...grant.client, client_secret: crypto.randomUUID(), token_endpoint_auth_method: 'client_secret_post' } });
 
+      fake.switches.beforeRefreshReply = undefined;
+      fake.switches.slack = true;
+      assert.deepEqual(await service.refresh(slackId), { ok: true });
+      fake.switches.slack = false;
+      assert(refreshRequests().at(-1)?.params.has('client_secret'));
+      assert.deepEqual(await readStatus(hub, slackId), healthy);
+
       const transient = [
-        { label: 'network', reply: () => Response.error(), reason: 'request_failed' },
+        { label: '408', reply: () => Response.json({ error: 'invalid_grant' }, { status: 408 }), reason: 'request_failed' },
         { label: '429', reply: () => new Response('', { status: 429 }), reason: 'rate_limited' },
         { label: '503', reply: () => new Response('', { status: 503 }), reason: 'request_failed' },
         { label: 'malformed', reply: () => new Response('{'), reason: 'request_failed' },
@@ -365,7 +373,23 @@ try {
       assert.equal(refreshRequests().length, rejected + 1);
       assert.deepEqual(await readStatus(hub, id), reconnectNeeded);
       assert.equal(grantCount(app), 1);
-      assert.equal(fake.authorizeScopes.length, 3);
+      const networkId = (await hub.request<{ server: AppMcpServer }>('mcp.registry.create', {
+        name: 'oauth-network-proof', url: fake.url, sourceType: 'http', enabled: false,
+      })).server.id;
+      const network = await invoke<{ authorizeUrl: string }>(hub, 'mcp.registry.connect', { id: networkId, preset: 'test' });
+      assert.equal((await fetch(await callbackUrl(network.authorizeUrl))).status, 200);
+      assert.equal(fake.authorizeScopes.length, 4);
+      fake.switches.beforeRefreshReply = async () => {
+        fake.stop();
+        fakeStopped = true;
+      };
+      const dropped = refreshRequests().length;
+      const failure = { ok: false, reason: 'request_failed' };
+      assert.deepEqual(await service.refresh(networkId), failure);
+      assert.deepEqual(await service.refresh(networkId), failure);
+      assert.equal(refreshRequests().length, dropped + 1);
+      assert.deepEqual(await readStatus(hub, networkId), healthy);
+      evidence.droppedConnection = failure.reason;
       return id;
     });
     await withDaemon(async (hub, app) => {
@@ -380,7 +404,7 @@ try {
   evidence.pass = true;
 } finally {
   tokenRelease.resolve();
-  fake.stop();
+  if (!fakeStopped) fake.stop();
   other.stop();
   writeFileSync(join(run, `evidence/${proofName}.json`), JSON.stringify(evidence, null, 2));
 }

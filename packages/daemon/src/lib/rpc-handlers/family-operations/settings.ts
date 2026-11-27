@@ -205,7 +205,7 @@ export function registerSettingsOperations(context: FamilyOperationContext): Ope
     ...(credentialManager
       ? createMcpOAuthOperations(db, credentialManager.getCredentialStore(), () =>
           emitChanged(internalEventBus)
-        )
+        ).operations
       : []),
     ...createDefaultModelOperations({
       read: () => settingsManager.getGlobalSettings(),

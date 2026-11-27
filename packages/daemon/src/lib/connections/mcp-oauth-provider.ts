@@ -1,5 +1,5 @@
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
-import { createMcpFetch, type McpOAuthPreset } from './mcp-fetch.ts';
+import { createMcpFetch, type McpOAuthPreset, type McpRefreshFailure } from './mcp-fetch.ts';
 import { mcpGrant, type McpGrant } from './status.ts';
 import type { ConnectionVault } from './vault.ts';
 
@@ -23,6 +23,8 @@ export function createMcpOAuthProvider(options: {
   generation: number;
   redirectUrl: string;
   attempt?: { authorize: (url: URL) => void };
+  save?: (grant: McpGrant) => Promise<void>;
+  onRefreshFailure?: (reason: McpRefreshFailure) => void;
   timeoutMs?: number;
 }) {
   const { preset, attempt } = options;
@@ -40,13 +42,14 @@ export function createMcpOAuthProvider(options: {
   const persist = async () => {
     const { client, tokens, binding, scopes } = draft;
     if (!client || !tokens || !binding || !scopes) throw new Error('request_failed');
-    await options.vault.replaceMcp(options.serverId, {
+    const grant = {
       generation: options.generation,
       client,
       tokens,
       binding,
       scopes,
-    });
+    };
+    await (options.save ? options.save(grant) : options.vault.replaceMcp(options.serverId, grant));
   };
   const provider: OAuthClientProvider = {
     redirectUrl: options.redirectUrl,
@@ -112,6 +115,7 @@ export function createMcpOAuthProvider(options: {
   const fetchFn = createMcpFetch({
     preset,
     tokenEndpoint: () => draft.binding?.authorizationServerMetadata.token_endpoint,
+    onRefreshFailure: options.onRefreshFailure,
     timeoutMs: options.timeoutMs,
   });
   return { provider, fetch: fetchFn, commit: persist };

@@ -9,6 +9,12 @@ export type McpOAuthPreset = {
   slackTokens?: boolean;
 };
 
+export type McpRefreshFailure =
+  | 'reconnect_needed'
+  | 'rate_limited'
+  | 'response_too_large'
+  | 'request_failed';
+
 const grantParams = ['code', 'code_verifier', 'refresh_token', 'client_secret'];
 const slackErrors: Record<string, [number, string]> = {
   invalid_refresh_token: [400, 'invalid_grant'],
@@ -112,6 +118,7 @@ function tokenReply(body: string, slack: boolean) {
 export function createMcpFetch(options: {
   preset: McpOAuthPreset;
   tokenEndpoint: () => string | undefined;
+  onRefreshFailure?: (reason: McpRefreshFailure) => void;
   maxBytes?: number;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
@@ -133,6 +140,10 @@ export function createMcpFetch(options: {
       throw new Error('request_failed');
     if (/^bearer /i.test(auth) && !sameUrl(url, options.preset.url))
       throw new Error('request_failed');
+    const recordFailure =
+      toToken && params.get('grant_type') === 'refresh_token'
+        ? options.onRefreshFailure
+        : undefined;
     const signal = AbortSignal.any([
       AbortSignal.timeout(options.timeoutMs ?? 30000),
       ...(init?.signal ? [init.signal] : []),
@@ -144,9 +155,30 @@ export function createMcpFetch(options: {
       body = await readCapped(response, options.maxBytes ?? 262144, signal);
     } catch (error) {
       tooLarge = error instanceof Error && error.message === 'response_too_large';
-      throw new Error(tooLarge ? 'response_too_large' : 'request_failed');
+      const reason = tooLarge ? 'response_too_large' : 'request_failed';
+      recordFailure?.(reason);
+      throw new Error(reason);
     }
     if (response.status >= 300 && response.status < 400) return redirectReply(response, url, init);
+    if (recordFailure) {
+      let code: unknown;
+      try {
+        const data = JSON.parse(body);
+        code =
+          !response.ok || (options.preset.slackTokens && data?.ok === false)
+            ? data?.error
+            : undefined;
+      } catch {}
+      if (response.status === 429 || code === 'ratelimited') recordFailure('rate_limited');
+      else if (response.status === 408 || response.status >= 500) recordFailure('request_failed');
+      else if (
+        code === 'invalid_grant' ||
+        (options.preset.slackTokens &&
+          typeof code === 'string' &&
+          slackErrors[code]?.[1] === 'invalid_grant')
+      )
+        recordFailure('reconnect_needed');
+    }
     const reply =
       response.status >= 400
         ? errorReply(response.status, body)
