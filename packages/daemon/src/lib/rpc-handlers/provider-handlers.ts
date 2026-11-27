@@ -225,7 +225,7 @@ export interface ProviderHandlerDeps {
   providerRepo: ProviderRepository;
   credentialManager: ProviderCredentialManager;
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
-  oxapSettings?: Pick<OxapSettingsDeps, 'settings' | 'key'>;
+  oxapSettings?: Pick<OxapSettingsDeps, 'settings' | 'key' | 'environment'>;
 }
 
 function notifyProvidersChanged(internalEventBus: InternalEventBus<DaemonInternalEventMap>): void {
@@ -275,7 +275,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
                 record.providerId,
                 record,
                 installed,
-                deps.oxapSettings?.key
+                deps.oxapSettings
               )
             )
           );
