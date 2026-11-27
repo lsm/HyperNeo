@@ -60,19 +60,26 @@ creation.
 ## Per-adapter identity mapping
 
 `provider` names the account/backend a session runs on. Each adapter declares
-its identity facts once — `fixedProvider`, and either `configurable` (it can
-apply and read back model/effort through `resolveStartConfiguration`) or
-`declaredRead` (it can read its own configuration before dispatch but cannot
-apply overrides) — and the gate reads the declaration instead of branching on
-adapter ids. An adapter that can do neither refuses starts that need identity,
-rather than growing a confirmation layer.
+its identity facts once — `fixedProvider`, and either `configurable` or
+`declaredRead` — and the gate reads the declaration instead of branching on
+adapter ids. `configurable` is a behavioral fact, not the presence of
+`resolveStartConfiguration`: the adapter validates request-supplied
+model/effort against its own options and applies them before the first turn,
+reading the applied values back. HyperNeo, Codex and Copilot do this through
+`resolveStartConfiguration`; Antigravity does it post-open — it applies the
+requested options and closes the session with a refusal when they do not take
+(`antigravity-start.ts:220-233`, validation in
+`antigravity-configuration.ts:56-82`) — so it declares `configurable` too.
+`declaredRead` means the adapter can read its own configuration before
+dispatch but cannot apply overrides. An adapter that can do neither refuses
+starts that need identity, rather than growing a confirmation layer.
 
 | Adapter | provider | model | effort |
 | --- | --- | --- | --- |
 | `hyperneo` | From the explicitly named model's catalog entry (`hyperneo-adapter.ts:708`) or the request; both must agree | Required in the request; applied and read back (`hyperneo-adapter.ts:719`) | Required in the request (thinking-level ID or label, `start-configuration.ts:21`) |
 | `codex-desktop` | Fixed: the Codex account | Required; resolved against the `model/list` catalog and confirmed applied (`codex-start-configuration.ts:46`, `codex-desktop-adapter.ts:1699`) | Required; resolved against the selected model's supported efforts |
 | `copilot-cli` / Copilot desktop | Fixed: GitHub Copilot | Required already (`copilot-adapter.ts:115`) | Required (`copilot-adapter.ts:637`; desktop capability `copilot-desktop-adapter.ts:155`) |
-| `antigravity` | Fixed: the Antigravity account | Required; applied through session options (`antigravity-configuration.ts:29`, `antigravity-adapter.ts:180`) | Required |
+| `antigravity` | Fixed: the Antigravity account | Required; validated against the opened session's options and applied before the first turn, the session closed on refusal (`antigravity-start.ts:220-233`, `antigravity-configuration.ts:56-82`) | Required (`antigravity-adapter.ts:180`) |
 | `claude-desktop` | Fixed: Anthropic | Not settable — explicit overrides keep refusing `unsupported_model` (`claude-desktop-adapter.ts:1487`). The adapter reads the app's configured model before dispatch and reports it as a declared value; if no such read exists, the start refuses `identity_required` | Same rule as model. The transcript observer is corroboration only: it runs after the first turn and can observe neither field (`claude-runtime-identity.ts:18-27`) |
 | `cursor` | Fixed: the Cursor account | Same rule as `claude-desktop`: a pre-dispatch read of the CLI configuration, or refusal (`cursor-start.ts` has no model/effort parameters today) | Same as model |
 | Claude Code inbox / discovery-only adapters | Fixed per adapter | No start capability; nothing to validate | — |
@@ -138,8 +145,9 @@ therefore labels its source instead of promising actuals it cannot bind:
 - `confirmed`: the adapter applied the value through its own configuration
   API and read it back before the first turn — the existing
   `workStartConfiguration.confirm` shape (`start-configuration.ts:102`) as
-  used by the HyperNeo (`hyperneo-adapter.ts:719`) and Codex paths. Only
-  confirmed identities satisfy an explicit request and only confirmed
+  used by the HyperNeo (`hyperneo-adapter.ts:719`) and Codex paths, and
+  Antigravity's post-open option read-back (`antigravity-start.ts:222-229`).
+  Only confirmed identities satisfy an explicit request and only confirmed
   identities qualify a worker for reuse matching.
 - `declared`: a pre-dispatch configuration read on a non-configurable
   adapter, recorded with its read time. It is reported as declared, never as
