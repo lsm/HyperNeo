@@ -2,6 +2,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createHttpWsServer } from '../../src/lib/runtime-server/index.ts';
 
 export type FakeMcpOAuthSwitches = {
+  port?: number;
+  beforeCodeReply?: () => Promise<void>;
   advertiseAllScopes?: boolean;
   grantScope?: string;
   omitRefreshScope?: boolean;
@@ -152,6 +154,7 @@ export async function startFakeMcpOAuthServer(switches: FakeMcpOAuthSwitches = {
           .digest('base64url');
         if (!entry || entry.challenge !== proof || entry.redirectUri !== params.get('redirect_uri'))
           return json({ error: 'invalid_grant' }, 400);
+        await switches.beforeCodeReply?.();
         return tokenReply(entry.scope, true);
       }
       const scope = refreshTokens.get(params.get('refresh_token') ?? '');
@@ -165,7 +168,11 @@ export async function startFakeMcpOAuthServer(switches: FakeMcpOAuthSwitches = {
       });
     return json({ error: 'not_found' }, 404);
   };
-  const server = await createHttpWsServer({ hostname: '127.0.0.1', port: 0, fetch: handle });
+  const server = await createHttpWsServer({
+    hostname: '127.0.0.1',
+    port: switches.port ?? 0,
+    fetch: handle,
+  });
   base = `http://127.0.0.1:${server.port}`;
   return {
     base,
