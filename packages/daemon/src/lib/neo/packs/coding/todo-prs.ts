@@ -586,6 +586,17 @@ export function createCodingTodoPolicy(
   };
 }
 
+function codingHoldUrls(condition: NeoTodoCheck): string[] | null {
+  const { urls } = condition.params;
+  return condition.kind === 'pr_merged' &&
+    Object.keys(condition.params).length === 1 &&
+    Array.isArray(urls) &&
+    urls.length > 0 &&
+    urls.every((url): url is string => typeof url === 'string' && !!codingPrKey(url))
+    ? urls
+    : null;
+}
+
 export function createCodingTodoPack(
   repo: CodingTodoPrRepository,
   readPrs: NeoWorkPrReader,
@@ -637,6 +648,24 @@ export function createCodingTodoPack(
   };
   return {
     readFacts,
+    hold: {
+      accepts: (condition) => codingHoldUrls(condition) !== null,
+      read: async (condition) => {
+        const urls = codingHoldUrls(condition);
+        if (!urls) return null;
+        const rows = await readPrs(urls);
+        const named = urls.map((url) => {
+          const key = codingPrKey(url);
+          return rows?.find((row) => codingPrKey(row.url) === key);
+        });
+        if (named.some((row) => !row)) return null;
+        const closed = named.find((row) => row?.state === 'CLOSED');
+        if (closed) return { url: closed.url, merged: false, reason: 'closed without merging' };
+        return named.every((row) => row?.state === 'MERGED')
+          ? { url: urls.join(', '), merged: true }
+          : null;
+      },
+    },
     judge: (todo, facts) => {
       if (!facts || facts.incomplete || todo.check?.pack !== 'coding')
         return { state: 'no_opinion' };
