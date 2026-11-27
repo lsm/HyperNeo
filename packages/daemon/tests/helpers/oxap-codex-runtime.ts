@@ -18,15 +18,17 @@ export function bindCodexRuntime(
   options?: OxapEngineOptions,
   events?: Parameters<typeof createOxapRuntime>[2],
   db?: unknown,
-  messageHub?: unknown
+  messageHub?: unknown,
+  attachOperations?: unknown
 ) {
-  return createOxapRuntime(
+  return Reflect.apply(createOxapRuntime, undefined, [
     engine,
     options ? { installed: () => true, read: async () => options } : undefined,
     events,
     db as never,
     messageHub as never,
-    (providerId) => (providerId === 'anthropic-codex' ? codexRecord : null),
-    async () => {}
-  );
+    (providerId: string) => (providerId === 'anthropic-codex' ? codexRecord : null),
+    async () => {},
+    attachOperations,
+  ]) as ReturnType<typeof createOxapRuntime>;
 }

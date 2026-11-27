@@ -18,7 +18,11 @@ const bind = createOxapRuntime as unknown as (
   options: OxapEngineOptions,
   events: ReturnType<typeof createDaemonInternalEventBus>,
   db: unknown,
-  messageHub: unknown
+  messageHub: unknown,
+  attachOperations?: (
+    sessionId: string,
+    reopen: boolean
+  ) => Promise<{ reference: string; dispose(): Promise<void> } | undefined>
 ) => (session: Session) => { hub: Promise<OxapQueryHub>; clear(): Promise<void> };
 
 function session(nativeId?: string, messageCount = 0): Session {
@@ -46,6 +50,7 @@ function fixture(
     failIdentityOnce?: boolean;
     failFreshOpenOnce?: boolean;
     loseFreshOpenResponseOnce?: boolean;
+    attachOperations?: Parameters<typeof bind>[5];
   } = {}
 ) {
   const operations: Array<{ op: string; params: Record<string, unknown> }> = [];
@@ -150,11 +155,57 @@ function fixture(
     db,
     messageHub,
     events,
-    runtime: bind(engine, options, events, db, messageHub),
+    runtime: bind(engine, options, events, db, messageHub, config.attachOperations),
   };
 }
 
 describe('OAP native session reopen wiring', () => {
+  test('a new chat attaches a fresh operations capability on each external open', async () => {
+    const dispose = mock(async () => {});
+    const first = 'A'.repeat(43);
+    const second = 'B'.repeat(43);
+    const attachOperations = mock(async (_sessionId: string, reopen: boolean) => ({
+      reference: reopen ? second : first,
+      dispose,
+    }));
+
+    const created = fixture({ attachOperations });
+    const current = session();
+    await created.runtime(current).hub;
+    const reopened = fixture({ known: true, attachOperations });
+    await reopened.runtime(current).hub;
+
+    expect(attachOperations.mock.calls).toEqual([
+      ['session-a', false],
+      ['session-a', true],
+    ]);
+    for (const [host, reference] of [
+      [created, first],
+      [reopened, second],
+    ] as const) {
+      const request = host.operations.find(({ op }) => op === 'open')?.params.request;
+      expect(request).toMatchObject({
+        payload: {
+          tool_sources: [{ id: 'hyperneo-operations', kind: 'remote', credential_ref: reference }],
+        },
+      });
+    }
+    expect(dispose).toHaveBeenCalledTimes(2);
+  });
+
+  test('a legacy binding resumes the original thread without operations tools', async () => {
+    const attachOperations = mock(async () => undefined);
+    const host = fixture({ known: true, attachOperations });
+    const current = session('native-thread-a');
+    await host.runtime(current).hub;
+
+    expect(attachOperations).toHaveBeenCalledWith('session-a', true);
+    const request = host.operations.find(({ op }) => op === 'open')?.params.request;
+    expect(request).toMatchObject({ payload: { reopen: true } });
+    expect(request).not.toHaveProperty('payload.tool_sources');
+    expect(current.sdkSessionId).toBe('native-thread-a');
+  });
+
   test('an empty recovery opens a fresh thread without promising or attaching an excerpt', async () => {
     const host = fixture({
       known: true,
