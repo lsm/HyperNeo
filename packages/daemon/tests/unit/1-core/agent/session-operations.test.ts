@@ -417,7 +417,7 @@ describe('session operation MCP attachment', () => {
       await db.createSession(createTestSession('destination'));
       const session = await restore(source.id);
       const operationServer = session.getOperationMcpServer();
-      expect(session.optionsBuilder.getEffectiveMcpServers()).toHaveProperty(
+      expect(await session.optionsBuilder.getEffectiveMcpServers()).toHaveProperty(
         'hyperneo-operations',
         operationServer
       );
@@ -471,12 +471,12 @@ describe('session operation MCP attachment', () => {
     const operationServer = session.getOperationMcpServer();
     const peer = { command: 'peer-server' };
     session.mergeRuntimeMcpServers({ peer });
-    expect(session.optionsBuilder.getEffectiveMcpServers()).toMatchObject({
+    expect(await session.optionsBuilder.getEffectiveMcpServers()).toMatchObject({
       peer,
       'hyperneo-operations': operationServer,
     });
     session.replaceAllRuntimeMcpServers({});
-    expect(session.optionsBuilder.getEffectiveMcpServers()).toEqual({
+    expect(await session.optionsBuilder.getEffectiveMcpServers()).toEqual({
       'hyperneo-operations': operationServer,
     });
     expect(session.getSessionData().config.mcpServers).toEqual({});

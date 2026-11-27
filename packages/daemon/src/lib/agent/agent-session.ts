@@ -170,6 +170,7 @@ export interface AgentSessionInit {
 
 export interface AgentSessionRuntimeOptions {
   oxap?: import('./query-runner.ts').OxapQueryRuntime;
+  mcpOAuthProxy?: QueryOptionsBuilderContext['mcpOAuthProxy'];
   getGithubToken?(): Promise<string | null>;
   operationRegistryProvider?: () => OperationRegistry | undefined;
   callerScopeResolver?: CallerScopeResolver;
@@ -2121,6 +2122,13 @@ export class AgentSession
     this.syncRuntimeMcpServersToActiveQuery('detach', [name]);
   }
 
+  get mcpOAuthProxy() {
+    return this.runtimeOptions.mcpOAuthProxy;
+  }
+
+  private mcpReconcileRequested = 0;
+  private mcpReconcileApplied = 0;
+
   reconcileEffectiveMcpServers(): void {
     this.syncRuntimeMcpServersToActiveQuery('reconcile', []);
   }
@@ -2135,9 +2143,15 @@ export class AgentSession
     const setMcpServers = queryObject.setMcpServers?.bind(queryObject);
     if (!setMcpServers) return;
 
-    const effectiveMcpServers = this.optionsBuilder.getEffectiveMcpServers() ?? {};
-    void setMcpServers(effectiveMcpServers)
-      .then((result) => {
+    const requested = ++this.mcpReconcileRequested;
+    void this.optionsBuilder
+      .getEffectiveMcpServers()
+      .then(async (effective) => {
+        if (queryObject !== this.queryObject || requested < this.mcpReconcileApplied) return;
+        this.mcpReconcileApplied = requested;
+        const effectiveMcpServers = effective ?? {};
+        const result = await setMcpServers(effectiveMcpServers);
+        if (queryObject !== this.queryObject) return;
         this.logger.info(
           `mcp.attach.live ${JSON.stringify({
             event: 'mcp.attach.live',
@@ -2151,6 +2165,12 @@ export class AgentSession
           })}`
         );
         this.recordMcpAttachOutcomes(result);
+        if (action === 'reconcile')
+          this.messageHub.event(
+            'session.toolInventory.changed',
+            { sessionId: this.session.id },
+            { channel: `session:${this.session.id}` }
+          );
       })
       .catch((error) => {
         this.logger.warn(

@@ -1,3 +1,4 @@
+import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import {
   mkdirSync,
@@ -3053,7 +3054,7 @@ describe('QueryOptionsBuilder', () => {
       mockSession.config.disallowedTools = ['mcp__exa'];
       const options = await builder.build();
       expect(options.mcpServers?.exa).toBeUndefined();
-      expect(builder.getEffectiveMcpServers()?.exa).toBeUndefined();
+      expect((await builder.getEffectiveMcpServers())?.exa).toBeUndefined();
     });
 
     it('excludes a configured Exa server from Front attachment', async () => {
@@ -3070,7 +3071,7 @@ describe('QueryOptionsBuilder', () => {
       };
       const options = await builder.build();
       expect(options.mcpServers?.exa).toBeUndefined();
-      expect(builder.getEffectiveMcpServers()?.exa).toBeUndefined();
+      expect((await builder.getEffectiveMcpServers())?.exa).toBeUndefined();
       expect(options.mcpServers?.kept).toEqual(kept);
     });
 
@@ -3079,9 +3080,9 @@ describe('QueryOptionsBuilder', () => {
       enableExaSettings();
       useNonNativeProvider();
       await builder.build();
-      expect(builder.getEffectiveMcpServers()?.exa).toBeDefined();
+      expect((await builder.getEffectiveMcpServers())?.exa).toBeDefined();
       mockSession.config.disallowedTools = ['mcp__exa'];
-      expect(builder.getEffectiveMcpServers()?.exa).toBeUndefined();
+      expect((await builder.getEffectiveMcpServers())?.exa).toBeUndefined();
     });
 
     it('keeps automatic Exa when work_on is listed without an Exa veto', async () => {
@@ -3095,7 +3096,7 @@ describe('QueryOptionsBuilder', () => {
         type: 'http',
         url: `https://mcp.exa.ai/mcp?exaApiKey=${EXA_TEST_KEY}`,
       });
-      expect(builder.getEffectiveMcpServers()?.exa).toBeDefined();
+      expect((await builder.getEffectiveMcpServers())?.exa).toBeDefined();
     });
 
     it('honors an explicit automatic Exa veto without a Front tool', async () => {
@@ -3105,7 +3106,7 @@ describe('QueryOptionsBuilder', () => {
       mockSession.config.disallowedTools = ['mcp__exa'];
       const options = await builder.build();
       expect(options.mcpServers?.exa).toBeUndefined();
-      expect(builder.getEffectiveMcpServers()?.exa).toBeUndefined();
+      expect((await builder.getEffectiveMcpServers())?.exa).toBeUndefined();
     });
 
     it('does not attach exa for providers with native web tools', async () => {
@@ -4274,6 +4275,37 @@ describe('QueryOptionsBuilder', () => {
       return { server, skills, on, context, builder: new QueryOptionsBuilder(context) };
     }
 
+    it.each([
+      ['canonical', 'frozen-browser'],
+      ['skill', 'wrapper-browser'],
+      ['registry', 'registry-browser'],
+    ] as const)('uses the OAuth SDK proxy in the %s path', async (path, alias) => {
+      const { context, server, skills } = fixture();
+      Object.assign(server, {
+        sourceType: 'http',
+        enabled: true,
+        url: 'https://example.com/mcp',
+        headers: { Authorization: 'synthetic-static-header' },
+        auth: { kind: 'oauth', generation: 1, active: true, preset: 'test' },
+      });
+      if (path !== 'canonical') {
+        mockSession.config.toolSelection = undefined;
+        mockSession.config.tools = {};
+        Object.assign(context, { mcpEnablementRepo: { listForScopes: () => [] } });
+      }
+      if (path === 'skill') skills[0].enabled = true;
+      if (path === 'registry') skills.shift();
+
+      const proxy = createSdkMcpServer({ name: alias });
+      let available = true;
+      context.mcpOAuthProxy = async (id, name) =>
+        available && id === server.id && name === alias ? proxy : undefined;
+      const builder = new QueryOptionsBuilder(context);
+      expect((await builder.getEffectiveMcpServers())?.[alias]).toBe(proxy);
+      available = false;
+      expect(await builder.getEffectiveMcpServers()).toBeUndefined();
+    });
+
     it('uses frozen choices despite old global and session preference flags', async () => {
       const f = fixture();
       const options = await f.builder.build();
@@ -4321,19 +4353,19 @@ describe('QueryOptionsBuilder', () => {
       expect(options.plugins ?? []).toEqual([]);
     });
 
-    it('keeps frozen aliases when server and wrapper names change', () => {
+    it('keeps frozen aliases when server and wrapper names change', async () => {
       const f = fixture();
       f.server.name = 'renamed-registry';
       f.skills[0].name = 'renamed-wrapper';
-      expect(f.builder.getEffectiveMcpServers()).toEqual({
+      expect(await f.builder.getEffectiveMcpServers()).toEqual({
         'frozen-browser': { command: 'not-executed', args: [] },
       });
     });
 
-    it('still refuses an invalid selected transport', () => {
+    it('still refuses an invalid selected transport', async () => {
       const f = fixture();
       f.server.command = ' ';
-      expect(f.builder.getEffectiveMcpServers() ?? {}).toEqual({});
+      expect((await f.builder.getEffectiveMcpServers()) ?? {}).toEqual({});
     });
 
     it('uses the supplied query snapshot instead of a later session selection', async () => {
@@ -4343,7 +4375,7 @@ describe('QueryOptionsBuilder', () => {
       const options = await f.builder.build({ session: captured });
       expect(options.mcpServers).toHaveProperty('frozen-browser');
       expect(options.plugins).toHaveLength(2);
-      expect(f.builder.getEffectiveMcpServers() ?? {}).toEqual({});
+      expect((await f.builder.getEffectiveMcpServers()) ?? {}).toEqual({});
     });
 
     it('captures one selection before asynchronous settings preparation', async () => {
@@ -4354,13 +4386,15 @@ describe('QueryOptionsBuilder', () => {
       const options = await f.builder.build();
       expect(options.mcpServers).toHaveProperty('frozen-browser');
       expect(options.plugins).toHaveLength(2);
-      expect(f.builder.getEffectiveMcpServers() ?? {}).toEqual({});
+      expect((await f.builder.getEffectiveMcpServers()) ?? {}).toEqual({});
     });
 
-    it('fails closed on an unsupported saved version', () => {
+    it('fails closed on an unsupported saved version', async () => {
       const f = fixture();
       mockSession.config.toolSelection = { version: 2, choices: {} } as never;
-      expect(() => f.builder.getEffectiveMcpServers()).toThrow('selection_version_unsupported');
+      await expect(f.builder.getEffectiveMcpServers()).rejects.toThrow(
+        'selection_version_unsupported'
+      );
     });
   });
 
@@ -5134,10 +5168,10 @@ describe('QueryOptionsBuilder', () => {
       const ctx = buildRegistryContext(registry);
       const builder = new QueryOptionsBuilder(ctx);
 
-      expect(builder.getEffectiveMcpServers()?.['doomed-srv']).toBeDefined();
+      expect((await builder.getEffectiveMcpServers())?.['doomed-srv']).toBeDefined();
 
       registry.pop();
-      expect(builder.getEffectiveMcpServers()?.['doomed-srv']).toBeUndefined();
+      expect((await builder.getEffectiveMcpServers())?.['doomed-srv']).toBeUndefined();
     });
 
     it('detaches the old name when a registry server is renamed', async () => {
@@ -5153,10 +5187,10 @@ describe('QueryOptionsBuilder', () => {
       const ctx = buildRegistryContext(registry);
       const builder = new QueryOptionsBuilder(ctx);
 
-      expect(builder.getEffectiveMcpServers()?.['old-name']).toBeDefined();
+      expect((await builder.getEffectiveMcpServers())?.['old-name']).toBeDefined();
 
       registry[0]!.name = 'new-name';
-      const eff = builder.getEffectiveMcpServers();
+      const eff = await builder.getEffectiveMcpServers();
       expect(eff?.['old-name']).toBeUndefined();
       expect(eff?.['new-name']).toBeDefined();
     });
@@ -5264,7 +5298,7 @@ describe('QueryOptionsBuilder', () => {
       const ctx = buildRegistryContext([server]);
       const builder = new QueryOptionsBuilder(ctx);
 
-      expect(builder.getEffectiveMcpServers()?.['codebase-memory-mcp']).toBeDefined();
+      expect((await builder.getEffectiveMcpServers())?.['codebase-memory-mcp']).toBeDefined();
 
       server.enabled = false;
       const options = await builder.build();

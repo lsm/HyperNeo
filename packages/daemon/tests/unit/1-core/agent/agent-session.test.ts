@@ -5264,7 +5264,7 @@ describe('AgentSession', () => {
         instance: {},
       } as unknown as McpServerConfig;
       agentSession.mergeRuntimeMcpServers({ 'space-agent-tools': spaceAgent });
-      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(setMcpServers).toHaveBeenCalledTimes(1);
       expect(setMcpServers).toHaveBeenCalledWith({
@@ -5307,7 +5307,7 @@ describe('AgentSession', () => {
           expect(agentSession.getSessionData().config.mcpServers?.later).toBeUndefined();
           agentSession.replaceAllRuntimeMcpServers({ replacement });
           expect(agentSession.getSessionData().config.mcpServers).toEqual({ replacement });
-          await Promise.resolve();
+          await new Promise((resolve) => setTimeout(resolve, 0));
           expect(setMcpServers).toHaveBeenCalledTimes(4);
           expect(setMcpServers).toHaveBeenLastCalledWith({
             'hyperneo-operations': agentSession.getOperationMcpServer(),
@@ -6027,7 +6027,7 @@ describe('AgentSession', () => {
       );
     });
 
-    it('reconcileEffectiveMcpServers pushes the effective set to the live query, preserving runtime servers', () => {
+    it('reconcileEffectiveMcpServers pushes the effective set to the live query, preserving runtime servers', async () => {
       const runtimeServer: McpServerConfig = { command: 'runtime-cmd' };
       agentSession.session.config.mcpServers = { 'space-agent-tools': runtimeServer };
 
@@ -6037,6 +6037,7 @@ describe('AgentSession', () => {
       } as unknown as AgentSession['queryObject'];
 
       agentSession.reconcileEffectiveMcpServers();
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(setMcpServers).toHaveBeenCalledTimes(1);
       const pushed = setMcpServers.mock.calls[0][0] as Record<string, McpServerConfig>;

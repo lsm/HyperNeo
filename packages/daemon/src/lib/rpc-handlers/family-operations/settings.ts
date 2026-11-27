@@ -13,8 +13,6 @@ import { publishGlobalSettings } from '../settings-handlers.ts';
 import type { FamilyOperationContext } from './context.ts';
 import { usableModels } from '../../usable-models.ts';
 import { createOxapSettingsOperations } from '../../oxap/oxap-settings.ts';
-import { createMcpOAuthOperations } from '../../connections/mcp-oauth-operations.ts';
-import { emitChanged } from '../app-mcp-handlers.ts';
 
 export interface DefaultModelDeps {
   readonly read: () => Pick<GlobalSettings, 'model' | 'modelProvider'>;
@@ -200,13 +198,9 @@ export function createDefaultModelOperations(deps: DefaultModelDeps): OperationD
 }
 
 export function registerSettingsOperations(context: FamilyOperationContext): OperationDefinition[] {
-  const { settingsManager, internalEventBus, credentialManager, db } = context.deps;
+  const { settingsManager, internalEventBus, credentialManager, mcpOAuthOperations } = context.deps;
   return [
-    ...(credentialManager
-      ? createMcpOAuthOperations(db, credentialManager.getCredentialStore(), () =>
-          emitChanged(internalEventBus)
-        ).operations
-      : []),
+    ...(mcpOAuthOperations ?? []),
     ...createDefaultModelOperations({
       read: () => settingsManager.getGlobalSettings(),
       write: (model, provider) => {

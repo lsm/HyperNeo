@@ -63,6 +63,7 @@ const mock = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
   const last = JSON.stringify(body.messages?.at(-1)?.content ?? '');
   const turn = turns.find((marker) => last.includes(marker));
   const call = turn && !requested.has(turn) && body.tools?.some((tool) => tool.name === toolName);
+  if (turn) evidence.lastTurn = { turn, offered: body.tools?.filter(tool => tool.name.includes('oauth')).map(tool => tool.name), receipt: results.has(turn), modelCalls };
   if (call) requested.add(turn);
   const block = call ? { type: 'tool_use', id: turn, name: toolName, input: { mode: turn } } : { type: 'text', text: 'Synthetic model turn complete' };
   const usage = { input_tokens: 100, output_tokens: 20 };
@@ -93,7 +94,7 @@ QueryOptionsBuilder.prototype.build = async function (...args) {
     stderr: () => { evidence.sdkStderr = Number(evidence.sdkStderr ?? 0) + 1; },
     spawnClaudeCodeProcess: (opts) => spawn(opts.command, opts.args, {
       cwd: opts.cwd,
-      env: { ...opts.env, ANTHROPIC_BASE_URL: modelUrl, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' },
+      env: { ...opts.env, ANTHROPIC_BASE_URL: modelUrl, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', ENABLE_TOOL_SEARCH: 'false' },
       stdio: ['pipe', 'pipe', 'pipe'],
       signal: opts.signal,
     }),
@@ -183,7 +184,9 @@ try {
   await until('Old-generation tool call did not reach the fake', () => entered);
   await consent('reconnect');
   hold.resolve();
-  assert(!(await stale).includes(readText));
+  const retired = await stale;
+  assert(retired.includes('reconnect_needed'), 'The retired grant did not return the reconnect reason');
+  assert(!retired.includes(readText), 'An old-generation tool result reached the model');
   assert((await read('read-reconnected')).includes(readText));
 
   await invoke('disconnect');
@@ -194,6 +197,7 @@ try {
   assert(!(await read('read-revoked')).includes(readText));
   await until('The running session retained OAuth tools after invalid_grant', async () => !(await hasTool()));
   assert.equal((await invoke<{ health: string }>('status')).health, 'reconnect_needed');
+  assert.equal((await agent.optionsBuilder.getEffectiveMcpServers())?.[name], undefined);
   assert.equal(agent.queryObject, query);
   assert.equal(fake.authorizeScopes.length, 3);
   evidence.pass = true;

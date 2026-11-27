@@ -120,7 +120,8 @@ export class SessionManager {
     private skillsManager?: SkillsManager,
     private appMcpServerRepo?: AppMcpServerRepository,
     private getGithubToken?: () => Promise<string | null>,
-    private oxapRuntime?: (session: Session) => import('../agent/query-runner.ts').OxapQueryRuntime
+    private oxapRuntime?: (session: Session) => import('../agent/query-runner.ts').OxapQueryRuntime,
+    private mcpOAuthProxy?: AgentSessionRuntimeOptions['mcpOAuthProxy']
   ) {
     this.logger = new Logger('SessionManager');
     this.worktreeManager = new WorktreeManager();
@@ -182,6 +183,7 @@ export class SessionManager {
         loginRecovery: this.loginRecovery,
         ...runtimeOptions,
         getGithubToken: this.getGithubToken,
+        mcpOAuthProxy: this.mcpOAuthProxy,
         operationRegistryProvider: () => this.getOperationRegistry(),
         callerScopeResolver: (sessionId) => this.resolveCallerScope(sessionId),
         spaceScopeResolver: (sessionId) => this.resolveSpaceScope(sessionId),

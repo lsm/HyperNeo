@@ -13,7 +13,6 @@ import { fillPrompt, MINIMAL_WORKTREE_PROMPT, WORKTREE_ISOLATION_PROMPT } from '
 import type {
   AgentDefinition,
   AppMcpServer,
-  AppMcpServerSourceType,
   DeclarativeToolGuard,
   Session,
   SkillEnablementOverride,
@@ -31,7 +30,6 @@ import {
   THINKING_LEVEL_TOKENS,
   type ThinkingEffort,
 } from '@hyperneo/shared';
-import type { McpServerConfig } from '@hyperneo/shared/types/sdk-config';
 import type { PermissionMode } from '@hyperneo/shared/types/settings';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -291,6 +289,7 @@ export interface QueryOptionsBuilderContext {
     inputOrigin?: QuestionInputOriginSource,
     desktopTurn?: () => DesktopTurn | null
   ): SdkMcpServerConfig;
+  mcpOAuthProxy?(id: string, name: string): Promise<SdkMcpServerConfig | undefined>;
   getSpaceBriefing?(): string | undefined;
   readonly session: Session;
   readonly settingsManager: SettingsManager;
@@ -373,7 +372,7 @@ export class QueryOptionsBuilder {
     return this.getPermissionMode();
   }
 
-  getEffectiveMcpServers(): Record<string, SdkMcpServerConfig> | undefined {
+  getEffectiveMcpServers() {
     return this.computeEffectiveMcpServers();
   }
 
@@ -394,33 +393,37 @@ export class QueryOptionsBuilder {
     return inputs;
   }
 
-  private canonicalMcpServers(inputs: CanonicalToolInputs): Record<string, McpServerConfig> {
-    const servers: Record<string, McpServerConfig> = {};
+  private async canonicalMcpServers(inputs: CanonicalToolInputs) {
+    const servers: Record<string, SdkMcpServerConfig> = {};
     for (const { alias, server } of inputs.catalogServers) {
       const validation = this.validateAppMcpServer(server);
       if (!validation.valid) {
         this.logger.warn(`Skipping selected MCP server "${alias}": ${validation.error}`);
         continue;
       }
-      servers[alias] = this.appMcpServerToSdkConfig(server);
+      const config = await this.appMcpServerToSdkConfig(server, alias);
+      if (config) servers[alias] = config;
     }
     return servers;
   }
 
-  private computeEffectiveMcpServers(
+  private async computeEffectiveMcpServers(
     inputs = this.canonicalToolInputs(),
     config = this.admittedConfig()
-  ): Record<string, SdkMcpServerConfig> | undefined {
+  ): Promise<Record<string, SdkMcpServerConfig> | undefined> {
     const operationServer =
       this.ctx.session.config.operationTools === false
         ? undefined
         : (this.operationServer ?? this.ctx.getOperationMcpServer?.());
     if (this.ctx.session.config.toolProfile === 'desktop')
       return operationServer ? { [DESKTOP_MCP_SERVER_NAME]: operationServer } : undefined;
+    const runtimeServers = this.getMcpServers() as Record<string, SdkMcpServerConfig> | undefined;
     const { servers, renamed } = mergeSessionMcpServers<SdkMcpServerConfig>({
-      registryServers: inputs ? this.canonicalMcpServers(inputs) : this.getMcpServersFromRegistry(),
-      skillServers: inputs ? {} : this.getMcpServersFromSkills(),
-      runtimeServers: this.getMcpServers() as Record<string, SdkMcpServerConfig> | undefined,
+      registryServers: await (inputs
+        ? this.canonicalMcpServers(inputs)
+        : this.getMcpServersFromRegistry()),
+      skillServers: inputs ? {} : await this.getMcpServersFromSkills(),
+      runtimeServers,
       operationServer,
     });
     for (const { from, to } of renamed) this.warnReservedMcpServerName(from, to);
@@ -605,7 +608,7 @@ export class QueryOptionsBuilder {
       config.operationTools === false
         ? undefined
         : this.ctx.getOperationMcpServer?.(overrides?.operationInputOrigin, overrides?.desktopTurn);
-    const mergedMcpServers = this.computeEffectiveMcpServers(toolInputs, config);
+    const mergedMcpServers = await this.computeEffectiveMcpServers(toolInputs, config);
 
     const queryOptions: Options = {
       model: sdkModelId,
@@ -1384,14 +1387,14 @@ export class QueryOptionsBuilder {
     return plugins;
   }
 
-  private getMcpServersFromSkills(): Record<string, McpServerConfig> {
+  private async getMcpServersFromSkills() {
     if (!this.ctx.skillsManager || !this.ctx.appMcpServerRepo) return {};
 
     const skills = this.ctx.skillsManager.getEnabledSkills();
     const overrideDisabled = this.getOverrideDisabledSkillIds();
     const sessionDisabled = this.getSessionDisabledSkillIds();
     const effectivelyEnabled = this.getEffectivelyEnabledAppServerIds();
-    const servers: Record<string, McpServerConfig> = {};
+    const servers: Record<string, SdkMcpServerConfig> = {};
 
     for (const skill of skills) {
       if (this.isSkillScopeDisabled(skill.id, overrideDisabled, sessionDisabled)) continue;
@@ -1412,7 +1415,8 @@ export class QueryOptionsBuilder {
         continue;
       }
 
-      servers[skill.name] = this.appMcpServerToSdkConfig(appServer);
+      const config = await this.appMcpServerToSdkConfig(appServer, skill.name);
+      if (config) servers[skill.name] = config;
     }
 
     return servers;
@@ -1431,12 +1435,12 @@ export class QueryOptionsBuilder {
     return resolveMcpServers(this.ctx.session, registry, overrides);
   }
 
-  private getMcpServersFromRegistry(): Record<string, McpServerConfig> {
+  private async getMcpServersFromRegistry() {
     const effective = this.resolveEffectiveRegistryServers();
     if (effective === null) return {};
 
     const skilledServerIds = this.getSkilledAppServerIds();
-    const servers: Record<string, McpServerConfig> = {};
+    const servers: Record<string, SdkMcpServerConfig> = {};
     for (const entry of effective) {
       if (skilledServerIds.has(entry.id)) continue;
       const validation = this.validateAppMcpServer(entry);
@@ -1444,7 +1448,8 @@ export class QueryOptionsBuilder {
         this.logger.warn(`Skipping configured MCP server "${entry.name}": ${validation.error}`);
         continue;
       }
-      servers[entry.name] = this.appMcpServerToSdkConfig(entry);
+      const config = await this.appMcpServerToSdkConfig(entry, entry.name);
+      if (config) servers[entry.name] = config;
     }
     return servers;
   }
@@ -1489,14 +1494,11 @@ export class QueryOptionsBuilder {
     }
   }
 
-  private appMcpServerToSdkConfig(server: {
-    sourceType: AppMcpServerSourceType;
-    command?: string;
-    args?: string[];
-    env?: Record<string, string>;
-    url?: string;
-    headers?: Record<string, string>;
-  }): McpServerConfig {
+  private async appMcpServerToSdkConfig(
+    server: AppMcpServer,
+    alias: string
+  ): Promise<SdkMcpServerConfig | undefined> {
+    if (server.auth) return this.ctx.mcpOAuthProxy?.(server.id, alias);
     switch (server.sourceType) {
       case 'stdio':
         return {

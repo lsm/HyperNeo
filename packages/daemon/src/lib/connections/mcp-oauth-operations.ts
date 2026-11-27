@@ -10,7 +10,7 @@ import { requireUnreservedName } from '../rpc-handlers/app-mcp-handlers.ts';
 import { writeToolDefaults } from '../tools/write-tool-defaults.ts';
 import { startLoopbackLogin } from './loopback-login.ts';
 import type { McpOAuthPreset, McpRefreshFailure } from './mcp-fetch.ts';
-import { createMcpOAuthProvider } from './mcp-oauth-provider.ts';
+import { admitsMcpGrant, createMcpOAuthProvider } from './mcp-oauth-provider.ts';
 import { createMcpOAuthRowClient } from './mcp-oauth-row-client.ts';
 import { createMcpOAuthToolProxy } from './mcp-oauth-tool-proxy.ts';
 import { ConnectionVault } from './vault.ts';
@@ -418,5 +418,15 @@ export function createMcpOAuthOperations(
     }),
   ];
   const toolProxy = (id: string, name: string) => createMcpOAuthToolProxy(client, id, name);
-  return { operations, refresh, client, toolProxy };
+  async function sessionProxy(id: string, name: string) {
+    if (!admission(id)) return;
+    try {
+      const grant = await (await vault()).readMcp(id);
+      const current = admission(id);
+      if (current && admitsMcpGrant(current.preset, current.generation, grant))
+        return toolProxy(id, name);
+    } catch {}
+  }
+
+  return { operations, refresh, client, toolProxy, sessionProxy };
 }

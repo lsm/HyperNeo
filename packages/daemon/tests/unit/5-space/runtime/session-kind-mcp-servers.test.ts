@@ -266,7 +266,7 @@ describe('session kind MCP server attachment', () => {
       };
     }
 
-    test('adds hyperneo-operations on top of whatever each session kind was attached', () => {
+    test('adds hyperneo-operations on top of whatever each session kind was attached', async () => {
       const attachedByKind: Record<SessionKind, string[]> = {
         agent_card: ['agent-memory', 'db-query'],
         unowned_space: [],
@@ -275,14 +275,16 @@ describe('session kind MCP server attachment', () => {
         non_space: [],
       };
 
-      const effective = SESSION_KINDS.map((kind) => {
-        const session = makeSessionOfKind(kind);
-        session.config.mcpServers = Object.fromEntries(
-          attachedByKind[kind].map((name) => [name, { type: 'sdk', name, instance: {} }])
-        ) as Session['config']['mcpServers'];
-        const builder = new QueryOptionsBuilder(makeBuilderContext(session));
-        return [kind, Object.keys(builder.getEffectiveMcpServers() ?? {}).sort()];
-      });
+      const effective = await Promise.all(
+        SESSION_KINDS.map(async (kind) => {
+          const session = makeSessionOfKind(kind);
+          session.config.mcpServers = Object.fromEntries(
+            attachedByKind[kind].map((name) => [name, { type: 'sdk', name, instance: {} }])
+          ) as Session['config']['mcpServers'];
+          const builder = new QueryOptionsBuilder(makeBuilderContext(session));
+          return [kind, Object.keys((await builder.getEffectiveMcpServers()) ?? {}).sort()];
+        })
+      );
 
       expect(effective).toEqual([
         ['agent_card', ['agent-memory', 'db-query', 'hyperneo-operations']],
@@ -309,15 +311,15 @@ describe('session kind MCP server attachment', () => {
       expect(options.strictMcpConfig).toBe(true);
     });
 
-    test('omits the operations server entirely when the context supplies no operation server factory', () => {
+    test('omits the operations server entirely when the context supplies no operation server factory', async () => {
       const session = makeSessionOfKind('non_space');
       const context = makeBuilderContext(session);
       delete context.getOperationMcpServer;
 
-      expect(new QueryOptionsBuilder(context).getEffectiveMcpServers()).toBeUndefined();
+      expect(await new QueryOptionsBuilder(context).getEffectiveMcpServers()).toBeUndefined();
     });
 
-    test('applies a space-scoped registry override only to sessions that carry that spaceId', () => {
+    test('applies a space-scoped registry override only to sessions that carry that spaceId', async () => {
       const registryServer = {
         id: 'registry-server-1',
         name: 'search',
@@ -345,10 +347,10 @@ describe('session kind MCP server attachment', () => {
           } as unknown as QueryOptionsBuilderContext['mcpEnablementRepo'],
         });
 
-      const member = new QueryOptionsBuilder(
+      const member = await new QueryOptionsBuilder(
         registryContext(makeSessionOfKind('agent_card'))
       ).getEffectiveMcpServers();
-      const outsider = new QueryOptionsBuilder(
+      const outsider = await new QueryOptionsBuilder(
         registryContext(makeSessionOfKind('non_space'))
       ).getEffectiveMcpServers();
 
@@ -356,7 +358,7 @@ describe('session kind MCP server attachment', () => {
       expect(Object.keys(outsider ?? {}).sort()).toEqual(['hyperneo-operations', 'search']);
     });
 
-    test('renames the operations server when a registry server already claims the name', () => {
+    test('renames the operations server when a registry server already claims the name', async () => {
       const collidingServer = {
         id: 'registry-server-2',
         name: 'hyperneo-operations',
@@ -379,7 +381,7 @@ describe('session kind MCP server attachment', () => {
         })
       );
 
-      expect(Object.keys(builder.getEffectiveMcpServers() ?? {}).sort()).toEqual([
+      expect(Object.keys((await builder.getEffectiveMcpServers()) ?? {}).sort()).toEqual([
         'hyperneo-operations',
         'hyperneo-operations-2',
       ]);

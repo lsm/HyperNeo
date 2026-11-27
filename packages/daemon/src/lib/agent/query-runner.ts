@@ -572,9 +572,9 @@ export class QueryRunner {
     const owns = () =>
       owner === this.toolInventoryOwner && owner.isLive() && query === this.ctx.queryObject;
     try {
-      const result = await query.setMcpServers(
-        this.ctx.optionsBuilder.getEffectiveMcpServers() ?? {}
-      );
+      const servers = await this.ctx.optionsBuilder.getEffectiveMcpServers();
+      if (!owns()) return { application: 'unverified', reason: 'query_changed' };
+      const result = await query.setMcpServers(servers ?? {});
       if (!owns()) return { application: 'unverified', reason: 'query_changed' };
       if (Object.keys(result.errors ?? {}).length)
         return { application: 'unverified', reason: 'application_failed' };
@@ -1264,13 +1264,17 @@ export class QueryRunner {
         logger.warn('Background fetch of models failed:', e);
       });
 
-      const effectiveMcpServers = optionsBuilder.getEffectiveMcpServers() ?? {};
-      void queryObject.setMcpServers?.(effectiveMcpServers).catch((err) => {
-        logger.warn(
-          `QueryRunner.start: post-start MCP reconcile failed for session ${session.id}: ` +
-            `${err instanceof Error ? err.message : String(err)}`
-        );
-      });
+      void Promise.resolve(optionsBuilder.getEffectiveMcpServers())
+        .then((servers) => {
+          if (this.ctx.queryObject === queryObject)
+            return queryObject.setMcpServers?.(servers ?? {});
+        })
+        .catch((err) => {
+          logger.warn(
+            `QueryRunner.start: post-start MCP reconcile failed for session ${session.id}: ` +
+              `${err instanceof Error ? err.message : String(err)}`
+          );
+        });
 
       const queryStartTime = Date.now();
 
