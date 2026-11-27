@@ -37,6 +37,7 @@ export function createMcpOAuthProvider(options: {
   attempt?: { authorize: (url: URL) => void };
   save?: (grant: McpGrant) => Promise<void>;
   onRefreshFailure?: (reason: McpRefreshFailure) => void;
+  onCredentialSent?: (value: string) => void;
   timeoutMs?: number;
 }) {
   const { preset, attempt } = options;
@@ -123,6 +124,7 @@ export function createMcpOAuthProvider(options: {
     preset,
     tokenEndpoint: () => draft.binding?.authorizationServerMetadata.token_endpoint,
     onRefreshFailure: options.onRefreshFailure,
+    onCredentialSent: options.onCredentialSent,
     timeoutMs: options.timeoutMs,
   });
   return { provider, fetch: fetchFn, commit: persist };

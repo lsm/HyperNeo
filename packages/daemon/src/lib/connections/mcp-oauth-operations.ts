@@ -12,6 +12,7 @@ import { startLoopbackLogin } from './loopback-login.ts';
 import type { McpOAuthPreset, McpRefreshFailure } from './mcp-fetch.ts';
 import { createMcpOAuthProvider } from './mcp-oauth-provider.ts';
 import { createMcpOAuthRowClient } from './mcp-oauth-row-client.ts';
+import { createMcpOAuthToolProxy } from './mcp-oauth-tool-proxy.ts';
 import { ConnectionVault } from './vault.ts';
 
 const loopback = 'http://127.0.0.1:18347';
@@ -218,6 +219,7 @@ export function createMcpOAuthOperations(
         preset,
         generation,
         redirectUrl: 'http://127.0.0.1/oauth/mcp/callback',
+        onCredentialSent: (value) => client.recordCredential(id, generation, value),
         onRefreshFailure: (failure) => {
           reason = failure;
         },
@@ -415,5 +417,6 @@ export function createMcpOAuthOperations(
       execute: readStatus,
     }),
   ];
-  return { operations, refresh, client };
+  const toolProxy = (id: string, name: string) => createMcpOAuthToolProxy(client, id, name);
+  return { operations, refresh, client, toolProxy };
 }
