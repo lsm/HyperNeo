@@ -21507,6 +21507,9 @@
             ],
             "type": "string"
           },
+          "preset": {
+            "type": "string"
+          },
           "scopes": {
             "items": {
               "type": "string"

@@ -19,6 +19,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'connections.description': '为此实例连接 Google 和 Microsoft 账号。',
   'connections.connect': '连接 Google',
   'connections.reconnect': '重新连接',
+  'connections.connectMcp': '连接',
   'connections.disconnect': '断开连接',
   'connections.empty': '尚未连接账号。',
   'connections.healthy': '已连接',

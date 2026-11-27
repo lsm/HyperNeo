@@ -49,6 +49,7 @@ const connectResult = z.union([
 const statusResult = z.object({
   health: z.enum(['healthy', 'disconnected', 'reconnect_needed']),
   scopes: z.array(z.string()),
+  preset: z.string().optional(),
 });
 const disconnectResult = z.union([
   z.object({ ok: z.literal(true) }),
@@ -351,8 +352,15 @@ export function createMcpOAuthOperations(
   async function status({
     id,
   }: z.infer<typeof statusInput>): Promise<z.infer<typeof statusResult>> {
+    const row = registry.get(id);
+    if (!row?.auth) {
+      const preset = Object.keys(testPresets).find(
+        (name) => row?.sourceType === 'http' && presetFor(name)?.preset.url === row.url
+      );
+      return { health: 'disconnected', scopes: [], ...(preset ? { preset } : {}) };
+    }
     const disconnected: z.infer<typeof statusResult> = { health: 'disconnected', scopes: [] };
-    if (!registry.get(id)?.auth?.active) return disconnected;
+    if (!row.auth.active) return disconnected;
     try {
       const grant = await (await vault()).readMcp(id);
       const auth = registry.get(id)?.auth;
