@@ -69,6 +69,7 @@ export function NeoHumanQueue({
 }) {
   const [state, setState] = useState<NeoHumanQueueState>('waiting');
   useEffect(() => onState?.(state), [state]);
+  useEffect(() => () => onState?.('waiting'), []);
   const [topic, setTopic] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, NeoAskEntry>>({});
   const title = (id: string) => {
