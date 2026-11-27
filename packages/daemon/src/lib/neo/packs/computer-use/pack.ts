@@ -21,7 +21,11 @@ export function createComputerUsePack(): NeoPack {
         ? DESKTOP_WORKER_TEMPLATE_KEY
         : undefined,
     workerTemplateBrief: (todo) =>
-      [todo.instruction, todo.doneWhen && `Finish when ${todo.doneWhen}`]
+      [
+        todo.doneWhen && `Finish when ${todo.doneWhen}`,
+        todo.report && `Latest worker report:\n${todo.report}`,
+        todo.instruction,
+      ]
         .filter(Boolean)
         .join('\n\n'),
     workerContext: () => NEO_PACK_COMPUTER_USE_WORKER,
