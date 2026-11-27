@@ -9,6 +9,8 @@ export type FakeMcpOAuthSwitches = {
   grantScope?: string;
   omitRefreshScope?: boolean;
   slack?: boolean;
+  preRegistered?: { clientId: string; clientSecret: string };
+  rootResource?: boolean;
   slackError?: string;
   metadataIssuer?: string;
   authorizationEndpoint?: string;
@@ -105,9 +107,14 @@ export async function startFakeMcpOAuthServer(switches: FakeMcpOAuthSwitches = {
         status: 307,
         headers: { location: switches.redirectMetadataTo },
       });
-    if (url.pathname === '/.well-known/oauth-protected-resource/mcp')
+    if (
+      url.pathname ===
+      (switches.rootResource
+        ? '/.well-known/oauth-protected-resource'
+        : '/.well-known/oauth-protected-resource/mcp')
+    )
       return json({
-        resource: `${base}/mcp`,
+        resource: switches.rootResource ? base : `${base}/mcp`,
         authorization_servers: [switches.authorizationServer ?? base],
         scopes_supported: switches.advertiseAllScopes ? allScopes : ['read', 'search'],
         ...(switches.oversized === 'resource' ? { padding: padding() } : {}),
@@ -117,14 +124,16 @@ export async function startFakeMcpOAuthServer(switches: FakeMcpOAuthSwitches = {
         issuer: switches.metadataIssuer ?? base,
         authorization_endpoint: switches.authorizationEndpoint ?? `${base}/authorize`,
         token_endpoint: `${base}/token`,
-        registration_endpoint: `${base}/register`,
+        ...(switches.preRegistered ? {} : { registration_endpoint: `${base}/register` }),
         response_types_supported: ['code'],
         code_challenge_methods_supported: ['S256'],
-        token_endpoint_auth_methods_supported: ['none', 'client_secret_post'],
+        token_endpoint_auth_methods_supported: switches.preRegistered
+          ? ['client_secret_post']
+          : ['none', 'client_secret_post'],
         scopes_supported: allScopes,
         ...(switches.oversized === 'metadata' ? { padding: padding() } : {}),
       });
-    if (url.pathname === '/register')
+    if (url.pathname === '/register' && !switches.preRegistered)
       return json({ ...(await request.json()), client_id: `client-${randomUUID()}` }, 201);
     if (url.pathname === '/authorize') {
       const scope = params.get('scope') ?? '';
@@ -147,6 +156,14 @@ export async function startFakeMcpOAuthServer(switches: FakeMcpOAuthSwitches = {
       );
     if (url.pathname === '/token' && switches.redirectToken && !url.search)
       return new Response(null, { status: 307, headers: { location: '/token?moved=1' } });
+    if (
+      url.pathname === '/token' &&
+      switches.preRegistered &&
+      (auth ||
+        params.get('client_id') !== switches.preRegistered.clientId ||
+        params.get('client_secret') !== switches.preRegistered.clientSecret)
+    )
+      return json({ error: 'invalid_client' }, 401);
     if (url.pathname === '/token') {
       if (params.get('grant_type') === 'authorization_code') {
         const entry = codes.get(params.get('code') ?? '');

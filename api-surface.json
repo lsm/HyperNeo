@@ -21217,6 +21217,16 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "clientId": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "clientSecret": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
           "id": {
             "minLength": 1,
             "type": "string"
@@ -21320,6 +21330,16 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "clientId": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "clientSecret": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
           "id": {
             "minLength": 1,
             "type": "string"
@@ -21512,6 +21532,10 @@
               "reconnect_needed"
             ],
             "type": "string"
+          },
+          "needsClient": {
+            "const": true,
+            "type": "boolean"
           },
           "preset": {
             "type": "string"

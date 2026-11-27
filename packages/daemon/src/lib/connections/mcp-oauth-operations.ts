@@ -14,6 +14,7 @@ import type { McpOAuthPreset, McpRefreshFailure } from './mcp-fetch.ts';
 import { admitsMcpGrant, createMcpOAuthProvider } from './mcp-oauth-provider.ts';
 import { createMcpOAuthRowClient } from './mcp-oauth-row-client.ts';
 import { createMcpOAuthToolProxy } from './mcp-oauth-tool-proxy.ts';
+import type { McpGrant } from './status.ts';
 import { ConnectionVault } from './vault.ts';
 
 const loopback = 'http://127.0.0.1:18347';
@@ -42,11 +43,38 @@ const vendorPresets = {
     origins: ['https://mcp.basecamp.com', basecamp],
     scopes: ['read'],
   },
+  slack: {
+    url: 'https://mcp.slack.com/mcp',
+    resource: 'https://mcp.slack.com',
+    issuer: 'https://mcp.slack.com',
+    authorizationEndpoint: 'https://slack.com/oauth/v2_user/authorize',
+    origins: ['https://mcp.slack.com', 'https://slack.com'],
+    scopes: [
+      'search:read.public',
+      'search:read.private',
+      'search:read.im',
+      'search:read.mpim',
+      'search:read.files',
+      'search:read.users',
+      'channels:history',
+      'channels:read',
+      'groups:read',
+      'im:read',
+      'mpim:read',
+      'users:read',
+      'files:read',
+      'canvases:read',
+      'lists:read',
+    ],
+    slackTokens: true,
+    clientSecret: true,
+  },
 } satisfies Record<string, McpOAuthPreset>;
 type PresetName = keyof typeof testPresets | keyof typeof vendorPresets;
 const presets: Record<PresetName, McpOAuthPreset> = { ...testPresets, ...vendorPresets };
 function presetFor(name: string | undefined) {
-  if (name === 'jira' || name === 'basecamp') return { name, preset: presets[name] } as const;
+  if (name === 'jira' || name === 'basecamp' || name === 'slack')
+    return { name, preset: presets[name] } as const;
   if (process.env.NODE_ENV === 'test' && (name === 'test' || name === 'test-slack')) {
     return { name, preset: presets[name] } as const;
   }
@@ -56,7 +84,11 @@ type RefreshResult = { ok: true } | { ok: false; reason: McpRefreshFailure };
 
 const policy = { safetyClass: 'human_only', caller: 'local_user' } as const;
 const statusInput = z.strictObject({ id: z.string().min(1) });
-const connectInput = statusInput.extend({ preset: z.string().min(1) });
+const clientInput = statusInput.extend({
+  clientId: z.string().trim().min(1).max(200).optional(),
+  clientSecret: z.string().trim().min(1).max(500).optional(),
+});
+const connectInput = clientInput.extend({ preset: z.string().min(1) });
 const replaceInput = statusInput
   .extend({
     url: z.string().nullable().optional(),
@@ -73,6 +105,7 @@ const statusResult = z.object({
   health: z.enum(['healthy', 'disconnected', 'reconnect_needed']),
   scopes: z.array(z.string()),
   preset: z.string().optional(),
+  needsClient: z.literal(true).optional(),
 });
 const disconnectResult = z.union([
   z.object({ ok: z.literal(true) }),
@@ -146,7 +179,11 @@ export function createMcpOAuthOperations(
     return { flow, generation: current.auth?.generation ?? 0, name, preset, target };
   }
 
-  async function openConsent(id: string, requestedPreset?: string) {
+  async function openConsent(
+    id: string,
+    entered: Omit<z.infer<typeof clientInput>, 'id'>,
+    requestedPreset?: string
+  ) {
     const admission = await serial(id, () => reserve(id, requestedPreset));
     if (!admission.flow) return { reason: admission.reason };
     const { flow, generation, name, preset, target } = admission;
@@ -155,6 +192,19 @@ export function createMcpOAuthOperations(
     };
     try {
       const store = await vault();
+      let registered: McpGrant['client'] | undefined;
+      if (preset.clientSecret) {
+        const clientId = entered.clientId ?? target()?.auth?.clientId;
+        const saved = (await store.readMcp(id))?.client;
+        const secret =
+          entered.clientSecret ??
+          (saved?.client_id === clientId ? saved?.client_secret : undefined);
+        if (!clientId || !secret) {
+          clear();
+          return { reason: 'client_required' };
+        }
+        registered = { client_id: clientId, client_secret: secret };
+      }
       let authorize: (code?: string) => ReturnType<typeof auth>;
       let commit: () => Promise<void>;
       const login = await startLoopbackLogin({
@@ -168,7 +218,7 @@ export function createMcpOAuthOperations(
             preset,
             generation: generation + 1,
             redirectUrl,
-            attempt: { authorize: consent.resolve },
+            attempt: { authorize: consent.resolve, client: registered },
           });
           const provider = { ...attempt.provider, state: () => state };
           authorize = (authorizationCode) =>
@@ -190,8 +240,11 @@ export function createMcpOAuthOperations(
             if (!current || (current.auth?.generation ?? 0) !== generation)
               throw new Error('login_failed');
 
-            const previous =
-              current.auth ?? ({ kind: 'oauth', preset: name, generation, active: false } as const);
+            const previous = {
+              ...(current.auth ??
+                ({ kind: 'oauth', preset: name, generation, active: false } as const)),
+              ...(registered ? { clientId: registered.client_id } : {}),
+            };
             refreshes.get(id)?.controller.abort();
             retries.delete(id);
             if (!current.auth) registry.setAuth(id, previous);
@@ -212,8 +265,9 @@ export function createMcpOAuthOperations(
     }
   }
 
-  const connect = ({ id, preset }: z.infer<typeof connectInput>) => openConsent(id, preset);
-  const reconnect = ({ id }: z.infer<typeof statusInput>) => openConsent(id);
+  const connect = ({ id, preset, ...entered }: z.infer<typeof connectInput>) =>
+    openConsent(id, entered, preset);
+  const reconnect = ({ id, ...entered }: z.infer<typeof clientInput>) => openConsent(id, entered);
 
   async function runRefresh(
     id: string,
@@ -384,6 +438,7 @@ export function createMcpOAuthOperations(
       health: 'disconnected',
       scopes: [],
       ...(preset ? { preset } : {}),
+      ...(preset && presetFor(preset)?.preset.clientSecret ? { needsClient: true as const } : {}),
     };
     if (!row?.auth?.active) return disconnected;
     try {
@@ -437,7 +492,7 @@ export function createMcpOAuthOperations(
       name: 'mcp.registry.reconnect',
       description: 'Start new browser consent for a remote MCP registry row with OAuth.',
       policy,
-      inputSchema: statusInput,
+      inputSchema: clientInput,
       resultSchema: connectResult,
       execute: startReconnect,
     }),

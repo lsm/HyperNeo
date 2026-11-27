@@ -113,6 +113,37 @@ describe('AppMcpOAuthRow', () => {
     }
   );
 
+  it('asks for the client ID and secret before connecting a preset that needs them', async () => {
+    request.mockImplementation(async (_method: string, { name }: Invocation) =>
+      name === 'mcp.registry.status'
+        ? { health: 'disconnected', scopes: [], preset: 'slack', needsClient: true }
+        : { authorizeUrl: consentUrl }
+    );
+    const popup = { opener: {}, location: { href: '' }, close: vi.fn() };
+    vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window);
+    render(<AppMcpOAuthRow server={{ ...server(false), auth: undefined }} />);
+    const connect = await screen.findByRole('button', { name: 'Connect' });
+    expect((connect as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.input(screen.getByLabelText('Client ID'), { target: { value: 'slack-client' } });
+    const secret = screen.getByLabelText('Client secret') as HTMLInputElement;
+    expect(secret.type).toBe('password');
+    fireEvent.input(secret, { target: { value: 'synthetic-secret' } });
+    fireEvent.click(connect);
+    await waitFor(() => expect(popup.location.href).toBe(consentUrl));
+    expect(invocations('mcp.registry.connect')).toEqual([
+      {
+        name: 'mcp.registry.connect',
+        input: {
+          id: 'row-1',
+          preset: 'slack',
+          clientId: 'slack-client',
+          clientSecret: 'synthetic-secret',
+        },
+      },
+    ]);
+    expect(secret.value).toBe('');
+  });
+
   it('shows nothing for an HTTP row without OAuth and without a matching preset', async () => {
     request.mockResolvedValue({ health: 'disconnected', scopes: [] });
     const { container } = render(<AppMcpOAuthRow server={{ ...server(false), auth: undefined }} />);
