@@ -210,7 +210,7 @@ export async function createDriverSession(
     ? {
         systemPrompt:
           template.key === DESKTOP_WORKER_TEMPLATE_KEY
-            ? template.instructions
+            ? undefined
             : { type: 'preset', preset: 'claude_code', append: template.instructions },
         sdkToolsPreset: [],
         coordinatorMode: false,
