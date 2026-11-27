@@ -270,9 +270,13 @@ compares the recorded triple against the todo target.
   (where one exists) disqualifies the worker like a failed confirmation.
 - `neo.todo.add` and `neo.todo.edit`: validate a start or send target with the
   same pure gate at admission, so an incomplete identity is rejected when the
-  work is assigned, not when the runner dispatches it later. Local targets use
-  the local adapter registry; targets on a paired daemon use that daemon's
-  `work.adapters` catalog read at admission; an unreachable remote defers
+  work is assigned, not when the runner dispatches it later. Like the start
+  gate, admission applies to local targets first, using the local adapter
+  registry; remote targets keep today's admission until the coding-and-remote
+  slice adds the `work.adapters` catalog read at admission (the local registry
+  cannot supply another machine's facts, and requiring the triple for remote
+  targets before the remote dispatch gate accepts it would refuse every remote
+  todo start in between). From that slice on, an unreachable remote defers
   validation to dispatch, where the owning daemon's gate is authoritative.
   `neo.todo.retarget` and `neo.todo.continue` need no admission of their own:
   they re-dispatch only the stored target this admission already validated.
@@ -348,7 +352,7 @@ compares the recorded triple against the todo target.
 
 ## Slices
 
-Six merge contracts following the repo's Pin/Build/Wire/Delete rungs. No
+Five merge contracts following the repo's Pin/Build/Wire/Delete rungs. No
 standalone pin slice: each wiring PR carries its own failing-then-passing
 assertions. Production-line estimates are measured from the cited regions at
 the investigation base; prompts and tests do not count against the budget.
@@ -376,21 +380,24 @@ holds per door from the moment its slice merges.
    executed identity on every turn (`query-options-builder.ts` plus the
    session facts write, ~35), and the receipt label plumbing through
    `recordStarted` (`work-operations.ts:752`, ~20).
-3. **Wire: send and todo admission** (≈105 production lines): the
-   `SendWorkInputSchema`/`NeoSendWorkTarget` identity fields
+3. **Wire: send and todo admission** (contract: new-todo sends and local
+   todo targets pass the gate; remote todo targets keep today's admission
+   until slice 4, matching the start gate's staging; ≈80 production lines):
+   the `SendWorkInputSchema`/`NeoSendWorkTarget` identity fields
    (`work-operations.ts:245`, `driver-work.ts:69`, ~10), the new-todo send
    check in `runSendWork` (`:1394`, ~30), and `neo.todo.add`/`neo.todo.edit`
-   admission including the remote catalog read (`todo-operations.ts`,
-   ~65).
-4. **Wire: coding pack and remote** (contract: coding candidates and
-   remote-routed starts pass the gate; ≈80 production lines): required
+   admission for local targets (`todo-operations.ts`, ~40).
+4. **Wire: coding pack and remote** (contract: coding candidates,
+   remote-routed starts and remote todo targets pass the gate; ≈105
+   production lines): required
    `CodingStageTarget` fields (`stage-preferences.ts:9`, ~5), the override
    deletion (`assign-operation.ts:233`, 1 line) and continuity-by-ordering
    (~15), and the remote advertisement schema plus forwarding admission that
    extend the gate step to remote routes and replace
    `admitRemoteStartModel`/`verifiedCopilotStart`'s model/effort role
    (`work-operations.ts:614-635`, `:346`, ~60) while preserving Copilot client
-   validation. The prompt changes above ride this slice, the last
+   validation, plus remote-target admission for `neo.todo.add`/`neo.todo.edit`
+   with the `work.adapters` catalog read (~25). The prompt changes above ride this slice, the last
    behavior-changing one; slices 2 and 3 update the tool text they change in
    the same PR as their behavior.
 5. **Delete** (removal only, ≈20 lines): the dispatch-path fallbacks the gates
