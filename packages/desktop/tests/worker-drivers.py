@@ -1208,7 +1208,7 @@ open(sys.argv[2], 'w').write(reply.decode())
         dock = int(subprocess.check_output(['/usr/bin/pgrep', '-x', 'Dock']).split()[0])
         pid = finder()
         reply = self.dispatch('list_windows', {'fixture_windows': [pid, dock]}, workDir=str(self.work),
-                              apps=['com.apple.finder'])['result']
+                              apps=['com.apple.Finder'])['result']
         self.assertTrue(reply['dispatched'], reply)
         self.assertEqual([w['pid'] for w in reply['structuredContent']['windows']], [pid])
         self.assertNotIn(f'Secret {dock}', json.dumps(reply['content']))
