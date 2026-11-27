@@ -8,6 +8,10 @@ export type NeoTurnReportFacts = {
   questionOpen: boolean;
 };
 
+export function isSilentNeoTurn(message: string): boolean {
+  return message.trim() === 'No response requested.';
+}
+
 export function skipEmptyNeoTurnReport(
   turn: { message: string; humanInput?: string },
   live: { status: string; waitingFor?: string; turnQuestion?: unknown } | null,
@@ -15,12 +19,12 @@ export function skipEmptyNeoTurnReport(
 ): boolean {
   return (
     turn.humanInput === undefined &&
-    turn.message.trim() === '' &&
+    (isSilentNeoTurn(turn.message) ||
+      (turn.message.trim() === '' && facts?.priorStatus === 'done')) &&
     live?.status === 'done' &&
     !live.waitingFor &&
     !live.turnQuestion &&
-    facts?.priorStatus === 'done' &&
-    facts.state === 'doing' &&
+    facts?.state === 'doing' &&
     facts.blockedBy === null &&
     !facts.questionOpen
   );

@@ -34,6 +34,12 @@ Evidence is observed.json with all recipient input bytes, send receipt, counts
 and todo records. This proves daemon receipt/storage, not model consumption or
 GUI rendering. The wrapper preserves evidence and removes synthetic daemon data.
 
+Pass `silent-turn` to run the same daemon and refresh job with a worker that ends
+its first turn with exactly `No response requested.` and sends no report. Inspect
+both Neo's queued digest and stored incoming messages. Pass prints
+`silent terminal turn PASS recipient_reports=0`. Failure-status notifications
+remain covered by the turn-report attention contract.
+
 ## Remote sender identities
 
 The helper also owns an ephemeral loopback work.status peer whose source machine

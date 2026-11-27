@@ -1,5 +1,9 @@
 import { neoSafeSessionLink } from '../../storage/repositories/neo-todo-session-repository.ts';
-import { skipEmptyNeoTurnReport, type NeoTurnReportFacts } from './turn-report-plan.ts';
+import {
+  isSilentNeoTurn,
+  skipEmptyNeoTurnReport,
+  type NeoTurnReportFacts,
+} from './turn-report-plan.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { WorkRef } from '../drivers/types.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -104,15 +108,16 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
         .join('\n');
       const owner = turn.notice ? 'a notice, no todo' : `todo ${todo.id}`;
       const context = `${owner}, dispatch ${dispatchId}, status ${live?.status ?? 'unknown'}`;
+      const message = isSilentNeoTurn(turn.message) ? '' : turn.message;
       if (turn.humanInput !== undefined)
-        return `The human worked directly in ${ref.adapter}:${ref.id} (ask ${ask.title}, todo ${todo.id}).\n\n${worker}\n\nThe human said: ${turn.humanInput}\n\nThe worker replied: ${turn.message || 'worker ended its turn with no reply'}\n\nWorker status: ${live?.status ?? 'unknown'}${live?.waitingFor ? `; waiting for: ${live.waitingFor}` : ''}`;
+        return `The human worked directly in ${ref.adapter}:${ref.id} (ask ${ask.title}, todo ${todo.id}).\n\n${worker}\n\nThe human said: ${turn.humanInput}\n\nThe worker replied: ${message || 'worker ended its turn with no reply'}\n\nWorker status: ${live?.status ?? 'unknown'}${live?.waitingFor ? `; waiting for: ${live.waitingFor}` : ''}`;
       return [
         statusOnly
           ? `Focused discussion status only (ask ${ask.id}, ${context}). Do not act, reply, forward or treat this as approval.`
           : `Worker turn report (${context}):`,
         worker,
         live?.waitingFor ? `Waiting for: ${live.waitingFor}` : '',
-        turn.message || 'worker ended its turn with no reply',
+        message || 'worker ended its turn with no reply',
         !statusOnly && !turn.notice && observation.facts?.blockedBy === 'needs-human'
           ? 'If you can answer this, reply to the worker and continue the todo; if only the human can decide, use neo.question.ask with kind relay for a worker question waiting on this todo, otherwise ask them with neo.question.ask (a choice with one option to confirm or several to choose, or a reply) linked to this todo.'
           : '',
