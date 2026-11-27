@@ -40,17 +40,37 @@ async function withDaemon<T>(drive: (hub: MessageHub, app: Awaited<ReturnType<ty
 const invoke = <T>(hub: MessageHub, name: string, input: unknown) =>
   hub.request<T>('operation.invoke', { name, input });
 const healthy = { health: 'healthy', scopes: ['read', 'search'] };
+const disconnected = { health: 'disconnected', scopes: [] };
+const reconnectNeeded = { health: 'reconnect_needed', scopes: [] };
 const tokenStarted = Promise.withResolvers<void>();
 const tokenRelease = Promise.withResolvers<void>();
+let holdCodeReply = { started: tokenStarted, release: tokenRelease };
 const fake = await startFakeMcpOAuthServer({
   port: 18347,
   advertiseAllScopes: true,
   beforeCodeReply: () => {
-    tokenStarted.resolve();
-    return tokenRelease.promise;
+    holdCodeReply.started.resolve();
+    return holdCodeReply.release.promise;
   },
 });
 const other = await startFakeMcpOAuthServer();
+const lifecycle = process.argv[3] === 'lifecycle';
+const proofName = lifecycle ? 'mcp-oauth-lifecycle' : 'mcp-oauth-connect';
+const readStatus = (hub: MessageHub, id: string) =>
+  invoke(hub, 'mcp.registry.status', { id });
+const reopen = (hub: MessageHub, id: string) =>
+  invoke<{ authorizeUrl: string }>(hub, 'mcp.registry.reconnect', { id });
+const disconnect = (hub: MessageHub, id: string) =>
+  invoke(hub, 'mcp.registry.disconnect', { id });
+const grantCount = (app: Awaited<ReturnType<typeof createDaemonApp>>) =>
+  app.db.getDatabase().query<{ count: number }, []>(
+    "SELECT count(*) AS count FROM provider_credentials WHERE provider_id LIKE 'hyperneo.connection.%.mcp.%'"
+  ).get()?.count;
+const callbackUrl = async (authorizeUrl: string) => {
+  const consent = await fetch(authorizeUrl, { redirect: 'manual' });
+  assert.equal(consent.status, 302);
+  return new URL(consent.headers.get('location') ?? '');
+};
 try {
   const id = await withDaemon(async (hub, app) => {
     const create = async (name: string, url: string) =>
@@ -74,9 +94,7 @@ try {
       { reason: 'invalid_preset' }
     );
     assert.equal(other.requests.length, 0);
-    const consent = await fetch(authorizeUrl, { redirect: 'manual' });
-    assert.equal(consent.status, 302);
-    const callback = new URL(consent.headers.get('location') ?? '');
+    const callback = await callbackUrl(authorizeUrl);
     const wrong = new URL(callback);
     wrong.searchParams.set('state', 'incorrect');
     const wrongState = (await fetch(wrong)).status;
@@ -111,11 +129,91 @@ try {
     assert.deepEqual(health, healthy);
     evidence.afterRestart = health;
   });
+  if (lifecycle) {
+    await withDaemon(async (hub, app) => {
+      const { authorizeUrl } = await reopen(hub, id);
+      assert.equal(new URL(authorizeUrl).pathname, '/authorize');
+      assert.deepEqual(await readStatus(hub, id), healthy);
+      assert.equal(grantCount(app), 1);
+      const cancel = await callbackUrl(authorizeUrl);
+      cancel.searchParams.delete('code');
+      cancel.searchParams.set('error', 'access_denied');
+      assert.equal((await fetch(cancel)).status, 400);
+      assert.deepEqual(await readStatus(hub, id), healthy);
+
+      const agent = createOperationMcpHandler(
+        () => app.sessionManager.getOperationRegistry(),
+        () => ({ sessionId: 'synthetic-worker', role: 'neo' })
+      );
+      for (const name of ['mcp.registry.reconnect', 'mcp.registry.disconnect']) {
+        const denied = await agent({ name, input: { id } });
+        assert.equal(denied.isError, true);
+        assert.equal(JSON.parse(denied.content[0].text).code, 'forbidden');
+      }
+
+      const reconnect = await reopen(hub, id);
+      assert.equal((await fetch(await callbackUrl(reconnect.authorizeUrl))).status, 200);
+      assert.deepEqual(await readStatus(hub, id), healthy);
+      assert.equal(app.db.appMcpServers.get(id)?.auth?.generation, 2);
+
+      const delayed = await reopen(hub, id);
+      const callback = await callbackUrl(delayed.authorizeUrl);
+      const hold = { started: Promise.withResolvers<void>(), release: Promise.withResolvers<void>() };
+      holdCodeReply = hold;
+      const reply = fetch(callback).then((response) => response.status, () => 'closed');
+      try {
+        await Promise.race([hold.started.promise, reply.then(() => { throw new Error('Callback ended before code exchange'); })]);
+        assert.deepEqual(await readStatus(hub, id), healthy);
+        assert.deepEqual(await disconnect(hub, id), { ok: true });
+      } finally {
+        hold.release.resolve();
+        holdCodeReply = { started: tokenStarted, release: tokenRelease };
+      }
+      assert.notEqual(await reply, 200);
+      assert.deepEqual(await readStatus(hub, id), disconnected);
+      assert.equal(grantCount(app), 0);
+      evidence.delayedConsent = { health: disconnected.health, grants: 0 };
+
+      const fresh = await invoke<{ authorizeUrl: string }>(hub, 'mcp.registry.connect', { id, preset: 'test' });
+      assert.equal((await fetch(await callbackUrl(fresh.authorizeUrl))).status, 200);
+      app.db.getDatabase().exec(`
+        CREATE TRIGGER proof_fail_grant_erase BEFORE DELETE ON provider_credentials
+        BEGIN SELECT RAISE(ABORT, 'synthetic erase failure'); END
+      `);
+      assert.deepEqual(await disconnect(hub, id), { ok: false, reason: 'request_failed' });
+      assert.deepEqual(await readStatus(hub, id), disconnected);
+      assert.equal(grantCount(app), 1);
+    });
+    await withDaemon(async (hub, app) => {
+      assert.deepEqual(await readStatus(hub, id), disconnected);
+      assert.equal(grantCount(app), 1);
+      evidence.eraseFailureAfterRestart = { health: disconnected.health, grants: 1 };
+      app.db.getDatabase().exec('DROP TRIGGER proof_fail_grant_erase');
+      const fresh = await invoke<{ authorizeUrl: string }>(hub, 'mcp.registry.connect', { id, preset: 'test' });
+      assert.equal((await fetch(await callbackUrl(fresh.authorizeUrl))).status, 200);
+      const reconnect = await reopen(hub, id);
+      app.db.getDatabase().exec(`
+        CREATE TRIGGER proof_stop_before_activation BEFORE UPDATE OF auth ON app_mcp_servers
+        BEGIN SELECT RAISE(ABORT, 'synthetic interrupted activation'); END
+      `);
+      assert.equal((await fetch(await callbackUrl(reconnect.authorizeUrl))).status, 400);
+      assert.deepEqual(await readStatus(hub, id), reconnectNeeded);
+    });
+    await withDaemon(async (hub) => {
+      assert.deepEqual(await readStatus(hub, id), reconnectNeeded);
+      evidence.interruptedActivationAfterRestart = reconnectNeeded.health;
+    });
+    const refreshRequests = fake.requests.filter(({ params }) => params.get('grant_type') === 'refresh_token').length;
+    assert.equal(refreshRequests, 0);
+    evidence.reconnectRefreshRequests = refreshRequests;
+  }
   evidence.pass = true;
 } finally {
   tokenRelease.resolve();
   fake.stop();
   other.stop();
-  writeFileSync(join(run, 'evidence/mcp-oauth-connect.json'), JSON.stringify(evidence, null, 2));
+  writeFileSync(join(run, `evidence/${proofName}.json`), JSON.stringify(evidence, null, 2));
 }
-console.log('PASS: human connected through RPC and one-use callback; agent and URL mismatch refused; one exchange; read scopes and healthy after restart');
+console.log(lifecycle
+  ? 'PASS: human reconnect and disconnect, cancelled consent, delayed callback, failed erase and interrupted activation'
+  : 'PASS: human connected through RPC and one-use callback; agent and URL mismatch refused; one exchange; read scopes and healthy after restart');
