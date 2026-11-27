@@ -35,8 +35,8 @@
     },
     {
       "file": "packages/daemon/src/storage/repositories/tool-default-transition.ts",
-      "lines": 253,
-      "sha256": "c5f99e8e216a9bac3c53bf1e3d39e4f4470e9cd26e40ca43dd9f179547e50247"
+      "lines": 256,
+      "sha256": "7db3bda3bef8e1226301175fcc7fdf09c6e38bad06110162ec6b48e1f5f4e526"
     },
     {
       "file": "packages/daemon/src/storage/repositories/tool-preference-commit.ts",
@@ -50,8 +50,8 @@
     },
     {
       "file": "packages/daemon/src/storage/repositories/app-mcp-server-repository.ts",
-      "lines": 343,
-      "sha256": "620ab4b5557a9223a3448de002996fb9b1205ed0b883dc6c9a7dd0ea080e1bd9"
+      "lines": 355,
+      "sha256": "3541c05b6a6b0ed44bfec74a1a9be46c47d01dd1328c4463dfbfc1f417d3ef35"
     },
     {
       "file": "packages/daemon/src/storage/repositories/mcp-enablement-repository.ts",
