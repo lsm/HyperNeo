@@ -11,6 +11,7 @@ import { NEO_TODO_FAILURE_NEXT, neoQuestionCoversTodo, neoTodoAwaitsHuman } from
 import { neoStartRetryDue } from './daemon-cards.ts';
 import { neoTodoPrerequisiteRefusal, neoTodoStartRefusal } from './todo-start-gate.ts';
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
+import { neoTodoMutations } from '../../storage/repositories/neo-todo-mutation-commit.ts';
 import { neoTodoRunnerWrites } from '../../storage/repositories/neo-todo-runner-state.ts';
 import { neoSyncedWorkers, neoWorkerStatusDue } from './worker-status-gate.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -1086,6 +1087,35 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     deps.changed();
   };
 
+  const refreshHold = async (id: string) => {
+    const todo = store.getCheckable(id);
+    const hold = todo?.hold;
+    if (todo?.blockedBy !== 'held' || !hold?.until) return;
+    const condition = hold.until;
+    const pack = deps.packs().find((pack) => pack.id === condition.pack);
+    const result = await pack?.todos?.hold?.read(condition);
+    if (!result || (!result.merged && hold.failed)) return;
+    const receipt = await deps.write(neoTodoMutations, {
+      input: {
+        kind: 'edit',
+        todoId: id,
+        hold: result.merged ? null : undefined,
+        holdResult: { heldAt: hold.heldAt, failure: result.merged ? undefined : result },
+      },
+      now: Date.now(),
+    });
+    if (!receipt.ok || !('startNext' in receipt)) return;
+    deps.changed();
+    if (result.merged)
+      await note(
+        'todo.hold_released',
+        todo,
+        hold.heldAt,
+        `Todo (${id}) hold was released after ${result.url} merged.${receipt.todo.startedAt === null ? '' : ' Please continue its worker.'}`,
+        { heldAt: hold.heldAt }
+      );
+  };
+
   const observe = async (id: string, outcome: OperationOutcome, ref: WorkRef) => {
     const todo = store.getTodo(id);
     const turns = readDriverTurnEnds(outcome);
@@ -1930,6 +1960,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         await check(store.getTodo(todo.id) ?? todo, Date.now()).catch((error) =>
           warn('Todo check pending', error)
         );
+        await refreshHold(todo.id).catch((error) => warn('Todo hold refresh pending', error));
         await queue
           .followThrough(todo.id, Date.now())
           .catch((error) => warn('Todo nudge pending', error));

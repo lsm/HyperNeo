@@ -44462,9 +44462,16 @@
             ],
             "description": "Why this step waits; null releases it."
           },
+          "reviewAt": {
+            "description": "Time in epoch milliseconds for Neo to review the hold.",
+            "type": "number"
+          },
           "todoId": {
             "minLength": 1,
             "type": "string"
+          },
+          "until": {
+            "description": "Pack condition that releases the hold when met."
           }
         },
         "required": [

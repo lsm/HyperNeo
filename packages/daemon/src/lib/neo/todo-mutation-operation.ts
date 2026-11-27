@@ -199,8 +199,8 @@ export function wireNeoTodoMutations(
 ): OperationDefinition[] {
   const mutate = buildTodoMutation(deps, superpipe({})('neo.todo.mutate-through-writer'));
   const done = buildTodoMutation(deps, superpipe({})('neo.todo.done'));
-  const definitions = createDefinitions(({ todoId, reason }, caller) =>
-    mutate({ todoId, hold: reason, kind: 'edit' }, caller)
+  const definitions = createDefinitions(({ todoId, reason, until, reviewAt }, caller) =>
+    mutate({ todoId, hold: reason, until, reviewAt, kind: 'edit' }, caller)
   );
   const operations = definitions.map<OperationDefinition>((entry) => {
     const kind = kinds.get(entry.name);
