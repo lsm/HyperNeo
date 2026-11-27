@@ -219,6 +219,14 @@ try {
       const reply = fetch(callback).then((response) => response.status, () => 'closed');
       try {
         await Promise.race([hold.started.promise, reply.then(() => { throw new Error('Callback ended before code exchange'); })]);
+        evidence.step = 'reject conflicting name before replacing URL';
+        await assert.rejects(hub.request('mcp.registry.update', {
+          id, url: other.url, name: 'oauth-mismatched',
+        }), /already exists/);
+        assert.deepEqual(await readStatus(hub, id), healthy);
+        assert.equal((await readRow(hub))?.url, fake.url);
+        assert.equal(grantCount(app), 1);
+        evidence.rejectedUpdatePreservedGrant = true;
         evidence.step = 'replace URL during consent';
         const { server } = await hub.request<{ server: AppMcpServer }>('mcp.registry.update', {
           id, url: other.url, sourceType: 'http', name: 'oauth-retargeted',
