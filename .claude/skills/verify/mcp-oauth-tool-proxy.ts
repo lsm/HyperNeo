@@ -18,6 +18,7 @@ assert(!existsSync(data));
 
 let oldBearer = '';
 let oldRefresh = '';
+let currentBearer = '';
 let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
 const streamReady = Promise.withResolvers<void>();
 let mode = 'normal';
@@ -26,7 +27,8 @@ const fixture = { started: Promise.withResolvers<void>(), release: Promise.withR
 const text = (value: string) => ({ type: 'text', text: value });
 const tool = { name: 'read', description: 'Read a record', inputSchema: { type: 'object' } };
 const secretFree = (value: unknown) =>
-  assert(!JSON.stringify(value).includes(oldBearer) && !JSON.stringify(value).includes(oldRefresh),
+  assert(!JSON.stringify(value).includes(oldBearer) && !JSON.stringify(value).includes(oldRefresh) &&
+    !JSON.stringify(value).includes(currentBearer),
     'The in-process MCP boundary exposed fixture credentials');
 const fake = await startFakeMcpOAuthServer({
   port: 18347,
@@ -66,6 +68,7 @@ const fake = await startFakeMcpOAuthServer({
       return reply({ content: [text(bearer)] });
     }
     if (expired && bearer === oldBearer) return new Response(null, { status: 401 });
+    currentBearer = bearer;
     oldRefresh = fake.requests.find(({ params }) => params.get('grant_type') === 'refresh_token')
       ?.params.get('refresh_token') ?? '';
     if (params.arguments?.path === 'get') {
@@ -76,9 +79,14 @@ const fake = await startFakeMcpOAuthServer({
       ));
       return new Response(null, { status: 202 });
     }
-    if (params.arguments?.path === 'error') return reply({ isError: true, content: [text(oldBearer)] });
-    if (params.arguments?.path === 'bytes')
-      return reply({ content: [text('kept'), text('x'.repeat(32730) + bearer + '界'.repeat(15000))] });
+    if (params.arguments?.path === 'tool-error') return reply({ isError: true, content: [text(oldBearer)] });
+    if (params.arguments?.path === 'rpc-error')
+      return Response.json({ jsonrpc: '2.0', id, error: { code: -32603, message: oldBearer } });
+    if (params.arguments?.path === 'bytes') {
+      const overhead = Buffer.byteLength(JSON.stringify({ content: [text('kept'), text(''), text('[truncated]')] }));
+      const prefix = 'x'.repeat(32768 - overhead - 12);
+      return reply({ content: [text('kept'), text(prefix + bearer + '界'.repeat(15000))] });
+    }
     if (params.arguments?.path === 'items') return reply({ content: Array(130).fill(text('item')) });
     return reply({ content: [text('read completed')] });
   },
@@ -140,10 +148,12 @@ try {
   assert.deepEqual(get.content, [text('[redacted]'), text('[redacted]')]);
   assert.deepEqual(get.structuredContent, { '[redacted]': '[redacted]' });
 
-  const error = await call('error');
-  secretFree(error);
-  assert.equal(error.isError, true);
-  assert.deepEqual(error.content, [text('request_failed')]);
+  for (const path of ['tool-error', 'rpc-error']) {
+    const error = await call(path);
+    secretFree(error);
+    assert.equal(error.isError, true);
+    assert.deepEqual(error.content, [text('request_failed')]);
+  }
 
   for (mode of ['count', 'description-size', 'schema-size', 'name', 'description', 'schema-key']) {
     const reason = ['count', 'description-size', 'schema-size'].includes(mode) ? 'response_too_large' : 'request_failed';
@@ -160,7 +170,10 @@ try {
     assert(result.content.length <= 32);
     assert.deepEqual(result.content.at(-1), text('[truncated]'));
   }
-  assert.deepEqual((bytes.content as unknown[])[0], text('kept'));
+  assert(Array.isArray(bytes.content));
+  assert.deepEqual(bytes.content[0], text('kept'));
+  assert(bytes.content[1]?.type === 'text' && bytes.content[1].text.endsWith('[redacted]'),
+    'A bearer crossing the byte limit must be replaced before truncation');
 
   await client.close();
   await proxy.instance.close();

@@ -163,6 +163,7 @@ export function createMcpFetch(options: {
   tokenEndpoint: () => string | undefined;
   onRefreshFailure?: (reason: McpRefreshFailure) => void;
   onResponseTooLarge?: () => void;
+  onCredentialSent?: (value: string) => void;
   maxBytes?: number;
   maxSseEventBytes?: number;
   timeoutMs?: number;
@@ -197,6 +198,17 @@ export function createMcpFetch(options: {
     let body: string;
     const maxBytes = options.maxBytes ?? 262144;
     try {
+      if (!signal.aborted && options.onCredentialSent) {
+        const secret = /^basic /i.test(auth)
+          ? Buffer.from(auth.slice(6), 'base64').toString('latin1').split(':').slice(1).join(':')
+          : params.get('client_secret');
+        for (const value of [
+          /^bearer /i.test(auth) && auth.slice(7),
+          params.get('refresh_token'),
+          secret,
+        ])
+          if (value) options.onCredentialSent(value);
+      }
       response = await (options.fetchImpl ?? fetch)(url, { ...init, redirect: 'manual', signal });
       const mediaType = response.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase();
       if (

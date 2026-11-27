@@ -1,6 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { CallToolRequest } from '@modelcontextprotocol/sdk/types.js';
+import { type CallToolRequest, CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { createMcpFetch, type McpOAuthPreset, type McpRefreshFailure } from './mcp-fetch.ts';
 import { admitsMcpGrant } from './mcp-oauth-provider.ts';
 import type { McpGrant } from './status.ts';
@@ -10,10 +10,11 @@ type Failure = McpRefreshFailure | 'unauthorized';
 type RowClient = Admission & {
   sdk: Client;
   ready: Promise<void>;
+  sent: Set<string>;
   fault?: RowFailure;
 };
 
-class RowFailure extends Error {
+export class RowFailure extends Error {
   constructor(reason: Failure) {
     super(reason);
   }
@@ -21,6 +22,16 @@ class RowFailure extends Error {
 
 const boundedFailure = (error: unknown) =>
   error instanceof RowFailure ? error : new RowFailure('request_failed');
+
+function visitStrings(value: unknown, visit: (text: string) => string): unknown {
+  if (typeof value === 'string') return visit(value);
+  if (Array.isArray(value)) return value.map((item) => visitStrings(item, visit));
+  if (value && typeof value === 'object')
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [visit(key), visitStrings(item, visit)])
+    );
+  return value;
+}
 
 export function createMcpOAuthRowClient(options: {
   admission: (id: string) => Admission | undefined;
@@ -39,6 +50,7 @@ export function createMcpOAuthRowClient(options: {
     if (!row || rows.get(id) !== row) return;
     row.fault = fault;
     rows.delete(id);
+    row.sent.clear();
     void row.sdk.close().catch(() => {});
   }
   function closeAll() {
@@ -58,6 +70,7 @@ export function createMcpOAuthRowClient(options: {
     const bounded = createMcpFetch({
       preset: admitted.preset,
       tokenEndpoint: () => undefined,
+      onCredentialSent: (value) => row.sent.add(value),
       onResponseTooLarge: () => close(id, row, new RowFailure('response_too_large')),
     });
     async function send(url: string | URL, init?: RequestInit, retry = true): Promise<Response> {
@@ -87,12 +100,16 @@ export function createMcpOAuthRowClient(options: {
       close(id, row, boundedFailure(error));
       throw error;
     });
-    const row: RowClient = { ...admitted, sdk, ready };
+    const row: RowClient = { ...admitted, sdk, ready, sent: new Set() };
     rows.set(id, row);
     return row;
   }
 
-  async function request<T>(id: string, run: (sdk: Client) => Promise<T>): Promise<T> {
+  async function request<T, R>(
+    id: string,
+    run: (sdk: Client) => Promise<T>,
+    project: (result: T, redact: (text: string) => string) => R
+  ): Promise<R> {
     const admitted = options.admission(id);
     const cached = rows.get(id);
     if (cached && (!admitted || !matching(cached, admitted))) close(id);
@@ -102,8 +119,23 @@ export function createMcpOAuthRowClient(options: {
       await row.ready;
       current(id, row);
       const result = await run(row.sdk);
+      const grant = await options.grant(id);
       current(id, row);
-      return result;
+      if (!admitsMcpGrant(row.preset, row.generation, grant))
+        throw new RowFailure('reconnect_needed');
+      const values = new Set([
+        ...row.sent,
+        grant.tokens.access_token,
+        grant.tokens.refresh_token,
+        grant.client.client_secret,
+      ]);
+      const pattern = [...values]
+        .filter((value): value is string => !!value)
+        .sort((a, b) => b.length - a.length)
+        .map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        .join('|');
+      const secrets = new RegExp(pattern, 'g');
+      return project(result, (text) => text.replace(secrets, '[redacted]'));
     } catch (error) {
       current(id, row);
       throw boundedFailure(error);
@@ -112,8 +144,30 @@ export function createMcpOAuthRowClient(options: {
 
   return {
     close: (id: string) => close(id),
-    listTools: (id: string) => request(id, (sdk) => sdk.listTools()),
+    recordCredential: (id: string, generation: number, value: string) => {
+      const row = rows.get(id);
+      if (row?.generation === generation) row.sent.add(value);
+    },
+    listTools: (id: string) =>
+      request(
+        id,
+        (sdk) => sdk.listTools(),
+        (result, redact) => {
+          visitStrings(result.tools, (text) => {
+            if (redact(text) !== text) throw new RowFailure('request_failed');
+            return text;
+          });
+          return result;
+        }
+      ),
     callTool: (id: string, input: CallToolRequest['params']) =>
-      request(id, (sdk) => sdk.callTool(input)),
+      request(
+        id,
+        (sdk) => sdk.callTool(input),
+        (result, redact) => {
+          if (result.isError) throw new RowFailure('request_failed');
+          return CallToolResultSchema.parse(visitStrings(result, redact));
+        }
+      ),
   };
 }
