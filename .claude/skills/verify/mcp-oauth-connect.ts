@@ -55,7 +55,8 @@ const fake = await startFakeMcpOAuthServer({
 });
 const other = await startFakeMcpOAuthServer();
 const lifecycle = process.argv[3] === 'lifecycle';
-const proofName = lifecycle ? 'mcp-oauth-lifecycle' : 'mcp-oauth-connect';
+const rowWrites = process.argv[3] === 'row-writes';
+const proofName = lifecycle ? 'mcp-oauth-lifecycle' : rowWrites ? 'mcp-oauth-row-writes' : 'mcp-oauth-connect';
 const readStatus = (hub: MessageHub, id: string) =>
   invoke(hub, 'mcp.registry.status', { id });
 const reopen = (hub: MessageHub, id: string) =>
@@ -207,6 +208,65 @@ try {
     assert.equal(refreshRequests, 0);
     evidence.reconnectRefreshRequests = refreshRequests;
   }
+  if (rowWrites) {
+    const readRow = async (hub: MessageHub) =>
+      (await hub.request<{ servers: AppMcpServer[] }>('mcp.registry.list', {}))
+        .servers.find((server) => server.id === id);
+    await withDaemon(async (hub, app) => {
+      const callback = await callbackUrl((await reopen(hub, id)).authorizeUrl);
+      const hold = { started: Promise.withResolvers<void>(), release: Promise.withResolvers<void>() };
+      holdCodeReply = hold;
+      const reply = fetch(callback).then((response) => response.status, () => 'closed');
+      try {
+        await Promise.race([hold.started.promise, reply.then(() => { throw new Error('Callback ended before code exchange'); })]);
+        evidence.step = 'reject conflicting name before replacing URL';
+        await assert.rejects(hub.request('mcp.registry.update', {
+          id, url: other.url, name: 'oauth-mismatched',
+        }), /already exists/);
+        assert.deepEqual(await readStatus(hub, id), healthy);
+        assert.equal((await readRow(hub))?.url, fake.url);
+        assert.equal(grantCount(app), 1);
+        evidence.rejectedUpdatePreservedGrant = true;
+        evidence.step = 'replace URL during consent';
+        const { server } = await hub.request<{ server: AppMcpServer }>('mcp.registry.update', {
+          id, url: other.url, sourceType: 'http', name: 'oauth-retargeted',
+        });
+        assert.equal(server.url, other.url);
+        assert.equal(server.name, 'oauth-retargeted');
+        assert.equal(server.auth?.active, false);
+      } finally {
+        hold.release.resolve();
+        holdCodeReply = { started: tokenStarted, release: tokenRelease };
+        await reply;
+      }
+      assert.notEqual(await reply, 200);
+      assert.deepEqual(await readStatus(hub, id), disconnected);
+      assert.deepEqual(await invoke(hub, 'mcp.registry.connect', { id, preset: 'test' }), {
+        reason: 'invalid_preset',
+      });
+      assert.equal(other.requests.length, 0);
+      assert.equal(grantCount(app), 0);
+      const agent = createOperationMcpHandler(
+        () => app.sessionManager.getOperationRegistry(),
+        () => ({ sessionId: 'synthetic-worker', role: 'neo' })
+      );
+      const denied = await agent({ name: 'mcp.registry.replace', input: { id, url: fake.url } });
+      assert.equal(denied.isError, true);
+      assert.equal(JSON.parse(denied.content[0].text).code, 'forbidden');
+      assert.equal((await readRow(hub))?.url, other.url);
+
+      evidence.rowWrites = {
+        agentRefused: true, delayedCallbacksRefused: 1, grantsAfterReplacement: 0,
+        requestsToReplacementUrl: 0,
+      };
+    });
+    await withDaemon(async (hub, app) => {
+      assert.equal((await readRow(hub))?.url, other.url);
+      assert.deepEqual(await readStatus(hub, id), disconnected);
+      assert.equal(grantCount(app), 0);
+      evidence.replacementAfterRestart = 'disconnected';
+    });
+  }
   evidence.pass = true;
 } finally {
   tokenRelease.resolve();
@@ -216,4 +276,6 @@ try {
 }
 console.log(lifecycle
   ? 'PASS: human reconnect and disconnect, cancelled consent, delayed callback, failed erase and interrupted activation'
-  : 'PASS: human connected through RPC and one-use callback; agent and URL mismatch refused; one exchange; read scopes and healthy after restart');
+  : rowWrites
+    ? 'PASS: registry URL replacement denied the agent, fenced delayed consent and stayed disconnected after restart'
+    : 'PASS: human connected through RPC and one-use callback; agent and URL mismatch refused; one exchange; read scopes and healthy after restart');

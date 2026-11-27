@@ -239,6 +239,7 @@ export const WorkStartedSchema = WorkSummarySchema.extend({
   receipt: WorkInputReceiptSchema.optional(),
   startedTurnId: z.string().min(1).optional(),
   reused: z.literal(true).optional(),
+  delivery: WorkDeliverySchema.optional(),
 });
 
 export const WorkTurnEndSchema = z.object({

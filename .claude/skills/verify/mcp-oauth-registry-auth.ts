@@ -141,10 +141,6 @@ try {
     } else {
       assert.deepEqual(before?.auth, auth);
       assert.deepEqual(await read(), before);
-      await assert.rejects(
-        hub.request('mcp.registry.update', { id: imported.id, url: newUrl }),
-        /disconnect it first/
-      );
     }
     const deletion = await hub
       .request('mcp.registry.delete', { id: baseline ? legacy.id : imported.id })
@@ -165,7 +161,7 @@ try {
     evidence.restartRetainedAuth = true;
   });
   evidence.pass = true;
-  console.log('PASS: migration applied once, OAuth import and registry writes refused, plain delete accepted');
+  console.log('PASS: migration applied once, OAuth import retarget and registry delete refused, plain delete accepted');
 } finally {
   writeFileSync(join(run, 'evidence/mcp-oauth-registry-auth.json'), JSON.stringify(evidence, null, 2));
 }

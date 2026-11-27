@@ -69,6 +69,7 @@ import { neoAskInputReads } from '../../../storage/repositories/neo-ask-input-wo
 import { gatewayFor } from '../../../storage/db-gateway/db-gateway.ts';
 import { Logger } from '../../logger.ts';
 import { WorkDeliveryInputRepository } from '../../../storage/repositories/work-delivery-input-repository.ts';
+import { retargetDeliveryInput } from '../../../storage/repositories/work-turn-todo-worker.ts';
 import { readDriverOutcome } from '../../neo/driver-work.ts';
 import { existsSync, mkdirSync, statSync } from 'node:fs';
 import { codexStatePath } from '../../../storage/codex-desktop-read.ts';
@@ -915,6 +916,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
           { failure: String(error) },
           Date.now()
         ),
+      retarget: (id, ref) => retargetDeliveryInput(db(), id, ref),
     } satisfies WorkVerbDeps['workInputs'],
     recordStarted: (
       ref: StartedWork,

@@ -28,7 +28,13 @@ const turn = (change: Partial<CodingTurn> = {}): CodingTurn => ({
   ...change,
 });
 const key = codingTurnSessionKey(session);
-const todos = { [key]: { 'receipt-a': 'todo-a', 'receipt-b': 'todo-b' } };
+const keyed = (keys: Record<string, string>) => ({
+  keys: Object.fromEntries(Object.entries(keys).map(([id, todo]) => [id, [todo]])),
+  starter: null,
+  roles: {},
+});
+const receipts = { 'receipt-a': 'todo-a', 'receipt-b': 'todo-b' };
+const todos = { [key]: keyed(receipts) };
 const owner = (turns: CodingTurn[], createdAt: number | undefined = 150) =>
   planCodingTurnOwner({ url, createdAt }, turns, todos);
 
@@ -78,7 +84,7 @@ describe('coding turn ownership', () => {
 
   test('an input id another session also uses names only its own todo', () => {
     const other = { adapter: 'hyperneo', id: 's2' };
-    const scoped = { ...todos, [codingTurnSessionKey(other)]: { 'receipt-a': 'todo-z' } };
+    const scoped = { ...todos, [codingTurnSessionKey(other)]: keyed({ 'receipt-a': 'todo-z' }) };
     expect(planCodingTurnOwner({ url, createdAt: 150 }, [turn()], scoped)).toEqual({
       state: 'placed',
       session,
@@ -104,7 +110,7 @@ describe('coding turn ownership', () => {
   });
 
   test('a row id and a pending id for one input count as one todo', () => {
-    const both = { [key]: { ...todos[key], 'desktop-pending:hash': 'todo-a' } };
+    const both = { [key]: keyed({ ...receipts, 'desktop-pending:hash': 'todo-a' }) };
     const pending = turn({ inputs: ['receipt-a', 'desktop-pending:hash'] });
     expect(planCodingTurnOwner({ url, createdAt: 150 }, [pending], both)).toEqual({
       state: 'placed',
@@ -116,7 +122,7 @@ describe('coding turn ownership', () => {
   test('a Codex send owns the turn by its native turn id', () => {
     expect(
       planCodingTurnOwner({ url, createdAt: 150 }, [turn({ inputs: [] })], {
-        [key]: { t1: 'todo-b' },
+        [key]: keyed({ t1: 'todo-b' }),
       })
     ).toEqual({ state: 'placed', session, todo: 'todo-b' });
   });

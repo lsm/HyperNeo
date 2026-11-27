@@ -143,4 +143,27 @@ describe('openWorkerRefs', () => {
     ]);
     db.close();
   });
+
+  test('a rejected send names its worker by its target', () => {
+    const db = new Database(':memory:');
+    runMigrations(db, () => {});
+    createTables(db);
+    db.exec(`INSERT INTO neo_asks (id, session_id, title, request, status, created_at, updated_at)
+      VALUES ('open', 'neo', 'a', 'r', 'open', 1, 1);
+      INSERT INTO neo_todos (id, ask_id, position, title, done_when, state, created_at, updated_at)
+      VALUES ('a', 'open', 0, 't', 'd', 'blocked', 1, 1)`);
+    const rejected = { adapter: 'codex-desktop', id: 'rejected' };
+    db.prepare(
+      `INSERT INTO work_delivery_inputs
+        (id, todo_id, origin_session_id, target, message, accepted_at, deadline_at, outcome)
+       VALUES ('d1', 'a', 'neo', ?, 'work', 1, 2, ?)`
+    ).run(
+      JSON.stringify({ verb: 'send', ref: rejected }),
+      JSON.stringify({ failure: 'not_delivered: lost', clientMessageId: 'client-a' })
+    );
+    expect(new WorkDeliveryInputRepository(db).openWorkerRefs()).toEqual([
+      { ref: rejected, lastActivityAt: null },
+    ]);
+    db.close();
+  });
 });
