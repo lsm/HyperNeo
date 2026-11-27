@@ -19,10 +19,13 @@ for (const name of ['gh', 'open', 'security', 'claude'])
 const name = 'oauth-session-proof';
 const model = 'claude-haiku-4-5-20251001';
 const toolName = `mcp__${name}__read`;
+const writeTool = `mcp__${name}__write`;
 const readText = 'Synthetic record read';
+const writeText = 'Synthetic record written';
+let mutations = 0;
 const results = new Map<string, string>();
 const requested = new Set<string>();
-const turns = ['read-first', 'read-reconnected', 'read-retired', 'read-revoked'];
+const turns = ['write-denied', 'read-first', 'read-reconnected', 'read-retired', 'read-revoked'];
 let revoke = false;
 const hold = Promise.withResolvers<void>();
 let entered = false;
@@ -37,8 +40,16 @@ const fake = await startFakeMcpOAuthServer({
     if (method === 'initialize')
       return reply({ protocolVersion: '2025-03-26', serverInfo: { name, version: '1' }, capabilities: { tools: {} } });
     if (method === 'tools/list')
-      return reply({ tools: [{ name: 'read', inputSchema: { type: 'object' } }] });
+      return reply({ tools: [{ name: 'read', inputSchema: { type: 'object' } }, { name: 'write', inputSchema: { type: 'object' } }] });
     if (revoke) return new Response(null, { status: 401 });
+    if (params.name === 'write') {
+      if (!fake.authorizeScopes.at(-1)?.split(' ').includes('write'))
+        return Response.json({ error: 'insufficient_scope' }, {
+          status: 403, headers: { 'www-authenticate': 'Bearer error="insufficient_scope", scope="write"' },
+        });
+      mutations += 1;
+      return reply({ content: [{ type: 'text', text: writeText }] });
+    }
     if (params.arguments?.mode === 'read-retired') {
       entered = true;
       await hold.promise;
@@ -62,10 +73,11 @@ const mock = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
   }
   const last = JSON.stringify(body.messages?.at(-1)?.content ?? '');
   const turn = turns.find((marker) => last.includes(marker));
-  const call = turn && !requested.has(turn) && body.tools?.some((tool) => tool.name === toolName);
+  const target = turn === 'write-denied' ? writeTool : toolName;
+  const call = turn && !requested.has(turn) && body.tools?.some((tool) => tool.name === target);
   if (turn) evidence.lastTurn = { turn, offered: body.tools?.filter(tool => tool.name.includes('oauth')).map(tool => tool.name), receipt: results.has(turn), modelCalls };
   if (call) requested.add(turn);
-  const block = call ? { type: 'tool_use', id: turn, name: toolName, input: { mode: turn } } : { type: 'text', text: 'Synthetic model turn complete' };
+  const block = call ? { type: 'tool_use', id: turn, name: target, input: { mode: turn } } : { type: 'text', text: 'Synthetic model turn complete' };
   const usage = { input_tokens: 100, output_tokens: 20 };
   const message = { id: `msg_${crypto.randomUUID()}`, type: 'message', role: 'assistant', model, content: [block], stop_reason: call ? 'tool_use' : 'end_turn', stop_sequence: null, usage };
   if (!body.stream) return Response.json(message);
@@ -178,6 +190,14 @@ try {
     return results.get(marker)!;
   };
   assert((await read('read-first')).includes(readText));
+  const consents = fake.authorizeScopes.length;
+  assert(!fake.authorizeScopes.at(-1)?.split(' ').includes('write'), 'The read grant must not carry write scope');
+  const denied = await read('write-denied');
+  assert(!denied.includes(writeText), 'A write tool result reached the model under the read grant');
+  assert.equal(mutations, 0);
+  assert.equal(fake.authorizeScopes.length, consents);
+  assert(await hasTool(), 'A write-scope challenge removed the OAuth tools');
+  evidence.writeDenied = { mutations, consents, result: denied.slice(0, 200) };
 
   const stale = read('read-retired');
   void stale.catch(() => {});
@@ -201,7 +221,7 @@ try {
   assert.equal(agent.queryObject, query);
   assert.equal(fake.authorizeScopes.length, 3);
   evidence.pass = true;
-  evidence.cases = ['connect and read', 'old-generation result refused', 'reconnect and read', 'disconnect removal', 'invalid_grant removal', 'same live query', 'SDK config has no headers'];
+  evidence.cases = ['connect and read', 'old-generation result refused', 'reconnect and read', 'disconnect removal', 'invalid_grant removal', 'same live query', 'SDK config has no headers', 'write tool under read grant: zero mutations, no new consent'];
   console.log('PASS: running native SDK session uses the OAuth proxy and reconciles the grant lifecycle');
 } finally {
   hold.resolve();
