@@ -33,3 +33,18 @@ SQLite triggers in the disposable DB simulate failed erase and an interruption
 between the bundle write and activation. After restarts, status must show
 disconnected and reconnect needed respectively. Require exit 0 and
 `pass: true` in `mcp-oauth-lifecycle.json`.
+
+To exercise registry URL replacement against the same daemon and
+fixture, run:
+
+```bash
+bash .claude/skills/verify/proof-run.sh /absolute/evidence/mcp-oauth-row-writes \
+  .claude/skills/verify/mcp-oauth-connect.ts "$(git rev-parse HEAD)" row-writes
+```
+
+On the base, expect exit 1 when the registry refuses a URL replacement.
+On the fixed head, require exit 0 and `pass: true` in `mcp-oauth-row-writes.json`.
+A conflicting rename in the same request leaves the URL and grant intact.
+The replacement operation refuses an agent caller. A human URL replacement
+aborts a held consent callback, erases the grant and stays disconnected after
+restart. The new endpoint receives no request.

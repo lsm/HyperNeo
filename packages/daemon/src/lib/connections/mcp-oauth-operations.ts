@@ -6,6 +6,8 @@ import type { Database } from '../../storage/database.ts';
 import { artifactIdentityWrites } from '../../storage/repositories/artifact-file-identity-write.ts';
 import type { CredentialStore } from '../credentials/credential-store.ts';
 import { defineOperation } from '../operations/registry.ts';
+import { requireUnreservedName } from '../rpc-handlers/app-mcp-handlers.ts';
+import { writeToolDefaults } from '../tools/write-tool-defaults.ts';
 import { startLoopbackLogin } from './loopback-login.ts';
 import type { McpOAuthPreset } from './mcp-fetch.ts';
 import { createMcpOAuthProvider } from './mcp-oauth-provider.ts';
@@ -25,6 +27,13 @@ const testPresets = {
 const policy = { safetyClass: 'human_only', caller: 'local_user' } as const;
 const statusInput = z.strictObject({ id: z.string().min(1) });
 const connectInput = statusInput.extend({ preset: z.string().min(1) });
+const replaceInput = statusInput
+  .extend({
+    url: z.string().nullable(),
+    sourceType: z.literal('http').optional(),
+    name: z.string().optional(),
+  })
+  .loose();
 const connectResult = z.union([
   z.object({ authorizeUrl: z.string() }),
   z.object({ reason: z.string() }),
@@ -152,13 +161,29 @@ export function createMcpOAuthOperations(
   const connect = ({ id, preset }: z.infer<typeof connectInput>) => openConsent(id, preset);
   const reconnect = ({ id }: z.infer<typeof statusInput>) => openConsent(id);
 
-  function disconnect({ id }: z.infer<typeof statusInput>) {
+  function retire({ id }: z.infer<typeof statusInput>, replacement?: z.infer<typeof replaceInput>) {
     const active = pending.get(id);
-    active?.controller.abort();
+    if (!replacement) active?.controller.abort();
     return serial(id, async (): Promise<z.infer<typeof disconnectResult>> => {
+      const row = registry.get(id);
+      if (replacement) {
+        if (!row?.auth) return { ok: false, reason: 'not_connected' };
+        const { id, url, ...updates } = replacement;
+        if (updates.name !== undefined) requireUnreservedName(updates.name.trim());
+        if (Object.keys(updates).length > 0) {
+          await writeToolDefaults(db, {
+            mutations: [{ repository: 'registry', method: 'update', args: [id, updates] }],
+            edits:
+              updates.enabled === undefined
+                ? []
+                : [{ key: `mcp:${id}`, selected: !!updates.enabled }],
+          });
+          changed();
+        }
+        if (row.url === (url ?? undefined)) return { ok: true };
+      }
       const flow = pending.get(id) ?? active;
       flow?.controller.abort();
-      const row = registry.get(id);
       const auth =
         row?.auth ??
         (flow && row?.sourceType === 'http' && row.url === testPresets[flow.preset].url
@@ -169,6 +194,12 @@ export function createMcpOAuthOperations(
       changed();
       try {
         await (await vault()).removeMcp(id);
+        if (replacement) {
+          if (!registry.replaceOAuthUrl(id, replacement.url)) {
+            return { ok: false, reason: 'request_failed' };
+          }
+          changed();
+        }
         return { ok: true };
       } catch {
         return { ok: false, reason: 'request_failed' };
@@ -200,10 +231,16 @@ export function createMcpOAuthOperations(
     .input('input')
     .pipe(reconnect, 'input', 'result')
     .endAsync('result') as typeof reconnect;
+  const disconnect = (input: z.infer<typeof statusInput>) => retire(input);
   const runDisconnect = (superpipe({})('mcp.registry.disconnect') as PipelineAPI)
     .input('input')
     .pipe(disconnect, 'input', 'result')
     .endAsync('result') as typeof disconnect;
+  const replace = (input: z.infer<typeof replaceInput>) => retire(input, input);
+  const runReplace = (superpipe({})('mcp.registry.replace') as PipelineAPI)
+    .input('input')
+    .pipe(replace, 'input', 'result')
+    .endAsync('result') as typeof replace;
   const readStatus = (superpipe({})('mcp.registry.status') as PipelineAPI)
     .input('input')
     .pipe(status, 'input', 'result')
@@ -232,6 +269,14 @@ export function createMcpOAuthOperations(
       inputSchema: statusInput,
       resultSchema: disconnectResult,
       execute: runDisconnect,
+    }),
+    defineOperation({
+      name: 'mcp.registry.replace',
+      description: 'Disconnect a remote MCP registry row before changing its URL.',
+      policy,
+      inputSchema: replaceInput,
+      resultSchema: disconnectResult,
+      execute: runReplace,
     }),
     defineOperation({
       name: 'mcp.registry.status',
