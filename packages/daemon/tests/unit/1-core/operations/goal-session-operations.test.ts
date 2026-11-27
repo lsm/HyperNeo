@@ -979,6 +979,42 @@ describe('a goal in its own session', () => {
     }
   });
 
+  test("Neo's goal list includes goals that run in its own child sessions", async () => {
+    const { db, call } = setup();
+    try {
+      const sessions = new SessionRepository(db);
+      const record = (id: string, parentSessionId: string) =>
+        sessions.createSession({
+          id,
+          title: id,
+          workspacePath: '/tmp',
+          createdAt: new Date(0).toISOString(),
+          lastActiveAt: new Date(0).toISOString(),
+          status: 'active',
+          config: {},
+          metadata: {},
+          parentSessionId,
+        } as never);
+      await call('goal.session.create', { title: 'Plain', doneTest: 'Done' });
+      await call('goal.session.create', { title: 'Own', doneTest: 'Done', ownSession: true });
+      record('goal-session-1', 'neo:root');
+      record('plain', 'neo:other');
+      await call(
+        'goal.session.create',
+        { title: 'Elsewhere', doneTest: 'Done', ownerSessionId: 'plain' },
+        human
+      );
+      const titles = async (ownerSessionId: string) =>
+        (await call('goal.session.list', { ownerSessionId }, human)).goals.map(
+          (goal: { title: string }) => goal.title
+        );
+      expect((await titles('neo:root')).sort()).toEqual(['Own', 'Plain']);
+      expect(await titles('neo:other')).toEqual(['Elsewhere']);
+    } finally {
+      db.close();
+    }
+  });
+
   test('a child session cannot start another goal session under itself', async () => {
     const { db, call, scheduler, started } = setup();
     try {
