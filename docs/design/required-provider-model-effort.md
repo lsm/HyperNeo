@@ -10,24 +10,31 @@ that base. This page changes no runtime behavior.
 
 ## Problem
 
-A todo started a HyperNeo worker without `target.effort`. Three independent
-defaults then disagreed, and nothing refused:
+A todo started a HyperNeo worker without `target.effort`. The recorded and
+executed efforts then disagreed, and nothing refused:
 
 - The session recorded `thinkingLevel` from global settings
   (`packages/daemon/src/lib/session/session-lifecycle.ts:292`), whose receipt
   label reads back as `medium` (`packages/shared/src/types.ts:168`,
   `packages/daemon/src/lib/rpc-handlers/family-operations/drivers.ts:390`).
-- The SDK query builder, seeing no chosen level, sent the provider's default
-  effort instead (`packages/daemon/src/lib/agent/query-options-builder.ts:830`),
-  which for the model in question is `high`.
+- The executed effort is decided independently at query time
+  (`packages/daemon/src/lib/agent/query-options-builder.ts:830-875`): a
+  provider default applies only when no level was chosen anywhere (`:830-834`,
+  `:910-917`); a recorded level maps to a sent effort only for granular
+  thinking modes on models that publish effort levels (`:837-842`); and the
+  kimi fixed-budget branch clears the effort outright (`:865-872`). Wherever
+  that mapping yields no effort — a non-granular provider, a model without
+  published levels, the kimi branch — the harness's own default applies,
+  `high` for the model in the trigger, while the receipt still read back the
+  recorded level's label.
 - Provider adapters keep their own third mapping
   (`packages/daemon/src/lib/providers/anthropic-copilot/reasoning-effort.ts:10`).
 
-The requested, recorded and executed identities were all different and no gate
-noticed, because every schema field is optional and every miss has a silent
-fallback. The fix is to make the identity triple a required, recorded fact at
-the one boundary that owns sessions — the daemon — not in prompt text or CLI
-parsing.
+The requested, recorded and executed identities could all differ and no gate
+noticed, because every schema field is optional, every miss has a silent
+fallback, and the receipt echoes configuration rather than execution. The fix
+is to make the identity triple a required, recorded fact at the one boundary
+that owns sessions — the daemon — not in prompt text or CLI parsing.
 
 ## Entry points that start new sessions today
 
@@ -221,11 +228,21 @@ compares the recorded triple against the todo target.
   session a confirmed triple.
 - Session lifecycle: `SessionManager.createSession`
   (`session-lifecycle.ts:286`) refuses any new session whose config lacks the
-  recorded triple. Each door supplies its triple from a named source:
-  - UI sessions (workspace and quick create): the client sends the model and
-    thinking selection it displays (`default-commands.ts:29` today sends
-    none); the picker state is the explicit source, so human behavior is
-    unchanged.
+  recorded triple. Effort is required only where thinking applies: for a
+  provider whose thinking mode is `off` (`types.ts:175-187` — minimax, ollama,
+  ollama-cloud, anthropic-copilot) or the `oxap-codex` harness, which
+  deliberately stores no thinking level (`session-lifecycle.ts:295`), the
+  recorded effort is the explicit value `off` — a stated fact the gate,
+  receipts and reuse compare like any other, not an absent field. Each door
+  supplies its triple from a named source:
+  - UI sessions: the workspace composer sends the model and thinking selection
+    it displays. Quick create has no picker (`default-commands.ts:23-29` sends
+    only a workspace path), so it gains an explicit source: the client reads
+    the user's configured default model and thinking from settings and sends
+    them in the create request; when no default is configured, quick create
+    opens the composer instead of creating a session with no identity. This is
+    a visible behavior change for quick create and is called out in that
+    slice's PR.
   - Neo coordinator: the saved `neo.preferences` entry read by
     `modelPreference()` (`service.ts:604`) is the only source. The unsaved
     synthesis in `effectiveNeoPreference` (`model-preference.ts:77-89`) is
