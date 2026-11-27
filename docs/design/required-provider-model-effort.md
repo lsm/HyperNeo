@@ -176,15 +176,21 @@ therefore labels its source instead of promising actuals it cannot bind:
   - thinking mode `off` splits by what execution does. Providers that run no
     reasoning at all (minimax, ollama, ollama-cloud) record the explicit value
     `off`. `anthropic-copilot` is mode `off` in the UI sense
-    (`packages/shared/src/types.ts:185`) but its provider layer maps every
-    requested level to a real reasoning effort — `off`→`low` through
-    `think64k`→`xhigh` (`reasoning-effort.ts:7-15`) — so its confirmed value is
-    that mapped effort in the provider's vocabulary: a request of `Max`
-    records `xhigh`. The mapping is total and stated at admission — the
-    executable set for a requested level on this provider is exactly its
-    `LEVEL_EFFORTS` value, so nothing refuses, and the receipt and provenance
-    show the mapped value rather than the requested label, making the
-    translation stated instead of silent.
+    (`packages/shared/src/types.ts:185`) and the query builder emits no effort
+    for it (`query-options-builder.ts:837-842`): its effort is decided at the
+    provider proxy, which maps the requested level through `LEVEL_EFFORTS`
+    (`reasoning-effort.ts:7-15`) and then fits it against the model's live
+    supported efforts, downgrading or omitting when the model supports fewer
+    (`server.ts:380-385`, `fitReasoningEffort` at `reasoning-effort.ts:21-29`).
+    The proxy is the boundary that builds execution for this provider, so the
+    confirmed value is the post-fit effort recorded where the proxy applies
+    it; until the first request runs, the receipt is declared with the mapped
+    (pre-fit) value. Admission does not pre-refuse on this provider — it
+    exposes no per-model effort levels to check against (`provider.ts:313-317`
+    offers only the thinking mode) and support is live data — so a fit below
+    the requested level shows in the receipt as a requested-vs-confirmed
+    mismatch, and reuse treats such a worker as not matching the request,
+    starting fresh.
 
   This is the boundary because the builder resolves provider effort
   independently of session config (`query-options-builder.ts:830-842`) and a
@@ -205,8 +211,9 @@ therefore labels its source instead of promising actuals it cannot bind:
   (`work-reconfigure.ts:90-100`) — and refuses a request the builder would
   remap with `unsupported_effort` naming the executable values, so a
   confirmed identity always equals what the request resolves to on a satisfied
-  start: the request itself where no mapping applies, the stated
-  `LEVEL_EFFORTS` value on `anthropic-copilot`.
+  start — the request itself where no mapping applies; on `anthropic-copilot`,
+  whose fit cannot be known at admission, the receipt instead shows the
+  post-fit value next to the request whenever they differ.
 
   For Codex, Copilot and Antigravity
   the adapter's own configuration API is that boundary — the existing
@@ -299,8 +306,11 @@ compares the recorded triple against the todo target.
   Only providers whose thinking mode is `off` and that run no reasoning at all
   (minimax, ollama, ollama-cloud — `packages/shared/src/types.ts:175-187`) record the explicit
   value `off`. Providers and harnesses that map levels to real reasoning
-  values record the mapped value instead: `anthropic-copilot` turns every
-  level, `off` included, into `low`–`xhigh` (`reasoning-effort.ts:7-15`), and
+  values record the executed value instead: `anthropic-copilot` maps every
+  level, `off` included, into `low`–`xhigh` and then fits it to the model's
+  live support at its proxy (`reasoning-effort.ts:7-29`,
+  `server.ts:380-385`), so the recorded value is the post-fit effort as the
+  receipts section specifies, and
   the `oxap-codex` harness — which deliberately stores no UI thinking level
   (`session-lifecycle.ts:295`) — executes model-specific reasoning `low`–`max`
   from its own level mapping (`oxap-harnesses.ts:138-159`), where `off` is
