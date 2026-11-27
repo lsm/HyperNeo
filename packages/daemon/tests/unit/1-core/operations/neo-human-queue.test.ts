@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import type { NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { neoHumanQueue } from '../../../../src/lib/neo/human-queue.ts';
-import { type NeoStepOwner, nextStepOwner } from '../../../../src/lib/neo/attention/owner.ts';
+import {
+  type NeoStepFacts,
+  type NeoStepOwner,
+  nextStepOwner,
+} from '../../../../src/lib/neo/attention/owner.ts';
 
 const todo = (id: string, state: NeoTodo['state'] = 'todo', askId = 'ask-a') => ({
   id,
@@ -49,6 +53,36 @@ describe('neoHumanQueue', () => {
     expect(at(24 * 60 * 60 * 1000 - 1)).toBe('progress');
     expect(at(24 * 60 * 60 * 1000)).toBe('waiting');
   });
+
+  test.each([
+    ['worker', 'running', null, 'working', undefined],
+    ['worker', 'queued', null, 'waiting', 'queue'],
+    ['pack', 'idle', null, 'waiting', 'review'],
+    ['prerequisite', undefined, null, 'waiting', 'earlier_step'],
+    ['daemon', undefined, 'held', 'waiting', 'queue'],
+    ['daemon', undefined, 'ready', 'waiting', 'checking'],
+    ['nobody', undefined, null, 'paused', undefined],
+    ['neo', 'idle', null, 'neo', undefined],
+    ['human', undefined, null, 'you', undefined],
+  ] as const)(
+    'shows %s with worker %s and queue state %s',
+    (owner, status, start, step, waitingOn) => {
+      const ownership =
+        owner === 'neo' ? { owner, reason: 'idle_worker' as const, since: 0 } : { owner };
+      const facts: Pick<NeoStepFacts, 'worker' | 'start'> = {
+        start,
+        worker: status ? { status, since: 0 } : null,
+      };
+      const queue = neoHumanQueue({
+        questions: [],
+        todos: [todo('step', 'doing')],
+        owners: new Map([['step', { ...ownership, ...facts }]]),
+        now: 25 * 60 * 60_000,
+      });
+      expect(queue.items[0]).toMatchObject({ owner, step, ...(waitingOn ? { waitingOn } : {}) });
+      if (!waitingOn) expect(queue.items[0]).not.toHaveProperty('waitingOn');
+    }
+  );
 
   test('a finished todo is not listed, with or without an answered card', () => {
     const queue = neoHumanQueue({

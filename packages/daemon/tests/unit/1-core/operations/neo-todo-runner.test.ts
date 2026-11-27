@@ -4398,6 +4398,98 @@ describe('a todo for a busy worker', () => {
     }
   });
 
+  const pr = 'https://github.com/acme/app/pull/12';
+  const reserve = (h: ReturnType<typeof setup>, kind = 'pr_merged', bound = true) => {
+    const holder = h.add({ pack: 'coding', kind, params: {} });
+    if (bound) h.sessions.recordRef(holder.id, ref, 1);
+    else h.sessions.queueOn(holder.id, ref, 'Build the rows.');
+    h.store.updateTodo(holder, { state: 'doing', startedAt: 1, title: 'Holder' }, 1);
+    h.setPrOpen(true);
+    return holder;
+  };
+
+  test.each(['done', 'stopped'])(
+    'a %s holder starts a fresh 60-minute wait for each candidate',
+    async (status) => {
+      const h = setup(false);
+      const clock = vi.spyOn(Date, 'now');
+      const base = Date.now();
+      try {
+        const holder = reserve(h);
+        let open = pr;
+        const pack = h.packs[0];
+        pack.todos = {
+          ...pack.todos!,
+          openPr: async (id: string) => (id === holder.id ? open : null),
+        } as NonNullable<NeoPack['todos']>;
+        const candidate = waitingOn(h);
+        const sweep = async (minutes: number) => {
+          clock.mockReturnValue(base + minutes * MIN);
+          await h.runner.refresh(() => {});
+        };
+        const stalls = () =>
+          h.told.filter((note) => note.includes('is stalled: Waiting for worker'));
+        h.setStatus(running);
+        await sweep(0);
+        await sweep(60);
+        expect(stalls()).toEqual([expect.stringContaining('working on "Holder"')]);
+
+        h.setStatus({ ok: true, value: { status, lastActivityAt: 2 } });
+        await sweep(61);
+        expect(h.store.getTodo(candidate.id)?.reason).toContain(
+          `idle but kept by "Holder" while ${pr} is open`
+        );
+        await sweep(120);
+        expect(stalls()).toHaveLength(1);
+        const late = waitingOn(h);
+        await sweep(121);
+        expect(stalls()).toHaveLength(2);
+        expect(stalls()[1]).toContain('replacedBy');
+        expect(h.store.getTodo(late.id)?.reason).toContain(pr);
+        await sweep(180);
+        expect(stalls()).toHaveLength(2);
+        await sweep(181);
+        expect(stalls()).toHaveLength(3);
+        open = 'https://github.com/acme/app/pull/13';
+        await sweep(182);
+        await sweep(241);
+        expect(stalls()).toHaveLength(3);
+        await sweep(242);
+        await sweep(243);
+        expect(stalls().slice(3)).toEqual(Array(2).fill(expect.stringContaining(open)));
+      } finally {
+        clock.mockRestore();
+        h.db.close();
+      }
+    }
+  );
+
+  test.each([
+    ['running', 'pr_merged', true, pr],
+    ['needs_you', 'pr_merged', true, pr],
+    ['failed', 'pr_merged', true, pr],
+    [null, 'pr_merged', true, pr],
+    ['done', 'pr_merged', false, pr],
+    ['done', 'pr_merged', true, null],
+  ] as const)(
+    'keeps the working text for status %s, check %s, bound %s, open PR %s',
+    async (status, kind, bound, open) => {
+      const h = setup(false);
+      try {
+        const holder = reserve(h, kind, bound);
+        const pack = h.packs[0];
+        pack.todos = { ...pack.todos!, openPr: async () => open } as NonNullable<NeoPack['todos']>;
+        const candidate = waitingOn(h);
+        h.setStatus(status ? { ok: true, value: { status, lastActivityAt: 2 } } : null);
+        await h.runner.refresh(() => {});
+        expect(h.store.getTodo(holder.id)?.state).toBe('doing');
+        expect(h.store.getTodo(candidate.id)?.reason).toContain('working on "Holder"');
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
   test('a worker waiting on the human still gets its todo, as before', async () => {
     const h = setup();
     try {
