@@ -41,7 +41,7 @@ try {
   const call = async (name: string, input: object, actor: typeof caller | typeof human = caller) => {
     const outcome = await invokeOperation(registry, name, input, actor);
     assert(outcome.kind === 'completed', JSON.stringify(outcome));
-    return outcome.value as { ok: boolean; reason?: string; todo?: NeoTodo; question?: NeoQuestion };
+    return outcome.value as { ok: boolean; reason?: string; todo?: NeoTodo; question?: NeoQuestion; created?: boolean; items?: { fullText: string }[] };
   };
   const check = { pack: 'core', kind: 'evidence', params: { path: join(folder, 'plan.md') } };
   const add = (title: string, after: string[], plan?: true) =>
@@ -123,6 +123,24 @@ try {
     call('neo.question.answer', { questionId: removal.id, answer: 'Remove these' }, human),
     'plan_steps_missing'
   );
+  assert.equal(store.getQuestion(removal.id)?.state, 'open');
+  assert.notEqual(store.getTodo(secondId)?.state, 'removed');
+  const requestId = crypto.randomUUID();
+  const chatReply = {
+    requestId,
+    sessionId: owner,
+    content: 'Remove these',
+    replyTo: { kind: 'question', id: removal.id },
+  };
+  for (const created of [true, false]) {
+    const sent = await call('neo.message.send', chatReply, human);
+    assert(sent.ok && sent.created === created, JSON.stringify(sent));
+  }
+  const page = await call('neo.publication.read', { conversationId: owner.slice(4) }, human);
+  assert(page.ok, JSON.stringify(page));
+  const notices = page.items?.filter((item) => item.fullText.includes('plan_steps_missing'));
+  assert.equal(notices?.length, 1, 'the conversation shows one refusal for two identical sends');
+  observed.chatRefusal = notices;
   assert.equal(store.getQuestion(removal.id)?.state, 'open');
   assert.notEqual(store.getTodo(secondId)?.state, 'removed');
   const continued = await call(
