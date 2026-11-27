@@ -17,3 +17,19 @@ returns only health and granted scopes, including after daemon restart.
 
 Require exit 0 and `pass: true` in `mcp-oauth-connect.json`. The evidence
 holds verdicts and scopes. This journey uses neither a vendor nor the web UI.
+
+To exercise the human reconnect and disconnect operations, run the same helper
+with the lifecycle argument and a fresh evidence directory:
+
+```bash
+bash .claude/skills/verify/proof-run.sh /absolute/evidence/mcp-oauth-lifecycle \
+  .claude/skills/verify/mcp-oauth-connect.ts "$(git rev-parse HEAD)" lifecycle
+```
+
+The proof keeps the old grant during consent, cancels a reconnect, and replaces
+the grant on a successful reconnect without refreshing. It disconnects while a
+code reply is held and checks that the grant is erased and the late reply fails.
+SQLite triggers in the disposable DB simulate failed erase and an interruption
+between the bundle write and activation. After restarts, status must show
+disconnected and reconnect needed respectively. Require exit 0 and
+`pass: true` in `mcp-oauth-lifecycle.json`.
