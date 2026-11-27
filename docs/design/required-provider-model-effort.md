@@ -264,7 +264,15 @@ target.
   reuse consumes the gate-resolved triple and compares it against each
   candidate's recorded identity through `matchesRequested`; the hook stays a
   start-time validation concern for the adapters that define it (hyperneo,
-  codex-desktop, copilot). Non-configurable workers
+  codex-desktop, copilot). The in-place switch-then-reuse path
+  (`work-operations.ts:1016-1027`) is dropped in the same slice: it
+  reconfigures a mismatched HyperNeo worker and matches on the status
+  read-back with no turn in between, and a post-switch read-back is a
+  declared-class config echo that can never satisfy confirmed-only matching —
+  predicting the next turn from config is exactly the conflation this design
+  removes. A worker that does not match is skipped and a fresh worker starts;
+  `work.reconfigure` plus a turn remains the way to move a live session to new
+  values. Non-configurable workers
   (`claude-desktop`, `cursor`) stay reusable by matching on their recorded
   requested triple instead: a new todo requesting the same provider, model and
   effort reuses the worker, with the match labeled `unverified` in the receipt
@@ -338,7 +346,9 @@ target.
   (including that `claude-desktop` and `cursor` receipts read `requested …,
   effective unknown`, with unobserved fields never resolving on their own) and
   the remote-start rule (the required triple is admitted for any advertised
-  adapter).
+  adapter). The sentence “An idle local HyperNeo worker with another model or
+  effort is switched in place first and reused once the switch is confirmed”
+  is deleted with the dropped switch-then-reuse path.
 - `packages/prompts/src/neo/tools/neo.todo.add.md:8` and
   `packages/prompts/src/neo/tools/neo.todo.edit.md`: the start target shape
   becomes `{verb:start,adapter,model,effort,provider?,place?}` — provider
@@ -377,7 +387,8 @@ rung.
    `hyperneo-adapter.ts` 14, `drivers.ts` 3): the `work.start` pipeline step
    with triple write-back, the reuse rules including rewiring
    `reuseIdleWorker`'s hook-keyed guards (`work-operations.ts:826`,
-   `:895-897`) to the recorded-triple match, the `work.send` new-todo identity
+   `:895-897`) to the recorded-triple match and dropping the
+   switch-then-reuse block (`:1016-1027`), the `work.send` new-todo identity
    fields and check, query-layer recording of the executed HyperNeo identity,
    `neo.todo.add`/`neo.todo.edit` and coding-candidate admission, deletion of
    the assign start call's previous-reviewer-model override
