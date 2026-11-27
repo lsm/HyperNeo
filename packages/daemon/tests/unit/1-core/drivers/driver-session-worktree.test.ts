@@ -22,6 +22,7 @@ import {
   type CreateSessionParams,
   ModelUnavailableError,
 } from '../../../../src/lib/session/session-lifecycle.ts';
+import { DesktopModelsExhaustedError } from '../../../../src/lib/session/desktop-model-chain.ts';
 import {
   createDriverSession,
   newestAvailableModel,
@@ -786,6 +787,60 @@ describe('createDriverSession model', () => {
       { model: 'swe-2-high', provider: 'custom:synthetic' },
       { model: 'swe-2-high', provider: 'custom:other' },
     ]);
+  });
+
+  test('a desktop worker asked only for a provider starts on that provider', async () => {
+    const { created, manager } = sessionManager(false);
+    const models = async () => [
+      model('gpt-6', '2026-09-01'),
+      { ...model('glm-5', '2026-01-01'), provider: 'glm' },
+      { ...model('glm-6', '2026-06-01'), provider: 'glm' },
+    ];
+    const start = (provider: string) =>
+      createDriverSession(
+        manager as never,
+        '/notes',
+        'task',
+        undefined,
+        models,
+        provider,
+        undefined,
+        false,
+        undefined,
+        'worker.desktop'
+      );
+    await start('glm');
+    expect(created[0].config).toMatchObject({ model: 'glm-6', provider: 'glm' });
+    await expect(start('kimi')).rejects.toThrow(ModelUnavailableError);
+    expect(created).toHaveLength(1);
+  });
+
+  test('an exhausted desktop model list is reported, not replaced by the newest model', async () => {
+    const created: CreateSessionParams[] = [];
+    const manager = {
+      createSession: mock(async (params: CreateSessionParams) => {
+        created.push(params);
+        throw new DesktopModelsExhaustedError('No model in the desktop-control model list');
+      }),
+      getWorktreeManager: () => ({
+        detectGitSupport: async () => ({ isGitRepo: false, gitRoot: null }),
+      }),
+    };
+    await expect(
+      createDriverSession(
+        manager as never,
+        '/notes',
+        'task',
+        undefined,
+        async () => [model('gpt-6', '2026-09-01')],
+        undefined,
+        undefined,
+        false,
+        undefined,
+        'worker.desktop'
+      )
+    ).rejects.toThrow(DesktopModelsExhaustedError);
+    expect(created).toHaveLength(1);
   });
 
   test('refuses a named model that is not available instead of using the default', async () => {
