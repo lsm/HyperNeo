@@ -16,7 +16,10 @@ import {
   type NeoConversationAskImageRow,
   NeoConversationAskRepository,
 } from '../../storage/repositories/neo-conversation-ask-repository.ts';
-import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
+import {
+  NeoPublicationRepository,
+  neoPublicationWrites,
+} from '../../storage/repositories/neo-publication-repository.ts';
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { toMailboxMessage } from '../mailbox/entry.ts';
 import {
@@ -30,12 +33,15 @@ import { type StagedImages, UploadImageSchema } from '../rpc-handlers/attachment
 import { voiceDiagnostic } from '../voice/diagnostics.ts';
 import { snapshotNeoCardQuote } from './card-quote.ts';
 import { NeoReplyRefSchema } from './conversation-ask.ts';
+import { neoDerivedId } from './derived-id.ts';
 import { neoImageSize } from './image-size.ts';
 import { neoLocalTimeLine } from './local-time.ts';
 import { admitNeoPreviewContext } from './preview-context.ts';
 import { NeoPreviewContextSchema, NeoPreviewReferenceSchema } from './preview-context-schema.ts';
 import { isHumanWorkDecision } from './proposal.ts';
-import { planNeoRemovedPrerequisiteAnswer } from './todo-removal.ts';
+import { NEO_REMOVED_PREREQUISITE } from './todo-removal.ts';
+import { neoPackPlanIds } from './todo-follow-up.ts';
+import type { NeoPack } from './pack-contract.ts';
 
 function projectionIssue(content: z.infer<typeof SessionContentSchema>): string | null {
   const projected = toMailboxMessage({
@@ -356,8 +362,9 @@ export function recordNeoReplyAnswer(
   reply: NeoReply | null,
   input: IntakeInput,
   store: NeoAskTodoRepository,
-  sessionId: string
-): IntakeResult {
+  sessionId: string,
+  packPlans: readonly string[] = []
+): IntakeResult & { answerRefusal?: string } {
   const words = neoAskText(input.content).trim();
   if (
     receipt.ok &&
@@ -368,22 +375,18 @@ export function recordNeoReplyAnswer(
   ) {
     const picked = neoChoiceByNumber(words, reply.question);
     if (picked === 'invalid') return receipt;
-    const answer = picked ?? words;
-    const now = Date.now();
-    store.answerQuestion(
+    const answer = store.answerQuestionWithPlanGuard(
       reply.question,
-      answer,
+      picked ?? words,
       'chat',
-      now,
-      { sessionId, messageId: input.requestId },
-      undefined,
-      planNeoRemovedPrerequisiteAnswer(
-        reply.question,
-        store.listFamilyTodos(reply.question.askId),
-        answer,
-        now
-      )
+      Date.now(),
+      packPlans,
+      {
+        sessionId,
+        messageId: input.requestId,
+      }
     );
+    if (typeof answer === 'string') return { ...receipt, answerRefusal: answer };
   }
   return receipt;
 }
@@ -558,7 +561,7 @@ function admitNeoIntakeTarget(
 }
 
 const runIntake = (superpipe({})('neo.message.send') as PipelineAPI)
-  .input(['input', 'caller', 'db', 'repo', 'notify', 'store', 'images'])
+  .input(['input', 'caller', 'db', 'repo', 'notify', 'store', 'images', 'packs'])
   .pipe(admitNeoIntake, ['input', 'caller'], 'result:receipt')
   .pipe(
     (input: IntakeInput, store: NeoAskTodoRepository) => readNeoReply(input.replyTo, store),
@@ -683,14 +686,42 @@ const runIntake = (superpipe({})('neo.message.send') as PipelineAPI)
     'receipt'
   )
   .pipe(
-    (
+    async (
       receipt: IntakeResult,
       reply: NeoReply | null,
       input: IntakeInput,
       store: NeoAskTodoRepository,
-      root: IntakeTarget
-    ) => recordNeoReplyAnswer(receipt, reply, input, store, root.target.id),
-    ['receipt', 'reply', 'input', 'store', 'root'],
+      root: IntakeTarget,
+      db: Database,
+      installed?: () => readonly NeoPack[]
+    ) => {
+      const packs = installed?.() ?? [];
+      const question = reply?.question;
+      const planIds =
+        question?.cause === NEO_REMOVED_PREREQUISITE && packs.some((pack) => pack.todos?.plan)
+          ? await neoPackPlanIds(store.listFamilyTodos(question.askId), packs)
+          : [];
+      const { answerRefusal, ...sent } = recordNeoReplyAnswer(
+        receipt,
+        reply,
+        input,
+        store,
+        root.target.id,
+        planIds
+      );
+      if (answerRefusal) {
+        const notice = await db.gateway.call(neoPublicationWrites, 'append', {
+          conversationId: root.conversationId,
+          publicationId: neoDerivedId(`neo-card-answer-refused:${input.requestId}`),
+          verbatim: true,
+          fullText: `The card is still open. ${answerRefusal}`,
+          links: [],
+        });
+        if (!notice.accepted) throw new Error(`Card answer refusal: ${notice.reason}`);
+      }
+      return sent;
+    },
+    ['receipt', 'reply', 'input', 'store', 'root', 'db', 'packs'],
     'receipt'
   )
   .pipe(
@@ -707,7 +738,8 @@ const runIntake = (superpipe({})('neo.message.send') as PipelineAPI)
   repo: NeoRepository,
   notify: NeoIntakeNotifier,
   store: NeoAskTodoRepository,
-  images?: StagedImages
+  images?: StagedImages,
+  packs?: () => readonly NeoPack[]
 ) => Promise<IntakeResult>;
 
 export const retryNeoIntake = runIntake;
@@ -717,7 +749,8 @@ export function createNeoIntakeOperation(
   repo: NeoRepository,
   notify: NeoIntakeNotifier = noNotification,
   store: NeoAskTodoRepository = new NeoAskTodoRepository(db.getDatabase()),
-  images?: StagedImages
+  images?: StagedImages,
+  packs?: () => readonly NeoPack[]
 ) {
   return defineOperation({
     name: 'neo.message.send',
@@ -725,6 +758,6 @@ export function createNeoIntakeOperation(
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'human_only' },
-    execute: (input, caller) => runIntake(input, caller, db, repo, notify, store, images),
+    execute: (input, caller) => runIntake(input, caller, db, repo, notify, store, images, packs),
   });
 }

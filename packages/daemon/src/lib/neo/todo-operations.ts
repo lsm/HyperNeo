@@ -106,7 +106,7 @@ const TodoDraft = z.object({
     .boolean()
     .optional()
     .describe(
-      "True when this todo's result is more work: a design, plan, research or inventory. Once it finishes, its ask cannot settle done until a later todo exists (unstarted is fine). Add each follow-up with after: [this todo's id]."
+      "True when research, inventory or other work yields follow-up todos. Once it finishes, its ask cannot settle done until a later todo exists (unstarted is fine). Add each follow-up with after: [this todo's id]."
     ),
   after: z
     .array(z.union([Text, z.number().int().min(0)]))
@@ -141,6 +141,12 @@ const Add = TodoDraft.extend({
   topic: NeoTopicPick.optional().describe(
     'The topic of a new ask, up to 12 display cells. Joining an existing ask keeps its topic.'
   ),
+  plan: z
+    .literal(true)
+    .optional()
+    .describe(
+      'True for a design or work plan whose steps the human approves. File the steps with after, run a plan check, then ask for sign-off before completing the plan.'
+    ),
   desktopApps: DesktopAppsSchema.optional().describe(
     'Bundle ids of the apps on this Mac this todo drives. Each must be on its ask’s approved proposal card with the visibility disclosure. Only this todo gets them. For any other app, propose a new ask with desktopApps.'
   ),
@@ -191,6 +197,7 @@ export function planNeoTodoDraft<T extends Pick<NeoTodo, 'check' | 'instruction'
 }
 
 export type ResolvedNeoTodoDraft = z.infer<typeof NeoTodoDraftSchema> & {
+  plan?: true;
   workerRemotes?: readonly string[];
 };
 
@@ -400,6 +407,7 @@ export const NeoTodoSchema = z.object({
   approvedAt: z.number().nullable(),
   approvalQuestionId: z.string().nullable(),
   producesFollowUp: z.literal(true).optional(),
+  plan: z.literal(true).optional(),
   report: z.string().nullable(),
   evidence: z.string().nullable(),
   artifacts: z.array(ArtifactRefSchema).readonly().optional(),

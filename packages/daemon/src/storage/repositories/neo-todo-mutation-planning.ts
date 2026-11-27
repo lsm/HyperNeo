@@ -6,6 +6,8 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import { neoTodoPolicies } from '../../lib/neo/packs/todo-policies.ts';
+import { neoPlanRefusal, neoRecordedPlanFacts } from '../../lib/neo/todo-follow-up.ts';
+import { neoPlanStepLoss, planNeoTodoRemoval } from '../../lib/neo/todo-removal.ts';
 import { sameNeoTodoCheck } from '../../lib/neo/todo-completion.ts';
 import {
   neoTodoPlaceRefusal,
@@ -24,11 +26,19 @@ import type { Database } from '../sqlite-compat.ts';
 import { NeoAskTodoRepository, type NeoTodoPatch } from './neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
 
-type Input =
+type Input = (
   | ({ kind: 'edit'; workerRemotes?: readonly string[] } & Parameters<typeof planNeoTodoEdit>[1])
   | ({ kind: 'done' } & Parameters<typeof planNeoTodoDone>[1])
-  | ({ kind: 'remove' } & Parameters<typeof planNeoTodoRemove>[2]);
-type Plan = { todo: NeoTodo; patch: NeoTodoPatch; records?: string[] };
+  | ({ kind: 'remove' } & Parameters<typeof planNeoTodoRemove>[2])
+) & {
+  packPlans?: readonly string[];
+};
+type Plan = {
+  todo: NeoTodo;
+  patch: NeoTodoPatch;
+  records?: string[];
+  removal?: ReturnType<typeof planNeoTodoRemoval<NeoTodo>>;
+};
 type Outcome =
   | { ok: false; reason: string }
   | { ok: true; todo: NeoTodo; todos: NeoTodo[]; records?: string[] };
@@ -192,6 +202,36 @@ class NeoTodoMutationPlanner {
       .pipe(
         (plan: Plan, input: Input) => this.withCheck(plan, input),
         ['outcome', 'input'],
+        'result:outcome'
+      )
+      .pipe(
+        (plan: Plan, input: Input, now: number) => {
+          const { todo, patch } = plan;
+          const packPlans = input.packPlans ?? [];
+          if (patch.state !== 'done' && patch.state !== 'removed' && !patch.dependsOn)
+            return { value: plan };
+          const family = todos.listFamilyTodos(todo.askId);
+          const removal =
+            input.kind === 'remove'
+              ? planNeoTodoRemoval(todo, family, { ...input, replacedBy: patch.replacedBy }, now)
+              : undefined;
+          const packPlan = packPlans.includes(todo.id);
+          const reason =
+            patch.state === 'done' && (todo.plan || packPlan)
+              ? neoPlanRefusal(
+                  neoRecordedPlanFacts(todo, family, todos.listQuestions(todo.askId), packPlan)
+                )
+              : null;
+          const refused =
+            reason ??
+            (removal || patch.dependsOn
+              ? neoPlanStepLoss(family, [{ todo, patch }, ...(removal?.writes ?? [])], packPlans)
+              : null);
+          return refused
+            ? { reason: { ok: false as const, reason: refused } }
+            : { value: { ...plan, removal } };
+        },
+        ['outcome', 'input', 'now'],
         'result:outcome'
       )
       .pipe(

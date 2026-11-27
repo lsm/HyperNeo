@@ -138,7 +138,7 @@ import { createNeoAttentionSweep, neoStepOwners, readNeoSteps } from './attentio
 import { neoHumanQueue } from './human-queue.ts';
 import { driverHealthEvents } from '../drivers/driver-health.ts';
 import { createNeoAttention, neoAttentionDelivery } from './attention/tell.ts';
-import { neoTodoFollowUpRefusal } from './todo-follow-up.ts';
+import { neoAskPlanGap } from './todo-follow-up.ts';
 import { neoTodoCovered } from './todo-state.ts';
 import { neoPromptTools, planNeoSessionConfig } from './session-config.ts';
 import { changeSessionToolChoice } from '../tools/change-session-tool-choice.ts';
@@ -1525,8 +1525,9 @@ export class NeoService {
       });
       const versions: Record<string, string> = {};
       for (const id of settleReady ?? []) {
-        const todos = this.todos.listTodos(id);
-        if (!neoTodoFollowUpRefusal(todos)) versions[id] = neoAskTodosVersion(todos);
+        const family = await this.todos.read('listFamilyTodos', id);
+        if (!(await neoAskPlanGap(id, family, this.installedPacks())))
+          versions[id] = neoAskTodosVersion(family);
       }
       const settleIds = Object.keys(versions);
       if (settleIds.length)

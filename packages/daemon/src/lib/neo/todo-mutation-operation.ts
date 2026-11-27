@@ -19,6 +19,7 @@ import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 import type { NeoPack, NeoTodoCheckResult } from './pack-contract.ts';
 import { getDataDir } from '../data-dir.ts';
 import { neoEvidencePathRefusal } from './core-todo-checks.ts';
+import { neoPackPlanIds } from './todo-follow-up.ts';
 import { readNeoTodoCompletion } from './todo-completion.ts';
 import {
   NeoTodoDoneInput,
@@ -78,6 +79,19 @@ function buildTodoMutation(deps: Dependencies, pipeline: ReturnType<SuperPipeFac
       },
       'request',
       'result:outcome'
+    )
+    .pipe(
+      async (input: Input) => {
+        const packs = deps.packs();
+        if (!packs.some((pack) => pack.todos?.plan)) return input;
+        if (input.kind === 'edit' && !input.done && !input.after) return input;
+        const todo = await deps.gateway.call(neoTodoReads, 'getTodo', input.todoId);
+        if (!todo) return input;
+        const family = await deps.gateway.call(neoTodoReads, 'listFamilyTodos', todo.askId);
+        return { ...input, packPlans: await neoPackPlanIds(family, packs) };
+      },
+      'outcome',
+      'outcome'
     )
     .pipe((outcome: Input) => outcome, 'outcome', 'input')
     .pipe(

@@ -1,3 +1,8 @@
+import {
+  NEO_REMOVED_PREREQUISITE,
+  neoPlanStepLoss,
+  planNeoRemovedPrerequisiteAnswer,
+} from '../../lib/neo/todo-removal.ts';
 import { proposalQuestionId } from '../../lib/neo/proposal.ts';
 import { queueNeoRequestReply, queueNeoRequestSettledReply } from '../../lib/neo/request-todo.ts';
 import type {
@@ -54,6 +59,7 @@ import { applyPackPreferenceAnswer } from './pack-preference-answer.ts';
 export type NeoTodoDraft = Pick<NeoTodo, 'title' | 'doneWhen' | 'check' | 'instruction' | 'named'> &
   Partial<Pick<NeoTodo, 'priority' | 'dependsOn' | 'approvedAt'>> & {
     producesFollowUp?: boolean;
+    plan?: true;
     desktopScope?: NeoDesktopApp[];
   };
 
@@ -857,10 +863,10 @@ export class NeoAskTodoRepository {
     this.db
       .prepare(
         `INSERT INTO neo_todos (id, ask_id, position, title, done_when, check_json, instruction, named,
-           added_after_start, priority, depends_on, approved_at, produces_follow_up, desktop_apps, created_at, updated_at)
+           added_after_start, priority, depends_on, approved_at, produces_follow_up, plan, desktop_apps, created_at, updated_at)
          VALUES (?, ?, (SELECT COALESCE(MAX(position) + 1, 0) FROM neo_todos WHERE ask_id = ?), ?, ?, ?, ?, ?,
            EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = ? AND started_at IS NOT NULL), ?,
-           ?, ?, ?, ?, ?, ?)`
+           ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -875,11 +881,13 @@ export class NeoAskTodoRepository {
         draft.priority ?? 'normal',
         JSON.stringify(draft.dependsOn ?? []),
         draft.approvedAt ?? null,
-        draft.producesFollowUp ? 1 : 0,
+        draft.producesFollowUp || draft.plan ? 1 : 0,
+        draft.plan ? 1 : 0,
         draft.desktopScope?.length ? JSON.stringify(draft.desktopScope) : null,
         now,
         now
       );
+    if (draft.dependsOn?.length) this.pruneQuestions(askId, now);
     this.touchAsk(askId, now, notify);
     return this.getTodo(id)!;
   }
@@ -1210,6 +1218,28 @@ export class NeoAskTodoRepository {
     return this.getQuestion(id)!;
   }
 
+  answerQuestionWithPlanGuard(
+    question: NeoQuestion,
+    answer: NeoQuestionAnswer,
+    by: 'button' | 'chat',
+    now: number,
+    packPlans: readonly string[],
+    approval?: { sessionId: string; messageId: string }
+  ): NeoQuestion | null | string {
+    if (question.cause !== NEO_REMOVED_PREREQUISITE)
+      return this.answerQuestion(question, answer, by, now, approval);
+    return this.inTransaction(() => {
+      const current = this.getQuestion(question.id);
+      if (!current || current.state !== 'open') return null;
+      const family = this.listFamilyTodos(current.askId);
+      const effects = planNeoRemovedPrerequisiteAnswer(current, family, answer, now);
+      return (
+        neoPlanStepLoss(family, effects, packPlans) ??
+        this.answerQuestion(current, answer, by, now, approval, undefined, effects)
+      );
+    });
+  }
+
   answerQuestion(
     question: NeoQuestion,
     answer: NeoQuestionAnswer,
@@ -1238,8 +1268,8 @@ export class NeoAskTodoRepository {
           if (ask?.status === 'open')
             this.settleAsk(ask, 'dropped', 'The human declined the proposal.', now);
         }
-        this.pruneQuestions(question.askId, now);
         for (const { todo, patch } of effects) this.writeTodo(todo, patch, now, false, false);
+        this.pruneQuestions(question.askId, now);
         const preferences = applyPackPreferenceAnswer(this.db, question.id);
         if (preferences.ok && preferences.applied) settingsChanged = 'preferences';
         const rules = applyNeoRuleAnswer(this.db, question.id, approval);
@@ -1449,6 +1479,7 @@ export const neoTodoReads = defineRepositoryOp(
     'listAwaitingNeoDecision',
     'listOpenAsks',
     'listTodosForAsks',
+    'listFamilyTodos',
     'followedRefs',
     'listStalledAsks',
     'listGoalAsks',

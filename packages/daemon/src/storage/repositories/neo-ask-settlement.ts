@@ -77,11 +77,12 @@ const settle = (superpipe({})('neo.ask.commit-settlement') as PipelineAPI)
     'result:outcome'
   )
   .pipe(
-    (current: Snapshot, input: Input) =>
-      input.todosVersion === undefined || neoAskTodosVersion(current.todos) === input.todosVersion
+    (store: NeoAskTodoRepository, current: Snapshot, input: Input) =>
+      input.todosVersion === undefined ||
+      neoAskTodosVersion(store.listFamilyTodos(input.askId)) === input.todosVersion
         ? { value: current }
         : { reason: ASK_CHANGED },
-    ['outcome', 'input'],
+    ['store', 'outcome', 'input'],
     'result:outcome'
   )
   .pipe(
@@ -396,7 +397,7 @@ export const neoAskTurnedSettleWrites = defineDbOp<
     const settled: string[] = [];
     for (const ask of asks) {
       const id = ask.id;
-      if (versions && neoAskTodosVersion(store.listTodos(id)) !== versions[id]) continue;
+      if (versions && neoAskTodosVersion(store.listFamilyTodos(id)) !== versions[id]) continue;
       if (!askWakeEnded(db, ask, recipients, facts)) continue;
       const outcome = turnedSettle(store, id, now, changes);
       if (typeof outcome === 'string') settled.push(outcome);

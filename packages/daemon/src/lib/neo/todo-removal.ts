@@ -5,6 +5,7 @@ import type {
   NeoTodo,
 } from '@hyperneo/shared/types/neo-ask';
 import type { NeoTodoPatch } from '../../storage/repositories/neo-ask-todo-repository.ts';
+import { livePlanSteps, neoPlanRefusal, neoRecordedPlanFacts } from './todo-follow-up.ts';
 import { neoStatusLine } from './status-codes.ts';
 import {
   type NeoTodoEdge,
@@ -30,6 +31,24 @@ const REMOVED_EN = {
 
 type Row = NeoTodoEdge & Pick<NeoTodo, 'title'>;
 type Write<T> = { todo: T; patch: NeoTodoPatch };
+
+export function neoPlanStepLoss(
+  family: readonly NeoTodo[],
+  writes: readonly Write<NeoTodo>[],
+  packPlans: readonly string[] = []
+): string | null {
+  const patches = new Map(writes.map(({ todo, patch }) => [todo.id, patch]));
+  const after = family.map((todo) => ({ ...todo, ...patches.get(todo.id) }));
+  for (const todo of after) {
+    if (todo.state === 'removed' || (!todo.plan && !packPlans.includes(todo.id))) continue;
+    const facts = neoRecordedPlanFacts(todo, after, [], packPlans.includes(todo.id));
+    if (!facts.steps.length && livePlanSteps(todo.id, family).length) {
+      const reason = neoPlanRefusal(facts, 'steps');
+      if (reason) return reason;
+    }
+  }
+  return null;
+}
 
 const live = (todo: Row) => !['done', 'removed'].includes(todo.state);
 

@@ -12,6 +12,7 @@ import { neoStartRetryDue } from './daemon-cards.ts';
 import { neoTodoPrerequisiteRefusal, neoTodoStartRefusal } from './todo-start-gate.ts';
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import { neoTodoMutations } from '../../storage/repositories/neo-todo-mutation-commit.ts';
+import { neoPackPlan } from './todo-follow-up.ts';
 import { neoTodoRunnerWrites } from '../../storage/repositories/neo-todo-runner-state.ts';
 import { neoSyncedWorkers, neoWorkerStatusDue } from './worker-status-gate.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -416,16 +417,20 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   const recompute = (superpipe({})('neo.todo.recompute-committed') as PipelineAPI)
     .input(['todo', 'patch', 'now', 'judgement'])
     .pipe(
-      (
+      async (
         todo: NeoTodo,
         patch: NeoTodoPatch = {},
         now = Date.now(),
         judgement: NeoTodoJudgement = { state: 'no_opinion' }
-      ) =>
-        deps.write(neoTodoRunnerWrites, {
+      ) => {
+        const packPlan =
+          (patch.state === 'done' || judgement.state === 'done') &&
+          (await neoPackPlan(todo, deps.packs()));
+        return deps.write(neoTodoRunnerWrites, {
           method: 'recompute',
-          args: [todo.id, todo.check, patch, now, judgement],
-        }),
+          args: [todo.id, todo.check, patch, now, judgement, packPlan],
+        });
+      },
       ['todo', 'patch', 'now', 'judgement'],
       'receipt'
     )
@@ -1101,7 +1106,11 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       const next = completion
         ? await recompute(live, {}, now, completion)
         : await finish(live, ask, planNeoTodoCheck(live, result, now), now);
-      if (completion && next.state !== live.state && ['done', 'blocked'].includes(next.state))
+      if (
+        completion &&
+        (next.state !== live.state || next.blockedReason !== live.blockedReason) &&
+        ['done', 'blocked'].includes(next.state)
+      )
         await noteState(next);
     }
     deps.changed();

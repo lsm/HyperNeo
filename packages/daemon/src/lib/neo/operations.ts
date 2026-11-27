@@ -778,7 +778,8 @@ export function createNeoOperations(
         if (questionId) void service.deliverQuestionAnswers(questionId);
       },
       service.todos,
-      stagedImages
+      stagedImages,
+      () => service.installedPacks()
     ),
     createNeoReorganizeOperation(neoReorganizeRuntime(service, identity)),
     createNeoProjectListOperation(service.repo, hostname),

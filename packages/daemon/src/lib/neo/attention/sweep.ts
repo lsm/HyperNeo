@@ -1,3 +1,4 @@
+import { neoAskPlanGap } from '../todo-follow-up.ts';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoTodoSessionRepository } from '../../../storage/repositories/neo-todo-session-repository.ts';
@@ -72,10 +73,23 @@ export const neoStepOwners = (steps: readonly NeoStepRow[]) =>
     ])
   );
 
-export function planNeoSweepEvents(
+async function planNeoSweepEvents(
   steps: readonly NeoStepRow[],
-  { followUps, unapproved }: Pick<Facts, 'followUps' | 'unapproved'>
-): NeoAttentionEvent[] {
+  { followUpAsks, unapproved }: Pick<Facts, 'followUpAsks' | 'unapproved'>,
+  packs: readonly NeoPack[]
+): Promise<NeoAttentionEvent[]> {
+  const followUps: NeoAttentionEvent[] = [];
+  for (const { ask, family } of followUpAsks) {
+    const gap = await neoAskPlanGap(ask.id, family, packs);
+    if (!gap) continue;
+    const { todo, reason } = gap;
+    followUps.push({
+      kind: 'todo.follow_up_missing',
+      subject: { type: 'ask', id: ask.id },
+      since: todo.finishedAt ?? todo.updatedAt,
+      facts: { title: todo.title, todoId: todo.id, askTitle: ask.title, reason },
+    });
+  }
   return [
     ...steps.flatMap((row) => {
       const next = owner(row);
@@ -110,12 +124,7 @@ export function planNeoSweepEvents(
           ]
         : [];
     }),
-    ...followUps.map(({ ask, todo }) => ({
-      kind: 'todo.follow_up_missing',
-      subject: { type: 'ask', id: ask.id },
-      since: todo.finishedAt ?? todo.updatedAt,
-      facts: { title: todo.title, todoId: todo.id, askTitle: ask.title },
-    })),
+    ...followUps,
     ...unapproved.map((todo) => ({
       kind: 'todo.unworked',
       subject: { type: 'todo', id: todo.id },
@@ -150,8 +159,8 @@ export function createNeoAttentionSweep(deps: {
       'scanned'
     )
     .pipe(
-      (steps: NeoStepRow[], facts: Facts, scanned: readonly NeoAttentionEvent[]) => [
-        ...planNeoSweepEvents(steps, facts),
+      async (steps: NeoStepRow[], facts: Facts, scanned: readonly NeoAttentionEvent[]) => [
+        ...(await planNeoSweepEvents(steps, facts, deps.packs())),
         ...scanned,
       ],
       ['steps', 'facts', 'scanned'],

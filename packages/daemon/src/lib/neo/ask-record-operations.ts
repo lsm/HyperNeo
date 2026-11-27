@@ -27,7 +27,7 @@ import { DESKTOP_CONTROL_REFUSAL, recordNeoTodoAdmission } from './todo-add-oper
 import { DesktopAppsSchema, desktopAppsLine, resolveDesktopApps } from '../desktop/app-scope.ts';
 import type { NeoPack, NeoTodoPolicyScope } from './pack-contract.ts';
 import { neoTodoRepository } from './pack-contract.ts';
-import { neoTodoFollowUpRefusal } from './todo-follow-up.ts';
+import { neoAskPlanGap } from './todo-follow-up.ts';
 import type { SessionGoal } from '@hyperneo/shared/types/session-goal';
 import type { DbGateway } from '../../storage/db-gateway/db-gateway.ts';
 import {
@@ -576,9 +576,16 @@ export function createNeoAskRecordOperations(
       'result:outcome'
     )
     .pipe(
-      (current: { ask: NeoAsk; todos: NeoTodo[] }, input: z.infer<typeof Settle>) => {
-        const reason = input.status === 'done' && neoTodoFollowUpRefusal(current.todos);
-        return reason ? { reason: { ok: false as const, reason } } : { value: current };
+      async (current: { ask: NeoAsk; todos: NeoTodo[] }, input: z.infer<typeof Settle>) => {
+        const gap =
+          input.status === 'done'
+            ? await neoAskPlanGap(
+                input.askId,
+                await store.read('listFamilyTodos', input.askId),
+                packs()
+              )
+            : null;
+        return gap ? { reason: { ok: false as const, reason: gap.reason } } : { value: current };
       },
       ['outcome', 'input'],
       'result:outcome'
@@ -614,12 +621,14 @@ export function createNeoAskRecordOperations(
         }
         const fresh = await settlement.gateway.call(neoAskSettlementReads, 'snapshot', input.askId);
         if ('ok' in fresh) return fresh;
-        const late = input.status === 'done' && neoTodoFollowUpRefusal(fresh.todos);
-        if (late) return { ok: false, reason: late };
+        const family = await store.read('listFamilyTodos', input.askId);
+        const late =
+          input.status === 'done' ? await neoAskPlanGap(input.askId, family, packs()) : null;
+        if (late) return { ok: false, reason: late.reason };
         const committed = await settlement.gateway.call(
           neoAskSettlementWrites,
           'settle',
-          { ...input, todosVersion: neoAskTodosVersion(fresh.todos) },
+          { ...input, todosVersion: neoAskTodosVersion(family) },
           Date.now()
         );
         if (!committed.ok) return committed;
