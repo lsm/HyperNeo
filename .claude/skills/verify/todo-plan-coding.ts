@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
@@ -121,7 +121,15 @@ try {
   assert.match(repeated.reason ?? '', /^plan_steps_missing:/);
   const calls = readFileSync(join(evidence, 'gh.log'), 'utf8').split('\n');
   assert.equal(calls.filter((call) => call.includes('CodingMergeFiles')).length, 1);
-  console.log(`PASS: ${Object.keys(observed).length} todo completion replies and one paginated PR file read`);
+  unlinkSync(join(run, 'files-2.json'));
+  db.prepare('UPDATE pack_coding_work_facts SET observed_at = 0 WHERE url = ?').run(url(2));
+  const unavailableFiles = await finish('todo-2');
+  observed.unavailableFiles = unavailableFiles;
+  assert.equal(unavailableFiles.ok, false, JSON.stringify(unavailableFiles));
+  assert.match(unavailableFiles.reason ?? '', /^plan_steps_missing:/);
+  const refreshedCalls = readFileSync(join(evidence, 'gh.log'), 'utf8').split('\n');
+  assert.equal(refreshedCalls.filter((call) => call.includes('CodingMergeFiles')).length, 2);
+  console.log(`PASS: ${Object.keys(observed).length} todo completion replies with a successful and a failed paginated PR file read`);
 } finally {
   writeFileSync(join(evidence, 'observed.json'), JSON.stringify(observed, null, 2));
   await app.cleanup();
