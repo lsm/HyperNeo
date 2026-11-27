@@ -1262,6 +1262,14 @@ html.tauri-desktop body:has(.neo-shell) .desktop-drag-strip {
   background: transparent;
 }
 
+html.tauri-desktop .neo-shell.neo-preview-focus > .artifact-preview-panel {
+  z-index: 20;
+}
+
+html.tauri-desktop .neo-shell.neo-preview-focus .neo-scene-list {
+  z-index: 21;
+}
+
 html.tauri-desktop
   body:has(.neo-shell)
   :is(

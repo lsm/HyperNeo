@@ -17,8 +17,9 @@ preview panel.
 
 On the base, it exits 1: the drag strip covers Close, Expand, Your work, the
 document tab and its close button. After the fix, every control receives its own
-click, and a real mouse click on Your work selects it. The page shows no Back to
-chat button on desktop.
+click, and a real mouse click on Your work selects it and shows the work list
+above the panel. The Back to chat rule is covered by `NeoLiveWorkScenes` unit
+tests, since this seed has no chat reference to open.
 
 `preview-tabs-desktop.json` and the `<phase>-closed`, `<phase>-open` and
 `<phase>-work-clicked` PNGs land in the evidence directory. A headless browser

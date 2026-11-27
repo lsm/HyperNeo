@@ -1288,7 +1288,7 @@ export function NeoLive() {
               },
             })}
           >
-            {returnToChat.current && (
+            {sheet && returnToChat.current && (
               <button type="button" class="neo-float-link" onClick={() => setScenesOpen(false)}>
                 {t('chat.backToChat')}
               </button>

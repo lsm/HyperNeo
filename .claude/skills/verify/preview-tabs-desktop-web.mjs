@@ -47,7 +47,6 @@ try {
     throw error;
   });
   await page.waitForTimeout(500);
-  observed.backToChat = await page.getByRole('button', { name: 'Back to chat' }).count();
   await page.screenshot({ path: join(run, 'evidence', `${phase}-closed.png`) });
   await open.click();
   await page.getByRole('dialog').waitFor();
@@ -73,6 +72,13 @@ try {
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await page.waitForTimeout(400);
   observed.workSelectedAfterClick = await work.getAttribute('aria-selected');
+  observed.workListOnTop = await page.evaluate(() => {
+    const list = document.querySelector('.neo-scene-list');
+    const control = list && [...list.querySelectorAll('button')].find((button) => button.getBoundingClientRect().width > 0);
+    if (!control) return false;
+    const box = control.getBoundingClientRect();
+    return list.contains(document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2));
+  });
   await page.screenshot({ path: join(run, 'evidence', `${phase}-work-clicked.png`) });
   await context.close();
 } finally {
@@ -83,4 +89,5 @@ console.log(JSON.stringify(observed, null, 2));
 assert(observed.hits.length > 0, 'no preview controls found');
 assert.deepEqual(observed.hits.filter((hit) => !hit.receives), [], 'preview controls are covered');
 assert.equal(observed.workSelectedAfterClick, 'true');
+assert.equal(observed.workListOnTop, true, 'the work list is hidden behind the preview panel');
 console.log('PASS: every preview tab and button receives its click in the desktop app layout');
