@@ -236,6 +236,23 @@ export interface NeoHumanQueue {
   topics?: Record<string, NeoTopicLabel>;
 }
 
+export function neoHumanQueueTab(item: NeoHumanQueueItem): NeoHumanQueueState | null {
+  if ('questionId' in item) return item.state;
+  if (item.owner === 'human') return 'waiting';
+  if (item.owner === 'nobody') return 'held';
+  return item.step === 'working' ? 'progress' : null;
+}
+
+export function neoHumanQueueCounts(queue: Pick<NeoHumanQueue, 'items'>): NeoHumanQueue['counts'] {
+  const counts: NeoHumanQueue['counts'] = {};
+  for (const item of queue.items) {
+    const tab = neoHumanQueueTab(item);
+    const ask = (counts[item.askId] ??= { waiting: 0, held: 0, progress: 0 });
+    if (tab) ask[tab]++;
+  }
+  return counts;
+}
+
 export type NeoWorkingStatus = 'queued' | 'processing' | 'rate_limit_cooldown';
 
 export interface NeoWorkingSession {

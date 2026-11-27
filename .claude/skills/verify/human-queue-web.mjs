@@ -101,6 +101,8 @@ async function checkPhoneParity(context, theme) {
   const progress = await queue.locator('[data-ask-todo]').count();
   const allWork = await tab('所有工作');
   if (!allWork) await tab('进行中|在做');
+  await page.locator('[data-ask]').first().waitFor({ timeout: 5000 }).catch(() => {});
+  await page.screenshot({ path: join(evidence, `phone-parity-list-${theme}.png`), animations: 'disabled' });
   const big = page.locator('[data-ask="big"] [data-ask-status]').first();
   const card = (await big.count()) ? await big.innerText() : null;
   const filed = () => page.locator('[data-ask^="filed-"]').count();
@@ -112,8 +114,10 @@ async function checkPhoneParity(context, theme) {
     await page.waitForFunction((n) => document.querySelectorAll('[data-ask^="filed-"]').length > n, before, { timeout: 5000 }).catch(() => {});
   }
   const after = await filed();
-  await page.screenshot({ path: join(evidence, `phone-parity-all-${theme}.png`), animations: 'disabled', fullPage: true });
-  observations.push({ theme, chips, progress, allWork, card, older: { offered, before, after } });
+  const scenes = await page.locator('[data-scene-group]').evaluateAll((groups) => groups.map((group) => group.getAttribute('aria-label')));
+  const asksShown = await page.locator('[data-ask]').evaluateAll((items) => items.map((item) => item.dataset.ask));
+  await page.screenshot({ path: join(evidence, `phone-parity-older-${theme}.png`), animations: 'disabled' });
+  observations.push({ theme, chips, progress, allWork, card, older: { offered, before, after }, scenes, asksShown });
 }
 async function checkShortTopics(context, theme) {
   await context.addInitScript(() => {
