@@ -21,6 +21,7 @@ export type FakeMcpOAuthSwitches = {
   redirectWithoutLocation?: boolean;
   echoError?: 'oauth' | 'raw';
   tokenStatus?: number;
+  mcpReply?: (request: Request) => Response | Promise<Response>;
 };
 
 export const echoedSecret = 'echoed-synthetic-secret';
@@ -169,6 +170,7 @@ export async function startFakeMcpOAuthServer(switches: FakeMcpOAuthSwitches = {
       return json({ error: 'unauthorized' }, 401, {
         'www-authenticate': `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`,
       });
+    if (url.pathname === '/mcp' && switches.mcpReply) return switches.mcpReply(request);
     return json({ error: 'not_found' }, 404);
   };
   const server = await createHttpWsServer({
