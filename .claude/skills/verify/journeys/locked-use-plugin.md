@@ -118,8 +118,13 @@ bash packages/desktop/locked-use/check-cover.sh
 Both covers must match their full screen frames before and after the larger
 display changes size and moves to a negative origin. If the replacement window
 reports a smaller frame, the guardian must relock and print
-`ended cover_mismatch` without a second `covered 2` line. Pass prints
-`guardian cover check cases=2 failures=0`.
+`ended cover_mismatch` without a second `covered 2` line. The fixtures also
+check opaque blue before wallpaper I/O, separate images for each display,
+opaque fallback, descriptor-only reads, path rejection, and discarding late,
+replaced or ending results without delaying relock. Pass prints `guardian cover check cases=7 failures=0`.
+To render the cover offscreen with synthetic wallpaper and the repository icon,
+pass an existing output directory and the absolute path to
+`packages/desktop/src-tauri/icons/128x128@2x.png` as the two arguments.
 
 Hidden password field, headless. While Touch ID can unlock, the login window keeps
 `UserPasswordTextField` out of its Accessibility tree and shows only "Touch ID or
@@ -166,10 +171,12 @@ through the cover handoff interval. It also checks delayed unlock, a lock reques
 at the roughly five-second cap with no observed unlock, and exit with
 `relock_failed` if the lock flag never returns by the ten-second release deadline.
 The last case exercises the real authorization listener: an armed guardian
-grants once, then refuses after an answered Allow or owner input. All five cases
-end in `guardian release check PASS`. The lock flag does not show when the lock
-screen draws. The guardian holds the covers for 750 ms after seeing it, within
-the release deadline. Check the visible handoff in the attended run.
+grants once, then refuses after an answered Allow or owner input. Four additional
+cases check the 750 ms opaque hold, matching fade opacity across displays,
+restoration and a fresh hold after an unlock during the fade, and opaque covers
+at the unchanged deadline. The fixture prints
+`guardian release check PASS (9 cases)`. Check the visible handoff in the
+attended run.
 The Desktop tests cover refusal while a guardian is active or releasing,
 suppression on a locked launch and after owner input or a crash, and admitting
 workers again after an unlock.
@@ -196,9 +203,18 @@ guardian socket. Compare with the macOS unified log for subsystem
 `io.hyperneo.locked-use`, category `plugin`, which records invocations even if
 they never reach the guardian. The diagnostics contain no UI values or input.
 
-1. With the Mac locked, have a worker perform a real Calculator action and read
-   the result back through Desktop. Check the blue cover. Stop the worker and
-   confirm the Mac relocks and the guardian exits cleanly.
+1. In an owner-attended run, set two different built-in wallpapers on two
+   displays. With the Mac locked, have a worker perform a real Calculator
+   action and read the result back through Desktop. Confirm both displays
+   show their own aspect-filled wallpaper and a fully opaque cover with the
+   centered HyperNeo icon, status, and stop hint. Stop with physical owner input.
+   Check that both covers stay opaque through relock and the 750 ms hold, then
+   the wallpaper, icon, status and hint fade together. Confirm the guardian
+   exits cleanly. Repeat with an Apple aerial and check for Apple's default
+   still, which can differ from the selected aerial. Repeat with a custom
+   photo outside the allowed wallpaper directories and check for opaque deep
+   blue without a permission prompt. Record observations in text without
+   capturing either display, a wallpaper, or its path.
 2. Repeat with input during startup, under the cover, and immediately after
    relock while the guardian is still exiting. Use the mouse and one or two
    password characters, first without Return and then with Return. Confirm that

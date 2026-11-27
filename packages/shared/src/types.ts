@@ -13,6 +13,7 @@ export type {
 } from './provider/types.ts';
 export type {
   AppMcpServer,
+  AppMcpServerAuth,
   AppMcpServerSourceType,
   CreateAppMcpServerRequest,
   UpdateAppMcpServerRequest,

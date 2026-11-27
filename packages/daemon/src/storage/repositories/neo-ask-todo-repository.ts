@@ -153,7 +153,8 @@ const TODO_SELECT = `SELECT id, ask_id AS askId, position, title, done_when AS d
   added_after_start AS addedAfterStart, report, evidence, artifacts_json AS artifactsJson, priority, depends_on AS dependsOnJson, created_at AS createdAt,
   updated_at AS updatedAt, started_at AS startedAt, finished_at AS finishedAt,
   approved_at AS approvedAt, approval_question_id AS approvalQuestionId,
-  produces_follow_up AS producesFollowUp, desktop_apps AS desktopAppsJson FROM neo_todos`;
+  produces_follow_up AS producesFollowUp, desktop_apps AS desktopAppsJson,
+  plan, plan_check_json AS planCheckJson FROM neo_todos`;
 
 export type NeoQuestionDraft = Pick<
   NeoQuestion,
@@ -267,11 +268,14 @@ type TodoRow = Omit<
   | 'artifacts'
   | 'dependsOn'
   | 'producesFollowUp'
+  | 'plan'
   | 'desktopApps'
 > & {
   desktopAppsJson: string | null;
   checkJson: string | null;
   producesFollowUp: number;
+  plan: number;
+  planCheckJson: string | null;
   dependsOnJson: string | null;
   artifactsJson: string | null;
   named: string | null;
@@ -285,11 +289,15 @@ const toTodo = ({
   named,
   addedAfterStart,
   producesFollowUp,
+  plan,
+  planCheckJson,
   desktopAppsJson,
   ...row
 }: TodoRow): NeoTodo => ({
   ...row,
   ...(desktopAppsJson ? { desktopApps: JSON.parse(desktopAppsJson) as NeoDesktopApp[] } : {}),
+  ...(plan === 1 ? { plan: true as const } : {}),
+  ...(planCheckJson ? { planCheck: JSON.parse(planCheckJson) as NeoTodo['planCheck'] } : {}),
   ...(producesFollowUp === 1 ? { producesFollowUp: true as const } : {}),
   dependsOn: parsed<string[]>(dependsOnJson),
   ...(artifactsJson ? { artifacts: JSON.parse(artifactsJson) as NeoTodo['artifacts'] } : {}),

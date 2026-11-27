@@ -110,3 +110,24 @@ test('the worker sandbox shows off when unset and saves the chosen mode', async 
   fireEvent.change(select, { target: { value: 'on-demand' } });
   expect(updateGlobalSettings).toHaveBeenCalledWith({ workerSandbox: 'on-demand' });
 });
+
+test('desktop observation collapse starts off and the switch saves the new value', () => {
+  settle();
+  render(<NeoWorkerPermissionSettings />);
+  const box = screen.getByRole('switch', { name: 'Collapse older desktop observations' });
+  expect(box.getAttribute('aria-checked')).toBe('false');
+  fireEvent.click(box);
+  expect(updateGlobalSettings).toHaveBeenCalledWith({ desktopObservationCollapse: true });
+});
+
+test('a saved desktop observation collapse shows checked and can be turned off', () => {
+  (globalSettings as { value: GlobalSettings | null }).value = {
+    neo,
+    desktopObservationCollapse: true,
+  } as GlobalSettings;
+  render(<NeoWorkerPermissionSettings />);
+  const box = screen.getByRole('switch', { name: 'Collapse older desktop observations' });
+  expect(box.getAttribute('aria-checked')).toBe('true');
+  fireEvent.click(box);
+  expect(updateGlobalSettings).toHaveBeenCalledWith({ desktopObservationCollapse: false });
+});

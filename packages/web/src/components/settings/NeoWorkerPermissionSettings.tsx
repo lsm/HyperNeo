@@ -9,7 +9,7 @@ import {
 import { globalSettings } from '../../lib/state.ts';
 import { updateGlobalSettings } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
-import { SettingsGroup, SettingsRow, SettingsSection } from './SettingsSection.tsx';
+import { SettingsGroup, SettingsRow, SettingsSection, SettingsToggle } from './SettingsSection.tsx';
 
 export function NeoWorkerPermissionSettings() {
   const settings = globalSettings.value;
@@ -104,6 +104,17 @@ export function NeoWorkerPermissionSettings() {
                 </option>
               ))}
             </select>
+          </SettingsRow>
+          <SettingsRow
+            label="Collapse older desktop observations"
+            description="Desktop workers on custom endpoints send the newest observation and the latest failure in full; older ones shrink to one line. Applies from the next model request. Off until the recorded desktop replay passes."
+          >
+            <SettingsToggle
+              aria-label="Collapse older desktop observations"
+              checked={settings.desktopObservationCollapse === true}
+              disabled={saving}
+              onChange={(checked) => save({ desktopObservationCollapse: checked })}
+            />
           </SettingsRow>
         </SettingsGroup>
       </SettingsSection>

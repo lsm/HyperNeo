@@ -1,10 +1,11 @@
 import { createPairWaits } from '../../../../src/lib/pairing/pair-waits';
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
-import { mkdtempSync, rmSync, statSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { request, Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { OPERATION_NAMES } from '@hyperneo/shared/types/operation-names';
+import { readClaudeDesktopRecords } from '../../../../src/lib/drivers/claude-desktop-adapter';
 import { parseMailboxEntry } from '../../../../src/lib/mailbox/entry';
 import { createSendMessageOperation } from '../../../../src/lib/messaging/message-send';
 import { startSessionDoor } from '../../../../src/lib/messaging/session-door';
@@ -52,7 +53,13 @@ describe('the session door', () => {
       createSendMessageOperation(mailbox.jobQueue, () => 'active'),
       createBuildOperation(() => mailbox.db.prepare('SELECT 1').get()),
     ]);
-    door = await startSessionDoor(() => registry, authenticated, join(dir, 'door.sock'));
+    const cache = new Map();
+    door = await startSessionDoor(
+      () => registry,
+      authenticated,
+      join(dir, 'door.sock'),
+      () => readClaudeDesktopRecords(dir, cache)
+    );
   });
   afterEach(async () => {
     await door.close();
@@ -234,6 +241,44 @@ describe('the session door', () => {
       '<session-message from-session="codex-desktop:thread-9" origin="session">'
     );
   });
+
+  const cliSessionId = '00000000-0000-4000-8000-000000000001';
+  const cliSender = `claude-code:${cliSessionId}`;
+  test.each([
+    ['unique', ['local_desktop'], 'claude-desktop:local_desktop'],
+    ['unmatched', [], cliSender],
+    ['ambiguous', ['local_first', 'local_second'], cliSender],
+  ])(
+    'a Claude CLI sender with %s Desktop records has the expected origin',
+    async (_, ids, sender) => {
+      const scope = join(dir, 'account', 'scope');
+      mkdirSync(scope, { recursive: true });
+      for (const sessionId of ids) {
+        writeFileSync(
+          join(scope, `${sessionId}.json`),
+          JSON.stringify({ sessionId, cliSessionId })
+        );
+      }
+      writeFileSync(
+        join(scope, 'local_invalid.json'),
+        JSON.stringify({ sessionId: 'invalid', cliSessionId })
+      );
+      writeFileSync(
+        join(scope, 'local_other.json'),
+        JSON.stringify({
+          sessionId: 'local_other',
+          cliSessionId: '00000000-0000-4000-8000-000000000002',
+        })
+      );
+
+      expect(
+        await post(door.path, { sender: cliSender, name: 'message.send', input: send('Hello') })
+      ).toMatchObject({ status: 200, body: { value: { kind: 'accepted' } } });
+      const entry = parseMailboxEntry(JSON.parse(mailbox.rows()[0].payload));
+      expect(entry?.origin).toBe(`session:${encodeURIComponent(sender)}`);
+      expect(entry?.message.message.content).toContain(`<session-message from-session="${sender}"`);
+    }
+  );
 
   test('an oversized request explains the transport limit and file path', async () => {
     expect(

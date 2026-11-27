@@ -1,6 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
+import { NEO_PLAN_SIGNOFF } from './todo-follow-up.ts';
 import type { NeoPack, NeoTodoCheckResult } from './pack-contract.ts';
 
 export function questionCheckTodo(question: NeoQuestion, todo: NeoTodo | null): NeoTodo {
@@ -46,6 +47,12 @@ export function createQuestionRetirement(
 ) {
   return (superpipe({})('neo.question.retire-when') as PipelineAPI)
     .input(['question', 'todo', 'now'])
+    .pipe(
+      (question: NeoQuestion) =>
+        question.cause === NEO_PLAN_SIGNOFF ? { reason: null } : { value: question },
+      'question',
+      'result:retired'
+    )
     .pipe(questionCheckTodo, ['question', 'todo'], 'checked')
     .pipe(
       (todo: NeoTodo) =>

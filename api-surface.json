@@ -6051,6 +6051,20 @@
             "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
             "type": "string"
           },
+          "edit": {
+            "additionalProperties": false,
+            "properties": {
+              "displayName": {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "displayName"
+            ],
+            "type": "object"
+          },
           "url": {
             "examples": [
               "wss://example.com/ws"
@@ -6263,6 +6277,13 @@
                     },
                     "daemonId": {
                       "type": "string"
+                    },
+                    "displayName": {
+                      "type": "string"
+                    },
+                    "paired": {
+                      "const": true,
+                      "type": "boolean"
                     },
                     "url": {
                       "type": "string"
@@ -21211,6 +21232,29 @@
             "required": [
               "space",
               "agent"
+            ],
+            "type": "object"
+          },
+          "check": {
+            "properties": {
+              "stepIds": {
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "verdict": {
+                "enum": [
+                  "pass",
+                  "fail"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "verdict",
+              "stepIds"
             ],
             "type": "object"
           },
@@ -36752,6 +36796,11 @@
                     ],
                     "type": "object"
                   },
+                  "signoff": {
+                    "const": true,
+                    "description": "Ask the human to sign off on a plan.",
+                    "type": "boolean"
+                  },
                   "sourceSession": {
                     "properties": {
                       "adapter": {
@@ -36781,6 +36830,15 @@
                     "description": "The todo this card belongs to.",
                     "minLength": 1,
                     "type": "string"
+                  },
+                  "todos": {
+                    "description": "Exact live step IDs for a plan sign-off.",
+                    "items": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "type": "array"
                   }
                 },
                 "required": [
@@ -59590,6 +59648,10 @@
           "adapter": {
             "minLength": 1,
             "type": "string"
+          },
+          "checkPlan": {
+            "const": true,
+            "type": "boolean"
           },
           "copilotClient": {
             "enum": [

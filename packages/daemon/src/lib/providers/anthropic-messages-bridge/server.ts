@@ -31,7 +31,7 @@ export type AnthropicMessagesBridgeConfig = {
   apiKey?: string;
   headers?: Record<string, string>;
   fetchImpl?: typeof fetch;
-  collapseDesktopObservations?: boolean;
+  collapseDesktopObservations?: () => boolean;
   models?: AnthropicMessagesBridgeModel[];
   thinkingSupported?: boolean;
   disableThinkingWithChatTemplate?: boolean;
@@ -183,7 +183,7 @@ export async function createAnthropicMessagesBridgeServer(
       let bodyBytes: ArrayBuffer;
       try {
         bodyBytes = await req.arrayBuffer();
-        if (config.collapseDesktopObservations) {
+        if (config.collapseDesktopObservations?.()) {
           const body: AnthropicRequest = JSON.parse(new TextDecoder().decode(bodyBytes));
           const collapsed = collapseDesktopObservations(body);
           if (collapsed !== body)

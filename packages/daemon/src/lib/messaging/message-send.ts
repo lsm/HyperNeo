@@ -83,6 +83,12 @@ export const SendMessageInputSchema = z
     to: z.union([MessageSessionIdSchema, AgentReferenceSchema]).optional(),
     text: z.string().min(1).optional(),
     kind: z.enum(WORKER_REPORT_KINDS).optional(),
+    check: z
+      .object({
+        verdict: z.enum(['pass', 'fail']),
+        stepIds: z.array(z.string().min(1)),
+      })
+      .optional(),
     question: z
       .strictObject({
         todoId: z.string().min(1),

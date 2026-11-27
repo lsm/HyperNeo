@@ -1,5 +1,6 @@
 import { describe, expect, it, mock } from 'bun:test';
 import {
+  configureDesktopObservationCollapse,
   CustomEndpointProvider,
   customProviderIdFor,
   isCustomEndpointProviderId,
@@ -927,5 +928,85 @@ describe('CustomEndpointProvider', () => {
       p.buildSdkConfig('qwen2.5-7b');
       expect(fake.configs[0].chatTemplateKwargs).toBeUndefined();
     });
+  });
+});
+
+describe('desktop observation collapse setting', () => {
+  const tool = (id: string, name: string, input: Record<string, unknown>) => ({
+    role: 'assistant',
+    content: [{ type: 'tool_use', id, name: `mcp__hyperneo-operations__${name}`, input }],
+  });
+  const observation = (id: string) => ({
+    role: 'user',
+    content: [
+      {
+        type: 'tool_result',
+        tool_use_id: id,
+        content: [
+          { type: 'text', text: '{"ok":true}' },
+          { type: 'text', text: 'AX window '.repeat(50) },
+        ],
+      },
+    ],
+  });
+  const messages = [
+    tool('read', 'get_window_state', { pid: 1, window_id: 2 }),
+    observation('read'),
+    tool('click', 'click', { x: 3, y: 4 }),
+    observation('click'),
+  ];
+
+  it('applies a changed setting to the next request on an already running bridge', async () => {
+    let enabled = false;
+    configureDesktopObservationCollapse(() => enabled);
+    const upstream: Array<{ messages: Array<{ content: Array<{ content: unknown }> }> }> = [];
+    const fetchImpl = Object.assign(
+      async (_url: string | URL | Request, init?: RequestInit) => {
+        upstream.push(await new Response(init?.body).json());
+        return new Response('event: message_stop\ndata: {"type":"message_stop"}\n\n', {
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      },
+      { preconnect: fetch.preconnect }
+    ) as typeof fetch;
+    const p = new CustomEndpointProvider(
+      { ...baseConfig, type: 'anthropic-messages' },
+      { bridgeFetchImpl: fetchImpl }
+    );
+    try {
+      await p.ensureBridgeStarted('qwen2.5-7b');
+      const url = `${p.buildSdkConfig('qwen2.5-7b').envVars.ANTHROPIC_BASE_URL}/v1/messages`;
+      const send = async () => {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: 'qwen2.5-7b', stream: true, max_tokens: 20, messages }),
+        });
+        await response.text();
+        return upstream.at(-1)!.messages[1]!.content[0]!.content;
+      };
+
+      expect(p.collapseDesktopObservations).toBe(false);
+      expect(JSON.stringify(await send())).toContain('AX window');
+
+      enabled = true;
+      expect(p.collapseDesktopObservations).toBe(true);
+      expect(await send()).toBe('get_window_state pid=1 window_id=2 ok');
+
+      enabled = false;
+      expect(JSON.stringify(await send())).toContain('AX window');
+    } finally {
+      configureDesktopObservationCollapse(() => false);
+      await p.shutdown?.();
+    }
+  });
+
+  it('is off until the setting is read as on', () => {
+    configureDesktopObservationCollapse(() => false);
+    const p = new CustomEndpointProvider(
+      { ...baseConfig, type: 'anthropic-messages' },
+      { bridgeFactory: makeFakeBridge().factory }
+    );
+    expect(p.collapseDesktopObservations).toBe(false);
   });
 });

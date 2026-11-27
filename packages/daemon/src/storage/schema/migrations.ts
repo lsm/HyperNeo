@@ -1,3 +1,4 @@
+import { runMigration537 } from './m537-neo-todo-plan.ts';
 import { runMigration528 } from './m528-retire-session-strategy.ts';
 import { runMigration529 } from './m529-work-start-record.ts';
 import { runMigration526 } from './m526-neo-front-failure-reason.ts';
@@ -52,6 +53,7 @@ import { runMigration482 } from './m482-todo-bound-at.ts';
 import { runMigration531 } from './m531-todo-roles.ts';
 import { runMigration535 } from './m535-neo-ask-desktop-apps.ts';
 import { runMigration536 } from './m536-remote-daemon-paired-identity.ts';
+import { runMigration537 } from './m537-mcp-oauth-auth.ts';
 import { runMigration483 } from './m483-neo-session-seen-question.ts';
 import { runMigration481 } from './m481-agent-devices.ts';
 import { runMigration476 } from './m476-neo-todo-approved-at.ts';
@@ -1107,6 +1109,7 @@ export function runMigrations(
   run(migrationMarkerKey(534), () => runMigration534(db));
   run(migrationMarkerKey(535), () => runMigration535(db));
   run(migrationMarkerKey(536), () => runMigration536(db));
+  run(migrationMarkerKey(537), () => runMigration537(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

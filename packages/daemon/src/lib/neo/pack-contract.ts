@@ -52,6 +52,7 @@ export type NeoTodoPolicyScope = {
 export interface NeoTodoPack {
   schema(db: Database): void;
   writerAdd?: true;
+  plan?(todo: NeoTodo): Promise<boolean>;
   check(todo: NeoTodo, context?: { readOnly: true }): Promise<NeoTodoCheckResult | null>;
   statusLine(todo: NeoTodo): NeoStatusLine | null;
   repository?(draft: NeoTodoRepositoryDraft, scope?: NeoTodoPolicyScope): string | null;
