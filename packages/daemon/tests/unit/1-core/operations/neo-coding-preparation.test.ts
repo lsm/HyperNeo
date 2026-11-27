@@ -106,7 +106,7 @@ describe('createCodexDesktopAdapter with coding preparation', () => {
         appServer: async () => {
           throw new Error('not used');
         },
-        startDesktopTurn: async () => {},
+        startDesktopTurn: async () => 'turn-1',
         bootstrapServer: async () => ({
           close: () => {},
           call: async (method, params) => {

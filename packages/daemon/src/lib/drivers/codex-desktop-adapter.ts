@@ -145,7 +145,7 @@ export interface CodexDesktopAdapterDeps {
   appServer: () => Promise<CodexAppServer>;
   bootstrapServer: () => Promise<CodexAppServer>;
   prepareDesktopProject: (folder: string, server: CodexAppServer) => Promise<string>;
-  startDesktopTurn: (threadId: string, request: Record<string, unknown>) => Promise<void>;
+  startDesktopTurn: (threadId: string, request: Record<string, unknown>) => Promise<string>;
   folderExists: (folder: string) => boolean;
   makeFolder: (folder: string) => void;
   homeDir: string;
@@ -1413,18 +1413,26 @@ export async function startCodexThread(
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
       };
-      await deps.startDesktopTurn(createdThreadId, opening).catch(async (error: unknown) => {
-        if (!codexDesktopIpcAbsent(error)) throw error;
-        const shared = await withCodexAppServer(deps, async (server) => {
-          await server.call('thread/resume', {
-            threadId: createdThreadId,
-            ...(sandbox ? { permissions: sandbox.permissions } : { sandbox: 'danger-full-access' }),
+      const startedTurnId = await deps
+        .startDesktopTurn(createdThreadId, opening)
+        .catch(async (error: unknown) => {
+          if (!codexDesktopIpcAbsent(error)) throw error;
+          const shared = await withCodexAppServer(deps, async (server) => {
+            await server.call('thread/resume', {
+              threadId: createdThreadId,
+              ...(sandbox
+                ? { permissions: sandbox.permissions }
+                : { sandbox: 'danger-full-access' }),
+            });
+            const turn = await server.call('turn/start', opening);
+            const id = (turn as { turn?: { id?: unknown } } | null)?.turn?.id;
+            return typeof id === 'string' && id
+              ? { ok: true as const, value: id }
+              : reject('not_delivered', 'turn/start returned no turn id.');
           });
-          await server.call('turn/start', opening);
-          return { ok: true as const, value: null };
+          if (!shared.ok) throw new Error(shared.detail);
+          return shared.value;
         });
-        if (!shared.ok) throw new Error(shared.detail);
-      });
       const receipt = await readCodexStartReceipt(
         startedRolloutPath(started),
         message,
@@ -1443,6 +1451,7 @@ export async function startCodexThread(
           ...(model ? { model } : {}),
           ...(effort ? { effort } : {}),
           ...(receipt ? { receipt } : {}),
+          startedTurnId,
         },
       };
     } catch (error) {

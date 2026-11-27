@@ -60201,6 +60201,10 @@
                     },
                     "type": "array"
                   },
+                  "startedTurnId": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
                   "status": {
                     "enum": [
                       "queued",

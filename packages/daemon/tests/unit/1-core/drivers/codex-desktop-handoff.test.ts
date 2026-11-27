@@ -112,7 +112,7 @@ describe('startCodexDesktopTurn', () => {
 
   test('waits for desktop ownership and targets its first turn with the selected model and effort', async () => {
     const f = await fixture();
-    await startCodexDesktopTurn(f.path, f.spawn, 'thread-1', request);
+    expect(await startCodexDesktopTurn(f.path, f.spawn, 'thread-1', request)).toBe('turn-1');
     expect(f.launched).toEqual([['open', '-g', 'codex://threads/thread-1']]);
     expect(f.seen.map((message) => message.method)).toEqual([
       'initialize',
