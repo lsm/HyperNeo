@@ -144,7 +144,7 @@ function selectsModel(response: unknown): boolean {
   return level === 'native' || level === 'emulated';
 }
 
-function readEvent(frame: ListenerInput): Event | Error | undefined {
+function readEvent(frame: ListenerInput, sessionId: string): Event | Error | undefined {
   if (frame instanceof Error) return frame;
   if (frame.event === 'oap-subscribed') return undefined;
   if (frame.event !== 'envelope') return new Error(`OAP hub ${frame.event}`);
@@ -153,6 +153,12 @@ function readEvent(frame: ListenerInput): Event | Error | undefined {
     return new Error('Invalid OAP hub event');
   }
   const event = value as Record<string, unknown>;
+  if (
+    event.type === 'session.state.updated' &&
+    event.session_id === sessionId &&
+    event.run_id === undefined
+  )
+    return undefined;
   if (typeof event.type !== 'string' || typeof event.run_id !== 'string') {
     return new Error('Invalid OAP hub event scope');
   }
@@ -278,7 +284,7 @@ export function createOxapQueryHub(
         const emitter = new EventEmitter();
         const events = on(emitter, 'event') as AsyncIterableIterator<[Event | Error]>;
         const subscription = await client.subscribe(sessionId, (frame) => {
-          const value = readEvent(frame);
+          const value = readEvent(frame, sessionId);
           if (value) emitter.emit('event', value);
         });
         let releasing: Promise<void> | undefined;

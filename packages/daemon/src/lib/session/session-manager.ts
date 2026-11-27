@@ -804,7 +804,13 @@ export class SessionManager {
   async grantOperationMcp(sessionId: string) {
     const session = await this.getSessionForControl(sessionId);
     if (!session) throw new Error('Operations MCP requires an open session.');
-    return this.sessionLifecycle.grantOperationMcp(session);
+    return this.sessionLifecycle.operationMcpSession(session).grant(session);
+  }
+
+  async attachOperationMcp(sessionId: string, directory: string) {
+    const session = await this.getSessionForControl(sessionId);
+    if (!session) throw new Error('Operations MCP requires an open session.');
+    return this.sessionLifecycle.operationMcpSession(session).capability(session, directory);
   }
 
   async archiveSessionResources(sessionId: string, trigger: ArchiveResourcesTrigger) {

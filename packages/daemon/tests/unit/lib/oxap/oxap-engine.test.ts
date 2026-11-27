@@ -85,6 +85,8 @@ describe('OxapEngine', () => {
       join(root, 'state', 'oap-serve.json'),
       '--session-history',
       join(root, 'state', 'session-history.jsonl'),
+      '--session-tool-sources',
+      join(root, 'state', 'session-tool-sources'),
     ]);
     delete launch.env.__CF_USER_TEXT_ENCODING;
     expect(launch.env).toEqual(options.hub.environment);
@@ -106,7 +108,10 @@ describe('OxapEngine', () => {
     expect(existsSync(join(root, 'unverified-executed'))).toBe(false);
     expect(await readFile(options.binaryPath, 'utf8')).toContain('unverified-executed');
     await engine.close();
-    expect(await readdir(options.stateDirectory)).toEqual(['oap-serve.json']);
+    expect(await readdir(options.stateDirectory)).toEqual([
+      'oap-serve.json',
+      'session-tool-sources',
+    ]);
   });
 
   test('removes a stale snapshot from a hard crash before starting a fresh hub', async () => {
@@ -120,7 +125,11 @@ describe('OxapEngine', () => {
     expect(typeof (await hub.request('ping'))).toBe('number');
     expect(await readFile(join(options.stateDirectory, 'unrelated'), 'utf8')).toBe('keep');
     await engine.close();
-    expect((await readdir(options.stateDirectory)).sort()).toEqual(['oap-serve.json', 'unrelated']);
+    expect((await readdir(options.stateDirectory)).sort()).toEqual([
+      'oap-serve.json',
+      'session-tool-sources',
+      'unrelated',
+    ]);
   });
 
   test('rejects a mismatched binary before starting or writing configuration', async () => {
@@ -136,7 +145,10 @@ describe('OxapEngine', () => {
     const { engine, options, read } = await fixture();
     await mkdir(join(options.stateDirectory, 'oap-serve.json'), { recursive: true });
     await expect(engine.getHub(read())).rejects.toThrow();
-    expect(await readdir(options.stateDirectory)).toEqual(['oap-serve.json']);
+    expect(await readdir(options.stateDirectory)).toEqual([
+      'oap-serve.json',
+      'session-tool-sources',
+    ]);
   });
 
   test('rejects an incomplete expected binary identity', async () => {

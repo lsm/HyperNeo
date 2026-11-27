@@ -192,7 +192,10 @@ resume can work. Stale capability files are removed at daemon startup.
    the loopback server, grants, and revocation. Prove parity with the Claude
    handler, cross-session bearer refusal, and post-close revocation directly.
 6. **HyperNeo wiring:** pin the released OXAP, write and consume one capability
-   in each external open plan, and update the verify journey. Run a real OXAP
+   in each Codex external open plan, and update the verify journey. Existing
+   Codex bindings with no tool-source IDs resume without tools. Set
+   `tool_approval: "approve"` only in the daemon-owned operations capability.
+   Run a real OXAP
    Codex chat through operations discovery and `message.send`, verify its
    ordinary-chat desktop refusal, and repeat the cross-client and revocation
    proofs through the released path.

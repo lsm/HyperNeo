@@ -18,7 +18,8 @@ export function bindCodexRuntime(
   options?: OxapEngineOptions,
   events?: Parameters<typeof createOxapRuntime>[2],
   db?: unknown,
-  messageHub?: unknown
+  messageHub?: unknown,
+  attachOperations?: Parameters<typeof createOxapRuntime>[7]
 ) {
   return createOxapRuntime(
     engine,
@@ -26,7 +27,8 @@ export function bindCodexRuntime(
     events,
     db as never,
     messageHub as never,
-    (providerId) => (providerId === 'anthropic-codex' ? codexRecord : null),
-    async () => {}
+    (providerId: string) => (providerId === 'anthropic-codex' ? codexRecord : null),
+    async () => {},
+    attachOperations
   );
 }
