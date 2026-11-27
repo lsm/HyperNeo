@@ -3,11 +3,15 @@ import type {
   FallbackModelEntry,
   ModelInfo,
   ProviderCapabilities,
+  ProviderRecord,
 } from '@hyperneo/shared';
 import { resolveCustomEndpointType } from '@hyperneo/shared/types/custom-endpoint';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { entryKey } from '../agent/fallback-recovery.ts';
+import { engineForProvider } from '../agent/session-engine.ts';
 import { Logger } from '../logger.ts';
+import { getProviderService } from '../provider-service.ts';
+import { getProviderRegistry } from '../providers/registry.ts';
 import {
   customProviderIdFor,
   isCustomEndpointProviderId,
@@ -28,6 +32,27 @@ export interface DesktopProviderFacts {
 export interface DesktopModelSources {
   catalog(): Promise<ModelInfo[]> | ModelInfo[];
   provider(providerId: string): DesktopProviderFacts | null;
+}
+
+export function liveDesktopModelSources(
+  record: (providerId: string) => Pick<ProviderRecord, 'configJson'> | null
+): DesktopModelSources {
+  return {
+    catalog: async () => (await import('../model-service.ts')).getAvailableModels('global'),
+    provider: (providerId) => {
+      const provider = getProviderRegistry().get(providerId);
+      if (!provider) return null;
+      let sdk = false;
+      try {
+        sdk = engineForProvider(providerId, () => record(providerId)) === 'sdk';
+      } catch {}
+      return {
+        capabilities: provider.capabilities,
+        sdk,
+        isAvailable: () => getProviderService().isProviderAvailable(providerId),
+      };
+    },
+  };
 }
 
 function seesScreenshots(
@@ -122,6 +147,22 @@ async function firstRunnable(
       : chain.length
         ? 'No model in the desktop-control model list is available right now.'
         : 'No model in the desktop-control model list can see screenshots and use tools here.'
+  );
+}
+
+export async function canSwitchToDesktopModel(
+  entry: FallbackModelEntry,
+  endpoints: readonly CustomEndpointConfig[] | undefined,
+  sources: DesktopModelSources
+): Promise<boolean> {
+  const models = await readCatalog(sources);
+  const [eligible] = desktopControlChain([entry], models, endpoints ?? [], (id) =>
+    sources.provider(id)
+  );
+  return (
+    eligible?.provider === entry.provider &&
+    eligible.model === entry.model &&
+    (await canRun(entry, models, sources.provider(entry.provider)))
   );
 }
 

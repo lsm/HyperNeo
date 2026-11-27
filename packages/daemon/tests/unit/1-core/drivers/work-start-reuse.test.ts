@@ -778,6 +778,38 @@ describe('work.start effort-only reuse', () => {
   );
 });
 
+describe('work.start desktop worker reuse', () => {
+  const desktop = { ...neo, workerTemplate: 'worker.desktop' };
+
+  test('effort-only reuse keeps the model the desktop list chose', async () => {
+    const config = {
+      adapter: 'hyperneo',
+      model: 'desk-b1',
+      provider: 'custom:desk-b',
+      effort: 'high',
+      reconfigure: 'applies' as const,
+    };
+    const run = harness(
+      [{ id: 'desk', status: 'done', workerTemplate: 'worker.desktop' }],
+      ['desk'],
+      config
+    );
+    expect((await run.start(desktop, false, { effort: 'low' })).value?.ref.id).toBe('desk');
+    expect(config).toMatchObject({ model: 'desk-b1', provider: 'custom:desk-b', effort: 'low' });
+  });
+
+  test('a named model starts a fresh desktop worker instead of reusing one', async () => {
+    const run = harness(
+      [{ id: 'desk', status: 'done', workerTemplate: 'worker.desktop' }],
+      ['desk'],
+      { adapter: 'hyperneo', model: 'gpt-6.1-sol', effort: 'high', reconfigure: 'applies' }
+    );
+    const r = await run.start(desktop, false, { model: 'gpt-6.1-sol' });
+    expect(r.value?.ref.id).toBe('fresh');
+    expect(run.sent).toEqual([]);
+  });
+});
+
 describe('work.start independent worker reuse', () => {
   test('excludes the author before delivery and reuses another idle worker', async () => {
     const run = harness(

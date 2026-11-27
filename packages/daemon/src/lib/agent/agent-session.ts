@@ -235,6 +235,10 @@ import {
   type EventSubscriptionSetupContext,
 } from './event-subscription-setup.ts';
 import { sessionFallbackChain } from './fallback-recovery.ts';
+import {
+  canSwitchToDesktopModel,
+  liveDesktopModelSources,
+} from '../session/desktop-model-chain.ts';
 import { frontSessionId } from '../neo/front-mode.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import type { IdleOwnerScope } from './idle-waiter-admission-pipeline.ts';
@@ -783,7 +787,14 @@ export class AgentSession
           { provider, model: info?.id ?? rawModel, alias: info?.alias }
         );
       },
+      desktopChain: () => this.desktopControlChain(),
       isEntryAvailable: async (entry) => {
+        if (this.desktopControlChain())
+          return canSwitchToDesktopModel(
+            entry,
+            this.settingsManager.getGlobalSettings().customEndpoints,
+            liveDesktopModelSources((id) => this.db.providers.getProviderByProviderId(id))
+          );
         try {
           const reg = getProviderRegistry();
           const p = reg.detectProviderForModel(entry.model, entry.provider);
@@ -3292,6 +3303,18 @@ export class AgentSession
       );
     void this.handleInterrupt({ skipDeferredReplay: true }).catch((interruptError: unknown) =>
       this.logger.warn(`Stopping after a rejected provider key failed: ${String(interruptError)}`)
+    );
+  }
+
+  desktopControlChain(): FallbackModelEntry[] | null {
+    const chain = this.session.metadata.desktopControlChain;
+    return chain?.length ? chain : null;
+  }
+
+  movesOverloadsAlongDesktopList(): boolean {
+    const { provider, model } = this.session.config;
+    return !!this.desktopControlChain()?.some(
+      (entry) => entry.provider === provider && entry.model === model
     );
   }
 

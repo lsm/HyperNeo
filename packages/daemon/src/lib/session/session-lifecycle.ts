@@ -26,9 +26,8 @@ import { Logger } from '../logger.ts';
 import { teardownSessionDeliveries } from '../mailbox/cancellation.ts';
 import { getProviderService } from '../provider-service.ts';
 import { resolveNewSessionModel, type NewSessionModelSettings } from './new-session-model.ts';
-import { selectDesktopControlModel, type DesktopModelSources } from './desktop-model-chain.ts';
+import { liveDesktopModelSources, selectDesktopControlModel } from './desktop-model-chain.ts';
 import { DESKTOP_WORKER_TEMPLATE_KEY } from '../desktop/worker-profile.ts';
-import { getProviderRegistry } from '../providers/registry.ts';
 import {
   archiveSDKSessions,
   deleteSDKSessions,
@@ -181,7 +180,7 @@ export class SessionLifecycle {
         ? await selectDesktopControlModel(
             globalSettings.desktopControlModels,
             globalSettings.customEndpoints,
-            this.desktopModelSources()
+            liveDesktopModelSources((id) => this.db.providers.getProviderByProviderId(id))
           )
         : null;
     const { id: modelId, provider: resolvedProvider } = desktop
@@ -1283,28 +1282,6 @@ export class SessionLifecycle {
     title = title.replace(/`/g, '');
 
     return title;
-  }
-
-  private desktopModelSources(): DesktopModelSources {
-    return {
-      catalog: async () => (await import('../model-service.ts')).getAvailableModels('global'),
-      provider: (providerId) => {
-        const provider = getProviderRegistry().get(providerId);
-        if (!provider) return null;
-        let sdk = false;
-        try {
-          sdk =
-            engineForProvider(providerId, () =>
-              this.db.providers.getProviderByProviderId(providerId)
-            ) === 'sdk';
-        } catch {}
-        return {
-          capabilities: provider.capabilities,
-          sdk,
-          isAvailable: () => getProviderService().isProviderAvailable(providerId),
-        };
-      },
-    };
   }
 
   private async getValidatedModelId(

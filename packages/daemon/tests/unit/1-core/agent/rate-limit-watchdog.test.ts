@@ -2694,3 +2694,114 @@ describe('RateLimitWatchdog persisted cooldown arming', () => {
     expect(watchdog.getPersistedEpisodeMessageUuid()).toBeNull();
   });
 });
+
+describe('RateLimitWatchdog desktop-control model chain', () => {
+  const A: FallbackModelEntry = { provider: 'custom:a', model: 'a1' };
+  const B: FallbackModelEntry = { provider: 'custom:b', model: 'b1' };
+  const C: FallbackModelEntry = { provider: 'custom:c', model: 'c1' };
+  const G: FallbackModelEntry = { provider: 'glm', model: 'glm-4.6' };
+
+  function desktop(opts: {
+    current?: FallbackModelEntry;
+    available?: Set<FallbackModelEntry>;
+    switches?: (entry: FallbackModelEntry) => boolean;
+  }) {
+    let current = opts.current ?? A;
+    const available = opts.available ?? new Set([A, B, C]);
+    const switched: string[] = [];
+    const saved: Record<string, ModelLimit>[] = [];
+    const stateManager = createMockStateManager();
+    const deps: RateLimitWatchdogDeps = {
+      getCurrentModel: () => current,
+      resolveChain: async () => [G],
+      desktopChain: () => [A, B, C],
+      isEntryAvailable: async (entry) =>
+        [...available].some((e) => e.provider === entry.provider && e.model === entry.model),
+      switchAndRetry: async (_message, entry) => {
+        switched.push(entry.model);
+        const ok = opts.switches ? opts.switches(entry) : true;
+        if (ok) current = entry;
+        return ok;
+      },
+      persistModelLimits: (limits) => {
+        saved.push(limits);
+      },
+    };
+    const watchdog = new RateLimitWatchdog('desk', stateManager, deps, { maxAutoRetries: 3 });
+    return {
+      watchdog,
+      switched,
+      saved,
+      available,
+      stateManager,
+      setCurrent: (entry: FallbackModelEntry) => (current = entry),
+    };
+  }
+  const message = { uuid: 'm1', content: 'click it' };
+
+  it('moves an overloaded desktop turn to the next listed model without recording a model limit', async () => {
+    const run = desktop({});
+    await run.watchdog.scheduleRetry('529 overloaded', message, { hold: 'overloaded' });
+    await flush();
+    expect(run.switched).toEqual(['b1']);
+    expect(run.saved).toEqual([]);
+    run.watchdog.cancel();
+  });
+
+  it('never returns to an earlier entry after a failed switch, even when it recovers', async () => {
+    const run = desktop({ available: new Set([A, C]), switches: (entry) => entry !== C });
+    await run.watchdog.scheduleRetry('429', message, { kind: 'rate_limit' });
+    await flush();
+    run.available.add(B);
+    await run.watchdog.scheduleRetry('429', message, { kind: 'rate_limit' });
+    await flush();
+    expect(run.switched).toEqual(['c1']);
+    run.watchdog.cancel();
+  });
+
+  it('takes only entries after the model now running on every failure', async () => {
+    const run = desktop({ available: new Set([A, C]) });
+    await run.watchdog.scheduleRetry('429', message, { kind: 'rate_limit' });
+    await flush();
+    run.available.add(B);
+    await run.watchdog.scheduleRetry('429 again', message, { kind: 'rate_limit' });
+    await flush();
+    expect(run.switched).toEqual(['c1']);
+    run.watchdog.cancel();
+  });
+
+  it('holds an overloaded turn without leaving the list when the model is not in it', async () => {
+    const run = desktop({ current: G });
+    await run.watchdog.scheduleRetry('529 overloaded', message, { hold: 'overloaded' });
+    await flush();
+    expect(run.switched).toEqual([]);
+    expect(run.saved).toEqual([]);
+    const held = (run.stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock
+      .calls[0][0];
+    expect(held.reason).toBe('overloaded');
+    run.watchdog.cancel();
+  });
+});
+
+describe('AgentSession desktop-control model list', () => {
+  const chain = [
+    { provider: 'custom:a', model: 'a1' },
+    { provider: 'custom:b', model: 'b1' },
+  ];
+  const session = (metadata: Record<string, unknown>, config: Record<string, unknown>) =>
+    ({
+      session: { metadata, config },
+      desktopControlChain: AgentSession.prototype.desktopControlChain,
+    }) as unknown as AgentSession;
+
+  it('moves overloads along the list only while the worker runs a listed model', () => {
+    const moves = (metadata: Record<string, unknown>, config: Record<string, unknown>) =>
+      AgentSession.prototype.movesOverloadsAlongDesktopList.call(session(metadata, config));
+    expect(moves({ desktopControlChain: chain }, { provider: 'custom:b', model: 'b1' })).toBe(true);
+    expect(moves({ desktopControlChain: chain }, { provider: 'glm', model: 'glm-4.6' })).toBe(
+      false
+    );
+    expect(moves({}, { provider: 'custom:a', model: 'a1' })).toBe(false);
+    expect(moves({ desktopControlChain: [] }, { provider: 'custom:a', model: 'a1' })).toBe(false);
+  });
+});

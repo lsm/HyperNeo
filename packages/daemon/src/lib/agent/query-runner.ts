@@ -431,6 +431,7 @@ export interface QueryRunnerContext {
   ) => Promise<boolean>;
 
   isLimitRecoveryPending?(): boolean;
+  movesOverloadsAlongDesktopList?(): boolean;
   hasLoginRecovery?(): boolean;
   loginCredentialEpoch?(): number;
   onLoginRejected?(
@@ -1785,6 +1786,7 @@ export class QueryRunner {
         isCleaningUp: this.ctx.isCleaningUp(),
         isSuperseded: this.ctx.getQueryGeneration() !== queryGeneration,
         hasRateLimitHandoff: !!this.ctx.onRateLimitExhausted,
+        useProviderFallback: this.ctx.movesOverloadsAlongDesktopList?.() ?? false,
         hasLoginRecovery: this.ctx.hasLoginRecovery?.() ?? false,
         recoveryState,
       };

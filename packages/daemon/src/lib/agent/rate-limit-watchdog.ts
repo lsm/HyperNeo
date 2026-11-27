@@ -69,6 +69,7 @@ export interface RateLimitWatchdogDeps {
   initialModelLimits?: Readonly<Record<string, ModelLimit>>;
   persistModelLimits?(limits: Record<string, ModelLimit>): Promise<unknown> | void;
   resolveChain(): Promise<FallbackModelEntry[]>;
+  desktopChain?(): FallbackModelEntry[] | null;
   isEntryAvailable(entry: FallbackModelEntry): Promise<boolean>;
   switchAndRetry(
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
@@ -104,6 +105,7 @@ export class RateLimitWatchdog {
 
   private triedKeys = new Set<string>();
   private chain: FallbackModelEntry[] | null = null;
+  private desktopCursor = -1;
   private readonly modelLimits = new Map<string, ModelLimit>();
   private fallbackPending = false;
   private limitKind: 'rate_limit' | 'usage_limit' | null = null;
@@ -257,6 +259,7 @@ export class RateLimitWatchdog {
       this.episodeMessageUuid = lastUserMessage.uuid;
       this.triedKeys.clear();
       this.chain = null;
+      this.desktopCursor = -1;
       this.retryCount = 0;
       this.startupRetries = 0;
       this.startupExhausted = false;
@@ -280,7 +283,21 @@ export class RateLimitWatchdog {
     }
     this.triedKeys.add(`${provider}/${currentCanonical}`);
 
-    if (this.chain === null) {
+    const desktop = this.deps.desktopChain?.() ?? null;
+    if (desktop) {
+      const keys = await Promise.all(
+        desktop.map(
+          async (entry) =>
+            `${entry.provider}/${(await this.deps.resolveModelId?.(entry.provider, entry.model)) ?? entry.model}`
+        )
+      );
+      if (entryGeneration !== this.generation || this.querySuperseded(queryGeneration)) {
+        this.logger.info('Chain resolution completed but the episode was superseded; aborting.');
+        return true;
+      }
+      const at = keys.indexOf(`${provider}/${currentCanonical}`);
+      this.chain = at < 0 ? [] : desktop.slice(Math.max(at, this.desktopCursor) + 1);
+    } else if (this.chain === null) {
       const chain = await this.deps.resolveChain();
       if (entryGeneration !== this.generation || this.querySuperseded(queryGeneration)) {
         this.logger.info('Chain resolution completed but the episode was superseded; aborting.');
@@ -289,7 +306,8 @@ export class RateLimitWatchdog {
       this.chain = chain;
     }
 
-    if (this.chain.length > 0 && this.lastHint?.hold !== 'overloaded') {
+    const overloaded = this.lastHint?.hold === 'overloaded';
+    if (this.chain.length > 0 && (desktop || !overloaded)) {
       const availability = new Map<FallbackModelEntry, boolean>();
       const canonicalKey = new Map<FallbackModelEntry, string>();
       await Promise.all(
@@ -324,16 +342,19 @@ export class RateLimitWatchdog {
           `Fallback: switching to ${sel.next.provider}/${sel.next.model} ` +
             `(skipReason for prior candidates: ${sel.skipReason}).`
         );
+        if (desktop) this.desktopCursor = desktop.indexOf(sel.next);
         const now = Date.now();
         const limitedKey = `${provider}/${model}`;
-        this.modelLimits.set(limitedKey, {
-          until:
-            this.lastHint?.resetAtMs ??
-            extractResetTimestamp(errorMessage, now)?.resetAtMs ??
-            now + BACKOFF_LADDER_MS[0],
-          fallback: entryKey(sel.next),
-        });
-        this.deps.persistModelLimits?.(Object.fromEntries(this.modelLimits));
+        if (!overloaded) {
+          this.modelLimits.set(limitedKey, {
+            until:
+              this.lastHint?.resetAtMs ??
+              extractResetTimestamp(errorMessage, now)?.resetAtMs ??
+              now + BACKOFF_LADDER_MS[0],
+            fallback: entryKey(sel.next),
+          });
+          this.deps.persistModelLimits?.(Object.fromEntries(this.modelLimits));
+        }
         this.fallbackPending = true;
         void this.fireImmediateFallback(
           lastUserMessage,

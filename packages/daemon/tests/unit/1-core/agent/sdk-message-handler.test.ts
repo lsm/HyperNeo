@@ -6572,6 +6572,33 @@ describe('SDKMessageHandler', () => {
       }
     );
 
+    it('holds every retryable 5xx result as an overload for a worker on its desktop model list', async () => {
+      const onResultLimitError = mock(async (_text: string, _hint: LimitRetryHint) => true);
+      mockContext.onResultLimitError = onResultLimitError;
+      mockContext.movesOverloadsAlongDesktopList = () => true;
+      for (const status of [500, 502, 504])
+        await handler.handleMessage(
+          makeApiErrorResult({ api_error_status: status, result: `API Error: ${status}` })
+        );
+      await handler.handleMessage(
+        makeApiErrorResult({
+          api_error_status: undefined,
+          result: 'API Error: 529 overloaded_error',
+        })
+      );
+      for (const status of [501, 404])
+        await handler.handleMessage(
+          makeApiErrorResult({ api_error_status: status, result: `API Error: ${status}` })
+        );
+
+      expect(onResultLimitError.mock.calls.map((call) => call[1])).toEqual([
+        { hold: 'overloaded' },
+        { hold: 'overloaded' },
+        { hold: 'overloaded' },
+        { hold: 'overloaded' },
+      ]);
+    });
+
     it('ignores api-error results whose text is not a limit error', async () => {
       const onResultLimitError = mock(async () => true);
       mockContext.onResultLimitError = onResultLimitError;

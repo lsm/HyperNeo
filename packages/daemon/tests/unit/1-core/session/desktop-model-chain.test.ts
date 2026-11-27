@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { CustomEndpointConfig, ModelInfo } from '@hyperneo/shared';
 import {
+  canSwitchToDesktopModel,
   DesktopModelsExhaustedError,
   selectDesktopControlModel,
   type DesktopModelSources,
@@ -148,5 +149,21 @@ describe('selectDesktopControlModel', () => {
     await expect(
       selectDesktopControlModel(entries, [], sources([], { a: seeing() }))
     ).rejects.toThrow(DesktopModelsExhaustedError);
+  });
+});
+
+describe('canSwitchToDesktopModel', () => {
+  test('applies the start gate again before a switch, with the settings in force now', async () => {
+    const entry = { provider: 'custom:ai0', model: 'bonsai' };
+    const check = (endpoint: CustomEndpointConfig, available = true) =>
+      canSwitchToDesktopModel(
+        entry,
+        [endpoint],
+        sources([model('bonsai', 'custom:ai0')], { 'custom:ai0': seeing(available) })
+      );
+    expect(await check(node('anthropic-messages'))).toBe(true);
+    expect(await check(node('anthropic-messages', false))).toBe(false);
+    expect(await check(node('ollama-native', true))).toBe(false);
+    expect(await check(node('anthropic-messages'), false)).toBe(false);
   });
 });
