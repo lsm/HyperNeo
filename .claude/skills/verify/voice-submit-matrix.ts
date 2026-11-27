@@ -12,7 +12,9 @@ import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/s
 
 const run = resolve(process.argv.at(-1)!);
 const phase = process.argv[2];
-assert(['before', 'after', 'track-ended', 'capture-readiness'].includes(phase));
+assert(
+  ['before', 'after', 'track-ended', 'capture-readiness', 'chunk-pipeline'].includes(phase)
+);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -261,7 +263,7 @@ try {
     })
   );
   const browserScript =
-    phase === 'track-ended' || phase === 'capture-readiness'
+    ['track-ended', 'capture-readiness', 'chunk-pipeline'].includes(phase)
       ? `voice-${phase}.mjs`
       : 'voice-submit-matrix.mjs';
   const child = spawn('node', [`.claude/skills/verify/${browserScript}`, run], {
