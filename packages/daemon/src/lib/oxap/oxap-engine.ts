@@ -102,6 +102,13 @@ async function writeConfig(
 ): Promise<{ launch: OxapHubClientOptions; binary: typeof validated.binary }> {
   const { config, binary } = validated;
   try {
+    if (config.config.adapters.deepseek?.model_provider && config.environment.DSH_HOME) {
+      const home = config.environment.DSH_HOME;
+      await mkdir(home, { recursive: true, mode: 0o700 });
+      if ((await readdir(home)).includes('.credentials.yaml')) {
+        throw new Error('The managed OXAP DeepSeek home must be free of .credentials.yaml');
+      }
+    }
     if (options.hub.adapters.opencode?.provider === 'opencode-go') {
       await writeFile(join(options.stateDirectory, OPENCODE_DSH_OVERLAY), opencodeDshOverlay, {
         mode: 0o600,

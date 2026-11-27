@@ -163,6 +163,33 @@ describe('McpImportService', () => {
       expect(repo.getByName('keep')).not.toBeNull();
     });
 
+    test('cannot delete or retarget an OAuth row', async () => {
+      const file = join(tmpRoot, '.mcp.json');
+      const declare = (url: string) =>
+        writeMcpJson(file, { mcpServers: { web: { type: 'http', url } } });
+      declare('https://a.example.test/mcp');
+      await service.refreshFromFile(file);
+      const id = repo.getByName('web')!.id;
+      const auth = { kind: 'oauth' as const, preset: 'test', generation: 1, active: true };
+      repo.setAuth(id, auth);
+      const protectedRow = repo.get(id);
+
+      declare('https://b.example.test/mcp');
+      expect(await service.refreshFromFile(file)).toMatchObject({ status: 'ok', updated: 0 });
+
+      writeMcpJson(file, {
+        mcpServers: { web: { type: 'http', url: protectedRow?.url, headers: { 'X-Test': 'new' } } },
+      });
+      expect(await service.refreshFromFile(file)).toMatchObject({ status: 'ok', updated: 0 });
+      expect(repo.get(id)).toEqual(protectedRow);
+
+      writeMcpJson(file, { mcpServers: {} });
+      await service.refreshFromFile(file);
+      unlinkSync(file);
+      await service.refreshFromFile(file);
+      expect(repo.get(id)?.auth).toEqual(auth);
+    });
+
     test('treats rename as remove + add (new row has new name)', async () => {
       const file = join(tmpRoot, '.mcp.json');
       writeMcpJson(file, {

@@ -523,4 +523,65 @@ describe('AppMcpServerRepository', () => {
       expect(idx!.sql).toMatch(/source = 'imported'/);
     });
   });
+
+  describe('OAuth rows', () => {
+    const auth = { kind: 'oauth' as const, preset: 'test', generation: 1, active: true };
+    const oauthRow = () => {
+      const server = repo.create({
+        name: 'remote',
+        sourceType: 'http',
+        url: 'https://mcp.example.test/mcp',
+      });
+      repo.setAuth(server.id, auth);
+      return server.id;
+    };
+
+    test('stores auth on an http row and returns it in reads', () => {
+      const id = oauthRow();
+      expect(repo.get(id)?.auth).toEqual(auth);
+      expect(repo.list().find((row) => row.id === id)?.auth).toEqual(auth);
+      expect(new AppMcpServerRepository(bunDb, reactiveDb).get(id)?.auth).toEqual(auth);
+    });
+
+    test('refuses auth on a stdio or sse row', () => {
+      const stdio = repo.create({ name: 'local', sourceType: 'stdio', command: 'x' });
+      const sse = repo.create({ name: 'stream', sourceType: 'sse', url: 'https://s.example.test' });
+      expect(() => repo.setAuth(stdio.id, auth)).toThrow();
+      expect(() => repo.setAuth(sse.id, auth)).toThrow();
+      expect(repo.get(stdio.id)?.auth).toBeUndefined();
+    });
+
+    test('plain create and update cannot set auth', () => {
+      expect(() =>
+        repo.create({ name: 'sneaky', sourceType: 'http', url: 'https://x.test', auth } as never)
+      ).toThrow();
+      const plain = repo.create({ name: 'plain', sourceType: 'http', url: 'https://x.test' });
+      expect(() => repo.update(plain.id, { auth } as never)).toThrow();
+      expect(repo.get(plain.id)?.auth).toBeUndefined();
+    });
+
+    test('plain update refuses to retarget an OAuth row but allows other fields', () => {
+      const id = oauthRow();
+      expect(() => repo.update(id, { url: 'https://other.example.test/mcp' })).toThrow();
+      expect(() => repo.update(id, { sourceType: 'stdio' })).toThrow();
+      expect(repo.update(id, { name: 'renamed', enabled: false })?.name).toBe('renamed');
+      expect(repo.get(id)?.url).toBe('https://mcp.example.test/mcp');
+      expect(repo.get(id)?.auth).toEqual(auth);
+    });
+
+    test('plain delete leaves an OAuth row; deleteOAuth removes it', () => {
+      const id = oauthRow();
+      expect(repo.delete(id)).toBe(false);
+      expect(repo.get(id)?.auth).toEqual(auth);
+      expect(repo.deleteOAuth(id)).toBe(true);
+      expect(repo.get(id)).toBeNull();
+    });
+
+    test('setAuth null clears auth so the row is plain again', () => {
+      const id = oauthRow();
+      repo.setAuth(id, null);
+      expect(repo.get(id)?.auth).toBeUndefined();
+      expect(repo.delete(id)).toBe(true);
+    });
+  });
 });

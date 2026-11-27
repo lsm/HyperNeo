@@ -105,6 +105,18 @@ describe('MCP default RPC writes', () => {
       expect(sessions.getSession('frozen')!.config.toolSelection).toEqual(selection());
     }
   );
+  it('refuses to delete an OAuth row and keeps it', async () => {
+    const server = registry.create({
+      name: 'remote',
+      sourceType: 'http',
+      url: 'https://mcp.example.test/mcp',
+    });
+    registry.setAuth(server.id, { kind: 'oauth', preset: 'test', generation: 1, active: false });
+    await expect(call('mcp.registry.delete', { id: server.id })).rejects.toThrow(
+      'disconnect it first'
+    );
+    expect(registry.get(server.id)).not.toBeNull();
+  });
   it('creates and deletes matching default choices', async () => {
     const { server } = (await call('mcp.registry.create', {
       name: 'created',
