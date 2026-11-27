@@ -285,12 +285,17 @@ try {
     assert.equal(Object.keys(preferences).length, 6);
     assert.deepEqual(preferences.payment, { value: 'fillStop', configured: true });
     assert.deepEqual(preferences.humanStep, { value: 'computer', configured: false });
+    assert.match(brief, /payment self: The human handles the entire payment\./);
+    assert.match(brief, /fillStop: Prepare the form and leave the final button to the human\./);
+    assert.match(brief, /confirmed: Press the final button only after the human explicitly approves that payment\./);
+    for (const key of ['signIn', 'verificationCodes', 'formFill', 'commitments', 'humanStep'])
+      assert(brief.includes(`- ${key} `), `Missing desktop delegation guidance for ${key}`);
     assert(brief.includes('Check the displayed value.'));
     assert.deepEqual({
       completion: brief.includes(`Finish when ${added.todo.doneWhen}`),
       previousReport: brief.includes(`Latest worker report:\n${previousReport}`),
     }, { completion: true, previousReport: true });
-    console.log(`long desktop brief PASS preferences=${Object.keys(preferences).length} completion=1 previous_report=1`);
+    console.log(`long desktop brief PASS preferences=${Object.keys(preferences).length} delegation_guidance=6 completion=1 previous_report=1`);
   }
   const expectedDesktopTools = ['report', ...catalog.map(({ name }) => name)]
     .map(name => 'mcp__desktop__' + name).sort();
