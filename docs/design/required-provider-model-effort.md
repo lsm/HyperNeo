@@ -2,7 +2,7 @@
 
 ## 中文摘要
 
-每一处能开新会话、派发新工作的入口（`neo.todo.add` 的 start 目标、`work.start`、编码包指派、目标会话、Neo 自身会话、Space 工作流工人、界面新建会话等）都必须显式给出 provider、model、effort 三项。缺任何一项，守护进程在派发前拒绝并说明缺什么，不再悄悄回退到全局默认或“最新可用模型”。校验是一个纯函数（superpipe 管线，类型化拒绝门），落在守护进程这个环境边界上，不靠提示词或 CLI 解析。能应用并回读配置的适配器，回执标注 confirmed（已确认）；只能通过派发前读配置推断的适配器，回执如实标注 declared（声明值），复用比对只认 confirmed；连配置都读不到的适配器直接拒绝，不加确认层。远程配对守护进程通过 `work.adapters` 目录广播各适配器的能力，转发方只按广播放行，最终校验和回执由拥有会话的那台守护进程完成。复用旧 worker 按已记录的实际三项逐一比对。Neo 引导文案随第一个改动服务端行为的 PR 发出。不做自动选型引擎。
+每一处能开新会话、派发新工作的入口（`neo.todo.add` 的 start 目标、`work.start`、编码包指派、目标会话、Neo 自身会话、Space 工作流工人、界面新建会话等）都必须显式给出 provider、model、effort 三项。缺任何一项，守护进程在派发前拒绝并说明缺什么，不再悄悄回退到全局默认或“最新可用模型”。校验是一个纯函数（superpipe 管线，类型化拒绝门），落在守护进程这个环境边界上，不靠提示词或 CLI 解析。能应用并回读配置的适配器，回执标注 confirmed（已确认），其中 HyperNeo 会话的 confirmed 取自查询层实际构造本轮执行时解析出的思考配置（配置回读不算数）；只能通过派发前读配置推断的适配器，回执如实标注 declared（声明值），复用比对只认 confirmed；连配置都读不到的适配器直接拒绝，不加确认层。把新 todo 工作发给一个没有 confirmed 三项的既有会话（含历史会话）同样拒绝，改为新开工人为其记录身份；同一会话的续接消息不受影响。远程配对守护进程通过 `work.adapters` 目录广播各适配器的能力，转发方只按广播放行，最终校验和回执由拥有会话的那台守护进程完成。复用旧 worker 按已记录的实际三项逐一比对。Neo 引导文案随第一个改动服务端行为的 PR 发出。不做自动选型引擎。
 
 Status: proposed. Investigation base: `50e22151753673c39998bacd3056aad0ba059c29`
 (`origin/dev`, 2026-11-27). Source references are repository-relative `file:line` at
@@ -31,10 +31,12 @@ parsing.
 
 ## Entry points that start new sessions today
 
-Every session can run turns, so every creation door is in scope. Dispatches
-onto an existing session (resumes, handoffs, sends) make no new identity
-decision — they inherit the recorded triple — so the invariant binds at
-creation.
+Every session can run turns, so every creation door is in scope. A dispatch
+onto an existing session is in scope too whenever it assigns *new* work (a
+todo send): the target must already hold a confirmed triple, recorded at its
+creation or reconfiguration. Pure continuations — resuming a session's own
+work, replies, notices — make no new identity decision and inherit the
+recorded triple.
 
 | Entry point | Where | How provider / model / effort are chosen today |
 | --- | --- | --- |
@@ -54,7 +56,8 @@ creation.
 | HyperNeo driver session (`work.start` on adapter `hyperneo`) | `packages/daemon/src/lib/rpc-handlers/family-operations/drivers.ts:188` (`createDriverSession`) | Template model/thinking when a worker template applies (`:208-209`); provider-only requests pick the newest available model (`:242`); a failed creation retries on the newest available model (`:253-258`). Adapter-side validation refuses unknown values but not absent ones (`hyperneo-adapter.ts:698`). |
 | Direct task sessions | `packages/daemon/src/lib/tasks/prepare-direct-session.ts:125` | `createSessionFromInit` fills `model ?? defaultModel` (`agent-session.ts:1097`) where the default is an env var or the literal `'default'` (`config.ts:111`); thinking level stays unset and is decided at query time (`query-options-builder.ts:919`). The construction passes no identity of its own. |
 | Query-time effort resolution | `query-options-builder.ts:830-875` | Not an entry point, but the place where an unrecorded level silently becomes a provider default effort — the divergence in the trigger. |
-| Handoffs and focused discussions | `drivers.ts:758` (`handoffPromptToMailbox`), `packages/daemon/src/lib/neo/ask-record-operations.ts:486` | Deliver to an existing session; covered by the recorded-identity rule above. |
+| New todo work sent to an existing session (`work.send` with a todo) | `work-operations.ts:1394` (`runSendWork`) | No identity check today: any open session can receive new todo work, including legacy sessions with no recorded triple — a bypass of every creation gate. |
+| Handoffs and focused discussions | `drivers.ts:758` (`handoffPromptToMailbox`), `packages/daemon/src/lib/neo/ask-record-operations.ts:486` | Deliver to an existing session; continuations inherit the recorded identity, new todo work follows the send rule above. |
 | `work.reconfigure` | `packages/daemon/src/lib/drivers/work-reconfigure.ts:26` | Switches a live daemon-started HyperNeo session and records previous/next identity (`:128`). Maintains the recorded values the reuse check reads. |
 
 ## Per-adapter identity mapping
@@ -142,18 +145,30 @@ A configuration read is not proof of execution — settings can change between
 read and dispatch, and a harness can pick a different runtime. The receipt
 therefore labels its source instead of promising actuals it cannot bind:
 
-- `confirmed`: the adapter applied the value through its own configuration
-  API and read it back before the first turn — the existing
-  `workStartConfiguration.confirm` shape (`start-configuration.ts:102`) as
-  used by the HyperNeo (`hyperneo-adapter.ts:719`) and Codex paths, and
-  Antigravity's post-open option read-back (`antigravity-start.ts:222-229`).
-  Only confirmed identities satisfy an explicit request and only confirmed
-  identities qualify a worker for reuse matching.
-- `declared`: a pre-dispatch configuration read on a non-configurable
-  adapter, recorded with its read time. It is reported as declared, never as
-  actual; `identityObservation` (`types.ts:83`) corroborates it after turns
-  run, and a contradiction surfaces in `work.status` as an observed-identity
-  fact instead of silently rewriting the record.
+- `confirmed`: the value observed at the boundary that builds execution, not
+  a configuration echo. For HyperNeo sessions that boundary is the query
+  layer: the resolved thinking config and effort the query builder produces
+  for the dispatched turn (`query-options-builder.ts:875`) are recorded as the
+  session's executed identity, because the builder resolves provider effort
+  independently of session config (`query-options-builder.ts:830-842`) and a
+  config read-back (`hyperneo-adapter.ts:719-729`) cannot prove what it sends
+  — that gap is the trigger. With the gate making effort explicit, the
+  builder's level→effort mapping is deterministic and the recorded query-layer
+  value is what receipts report and reuse compares. For Codex, Copilot and
+  Antigravity the adapter's own configuration API is that boundary — the
+  existing `workStartConfiguration.confirm` shape
+  (`start-configuration.ts:102`) as used by the Codex path and Antigravity's
+  post-open option read-back (`antigravity-start.ts:222-229`) — so their
+  applied read-backs are confirmed. Only confirmed identities satisfy an
+  explicit request and only confirmed identities qualify a worker for reuse
+  matching.
+- `declared`: anything short of that boundary — a pre-dispatch configuration
+  read on a non-configurable adapter, or a HyperNeo session's config values
+  before its first turn's query options exist — recorded with its read time.
+  It is reported as declared, never as actual; `identityObservation`
+  (`types.ts:83`) corroborates it after turns run, and a contradiction
+  surfaces in `work.status` as an observed-identity fact instead of silently
+  rewriting the record.
 
 `WorkStarted` (`types.ts:238`) and the persisted start facts
 (`work-operations.ts:752`, `recordStarted`) carry the triple plus this source
@@ -195,6 +210,15 @@ compares the recorded triple against the todo target.
   identity advertisement does not vouch for the requested client. Final
   validation and the receipt happen on the daemon that owns the session; the
   forwarding daemon records that receipt verbatim.
+- New todo work sent to an existing session (`work.send` naming a todo the
+  worker is not already running) is a dispatch of new work, so it checks the
+  target's recorded identity: a session without a confirmed triple — every
+  legacy session included — is refused `identity_required`, and Neo starts a
+  fresh worker instead. Continuation keeps today's semantics and needs no
+  triple check: the same todo continuing on its worker, notice replies to a
+  session that messaged Neo, and the human messaging their own sessions.
+  `work.reconfigure` (HyperNeo) is the upgrade path that gives a live legacy
+  session a confirmed triple.
 - Session lifecycle: `SessionManager.createSession`
   (`session-lifecycle.ts:286`) refuses any new session whose config lacks the
   recorded triple. Each door supplies its triple from a named source:
@@ -224,9 +248,10 @@ compares the recorded triple against the todo target.
     resolves the triple before `createSessionFromInit` and refuses when the
     task carries none — the env-var `defaultModel` (`config.ts:111`) stops
     being a session identity.
-  - Existing sessions and legacy configs are untouched: the gate runs at
-    creation, resumes inherit the recorded triple, and `work.reconfigure`
-    governs later changes.
+  - Existing sessions and legacy configs are not retrofitted at creation, but
+    they are not a bypass either: new todo work sent to them refuses without a
+    confirmed triple (the send rule above), and `work.reconfigure` records
+    one.
 
 ### Neo guidance, same PR as the first server behavior
 
@@ -258,10 +283,12 @@ every slice stays within the repo's ~300 production-line budget.
    churn): the pure gate, the `identity_required` reason, the receipt source
    label, per-adapter fact declarations including the `work.adapters` catalog
    fields. Exported and tested, not yet called; nothing observable changes.
-2. **Wire: work dispatch** (contract: every `work.start` path requires the
-   triple and no fallback remains reachable behind it; measured surface:
-   `work-operations.ts` 36 importers, `driver-work.ts` 15, `hyperneo-adapter.ts`
-   14, `drivers.ts` 3): the pipeline step with triple write-back, deletion of
+2. **Wire: work dispatch** (contract: every `work.start` path and every new
+   todo send requires confirmed identity and no fallback remains reachable
+   behind it; measured surface: `work-operations.ts` 36 importers,
+   `driver-work.ts` 15, `hyperneo-adapter.ts` 14, `drivers.ts` 3): the
+   pipeline step with triple write-back, the `work.send` new-todo identity
+   check, query-layer recording of the executed HyperNeo identity, deletion of
    the desktop stripping carve-outs, `neo.todo.add` admission (local and
    remote catalog), remote advertisement replacing the model/effort role of
    `admitRemoteStartModel`/`verifiedCopilotStart` while preserving Copilot
