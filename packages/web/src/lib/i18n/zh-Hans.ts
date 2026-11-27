@@ -288,6 +288,8 @@ export const zhHans: Record<keyof typeof en, string> = {
   'live.emptyHint': '提议的工作会等你回答它的问题。',
   'live.scenes': '工作场景',
   'live.closeWork': '关闭工作列表',
+  'live.resizeWork': '调整工作列表宽度',
+  'live.workWidth': '工作列表宽度 {width}%',
   'live.moreSearchResults': '加载更多搜索结果',
   'live.searchWork': '搜索工作',
   'live.closeSearch': '关闭工作搜索',

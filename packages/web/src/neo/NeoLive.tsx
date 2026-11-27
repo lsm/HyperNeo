@@ -138,6 +138,7 @@ export function NeoLive() {
   const [workReference, setWorkReference] = useState<ArtifactPreviewTarget | null>(null);
   const [previewExpanded, setPreviewExpanded] = useState(false);
   const [previewSize, setPreviewSize] = useState<number | null>(null);
+  const [workWidth, setWorkWidth] = useState(42);
   const [previewDesktop, setPreviewDesktop] = useState(
     () => window.matchMedia('(min-width: 720px)').matches
   );
@@ -860,7 +861,10 @@ export function NeoLive() {
   return (
     <div
       ref={shell}
-      style={expandable ? { '--neo-preview-width': `${previewWidth}%` } : undefined}
+      style={{
+        '--neo-split-chat-width': `${100 - workWidth}%`,
+        ...(expandable ? { '--neo-preview-width': `${previewWidth}%` } : {}),
+      }}
       class={`neo-shell relative flex flex-col overflow-clip text-fg${publicConversation ? ' neo-public-layout' : ''}${columns ? ' neo-has-scenes' : ''}${sheet && scenesOpen ? ' neo-sheet-open' : ''}${focusPreview ? ' neo-preview-focus' : ''}${previewWork ? ' neo-preview-work' : ''}${expanded ? ' neo-preview-expanded' : ''}`}
     >
       {dragging && (
@@ -1377,6 +1381,16 @@ export function NeoLive() {
             title={sessionTitle(chat.sessionId)}
             label={chat.label}
             onClose={closeChat}
+          />
+        )}
+        {columns && !sheet && !workHidden && !focusPreview && !chat && (
+          <NeoPreviewResize
+            work
+            value={workWidth}
+            min={30}
+            max={54}
+            controls="neo-preview-work-panel"
+            onChange={setWorkWidth}
           />
         )}
       </main>

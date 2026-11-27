@@ -290,6 +290,8 @@ export const en = {
   'live.emptyHint': 'Proposed work waits for your answer to its question.',
   'live.scenes': 'Work scenes',
   'live.closeWork': 'Close work list',
+  'live.resizeWork': 'Adjust work list width',
+  'live.workWidth': 'Work list width {width}%',
   'live.moreSearchResults': 'Load more search results',
   'live.searchWork': 'Search work',
   'live.closeSearch': 'Close work search',

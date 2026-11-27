@@ -430,7 +430,7 @@
     --neo-chat-width: 100%;
   }
   .neo-public-layout.neo-has-scenes {
-    --neo-chat-width: 58%;
+    --neo-chat-width: var(--neo-split-chat-width, 58%);
   }
   .neo-public-layout .neo-chat-rail,
   .neo-public-layout .neo-composer-rail {
@@ -442,6 +442,7 @@
     grid-template-rows: minmax(0, 1fr);
     grid-template-columns: minmax(0, var(--neo-chat-width)) minmax(0, 1fr);
     overflow: hidden;
+    scrollbar-gutter: auto;
   }
   .neo-public-layout.neo-has-scenes .neo-chat-rail {
     grid-column: 1;
@@ -809,6 +810,25 @@
 .neo-preview-resizer:is(:hover, :focus-visible)::after {
   background: var(--accent);
   opacity: 1;
+}
+
+.neo-scroll:has(> .neo-work-resizer) {
+  position: relative;
+}
+
+.neo-work-resizer {
+  top: 68px;
+  bottom: 0;
+  right: auto;
+  left: var(--neo-chat-width);
+}
+
+.neo-work-resizer:is(:hover, :focus-visible)::after {
+  background: var(--fg-muted);
+}
+
+.neo-shell:has(.neo-work-resizer:focus) :is(.neo-scroll, .neo-composer-dock) {
+  transition: none;
 }
 
 .neo-message [data-clamped] {
