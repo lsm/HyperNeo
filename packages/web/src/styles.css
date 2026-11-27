@@ -1233,7 +1233,6 @@ html.tauri-desktop .desktop-drag-strip {
 html.tauri-desktop
   :is(
     .neo-session-pane,
-    .neo-drawer-layer,
     .neo-scene-list.neo-scene-sheet,
     .fixed.inset-0,
     .fixed.top-0.left-0.right-0
@@ -1247,22 +1246,20 @@ html.tauri-desktop .fixed.top-4 {
 
 html.tauri-desktop body:has(.neo-shell) {
   --safe-height: 100dvh;
+  --neo-desktop-toolbar-height: 52px;
+  --neo-desktop-sidebar-toggle-left: 86px;
+  --neo-desktop-sidebar-toggle-size: 26px;
+  --neo-desktop-work-inset: 16px;
+  --neo-desktop-work-control-size: 30px;
+  --neo-desktop-work-icon-size: 18px;
+  --neo-desktop-work-summary-padding: 7px;
   padding-top: 0;
 }
 
 html.tauri-desktop body:has(.neo-shell) .desktop-drag-strip {
-  height: 40px;
-  background: none;
-}
-
-html.tauri-desktop body:has(.neo-shell) .desktop-drag-strip::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
-  -webkit-mask-image: linear-gradient(#000 40%, transparent);
-  mask-image: linear-gradient(#000 40%, transparent);
+  height: var(--neo-desktop-toolbar-height);
+  z-index: 19;
+  background: transparent;
 }
 
 html.tauri-desktop
@@ -1273,23 +1270,260 @@ html.tauri-desktop
     .fixed.inset-0,
     .fixed.top-0.left-0.right-0
   ) {
-  top: 40px;
+  top: var(--neo-desktop-toolbar-height);
 }
 
-html.tauri-desktop body:has(.neo-shell) .neo-drawer-layer {
-  top: 0;
+html.tauri-desktop .neo-shell .neo-drawer-layer {
+  pointer-events: none;
+  background: rgb(0 0 0 / 0.28);
 }
 
-html.tauri-desktop .neo-drawer {
-  padding-top: 56px;
+html.tauri-desktop .neo-shell .neo-drawer-backdrop {
+  background: transparent;
+}
+
+html.tauri-desktop .neo-shell .neo-drawer {
+  padding-top: var(--neo-desktop-toolbar-height);
+  pointer-events: auto;
+}
+
+html.tauri-desktop .neo-drawer-drag-region {
+  position: absolute;
+  display: block;
+  inset: 0 0 auto;
+  height: var(--neo-desktop-toolbar-height);
+}
+
+html.tauri-desktop .neo-drawer-desktop-icon {
+  display: block;
+  width: 18px;
+  height: 18px;
+}
+
+html.tauri-desktop .neo-drawer-web-icon {
+  display: none;
+}
+
+@media (min-width: 960px) {
+  html.tauri-desktop
+    .neo-shell:not(.neo-preview-focus, .neo-preview-expanded):has(
+      > .neo-settings > .neo-drawer-layer
+    ) {
+    --neo-main-width: calc(100% - var(--neo-drawer-width));
+
+    > .neo-scroll {
+      align-self: flex-end;
+      width: var(--neo-main-width);
+    }
+
+    > .neo-composer-dock {
+      left: var(--neo-drawer-width);
+      width: var(--neo-main-width);
+    }
+
+    .neo-drawer {
+      box-shadow: none;
+    }
+
+    .neo-drawer-layer {
+      background: transparent;
+    }
+  }
+}
+
+@media (min-width: 1120px) {
+  html.tauri-desktop
+    .neo-has-scenes:not(.neo-preview-focus, .neo-preview-expanded):has(
+      > .neo-settings > .neo-drawer-layer
+    )
+    > .neo-composer-dock {
+    width: calc(var(--neo-main-width) * var(--neo-chat-ratio));
+  }
 }
 
 html.tauri-desktop .neo-shell .neo-float-dock {
-  top: 44px;
+  top: 0;
+  left: var(--neo-desktop-sidebar-toggle-left);
+  right: calc(
+    var(--neo-desktop-work-inset) +
+    (var(--neo-desktop-work-control-size) - var(--neo-desktop-work-icon-size)) /
+    2 -
+    var(--neo-desktop-work-summary-padding)
+  );
+  height: var(--neo-desktop-toolbar-height);
 }
 
-html.tauri-desktop .neo-shell :is(.neo-chat-rail, .neo-scene-list:not(.neo-scene-sheet)) {
-  padding-top: 100px;
+html.tauri-desktop .neo-float-dock .neo-glass-button {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--fg-muted);
+}
+
+html.tauri-desktop .neo-float-dock .neo-glass-button:hover,
+html.tauri-desktop .neo-float-dock .neo-glass-button:not(.neo-drawer-toggle)[aria-expanded="true"] {
+  color: var(--fg);
+  background: var(--neo-action-hover);
+}
+
+html.tauri-desktop .neo-float-dock .neo-drawer-toggle {
+  width: var(--neo-desktop-sidebar-toggle-size);
+  height: var(--neo-desktop-sidebar-toggle-size);
+  border-radius: 5px;
+  transform: none;
+  transition: none;
+}
+
+html.tauri-desktop .neo-float-dock :is(.neo-drawer-toggle, .neo-desktop-work-summary):focus-visible,
+html.tauri-desktop .neo-work-toolbar button:focus-visible {
+  outline: none;
+  background: var(--control-fill);
+}
+
+html.tauri-desktop .neo-settings[role="dialog"] > .neo-float-dock {
+  z-index: 51;
+}
+
+html.tauri-desktop .neo-float-dock .neo-desktop-work-summary {
+  width: auto;
+  height: 26px;
+  gap: 7px;
+  padding-inline: var(--neo-desktop-work-summary-padding);
+  background: var(--neo-action-hover);
+  border-radius: 7px;
+}
+
+.neo-desktop-work-summary > svg {
+  width: var(--neo-desktop-work-icon-size);
+  height: var(--neo-desktop-work-icon-size);
+}
+
+html.tauri-desktop .neo-work-toolbar-actions {
+  --neo-work-icon-size: var(--neo-desktop-work-icon-size);
+  margin-top: 0;
+  padding-bottom: 0;
+  gap: 4px;
+}
+
+html.tauri-desktop .neo-work-toolbar [data-work-tabs] > button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  height: var(--neo-desktop-work-control-size);
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+html.tauri-desktop .neo-work-toolbar [data-work-tabs] > button[aria-pressed="true"]::after {
+  position: absolute;
+  right: 0;
+  bottom: -2px;
+  left: 0;
+  height: 2px;
+  background: var(--accent);
+  content: "";
+}
+
+html.tauri-desktop :is(.neo-work-toolbar-actions > button, .neo-work-toolbar-search button) {
+  width: var(--neo-desktop-work-control-size);
+  height: var(--neo-desktop-work-control-size);
+  border-radius: 6px;
+}
+
+html.tauri-desktop .neo-work-toolbar-search {
+  margin-top: 0;
+  padding-bottom: 0;
+}
+
+html.tauri-desktop .neo-work-toolbar-search input {
+  padding-block: 4px;
+}
+
+.neo-work-toolbar-actions > button > svg {
+  width: var(--neo-work-icon-size, 16px);
+  height: var(--neo-work-icon-size, 16px);
+}
+
+html.tauri-desktop :is(.neo-work-toolbar-actions > button, .neo-desktop-work-summary) > svg {
+  translate: 0 -1.5px;
+}
+
+html.tauri-desktop #neo-work-search-trigger > svg {
+  transform: translateY(0.35px);
+}
+
+html.tauri-desktop .neo-shell:not(.neo-preview-focus) > .neo-scroll {
+  scrollbar-gutter: auto;
+}
+
+.neo-work-counters,
+.neo-work-counters > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.neo-work-counters > span {
+  gap: 2px;
+}
+
+.neo-work-counters svg {
+  width: 11px;
+  height: 11px;
+  stroke-width: 3;
+}
+
+.neo-work-counters [data-state="waiting"] {
+  color: var(--warning);
+}
+
+.neo-work-counters [data-state="waiting"] svg {
+  stroke-width: 12;
+}
+
+.neo-work-counters [data-state="held"] {
+  color: var(--danger);
+}
+
+.neo-work-counters [data-state="progress"] {
+  color: var(--neo-teal);
+}
+
+html.tauri-desktop .neo-shell .neo-chat-rail {
+  padding-top: calc(var(--neo-desktop-toolbar-height) + 8px);
+}
+
+html.tauri-desktop .neo-shell:not(.neo-preview-focus) .neo-scene-list:not(.neo-scene-sheet) {
+  padding-top: 7px;
+  padding-inline-end: var(--neo-desktop-work-inset);
+}
+
+html.tauri-desktop .neo-shell:not(.neo-preview-focus) .neo-scene-list > .neo-work-toolbar {
+  border-bottom: 0;
+  margin-bottom: 6px;
+}
+
+html.tauri-desktop
+  .neo-shell:not(.neo-preview-focus)
+  .neo-scene-list:not(.neo-scene-sheet)
+  > .neo-work-toolbar {
+  position: relative;
+  z-index: 20;
+  pointer-events: none;
+}
+
+html.tauri-desktop .neo-work-toolbar :is(button, input) {
+  pointer-events: auto;
+}
+
+html.tauri-desktop .neo-scene-sheet > .neo-work-toolbar {
+  padding-top: 4px;
 }
 
 html.tauri-desktop #root > main {

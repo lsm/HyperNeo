@@ -802,8 +802,6 @@ describe('Neo public work scenes', () => {
     set({ needsYou: 4, neoUnhandled: 2 });
     expect(screen.getByRole('button', { name: /^Your work, 4 need/, hidden: true })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Needs your attention · 4' })).toBeTruthy();
-    expect(screen.getByText('Waiting on Neo to check or unblock: 2')).toBeTruthy();
-    set({ needsYou: 4, neoUnhandled: 0 });
     expect(screen.queryByText(/Waiting on Neo/)).toBeNull();
   });
 
@@ -828,7 +826,7 @@ describe('Neo public work scenes', () => {
     });
     expect(screen.queryByRole('region', { name: 'Needs your attention' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Your work', hidden: true })).toBeTruthy();
-    expect(screen.getByText('Waiting on Neo to check or unblock: 1')).toBeTruthy();
+    expect(screen.queryByText(/Waiting on Neo to check or unblock/)).toBeNull();
   });
 
   it('shows no pending check banner and only work scene groups in legacy mode', () => {
@@ -1743,6 +1741,8 @@ describe('card reply notice navigation', () => {
           },
         };
       });
+      expect(screen.queryByText('Open sign-off question')).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: 'Scheduled' }));
       fireEvent.click(screen.getByText('Open sign-off question'));
       await waitFor(() =>
         expect(document.querySelector('[data-card-reply-focus]')?.id).toBe('neo-ref-question-q1')

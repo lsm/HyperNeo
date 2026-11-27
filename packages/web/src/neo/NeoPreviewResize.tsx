@@ -6,15 +6,19 @@ export function NeoPreviewResize({
   min,
   max,
   controls,
+  work = false,
   onChange,
 }: {
   value: number;
   min: number;
   max: number;
   controls: string;
+  work?: boolean;
   onChange: (value: number) => void;
 }) {
-  const drag = useRef<{ id: number; start: number; x: number; shell: HTMLElement } | null>(null);
+  const drag = useRef<{ id: number; start: number; x: number; container: HTMLElement } | null>(
+    null
+  );
   const change = (next: number) => onChange(Math.min(max, Math.max(min, next)));
   const finish = (handle: HTMLElement) => {
     const current = drag.current;
@@ -25,27 +29,27 @@ export function NeoPreviewResize({
     <div
       role="separator"
       tabIndex={0}
-      aria-label={t('artifact.resize')}
+      aria-label={t(work ? 'live.resizeWork' : 'artifact.resize')}
       aria-orientation="vertical"
       aria-controls={controls}
       aria-valuemin={min}
       aria-valuemax={max}
       aria-valuenow={Math.round(value)}
-      aria-valuetext={t('artifact.width', { width: Math.round(value) })}
-      class="neo-preview-resizer"
+      aria-valuetext={t(work ? 'live.workWidth' : 'artifact.width', { width: Math.round(value) })}
+      class={work ? 'neo-preview-resizer neo-work-resizer' : 'neo-preview-resizer'}
       onPointerDown={(event) => {
         if (event.button !== 0 || !event.isPrimary || drag.current) return;
         const handle = event.currentTarget;
-        const shell = handle.closest<HTMLElement>('.neo-shell');
-        if (!shell) return;
+        const container = handle.parentElement;
+        if (!container) return;
         event.preventDefault();
         handle.focus({ preventScroll: true });
         handle.setPointerCapture(event.pointerId);
-        drag.current = { id: event.pointerId, start: value, x: event.clientX, shell };
+        drag.current = { id: event.pointerId, start: value, x: event.clientX, container };
       }}
       onPointerMove={(event) => {
         if (drag.current?.id !== event.pointerId) return;
-        const rect = drag.current.shell.getBoundingClientRect();
+        const rect = drag.current.container.getBoundingClientRect();
         if (rect.width > 0)
           change(drag.current.start + ((drag.current.x - event.clientX) / rect.width) * 100);
       }}

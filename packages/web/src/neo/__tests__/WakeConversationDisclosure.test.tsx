@@ -1,5 +1,5 @@
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NeoPublicConversation, PendingAsk } from '../NeoPublicConversation.tsx';
 import { NeoWakeRow } from '../NeoWakeRow.tsx';
@@ -29,7 +29,7 @@ function assertTrailingControl(body: HTMLElement, context: RegExp) {
 }
 
 describe('Wake and conversation explicit disclosures', () => {
-  it('keeps wake summaries inert, preserves native navigation and uses a trailing control', async () => {
+  it('toggles wake details from the summary and preserves expansion across updates', () => {
     const wake = {
       scheduleId: 'synthetic-wake',
       sourceKind: 'goal' as const,
@@ -42,15 +42,11 @@ describe('Wake and conversation explicit disclosures', () => {
     };
     const view = render(<NeoWakeRow entryKey="wake" conversationId={root.slice(4)} wake={wake} />);
     const row = view.container.querySelector<HTMLDetailsElement>('details')!;
-    fireEvent.click(screen.getByText('Synthetic wake'));
     expect(row.open).toBe(false);
-    const more = screen.getByRole('button', { name: /more.*Synthetic wake/ });
-    fireEvent.click(more);
+    fireEvent.click(screen.getByText('Synthetic wake'));
     expect(row.open).toBe(true);
-    const less = assertTrailingControl(
-      screen.getByText('Synthetic wake detail'),
-      /less.*Synthetic wake/
-    );
+    fireEvent.click(screen.getByText('Synthetic wake detail'));
+    expect(row.open).toBe(true);
     view.rerender(
       <NeoWakeRow
         entryKey="wake"
@@ -59,13 +55,8 @@ describe('Wake and conversation explicit disclosures', () => {
       />
     );
     expect(row.open).toBe(true);
-    fireEvent.click(less);
+    fireEvent.click(screen.getByText('Synthetic wake'));
     expect(row.open).toBe(false);
-    row.open = true;
-    fireEvent(row, new Event('toggle'));
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /less.*Synthetic wake/ })).toBeTruthy()
-    );
   });
 
   it('keeps Edited as a marker and folds revision history from its bottom-right control', async () => {

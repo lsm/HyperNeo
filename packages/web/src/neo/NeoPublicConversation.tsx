@@ -728,7 +728,9 @@ function PublicEntry({
           {ask?.delivery?.supersededBy && <span class="ml-2">{t('chat.retried')}</span>}
         </div>
       )}
-      <div class={`mt-1 flex items-center gap-3 ${ask ? 'justify-end' : ''}`}>
+      <div
+        class={`neo-message-tools ${undelivered ? '' : 'neo-message-quiet-tools'} mt-1 flex items-center gap-2 ${ask ? 'justify-end' : ''}`}
+      >
         {undelivered &&
           ask?.delivery?.reason &&
           !ask.delivery.supersededBy &&
@@ -803,7 +805,6 @@ function PublicEntry({
           at={menu.at}
           actions={neoMessageMenuActions({
             hasText: !!copyText.trim(),
-            canShare: typeof navigator !== 'undefined' && typeof navigator.share === 'function',
             canReply: !!onQuote && !!copyText.trim(),
           })}
           onClose={menu.close}
@@ -818,7 +819,6 @@ function PublicEntry({
                 void copyToClipboard(copyText).then((ok) => {
                   if (ok) setCopiedAt(Date.now());
                 }),
-              share: () => void navigator.share?.({ text: copyText }).catch(() => {}),
               reply: () =>
                 onQuote?.({ author: ask ? 'You' : 'Neo', text: quoteText, anchor, replyTo }),
             })[action]()
@@ -996,7 +996,7 @@ export function NeoPublicConversation({
     setSeeking(messageId);
   };
   return (
-    <div class="space-y-6" aria-label={t('chat.public')}>
+    <div class="space-y-4" aria-label={t('chat.public')}>
       {conversation.status !== 'ready' &&
         (conversation.status === 'unavailable' || conversation.entries.length === 0) && (
           <p role="status" class="text-sm text-fg-muted">

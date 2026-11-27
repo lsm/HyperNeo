@@ -14,7 +14,7 @@ export function NeoWorkSearchButton({ onOpen }: { onOpen: () => void }) {
       aria-expanded={false}
       onClick={onOpen}
     >
-      <NeoIcon name="search" class="!h-4 !w-4" />
+      <NeoIcon name="search" />
     </button>
   );
 }

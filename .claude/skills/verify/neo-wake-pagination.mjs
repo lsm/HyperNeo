@@ -26,7 +26,6 @@ const observed=[];
   const scrollBefore=await scroller.evaluate(element=>element.scrollTop);
   await page.screenshot({path:`${run}/evidence/neo-wake-pagination-${name}-before.png`});
   await earlier.click();
-  await wake.waitFor({state:'attached'});
   await page.locator(`[data-message-ref="${seed.older}"]`).waitFor();
   const after=await message.boundingBox();
   const scrollAfter=await scroller.evaluate(element=>element.scrollTop);
@@ -37,6 +36,9 @@ const observed=[];
   assert.equal(await message.isVisible(),true);
   assert.equal(await page.locator('.neo-chat-rail [data-wake]').count(),0);
   assert(Math.abs(after.y-before.y)<2,`Load earlier moved retained reply by ${after.y-before.y}px`);
+  if (width < 1120) await page.getByRole('button', { name: /^Your work(?:,.*)?$/ }).click();
+  await page.getByRole('button', { name: 'Scheduled', exact: true }).click();
+  await wake.waitFor({ state: 'visible' });
  }
 return observed;
 }

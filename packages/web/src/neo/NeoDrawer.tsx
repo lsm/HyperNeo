@@ -1,7 +1,9 @@
+import { NeoIcon } from './NeoIcon.tsx';
 import { DesktopControl } from '../components/DesktopControl.tsx';
 import { PairConfirmInput, pairApprovalReady } from '../components/settings/PairConfirmInput.tsx';
 import type { ConnectionState } from '../lib/state.ts';
 import { useEffect, useRef, useState } from 'preact/hooks';
+import type { RefObject } from 'preact';
 import { setupFocusTrap } from '../components/ui/Modal.tsx';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { invokeOperation } from '../lib/operations.ts';
@@ -18,6 +20,7 @@ const LANGUAGES: { value: LanguageSetting; label: () => string }[] = [
 
 export function NeoDrawer({
   open,
+  desktopDialog,
   onClose,
   connection,
   onReconnect,
@@ -25,6 +28,7 @@ export function NeoDrawer({
   onOpenSession,
 }: {
   open: boolean;
+  desktopDialog?: RefObject<HTMLDivElement>;
   onClose: () => void;
   connection: ConnectionState;
   onReconnect: () => void;
@@ -46,14 +50,15 @@ export function NeoDrawer({
       if (event.key === 'Escape') onClose();
     };
     document.addEventListener('keydown', onKey);
-    const release = setupFocusTrap(panel.current);
-    panel.current.focus();
+    const desktopContainer = desktopDialog?.current;
+    const release = desktopContainer ? undefined : setupFocusTrap(panel.current);
+    if (!desktopContainer?.contains(opener)) panel.current.focus();
     return () => {
       document.removeEventListener('keydown', onKey);
-      release();
+      release?.();
       setTimeout(() => opener?.focus?.(), 0);
     };
-  }, [open, onClose]);
+  }, [open, onClose, desktopDialog]);
   if (!open) return null;
   const drag = (x: number) => {
     const from = dragFrom.current;
@@ -67,13 +72,18 @@ export function NeoDrawer({
       <div class="neo-drawer-backdrop" data-testid="neo-drawer-backdrop" onClick={onClose} />
       <aside
         ref={panel}
-        role="dialog"
-        aria-modal="true"
-        aria-label={t('drawer.title')}
+        id={desktopDialog ? 'neo-settings-panel' : undefined}
+        role={desktopDialog ? undefined : 'dialog'}
+        aria-modal={desktopDialog ? undefined : 'true'}
+        aria-label={desktopDialog ? undefined : t('drawer.title')}
         tabIndex={-1}
         class="neo-drawer"
         onPointerDown={(event) => {
-          if ((event.target as Element).closest('button, a, input, select, textarea, label'))
+          if (
+            (event.target as Element).closest(
+              'button, a, input, select, textarea, label, [data-tauri-drag-region]'
+            )
+          )
             return;
           dragFrom.current = event.clientX;
         }}
@@ -89,23 +99,95 @@ export function NeoDrawer({
           if (panel.current) panel.current.style.transform = '';
         }}
       >
-        <h2 class="mb-5 text-base font-medium">{t('drawer.title')}</h2>
-        <section aria-label={t('drawer.connection')} class="mb-6">
-          <h3 class="mb-2 text-sm font-medium text-fg-muted">{t('drawer.connection')}</h3>
-          <p class="mb-3 flex items-center gap-2 text-sm">
-            <span
-              aria-hidden="true"
-              class={`h-2.5 w-2.5 rounded-full ${
-                connection === 'connected'
-                  ? 'bg-success'
-                  : connection === 'connecting' || connection === 'reconnecting'
-                    ? 'bg-warning'
-                    : 'bg-danger'
-              }`}
-            />
-            {t(`drawer.status.${connection}`)}
+        <div class="neo-drawer-drag-region" data-tauri-drag-region />
+        <header class="neo-drawer-heading">
+          <h2>{t('drawer.title')}</h2>
+          {!desktopDialog && (
+            <button
+              type="button"
+              class="neo-drawer-close"
+              aria-label={t('drawer.close')}
+              onClick={onClose}
+            >
+              <NeoIcon name="close" />
+            </button>
+          )}
+        </header>
+        <section aria-label={t('drawer.connection')} class="neo-drawer-section">
+          <div class="neo-drawer-row">
+            <h3>{t('drawer.connection')}</h3>
+            <p class="flex items-center gap-2 text-xs text-fg-muted" role="status">
+              <span
+                aria-hidden="true"
+                class={`h-2 w-2 rounded-full ${
+                  connection === 'connected'
+                    ? 'bg-success'
+                    : connection === 'connecting' || connection === 'reconnecting'
+                      ? 'bg-warning'
+                      : 'bg-danger'
+                }`}
+              />
+              {t(`drawer.status.${connection}`)}
+            </p>
+          </div>
+        </section>
+        <section aria-label={t('drawer.language')} class="neo-drawer-section">
+          <label class="neo-drawer-row">
+            <span>{t('drawer.language')}</span>
+            <select
+              aria-label={t('drawer.language')}
+              value={languageSetting.value}
+              disabled={connection !== 'connected'}
+              onChange={(event) => {
+                const language = event.currentTarget.value as LanguageSetting;
+                const attempt = ++languageAttempt.current;
+                const settle = (failed: boolean) => {
+                  if (attempt === languageAttempt.current) setLanguageFailed(failed);
+                };
+                setLanguageFailed(false);
+                updateGlobalSettings({ language })
+                  .then((result) => settle(!result.success))
+                  .catch(() => settle(true));
+              }}
+              class="neo-drawer-select"
+              aria-describedby="neo-language-scope"
+            >
+              {LANGUAGES.map((language) => (
+                <option key={language.value} value={language.value}>
+                  {language.label()}
+                </option>
+              ))}
+            </select>
+          </label>
+          {languageFailed && (
+            <p role="alert" class="mt-2 text-sm text-danger">
+              {t('drawer.language.failed')}
+            </p>
+          )}
+          <p id="neo-language-scope" class="neo-drawer-hint">
+            {t('drawer.language.hint')}
           </p>
-          <div class="flex gap-2">
+        </section>
+        <section aria-label={t('drawer.appearance')} class="neo-drawer-section">
+          <label class="neo-drawer-row" for="neo-theme-setting">
+            <span>{t('drawer.theme')}</span>
+            <select
+              id="neo-theme-setting"
+              value={themeSetting.value}
+              onChange={(event) => setTheme(event.currentTarget.value as ThemeSetting)}
+              class="neo-drawer-select"
+            >
+              {(['light', 'dark', 'system'] as const).map((value) => (
+                <option key={value} value={value}>
+                  {t(`drawer.theme.${value}`)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </section>
+        <details class="neo-drawer-section" open={connection !== 'connected'}>
+          <summary class="neo-drawer-row">{t('drawer.troubleshoot')}</summary>
+          <div class="mb-3 flex flex-wrap gap-2">
             <button type="button" class="neo-drawer-action" onClick={onReconnect}>
               {t('drawer.reconnect')}
             </button>
@@ -120,57 +202,7 @@ export function NeoDrawer({
               {t('drawer.refresh')}
             </button>
           </div>
-        </section>
-        <section aria-label={t('drawer.language')} class="mb-6">
-          <h3 class="mb-2 text-sm font-medium text-fg-muted">{t('drawer.language')}</h3>
-          <select
-            aria-label={t('drawer.language')}
-            value={languageSetting.value}
-            disabled={connection !== 'connected'}
-            onChange={(event) => {
-              const language = event.currentTarget.value as LanguageSetting;
-              const attempt = ++languageAttempt.current;
-              const settle = (failed: boolean) => {
-                if (attempt === languageAttempt.current) setLanguageFailed(failed);
-              };
-              setLanguageFailed(false);
-              updateGlobalSettings({ language })
-                .then((result) => settle(!result.success))
-                .catch(() => settle(true));
-            }}
-            class="neo-drawer-action h-11 w-full appearance-auto bg-surface text-fg"
-          >
-            {LANGUAGES.map((language) => (
-              <option key={language.value} value={language.value}>
-                {language.label()}
-              </option>
-            ))}
-          </select>
-          {languageFailed && (
-            <p role="alert" class="mt-2 text-sm text-danger">
-              {t('drawer.language.failed')}
-            </p>
-          )}
-          <p class="mt-2 text-xs text-fg-muted">{t('drawer.language.hint')}</p>
-        </section>
-        <section aria-label={t('drawer.appearance')} class="mb-6">
-          <h3 class="mb-2 text-sm font-medium text-fg-muted">{t('drawer.appearance')}</h3>
-          <label class="flex items-center gap-3 text-sm" for="neo-theme-setting">
-            <span>{t('drawer.theme')}</span>
-            <select
-              id="neo-theme-setting"
-              value={themeSetting.value}
-              onChange={(event) => setTheme(event.currentTarget.value as ThemeSetting)}
-              class="neo-drawer-action h-11 min-w-0 flex-1 appearance-auto bg-surface text-fg"
-            >
-              {(['light', 'dark', 'system'] as const).map((value) => (
-                <option key={value} value={value}>
-                  {t(`drawer.theme.${value}`)}
-                </option>
-              ))}
-            </select>
-          </label>
-        </section>
+        </details>
         <DesktopControl
           class="mb-6"
           onOpen={

@@ -12,6 +12,7 @@ import { isMessageKey, locale, t } from '../lib/i18n/index.ts';
 import { useVisibleTick } from '../hooks/useVisibleTick.ts';
 import { Button } from './ui/Button.tsx';
 import { NeoWorkEmpty } from '../neo/NeoWorkEmpty.tsx';
+import { NeoIcon } from '../neo/NeoIcon.tsx';
 
 async function call<T>(name: OperationName, input: unknown): Promise<T> {
   return invokeOperation<T>(await connectionManager.getHub(), name, input);
@@ -158,7 +159,19 @@ function everyText(ms: number) {
     return minutes === 60 ? t('schedules.hourly') : t('schedules.everyHours', { n: minutes / 60 });
   return t('schedules.every', { minutes });
 }
-function cadenceText(row: SessionScheduleView) {
+function cadenceText(row: SessionScheduleView, inWorkTab = false) {
+  if (inWorkTab && row.cadence.kind === 'cron') {
+    const daily = /^(\d{1,2}) (\d{1,2}) \* \* \*$/.exec(row.cadence.cron);
+    if (daily) {
+      const time = new Date(Date.UTC(2000, 0, 1, Number(daily[2]), Number(daily[1])));
+      const display = time.toLocaleTimeString(locale.value, {
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZone: 'UTC',
+      });
+      return `${t('schedules.daily')} ${display} · ${row.cadence.timezone}`;
+    }
+  }
   return row.cadence.kind === 'every' ? (
     everyText(row.cadence.everyMs)
   ) : row.cadence.kind === 'once' ? (
@@ -169,6 +182,81 @@ function cadenceText(row: SessionScheduleView) {
     `${row.cadence.cron} · ${row.cadence.timezone}`
   );
 }
+
+type ScheduleRun = {
+  firedAt: number;
+  dueAt: number | null;
+  outcome: string;
+  skipReason: string | null;
+};
+
+function ScheduleRunHistory({ scheduleId, version }: { scheduleId: string; version: number }) {
+  const [state, setState] = useState<ScheduleRun[] | 'error' | null>(null);
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    let active = true;
+    void call<{ ok: true; runs: ScheduleRun[] } | { ok: false }>('schedule.session.runs', {
+      scheduleId,
+    })
+      .then((result) => {
+        if (active) setState(result.ok ? result.runs : 'error');
+      })
+      .catch(() => {
+        if (active) setState('error');
+      });
+    return () => {
+      active = false;
+    };
+  }, [scheduleId, version, retry]);
+
+  return (
+    <section
+      aria-label={t('schedules.runHistory')}
+      class="mt-3 border-t border-line pt-2 text-xs text-fg-muted"
+    >
+      <h3 class="font-medium">{t('schedules.runHistory')}</h3>
+      {state === null ? (
+        <p role="status" class="mt-2">
+          {t('schedules.runsLoading')}
+        </p>
+      ) : state === 'error' ? (
+        <p role="alert" class="mt-2">
+          {t('schedules.runsFailed')}{' '}
+          <button type="button" class="text-accent" onClick={() => setRetry((value) => value + 1)}>
+            {t('chat.retry')}
+          </button>
+        </p>
+      ) : state.length === 0 ? (
+        <p class="mt-2">{t('schedules.runsEmpty')}</p>
+      ) : (
+        <ol class="mt-1 divide-y divide-line">
+          {state.map((run, index) => (
+            <li
+              key={`${run.firedAt}:${index}`}
+              class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 py-2"
+            >
+              <span>
+                <RunTime at={run.firedAt} />
+              </span>
+              <span>
+                {run.outcome.startsWith('skipped_')
+                  ? t('schedules.skipped')
+                  : factLabel('outcome', run.outcome)}
+                {run.skipReason && <> · {factLabel('reason', run.skipReason)}</>}
+              </span>
+              {run.dueAt !== null && run.dueAt !== run.firedAt && (
+                <span class="basis-full text-fg-faint">
+                  {t('schedules.due')} <RunTime at={run.dueAt} />
+                </span>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
 function ScheduleStrip({
   sessionId,
   readonly,
@@ -184,6 +272,7 @@ function ScheduleStrip({
   const [busy, setBusy] = useState('');
   const [version, setVersion] = useState(0);
   const [goal, setGoal] = useState<string | null>(null);
+  const [history, setHistory] = useState<string | null>(null);
   useVisibleTick(30_000, true, () => setVersion((value) => value + 1));
   useEffect(() => {
     let alive = true;
@@ -253,11 +342,16 @@ function ScheduleStrip({
         {!loading && !error && !rows.length && (
           <NeoWorkEmpty icon="clock" title={t('schedules.empty')} hint={t('schedules.emptyHint')} />
         )}
-        <ul>
+        <ul class="space-y-2">
           {rows.map((row) => (
-            <li key={row.id} data-schedule={row.id} class="border-b border-line py-3">
-              <div class="flex items-start justify-between gap-3">
-                <div class="min-w-0 break-words font-medium text-fg">
+            <li
+              key={row.id}
+              data-schedule={row.id}
+              class="rounded-xl border border-line bg-surface px-3 py-3"
+            >
+              <div class="flex items-start justify-between gap-2">
+                <NeoIcon name="clock" class="mt-0.5 !h-4 !w-4 text-fg-muted" />
+                <div class="min-w-0 flex-1 break-words font-medium text-fg">
                   {row.sourceKind === 'goal' && row.sourceLabel ? (
                     <button
                       type="button"
@@ -270,11 +364,17 @@ function ScheduleStrip({
                   ) : (
                     (row.sourceLabel ?? t('schedules.unavailable'))
                   )}
+                  <p class="mt-1 text-xs font-normal text-fg-muted">
+                    {isMessageKey(`schedules.kind.${row.sourceKind}`) && (
+                      <>{factLabel('kind', row.sourceKind)} · </>
+                    )}
+                    {cadenceText(row, true)}
+                  </p>
                 </div>
                 {row.status !== 'done' && (
                   <button
                     type="button"
-                    class="shrink-0 text-xs text-accent hover:underline disabled:opacity-50"
+                    class="shrink-0 rounded-md px-2 py-1 text-xs text-fg-muted hover:bg-fill-soft hover:text-fg disabled:opacity-50"
                     disabled={readonly || loading || !!busy}
                     onClick={() => void change(row)}
                   >
@@ -282,27 +382,44 @@ function ScheduleStrip({
                   </button>
                 )}
               </div>
-              <p class="mt-1 text-xs text-fg-muted">
-                {isMessageKey(`schedules.kind.${row.sourceKind}`) && (
-                  <>{factLabel('kind', row.sourceKind)} · </>
-                )}
-                {cadenceText(row)}
-                {row.status !== 'active' && <> · {factLabel('status', row.status)}</>}
-              </p>
-              <p class="text-xs text-fg-muted">
-                {t('schedules.next')} <RunTime at={row.nextRunAt} /> · {t('schedules.last')}{' '}
-                <RunTime at={row.lastRunAt} />
-                {row.lastOutcome && (
-                  <>
-                    {' '}
-                    ·{' '}
-                    {row.lastOutcome.startsWith('skipped_')
-                      ? t('schedules.skipped')
-                      : factLabel('outcome', row.lastOutcome)}
-                    {row.lastSkipReason && <> · {factLabel('reason', row.lastSkipReason)}</>}
-                  </>
-                )}
-              </p>
+              <button
+                type="button"
+                aria-label={t('schedules.runHistoryFor', {
+                  title: row.sourceLabel ?? t('schedules.unavailable'),
+                })}
+                aria-expanded={history === row.id}
+                class="mt-1 flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-xs text-fg-muted hover:bg-fill-soft"
+                onClick={() => setHistory(history === row.id ? null : row.id)}
+              >
+                <span class="flex flex-wrap gap-x-3 gap-y-1 pl-4">
+                  <span>{factLabel('status', row.status)}</span>
+                  {row.nextRunAt !== null && (
+                    <span>
+                      {t('schedules.next')} <RunTime at={row.nextRunAt} />
+                    </span>
+                  )}
+                  {row.lastRunAt !== null && (
+                    <span>
+                      {t('schedules.last')} <RunTime at={row.lastRunAt} />
+                    </span>
+                  )}
+                  {row.lastOutcome && (
+                    <span>
+                      {row.lastOutcome.startsWith('skipped_')
+                        ? t('schedules.skipped')
+                        : factLabel('outcome', row.lastOutcome)}
+                      {row.lastSkipReason && <> · {factLabel('reason', row.lastSkipReason)}</>}
+                    </span>
+                  )}
+                </span>
+                <NeoIcon
+                  name="chevron"
+                  class={`!h-4 !w-4 ${history === row.id ? '' : 'rotate-180'}`}
+                />
+              </button>
+              {history === row.id && (
+                <ScheduleRunHistory key={row.id} scheduleId={row.id} version={version} />
+              )}
               {goal === row.id && (
                 <GoalDefinition ownerSessionId={sessionId} goalId={row.sourceId} />
               )}

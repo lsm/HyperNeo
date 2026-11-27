@@ -84,7 +84,7 @@ describe('scheduled work stays outside the public conversation', () => {
     expect(container.querySelector('[data-wake]')).toBeNull();
     expect(container.textContent).not.toContain(wake.title);
   });
-  it('shows title and state in the work panel and keeps internal reasons behind more', () => {
+  it('shows title and state in the work panel and opens details from the summary row', () => {
     const internal = 'That ask was already settled as done after its todo completed.';
     const { container, rerender } = render(
       <NeoWakeRow entryKey="wake" wake={{ ...wake, summary: internal }} conversationId={id} />
@@ -94,7 +94,7 @@ describe('scheduled work stays outside the public conversation', () => {
     expect(row.querySelector('summary')?.textContent).toContain(wake.title);
     expect(row.querySelector('summary')?.textContent).toContain('Completed');
     expect(row.querySelector('summary')?.textContent).not.toContain(internal);
-    fireEvent.click(within(row).getByRole('button', { name: /more/i }));
+    fireEvent.click(row.querySelector('summary')!);
     expect(row.open).toBe(true);
     expect(within(row).getByText(internal)).toBeTruthy();
     rerender(
