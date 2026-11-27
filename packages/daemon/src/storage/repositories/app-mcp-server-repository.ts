@@ -69,6 +69,17 @@ function validateSourceType(sourceType: string): void {
   }
 }
 
+export function retargetsOAuth(
+  row: AppMcpServer,
+  updates: { url?: string | null; sourceType?: string; auth?: null }
+): boolean {
+  return (
+    'auth' in updates ||
+    ('url' in updates && (updates.url ?? undefined) !== row.url) ||
+    (updates.sourceType !== undefined && updates.sourceType !== row.sourceType)
+  );
+}
+
 function validateSource(source: string): void {
   if (!VALID_SOURCES.has(source as AppMcpServerSource)) {
     throw new Error(`Invalid source "${source}". Must be one of: ${[...VALID_SOURCES].join(', ')}`);
@@ -207,14 +218,15 @@ export class AppMcpServerRepository {
     return this.writeUpdate(id, updates, false);
   }
 
-  replaceOAuthUrl(id: string, updates: Omit<UpdateAppMcpServerRequest, 'id'>) {
-    return this.writeUpdate(id, updates, true);
+  replaceOAuthUrl(id: string, updates: Omit<UpdateAppMcpServerRequest, 'id'>, clearAuth: boolean) {
+    return this.writeUpdate(id, updates, true, clearAuth);
   }
 
   private writeUpdate(
     id: string,
     updates: Omit<UpdateAppMcpServerRequest, 'id'>,
-    replaceOAuthUrl: boolean
+    replaceOAuthUrl: boolean,
+    clearAuth = false
   ): AppMcpServer | null {
     this.validateUpdate(id, updates);
 
@@ -258,6 +270,7 @@ export class AppMcpServerRepository {
       fields.push('enabled = ?');
       values.push(updates.enabled ? 1 : 0);
     }
+    if (clearAuth) fields.push('auth = NULL');
     if (updates.source !== undefined) {
       fields.push('source = ?');
       values.push(updates.source);

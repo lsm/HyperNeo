@@ -50,8 +50,8 @@
     },
     {
       "file": "packages/daemon/src/storage/repositories/app-mcp-server-repository.ts",
-      "lines": 355,
-      "sha256": "3541c05b6a6b0ed44bfec74a1a9be46c47d01dd1328c4463dfbfc1f417d3ef35"
+      "lines": 368,
+      "sha256": "b6da25470bbef7c1b75ba49584b4ad85207017a81884bce4cce01192561e55e6"
     },
     {
       "file": "packages/daemon/src/storage/repositories/mcp-enablement-repository.ts",

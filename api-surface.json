@@ -21366,6 +21366,9 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": {},
         "properties": {
+          "auth": {
+            "type": "null"
+          },
           "id": {
             "minLength": 1,
             "type": "string"
@@ -21374,7 +21377,11 @@
             "type": "string"
           },
           "sourceType": {
-            "const": "http",
+            "enum": [
+              "stdio",
+              "sse",
+              "http"
+            ],
             "type": "string"
           },
           "url": {
@@ -21385,8 +21392,7 @@
           }
         },
         "required": [
-          "id",
-          "url"
+          "id"
         ],
         "type": "object"
       },
