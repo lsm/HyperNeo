@@ -42,6 +42,8 @@ const NEO_STEP: Record<NeoStepReason, (detail: string) => string> = {
     'its prerequisites are done and it has no instruction or worker. Write the instruction and start it, or remove it.',
   check_overdue: () =>
     'its check has not passed for 24 hours. Ask whoever it waits on, mark it done, or remove it.',
+  hold_failed: (detail) => `its hold condition failed: ${detail}.`,
+  hold_review: (detail) => `its hold is due for review: ${detail}.`,
   idle_worker: () =>
     'its worker is idle and nothing is pending. Continue it, mark it done, or remove it.',
 };
@@ -85,11 +87,16 @@ export const NEO_ATTENTION_KINDS: readonly NeoAttentionKind[] = [
     decide: always('wake'),
     ladder: [HOUR, 4 * HOUR, DAY],
     every: DAY,
-    render: ({ subject, facts }) =>
-      facts.reason === 'no_worker' && typeof facts.requestFrom === 'string'
+    render: ({ subject, facts }) => {
+      if (facts.reason === 'hold_failed' || facts.reason === 'hold_review') {
+        return `Todo (${subject.id}) needs your next step: ${NEO_STEP[facts.reason](String(facts.detail ?? ''))}`;
+      }
+      return facts.reason === 'no_worker' && typeof facts.requestFrom === 'string'
         ? `Todo "${facts.title}" (${subject.id}) is a request from session ${facts.requestFrom} waiting for your answer. Answer it by closing this todo with neo.todo.done or neo.todo.remove and a reason; the daemon sends that reason to the requester.`
-        : `Todo "${facts.title}" (${subject.id}) needs your next step: ${NEO_STEP[facts.reason as NeoStepReason](String(facts.detail ?? ''))}`,
+        : `Todo "${facts.title}" (${subject.id}) needs your next step: ${NEO_STEP[facts.reason as NeoStepReason](String(facts.detail ?? ''))}`;
+    },
   },
+  { id: 'todo.hold_released', render: carried, decide: always('digest') },
   { id: 'todo.line_moved', render: carried, decide: always('digest') },
   { id: 'todo.stalled', render: carried, decide: always('wake'), ladder: [4 * HOUR] },
   { id: 'ask.idle', render: carried, decide: always('digest'), ladder: [DAY] },
@@ -163,8 +170,8 @@ export const neoAttentionUuid = (event: NeoAttentionEvent, step: number, text: s
       event.kind,
       event.subject.type,
       event.subject.id,
-      event.since,
-      step,
-      text,
+      ...(typeof event.facts.heldAt === 'number'
+        ? [event.facts.heldAt, event.facts.reason, step]
+        : [event.since, step, text]),
     ])
   );

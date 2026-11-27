@@ -1,9 +1,20 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { WorkRef } from '../../../../src/lib/drivers/types.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
-import { planNeoTodoEdit } from '../../../../src/lib/neo/todo-operations.ts';
+import {
+  CodingTodoPrRepository,
+  createCodingTodoPack,
+} from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
+import type { NeoWorkPrReader } from '../../../../src/lib/neo/packs/coding/work-prs.ts';
+import { wireNeoTodoMutations } from '../../../../src/lib/neo/todo-mutation-operation.ts';
+import {
+  createNeoTodoOperations,
+  planNeoTodoEdit,
+} from '../../../../src/lib/neo/todo-operations.ts';
 import { createNeoTodoRunner, planNeoTodoCheck } from '../../../../src/lib/neo/todo-runner.ts';
-import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
+import { invokeOperation, type OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
@@ -13,7 +24,7 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 const completed = (value: unknown): OperationOutcome =>
   ({ kind: 'completed', value }) as OperationOutcome;
 
-function world() {
+function world(readPrs?: NeoWorkPrReader) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
@@ -24,9 +35,22 @@ function world() {
   const store = new NeoAskTodoRepository(db);
   const sessions = new NeoTodoSessionRepository(db);
   const started: string[] = [];
+  const events: string[] = [];
+  const packs = readPrs
+    ? [
+        {
+          id: 'coding',
+          describe: 'Coding',
+          instructions: () => null,
+          todos: createCodingTodoPack(new CodingTodoPrRepository(db), readPrs),
+        },
+      ]
+    : [];
+  const gateway = gatewayFor(db);
+  const write = gateway.run.bind(gateway);
   const runner = createNeoTodoRunner({
     limits: () => ({ running: 99, perGroup: 99 }),
-    write: gatewayFor(db).run.bind(gatewayFor(db)),
+    write,
     store,
     sessions,
     invoke: async (_caller, name, input) => {
@@ -39,9 +63,11 @@ function world() {
       }
       return completed({ ok: true, value: { status: 'running', lastActivityAt: Date.now() } });
     },
-    packs: () => [],
+    packs: () => packs,
     tell: async () => {},
-    attend: async () => {},
+    attend: async ({ kind }) => {
+      events.push(kind);
+    },
     changed: () => {},
   });
   store.openAsk({
@@ -80,7 +106,46 @@ function world() {
     if ('reason' in plan) return plan.reason;
     return runner.recompute(todo(id), plan.value.patch);
   };
-  return { db, store, runner, started, add, todo, edit };
+  const controls = { ...runner, resolveTarget: async (ref: WorkRef) => ({ value: ref }) };
+  const registry = createOperationRegistry(
+    wireNeoTodoMutations(
+      (writeHold) =>
+        createNeoTodoOperations(
+          store,
+          sessions,
+          controls,
+          () => packs,
+          () => null,
+          undefined,
+          undefined,
+          writeHold
+        ),
+      {
+        gateway,
+        write,
+        packs: () => packs,
+        artifact: () => null,
+        stop: runner.stop,
+        userFolder: '/synthetic',
+        resolveTarget: controls.resolveTarget,
+        advance: runner.advance,
+        changed: () => {},
+        project: async (todos) => [...todos],
+      }
+    )
+  );
+  const hold = (id: string, urls: string[]) =>
+    invokeOperation(
+      registry,
+      'neo.todo.hold',
+      {
+        todoId: id,
+        reason: 'Wait for the named pull requests.',
+        until: { pack: 'coding', kind: 'pr_merged', params: { urls } },
+      },
+      { source: 'mcp', role: 'neo', sessionId: 'neo' }
+    );
+  return { db, store, runner, started, add, todo, edit, hold, events };
 }
 
 let current: ReturnType<typeof world> | null = null;
@@ -90,6 +155,42 @@ afterEach(() => {
 });
 
 describe('a held todo', () => {
+  test('refresh uses the first matching result and waits for every named PR', async () => {
+    const merged = 'https://github.com/example/demo/pull/1';
+    const second = 'https://github.com/example/demo/pull/2';
+    let missing = true;
+    const w = (current = world(async (urls) =>
+      urls
+        .filter((url) => url === merged || (!missing && url === second))
+        .flatMap((url) => [
+          {
+            url: url.replace('example/demo', 'Example/Demo'),
+            state: 'MERGED',
+            checks: 'none',
+            review: 'none',
+          },
+          { url, state: 'CLOSED', checks: 'none', review: 'none' },
+        ])
+    ));
+    const id = w.add('conditional');
+    expect(await w.hold(id, [merged, second])).toMatchObject({
+      kind: 'completed',
+      value: { ok: true, todo: { blockedBy: 'held' } },
+    });
+    const refresh = () =>
+      w.runner.refresh((_message, error) => {
+        throw error;
+      });
+    await refresh();
+    expect(w.todo(id).blockedBy).toBe('held');
+    expect(w.events).toEqual([]);
+    missing = false;
+    await refresh();
+    await refresh();
+    expect(w.started).toEqual([id]);
+    expect(w.events.filter((kind) => kind === 'todo.hold_released')).toHaveLength(1);
+  });
+
   test('is never started, by plan advancement or by an explicit start, until it is released', async () => {
     const w = (current = world());
     const first = w.add('first');

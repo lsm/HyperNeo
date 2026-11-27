@@ -3,6 +3,8 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoTodoPatch } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoJudgement } from './pack-contract.ts';
 
+export const NEO_TODO_HOLD_RELEASED = 'The hold was released.';
+
 export const NEO_TODO_FAILURE_NEXT = 'Ask the human how to go on, or take another approach.';
 
 export interface TodoStateFacts {
@@ -130,6 +132,7 @@ export function decideTodoState(facts: TodoStateFacts, now: number): TodoStateDe
     else if (
       !Object.keys(change).length &&
       todo.state !== 'done' &&
+      todo.blockedReason !== NEO_TODO_HOLD_RELEASED &&
       !(
         todo.state === 'blocked' &&
         ['failure', 'stalled', 'held', 'check', 'environment'].includes(todo.blockedBy ?? '')
