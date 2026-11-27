@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { CodingWorkFactsRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/work-facts.ts';
+import { createCodingWorkPrReader } from '../../../packages/daemon/src/lib/neo/packs/coding/work-reader.ts';
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
@@ -32,6 +33,7 @@ view(1, 'OPEN', [design]);
 view(2, 'MERGED', ordinary, 101);
 view(3, 'MERGED', [neighbor]);
 view(4, 'MERGED', [design]);
+view(5, 'MERGED', ordinary, 101);
 
 const filePage = (nodes: typeof ordinary, hasNextPage = false) => ({
   data: { repository: { pullRequest: {
@@ -44,7 +46,13 @@ writeFileSync(join(run, 'bin', 'gh'), `#!/bin/bash
 printf '%s\\n' "$*" >> "${evidence}/gh.log"
 case "$1 $2" in
   'pr view') cat "${run}/pr-\${3##*/}.json" ;;
-  'api graphql') [[ "$*" == *CodingMergeFiles* && "$*" == *number=2* ]] && cat "${run}/files-2.json" ;;
+  'api graphql')
+    [[ "$*" == *CodingMergeFiles* ]] || exit 1
+    case "$*" in
+      *number=2*) cat "${run}/files-2.json" ;;
+      *number=5*) cat "${run}/files-5.json" ;;
+      *) exit 1 ;;
+    esac ;;
   'api --hostname')
     case "$*" in
       */check-runs*) echo '{"check_runs":[]}' ;;
@@ -119,17 +127,39 @@ try {
   observed.cached = repeated;
   assert.equal(repeated.ok, false, JSON.stringify(repeated));
   assert.match(repeated.reason ?? '', /^plan_steps_missing:/);
-  const calls = readFileSync(join(evidence, 'gh.log'), 'utf8').split('\n');
-  assert.equal(calls.filter((call) => call.includes('CodingMergeFiles')).length, 1);
+  const fileReads = (number: number) =>
+    readFileSync(join(evidence, 'gh.log'), 'utf8').split('\n').filter(
+      (call) => call.includes('CodingMergeFiles') && call.includes(`number=${number} `)
+    ).length;
+  assert.equal(fileReads(2), 1);
   unlinkSync(join(run, 'files-2.json'));
   db.prepare('UPDATE pack_coding_work_facts SET observed_at = 0 WHERE url = ?').run(url(2));
   const unavailableFiles = await finish('todo-2');
   observed.unavailableFiles = unavailableFiles;
   assert.equal(unavailableFiles.ok, false, JSON.stringify(unavailableFiles));
   assert.match(unavailableFiles.reason ?? '', /^plan_steps_missing:/);
-  const refreshedCalls = readFileSync(join(evidence, 'gh.log'), 'utf8').split('\n');
-  assert.equal(refreshedCalls.filter((call) => call.includes('CodingMergeFiles')).length, 2);
-  console.log(`PASS: ${Object.keys(observed).length} todo completion replies with a successful and a failed paginated PR file read`);
+  assert.equal(fileReads(2), 2);
+
+  const [basic] = (await createCodingWorkPrReader(() => db)([url(5)])) ?? [];
+  assert.equal(basic?.state, 'MERGED');
+  observed.basicReadFilePages = fileReads(5);
+  const unknown = await planRefusal(5);
+  assert.equal(unknown.ok, false, JSON.stringify(unknown));
+  assert.match(unknown.reason ?? '', /^plan_steps_missing:/);
+  assert.equal(observed.basicReadFilePages, 0);
+  const retry = await finish('todo-5');
+  observed.unknownCached = retry;
+  assert.equal(retry.ok, false, JSON.stringify(retry));
+  assert.match(retry.reason ?? '', /^plan_steps_missing:/);
+  assert.equal(fileReads(5), 1);
+
+  writeFileSync(join(run, 'files-5.json'), JSON.stringify([filePage(ordinary, true), filePage([neighbor])]));
+  db.prepare('UPDATE pack_coding_work_facts SET observed_at = 0 WHERE url = ?').run(url(5));
+  const recovered = await finish('todo-5');
+  observed.filesRecovered = recovered;
+  assert.equal(recovered.ok, true, JSON.stringify(recovered));
+  assert.equal(fileReads(5), 2);
+  console.log(`PASS: ${Object.keys(observed).length - 1} todo completion replies, lazy pagination, and recovery from unavailable file pages`);
 } finally {
   writeFileSync(join(evidence, 'observed.json'), JSON.stringify(observed, null, 2));
   await app.cleanup();
