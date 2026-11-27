@@ -7,10 +7,10 @@ import type { McpGrant } from './status.ts';
 
 type Admission = { generation: number; preset: McpOAuthPreset };
 type Failure = McpRefreshFailure | 'unauthorized';
-type RowClient = Admission & {
+type CredentialHistory = Admission & { sent: Set<string> };
+type RowClient = CredentialHistory & {
   sdk: Client;
   ready: Promise<void>;
-  sent: Set<string>;
   fault?: RowFailure;
 };
 
@@ -43,18 +43,23 @@ export function createMcpOAuthRowClient(options: {
   closeSignal: AbortSignal;
 }) {
   const rows = new Map<string, RowClient>();
+  const histories = new Map<string, CredentialHistory>();
   const matching = (current: Admission | undefined, admitted: Admission) =>
     current?.generation === admitted.generation && current.preset === admitted.preset;
 
   function close(id: string, row = rows.get(id), fault?: RowFailure) {
-    if (!row || rows.get(id) !== row) return;
+    if (rows.get(id) !== row) return;
+    if (!fault) {
+      histories.get(id)?.sent.clear();
+      histories.delete(id);
+    }
+    if (!row) return;
     row.fault = fault;
     rows.delete(id);
-    row.sent.clear();
     void row.sdk.close().catch(() => {});
   }
   function closeAll() {
-    for (const id of rows.keys()) close(id);
+    for (const id of histories.keys()) close(id);
   }
   options.closeSignal.addEventListener('abort', closeAll, { once: true });
 
@@ -66,6 +71,8 @@ export function createMcpOAuthRowClient(options: {
   }
 
   function open(id: string, admitted: Admission) {
+    const history = histories.get(id) ?? { ...admitted, sent: new Set<string>() };
+    histories.set(id, history);
     const sdk = new Client({ name: 'HyperNeo', version: '1' });
     const bounded = createMcpFetch({
       preset: admitted.preset,
@@ -100,7 +107,7 @@ export function createMcpOAuthRowClient(options: {
       close(id, row, boundedFailure(error));
       throw error;
     });
-    const row: RowClient = { ...admitted, sdk, ready, sent: new Set() };
+    const row: RowClient = { ...history, sdk, ready };
     rows.set(id, row);
     return row;
   }
@@ -111,7 +118,7 @@ export function createMcpOAuthRowClient(options: {
     project: (result: T, redact: (text: string) => string) => R
   ): Promise<R> {
     const admitted = options.admission(id);
-    const cached = rows.get(id);
+    const cached = histories.get(id);
     if (cached && (!admitted || !matching(cached, admitted))) close(id);
     if (options.closeSignal.aborted || !admitted) throw new RowFailure('reconnect_needed');
     const row = rows.get(id) ?? open(id, admitted);
@@ -145,8 +152,8 @@ export function createMcpOAuthRowClient(options: {
   return {
     close: (id: string) => close(id),
     recordCredential: (id: string, generation: number, value: string) => {
-      const row = rows.get(id);
-      if (row?.generation === generation) row.sent.add(value);
+      const history = histories.get(id);
+      if (history?.generation === generation) history.sent.add(value);
     },
     listTools: (id: string) =>
       request(
