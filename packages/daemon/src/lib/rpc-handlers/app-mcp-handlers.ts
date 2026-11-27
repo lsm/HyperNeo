@@ -23,6 +23,7 @@ import type {
 import { isBuiltInMcpServerName } from '../mcp/built-in-servers.ts';
 import { scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
 import { Logger } from '../logger.ts';
+import { retargetsOAuth } from '../../storage/repositories/app-mcp-server-repository.ts';
 
 const log = new Logger('app-mcp-handlers');
 
@@ -86,16 +87,9 @@ export function registerAppMcpHandlers(messageHub: MessageHub, ctx: AppMcpHandle
     if (updates.name !== undefined) requireUnreservedName(updates.name.trim());
     const current = db.appMcpServers.get(id);
     if (!current) throw new Error(`MCP server not found: ${id}`);
-    if (
-      invoke &&
-      current.auth &&
-      !('auth' in updates) &&
-      (updates.sourceType === undefined || updates.sourceType === 'http') &&
-      'url' in updates &&
-      (updates.url ?? undefined) !== current.url
-    ) {
+    if (invoke && current.auth && retargetsOAuth(current, updates)) {
       const reply = (await invoke(
-        { name: 'mcp.registry.replace', input: { ...updates, id, url: updates.url ?? null } },
+        { name: 'mcp.registry.replace', input: { ...updates, id } },
         context
       )) as { ok: true } | { ok: false; reason: string };
       if (!reply.ok) throw new Error(reply.reason);

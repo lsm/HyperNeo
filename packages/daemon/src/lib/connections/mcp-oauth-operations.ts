@@ -3,6 +3,7 @@ import { auth } from '@modelcontextprotocol/sdk/client/auth.js';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../storage/database.ts';
+import { retargetsOAuth } from '../../storage/repositories/app-mcp-server-repository.ts';
 import { artifactIdentityWrites } from '../../storage/repositories/artifact-file-identity-write.ts';
 import type { CredentialStore } from '../credentials/credential-store.ts';
 import { defineOperation } from '../operations/registry.ts';
@@ -37,9 +38,10 @@ const statusInput = z.strictObject({ id: z.string().min(1) });
 const connectInput = statusInput.extend({ preset: z.string().min(1) });
 const replaceInput = statusInput
   .extend({
-    url: z.string().nullable(),
-    sourceType: z.literal('http').optional(),
+    url: z.string().nullable().optional(),
+    sourceType: z.enum(['stdio', 'sse', 'http']).optional(),
     name: z.string().optional(),
+    auth: z.null().optional(),
   })
   .loose();
 const connectResult = z.union([
@@ -296,10 +298,10 @@ export function createMcpOAuthOperations(
       const row = registry.get(id);
       if (replacement) {
         if (!row?.auth) return { ok: false, reason: 'not_connected' };
-        const { id, url, ...updates } = replacement;
+        const { id, url: _url, auth: _auth, ...updates } = replacement;
         if (updates.name !== undefined) requireUnreservedName(updates.name.trim());
         registry.validateUpdate(id, updates);
-        if (row.url === (url ?? undefined)) {
+        if (!retargetsOAuth(row, replacement)) {
           if (Object.keys(updates).length > 0) await writeReplacement(replacement, 'update');
           return { ok: true };
         }
@@ -335,15 +337,18 @@ export function createMcpOAuthOperations(
   }
 
   async function writeReplacement(
-    { id, url, ...updates }: z.infer<typeof replaceInput>,
+    { id, url, auth, ...fields }: z.infer<typeof replaceInput>,
     method: 'replaceOAuthUrl' | 'update'
   ) {
+    const updates = { ...fields, ...(url === undefined ? {} : { url: url ?? undefined }) };
+    const clearAuth = auth === null || (updates.sourceType ?? 'http') !== 'http';
     await writeToolDefaults(db, {
       mutations: [
-        { repository: 'registry', method, args: [id, { ...updates, url: url ?? undefined }] },
+        method === 'update'
+          ? { repository: 'registry', method, args: [id, updates] }
+          : { repository: 'registry', method, args: [id, updates, clearAuth] },
       ],
-      edits:
-        updates.enabled === undefined ? [] : [{ key: `mcp:${id}`, selected: !!updates.enabled }],
+      edits: fields.enabled === undefined ? [] : [{ key: `mcp:${id}`, selected: !!fields.enabled }],
     });
     changed();
   }
@@ -418,7 +423,8 @@ export function createMcpOAuthOperations(
     }),
     defineOperation({
       name: 'mcp.registry.replace',
-      description: 'Disconnect a remote MCP registry row before changing its URL.',
+      description:
+        'Disconnect a remote MCP registry row before changing its URL, source type or auth.',
       policy,
       inputSchema: replaceInput,
       resultSchema: disconnectResult,
