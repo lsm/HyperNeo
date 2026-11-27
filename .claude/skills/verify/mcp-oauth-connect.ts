@@ -255,6 +255,26 @@ try {
       assert.equal(JSON.parse(denied.content[0].text).code, 'forbidden');
       assert.equal((await readRow(hub))?.url, other.url);
 
+      evidence.step = 'roll back defaults when URL write fails';
+      const raw = app.db.getDatabase();
+      const settings = () => raw.query('SELECT settings FROM global_settings WHERE id = 1').get();
+      const before = settings();
+      raw.exec(`CREATE TRIGGER reject_oauth_url BEFORE UPDATE OF url ON app_mcp_servers
+        WHEN NEW.url IS NOT OLD.url BEGIN SELECT RAISE(ABORT, 'URL write refused'); END`);
+      try {
+        await assert.rejects(hub.request('mcp.registry.update', {
+          id, url: fake.url, name: 'oauth-replacement-failed', enabled: true,
+        }));
+        const row = await readRow(hub);
+        assert.equal(row?.url, other.url);
+        assert.equal(row?.name, 'oauth-retargeted', 'failed URL write must roll back the rename');
+        assert.equal(row?.enabled, false);
+        assert.deepEqual(settings(), before);
+      } finally {
+        raw.exec('DROP TRIGGER reject_oauth_url');
+      }
+      evidence.failedReplacementPreservedDefaults = true;
+
       evidence.rowWrites = {
         agentRefused: true, delayedCallbacksRefused: 1, grantsAfterReplacement: 0,
         requestsToReplacementUrl: 0,
