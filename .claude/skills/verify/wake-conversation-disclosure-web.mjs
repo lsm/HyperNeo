@@ -9,33 +9,34 @@ export async function verifyWakeConversation(page, { port, run, width, phase }) 
   await page.setViewportSize({ width, height: 1000 });
   await page.goto(`http://127.0.0.1:${port}/neo`);
   if (width < 1120) await page.getByRole('button', { name: /^Your work(?:,.*)?$/ }).click();
+  const openScheduled = () => page.getByRole('button', { name: 'Scheduled', exact: true }).click();
+  if (after) await openScheduled();
   const wake = page.locator(`#neo-preview-work-panel [data-wake="${seed.wake}"]`);
   await wake.waitFor();
   const failed = page.locator(`[data-message-ref="${seed.failed}"]`);
-  const toggle = row => row.getByRole('button', { name: /(?:more|less).*./ });
+  const toggle = row => row.locator('summary');
   const result = { phase, width, controls: [] };
   await wake.scrollIntoViewIfNeeded();
   await settle(page);
   await page.screenshot({ path: `${dir}/collapsed-${width}.png`, scale: 'css' });
   await wake.getByText('Publish the guide', { exact: true }).click();
   result.wakeBodyOpens = await wake.getAttribute('open') !== null;
-  if (after) { assert.equal(result.wakeBodyOpens, false); await toggle(wake).focus(); await page.keyboard.press('Enter'); }
+  assert.equal(result.wakeBodyOpens, true);
   assert.equal(await wake.getByRole('link', { name: 'Which language?' }).isVisible(), true);
-  if (after) { result.focusAfterOpen = await page.evaluate(() => document.activeElement?.getAttribute('aria-label')); assert.match(result.focusAfterOpen, /^less/); }
+
   const linkedPublication = seed.additions.find(a => a.kind === 'publication');
   const link = wake.getByRole('link', { name: linkedPublication.label, exact: true });
   assert.equal(await link.getAttribute('href'), `#${await page.locator(`[data-message-ref="${linkedPublication.id}"]`).getAttribute('id')}`);
   if (after) {
     await wake.getByText('Synthetic wake finished.', { exact: true }).click();
-    assert.equal(await toggle(wake).getAttribute('aria-expanded'), 'true');
+    assert.notEqual(await wake.getAttribute('open'), null);
   }
   await settle(page);
   await page.screenshot({ path: `${dir}/wake-expanded-${width}.png`, scale: 'css' });
   if (after) {
-    result.controls.push(await controlBounds(toggle(wake)));
     await toggle(wake).press('Space');
     result.focusAfterClose = await page.evaluate(() => document.activeElement?.getAttribute('aria-label'));
-    assert.match(result.focusAfterClose, /^more/);
+    assert.match(result.focusAfterClose, /^Scheduled check-in:/);
   } else await wake.locator('summary').click();
   assert.equal(await wake.getAttribute('open'), null);
   if (width < 1120) await page.getByRole('button', { name: 'Close work list', exact: true }).click();
@@ -58,6 +59,7 @@ export async function verifyWakeConversation(page, { port, run, width, phase }) 
   if (after) {
     for (const c of result.controls) {assert.match(c.name,/less/); assert(Math.abs(c.parentRight-c.right)<18);}
     if (width < 1120) await page.getByRole('button', { name: /^Your work(?:,.*)?$/ }).click();
+    await openScheduled();
     await toggle(wake).click();
     await wake.getByRole('link', { name: 'Which language?', exact: true }).click();
     const question = seed.additions.find(a => a.kind === 'question');

@@ -9,22 +9,22 @@ export function NeoWorkTabs({
   onSelect,
   trailing,
   search,
-  sticky,
+  sheet,
 }: {
   selected: NeoWorkTab;
   onSelect: (tab: NeoWorkTab) => void;
   trailing?: ComponentChildren;
   search?: ComponentChildren;
-  sticky?: boolean;
+  sheet?: boolean;
 }) {
   return (
     <div
-      class={`flex items-center gap-2 border-b border-line ${
-        sticky ? 'sticky top-0 z-10 -mx-5 bg-[var(--neo-background)] px-5 pt-3' : 'mt-1'
+      class={`neo-work-toolbar flex shrink-0 items-center gap-2 border-b border-line ${
+        sheet ? 'pt-3' : 'mt-1'
       }`}
     >
       {search ? (
-        <div class="-mt-1 flex min-w-0 flex-1 pb-1">{search}</div>
+        <div class="neo-work-toolbar-search -mt-1 flex min-w-0 flex-1 pb-1">{search}</div>
       ) : (
         <nav aria-label={t('live.workTabs')} class="flex min-w-0 flex-1 gap-5" data-work-tabs>
           {TABS.map((tab) => (
@@ -44,7 +44,11 @@ export function NeoWorkTabs({
           ))}
         </nav>
       )}
-      {trailing && <div class="-mt-1 flex shrink-0 items-center gap-1 pb-1">{trailing}</div>}
+      {trailing && (
+        <div class="neo-work-toolbar-actions -mt-1 flex shrink-0 items-center gap-1 pb-1">
+          {trailing}
+        </div>
+      )}
     </div>
   );
 }

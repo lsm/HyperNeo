@@ -14,18 +14,14 @@ afterEach(() => {
 });
 
 describe('neoMessageMenuActions', () => {
-  it('offers nothing for a message with no text, Share only where the browser can share, and Reply only where replies work', () => {
-    expect(neoMessageMenuActions({ hasText: true, canShare: true, canReply: true })).toEqual([
+  it('offers nothing for a message with no text and Reply only where replies work', () => {
+    expect(neoMessageMenuActions({ hasText: true, canReply: true })).toEqual([
       'select',
       'copy',
-      'share',
       'reply',
     ]);
-    expect(neoMessageMenuActions({ hasText: true, canShare: false, canReply: false })).toEqual([
-      'select',
-      'copy',
-    ]);
-    expect(neoMessageMenuActions({ hasText: false, canShare: true, canReply: true })).toEqual([]);
+    expect(neoMessageMenuActions({ hasText: true, canReply: false })).toEqual(['select', 'copy']);
+    expect(neoMessageMenuActions({ hasText: false, canReply: true })).toEqual([]);
   });
 });
 
@@ -135,15 +131,15 @@ describe('useNeoMessageMenu', () => {
 
 describe('requireNeoMessageMenuText', () => {
   it('turns away a message with no text', () => {
-    expect(requireNeoMessageMenuText({ hasText: false, canShare: true, canReply: true })).toEqual({
+    expect(requireNeoMessageMenuText({ hasText: false, canReply: true })).toEqual({
       reason: [],
     });
   });
 });
 
 describe('listNeoMessageMenuActions', () => {
-  it('always offers select and copy, then share and reply when allowed', () => {
-    expect(listNeoMessageMenuActions({ hasText: true, canShare: false, canReply: true })).toEqual([
+  it('always offers select and copy, then reply when allowed', () => {
+    expect(listNeoMessageMenuActions({ hasText: true, canReply: true })).toEqual([
       'select',
       'copy',
       'reply',

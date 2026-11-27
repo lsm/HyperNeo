@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { t } from '../lib/i18n/index.ts';
 
-export type NeoMessageMenuAction = 'select' | 'copy' | 'share' | 'reply';
+export type NeoMessageMenuAction = 'select' | 'copy' | 'reply';
 
-const labels: Record<NeoMessageMenuAction, string> = {
-  select: 'Select text',
-  copy: 'Copy',
-  share: 'Share',
-  reply: 'Reply',
-};
+const labels = {
+  select: 'chat.selectText',
+  copy: 'chat.copyMessage',
+  reply: 'chat.reply',
+} as const;
 
-type MenuInput = { hasText: boolean; canShare: boolean; canReply: boolean };
+type MenuInput = { hasText: boolean; canReply: boolean };
 
 export function requireNeoMessageMenuText(
   input: MenuInput
@@ -19,11 +19,7 @@ export function requireNeoMessageMenuText(
 }
 
 export function listNeoMessageMenuActions(input: MenuInput): NeoMessageMenuAction[] {
-  const optional: [boolean, NeoMessageMenuAction][] = [
-    [input.canShare, 'share'],
-    [input.canReply, 'reply'],
-  ];
-  return ['select', 'copy', ...optional.filter(([on]) => on).map(([, action]) => action)];
+  return input.canReply ? ['select', 'copy', 'reply'] : ['select', 'copy'];
 }
 
 export const neoMessageMenuActions = (superpipe({})('neo-message-menu') as PipelineAPI)
@@ -121,7 +117,7 @@ export function NeoMessageMenu({
     <div
       ref={menu}
       role="menu"
-      aria-label="Message actions"
+      aria-label={t('chat.messageActions')}
       style={{
         left: `${Math.min(at.x, window.innerWidth - 176)}px`,
         top: `${Math.min(at.y, window.innerHeight - 48 * actions.length - 8)}px`,
@@ -152,7 +148,7 @@ export function NeoMessageMenu({
             onPick(action);
           }}
         >
-          {labels[action]}
+          {t(labels[action])}
         </button>
       ))}
     </div>

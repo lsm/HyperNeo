@@ -28,6 +28,8 @@
   --focus-ring: var(--accent);
 
   --neo-background: var(--bg);
+  --neo-drawer-width: min(280px, 86vw);
+  --neo-drawer-bg: light-dark(#f0f1f3, #212224);
   --neo-message-label: var(--fg-muted);
   --neo-message-time: var(--fg-faint);
 
@@ -79,8 +81,31 @@
 }
 
 .neo-scroll {
+  --neo-chat-top-fade: 48px;
+  --neo-chat-top-fade-midpoint: 32px;
+  --neo-chat-top-mask: linear-gradient(
+    transparent,
+    var(--neo-chat-top-fade-midpoint),
+    black var(--neo-chat-top-fade)
+  );
   scrollbar-gutter: stable;
   scroll-padding-bottom: calc(var(--neo-composer-height, 190px) + 24px);
+}
+
+.neo-scroll::before {
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  display: block;
+  height: var(--neo-chat-top-fade);
+  margin-bottom: calc(-1 * var(--neo-chat-top-fade));
+  background: linear-gradient(
+    var(--neo-background),
+    var(--neo-chat-top-fade-midpoint),
+    transparent
+  );
+  pointer-events: none;
+  content: "";
 }
 
 .neo-chat-rail,
@@ -279,6 +304,39 @@
   color: var(--prose-fg);
 }
 
+.neo-message-assistant .neo-message-bubble {
+  background: transparent;
+  border-color: transparent;
+  padding: 0;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .neo-message-quiet-tools {
+    opacity: 0;
+  }
+
+  .neo-message:is(:hover, :focus-within) > .neo-message-quiet-tools {
+    opacity: 1;
+  }
+
+  .neo-message > .neo-message-tools > :is(.copy-button, .neo-message-action) {
+    width: 34px;
+    height: 34px;
+  }
+}
+
+@media (pointer: coarse) {
+  .neo-message-quiet-tools:not(:focus-within) {
+    position: absolute;
+    clip-path: inset(50%);
+  }
+
+  .neo-drawer-close,
+  .neo-drawer-select {
+    min-height: 44px;
+  }
+}
+
 .neo-progress-slot {
   min-height: 24px;
   overflow: hidden;
@@ -430,12 +488,15 @@
     --neo-chat-width: 100%;
   }
   .neo-public-layout.neo-has-scenes {
-    --neo-chat-width: var(--neo-split-chat-width, 58%);
+    --neo-chat-width: calc(100% * var(--neo-chat-ratio));
   }
   .neo-public-layout .neo-chat-rail,
   .neo-public-layout .neo-composer-rail {
     width: 100%;
     margin-inline: auto;
+  }
+  .neo-public-layout:not(.neo-has-scenes) .neo-chat-rail {
+    padding-bottom: calc(var(--neo-composer-height, 190px) + 32px);
   }
   .neo-public-layout.neo-has-scenes .neo-scroll {
     display: grid;
@@ -443,6 +504,9 @@
     grid-template-columns: minmax(0, var(--neo-chat-width)) minmax(0, 1fr);
     overflow: hidden;
     scrollbar-gutter: auto;
+  }
+  .neo-public-layout.neo-has-scenes .neo-scroll::before {
+    display: none;
   }
   .neo-public-layout.neo-has-scenes .neo-chat-rail {
     grid-column: 1;
@@ -456,6 +520,7 @@
     padding: 68px 24px calc(var(--neo-composer-height, 190px) + 32px);
     scrollbar-gutter: stable;
     scroll-padding-bottom: calc(var(--neo-composer-height, 190px) + 24px);
+    mask-image: var(--neo-chat-top-mask);
   }
   .neo-public-layout.neo-has-scenes .neo-scene-list {
     min-width: 0;
@@ -498,7 +563,7 @@
 .neo-drawer-backdrop {
   position: absolute;
   inset: 0;
-  background: rgb(0 0 0 / 0.4);
+  background: rgb(0 0 0 / 0.28);
 }
 
 .neo-drawer {
@@ -506,15 +571,100 @@
   top: 0;
   bottom: 0;
   left: 0;
-  width: 360px;
-  max-width: 86vw;
+  width: var(--neo-drawer-width);
+  border-right: 1px solid var(--line);
   overflow-y: auto;
-  padding: calc(env(safe-area-inset-top) + 20px) 20px calc(env(safe-area-inset-bottom) + 20px);
-  background: var(--surface);
+  padding: calc(env(safe-area-inset-top) + 16px) 12px calc(env(safe-area-inset-bottom) + 16px);
+  background: var(--neo-drawer-bg);
   color: var(--fg, inherit);
   box-shadow: 0 0 32px rgb(0 0 0 / 0.25);
   touch-action: pan-y;
   outline: none;
+}
+
+.neo-drawer-heading,
+.neo-drawer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.neo-drawer-heading {
+  min-height: 36px;
+  margin-bottom: 8px;
+  padding-inline: 8px;
+  color: var(--fg-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.neo-drawer-close {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  color: var(--fg-muted);
+  border-radius: 8px;
+}
+
+.neo-drawer-close:hover {
+  background: var(--neo-action-hover);
+  color: var(--fg);
+}
+
+.neo-drawer-section {
+  font-size: 0.875rem;
+}
+
+.neo-drawer-row {
+  min-height: 38px;
+  padding-inline: 8px;
+  border-radius: 6px;
+}
+
+.neo-drawer-row:where(label, summary):hover {
+  background: var(--neo-action-hover);
+}
+
+.neo-drawer-section summary {
+  display: list-item;
+  align-content: center;
+  margin-top: 12px;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.neo-drawer-select {
+  max-width: 62%;
+  height: 32px;
+  appearance: auto;
+  padding-inline: 6px;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.neo-drawer-select option {
+  background: var(--neo-drawer-bg);
+  color: var(--fg);
+}
+
+.neo-drawer-select:disabled {
+  cursor: default;
+}
+
+.neo-drawer-hint {
+  padding: 0 8px 6px;
+  color: var(--fg-muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.neo-drawer-desktop-icon,
+.neo-drawer-drag-region {
+  display: none;
 }
 
 .neo-drawer-action {
@@ -685,6 +835,9 @@
   .neo-shell.neo-preview-focus > .neo-scroll {
     display: contents;
   }
+  .neo-shell.neo-preview-focus > .neo-scroll::before {
+    display: none;
+  }
   .neo-shell.neo-preview-focus .neo-chat-rail {
     grid-area: 1 / 1;
     width: 100%;
@@ -696,6 +849,7 @@
     overflow-y: auto;
     scrollbar-gutter: stable;
     padding: 76px 24px calc(var(--neo-composer-height, 190px) + 32px);
+    mask-image: var(--neo-chat-top-mask);
   }
   .neo-shell.neo-preview-focus .neo-scene-list {
     grid-area: 1 / 2;
@@ -817,7 +971,7 @@
 }
 
 .neo-work-resizer {
-  top: 68px;
+  top: var(--neo-desktop-toolbar-height, 60px);
   bottom: 0;
   right: auto;
   left: var(--neo-chat-width);
@@ -978,4 +1132,50 @@
 .neo-question-time {
   margin-top: 0;
   margin-bottom: 0.5rem;
+}
+
+.neo-shell .neo-scene-list.neo-with-work-tabs:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  scrollbar-gutter: auto;
+  padding-bottom: 0;
+}
+
+.neo-work-body {
+  --neo-work-scroll-thumb: color-mix(in srgb, var(--fg) 23%, transparent);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin-inline-end: -8px;
+  padding-inline-end: 8px;
+  padding-bottom: 32px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--neo-work-scroll-thumb) transparent;
+}
+
+@supports selector(::-webkit-scrollbar) {
+  .neo-work-body {
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+  }
+
+  .neo-work-body::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .neo-work-body::-webkit-scrollbar-track {
+    margin-block: 5px;
+    background: transparent;
+  }
+
+  .neo-work-body::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: 8px;
+    background: var(--neo-work-scroll-thumb) padding-box;
+  }
+
+  .neo-work-body::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--fg) 42%, transparent) padding-box;
+  }
 }

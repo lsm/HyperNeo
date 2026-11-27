@@ -678,8 +678,10 @@ describe('NeoLive durable conversation activation', () => {
         expect(message.closest('details:not([open])')).toBeNull();
         expect(message.getBoundingClientRect().height).toBe(100);
         expect(container.querySelector('.neo-chat-rail [data-wake]')).toBeNull();
-        expect(container.querySelector('#neo-preview-work-panel [data-wake]')).toBeTruthy();
+        expect(container.querySelector('#neo-preview-work-panel [data-wake]')).toBeNull();
         expect(main.scrollTop).toBe(200);
+        fireEvent.click(screen.getByText('Scheduled', { selector: 'button' }));
+        expect(container.querySelector('#neo-preview-work-panel [data-wake]')).toBeTruthy();
       } finally {
         rect.mockRestore();
       }
