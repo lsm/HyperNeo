@@ -12,13 +12,23 @@ import type { SDKMessage } from '@hyperneo/shared/sdk';
 
 const createTestDirectory = testDirectories();
 
-test.each(['ordinary', 'neo', 'opus1m', 'opus-native', 'neo45', 'daemon', 'worker'] as const)(
+test.each([
+  'ordinary',
+  'neo',
+  'side',
+  'opus1m',
+  'opus-native',
+  'neo45',
+  'daemon',
+  'worker',
+] as const)(
   '%s compaction keeps queued inputs',
   async (kind) => {
     const daemon = kind === 'daemon';
     const worker = kind === 'worker';
     const manual = daemon || worker;
-    const neo = kind === 'neo' || kind === 'neo45';
+    const side = kind === 'side';
+    const neo = kind === 'neo' || kind === 'neo45' || side;
     const oneM = kind.startsWith('opus') || kind === 'neo45';
     const native = kind === 'opus-native';
     const model = oneM ? 'claude-opus-5-5' : 'claude-haiku-4-5-20251001';
@@ -85,7 +95,14 @@ test.each(['ordinary', 'neo', 'opus1m', 'opus-native', 'neo45', 'daemon', 'worke
       let content: Array<Record<string, unknown>>;
       let usage = 1000;
       if (active) {
-        turn += 1;
+        const history = JSON.stringify(body.messages);
+        turn = manual
+          ? turn + 1
+          : history.includes('compact-read-2')
+            ? 3
+            : history.includes('compact-read-1')
+              ? 2
+              : 1;
         if (turn === 2) {
           held = true;
           await gate;
@@ -321,6 +338,15 @@ test.each(['ordinary', 'neo', 'opus1m', 'opus-native', 'neo45', 'daemon', 'worke
         });
         return { messageId: requestId };
       };
+      if (side)
+        await fetch(`http://127.0.0.1:${address.port}/v1/messages`, {
+          method: 'POST',
+          body: JSON.stringify({
+            model,
+            messages: [{ role: 'user', content: 'Side request' }],
+            tools: [{ name: 'Read' }],
+          }),
+        });
       const accepted = [
         await send('SDK_COMPACTION_PROOF: read the synthetic probe twice and finish.'),
       ];
