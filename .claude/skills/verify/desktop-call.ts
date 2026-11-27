@@ -47,6 +47,7 @@ const otherApp = 'com.apple.TextEdit';
 const toolPrefix = 'mcp__desktop__';
 const modelTools = ['report', ...catalog.map(({ name }) => name)].map(name => toolPrefix + name);
 const reportText = 'Calculator observation recorded.';
+const previousReport = 'Calculator was open. The previous worker stopped before pressing a key.';
 const toolCalls = [
   { name: 'get_window_state', input: { pid: 123, window_id: 7, timeout_ms: 1000, since: 'latest' } },
   { name: 'launch_app', input: { bundle_id: otherApp } },
@@ -219,14 +220,24 @@ try {
     assert(updated.ok, JSON.stringify(updated));
   }
   secretObservation = true;
+  const target = { verb: 'start', adapter: 'hyperneo', ...modelConfig, place: { machine: hostname(), folder: run, name: 'Synthetic workspace' } };
   const added = await fromNeo('neo.todo.add', {
     askId: opened.ask.id, title: 'Identify the Calculator window', after: [],
     check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'evidence', 'complete') } },
-    instruction: longBrief ? instruction + '\n\n' + 'Check the displayed value. '.repeat(1_000) : instruction,
-    target: { verb: 'start', adapter: 'hyperneo', ...modelConfig, place: { machine: hostname(), folder: run, name: 'Synthetic workspace' } },
+    instruction: longBrief ? null : instruction,
+    target: longBrief ? undefined : target,
     desktopApps: [bundleId],
   });
   assert(added.ok && added.todo, JSON.stringify(added));
+  if (longBrief) {
+    sql.prepare('UPDATE neo_todos SET report = ? WHERE id = ?').run(previousReport, added.todo.id);
+    const started = await fromNeo('neo.todo.edit', {
+      todoId: added.todo.id,
+      instruction: instruction + '\n\n' + 'Check the displayed value. '.repeat(1_000),
+      target,
+    });
+    assert(started.ok, JSON.stringify(started));
+  }
   const ref = new NeoTodoSessionRepository(sql).readRef(added.todo.id);
   assert(ref, JSON.stringify(added));
   const templated = await app.sessionManager.getSessionAsync(ref.id);
@@ -275,7 +286,11 @@ try {
     assert.deepEqual(preferences.payment, { value: 'fillStop', configured: true });
     assert.deepEqual(preferences.humanStep, { value: 'computer', configured: false });
     assert(brief.includes('Check the displayed value.'));
-    console.log(`long desktop brief PASS preferences=${Object.keys(preferences).length}`);
+    assert.deepEqual({
+      completion: brief.includes(`Finish when ${added.todo.doneWhen}`),
+      previousReport: brief.includes(`Latest worker report:\n${previousReport}`),
+    }, { completion: true, previousReport: true });
+    console.log(`long desktop brief PASS preferences=${Object.keys(preferences).length} completion=1 previous_report=1`);
   }
   const expectedDesktopTools = ['report', ...catalog.map(({ name }) => name)]
     .map(name => 'mcp__desktop__' + name).sort();

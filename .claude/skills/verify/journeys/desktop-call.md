@@ -38,9 +38,10 @@ The capture normalizes the generated IDs and fixture directory and omits the
 SDK's environment disclosure. The remaining task brief must match byte for byte.
 
 Pass `--long-brief` to the helper to send an oversized task with a configured
-payment preference. The provider must receive all six delegation preferences
-as valid JSON and still receive the start of the task. Pass prints
-`long desktop brief PASS preferences=6`.
+payment preference and a seeded previous worker report. The provider must
+receive all six preferences as valid JSON, the completion condition, the
+previous report, and the start of the task. Pass prints
+`long desktop brief PASS preferences=6 completion=1 previous_report=1`.
 
 Pass prints `desktop.call journey PASS host_requests=11 no_scope_refused=1 sibling_isolated=1 sibling_own_scope=1 host_busy=1 host_timeout=1 host_locked=1 resumed=1 initial_audit_rows=2
 blocked_allowed=1 pending_allowed=1 current_preferred=1 ambiguous_refused=1 blocked_with_queued_allowed=1 finished_refused=1 driver_error_body=1 refused_paths=5 described_tools=12`: operations.describe lists every catalog tool.
