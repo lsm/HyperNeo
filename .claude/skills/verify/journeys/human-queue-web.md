@@ -44,6 +44,13 @@ fallback for another English title. Repeat with `VERIFY_THEME=light` and
 The scoped RPC receipt and read-only SQLite output confirm the missing card
 page entry and the original stored pick and project title.
 
+Use `waiting-only` to check that Waiting on you lists only waiting cards. The
+seed adds one finished ask. Waiting on you must show no held card, no uncovered
+step and no scene section. In progress must still show the uncovered step and
+Recent outcomes with the finished ask. Run it on the base, where it exits 1 with
+the leaks it saw, and on the fix, where it exits 0. Compare
+`waiting-only-<theme>.png` with `waiting-only-progress-<theme>.png`.
+
 Use `late-reference` to open a chat link to a held question while its item is
 missing from the browser's queue snapshot. A second hold refreshes the queue.
 Verify that the Inbox clears the conflicting topic filter, selects Held, and

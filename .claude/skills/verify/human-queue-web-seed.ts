@@ -83,6 +83,10 @@ try {
     card('hotel-card', 'trip', 'Book the hotel by the station for three nights?', 'hotel');
     card('tax-card', 'tax', 'File jointly this year?', 'receipts');
     assert(store.holdQuestion('trip-card', true, crypto.randomUUID(), now), 'the seed holds one card');
+    if (phase === 'waiting-only') {
+      ask('archive', 'Synthetic filed archive', 'Finance');
+      store.settleAsk(store.getAsk('archive')!, 'done', 'Filed', now);
+    }
     if (phase === 'late-reference') {
       const conversationId = projects.conversationId();
       assert(conversationId);

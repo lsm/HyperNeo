@@ -10,7 +10,11 @@ import {
 } from './neo-work-reference.ts';
 import type { NeoCardReply } from '@hyperneo/shared/types/neo-publication';
 import type { NeoAskEntry, NeoQuestionEntry } from '@hyperneo/shared/types/neo-ask';
-import type { NeoAskHistoryPage, NeoResult } from '@hyperneo/shared/types/neo-snapshot';
+import type {
+  NeoAskHistoryPage,
+  NeoHumanQueueState,
+  NeoResult,
+} from '@hyperneo/shared/types/neo-snapshot';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { NeoWakeRow } from './NeoWakeRow.tsx';
 import { NeoGoals } from './NeoGoals.tsx';
@@ -550,6 +554,7 @@ export function NeoLive() {
   });
   const attentionCount = view?.needsYou ?? 0;
   const fullQueue = workQuery.trim() ? undefined : inboxQueue;
+  const [queueState, setQueueState] = useState<NeoHumanQueueState>('waiting');
   const outsideQueue =
     fullQueue && cardTarget && !neoHumanQueueHolds(fullQueue, cardTarget) ? cardTarget.askId : null;
   const withoutQueued = (entry: NeoAskEntry): NeoAskEntry =>
@@ -1349,6 +1354,7 @@ export function NeoLive() {
                 {fullQueue && (
                   <NeoHumanQueue
                     queue={fullQueue}
+                    onState={setQueueState}
                     entries={workEntries}
                     disabled={!connected || !!neo.busyWork}
                     onAnswer={(questionId, answer) => void neo.answerQuestion(questionId, answer)}
@@ -1409,10 +1415,11 @@ export function NeoLive() {
                       )
                         .filter(
                           (entry) =>
-                            !fullQueue ||
-                            group.key === 'outcomes' ||
+                            !fullQueue?.items.length ||
                             entry.ask.id === outsideQueue ||
-                            !fullQueue.counts[entry.ask.id]
+                            (queueState === 'progress' &&
+                              (group.key === 'outcomes' ||
+                                (group.key === 'running' && !fullQueue.counts[entry.ask.id])))
                         )
                         .map(withoutQueued),
                     }))

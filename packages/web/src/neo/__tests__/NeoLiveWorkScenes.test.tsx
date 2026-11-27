@@ -719,11 +719,7 @@ describe('Neo public work scenes', () => {
         )
       );
     }
-    expect(seen).toEqual([
-      ...['a100', 'a10', 'a-held', 'a-step', 'b80'],
-      ...['a100', 'a10', 'a-held', 'a-step'],
-      ...['a100', 'a10', 'a-held', 'a-step', 'run-step'],
-    ]);
+    expect(seen).toEqual([...['a100', 'a10', 'b80'], 'a-held', ...['a-step', 'run-step']]);
   });
 
   it('shows under Waiting on you only the cards that wait on the human', () => {
@@ -1327,17 +1323,16 @@ describe('card reply notice navigation', () => {
           },
         };
       });
-      const child = document.querySelector('article[data-ask="hotel-ask"]') as HTMLElement;
-      expect(
-        within(child).getByRole('button', { name: 'Step actions: Fictional hotel' })
-      ).toBeTruthy();
       if (searching) {
         fireEvent.click(screen.getByRole('button', { name: 'Search work', exact: true }));
         fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'Fictional' } });
       }
       fireEvent.click(screen.getByRole('button', { name: /Quoted hotel target/ }));
       await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-todo-hotel'));
-      expect(document.activeElement?.closest('[data-ask="hotel-ask"]')).toBeTruthy();
+      const child = document.activeElement?.closest('[data-ask="hotel-ask"]') as HTMLElement;
+      expect(
+        within(child).getByRole('button', { name: 'Step actions: Fictional hotel' })
+      ).toBeTruthy();
       expect(document.querySelectorAll('[id="neo-ref-todo-hotel"]')).toHaveLength(1);
     }
   );
@@ -1540,8 +1535,10 @@ describe('card reply notice navigation', () => {
         } as never,
       };
     });
-    expect(document.querySelector('[data-ask="empty"]')).toBeTruthy();
+    expect(document.querySelector('[data-ask="empty"]')).toBeNull();
     expect(document.querySelector('article[data-ask="tax"]')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^In progress/ }));
+    expect(document.querySelector('[data-ask="empty"]')).toBeTruthy();
   });
 
   it('ignores a saved topic and makes topic badges read-only when queue filters are shown', () => {
