@@ -409,7 +409,7 @@ if (phase === 'waiting-only') {
 }
 if (phase === 'phone-parity') {
   const wrong = observations.filter((seen) =>
-    JSON.stringify(seen.chips) !== JSON.stringify(['等你 0', '已搁置 0', '进行中 0', '所有工作 5']) ||
+    JSON.stringify(seen.chips) !== JSON.stringify(['等你 0', '已搁置 1', '进行中 0', '所有工作 6']) ||
     seen.progress !== 0 || !seen.allWork || !seen.card?.includes('· 2 个待办') ||
     !seen.older.offered || seen.older.after <= seen.older.before);
   assert.deepEqual(wrong, [], `The web Inbox differs from the phone: ${JSON.stringify(wrong)}`);
@@ -419,4 +419,4 @@ if (phase === 'topic-before') {
     assert.deepEqual(savedTopic, { state: 'In progress 1', badgeDisabled: false });
   assert.fail(`${observations.length} themes: the saved topic silently narrowed In progress to 1`);
 }
-console.log(`PASS: ${observations.length} themes, ${phase === 'late-reference' ? 'late queue reference selects Held and receives focus' : phase === 'waiting-only' ? 'Waiting on you lists only waiting cards; In progress keeps recent outcomes' : phase === 'short-topics' ? 'localized topic chips, overflow and grouped queue cards' : 'state and topic filters, Hold and Take back, and centered attachment hover'}`);
+console.log(`PASS: ${observations.length} themes, ${phase === 'late-reference' ? 'late queue reference selects Held and receives focus' : phase === 'waiting-only' ? 'Waiting on you lists only waiting cards; In progress keeps recent outcomes' : phase === 'short-topics' ? 'localized topic chips, overflow and grouped queue cards' : phase === 'phone-parity' ? 'phone tab counts, unfinished todo count and older outcomes' : 'state and topic filters, Hold and Take back, and centered attachment hover'}`);

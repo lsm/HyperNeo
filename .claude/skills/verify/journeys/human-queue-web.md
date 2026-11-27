@@ -56,3 +56,9 @@ missing from the browser's queue snapshot. A second hold refreshes the queue.
 Verify that the Inbox clears the conflicting topic filter, selects Held, and
 focuses the linked question when it arrives. The browser captures
 `late-reference.png` and records the selected state in `human-queue-web.json`.
+
+Use `phone-parity` for the phone's tab rules in the Chinese Inbox. The seed has
+stalled unstarted todos, a held card, a 28-todo checklist with 26 done and 12
+filed outcomes. It requires `等你 0 · 已搁置 1 · 进行中 0 · 所有工作 6`, the
+checklist card at `2 个待办`, and 显示更早的结果 under 所有工作 adding filed
+outcomes. Before the fix it exits 1 with the stalled todos under 等你.

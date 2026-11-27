@@ -73,6 +73,9 @@ try {
       store.addTodo(id, askId, { title, doneWhen: 'Observed', check: null, instruction: 'Synthetic', named: null, approvedAt: at }, at);
     ask('research', 'Synthetic research database decision', 'Research');
     step('research-step', 'research', 'Pick a research database');
+    step('research-choice', 'research', 'Choose the database vendor');
+    card('research-card', 'research', 'Use the hosted database?', 'research-choice');
+    assert(store.holdQuestion('research-card', true, crypto.randomUUID(), now));
     ask('reminders', 'Synthetic future reminders', 'Home');
     step('reminder-19', 'reminders', 'Remind me on Dec 19');
     step('reminder-22', 'reminders', 'Remind me on Dec 22');
