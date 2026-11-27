@@ -2,12 +2,12 @@ import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import type { WorkRef } from '../../../drivers/types.ts';
 import type { WorkTurnMention } from '../../../../storage/repositories/work-turn-repository.ts';
+import { type TurnTodoFacts, turnKeyTodos } from '../../turn-todo.ts';
 import { codingPrKey } from './pr-key.ts';
 
 export type CodingTurnBind = { todo: string; boundAt: number; finishedAt: number | null };
 export type CodingTurn = WorkTurnMention & { bound?: readonly CodingTurnBind[] };
-export type CodingTurnTodos = Readonly<Record<string, string>>;
-export type CodingSessionTodos = Readonly<Record<string, CodingTurnTodos>>;
+export type CodingSessionTodos = Readonly<Record<string, TurnTodoFacts>>;
 export type CodingTurnMentions = { turns: readonly CodingTurn[]; todos: CodingSessionTodos };
 export type CodingTurnOwner =
   | { state: 'placed'; session: WorkRef; todo: string | null }
@@ -20,6 +20,7 @@ export type CodingTurnProducer =
   | { state: 'none' };
 
 const ABORTED = /abort|interrupt/;
+const NO_FACTS: TurnTodoFacts = { keys: {}, starter: null, roles: {} };
 
 export const codingNamedPrKeys = (todo: Pick<NeoTodo, 'check'>) => {
   const urls =
@@ -28,10 +29,6 @@ export const codingNamedPrKeys = (todo: Pick<NeoTodo, 'check'>) => {
     typeof url === 'string' ? (codingPrKey(url) ?? []) : []
   );
 };
-
-const todosIn = (turn: Pick<CodingTurn, 'id' | 'inputs'>, todos: CodingTurnTodos) => [
-  ...new Set([turn.id, ...turn.inputs].flatMap((id) => todos[id] ?? [])),
-];
 
 const bindsOf = (turn: CodingTurn) =>
   (turn.bound ?? []).filter(
@@ -42,20 +39,26 @@ const bindsOf = (turn: CodingTurn) =>
 const startedAfterBind = (turn: CodingTurn) =>
   turn.inputs.length > 0 && bindsOf(turn).every(({ boundAt }) => turn.startedAt > boundAt);
 
-export function codingTurnTodos(turn: CodingTurn, todos: CodingTurnTodos): string[] {
-  const own = todosIn(turn, todos);
-  if (own.length) return own;
+const single = (todos: readonly string[]) => (todos.length === 1 ? [...todos] : []);
+
+export function codingTurnTodos(turn: CodingTurn, facts: TurnTodoFacts): string[] {
+  const own = turnKeyTodos(turn, facts.keys);
+  if (own.length) return single(own);
   if (!turn.inputs.length && turn.previous && ABORTED.test(turn.previous.ended)) {
-    const continued = todosIn(turn.previous, todos);
-    if (continued.length) return continued;
+    const continued = turnKeyTodos(turn.previous, facts.keys);
+    if (continued.length) return single(continued);
   }
-  return startedAfterBind(turn) ? [] : bindsOf(turn).map(({ todo }) => todo);
+  const binds = bindsOf(turn);
+  if (!binds.length) return facts.starter ? [facts.starter] : [];
+  return startedAfterBind(turn) ? [] : binds.map(({ todo }) => todo);
 }
 
-export function codingTurnBoundUnknown(turn: CodingTurn, todos: CodingTurnTodos): boolean {
+export function codingTurnBoundUnknown(turn: CodingTurn, facts: TurnTodoFacts): boolean {
   const binds = bindsOf(turn);
   return (
-    binds.length > 0 && !todosIn(turn, todos).length && (startedAfterBind(turn) || binds.length > 1)
+    binds.length > 0 &&
+    !turnKeyTodos(turn, facts.keys).length &&
+    (startedAfterBind(turn) || binds.length > 1)
   );
 }
 
@@ -91,14 +94,10 @@ export function planCodingTurnOwner(
   const producer = planCodingTurnProducer(pr, turns);
   if (producer.state !== 'placed') return producer;
   const placing = producer.turns;
-  const sessionTodos = (turn: CodingTurn) => todos[codingTurnSessionKey(turn.ref)] ?? {};
+  const sessionTodos = (turn: CodingTurn) => todos[codingTurnSessionKey(turn.ref)] ?? NO_FACTS;
   if (placing.some((turn) => codingTurnBoundUnknown(turn, sessionTodos(turn))))
     return { state: 'unknown' };
-  const owners = [
-    ...new Set(
-      placing.flatMap((turn) => codingTurnTodos(turn, todos[codingTurnSessionKey(turn.ref)] ?? {}))
-    ),
-  ];
+  const owners = [...new Set(placing.flatMap((turn) => codingTurnTodos(turn, sessionTodos(turn))))];
   return { state: 'placed', session: placing[0].ref, todo: owners.length === 1 ? owners[0] : null };
 }
 

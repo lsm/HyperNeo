@@ -109,6 +109,7 @@ const DriverReplySchema = z.discriminatedUnion('ok', [
     reason: z.string(),
     detail: z.string(),
     clientMessageId: z.string().min(1).optional(),
+    notSent: z.literal(true).optional(),
   }),
 ]);
 
@@ -187,7 +188,7 @@ export function readDriverOutcome(
       receipt?: WorkDelivery['receipt'];
       delivery?: WorkDelivery;
     }
-  | { failure: string; reason?: string; clientMessageId?: string } {
+  | { failure: string; reason?: string; clientMessageId?: string; notSent?: true } {
   if (outcome.kind === 'failed') return { failure: outcome.message };
   const reply = DriverReplySchema.safeParse(outcome.value);
   if (!reply.success) return { failure: 'The work operation returned an unusable reply.' };
@@ -196,26 +197,39 @@ export function readDriverOutcome(
       failure: `${reply.data.reason}: ${reply.data.detail}`,
       reason: reply.data.reason,
       ...(reply.data.clientMessageId ? { clientMessageId: reply.data.clientMessageId } : {}),
+      ...(reply.data.notSent ? { notSent: true as const } : {}),
     };
   if ('ref' in reply.data.value) {
-    const { ref, link, model, effort, lastActivityAt, receipt, status, watchHint, startedTurnId } =
-      reply.data.value as {
-        ref: WorkRef;
-        link?: unknown;
-        model?: unknown;
-        effort?: unknown;
-        lastActivityAt?: unknown;
-        receipt?: unknown;
-        status?: unknown;
-        watchHint?: unknown;
-        startedTurnId?: unknown;
-      };
+    const {
+      ref,
+      link,
+      model,
+      effort,
+      lastActivityAt,
+      receipt,
+      status,
+      watchHint,
+      startedTurnId,
+      delivery,
+    } = reply.data.value as {
+      ref: WorkRef;
+      link?: unknown;
+      model?: unknown;
+      effort?: unknown;
+      lastActivityAt?: unknown;
+      receipt?: unknown;
+      status?: unknown;
+      watchHint?: unknown;
+      startedTurnId?: unknown;
+      delivery?: unknown;
+    };
     if (status === 'needs_you' && receipt === undefined)
       return {
         failure: typeof watchHint === 'string' ? watchHint : 'The new session needs the human.',
         reason: 'needs_you',
       };
     const started = WorkInputReceiptSchema.safeParse(receipt);
+    const reused = WorkDeliverySchema.safeParse(delivery);
     return {
       ref,
       ...(typeof link === 'string' ? { link } : {}),
@@ -225,7 +239,9 @@ export function readDriverOutcome(
       ...(started.success ? { receipt: started.data } : {}),
       ...(typeof startedTurnId === 'string' && startedTurnId
         ? { delivery: { delivered: true, startedTurnId } }
-        : {}),
+        : reused.success
+          ? { delivery: reused.data }
+          : {}),
     };
   }
   if (target.verb !== 'send') return { failure: 'work.start returned no reference.' };
