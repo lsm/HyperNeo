@@ -336,6 +336,20 @@ describe('OAP daemon runtime', () => {
     expect(host.operations.filter(({ op }) => op === 'open')).toHaveLength(2);
   });
 
+  test('deleting a session after hub restart does not close it on the retired hub', async () => {
+    const host = fixture();
+    const events = createDaemonInternalEventBus();
+    const runtime = createOxapRuntime(host.engine, options, events);
+    const first = runtime(session('session-a', '/synthetic/workspace'));
+    await first.hub;
+    host.isCurrentHub.mockReturnValue(false);
+
+    await events.publish('session.deleted', { sessionId: 'session-a' });
+
+    expect(host.operations.filter(({ op }) => op === 'close')).toHaveLength(0);
+    await expect(first.hub).rejects.toThrow(/deleted/i);
+  });
+
   test('deletion during session open retires the attempt and closes the opened session', async () => {
     const host = fixture();
     const events = createDaemonInternalEventBus();
