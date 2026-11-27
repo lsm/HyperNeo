@@ -353,9 +353,10 @@ export function createMcpOAuthOperations(
     id,
   }: z.infer<typeof statusInput>): Promise<z.infer<typeof statusResult>> {
     const row = registry.get(id);
-    const preset = (row?.auth ? [row.auth.preset] : Object.keys(testPresets)).find(
-      (name) => row?.sourceType === 'http' && presetFor(name)?.preset.url === row.url
-    );
+    const preset = (row?.auth ? [row.auth.preset] : Object.keys(testPresets)).find((name) => {
+      const found = presetFor(name);
+      return row?.sourceType === 'http' && !!found && found.preset.url === row.url;
+    });
     const disconnected: z.infer<typeof statusResult> = {
       health: 'disconnected',
       scopes: [],
