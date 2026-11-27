@@ -11,6 +11,7 @@ import { writeToolDefaults } from '../tools/write-tool-defaults.ts';
 import { startLoopbackLogin } from './loopback-login.ts';
 import type { McpOAuthPreset, McpRefreshFailure } from './mcp-fetch.ts';
 import { createMcpOAuthProvider } from './mcp-oauth-provider.ts';
+import { createMcpOAuthRowClient } from './mcp-oauth-row-client.ts';
 import { ConnectionVault } from './vault.ts';
 
 const loopback = 'http://127.0.0.1:18347';
@@ -69,9 +70,25 @@ export function createMcpOAuthOperations(
   >();
   const retries = new Map<string, { until: number; reason: McpRefreshFailure }>();
   const writes = new Map<string, Promise<unknown>>();
+  const disconnecting = new Set<string>();
   const { appMcpServers: registry, gateway } = db;
   const vault = async () =>
     new ConnectionVault(store, await gateway.call(artifactIdentityWrites, 'ensure', randomUUID()));
+
+  function admission(id: string) {
+    if (disconnecting.has(id)) return;
+    const row = registry.get(id);
+    if (!row?.auth?.active || row.sourceType !== 'http') return;
+    const preset = presetFor(row.auth.preset)?.preset;
+    if (preset && row.url === preset.url)
+      return { auth: row.auth, generation: row.auth.generation, preset };
+  }
+  const client = createMcpOAuthRowClient({
+    admission,
+    grant: async (id) => (await vault()).readMcp(id),
+    refresh,
+    closeSignal: gateway.closeSignal,
+  });
 
   function serial<T>(id: string, write: () => Promise<T> | T): Promise<T> {
     const result = (writes.get(id) ?? Promise.resolve()).then(write, write);
@@ -159,6 +176,7 @@ export function createMcpOAuthOperations(
             await commit();
             signal.throwIfAborted();
             registry.setAuth(id, { ...previous, generation: generation + 1, active: true });
+            client.close(id);
             changed();
             return { ok: true } as const;
           });
@@ -175,21 +193,14 @@ export function createMcpOAuthOperations(
   const connect = ({ id, preset }: z.infer<typeof connectInput>) => openConsent(id, preset);
   const reconnect = ({ id }: z.infer<typeof statusInput>) => openConsent(id);
 
-  async function runRefresh(id: string, signal: AbortSignal): Promise<RefreshResult> {
-    const row = registry.get(id);
-    const previous = row?.auth;
-    const selection = presetFor(previous?.preset);
-    if (
-      signal.aborted ||
-      !previous?.active ||
-      !selection ||
-      row?.sourceType !== 'http' ||
-      row.url !== selection.preset.url
-    )
-      return { ok: false, reason: 'reconnect_needed' };
-
-    const { preset } = selection;
-    const generation = previous.generation;
+  async function runRefresh(
+    id: string,
+    signal: AbortSignal,
+    rejectedToken?: string
+  ): Promise<RefreshResult> {
+    const admitted = admission(id);
+    if (signal.aborted || !admitted) return { ok: false, reason: 'reconnect_needed' };
+    const { auth: previous, generation, preset } = admitted;
     const current = () => {
       const auth = registry.get(id)?.auth;
       return !signal.aborted && auth?.active && auth.generation === generation;
@@ -216,8 +227,10 @@ export function createMcpOAuthOperations(
             await store.replaceMcp(id, grant);
           }),
       });
-      if (!(await attempt.provider.tokens())?.refresh_token || !current())
-        return { ok: false, reason: 'reconnect_needed' };
+      const tokens = await attempt.provider.tokens();
+      if (!tokens || !current()) return { ok: false, reason: 'reconnect_needed' };
+      if (rejectedToken !== undefined && tokens.access_token !== rejectedToken) return { ok: true };
+      if (!tokens.refresh_token) return { ok: false, reason: 'reconnect_needed' };
       const result = await auth(
         {
           ...attempt.provider,
@@ -237,6 +250,7 @@ export function createMcpOAuthOperations(
       if (!current()) return { ok: false, reason: 'reconnect_needed' };
       if (reason === 'reconnect_needed') {
         registry.setAuth(id, { ...previous, generation: generation + 1 });
+        client.close(id);
         changed();
         try {
           await (await vault()).removeMcp(id);
@@ -248,12 +262,12 @@ export function createMcpOAuthOperations(
     });
   }
 
-  function refresh(id: string) {
+  function refresh(id: string, rejectedToken?: string) {
     const active = refreshes.get(id);
     if (active && !active.controller.signal.aborted) return active.result;
     const controller = new AbortController();
     const signal = AbortSignal.any([gateway.closeSignal, controller.signal]);
-    const result = runRefresh(id, signal).catch(
+    const result = runRefresh(id, signal, rejectedToken).catch(
       (): RefreshResult => ({ ok: false, reason: 'request_failed' })
     );
     refreshes.set(id, { controller, result });
@@ -266,10 +280,13 @@ export function createMcpOAuthOperations(
   function retire({ id }: z.infer<typeof statusInput>, replacement?: z.infer<typeof replaceInput>) {
     const active = pending.get(id);
     if (!replacement) {
+      disconnecting.add(id);
+      client.close(id);
       active?.controller.abort();
       refreshes.get(id)?.controller.abort();
     }
     return serial(id, async (): Promise<z.infer<typeof disconnectResult>> => {
+      if (!replacement) disconnecting.delete(id);
       const row = registry.get(id);
       if (replacement) {
         if (!row?.auth) return { ok: false, reason: 'not_connected' };
@@ -291,6 +308,7 @@ export function createMcpOAuthOperations(
       if (!row || !auth) return { ok: false, reason: 'not_connected' };
       refreshes.get(id)?.controller.abort();
       retries.delete(id);
+      client.close(id);
       registry.setAuth(id, { ...auth, active: false, generation: auth.generation + 1 });
       changed();
       try {
@@ -397,5 +415,5 @@ export function createMcpOAuthOperations(
       execute: readStatus,
     }),
   ];
-  return { operations, refresh };
+  return { operations, refresh, client };
 }
