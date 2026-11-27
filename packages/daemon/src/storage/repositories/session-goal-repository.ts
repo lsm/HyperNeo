@@ -72,7 +72,9 @@ export class SessionGoalRepository {
     return (
       this.db
         .prepare(
-          `${SELECT} WHERE owner_session_id = ? AND (? OR status IN ('active', 'paused'))
+          `${SELECT} WHERE (owner_session_id = ?1
+             OR owner_session_id IN (SELECT id FROM sessions WHERE parent_id = ?1))
+           AND (?2 OR status IN ('active', 'paused'))
            ORDER BY updated_at DESC, id DESC`
         )
         .all(ownerSessionId, includeClosed ? 1 : 0) as Row[]

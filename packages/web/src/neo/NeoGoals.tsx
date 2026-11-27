@@ -38,10 +38,17 @@ function GoalList({ sessionId }: { sessionId: string }) {
         includeClosed: false,
       });
       if (!alive) return;
-      const schedules = await read<SessionScheduleListResult>('schedule.session.list', {
-        target: { adapter: 'hyperneo', id: sessionId },
-      });
-      if (!schedules.ok) throw new Error(schedules.reason);
+      const schedules = (
+        await Promise.all(
+          [...new Set([sessionId, ...goals.map((goal) => goal.ownerSessionId)])].map(async (id) => {
+            const result = await read<SessionScheduleListResult>('schedule.session.list', {
+              target: { adapter: 'hyperneo', id },
+            });
+            if (!result.ok) throw new Error(result.reason);
+            return result.schedules;
+          })
+        )
+      ).flat();
       const next = await Promise.all(
         goals.map(async (goal) => {
           const { entries } = await read<{ entries: GoalJournalEntry[] }>('goal.journal.list', {
@@ -49,7 +56,7 @@ function GoalList({ sessionId }: { sessionId: string }) {
             goalId: goal.id,
             limit: 1,
           });
-          const schedule = schedules.schedules.find(
+          const schedule = schedules.find(
             (row) => row.sourceKind === 'goal' && row.sourceId === goal.id
           );
           return {
