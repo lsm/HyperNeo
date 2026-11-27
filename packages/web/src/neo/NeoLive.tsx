@@ -1278,7 +1278,8 @@ export function NeoLive() {
               ref: workBody,
               class: 'neo-work-body',
               onScroll: (event: Event) => {
-                workScrollTop.current = (event.currentTarget as HTMLDivElement).scrollTop;
+                if (!sceneSheet.current?.hidden)
+                  workScrollTop.current = (event.currentTarget as HTMLDivElement).scrollTop;
               },
             })}
           >
