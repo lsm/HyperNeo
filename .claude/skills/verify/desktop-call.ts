@@ -253,8 +253,9 @@ try {
     neoPrepares: outbound.system.includes('Neo handles file reads, writes, and other preparation'),
     reportsOnly: outbound.system.includes('only the report tool reaches them'),
     noNarration: outbound.system.includes('Call tools without narrating or explaining them.'),
-    turnEnd: JSON.stringify(JSON.parse(outbound.system)).includes('End every turn with exactly \\"No response requested.\\" and nothing else.'),
-  }, { desktopOnly: true, neoPrepares: true, reportsOnly: true, noNarration: true, turnEnd: true });
+    reportDetail: outbound.system.includes('Include as much detail as Neo needs.'),
+    turnEnd: outbound.system.includes(String.raw`End every turn with exactly \"No response requested.\" and nothing else.`),
+  }, { desktopOnly: true, neoPrepares: true, reportsOnly: true, noNarration: true, reportDetail: true, turnEnd: true });
   assert.match(outbound.system, /using the desktop tools in approved apps/);
   assert.match(outbound.system, /capture any exact text you will need/);
   assert(!outbound.brief.includes('desktop_permissions_required'));

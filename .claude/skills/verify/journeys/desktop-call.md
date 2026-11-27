@@ -16,7 +16,10 @@ The journey first proposes a Calculator todo through Neo's MCP operation and ans
 its disclosure card through the human WebSocket door. The real work start must
 create a Desktop template session. The actual SDK request to the loopback model
 must expose the desktop action catalog and `report`, with a desktop-only system
-prompt and brief. The saved SDK startup and HyperNeo composer must
+prompt and brief. The system prompt assigns only approved app steps to the
+desktop worker and leaves file reads, writes and preparation to Neo. It requires
+silent tool use, communication through `report`, and the exact turn-ending text
+`No response requested.` The saved SDK startup and HyperNeo composer must
 show only the desktop MCP tools and no skills, slash commands or agents. Pass
 prints `desktop worker inventory PASS`. The exact lists and Claude Code version
 and the provider's prompt and brief are saved to

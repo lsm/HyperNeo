@@ -1,6 +1,6 @@
 import {
   NEO_PACK_COMPUTER_USE_INSTRUCTIONS,
-  NEO_PACK_COMPUTER_USE_WORKER,
+  NEO_PACK_COMPUTER_USE_WORKER_GUIDANCE,
 } from '@hyperneo/prompts';
 import type { NeoPack, NeoPackBrief } from '../../pack-contract.ts';
 import { DESKTOP_WORKER_TEMPLATE_KEY } from '../../../desktop/worker-profile.ts';
@@ -28,6 +28,6 @@ export function createComputerUsePack(): NeoPack {
       ]
         .filter(Boolean)
         .join('\n\n'),
-    workerContext: () => NEO_PACK_COMPUTER_USE_WORKER,
+    workerContext: () => NEO_PACK_COMPUTER_USE_WORKER_GUIDANCE,
   };
 }

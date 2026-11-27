@@ -86,6 +86,9 @@ import mdneoPacksComputerUseInstructions from './neo/packs/computer-use/instruct
   type: 'text',
 };
 import mdneoPacksComputerUseWorker from './neo/packs/computer-use/worker.md' with { type: 'text' };
+import mdneoPacksComputerUseWorkerGuidance from './neo/packs/computer-use/worker-guidance.md' with {
+  type: 'text',
+};
 import mdneoWorkGoalRemaining from './neo/work/goal-remaining.md' with { type: 'text' };
 import mdneoWorkBlocker from './neo/work/blocker.md' with { type: 'text' };
 import mdneoWorkPreferenceChanged from './neo/work/preference-changed.md' with { type: 'text' };
@@ -419,6 +422,7 @@ const registry: Record<string, string> = {
   'neo/packs/delegation/instructions.md': mdneoPacksDelegationInstructions,
   'neo/packs/computer-use/instructions.md': mdneoPacksComputerUseInstructions,
   'neo/packs/computer-use/worker.md': mdneoPacksComputerUseWorker,
+  'neo/packs/computer-use/worker-guidance.md': mdneoPacksComputerUseWorkerGuidance,
   'neo/work/goal-remaining.md': mdneoWorkGoalRemaining,
   'neo/work/files.md': mdneoWorkFiles,
   'neo/work/goal.md': mdneoWorkGoal,
@@ -542,6 +546,7 @@ export const {
   NEO_PACK_DELEGATION_INSTRUCTIONS,
   NEO_PACK_COMPUTER_USE_INSTRUCTIONS,
   NEO_PACK_COMPUTER_USE_WORKER,
+  NEO_PACK_COMPUTER_USE_WORKER_GUIDANCE,
   NEO_SESSION_TRACK,
   NEO_GOAL_CYCLE,
   GOAL_SESSION_CYCLE,
