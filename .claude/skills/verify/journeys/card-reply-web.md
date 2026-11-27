@@ -20,7 +20,7 @@ bun run build
 The tests render one localized card-reply row without options in chat. They click
 the actual public-conversation component through NeoLive's Work callback at both
 mobile and desktop media settings, require the owning card to expand, focus and
-highlight its question, and expose existing answer controls. Back to chat restores
+highlight its question, and expose existing answer controls. On mobile, Back to chat restores
 the previous scroller position. Answered/retired questions show their saved details;
 replacements resolve to their current question. Missing, broken or cyclic targets
 show explicit unavailable feedback. Repeated clicks focus again; removing an open
