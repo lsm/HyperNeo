@@ -33,19 +33,38 @@ const statusResult = z.object({
   health: z.enum(['healthy', 'disconnected', 'reconnect_needed']),
   scopes: z.array(z.string()),
 });
+const disconnectResult = z.union([
+  z.object({ ok: z.literal(true) }),
+  z.object({ ok: z.literal(false), reason: z.string() }),
+]);
 
 export function createMcpOAuthOperations(
   db: Database,
   store: CredentialStore,
   changed: () => void
 ) {
-  const pending = new Set<string>();
+  const pending = new Map<
+    string,
+    { controller: AbortController; preset: keyof typeof testPresets }
+  >();
+  const writes = new Map<string, Promise<unknown>>();
   const { appMcpServers: registry, gateway } = db;
   const vault = async () =>
     new ConnectionVault(store, await gateway.call(artifactIdentityWrites, 'ensure', randomUUID()));
 
-  async function connect(input: z.infer<typeof connectInput>) {
-    const { id, preset: name } = input;
+  function serial<T>(id: string, write: () => Promise<T> | T): Promise<T> {
+    const result = (writes.get(id) ?? Promise.resolve()).then(write, write);
+    writes.set(id, result);
+    const clear = () => {
+      if (writes.get(id) === result) writes.delete(id);
+    };
+    void result.then(clear, clear);
+    return result;
+  }
+
+  function reserve(id: string, requestedPreset?: string) {
+    const row = registry.get(id);
+    const name = requestedPreset ?? row?.auth?.preset;
     if (process.env.NODE_ENV !== 'test' || name !== 'test') return { reason: 'invalid_preset' };
     const preset = testPresets[name];
     const target = () => {
@@ -57,20 +76,29 @@ export function createMcpOAuthOperations(
       )
         return row;
     };
-    const row = target();
-    if (!row) return { reason: 'invalid_preset' };
-    if (row.auth?.active) return { reason: 'already_connected' };
+    const current = target();
+    if (!current) return { reason: 'invalid_preset' };
+    if (requestedPreset && current.auth?.active) return { reason: 'already_connected' };
     if (pending.has(id)) return { reason: 'connect_pending' };
 
-    const generation = row.auth?.generation ?? 0;
-    pending.add(id);
-    let committing: Promise<void> | undefined;
+    const flow = { controller: new AbortController(), preset: name } as const;
+    pending.set(id, flow);
+    return { flow, generation: current.auth?.generation ?? 0, name, preset, target };
+  }
+
+  async function openConsent(id: string, requestedPreset?: string) {
+    const admission = await serial(id, () => reserve(id, requestedPreset));
+    if (!admission.flow) return { reason: admission.reason };
+    const { flow, generation, name, preset, target } = admission;
+    const clear = () => {
+      if (pending.get(id) === flow) pending.delete(id);
+    };
     try {
       const store = await vault();
       let authorize: (code?: string) => ReturnType<typeof auth>;
       let commit: () => Promise<void>;
       const login = await startLoopbackLogin({
-        signal: gateway.closeSignal,
+        signal: AbortSignal.any([gateway.closeSignal, flow.controller.signal]),
         redirect: (port) => `http://127.0.0.1:${port}/oauth/mcp/callback`,
         authorize: async (redirectUrl, { state }, signal) => {
           const consent = Promise.withResolvers<URL>();
@@ -96,39 +124,67 @@ export function createMcpOAuthOperations(
         },
         exchange: async (code, _verifier, _redirectUri, _nonce, signal) => {
           if ((await authorize(code)) !== 'AUTHORIZED') throw new Error('login_failed');
-          signal.throwIfAborted();
-          const current = target();
-          if (!current || current.auth?.active || (current.auth?.generation ?? 0) !== generation)
-            throw new Error('login_failed');
+          return serial(id, async () => {
+            signal.throwIfAborted();
+            const current = target();
+            if (!current || (current.auth?.generation ?? 0) !== generation)
+              throw new Error('login_failed');
 
-          const inactive = { kind: 'oauth', preset: name, generation, active: false } as const;
-          if (!current.auth) registry.setAuth(id, inactive);
-          committing = commit();
-          await committing;
-          signal.throwIfAborted();
-          registry.setAuth(id, { ...inactive, generation: generation + 1, active: true });
-          changed();
-          return { ok: true };
+            const previous =
+              current.auth ?? ({ kind: 'oauth', preset: name, generation, active: false } as const);
+            if (!current.auth) registry.setAuth(id, previous);
+            await commit();
+            signal.throwIfAborted();
+            registry.setAuth(id, { ...previous, generation: generation + 1, active: true });
+            changed();
+            return { ok: true } as const;
+          });
         },
       });
-      void login.result.then(async () => {
-        await committing?.catch(() => {});
-        pending.delete(id);
-      });
+      void login.result.then(clear);
       return { authorizeUrl: login.authorizeUrl };
     } catch {
-      pending.delete(id);
+      clear();
       return { reason: 'login_failed' };
     }
+  }
+
+  const connect = ({ id, preset }: z.infer<typeof connectInput>) => openConsent(id, preset);
+  const reconnect = ({ id }: z.infer<typeof statusInput>) => openConsent(id);
+
+  function disconnect({ id }: z.infer<typeof statusInput>) {
+    const active = pending.get(id);
+    active?.controller.abort();
+    return serial(id, async (): Promise<z.infer<typeof disconnectResult>> => {
+      const flow = pending.get(id) ?? active;
+      flow?.controller.abort();
+      const row = registry.get(id);
+      const auth =
+        row?.auth ??
+        (flow && row?.sourceType === 'http' && row.url === testPresets[flow.preset].url
+          ? { kind: 'oauth' as const, preset: flow.preset, generation: 0 }
+          : undefined);
+      if (!row || !auth) return { ok: false, reason: 'not_connected' };
+      registry.setAuth(id, { ...auth, active: false, generation: auth.generation + 1 });
+      changed();
+      try {
+        await (await vault()).removeMcp(id);
+        return { ok: true };
+      } catch {
+        return { ok: false, reason: 'request_failed' };
+      }
+    });
   }
 
   async function status({
     id,
   }: z.infer<typeof statusInput>): Promise<z.infer<typeof statusResult>> {
-    const auth = registry.get(id)?.auth;
-    if (!auth?.active) return { health: 'disconnected', scopes: [] };
+    const disconnected: z.infer<typeof statusResult> = { health: 'disconnected', scopes: [] };
+    if (!registry.get(id)?.auth?.active) return disconnected;
     try {
       const grant = await (await vault()).readMcp(id);
+      const auth = registry.get(id)?.auth;
+      if (!auth?.active) return disconnected;
       if (grant?.generation === auth.generation) return { health: 'healthy', scopes: grant.scopes };
     } catch {
       throw new Error('request_failed');
@@ -140,6 +196,14 @@ export function createMcpOAuthOperations(
     .input('input')
     .pipe(connect, 'input', 'result')
     .endAsync('result') as typeof connect;
+  const startReconnect = (superpipe({})('mcp.registry.reconnect') as PipelineAPI)
+    .input('input')
+    .pipe(reconnect, 'input', 'result')
+    .endAsync('result') as typeof reconnect;
+  const runDisconnect = (superpipe({})('mcp.registry.disconnect') as PipelineAPI)
+    .input('input')
+    .pipe(disconnect, 'input', 'result')
+    .endAsync('result') as typeof disconnect;
   const readStatus = (superpipe({})('mcp.registry.status') as PipelineAPI)
     .input('input')
     .pipe(status, 'input', 'result')
@@ -152,6 +216,22 @@ export function createMcpOAuthOperations(
       inputSchema: connectInput,
       resultSchema: connectResult,
       execute: startConnect,
+    }),
+    defineOperation({
+      name: 'mcp.registry.reconnect',
+      description: 'Start new browser consent for a remote MCP registry row with OAuth.',
+      policy,
+      inputSchema: statusInput,
+      resultSchema: connectResult,
+      execute: startReconnect,
+    }),
+    defineOperation({
+      name: 'mcp.registry.disconnect',
+      description: 'Disconnect a remote MCP registry row and erase its saved grant.',
+      policy,
+      inputSchema: statusInput,
+      resultSchema: disconnectResult,
+      execute: runDisconnect,
     }),
     defineOperation({
       name: 'mcp.registry.status',

@@ -55,6 +55,10 @@ export class ConnectionVault {
     await this.store.set(service, account, JSON.stringify(mcpGrant.parse(grant)));
   }
 
+  async removeMcp(serverId: string): Promise<void> {
+    await this.store.delete(...this.mcpAddress(serverId));
+  }
+
   async replace(connection: ConnectionStatus, tokens: ConnectionTokens): Promise<void> {
     const [service, account] = this.address(connection);
     await this.store.set(service, account, JSON.stringify(connectionTokens.parse(tokens)));

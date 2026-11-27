@@ -7,6 +7,8 @@ export const SETTINGS_OPERATION_NAMES = [
   'connections.microsoft.disconnect',
   'connections.microsoft.login',
   'mcp.registry.connect',
+  'mcp.registry.disconnect',
+  'mcp.registry.reconnect',
   'mcp.registry.status',
   'oxap.settings.save',
   'settings.model.get',

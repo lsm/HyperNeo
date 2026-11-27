@@ -21278,6 +21278,104 @@
         ],
         "type": "object"
       },
+      "name": "mcp.registry.disconnect",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": true,
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ok",
+              "reason"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "mcp.registry.reconnect",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "authorizeUrl": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "authorizeUrl"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
       "name": "mcp.registry.status",
       "resultSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
