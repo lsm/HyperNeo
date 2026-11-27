@@ -6,6 +6,8 @@ import type { Database } from '../../storage/database.ts';
 import { artifactIdentityWrites } from '../../storage/repositories/artifact-file-identity-write.ts';
 import type { CredentialStore } from '../credentials/credential-store.ts';
 import { defineOperation } from '../operations/registry.ts';
+import { requireUnreservedName } from '../rpc-handlers/app-mcp-handlers.ts';
+import { writeToolDefaults } from '../tools/write-tool-defaults.ts';
 import { startLoopbackLogin } from './loopback-login.ts';
 import type { McpOAuthPreset } from './mcp-fetch.ts';
 import { createMcpOAuthProvider } from './mcp-oauth-provider.ts';
@@ -25,7 +27,13 @@ const testPresets = {
 const policy = { safetyClass: 'human_only', caller: 'local_user' } as const;
 const statusInput = z.strictObject({ id: z.string().min(1) });
 const connectInput = statusInput.extend({ preset: z.string().min(1) });
-const replaceInput = statusInput.extend({ url: z.string().nullable() });
+const replaceInput = statusInput
+  .extend({
+    url: z.string().nullable(),
+    sourceType: z.literal('http').optional(),
+    name: z.string().optional(),
+  })
+  .loose();
 const connectResult = z.union([
   z.object({ authorizeUrl: z.string() }),
   z.object({ reason: z.string() }),
@@ -153,13 +161,27 @@ export function createMcpOAuthOperations(
   const connect = ({ id, preset }: z.infer<typeof connectInput>) => openConsent(id, preset);
   const reconnect = ({ id }: z.infer<typeof statusInput>) => openConsent(id);
 
-  function retire({ id }: z.infer<typeof statusInput>, replacement?: { url: string | null }) {
+  function retire({ id }: z.infer<typeof statusInput>, replacement?: z.infer<typeof replaceInput>) {
     const active = pending.get(id);
     if (!replacement) active?.controller.abort();
     return serial(id, async (): Promise<z.infer<typeof disconnectResult>> => {
       const row = registry.get(id);
-      if (replacement && !row?.auth) return { ok: false, reason: 'not_connected' };
-      if (replacement && row?.url === (replacement.url ?? undefined)) return { ok: true };
+      if (replacement) {
+        if (!row?.auth) return { ok: false, reason: 'not_connected' };
+        const { id, url, ...updates } = replacement;
+        if (updates.name !== undefined) requireUnreservedName(updates.name.trim());
+        if (Object.keys(updates).length > 0) {
+          await writeToolDefaults(db, {
+            mutations: [{ repository: 'registry', method: 'update', args: [id, updates] }],
+            edits:
+              updates.enabled === undefined
+                ? []
+                : [{ key: `mcp:${id}`, selected: !!updates.enabled }],
+          });
+          changed();
+        }
+        if (row.url === (url ?? undefined)) return { ok: true };
+      }
       const flow = pending.get(id) ?? active;
       flow?.controller.abort();
       const auth =

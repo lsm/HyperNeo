@@ -32,7 +32,7 @@ export interface AppMcpHandlerContext {
   invoke?: RequestHandler;
 }
 
-function requireUnreservedName(name: string): void {
+export function requireUnreservedName(name: string): void {
   if (!isBuiltInMcpServerName(name)) return;
   throw new Error(
     `"${name}" is reserved for a built-in MCP server. Choose another name — a server registered ` +
@@ -95,16 +95,11 @@ export function registerAppMcpHandlers(messageHub: MessageHub, ctx: AppMcpHandle
       (updates.url ?? undefined) !== current.url
     ) {
       const reply = (await invoke(
-        { name: 'mcp.registry.replace', input: { id, url: updates.url ?? null } },
+        { name: 'mcp.registry.replace', input: { ...updates, id, url: updates.url ?? null } },
         context
       )) as { ok: true } | { ok: false; reason: string };
       if (!reply.ok) throw new Error(reply.reason);
-      delete updates.url;
-      if (Object.keys(updates).length === 0) {
-        const server = db.appMcpServers.get(id);
-        if (!server) throw new Error(`MCP server not found: ${id}`);
-        return { server };
-      }
+      return { server: db.appMcpServers.get(id) };
     }
 
     const result = await writeToolDefaults(db, {

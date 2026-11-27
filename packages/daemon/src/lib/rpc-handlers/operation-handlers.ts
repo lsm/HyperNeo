@@ -16,11 +16,9 @@ export function setupOperationHandlers(
     invoke({ name: 'neo.session.unarchive', input }, context)
   );
   const unregisterInvoke = messageHub.onRequest('operation.invoke', invoke);
-  return Object.assign(
-    () => {
-      unregisterUnarchive();
-      unregisterInvoke();
-    },
-    { invoke }
-  );
+  const unregister = () => {
+    unregisterUnarchive();
+    unregisterInvoke();
+  };
+  return Object.assign(unregister, { invoke });
 }
