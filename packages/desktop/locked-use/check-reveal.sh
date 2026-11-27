@@ -9,7 +9,7 @@ cd "$(dirname "$0")"
 run="$(mktemp -d)"
 trap 'rm -rf "$run"' EXIT
 clang -fobjc-arc -Wall -Werror -framework AppKit -framework ApplicationServices \
-    -framework IOKit -framework Security -o "$run/check-reveal" check-reveal.m
+    -framework IOKit -framework Security -framework ImageIO -o "$run/check-reveal" check-reveal.m
 
 reveal() {
     local result

@@ -96,6 +96,9 @@ export const NeoDriverTargetSchema = z.discriminatedUnion('verb', [
 ]);
 
 export type NeoDriverTarget = z.infer<typeof NeoDriverTargetSchema>;
+export type NeoDeliveryTarget =
+  | (Extract<NeoDriverTarget, { verb: 'start' }> & { planStepIds?: string[]; role?: 'do' })
+  | Extract<NeoDriverTarget, { verb: 'send' }>;
 const DriverReplySchema = z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),

@@ -15,7 +15,13 @@ export const ListDaemonsResultSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('listed'),
     daemons: z.array(
-      z.object({ daemonId: z.string(), url: z.string(), addressExample: z.string() })
+      z.object({
+        daemonId: z.string(),
+        url: z.string(),
+        addressExample: z.string(),
+        displayName: z.string().optional(),
+        paired: z.literal(true).optional(),
+      })
     ),
   }),
   Rejected,
@@ -65,10 +71,12 @@ export function requireRpcDaemonCaller<Input>(
 export function listRemoteDaemons(_input: ListInput, registry: RemoteDaemonRegistry): ListResult {
   return {
     kind: 'listed',
-    daemons: registry.list().map(({ daemonId, url }) => ({
-      daemonId,
-      url,
-      addressExample: renderRemoteAddressExample(daemonId),
+    daemons: registry.list().map((attachment) => ({
+      daemonId: attachment.daemonId,
+      url: attachment.url,
+      displayName: attachment.displayName,
+      addressExample: renderRemoteAddressExample(attachment.daemonId),
+      ...(registry.isPaired(attachment) ? { paired: true } : {}),
     })),
   };
 }

@@ -401,7 +401,8 @@ export function createTables(db: BunDatabase): void {
         source_path TEXT,
         last_attach_error TEXT,
         created_at INTEGER,
-        updated_at INTEGER
+        updated_at INTEGER,
+        auth TEXT
       )
     `);
 

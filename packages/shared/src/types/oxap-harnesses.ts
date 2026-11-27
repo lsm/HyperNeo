@@ -34,6 +34,11 @@ function deepSeekNativeId(link: string): string | undefined {
     : undefined;
 }
 
+export function oxapModelProvider(settings: Readonly<Record<string, string>>): string | undefined {
+  const value = settings.model_provider;
+  return typeof value === 'string' ? value.trim() || undefined : undefined;
+}
+
 export const OXAP_HARNESSES = {
   'oxap-codex': {
     label: 'OXAP Codex',
@@ -68,6 +73,7 @@ export const OXAP_HARNESSES = {
       environment,
       any_directory: true,
       provider: 'deepseek-official',
+      model_provider: oxapModelProvider(settings),
       model: 'deepseek-v4-pro',
     }),
     nativeId: deepSeekNativeId,

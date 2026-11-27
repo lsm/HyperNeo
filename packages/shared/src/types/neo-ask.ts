@@ -78,6 +78,13 @@ export interface NeoTodoCheck {
   params: Record<string, unknown>;
 }
 
+export interface NeoTodoHold {
+  heldAt: number;
+  until?: NeoTodoCheck;
+  reviewAt: number;
+  failed?: { at: number; url: string; reason: string };
+}
+
 export type NeoTodoState = 'todo' | 'doing' | 'blocked' | 'done' | 'removed';
 
 export type NeoTodoPriority = 'low' | 'normal' | 'high' | 'urgent';
@@ -91,6 +98,10 @@ export type NeoTodoBlocker =
   | 'environment'
   | 'stalled'
   | 'held';
+
+export type NeoPlanCheck =
+  | { legacy: true }
+  | { session: string; model: string; anotherModelUsable: boolean; stepIds: string[] };
 
 export interface NeoTodo extends ArtifactProjection {
   worker?: WorkerIdentity | null;
@@ -108,6 +119,7 @@ export interface NeoTodo extends ArtifactProjection {
   blockedReason: string | null;
   nextAction: string | null;
   blockedBy: NeoTodoBlocker | null;
+  hold?: NeoTodoHold;
   priority: NeoTodoPriority;
   dependsOn: string[] | null;
   replacedBy: string | null;
@@ -121,6 +133,8 @@ export interface NeoTodo extends ArtifactProjection {
   approvedAt: number | null;
   approvalQuestionId: string | null;
   producesFollowUp?: true;
+  plan?: true;
+  planCheck?: NeoPlanCheck;
 }
 
 export type NeoQuestionKind = 'yesno' | 'choice' | 'reply';

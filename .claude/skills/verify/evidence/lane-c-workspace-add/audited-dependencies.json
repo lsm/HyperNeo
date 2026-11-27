@@ -5,8 +5,8 @@
   "units": [
     {
       "file": "packages/daemon/src/lib/mcp/mcp-import-service.ts",
-      "lines": 991,
-      "sha256": "2d44b5777dc63e54f9de05a5b3b23e6c08c52ee89e4eab94efdf7fd9d6d7ac4d"
+      "lines": 993,
+      "sha256": "46060c9041f78213583baf4a3b8d6a83f23476810c6bd5a3b49f218048e85679"
     },
     {
       "file": "packages/daemon/src/lib/mcp/mcp-server-namespace.ts",
@@ -50,8 +50,8 @@
     },
     {
       "file": "packages/daemon/src/storage/repositories/app-mcp-server-repository.ts",
-      "lines": 291,
-      "sha256": "ec9dd598d882c0afdec8c15cefe4717e1b75c9c60d832f782af412056f911692"
+      "lines": 332,
+      "sha256": "a2a594dbc2e9f1f053cba16e8bf9ee316fe4d1d3abd46b18a9abe113f4f2c540"
     },
     {
       "file": "packages/daemon/src/storage/repositories/mcp-enablement-repository.ts",

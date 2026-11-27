@@ -49,9 +49,18 @@ export type NeoTodoPolicyScope = {
   start?: true;
 };
 
+export type NeoTodoHoldResult =
+  | { url: string; merged: true }
+  | { url: string; merged: false; reason: string };
+
 export interface NeoTodoPack {
+  hold?: {
+    accepts(condition: NeoTodoCheck): boolean;
+    read(condition: NeoTodoCheck): Promise<NeoTodoHoldResult | null>;
+  };
   schema(db: Database): void;
   writerAdd?: true;
+  plan?(todo: NeoTodo): Promise<boolean>;
   check(todo: NeoTodo, context?: { readOnly: true }): Promise<NeoTodoCheckResult | null>;
   statusLine(todo: NeoTodo): NeoStatusLine | null;
   repository?(draft: NeoTodoRepositoryDraft, scope?: NeoTodoPolicyScope): string | null;

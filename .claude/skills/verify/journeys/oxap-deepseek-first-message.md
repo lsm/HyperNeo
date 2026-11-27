@@ -28,3 +28,28 @@ second turn in the same chat. The local dsh peer requires the saved key, and
 the transcript confirms the reply arrived on the original native thread.
 
 The fixture runs the published OXAP hub with a local dsh peer.
+
+With `routed`, save `model_provider: opencode-go` over RPC and send the first
+message without an official DeepSeek key. With `routed-with-key`, repeat with a
+stored official key. Both modes give only the hub a synthetic OpenCode key and
+require the local dsh peer to receive the translated endpoint and key, use the
+daemon-owned home without a managed credential file, and deliver a chat reply.
+The served document must contain the provider ID and no key values. These
+modes exercise OXAP routing without contacting OpenCode Go.
+The same runs also exercise an explicit Claude Code override. Creation is
+refused without the official DeepSeek key and succeeds with it.
+
+With `routed-missing-key`, save the OpenCode Go route and omit its environment
+key. Check that the provider is no longer ready for OXAP and that creating a
+chat returns a refusal naming `OPENCODE_API_KEY`.
+
+With `routed-zen` and `routed-zen-missing-key`, check the same reply and refusal
+for the OpenCode Zen catalog row. With `routed-unknown`, require Settings to
+refuse an unknown route before installing the hub.
+
+With `routed-web`, use the browser setup above to save the setting in Providers,
+reload to check the saved setting and official API key field, and select DeepSeek
+V4 Pro in the new chat picker without an official key. The fixture then sends a
+message through the authenticated RPC and checks the same routed reply.
+Switch to Claude Code in the picker and check that the routed models disappear
+and the start button is disabled until an available model or client is chosen.

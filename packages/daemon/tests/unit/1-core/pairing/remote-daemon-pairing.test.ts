@@ -179,6 +179,21 @@ describe('attaching a daemon with a pairing code', () => {
     await expect(daemons.probe(remote.url)).resolves.toBeUndefined();
   });
 
+  test('editing the endpoint keeps the original pairing and stable reply address', async () => {
+    const made = remote.devices.createCode('daemon', null, true, Date.now());
+    await attach({ code: made.code });
+    const [original] = remote.devices.listDevices();
+    const url = `${remote.url}?address=updated`;
+    expect(await attach({ url, edit: { displayName: 'Remote office' } })).toMatchObject({
+      kind: 'completed',
+      value: { kind: 'attached', daemonId: 'b', url },
+    });
+    expect(await daemons.invoke(`paired:${remote.daemonId}`, 'work.status', {})).toEqual({
+      kind: 'daemon',
+    });
+    expect(remote.devices.listDevices().map(({ id }) => id)).toEqual([original.id]);
+  });
+
   test('testing uses a saved credential even when another attachment shares the address', async () => {
     await invokeOperation(operations, 'daemon.attach', { daemonId: 'a', url: remote.url }, human);
     const made = remote.devices.createCode('daemon', null, true, Date.now());

@@ -22,3 +22,8 @@ Repeat with `opencode-go-alias` and a fresh evidence directory to configure the
 provider with only `OPENCODE_GO_API_KEY` in its injected environment. This
 checks readiness and the child key name without setting a daemon environment
 credential.
+
+With `opencode-go-with-unkeyed-route`, also save an OpenCode Go route for the
+DeepSeek provider while the daemon environment has no OpenCode key. Confirm
+the direct OpenCode Go harness still replies with its stored key and that the
+hub omits the separate DeepSeek route.

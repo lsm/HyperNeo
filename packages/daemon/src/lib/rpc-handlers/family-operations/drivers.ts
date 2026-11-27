@@ -1,3 +1,4 @@
+import { neoPlanCheckBrief, neoPlanFacts } from '../../neo/todo-follow-up.ts';
 import { getBuiltInSpaceAgentTemplates } from '../../agents/template-manager.ts';
 import { deriveWorkerDisallowedTools } from '../../agents/tool-policy.ts';
 import { qualifyRemoteOrigin, renderRemoteAddress } from '../../mailbox/address.ts';
@@ -809,6 +810,35 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     remote: remoteDaemons,
     daemonName: machine,
     qualifyReplyOrigin: (from: string) => qualifyRemoteOrigin(from, remoteDaemons.replyDaemonId),
+    preparePlanCheck: (async (input, caller) => {
+      const store = new NeoAskTodoRepository(db());
+      const todo = input.todoId ? store.getCheckable(input.todoId) : null;
+      if (
+        !todo ||
+        caller.role !== 'neo' ||
+        store.getAsk(todo.askId)?.sessionId !== caller.sessionId
+      )
+        return { reason: reject('todo_required', 'Choose an open plan on your ask.', true) };
+      const facts = await neoPlanFacts(
+        todo,
+        store.listFamilyTodos(todo.askId),
+        [],
+        context.neoPacks()
+      );
+      if (!facts.plan)
+        return { reason: reject('todo_required', 'Choose an open plan on your ask.', true) };
+      if (!facts.steps.length)
+        return {
+          reason: reject('todo_required', 'Add dependent steps before checking the plan.', true),
+        };
+      return {
+        value: {
+          ...input,
+          message: neoPlanCheckBrief(todo, facts.steps, input.message),
+          planStepIds: facts.steps.map((step) => step.id),
+        },
+      };
+    }) satisfies NonNullable<WorkVerbDeps['preparePlanCheck']>,
     startPlace: neoStartPlace({
       db: db(),
       machine,

@@ -2,6 +2,7 @@ import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
 import type {
   AppMcpServer,
+  AppMcpServerAuth,
   AppMcpServerSource,
   AppMcpServerSourceType,
   CreateAppMcpServerRequest,
@@ -29,6 +30,7 @@ interface AppMcpServerRow {
   last_attach_error: string | null;
   created_at: number | null;
   updated_at: number | null;
+  auth: string | null;
 }
 
 export interface McpAttachOutcome {
@@ -55,6 +57,7 @@ function rowToServer(row: AppMcpServerRow): AppMcpServer {
     ...(row.last_attach_error !== null ? { lastAttachError: row.last_attach_error } : {}),
     ...(row.created_at !== null ? { createdAt: row.created_at } : {}),
     ...(row.updated_at !== null ? { updatedAt: row.updated_at } : {}),
+    ...(row.auth ? { auth: JSON.parse(row.auth) as AppMcpServerAuth } : {}),
   };
 }
 
@@ -90,6 +93,7 @@ export class AppMcpServerRepository {
   }
 
   create(req: CreateAppMcpServerRequest): AppMcpServer {
+    if ('auth' in req) throw new Error('OAuth is set by connecting a server, not by create');
     validateSourceType(req.sourceType);
 
     const source: AppMcpServerSource = req.source ?? 'user';
@@ -185,6 +189,7 @@ export class AppMcpServerRepository {
   update(id: string, updates: Omit<UpdateAppMcpServerRequest, 'id'>): AppMcpServer | null {
     const existing = this.get(id);
     if (!existing) return null;
+    if ('auth' in updates) throw new Error('OAuth is set by connecting a server, not by update');
 
     if (updates.name !== undefined && this.isNameTaken(updates.name, id)) {
       throw new Error(`An MCP server named "${updates.name}" already exists`);
@@ -252,10 +257,22 @@ export class AppMcpServerRepository {
       values.push(null);
       fields.push('updated_at = ?');
       values.push(now);
-      values.push(id);
-      this.db
-        .prepare(`UPDATE app_mcp_servers SET ${fields.join(', ')} WHERE id = ?`)
-        .run(...values);
+      const urlProvided = 'url' in updates;
+      const result = this.db
+        .prepare(
+          `UPDATE app_mcp_servers SET ${fields.join(', ')}
+           WHERE id = ? AND (
+             auth IS NULL OR ((? = 0 OR url IS ?) AND source_type = COALESCE(?, source_type))
+           )`
+        )
+        .run(...values, id, Number(urlProvided), updates.url ?? null, updates.sourceType ?? null);
+      if (result.changes === 0) {
+        const current = this.get(id);
+        if (current?.auth) {
+          throw new Error(`MCP server "${current.name}" uses OAuth; disconnect it first`);
+        }
+        return null;
+      }
       this.reactiveDb.notifyChange('app_mcp_servers');
     }
 
@@ -280,8 +297,32 @@ export class AppMcpServerRepository {
     }
   }
 
+  setAuth(id: string, auth: AppMcpServerAuth | null): AppMcpServer | null {
+    const result = this.db
+      .prepare(
+        `UPDATE app_mcp_servers SET auth = ?1, updated_at = ?2
+         WHERE id = ?3 AND (?1 IS NULL OR source_type = 'http')`
+      )
+      .run(auth ? JSON.stringify(auth) : null, Date.now(), id);
+    if (result.changes === 0) {
+      const current = this.get(id);
+      if (current) throw new Error(`OAuth needs an http MCP server, not ${current.sourceType}`);
+      return null;
+    }
+    this.reactiveDb.notifyChange('app_mcp_servers');
+    return this.get(id);
+  }
+
+  deleteOAuth(id: string): boolean {
+    return this.remove(`DELETE FROM app_mcp_servers WHERE id = ? AND auth IS NOT NULL`, id);
+  }
+
   delete(id: string): boolean {
-    const result = this.db.prepare(`DELETE FROM app_mcp_servers WHERE id = ?`).run(id);
+    return this.remove(`DELETE FROM app_mcp_servers WHERE id = ? AND auth IS NULL`, id);
+  }
+
+  private remove(sql: string, id: string): boolean {
+    const result = this.db.prepare(sql).run(id);
     const deleted = result.changes > 0;
     if (deleted) {
       this.reactiveDb.notifyChange('app_mcp_servers');
