@@ -33,6 +33,5 @@ PASS lines:
 Nothing reaches the real Codex app or a provider; `open` is stubbed to refuse.
 `$RUN/evidence/observed.json` keeps the peer calls, outcomes and recorded turns.
 
-Not covered here: a rejected send whose message runs later. Its outcome keeps
-`clientMessageId`, but a failure outcome has no `ref`, and deliveries are found by
-`outcome.ref` until the design's first PR also matches `target.ref`.
+A rejected send whose message runs later is covered by
+[turn-todo-rejected-send.md](turn-todo-rejected-send.md).

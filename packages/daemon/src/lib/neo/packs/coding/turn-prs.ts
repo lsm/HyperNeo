@@ -14,6 +14,7 @@ import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
 import { WorkDeliveryInputRepository } from '../../../../storage/repositories/work-delivery-input-repository.ts';
 import { WorkTurnRepository } from '../../../../storage/repositories/work-turn-repository.ts';
+import { readTurnTodoFacts } from '../../../../storage/repositories/work-turn-todo-worker.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import type { NeoWorkPrReader } from './work-prs.ts';
@@ -33,26 +34,8 @@ import {
 
 type Delivery = ReturnType<WorkDeliveryInputRepository['list']>[number];
 
-const PENDING_RECEIPT = /^desktop-pending:\d+:([a-f0-9]+)$/;
-
-function deliveryKeys({ outcome }: Delivery): string[] {
-  const reply = outcome as {
-    receipt?: { inputId?: string };
-    clientMessageId?: string;
-    delivery?: { startedTurnId?: string; steeredIntoTurnId?: string; clientMessageId?: string };
-  } | null;
-  const input = reply?.receipt?.inputId;
-  const pending = input && PENDING_RECEIPT.exec(input);
-  return [
-    ...(pending ? [`desktop-pending:${pending[1]}`] : input ? [input] : []),
-    ...(reply?.delivery?.startedTurnId ? [reply.delivery.startedTurnId] : []),
-    ...(reply?.delivery?.steeredIntoTurnId ? [reply.delivery.steeredIntoTurnId] : []),
-    ...(reply?.delivery?.clientMessageId ? [reply.delivery.clientMessageId] : []),
-    ...(reply?.clientMessageId ? [reply.clientMessageId] : []),
-  ];
-}
-
-const deliveryRef = ({ outcome }: Delivery) => (outcome as { ref?: WorkRef } | null)?.ref ?? null;
+const deliveryRef = ({ outcome, target }: Delivery) =>
+  (outcome as { ref?: WorkRef } | null)?.ref ?? ('ref' in target ? target.ref : null);
 
 type AttachmentCandidate = {
   id: string;
@@ -102,13 +85,7 @@ export class CodingTurnPrRepository {
   }
 
   private todosOf(ref: WorkRef) {
-    return Object.fromEntries(
-      this.deliveries
-        .list(ref)
-        .flatMap((row) =>
-          row.todoId ? deliveryKeys(row).map((key) => [key, row.todoId as string]) : []
-        )
-    );
+    return readTurnTodoFacts(this.db, ref);
   }
 
   private bindsOf(ref: WorkRef): CodingTurnBind[] {

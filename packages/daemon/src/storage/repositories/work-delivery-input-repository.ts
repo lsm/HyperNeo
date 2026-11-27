@@ -20,9 +20,9 @@ type InputRow = {
 
 const SELECT = `SELECT id, todo_id AS todoId, origin_session_id AS originSessionId,
   target, message, accepted_at AS acceptedAt, deadline_at AS deadlineAt,
-  outcome, observed_at AS observedAt FROM work_delivery_inputs`;
+  outcome, observed_at AS observedAt, rowid AS seq FROM work_delivery_inputs`;
 
-function readInput(row: InputRow) {
+function readInput({ seq: _seq, ...row }: InputRow & { seq: number }) {
   return {
     ...row,
     target: JSON.parse(row.target) as Target,
@@ -98,18 +98,16 @@ export class WorkDeliveryInputRepository {
   }
 
   list(scope: string | { adapter: string; id: string; daemon?: string }) {
-    const where =
+    const names = (column: 'outcome' | 'target') =>
+      `${SELECT} WHERE json_extract(${column}, '$.ref.adapter') = ?1
+        AND json_extract(${column}, '$.ref.id') = ?2 AND json_extract(${column}, '$.ref.daemon') IS ?3`;
+    const sql =
       typeof scope === 'string'
-        ? 'todo_id = ?'
-        : `json_extract(outcome, '$.ref.adapter') = ? AND json_extract(outcome, '$.ref.id') = ?
-        AND json_extract(outcome, '$.ref.daemon') IS ?`;
+        ? `${SELECT} WHERE todo_id = ?1 ORDER BY acceptedAt, seq`
+        : `${names('outcome')} UNION ${names('target')} ORDER BY acceptedAt, seq`;
     const params =
       typeof scope === 'string' ? [scope] : [scope.adapter, scope.id, scope.daemon ?? null];
-    return (
-      this.db
-        .prepare(`${SELECT} WHERE ${where} ORDER BY accepted_at, rowid`)
-        .all(...params) as InputRow[]
-    ).map(readInput);
+    return (this.db.prepare(sql).all(...params) as (InputRow & { seq: number })[]).map(readInput);
   }
 
   queuedFor(todoId: string, message: string, ref: WorkRef) {
@@ -119,7 +117,7 @@ export class WorkDeliveryInputRepository {
   openWorkerRefs(): { ref: WorkRef; lastActivityAt: number | null }[] {
     const rows = this.db
       .prepare(`WITH workers(ref) AS (
-          SELECT json_extract(d.outcome, '$.ref')
+          SELECT COALESCE(json_extract(d.outcome, '$.ref'), json_extract(d.target, '$.ref'))
             FROM neo_asks a JOIN neo_todos t ON t.ask_id = a.id
             JOIN work_delivery_inputs d ON d.todo_id = t.id
             WHERE a.status = 'open'
@@ -144,7 +142,7 @@ export class WorkDeliveryInputRepository {
     return (
       this.db
         .prepare(`${SELECT} WHERE deadline_at <= ? ORDER BY deadline_at, id LIMIT ?`)
-        .all(now, limit) as InputRow[]
+        .all(now, limit) as (InputRow & { seq: number })[]
     ).map(readInput);
   }
 }
