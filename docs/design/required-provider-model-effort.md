@@ -81,7 +81,10 @@ requested options and closes the session with a refusal when they do not take
 (`antigravity-start.ts:220-233`, validation in
 `antigravity-configuration.ts:56-82`) — so it declares `configurable` too.
 `declaredRead` means the adapter can read its own configuration before
-dispatch but cannot apply overrides. An adapter that can do neither refuses
+dispatch but cannot apply overrides. A declared read reports each field with
+its source — the configured value, or the product's account default labeled
+as such; a caller-supplied claim never substitutes for the read, and only a
+failed read refuses the start. An adapter that can do neither refuses
 starts that need identity, rather than growing a confirmation layer.
 
 | Adapter | provider | model | effort |
@@ -90,8 +93,8 @@ starts that need identity, rather than growing a confirmation layer.
 | `codex-desktop` | Fixed: the Codex account | Required; resolved against the `model/list` catalog and confirmed applied (`codex-start-configuration.ts:46`, `codex-desktop-adapter.ts:1699`) | Required; resolved against the selected model's supported efforts |
 | `copilot-cli` / Copilot desktop | Fixed: GitHub Copilot | Required already (`copilot-adapter.ts:115`) | Required (`copilot-adapter.ts:637`; desktop capability `copilot-desktop-adapter.ts:155`) |
 | `antigravity` | Fixed: the Antigravity account | Required; validated against the opened session's options and applied before the first turn, the session closed on refusal (`antigravity-start.ts:220-233`, `antigravity-configuration.ts:56-82`) | Required (`antigravity-adapter.ts:180`) |
-| `claude-desktop` | Fixed: Anthropic | Not settable — explicit overrides keep refusing `unsupported_model` (`claude-desktop-adapter.ts:1487`). No pre-dispatch configuration read exists today (the transcript observer is post-turn and can observe neither field, `claude-runtime-identity.ts:18-27`), so from the dispatch slice these starts refuse `identity_required` — intended interim behavior, stated in the prompt text, until a follow-up adds a `declaredRead` of the app's configuration | Same rule as model |
-| `cursor` | Fixed: the Cursor account | Same rule as `claude-desktop`: no pre-dispatch read exists (`cursor-start.ts` has no model/effort parameters today), so starts refuse `identity_required` until a follow-up adds one | Same as model |
+| `claude-desktop` | Fixed: Anthropic | Not settable — explicit overrides keep refusing `unsupported_model` (`claude-desktop-adapter.ts:1487`). Declared read: the model from the Claude settings chain the launched CLI itself reads (`~/.claude/settings.json`, whose reader already exists at `credential-discovery.ts:89`); effort: the CLI's configured thinking setting, else its documented default, labeled with that source. The transcript observer corroborates after turns (`claude-runtime-identity.ts:18-27`) | Same rule as model |
+| `cursor` | Fixed: the Cursor account | Declared read: the cursor-agent configuration reported over the JSON-RPC control channel the adapter already opens before the first turn (`cursor-start.ts:31-34`); a field the CLI does not report is declared as the account default with that label, never guessed | Same as model |
 | Claude Code inbox / discovery-only adapters | Fixed per adapter | No start capability; nothing to validate | — |
 
 There is no “start now, decide later”: a start either carries a fully
@@ -161,10 +164,14 @@ therefore labels its source instead of promising actuals it cannot bind:
   provider's own vocabulary — never empty:
   - granular thinking modes with published effort levels: the effort string
     sent (`query-options-builder.ts:837-842`);
-  - budget modes (thinking mode `on`, including the kimi fixed-budget branch,
-    which always sends the `think16k` budget, `query-options-builder.ts:865-872`):
-    the thinking level whose budget config was sent, recorded under its
-    standard label;
+  - every path that sends a thinking config instead of an effort string —
+    thinking mode `on`, granular models without published levels (the effort
+    mapping yields nothing and the builder falls through to
+    `thinkingLevelToThinkingConfig`, `query-options-builder.ts:843-846`,
+    `:762-777`), and the kimi fixed-budget branch
+    (`query-options-builder.ts:865-872`): the thinking level whose config was
+    sent — an enabled budget maps to its level (the kimi branch always sends
+    the `think16k` budget), a disabled config records `off`;
   - thinking mode `off`: the explicit value `off`.
 
   This is the boundary because the builder resolves provider effort
@@ -290,11 +297,10 @@ compares the recorded triple against the todo target.
 - `packages/prompts/src/neo/tools/work.start.md`: replace “Without model, a new
   HyperNeo session starts on the default model…” and the “Optional effort…”
   sentences with the required-triple rule, the `identity_required` refusal,
-  the per-adapter fixed-provider note, the confirmed/declared receipt labels,
-  the remote-start rule (explicit identity admitted when the remote adapter
-  advertises `configurable`) and the interim notice that `claude-desktop` and
-  `cursor` starts refuse `identity_required` until a pre-dispatch
-  configuration read lands, so Neo plans work on configurable adapters.
+  the per-adapter fixed-provider note, the confirmed/declared receipt labels
+  (including that `claude-desktop` and `cursor` receipts are declared, from
+  their configuration reads) and the remote-start rule (explicit identity
+  admitted when the remote adapter advertises `configurable`).
 - `packages/prompts/src/neo/tools/neo.todo.add.md:8`: the start target shape
   becomes `{verb:start,adapter,model,effort,provider?,place?}` — provider
   optional only where the adapter fixes or derives it, model and effort
@@ -320,7 +326,10 @@ Delete rung, not by the Wire PRs.
    change is additive — optional fields and one enum value — so no caller
    churn): the pure gate, the `identity_required` reason, the receipt source
    label, per-adapter fact declarations including the `work.adapters` catalog
-   fields. Exported and tested, not yet called; nothing observable changes.
+   fields, and the two declared reads (`claude-desktop` via the existing
+   settings-chain reader, `cursor` via its control channel), so the refusal
+   path never opens for adapters that carry live capability. Exported and
+   tested, not yet called; nothing observable changes.
 2. **Wire: work dispatch** (contract: every `work.start` path and every new
    todo send passes the gate; measured surface: `work-operations.ts` 36
    importers, `driver-work.ts` 15, `hyperneo-adapter.ts` 14, `drivers.ts` 3):
@@ -329,9 +338,9 @@ Delete rung, not by the Wire PRs.
    `neo.todo.add` admission (local and remote catalog), remote advertisement
    replacing the model/effort admission role of
    `admitRemoteStartModel`/`verifiedCopilotStart` while preserving Copilot
-   client validation, and the prompt changes above — including the notice
-   that `claude-desktop` and `cursor` starts refuse `identity_required` until
-   a `declaredRead` lands. Recorded merge-contract exception: removing the two
+   client validation, and the prompt changes above. `claude-desktop` and
+   `cursor` starts keep working through their Build-slice declared reads,
+   receipted as declared. Recorded merge-contract exception: removing the two
    desktop stripping carve-outs (`work-operations.ts:841`, `:901`) rides this
    Wire PR under the repo's few-line Build+Wire allowance, because the wire
    cannot function for desktop-template workers while they strip the resolved
