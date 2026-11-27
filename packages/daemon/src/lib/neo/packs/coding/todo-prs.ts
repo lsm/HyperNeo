@@ -669,6 +669,13 @@ export function createCodingTodoPack(
   };
   return {
     readFacts,
+    plan: async (todo) => {
+      const facts = await readCodingTurnFacts(todo, repo.turnPrs, (urls) => readPrs(urls, true));
+      return (
+        (facts.incomplete === true && codingNamedPrKeys(todo).length > 0) ||
+        facts.prs.some((pr) => pr.designChanged === true || pr.designChanged === null)
+      );
+    },
     hold: {
       accepts: (condition) => codingHoldUrls(condition) !== null,
       read: async (condition) => {

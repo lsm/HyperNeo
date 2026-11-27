@@ -1,5 +1,5 @@
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import type { CodingWorkPr } from './work-prs.ts';
 import type { WorkRef } from '../../../drivers/types.ts';
 import type { WorkTurnMention } from '../../../../storage/repositories/work-turn-repository.ts';
 import { type TurnTodoFacts, turnKeyTodos } from '../../turn-todo.ts';
@@ -134,10 +134,10 @@ export function planCodingTurnFacts(
   todo: Pick<NeoTodo, 'id' | 'check'>,
   own: readonly Pick<CodingTurn, 'complete' | 'finalUrls'>[],
   urls: readonly string[],
-  read: readonly NeoWorkPr[] | null,
+  read: readonly CodingWorkPr[] | null,
   mentions: CodingTurnMentions,
   observedAt: number
-): { prs: readonly NeoWorkPr[]; observedAt: number; incomplete?: true } {
+): { prs: readonly CodingWorkPr[]; observedAt: number; incomplete?: true } {
   const unknown = { prs: [], observedAt, incomplete: true as const };
   const found = (url: string) => read?.find((pr) => codingPrKey(pr.url) === url);
   const named = new Set(codingNamedPrKeys(todo));

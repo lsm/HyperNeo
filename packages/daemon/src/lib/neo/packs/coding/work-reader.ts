@@ -10,19 +10,25 @@ export function createCodingWorkPrReader(
   now = Date.now
 ): NeoWorkPrReader {
   let ledger: CodingPrLedgerRepository | undefined;
-  return async (urls) => {
+  return async (urls, requireDesign) => {
     ledger ??= new CodingPrLedgerRepository(db());
     const unique = [...new Map(urls.map((url) => [githubUrlKey(url), url])).values()];
     const prs = await Promise.all(
       unique.map(async (url) => {
         const current = await ledger!.workFacts.readCurrent(url, now(), NEO_SETTLED_PR_READ_MS);
-        if (current.view.status === 'known') {
+        if (
+          current.view.status === 'known' &&
+          (!requireDesign || current.view.value.designChanged !== undefined)
+        ) {
           const maxAgeMs =
-            current.view.value.state === 'OPEN' ? NEO_WORK_PR_READ_MS : NEO_SETTLED_PR_READ_MS;
+            current.view.value.state === 'OPEN' ||
+            (requireDesign && current.view.value.designChanged === null)
+              ? NEO_WORK_PR_READ_MS
+              : NEO_SETTLED_PR_READ_MS;
           if (current.view.observedAt !== null && now() - current.view.observedAt < maxAgeMs)
             return current.view.value;
         }
-        const fresh = await ledger!.workFacts.refresh(url, spawn, now);
+        const fresh = await ledger!.workFacts.refresh(url, spawn, now, requireDesign);
         return fresh.view.status === 'known' ? fresh.view.value : null;
       })
     );

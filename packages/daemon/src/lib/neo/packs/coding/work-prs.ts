@@ -5,8 +5,13 @@ import { z } from 'zod';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { githubGraphqlArgs, parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
+import { CodingPrFilePages, codingPrFilePagesMatch, readCodingPrFilePages } from './pr-files.ts';
 
-export type NeoWorkPrReader = (urls: readonly string[]) => Promise<NeoWorkPr[] | null>;
+export type CodingWorkPr = NeoWorkPr & { designChanged?: boolean | null };
+export type NeoWorkPrReader = (
+  urls: readonly string[],
+  requireDesign?: true
+) => Promise<CodingWorkPr[] | null>;
 
 export const NEO_WORK_PR_READ_MS = 2 * 60_000;
 export const NEO_SETTLED_PR_READ_MS = 12 * 60 * 60_000;
@@ -388,8 +393,34 @@ async function readPrDetail(url: string, spawnImpl: SpawnFn): Promise<PrDetail |
   };
 }
 
+const DesignFileFacts = z.object({
+  headRefOid: z.string(),
+  baseRefOid: z.string(),
+  changedFiles: z.number().int().nonnegative(),
+  files: z.array(z.object({ path: z.string() })),
+});
+
+async function readDesignChanged(url: string, raw: unknown, spawn: SpawnFn, requireDesign?: true) {
+  const parsed = DesignFileFacts.safeParse(raw);
+  if (!parsed.success) return;
+  const revision = parsed.data;
+  const isDesign = ({ path }: { path: string }) => path.startsWith('docs/design/');
+  if (revision.files.some(isDesign)) return true;
+  if (revision.files.length === revision.changedFiles) return false;
+  if (!requireDesign) return;
+
+  const meta = parsePrUrl(url.toLowerCase());
+  if (!meta) return;
+  const outcome = await readCodingPrFilePages(meta, homedir(), spawn);
+  const pages = outcome.ok ? CodingPrFilePages.safeParse(outcome.data) : null;
+  if (!pages?.success || !codingPrFilePagesMatch(pages.data, revision)) return;
+  const files = pages.data.flatMap((page) => page.data.repository.pullRequest.files.nodes);
+  if (files.some(isDesign)) return true;
+  if (new Set(files.map(({ path }) => path)).size === revision.changedFiles) return false;
+}
+
 const readGithubPr = (superpipe({})('neo-work-pr-read') as PipelineAPI)
-  .input(['url', 'spawnImpl'])
+  .input(['url', 'spawnImpl', 'requireDesign'])
   .pipe(
     async (url: string, spawnImpl: SpawnFn) => {
       const outcome = await gh(
@@ -399,7 +430,7 @@ const readGithubPr = (superpipe({})('neo-work-pr-read') as PipelineAPI)
           'view',
           url,
           '--json',
-          'url,state,headRefOid,reviews,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences',
+          'url,state,headRefOid,reviews,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences,baseRefOid,changedFiles,files',
         ],
         spawnImpl,
         'graphql'
@@ -415,25 +446,27 @@ const readGithubPr = (superpipe({})('neo-work-pr-read') as PipelineAPI)
     'read'
   )
   .pipe(
-    (read: { raw: unknown }) => {
+    async (read: { raw: unknown }, url: string, spawn: SpawnFn, requireDesign?: true) => {
       const pr = summarizeNeoWorkPr(read.raw);
       const meta = GhPrSchema.safeParse(read.raw);
-      return pr && meta.success
-        ? {
-            value: {
-              pr,
-              base: meta.data.baseRefName,
-              mergeState: meta.data.mergeStateStatus,
-              approvals: countNeoWorkPrApprovals(meta.data.reviews),
-            },
-          }
-        : { reason: null };
+      if (!pr || !meta.success) return { reason: null };
+      const designChanged =
+        (await readDesignChanged(url, read.raw, spawn, requireDesign)) ??
+        (requireDesign ? null : undefined);
+      return {
+        value: {
+          pr: designChanged === undefined ? pr : { ...pr, designChanged },
+          base: meta.data.baseRefName,
+          mergeState: meta.data.mergeStateStatus,
+          approvals: countNeoWorkPrApprovals(meta.data.reviews),
+        },
+      };
     },
-    'read',
+    ['read', 'url', 'spawnImpl', 'requireDesign'],
     'result:pr'
   )
   .pipe(
-    async (url: string, spawnImpl: SpawnFn, found: { pr: NeoWorkPr; base?: string }) => {
+    async (url: string, spawnImpl: SpawnFn, found: { pr: CodingWorkPr; base?: string }) => {
       if (!wantsNeoWorkPrBlockers(found.pr, found.base)) return { rules: [], detail: null };
       const pr = githubPr(url);
       return {
@@ -446,7 +479,7 @@ const readGithubPr = (superpipe({})('neo-work-pr-read') as PipelineAPI)
   )
   .pipe(
     (
-      found: { pr: NeoWorkPr; base?: string; mergeState?: string; approvals: number },
+      found: { pr: CodingWorkPr; base?: string; mergeState?: string; approvals: number },
       extra: { rules: BranchRule[]; detail: PrDetail | null }
     ) => {
       const blockers = found.base
@@ -462,15 +495,20 @@ const readGithubPr = (superpipe({})('neo-work-pr-read') as PipelineAPI)
     ['pr', 'extra'],
     'pr'
   )
-  .endAsync('pr') as (url: string, spawnImpl: SpawnFn) => Promise<NeoWorkPr | null>;
+  .endAsync('pr') as (
+  url: string,
+  spawnImpl: SpawnFn,
+  requireDesign?: true
+) => Promise<CodingWorkPr | null>;
 
 export async function readGithubPrs(
   urls: readonly string[],
-  spawnImpl: SpawnFn = spawnProcess
-): Promise<NeoWorkPr[] | null> {
-  const prs: NeoWorkPr[] = [];
+  spawnImpl: SpawnFn = spawnProcess,
+  requireDesign?: true
+): Promise<CodingWorkPr[] | null> {
+  const prs: CodingWorkPr[] = [];
   for (const url of urls) {
-    const pr = await readGithubPr(url, spawnImpl);
+    const pr = await readGithubPr(url, spawnImpl, requireDesign);
     if (pr) prs.push(pr);
   }
   return prs.length || !urls.length ? prs : null;
