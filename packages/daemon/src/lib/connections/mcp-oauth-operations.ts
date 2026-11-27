@@ -279,7 +279,11 @@ export function createMcpOAuthOperations(
     return result;
   }
 
-  function retire({ id }: z.infer<typeof statusInput>, replacement?: z.infer<typeof replaceInput>) {
+  function retire(
+    { id }: z.infer<typeof statusInput>,
+    next?: z.infer<typeof replaceInput> | 'remove'
+  ) {
+    const replacement = next === 'remove' ? undefined : next;
     const active = pending.get(id);
     if (!replacement) {
       disconnecting.add(id);
@@ -316,6 +320,13 @@ export function createMcpOAuthOperations(
       try {
         await (await vault()).removeMcp(id);
         if (replacement) await writeReplacement(replacement, 'replaceOAuthUrl');
+        if (next === 'remove') {
+          await writeToolDefaults(db, {
+            mutations: [{ repository: 'registry', method: 'deleteOAuth', args: [id] }],
+            edits: [],
+          });
+          changed();
+        }
         return { ok: true };
       } catch {
         return { ok: false, reason: 'request_failed' };
@@ -371,6 +382,11 @@ export function createMcpOAuthOperations(
     .input('input')
     .pipe(replace, 'input', 'result')
     .endAsync('result') as typeof replace;
+  const remove = (input: z.infer<typeof statusInput>) => retire(input, 'remove');
+  const runRemove = (superpipe({})('mcp.registry.remove') as PipelineAPI)
+    .input('input')
+    .pipe(remove, 'input', 'result')
+    .endAsync('result') as typeof remove;
   const readStatus = (superpipe({})('mcp.registry.status') as PipelineAPI)
     .input('input')
     .pipe(status, 'input', 'result')
@@ -407,6 +423,14 @@ export function createMcpOAuthOperations(
       inputSchema: replaceInput,
       resultSchema: disconnectResult,
       execute: runReplace,
+    }),
+    defineOperation({
+      name: 'mcp.registry.remove',
+      description: 'Disconnect a remote MCP registry row, erase its saved grant and delete it.',
+      policy,
+      inputSchema: statusInput,
+      resultSchema: disconnectResult,
+      execute: runRemove,
     }),
     defineOperation({
       name: 'mcp.registry.status',
