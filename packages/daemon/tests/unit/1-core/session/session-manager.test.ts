@@ -1340,6 +1340,30 @@ describe('SessionManager', () => {
   });
 
   describe('archiveSessionResources (UI-only: session.archive + task.archive RPCs)', () => {
+    it('archives the session when the OXAP hub cannot detach it', async () => {
+      const session = { id: 'archive-id', status: 'active', config: {} } as Session;
+      const detach = mock(async () => {
+        throw new Error('OXAP close timed out');
+      });
+      sessionManager.registerSession({
+        getSessionData: () => session,
+        ensureOperationRegistryProvider: mock(() => {}),
+        setCallerScopeResolver: mock(() => {}),
+        setSpaceScopeResolver: mock(() => {}),
+        cleanup: mock(async () => {}),
+        oxap: { detach },
+      } as unknown as AgentSession);
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(session);
+
+      await sessionManager.archiveSessionResources(session.id, 'ui_session_archive');
+
+      expect(detach).toHaveBeenCalledTimes(1);
+      expect(mockDb.updateSession).toHaveBeenCalledWith(
+        session.id,
+        expect.objectContaining({ status: 'archived' })
+      );
+    });
+
     it('should NOT delete the DB row when archiving (preserves conversation history)', async () => {
       (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
         id: 'archive-id',
