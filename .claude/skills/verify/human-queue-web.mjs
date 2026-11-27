@@ -6,7 +6,7 @@ import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 
 const [port, directory, phase] = process.argv.slice(2);
-assert(port && port !== '8399' && directory && ['before', 'topic-before', 'layout-before', 'after', 'short-topics', 'late-reference', 'waiting-only'].includes(phase));
+assert(port && port !== '8399' && directory && ['before', 'topic-before', 'layout-before', 'after', 'short-topics', 'late-reference', 'waiting-only', 'phone-parity'].includes(phase));
 const run = resolve(directory);
 const evidence = join(run, 'evidence');
 const base = `http://127.0.0.1:${port}`;
@@ -81,6 +81,39 @@ async function checkWaitingOnly(context, theme) {
   const progress = await shown();
   await page.screenshot({ path: join(evidence, `waiting-only-progress-${theme}.png`), animations: 'disabled' });
   observations.push({ theme, waiting, progress });
+}
+async function checkPhoneParity(context, theme) {
+  const page = await context.newPage();
+  page.setDefaultTimeout(15000);
+  await page.goto(`${base}/neo`);
+  const queue = page.locator('[data-human-queue]');
+  const states = queue.getByRole('group', { name: '状态' });
+  await states.waitFor();
+  const chips = await states.getByRole('button').allInnerTexts();
+  await page.screenshot({ path: join(evidence, `phone-parity-waiting-${theme}.png`), animations: 'disabled' });
+  const tab = async (name) => {
+    const chip = states.getByRole('button', { name: new RegExp(`^${name}`) });
+    if (!(await chip.count())) return false;
+    await chip.click();
+    return true;
+  };
+  await tab('进行中|在做');
+  const progress = await queue.locator('[data-ask-todo]').count();
+  const allWork = await tab('所有工作');
+  if (!allWork) await tab('进行中|在做');
+  const big = page.locator('[data-ask="big"] [data-ask-status]').first();
+  const card = (await big.count()) ? await big.innerText() : null;
+  const filed = () => page.locator('[data-ask^="filed-"]').count();
+  const before = await filed();
+  const older = page.getByRole('button', { name: '显示更早的结果' });
+  const offered = await older.count();
+  if (offered) {
+    await older.click();
+    await page.waitForFunction((n) => document.querySelectorAll('[data-ask^="filed-"]').length > n, before, { timeout: 5000 }).catch(() => {});
+  }
+  const after = await filed();
+  await page.screenshot({ path: join(evidence, `phone-parity-all-${theme}.png`), animations: 'disabled', fullPage: true });
+  observations.push({ theme, chips, progress, allWork, card, older: { offered, before, after } });
 }
 async function checkShortTopics(context, theme) {
   await context.addInitScript(() => {
@@ -167,11 +200,16 @@ try {
     phase === 'late-reference' ? ['light'] : ['light', 'dark'];
   for (const theme of themes) {
     assert(['light', 'dark'].includes(theme));
-    const context = await browser.newContext({ storageState, viewport: { width: 1440, height: 900 }, colorScheme: theme, locale: phase === 'short-topics' ? 'zh-CN' : 'en-US' });
+    const context = await browser.newContext({ storageState, viewport: { width: 1440, height: 900 }, colorScheme: theme, locale: ['short-topics', 'phone-parity'].includes(phase) ? 'zh-CN' : 'en-US' });
     await context.route('**/*', (route) => route.request().url().startsWith(base) ? route.continue() : route.abort());
     await context.addInitScript((value) => localStorage.setItem('theme', value), theme);
     if (phase === 'late-reference') {
       await checkLateReference(context);
+      await context.close();
+      continue;
+    }
+    if (phase === 'phone-parity') {
+      await checkPhoneParity(context, theme);
       await context.close();
       continue;
     }
@@ -364,6 +402,13 @@ if (phase === 'waiting-only') {
     assert(progress.sections.includes('Recent outcomes'));
     assert.equal(progress.finished, 1);
   }
+}
+if (phase === 'phone-parity') {
+  const wrong = observations.filter((seen) =>
+    JSON.stringify(seen.chips) !== JSON.stringify(['等你 0', '已搁置 0', '进行中 0', '所有工作 5']) ||
+    seen.progress !== 0 || !seen.allWork || !seen.card?.includes('· 2 个待办') ||
+    !seen.older.offered || seen.older.after <= seen.older.before);
+  assert.deepEqual(wrong, [], `The web Inbox differs from the phone: ${JSON.stringify(wrong)}`);
 }
 if (phase === 'topic-before') {
   for (const { savedTopic } of observations)

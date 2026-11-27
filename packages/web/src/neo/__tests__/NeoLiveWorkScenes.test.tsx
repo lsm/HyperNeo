@@ -452,6 +452,44 @@ describe('Neo public work scenes', () => {
       hub.mockRestore();
     }
   });
+  it('shows older outcomes under All work while the queue is showing', async () => {
+    const old = testAskEntry('older', 'Older completed work', { state: 'done' });
+    old.ask.status = 'done';
+    const request = vi.fn((_method: string, input: { name: string }) =>
+      Promise.resolve(
+        input.name === 'neo.ask.history'
+          ? { ok: true, entries: [old], nextCursor: null }
+          : { ok: true, results: [], schedules: [] }
+      )
+    );
+    vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
+    const { model, container } = mount();
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          historyCursor: { updatedAt: 100, id: 'last-recent' },
+          humanQueue: {
+            items: [
+              {
+                state: 'waiting',
+                askId: 'waiting',
+                questionId: 'q-open',
+                text: 'Open card',
+                todos: [],
+              },
+            ],
+            counts: { waiting: { waiting: 1, held: 0, progress: 0 } },
+          },
+        } as never,
+      };
+    });
+    const queue = container.querySelector('[data-human-queue]') as HTMLElement;
+    fireEvent.click(within(queue).getByRole('button', { name: /^All work/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Show older outcomes' }));
+    await waitFor(() => expect(container.querySelector('[data-ask="older"]')).toBeTruthy());
+  });
   it.each([true, false])('keeps an empty Work surface accessible on desktop=%s', (desktop) => {
     vi.stubGlobal('matchMedia', () => ({ matches: desktop }));
     const { container } = mount(true, true);

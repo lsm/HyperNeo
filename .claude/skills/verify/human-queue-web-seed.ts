@@ -67,6 +67,25 @@ try {
       store.askQuestion(questionId, id, { text: `Held ${id}?`, kind: 'yesno', options: null, multiple: false, noLabel: 'Not now', yesLabel: 'Agree' }, now + i);
       assert(store.holdQuestion(questionId, true, crypto.randomUUID(), now));
     }
+  } else if (phase === 'phone-parity') {
+    const old = now - 3 * 24 * 60 * 60 * 1000;
+    const step = (id: string, askId: string, title: string, at = old) =>
+      store.addTodo(id, askId, { title, doneWhen: 'Observed', check: null, instruction: 'Synthetic', named: null, approvedAt: at }, at);
+    ask('research', 'Synthetic research database decision', 'Research');
+    step('research-step', 'research', 'Pick a research database');
+    ask('reminders', 'Synthetic future reminders', 'Home');
+    step('reminder-19', 'reminders', 'Remind me on Dec 19');
+    step('reminder-22', 'reminders', 'Remind me on Dec 22');
+    ask('big', 'Synthetic long checklist', 'Home');
+    const finish = db.prepare("UPDATE neo_todos SET state = 'done', started_at = ?, finished_at = ? WHERE id = ?");
+    for (let i = 0; i < 28; i++) {
+      step(`big-${i}`, 'big', `Checklist step ${i + 1}`, now);
+      if (i >= 2) finish.run(now, now, `big-${i}`);
+    }
+    for (let i = 0; i < 12; i++) {
+      ask(`filed-${i}`, `Synthetic filed outcome ${i + 1}`, 'Archive');
+      store.settleAsk(store.getAsk(`filed-${i}`)!, 'done', 'Filed', now - (i + 1) * 1000);
+    }
   } else {
     ask('trip', 'Synthetic trip plan', 'Travel');
     ask('tax', 'Synthetic tax filing', 'Finance');

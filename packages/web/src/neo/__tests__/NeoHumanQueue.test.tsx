@@ -993,3 +993,67 @@ describe('NeoHumanQueue', () => {
     expect(view.getByRole('region', { name: 'Ask 5' })).toBeTruthy();
   });
 });
+
+describe('NeoHumanQueue states match the phone', () => {
+  const parity: Queue = {
+    items: [
+      {
+        state: 'waiting',
+        askId: 'idle',
+        todoId: 'stalled',
+        title: 'Not started for days',
+        owner: 'neo',
+        step: 'neo',
+      },
+      {
+        state: 'progress',
+        askId: 'idle',
+        todoId: 'paused',
+        title: 'Paused step',
+        owner: 'nobody',
+        step: 'paused',
+      },
+      {
+        state: 'progress',
+        askId: 'idle',
+        todoId: 'after',
+        title: 'After an earlier step',
+        owner: 'prerequisite',
+        step: 'waiting',
+        waitingOn: 'earlier_step',
+      },
+      {
+        state: 'progress',
+        askId: 'busy',
+        todoId: 'running',
+        title: 'Session running',
+        owner: 'worker',
+        step: 'working',
+      },
+    ],
+    counts: {
+      idle: { waiting: 1, held: 0, progress: 2 },
+      busy: { waiting: 0, held: 0, progress: 1 },
+    },
+  };
+  const asks = [entry('idle', 'Idle ask'), entry('busy', 'Busy ask')];
+
+  it('waits on you only for your cards and steps, and is in progress only while a session runs', () => {
+    locale.value = 'zh-Hans';
+    const view = render(
+      <NeoHumanQueue queue={parity} entries={asks} onHold={vi.fn()} onAnswer={vi.fn()} />
+    );
+    const states = within(view.getByRole('group', { name: '状态' }));
+    expect(states.getByRole('button', { name: '等你 0' })).toBeTruthy();
+    expect(states.getByRole('button', { name: '已搁置 1' })).toBeTruthy();
+    expect(states.getByRole('button', { name: '进行中 1' })).toBeTruthy();
+    expect(states.getByRole('button', { name: '所有工作 4' })).toBeTruthy();
+    expect(view.queryByText('Not started for days')).toBeNull();
+    fireEvent.click(states.getByRole('button', { name: '进行中 1' }));
+    expect(view.getByText('Session running')).toBeTruthy();
+    expect(view.queryByText('After an earlier step')).toBeNull();
+    expect(view.queryByText('Paused step')).toBeNull();
+    fireEvent.click(states.getByRole('button', { name: '已搁置 1' }));
+    expect(view.getByText('Paused step')).toBeTruthy();
+  });
+});
