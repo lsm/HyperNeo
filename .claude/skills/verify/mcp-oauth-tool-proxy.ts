@@ -88,6 +88,10 @@ const fake = await startFakeMcpOAuthServer({
       return reply({ content: [text('kept'), text(prefix + bearer + '界'.repeat(15000))] });
     }
     if (params.arguments?.path === 'items') return reply({ content: Array(130).fill(text('item')) });
+    if (params.arguments?.path === 'transport-cap')
+      return reply({ content: [text('x'.repeat(262144))] });
+    if (params.arguments?.path === 'retired-credentials')
+      return reply({ content: [text(oldBearer), text(oldRefresh)] });
     return reply({ content: [text('read completed')] });
   },
 });
@@ -175,12 +179,20 @@ try {
   assert(bytes.content[1]?.type === 'text' && bytes.content[1].text.endsWith('[redacted]'),
     'A bearer crossing the byte limit must be replaced before truncation');
 
+  const fault = await call('transport-cap');
+  assert.equal(fault.isError, true);
+  assert.deepEqual(fault.content, [text('response_too_large')]);
+  const reopened = await call('retired-credentials');
+  secretFree(reopened);
+  assert.deepEqual(reopened.content, [text('[redacted]'), text('[redacted]')]);
+
   await client.close();
   await proxy.instance.close();
   mkdirSync(join(run, 'evidence'));
   writeFileSync(join(run, 'evidence/mcp-oauth-tool-proxy.json'), JSON.stringify({
     testedHead: process.argv[2], pass: true, postAfterRefresh: 'redacted',
     standaloneGetAfterRefresh: 'redacted', catalogRefusals: 6,
+    sameGenerationTransportReopen: 'redacted',
     outputCaps: ['bytes', 'items'], upstreamError: 'request_failed',
   }, null, 2));
   console.log('PASS: in-process MCP catalog refusal, item and byte caps, delayed POST and standalone GET redaction, bounded upstream error');
