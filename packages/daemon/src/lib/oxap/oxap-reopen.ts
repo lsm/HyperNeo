@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { MessageHub, Session } from '@hyperneo/shared';
 import {
   isOxapHarness,
@@ -7,6 +9,7 @@ import {
 import type { Database } from '../../storage/index.ts';
 import { MessageDeliveryTerminalTurnError } from '../agent/message-delivery.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
 import { OxapHubRequestError, type OxapHubClient } from './oxap-hub-client.ts';
 import { announceOxapNotice } from './oxap-notice.ts';
 import { recoveryContext } from './oxap-recovery.ts';
@@ -45,10 +48,15 @@ export type OxapReopenStore = Pick<
   | 'getSDKMessageRepo'
 >;
 export type OxapReopenEvents = Pick<MessageHub, 'event'>;
+export type AttachOxapOperations = (
+  sessionId: string,
+  reopen: boolean
+) => Promise<{ reference: string; dispose(): Promise<void> } | undefined>;
 export type OxapOpenPlan = {
   sessionId: string;
   directory: string;
   request: Record<string, unknown>;
+  attachOperations?: AttachOxapOperations;
 };
 type WorkStatus = {
   held?: boolean;
@@ -79,17 +87,57 @@ function nativeId(status: WorkStatus | undefined, plan: OxapOpenPlan, row: OxapH
   return id;
 }
 
+export async function bindingHasNoToolSources(directory: string, sessionId: string) {
+  const history = await readFile(join(directory, 'session-history.jsonl'), 'utf8').catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error;
+      return '';
+    }
+  );
+  for (const line of history.trimEnd().split('\n').reverse()) {
+    if (!line) continue;
+    const { action, record } = JSON.parse(line.slice(line.indexOf(' ') + 1)) as {
+      action: string;
+      record: { session_id: string; tool_source_ids?: string[] };
+    };
+    if (action !== 'refused' && record.session_id === sessionId)
+      return !record.tool_source_ids?.length;
+  }
+  return false;
+}
+
 async function open(client: OxapHubClient, plan: OxapOpenPlan, revision?: string): Promise<void> {
   const envelope = plan.request.request as { payload: Record<string, unknown> };
-  const request = revision
-    ? { ...envelope, capability_revision: revision, payload: { ...envelope.payload, reopen: true } }
-    : envelope;
-  const result = (await client.request('open', { ...plan.request, request })) as {
-    type?: unknown;
-    payload?: { session_id?: unknown };
-  };
-  if (result?.type !== 'session.open.response' || result.payload?.session_id !== plan.sessionId)
-    throw new Error('OAP returned an invalid session open response');
+  const capability = await plan.attachOperations?.(plan.sessionId, !!revision);
+  try {
+    const request = {
+      ...envelope,
+      ...(revision ? { capability_revision: revision } : {}),
+      payload: {
+        ...envelope.payload,
+        ...(revision ? { reopen: true } : {}),
+        ...(capability
+          ? {
+              tool_sources: [
+                {
+                  id: OPERATIONS_MCP_SERVER_NAME,
+                  kind: 'remote',
+                  credential_ref: capability.reference,
+                },
+              ],
+            }
+          : {}),
+      },
+    };
+    const result = (await client.request('open', { ...plan.request, request })) as {
+      type?: unknown;
+      payload?: { session_id?: unknown };
+    };
+    if (result?.type !== 'session.open.response' || result.payload?.session_id !== plan.sessionId)
+      throw new Error('OAP returned an invalid session open response');
+  } finally {
+    await capability?.dispose();
+  }
 }
 
 async function reopenRevision(

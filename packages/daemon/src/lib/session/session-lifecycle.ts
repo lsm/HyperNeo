@@ -660,12 +660,12 @@ export class SessionLifecycle {
     }
   }
 
-  grantOperationMcp(session: ReturnType<AgentSessionFactory>) {
+  operationMcpSession(session: ReturnType<AgentSessionFactory>) {
     const { id } = session.getSessionData();
     const stored = this.db.getSession(id);
     if (this.resourceOperations.has(id) || !stored || stored.status === 'archived')
       throw new Error('Operations MCP requires an open session.');
-    return this.operationMcp.grant(session);
+    return this.operationMcp;
   }
 
   closeOperationMcp() {
@@ -759,7 +759,7 @@ export class SessionLifecycle {
     sessionId: string,
     trigger: ArchiveResourcesTrigger
   ): Promise<WorktreeCleanup | undefined> {
-    await this.operationMcp.revoke(sessionId);
+    const grantSession = await this.operationMcp.revoke(sessionId);
     const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
     const session = this.db.getSession(sessionId);
     if (!session) {
@@ -782,6 +782,7 @@ export class SessionLifecycle {
       }
     }
 
+    await (agentSession ?? grantSession)?.oxap?.detach?.();
     await releaseWorkerSandbox(sessionSdkPath(session));
 
     await this.update(sessionId, { status: 'archived', archivedAt });

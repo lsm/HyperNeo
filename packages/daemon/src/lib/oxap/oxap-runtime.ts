@@ -13,14 +13,18 @@ import {
 import { updateOxapReasoning } from './oxap-query-hub.ts';
 import type { OxapQueryHub } from './oxap-query.ts';
 import { withOxapRecovery } from './oxap-recovery.ts';
-import { openOxapSession, type OxapReopenStore, type OxapReopenEvents } from './oxap-reopen.ts';
+import {
+  openOxapSession,
+  type OxapReopenStore,
+  type OxapReopenEvents,
+  type OxapOpenPlan,
+  type AttachOxapOperations,
+} from './oxap-reopen.ts';
 import { decideOxapOpen, savedOxapCodexReasoning } from '../agent/session-engine.ts';
 import { canonicalModelId } from '../model-service.ts';
 import { checkCodexLogin } from './oxap-codex-login.ts';
 import { savedOxapAdapter } from './oxap-hub-config.ts';
 import { recordOxapInit } from './oxap-init.ts';
-
-type OpenPlan = { sessionId: string; directory: string; request: Record<string, unknown> };
 
 function validateSession(session: Session): { sessionId: string; directory: string } {
   const directory = session.worktree?.worktreePath ?? session.workspacePath ?? process.cwd();
@@ -33,7 +37,7 @@ function openPlan(
   id: string,
   open: { adapter: string } | string,
   session: Session
-): OpenPlan {
+): OxapOpenPlan {
   if (typeof open === 'string') throw new Error(open);
   const { harness, model, thinkingLevel } = session.config;
   const reasoning =
@@ -67,7 +71,7 @@ const prepareOpen = (superpipe({})('oap.runtime.open') as PipelineAPI)
     'open'
   )
   .pipe(openPlan, ['placement', 'id', 'open', 'session'], 'plan')
-  .end('plan') as (session: Session, id: string, record: ProviderRecord | null) => OpenPlan;
+  .end('plan') as (session: Session, id: string, record: ProviderRecord | null) => OxapOpenPlan;
 
 type SessionSlot = {
   session: Session;
@@ -154,7 +158,8 @@ export function createOxapRuntime(
   db?: OxapReopenStore,
   messageHub?: OxapReopenEvents,
   providerRecord: (providerId: string) => ProviderRecord | null = () => null,
-  checkLogin = checkCodexLogin
+  checkLogin = checkCodexLogin,
+  attachOperations?: AttachOxapOperations
 ): (session: Session) => OxapQueryRuntime {
   const sessions = new Map<string, SessionSlot>();
   events?.subscribe(
@@ -167,7 +172,7 @@ export function createOxapRuntime(
       try {
         (await slot.opening)?.release?.();
       } catch {}
-      if (!slot.client) return;
+      if (!slot.client || !engine.isCurrentHub(slot.client)) return;
       try {
         await slot.client.request('close', { session_id: sessionId });
       } catch (error) {
@@ -188,6 +193,10 @@ export function createOxapRuntime(
     const ensureLive = () => {
       if (!slot || slot.deleted) throw new Error('Codex session was deleted');
     };
+    const planFor = (current: Session, record: ProviderRecord | null) => ({
+      ...prepareOpen(current, generateUUID(), record),
+      attachOperations: current.config.harness === 'oxap-codex' ? attachOperations : undefined,
+    });
     const restoreReasoning = async (client: OxapHubClient) => {
       if (!slot?.reasoningUnconfirmed) return;
       ensureLive();
@@ -199,7 +208,7 @@ export function createOxapRuntime(
       } else {
         if (held) await client.request('close', { session_id: current.id });
         const record = current.config.provider ? providerRecord(current.config.provider) : null;
-        const plan = prepareOpen(current, generateUUID(), record);
+        const plan = planFor(current, record);
         if (!db || !messageHub) throw new Error('Codex OAP session storage is unavailable');
         await openOxapSession(client, plan, current, db, messageHub, events, ensureLive);
       }
@@ -236,6 +245,23 @@ export function createOxapRuntime(
           return result;
         });
       },
+      async detach() {
+        if (!slot || session.config.harness !== 'oxap-codex') return;
+        await serializeSettings(slot, async () => {
+          (await slot.opening?.catch(() => undefined))?.release?.();
+          const client = slot.client;
+          slot.hub = undefined;
+          slot.opening = undefined;
+          slot.client = undefined;
+          if (!client || !engine.isCurrentHub(client)) return;
+          try {
+            await client.request('close', { session_id: session.id });
+          } catch (error) {
+            if (!(error instanceof OxapHubRequestError) || error.code !== 'unknown_session')
+              throw error;
+          }
+        });
+      },
       clear() {
         return clearSession(runtime, session, slot, db);
       },
@@ -246,7 +272,7 @@ export function createOxapRuntime(
             throw new Error('OXAP hub is not installed; choose an OXAP harness in Settings');
           if (!db || !messageHub) throw new Error('Codex OAP session storage is unavailable');
           const record = session.config.provider ? providerRecord(session.config.provider) : null;
-          const plan = prepareOpen(session, generateUUID(), record);
+          const plan = planFor(session, record);
           if (slot.directory && slot.directory !== plan.directory) {
             throw new Error('Codex session workspace changed; reopen is required');
           }

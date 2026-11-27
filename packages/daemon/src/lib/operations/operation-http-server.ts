@@ -1,4 +1,6 @@
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { rename, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
@@ -22,6 +24,7 @@ type Grant = {
   session: AgentSession;
   bearer: Buffer;
   connection?: McpConnection;
+  capabilities: Map<string, Promise<void>>;
 };
 
 export class OperationMcpHttpServer {
@@ -32,8 +35,11 @@ export class OperationMcpHttpServer {
   async grant(session: AgentSession) {
     if (this.closed) throw new Error('Operations MCP server is closed.');
     const { id } = session.getSessionData();
-    if (this.grants.has(id)) throw new Error('Operations MCP grant already exists.');
-    const grant = { session, bearer: Buffer.from(randomBytes(32).toString('base64url')) };
+    const grant = this.grants.get(id) ?? {
+      session,
+      bearer: Buffer.from(randomBytes(32).toString('base64url')),
+      capabilities: new Map<string, Promise<void>>(),
+    };
     this.grants.set(id, grant);
     try {
       this.listener ??= createHttpWsServer({
@@ -57,10 +63,68 @@ export class OperationMcpHttpServer {
     }
   }
 
+  async capability(session: AgentSession, directory: string) {
+    const { id } = session.getSessionData();
+    const issuing = this.grant(session);
+    const grant = this.grants.get(id);
+    const { endpoint, bearer } = await issuing;
+    if (!grant || this.grants.get(id) !== grant)
+      throw new Error('Operations MCP grant was revoked.');
+
+    const reference = randomBytes(32).toString('base64url');
+    const path = join(directory, reference);
+    const staging = join(directory, `.pending-${reference}`);
+    const writing = (async () => {
+      try {
+        await writeFile(
+          staging,
+          JSON.stringify({
+            session_id: id,
+            tool_approval: 'approve',
+            source: { id: OPERATIONS_MCP_SERVER_NAME, kind: 'remote', protocol: 'mcp', endpoint },
+            headers: { Authorization: `Bearer ${bearer}` },
+          }),
+          { flag: 'wx', mode: 0o600 }
+        );
+        await rename(staging, path);
+      } catch {
+        await rm(staging, { force: true }).catch(() => {});
+        throw new Error('Could not write the OXAP operations capability.');
+      }
+    })();
+    grant.capabilities.set(path, writing);
+    const dispose = async () => {
+      await this.removeCapability(path);
+      grant.capabilities.delete(path);
+    };
+    try {
+      await writing;
+      if (this.grants.get(id) !== grant) throw new Error('Operations MCP grant was revoked.');
+      return { reference, dispose };
+    } catch (error) {
+      await dispose();
+      throw error;
+    }
+  }
+
+  private async removeCapability(path: string) {
+    await rm(path, { force: true }).catch(() => {
+      throw new Error('Could not remove the OXAP operations capability.');
+    });
+  }
+
   async revoke(sessionId: string) {
     const grant = this.grants.get(sessionId);
     this.grants.delete(sessionId);
-    await grant?.connection?.transport.close();
+    if (!grant) return;
+    await Promise.all([
+      grant.connection?.transport.close(),
+      ...Array.from(grant.capabilities, async ([path, writing]) => {
+        await writing.catch(() => {});
+        await this.removeCapability(path);
+      }),
+    ]);
+    return grant.session;
   }
 
   async close() {

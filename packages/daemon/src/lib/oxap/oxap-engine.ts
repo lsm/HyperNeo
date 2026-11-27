@@ -41,13 +41,18 @@ function hubLaunch(options: OxapEngineOptions) {
       join(options.stateDirectory, 'oap-serve.json'),
       '--session-history',
       join(options.stateDirectory, 'session-history.jsonl'),
+      '--session-tool-sources',
+      join(options.stateDirectory, 'session-tool-sources'),
     ],
     environment: options.hub.environment,
   };
 }
 
 async function readSnapshotNames(options: OxapEngineOptions): Promise<string[]> {
-  await mkdir(options.stateDirectory, { recursive: true, mode: 0o700 });
+  await mkdir(join(options.stateDirectory, 'session-tool-sources'), {
+    recursive: true,
+    mode: 0o700,
+  });
   return readdir(options.stateDirectory);
 }
 

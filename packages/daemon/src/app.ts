@@ -23,6 +23,7 @@ import { stampActiveAttempt } from './lib/tasks/direct-attempt-flag.ts';
 import { homedir } from 'os';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { mkdir, rm } from 'node:fs/promises';
 import { codexStatePath } from './storage/codex-desktop-read.ts';
 import { parsePositiveInt, type Config } from './config.ts';
 import type { WebSocketData } from './types/websocket.ts';
@@ -234,6 +235,7 @@ import { remoteDaemons } from './lib/remote-daemons/registry.ts';
 import { RemoteDaemonSecretRepository } from './storage/repositories/remote-daemon-secret-repository.ts';
 import { artifactIdentityWrites } from './storage/repositories/artifact-file-identity-write.ts';
 import { OxapEngine } from './lib/oxap/oxap-engine.ts';
+import { bindingHasNoToolSources } from './lib/oxap/oxap-reopen.ts';
 import { createOxapRuntime } from './lib/oxap/oxap-query.ts';
 import { readHubOptions, type OxapSettingsDeps } from './lib/oxap/oxap-settings.ts';
 import { installOxapHub, type OxapHubBinary } from './lib/oxap/oxap-install.ts';
@@ -864,6 +866,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     }
 
     const oxapStateDirectory = join(getDataDir(), 'oap');
+    const capabilityDirectory = join(oxapStateDirectory, 'session-tool-sources');
+    await rm(capabilityDirectory, { recursive: true, force: true });
+    await mkdir(capabilityDirectory, { recursive: true, mode: 0o700 });
     let installingOxap: Promise<OxapHubBinary> | undefined;
     const oxapSettings: OxapSettingsDeps = {
       settings: () => settingsManager.getGlobalSettings(),
@@ -929,7 +934,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         internalEventBus,
         reactiveDb.db,
         messageHub,
-        (providerId) => db.providers.getProviderByProviderId(providerId)
+        (providerId) => db.providers.getProviderByProviderId(providerId),
+        undefined,
+        async (sessionId, reopen) => {
+          if (reopen && (await bindingHasNoToolSources(oxapStateDirectory, sessionId)))
+            return undefined;
+          return sessionManager!.attachOperationMcp(sessionId, capabilityDirectory);
+        }
       ),
       mcpOAuth.sessionProxy
     );
