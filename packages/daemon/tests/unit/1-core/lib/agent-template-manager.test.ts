@@ -107,8 +107,8 @@ describe('SpaceAgentTemplateManager', () => {
         expect.objectContaining({
           key: 'worker.desktop',
           tools: [
-            'invoke',
-            ...desktopCatalog.map(({ name }) => `mcp__hyperneo-operations__${name}`),
+            'mcp__desktop__report',
+            ...desktopCatalog.map(({ name }) => `mcp__desktop__${name}`),
           ],
         })
       );

@@ -2,7 +2,7 @@
 
 Run this journey on a build host with the pinned Bun from SKILL.md. It starts an
 isolated daemon on a random port with its own HOME and database, then calls the
-real session's hyperneo-operations MCP server against a fake desktop host. The
+real session's desktop MCP server against a fake desktop host. The
 session keeps the daemon's own caller role, as a todo worker Neo starts does. It
 routes the template turn to a scripted loopback model and sends no real GUI input. Worktrees are disabled in
 the daemon config, and the job processor is stopped before fixture seeding.
@@ -12,19 +12,38 @@ TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh \
   /absolute/fresh/evidence-directory .claude/skills/verify/desktop-call.ts
 ```
 
-The journey first proposes a Finder todo through Neo's MCP operation and answers
+The journey first proposes a Calculator todo through Neo's MCP operation and answers
 its disclosure card through the human WebSocket door. The real work start must
 create a Desktop template session. The actual SDK request to the loopback model
-must expose `invoke` and every catalog tool, carry the system instructions, and
-omit their copy from the brief. The model calls `get_window_state` for Finder
+must expose the desktop action catalog and `report`, with a desktop-only system
+prompt and brief. The saved SDK startup and HyperNeo composer must
+show only the desktop MCP tools and no skills, slash commands or agents. Pass
+prints `desktop worker inventory PASS`. The exact lists and Claude Code version
+and the provider's prompt and brief are saved to
+`evidence/desktop-worker-inventory.json`. The model calls `get_window_state` for Calculator
 and tries `launch_app` for unapproved TextEdit. Both return `at` and `ms`. The
 TextEdit call returns `app_not_in_todo_scope` without dispatching any input.
-The session MCP door must list exactly four operations and refuse a file read.
+The model sends a result that reaches the assigning session. Reports with a
+question or blocker stage the question on the bound task. The desktop session
+must refuse operation discovery and a file read.
 The fake host sends a synthetic token in both accessibility fields and a
-screenshot. The native and `invoke` results must contain just a redaction marker
+screenshot. The desktop tool and underlying operation results must contain just a redaction marker
 after the normal status. An app missing from the card and legacy cards with or without
 recorded approval must refuse capture before dispatch. Pass prints `desktop worker template journey PASS` and saves
 `desktop-worker-template.json`. The signed host and its dialogs remain a separate journey.
+The desktop session has no second system prompt stored in its configuration.
+
+The runner also captures a non-desktop worker request. Compare
+`ordinary-worker-brief.txt` from the baseline and changed runs with `cmp`.
+The capture normalizes the generated IDs and fixture directory and omits the
+SDK's environment disclosure. The remaining task brief must match byte for byte.
+
+Pass `--long-brief` to the helper to send an oversized task with a configured
+payment preference and a seeded previous worker report. The provider must
+receive all six preferences as valid JSON with guidance for every value
+listed by the preference operation, the completion condition, the previous report, and the start of the
+task. Pass prints `long desktop brief PASS preferences=6 delegation_guidance=6
+completion=1 previous_report=1`.
 
 Pass prints `desktop.call journey PASS host_requests=11 no_scope_refused=1 sibling_isolated=1 sibling_own_scope=1 host_busy=1 host_timeout=1 host_locked=1 resumed=1 initial_audit_rows=2
 blocked_allowed=1 pending_allowed=1 current_preferred=1 ambiguous_refused=1 blocked_with_queued_allowed=1 finished_refused=1 driver_error_body=1 refused_paths=5 described_tools=12`: operations.describe lists every catalog tool.

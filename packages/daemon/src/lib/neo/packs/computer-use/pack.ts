@@ -3,6 +3,7 @@ import {
   NEO_PACK_COMPUTER_USE_WORKER,
 } from '@hyperneo/prompts';
 import type { NeoPack, NeoPackBrief } from '../../pack-contract.ts';
+import { DESKTOP_WORKER_TEMPLATE_KEY } from '../../../desktop/worker-profile.ts';
 
 export const COMPUTER_USE_PACK_BRIEF: NeoPackBrief = {
   id: 'computer-use',
@@ -17,8 +18,16 @@ export function createComputerUsePack(): NeoPack {
     instructions: () => NEO_PACK_COMPUTER_USE_INSTRUCTIONS,
     workerTemplate: (todo) =>
       todo.desktopApps?.length && todo.named?.desktopControl !== false
-        ? 'worker.desktop'
+        ? DESKTOP_WORKER_TEMPLATE_KEY
         : undefined,
+    workerTemplateBrief: (todo) =>
+      [
+        todo.doneWhen && `Finish when ${todo.doneWhen}`,
+        todo.report && `Latest worker report:\n${todo.report}`,
+        todo.instruction,
+      ]
+        .filter(Boolean)
+        .join('\n\n'),
     workerContext: () => NEO_PACK_COMPUTER_USE_WORKER,
   };
 }

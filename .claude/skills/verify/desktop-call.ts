@@ -19,6 +19,7 @@ import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/loca
 
 const run = resolve(process.argv.at(-1)!);
 const collapse = process.argv.includes('--collapse');
+const longBrief = process.argv.includes('--long-brief');
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -39,16 +40,21 @@ const app = await createDaemonApp({
 });
 assert(![8399, 8499].includes(app.server.port));
 const model = 'desktop-template-proof';
-const instruction = 'Identify the open Finder window.';
-const bundleId = 'com.apple.finder';
+const instruction = 'Identify the open Calculator window.';
+const ordinaryInstruction = 'Summarize this ordinary task.';
+const bundleId = 'com.apple.calculator';
 const otherApp = 'com.apple.TextEdit';
-const toolPrefix = 'mcp__hyperneo-operations__';
-const modelTools = ['invoke', ...catalog.map(({ name }) => name)].map(name => toolPrefix + name);
+const toolPrefix = 'mcp__desktop__';
+const modelTools = ['report', ...catalog.map(({ name }) => name)].map(name => toolPrefix + name);
+const reportText = 'Calculator observation recorded.';
+const previousReport = 'Calculator was open. The previous worker stopped before pressing a key.';
 const toolCalls = [
   { name: 'get_window_state', input: { pid: 123, window_id: 7, timeout_ms: 1000, since: 'latest' } },
   { name: 'launch_app', input: { bundle_id: otherApp } },
+  { name: 'report', input: { kind: 'done', text: reportText } },
 ];
 const modelRequest = Promise.withResolvers<{ tools: string[]; system: string; brief: string }>();
+const ordinaryRequest = Promise.withResolvers<string>();
 type ModelBlock = { type: string; tool_use_id?: string; content?: string | { type: string; text?: string }[] };
 const modelResults = Promise.withResolvers<ModelBlock[]>();
 let modelStep = 0;
@@ -59,6 +65,8 @@ const mock = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
   if (!path.endsWith('/messages')) return Response.json({});
   const body = await request.json() as { stream?: boolean; tools?: { name: string }[]; system?: unknown; messages?: { content: string | ModelBlock[] }[] };
   const brief = JSON.stringify(body.messages ?? []);
+  if (body.stream && brief.includes(ordinaryInstruction) && brief.includes('Worker delivery:'))
+    ordinaryRequest.resolve(brief);
   if (brief.includes(instruction)) modelRequest.resolve({
     tools: (body.tools ?? []).map(({ name }) => name),
     system: JSON.stringify(body.system ?? ''),
@@ -170,25 +178,66 @@ try {
   const neo = createOperationMcpHandler(registry, () => ({ sessionId: root, role: 'neo' }));
   const fromNeo = async (name: string, input: Record<string, unknown>) =>
     JSON.parse((await neo({ name, input })).content[0].text);
-  const opened = await fromNeo('neo.ask.propose', { title: 'Inspect Finder', request: 'Inspect the test folder in Finder?', desktopApps: [bundleId] });
-  assert(opened.ok, JSON.stringify(opened));
+  app.jobProcessor.start();
+  const ordinary = await fromNeo('neo.ask.propose', { title: 'Ordinary task', request: ordinaryInstruction });
+  assert(ordinary.ok, JSON.stringify(ordinary));
   const ask = new NeoAskTodoRepository(sql);
+  const ordinaryAnswer = await hub.request<{ ok: boolean }>('operation.invoke', {
+    name: 'neo.question.answer', input: { questionId: ask.listQuestions(ordinary.ask.id)[0]!.id, answer: 'yes' },
+  });
+  assert(ordinaryAnswer.ok, JSON.stringify(ordinaryAnswer));
+  const ordinaryTodo = await fromNeo('neo.todo.add', {
+    askId: ordinary.ask.id, title: 'Ordinary task', instruction: ordinaryInstruction, after: [],
+    check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'evidence', 'ordinary') } },
+    target: { verb: 'start', adapter: 'hyperneo', ...modelConfig, place: { machine: hostname(), folder: run, name: 'Synthetic workspace' } },
+  });
+  assert(ordinaryTodo.ok && ordinaryTodo.todo, JSON.stringify(ordinaryTodo));
+  const ordinaryBrief = await Promise.race([
+    ordinaryRequest.promise,
+    delay(30_000, undefined, { ref: false }).then(() => { throw new Error('No model request for the ordinary todo'); }),
+  ]);
+  const ordinaryText = (JSON.parse(ordinaryBrief) as { role: string; content: { text?: string }[] }[])
+    .flatMap(({ content }) => content.map(({ text }) => text ?? '')).join('\n')
+    .split('\n# Environment')[0]
+    .replaceAll(root, '<sender>')
+    .replaceAll(run, '<run>')
+    .replaceAll(ordinaryTodo.todo.id, '<task>')
+    .replace(/Worker delivery: [0-9a-f-]+/, 'Worker delivery: <delivery>');
+  writeFileSync(join(run, 'evidence/ordinary-worker-brief.txt'), ordinaryText);
+  const opened = await fromNeo('neo.ask.propose', { title: 'Inspect Calculator', request: 'Inspect the Calculator window?', desktopApps: [bundleId] });
+  assert(opened.ok, JSON.stringify(opened));
   const card = ask.listQuestions(opened.ask.id)[0]!;
   assert(card.text.includes('The worker and its model will see everything these apps show, on every page.'));
   const answered = await hub.request<{ ok: boolean }>('operation.invoke', {
     name: 'neo.question.answer', input: { questionId: card.id, answer: 'yes' },
   });
   assert(answered.ok, JSON.stringify(answered));
+  if (longBrief) {
+    const updated = await hub.request<{ ok: boolean }>('operation.invoke', {
+      name: 'pack.preferences.set',
+      input: { pack: 'delegation', scope: { kind: 'global', key: '' }, key: 'payment', value: 'fillStop' },
+    });
+    assert(updated.ok, JSON.stringify(updated));
+  }
   secretObservation = true;
-  app.jobProcessor.start();
+  const target = { verb: 'start', adapter: 'hyperneo', ...modelConfig, place: { machine: hostname(), folder: run, name: 'Synthetic workspace' } };
   const added = await fromNeo('neo.todo.add', {
-    askId: opened.ask.id, title: 'Identify the Finder window', after: [],
+    askId: opened.ask.id, title: 'Identify the Calculator window', after: [],
     check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'evidence', 'complete') } },
-    instruction,
-    target: { verb: 'start', adapter: 'hyperneo', ...modelConfig, place: { machine: hostname(), folder: run, name: 'Synthetic workspace' } },
+    instruction: longBrief ? null : instruction,
+    target: longBrief ? undefined : target,
     desktopApps: [bundleId],
   });
   assert(added.ok && added.todo, JSON.stringify(added));
+  if (longBrief) {
+    sql.prepare('UPDATE neo_todos SET report = ? WHERE id = ?').run(previousReport, added.todo.id);
+    const started = await fromNeo('neo.todo.edit', {
+      todoId: added.todo.id,
+      instruction: instruction + '\n\n' + 'Check the displayed value. '.repeat(1_000),
+      target,
+    });
+    assert(started.ok, JSON.stringify(started));
+  }
   const ref = new NeoTodoSessionRepository(sql).readRef(added.todo.id);
   assert(ref, JSON.stringify(added));
   const templated = await app.sessionManager.getSessionAsync(ref.id);
@@ -196,10 +245,10 @@ try {
   assert.equal(templated.getSessionData().metadata.workerTemplate, 'worker.desktop');
   const outbound = await Promise.race([
     modelRequest.promise,
-    delay(30_000, undefined, { ref: false }).then(() => { throw new Error('No model request for the Finder todo'); }),
+    delay(30_000, undefined, { ref: false }).then(() => { throw new Error('No model request for the Calculator todo'); }),
   ]);
-  assert.deepEqual(outbound.tools.sort(), [...modelTools].sort());
-  assert.match(outbound.system, /desktop tools to act in the approved apps/);
+  assert.deepEqual([...outbound.tools].sort(), [...modelTools].sort());
+  assert.match(outbound.system, /using the desktop tools in approved apps/);
   assert.match(outbound.system, /Put any exact text you will need in your own reply/);
   assert(!outbound.brief.includes('desktop_permissions_required'));
   const results = await Promise.race([
@@ -207,10 +256,75 @@ try {
     delay(30_000, undefined, { ref: false }).then(() => { throw new Error('No native desktop tool results reached the model'); }),
   ]);
   await app.jobProcessor.stop();
-  assert.equal(results.length, 2);
-  const [capture, refusal] = results;
+  const init = app.db.getSDKMessagesByType(ref.id, 'system', 'init').find(
+    (message) => message.type === 'system' && message.subtype === 'init'
+  );
+  assert(init, 'No Claude Code startup inventory was recorded');
+  const { commandsData } = await hub.request<{ commandsData: { availableCommands: string[] } }>(
+    'state.session', { sessionId: ref.id }
+  );
+  const inventory = {
+    claudeCodeVersion: init.claude_code_version,
+    tools: init.tools,
+    modelTools: outbound.tools,
+    skills: init.skills,
+    slashCommands: init.slash_commands,
+    terminalSlashCommands: init.terminal_slash_commands,
+    agents: init.agents,
+    composerCommands: commandsData.availableCommands,
+    systemPrompt: JSON.parse(outbound.system),
+    taskBrief: JSON.parse(outbound.brief),
+  };
+  writeFileSync(join(run, 'evidence/desktop-worker-inventory.json'), JSON.stringify(inventory, null, 2));
+  if (longBrief) {
+    const task = inventory.taskBrief.find(({ role }: { role: string }) => role === 'user');
+    const brief = task.content.map(({ text }: { text?: string }) => text ?? '').join('\n');
+    const data = brief.split('Delegation preferences (data):\n')[1]?.split('\n')[0];
+    assert(data, 'Long desktop task brief lost the delegation preferences');
+    const preferences = JSON.parse(data);
+    assert.equal(Object.keys(preferences).length, 6);
+    assert.deepEqual(preferences.payment, { value: 'fillStop', configured: true });
+    assert.deepEqual(preferences.humanStep, { value: 'computer', configured: false });
+    assert.match(brief, /payment self: The human handles the entire payment\./);
+    assert.match(brief, /fillStop: Prepare the form and leave the final button to the human\./);
+    assert.match(brief, /confirmed: Press the final button only after the human explicitly approves that payment\./);
+    const { declarations } = await fromNeo('pack.preferences.list', { pack: 'delegation' });
+    assert.deepEqual(Object.keys(declarations).sort(), Object.keys(preferences).sort());
+    for (const [key, declaration] of Object.entries(declarations as Record<string, { valueLabels: Record<string, unknown> }>)) {
+      const guide = brief.split('\n').find((line: string) => line.startsWith(`- ${key} `));
+      assert(guide, `Missing desktop delegation guidance for ${key}`);
+      for (const value of Object.keys(declaration.valueLabels))
+        assert(guide.includes(` ${value}: `), `Missing desktop delegation guidance for ${key} ${value}`);
+    }
+    assert(brief.includes('Check the displayed value.'));
+    assert.deepEqual({
+      completion: brief.includes(`Finish when ${added.todo.doneWhen}`),
+      previousReport: brief.includes(`Latest worker report:\n${previousReport}`),
+    }, { completion: true, previousReport: true });
+    console.log(`long desktop brief PASS preferences=${Object.keys(preferences).length} delegation_guidance=6 completion=1 previous_report=1`);
+  }
+  const expectedDesktopTools = ['report', ...catalog.map(({ name }) => name)]
+    .map(name => 'mcp__desktop__' + name).sort();
+  assert.deepEqual([...outbound.tools].sort(), expectedDesktopTools);
+  assert.doesNotMatch((outbound.system + outbound.brief).replaceAll(run, '<fixture>'), /\bneo\b|hyperneo|operations\.describe|message\.send|Most non-coding tasks/i);
+  assert.deepEqual([...init.tools].sort(), [...modelTools].sort());
+  assert.deepEqual(init.skills, []);
+  assert.deepEqual(init.slash_commands, []);
+  assert.deepEqual(init.terminal_slash_commands ?? [], []);
+  assert.deepEqual(init.agents ?? [], []);
+  assert.deepEqual(inventory.composerCommands, []);
+  assert.doesNotMatch(outbound.system + outbound.brief, /deep-research|statusline-setup|Available agent types/i);
+  assert.equal(templated.getSessionData().config.systemPrompt, undefined, 'Desktop session stores a second system prompt');
+  console.log(`desktop worker inventory PASS sdk_tools=${init.tools.length} model_tools=${outbound.tools.length} skills=0 slash_commands=0 agents=0 composer_commands=0`);
+  assert.equal(results.length, 3);
+  const [capture, refusal, sent] = results;
   assert(Array.isArray(refusal.content));
   const refused = JSON.parse(refusal.content[0].text ?? '');
+  assert(Array.isArray(sent.content));
+  assert.equal(sent.content[0]?.text, 'Report received.');
+  const pendingReports = app.db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': root });
+  const received = app.db.getSDKMessagesByType(root, 'user');
+  assert(JSON.stringify([...pendingReports, ...received]).includes(reportText), 'Result did not reach the assigning session');
   assert.equal(refused.reason, 'app_not_in_todo_scope');
   assert.equal(refused.dispatched, false);
   assert(Number.isFinite(Date.parse(refused.at)));
@@ -230,8 +344,8 @@ try {
   assert.match(stored, /Desktop observation redacted because it contains a possible secret/);
   assert(!stored.includes('get_window_state pid=123 window_id=7 ok'));
   assert.deepEqual(requests.map(({ tool, arguments: args, apps }) => ({ tool, args, apps })),
-    toolCalls.map(({ name, input }) => {
-      const { since, ...full } = input;
+    toolCalls.slice(0, 2).map(({ name, input }) => {
+      const { since, ...full } = 'since' in input ? input : { ...input, since: undefined };
       return { tool: name, args: collapse ? full : input, apps: [bundleId] };
     }));
   console.log(`desktop snapshot journey PASS collapse=${collapse} dispatches=${requests.length} kept_full=${collapse ? 1 : 2} since_forwarded=${!collapse}`);
@@ -240,15 +354,15 @@ try {
   const options = await templated.optionsBuilder.build();
   assert.deepEqual(options.tools, []);
   assert.deepEqual(options.allowedTools, modelTools);
-  assert.deepEqual(Object.keys(options.mcpServers ?? {}), ['hyperneo-operations']);
+  assert.deepEqual(Object.keys(options.mcpServers ?? {}), ['desktop']);
   assert(options.systemPrompt && typeof options.systemPrompt === 'object');
-  assert.match(options.systemPrompt.append ?? '', /desktop tools to act in the approved apps/);
-  const templateCall = operationInvoke(templated.getOperationMcpServer());
-  const operations = JSON.parse((await templateCall({ name: 'operations.list', input: { all: true } })).content[0].text)
-    .map(({ name }: { name: string }) => name).sort();
-  assert.deepEqual(operations, ['desktop.call', 'message.send', 'operations.describe', 'operations.list']);
-  const denied = await templateCall({ name: 'file.reference.read', input: {} });
-  assert.equal(JSON.parse(denied.content[0].text).code, 'forbidden');
+  assert.equal(options.systemPrompt.type, 'custom');
+  const [registrySource, resolveCaller, recordRefusal] = templated.getOperationMcpRegistration();
+  const templateCall = createOperationMcpHandler(registrySource, resolveCaller, recordRefusal);
+  for (const name of ['operations.list', 'operations.describe', 'file.reference.read']) {
+    const denied = await templateCall({ name, input: {} });
+    assert.equal(JSON.parse(denied.content[0].text).code, 'forbidden');
+  }
   const observation = { name: 'desktop.call', input: { tool: 'get_window_state', args: { pid: 123, window_id: 7 } } };
   secretObservation = true;
   const redacted = await templateCall(observation);
@@ -264,19 +378,32 @@ try {
   const reasonForCapture = async () => JSON.parse((await templateCall(observation)).content[0].text).reason;
   setScope([{ bundleId: 'com.apple.TextEdit', name: 'TextEdit', seen: 'all' }]);
   assert.equal(await reasonForCapture(), 'desktop_not_enabled');
-  setScope([{ bundleId, name: 'Finder' }]);
+  setScope([{ bundleId, name: 'Calculator' }]);
   assert.equal(await reasonForCapture(), 'desktop_consent_outdated');
   sql.prepare('UPDATE neo_todos SET approved_at = NULL WHERE id = ?').run(added.todo.id);
   assert.equal(await reasonForCapture(), 'desktop_consent_outdated');
   assert.equal(requests.length, 1);
+  setScope([{ bundleId, name: 'Calculator', seen: 'all' }]);
+  sql.prepare('UPDATE neo_todos SET approved_at = ? WHERE id = ?').run(now, added.todo.id);
+  const { instance } = templated.getOperationMcpServer();
+  const report = (instance as unknown as {
+    _registeredTools: { report: { handler: ReturnType<typeof createOperationMcpHandler> } };
+  })._registeredTools.report.handler;
+  for (const kind of ['question', 'blocked']) {
+    const title = kind === 'question' ? 'Use Calculator now?' : 'Allow Calculator access?';
+    const reply = await report({ kind, text: title, question: { title, options: ['Yes', 'No'], language: 'en' } });
+    assert.equal(reply.content[0].text, 'Report received.');
+    assert.equal(ask.getTodo(added.todo.id)?.blockedReason, title);
+    assert.equal(new NeoTodoSessionRepository(sql).readNudge(added.todo.id)?.workerQuestion?.title, title);
+  }
   await hub.request('settings.global.update', { updates: { coordinatorMode: false } });
   writeFileSync(join(run, 'evidence/desktop-worker-template.json'), JSON.stringify({
     card: card.text, template: 'worker.desktop', builtins: options.tools, allowedTools: options.allowedTools,
-    mcpServers: Object.keys(options.mcpServers ?? {}), operations, denied: true, redacted: true,
+    mcpServers: Object.keys(options.mcpServers ?? {}), reports: 3, denied: true, redacted: true,
     modelTools: outbound.tools, templatePrompt: true, shortBrief: true, rejectedCaptures: 3,
     capture: capture.content, refused, collapse, fullCaptureStored: true,
   }, null, 2));
-  console.log(`desktop worker template journey PASS builtins=0 mcp_tools=${modelTools.length} admitted_operations=4 denied_file_reads=1 timed_native_results=${collapse ? 1 : 2} redacted_observations=2 rejected_captures=3`);
+  console.log(`desktop worker template journey PASS builtins=0 mcp_tools=${modelTools.length} report_kinds=3 denied_operations=3 timed_native_results=${collapse ? 1 : 2} redacted_observations=2 rejected_captures=3`);
   requests.length = 0;
   sql.prepare("DELETE FROM mcp_audit_log WHERE session_id = ?").run(ref.id);
   const worker = await app.sessionManager.createSession({ workspacePath: run, title: 'Synthetic desktop worker', config: modelConfig });

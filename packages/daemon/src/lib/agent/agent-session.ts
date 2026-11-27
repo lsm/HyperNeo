@@ -69,6 +69,7 @@ import {
 import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
 import { operationsCapabilityContribution } from '../operations/door-briefing.ts';
 import { createOperationMcpServer } from '../operations/mcp-server.ts';
+import { desktopReportTarget } from '../desktop/opt-in.ts';
 import {
   enabledOperationPacks,
   type OperationRegistry,
@@ -410,6 +411,7 @@ export class AgentSession
     inputOrigin?: () => { messageId: string } | null,
     desktopTurn?: () => DesktopTurn | null
   ): Parameters<typeof createOperationMcpServer> {
+    const desktop = this.session.config.toolProfile === 'desktop';
     return [
       () => this.resolveOperationRegistry(),
       (operation) => {
@@ -427,9 +429,8 @@ export class AgentSession
         };
       },
       this.recordOperationRefusal,
-      this.session.config.toolProfile === 'desktop'
-        ? 'desktop'
-        : this.operationCallerIdentity().role,
+      desktop ? 'desktop' : this.operationCallerIdentity().role,
+      desktop ? () => desktopReportTarget(this.operationDatabase, this.session.id) : undefined,
       () => {
         const provider = getProviderRegistry().get(this.providerId());
         return provider instanceof CustomEndpointProvider && provider.collapseDesktopObservations;
@@ -437,8 +438,12 @@ export class AgentSession
     ];
   }
 
+  private get operationDatabase() {
+    return this.db.getDatabase();
+  }
+
   private readonly recordOperationRefusal = (refusal: OperationRefusal) =>
-    gatewayFor(this.db.getDatabase()).run(recordOperationRefusal, {
+    gatewayFor(this.operationDatabase).run(recordOperationRefusal, {
       refusal,
       sessionId: this.session.id,
       at: Date.now(),

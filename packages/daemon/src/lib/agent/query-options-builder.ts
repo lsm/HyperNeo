@@ -1,4 +1,3 @@
-import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
 import { workerWorkEnvironment, workerWorkLocationsBrief } from '../work-locations.ts';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { neoPlanContextHooks } from './neo-plan-hook.ts';
@@ -97,6 +96,11 @@ import {
 } from './output-limiter-hook.ts';
 import type { QuestionInputOriginSource } from './question-input-origin.ts';
 import type { DesktopTurn } from '../desktop/host-dispatch.ts';
+import {
+  DESKTOP_MCP_SERVER_NAME,
+  DESKTOP_WORKER_PROMPT,
+  DESKTOP_WORKER_TOOLS,
+} from '../desktop/worker-profile.ts';
 import { awaitSDKCliPathForQuery, isRunningUnderBun } from './sdk-cli-resolver.js';
 import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
 
@@ -412,7 +416,7 @@ export class QueryOptionsBuilder {
         ? undefined
         : (this.operationServer ?? this.ctx.getOperationMcpServer?.());
     if (this.ctx.session.config.toolProfile === 'desktop')
-      return operationServer ? { [OPERATIONS_MCP_SERVER_NAME]: operationServer } : undefined;
+      return operationServer ? { [DESKTOP_MCP_SERVER_NAME]: operationServer } : undefined;
     const { servers, renamed } = mergeSessionMcpServers<SdkMcpServerConfig>({
       registryServers: inputs ? this.canonicalMcpServers(inputs) : this.getMcpServersFromRegistry(),
       skillServers: inputs ? {} : this.getMcpServersFromSkills(),
@@ -525,9 +529,11 @@ export class QueryOptionsBuilder {
       providerEpoch,
     });
 
-    const systemPromptConfig = this.buildSystemPrompt();
+    const systemPromptConfig = desktop
+      ? buildHostAuthoredPrompt(DESKTOP_WORKER_PROMPT)
+      : this.buildSystemPrompt();
     const disallowedTools = this.getDisallowedTools();
-    const allowedTools = this.getAllowedTools();
+    const allowedTools = desktop ? DESKTOP_WORKER_TOOLS : this.getAllowedTools();
     const neo = neoCoordinatorBinding(this.ctx.db, session.id);
     const readAccess = neo
       ? await neoReadAccess(session.id, this.getCwd(), this.ctx.getGithubToken?.bind(this.ctx))
@@ -611,12 +617,12 @@ export class QueryOptionsBuilder {
 
       systemPrompt: systemPromptConfig,
 
-      tools: config.sdkToolsPreset,
+      tools: desktop ? [] : config.sdkToolsPreset,
       allowedTools: allowedTools.length > 0 ? allowedTools : undefined,
       disallowedTools: disallowedTools.length > 0 ? disallowedTools : undefined,
 
-      agent: config.agent,
-      agents: config.agents as Options['agents'],
+      agent: desktop ? undefined : config.agent,
+      agents: desktop ? undefined : (config.agents as Options['agents']),
 
       permissionMode,
       allowDangerouslySkipPermissions: permissionMode === 'bypassPermissions',
@@ -630,7 +636,7 @@ export class QueryOptionsBuilder {
 
       outputFormat: config.outputFormat,
 
-      plugins: this.mergePlugins(config.plugins, pluginsFromSkills),
+      plugins: desktop ? undefined : this.mergePlugins(config.plugins, pluginsFromSkills),
 
       betas: config.betas,
 
@@ -649,11 +655,14 @@ export class QueryOptionsBuilder {
       executable: config.executable ?? (isRunningUnderBun() ? 'bun' : undefined),
       executableArgs: config.executableArgs,
       pathToClaudeCodeExecutable: sdkCliPath,
+      extraArgs: desktop ? { 'disable-slash-commands': null } : undefined,
 
-      settingSources:
-        config.settingSources ?? this.ctx.settingsManager.getGlobalSettings().settingSources,
+      settingSources: desktop
+        ? []
+        : (config.settingSources ?? this.ctx.settingsManager.getGlobalSettings().settingSources),
       settings: withSdkTranscriptRetention({
         ...providerSettings,
+        ...(desktop ? { disableBundledSkills: true } : {}),
         ...(sessionHasAutoCompactWindow && config.autoCompactWindow !== undefined
           ? { autoCompactWindow: config.autoCompactWindow }
           : {}),
@@ -706,7 +715,7 @@ export class QueryOptionsBuilder {
       supportedDialogKinds: sdkFallbackModel ? ['refusal_fallback_prompt'] : undefined,
     };
 
-    if (config.coordinatorMode) {
+    if (config.coordinatorMode && !desktop) {
       queryOptions.agent = 'Coordinator';
       const agents = getCoordinatorAgents(
         config.agents as Record<string, AgentDefinition> | undefined
