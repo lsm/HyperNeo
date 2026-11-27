@@ -2,7 +2,7 @@
 
 ## 中文摘要
 
-每一处能开新会话、派发新工作的入口（`neo.todo.add` 的 start 目标、`work.start`、编码包指派、目标会话、Neo 自身会话、Space 工作流工人、界面新建会话等）都必须显式给出 provider、model、effort 三项。缺任何一项，守护进程在派发前拒绝并说明缺什么，不再悄悄回退到全局默认或“最新可用模型”。校验是一个纯函数（superpipe 管线，类型化拒绝门），落在守护进程这个环境边界上，不靠提示词或 CLI 解析。能应用并回读配置的适配器，回执标注 confirmed（已确认），其中 HyperNeo 会话的 confirmed 取自查询层实际构造本轮执行时解析出的思考配置（配置回读不算数）；只能通过派发前读配置推断的适配器，回执如实标注 declared（声明值），复用比对只认 confirmed；连配置都读不到的适配器直接拒绝，不加确认层。把新 todo 工作发给一个没有 confirmed 三项的既有会话（含历史会话）同样拒绝，改为新开工人为其记录身份；同一会话的续接消息不受影响。远程配对守护进程通过 `work.adapters` 目录广播各适配器的能力，转发方只按广播放行，最终校验和回执由拥有会话的那台守护进程完成。复用旧 worker 按已记录的实际三项逐一比对。Neo 引导文案随第一个改动服务端行为的 PR 发出。不做自动选型引擎。
+每一处能开新会话、派发新工作的入口（`neo.todo.add` 的 start 目标、`work.start`、编码包指派、目标会话、Neo 自身会话、Space 工作流工人、界面新建会话等）都必须显式给出 provider、model、effort 三项。缺任何一项，守护进程在派发前拒绝并说明缺什么，不再悄悄回退到全局默认或“最新可用模型”。校验是一个纯函数（superpipe 管线，类型化拒绝门），落在守护进程这个环境边界上，不靠提示词或 CLI 解析。能应用并回读配置的适配器，回执标注 confirmed（已确认），其中 HyperNeo 会话的 confirmed 取自查询层实际构造本轮执行时解析出的思考配置（配置回读不算数）；无法应用也无法在执行前读到生效值的适配器（Claude Desktop、Cursor），入口照样必须给出请求的三项，启动照常进行，回执如实写“requested …, effective unknown”，首轮事后观测再报告实际值；复用比对只认 confirmed。把新 todo 工作发给一个没有 confirmed 三项的既有会话（含历史会话）同样拒绝，改为新开工人；同一会话的续接消息不受影响。远程配对守护进程通过 `work.adapters` 目录广播各适配器的能力，转发方只按广播放行，最终校验和回执由拥有会话的那台守护进程完成。Neo 引导文案随第一个改动服务端行为的 PR 发出。不做自动选型引擎。
 
 Status: proposed. Investigation base: `50e22151753673c39998bacd3056aad0ba059c29`
 (`origin/dev`, 2026-11-27). Source references are repository-relative `file:line` at
@@ -70,22 +70,25 @@ recorded triple.
 ## Per-adapter identity mapping
 
 `provider` names the account/backend a session runs on. Each adapter declares
-its identity facts once — `fixedProvider`, and either `configurable` or
-`declaredRead` — and the gate reads the declaration instead of branching on
-adapter ids. `configurable` is a behavioral fact, not the presence of
-`resolveStartConfiguration`: the adapter validates request-supplied
-model/effort against its own options and applies them before the first turn,
-reading the applied values back. HyperNeo, Codex and Copilot do this through
-`resolveStartConfiguration`; Antigravity does it post-open — it applies the
-requested options and closes the session with a refusal when they do not take
-(`antigravity-start.ts:220-233`, validation in
-`antigravity-configuration.ts:56-82`) — so it declares `configurable` too.
-`declaredRead` means the adapter can read its own configuration before
-dispatch but cannot apply overrides. A declared read reports each field with
-its source — the configured value, or the product's account default labeled
-as such; a caller-supplied claim never substitutes for the read, and only a
-failed read refuses the start. An adapter that can do neither refuses
-starts that need identity, rather than growing a confirmation layer.
+its identity facts once — `fixedProvider` and `configurable` — and the gate
+reads the declaration instead of branching on adapter ids. `configurable` is a
+behavioral fact, not the presence of `resolveStartConfiguration`: the adapter
+validates request-supplied model/effort against its own options and applies
+them before the first turn, reading the applied values back. HyperNeo, Codex
+and Copilot do this through `resolveStartConfiguration`; Antigravity does it
+post-open — it applies the requested options and closes the session with a
+refusal when they do not take (`antigravity-start.ts:220-233`, validation in
+`antigravity-configuration.ts:56-82`) — so it declares `configurable` too. A
+non-configurable adapter cannot apply or pre-verify model/effort, and for the
+two that matter no authoritative pre-dispatch source of the effective values
+exists: the `claude-desktop` launch passes no model flag and only an env-only
+`--settings` (`claude-desktop-adapter.ts:1706-1733`), so the effective model
+is the CLI's own settings/account resolution, unreadable before launch, and
+`cursor`'s initialize/session-new exchange carries protocol and session id
+only (`cursor-start.ts:81-106`). Such adapters therefore take the requested
+triple as required entry data they cannot enforce, start, and receipt it
+plainly as `requested …, effective unknown` — never as actual — until the
+post-turn observation reports what really ran.
 
 | Adapter | provider | model | effort |
 | --- | --- | --- | --- |
@@ -93,8 +96,8 @@ starts that need identity, rather than growing a confirmation layer.
 | `codex-desktop` | Fixed: the Codex account | Required; resolved against the `model/list` catalog and confirmed applied (`codex-start-configuration.ts:46`, `codex-desktop-adapter.ts:1699`) | Required; resolved against the selected model's supported efforts |
 | `copilot-cli` / Copilot desktop | Fixed: GitHub Copilot | Required already (`copilot-adapter.ts:115`) | Required (`copilot-adapter.ts:637`; desktop capability `copilot-desktop-adapter.ts:155`) |
 | `antigravity` | Fixed: the Antigravity account | Required; validated against the opened session's options and applied before the first turn, the session closed on refusal (`antigravity-start.ts:220-233`, `antigravity-configuration.ts:56-82`) | Required (`antigravity-adapter.ts:180`) |
-| `claude-desktop` | Fixed: Anthropic | Not settable — explicit overrides keep refusing `unsupported_model` (`claude-desktop-adapter.ts:1487`). Declared read: the model from the Claude settings chain the launched CLI itself reads (`~/.claude/settings.json`, whose reader already exists at `credential-discovery.ts:89`); effort: the CLI's configured thinking setting, else its documented default, labeled with that source. The transcript observer corroborates after turns (`claude-runtime-identity.ts:18-27`) | Same rule as model |
-| `cursor` | Fixed: the Cursor account | Declared read: the cursor-agent configuration reported over the JSON-RPC control channel the adapter already opens before the first turn (`cursor-start.ts:31-34`); a field the CLI does not report is declared as the account default with that label, never guessed | Same as model |
+| `claude-desktop` | Fixed: Anthropic | Required at entry as the requested value; the adapter cannot apply it (its override refusal at `claude-desktop-adapter.ts:1487` becomes accept-as-requested, not enforced) and no pre-dispatch source carries the effective model — the launch passes no model flag and an env-only `--settings` (`claude-desktop-adapter.ts:1706-1733`). Receipt: `requested …, effective unknown`; the post-turn transcript observation reports what ran (`claude-runtime-identity.ts:18-27`) | Same rule as model |
+| `cursor` | Fixed: the Cursor account | Same rule as `claude-desktop`: required at entry, not enforceable, no pre-dispatch source — the initialize/session-new exchange carries protocol and session id only (`cursor-start.ts:81-106`). Receipt: `requested …, effective unknown` | Same as model |
 | Claude Code inbox / discovery-only adapters | Fixed per adapter | No start capability; nothing to validate | — |
 
 There is no “start now, decide later”: a start either carries a fully
@@ -116,9 +119,8 @@ style as `select`/`confirm` with a typed `result:identity` rejection output:
 
 ```
 input:  request  { adapter, provider?, model?, effort? }
-        facts    { fixedProvider?, catalogProvider?, configurable: boolean,
-                   declaredRead?: { model, effort } }
-output: { value: { provider, model?, effort? } }          — determined identity
+        facts    { fixedProvider?, catalogProvider?, configurable: boolean }
+output: { value: { provider, model, effort } }            — required entry triple
       | { reason: { ok: false, reason, detail } }         — refuse before dispatch
 ```
 
@@ -131,18 +133,16 @@ Pure rules, each a small function piped in order:
    that single value. A caller supplying a provider that contradicts the
    adapter's fixed provider is refused, not silently overridden. No source at
    all refuses.
-2. Model and effort, configurable adapters: both must be present in the
-   request. The resolved values are written back into the pipeline input so
-   reuse and start consume them; adapters confirm them by applying and reading
-   back their own configuration.
-3. Model and effort, non-configurable adapters: the request must not carry
-   them (these adapters refuse overrides today, e.g.
-   `claude-desktop-adapter.ts:1487`, and that refusal stays). The gate instead
-   requires the adapter's `declaredRead` facts and passes them through
-   untouched — nothing is written into the request, so there is no conflict
-   with the adapters' override refusal. No declaration refuses
-   `identity_required`.
-4. Refusals reuse the existing vocabulary — `unsupported_model`,
+2. Model and effort: both must be present in the request, for every adapter —
+   the entry requirement is uniform. For a configurable adapter the resolved
+   values are written back into the pipeline input so reuse and start consume
+   them, and the adapter confirms them by applying and reading back its own
+   configuration. For a non-configurable adapter the values pass through as
+   the recorded request the adapter cannot enforce; the receipt says so
+   (`requested …, effective unknown`) rather than refusing a start the human's
+   workflow depends on, and the post-turn observation reports the effective
+   values.
+3. Refusals reuse the existing vocabulary — `unsupported_model`,
    `unsupported_effort` — plus one new reason, `identity_required`, added to
    `WorkRejectionSchema` (`types.ts:128`), whose detail names every missing or
    conflicting field: `identity_required: name provider, model and effort for
@@ -186,13 +186,13 @@ therefore labels its source instead of promising actuals it cannot bind:
   (`antigravity-start.ts:222-229`) — so their applied read-backs are
   confirmed. Only confirmed identities satisfy an explicit request and only
   confirmed identities qualify a worker for reuse matching.
-- `declared`: anything short of that boundary — a pre-dispatch configuration
-  read on a non-configurable adapter, or a HyperNeo session's config values
-  before its first turn's query options exist — recorded with its read time.
-  It is reported as declared, never as actual; `identityObservation`
-  (`types.ts:83`) corroborates it after turns run, and a contradiction
-  surfaces in `work.status` as an observed-identity fact instead of silently
-  rewriting the record.
+- `declared`: anything short of that boundary, reported as `requested …,
+  effective unknown` — a non-configurable adapter's recorded request it cannot
+  enforce, or a HyperNeo session's config values before its first turn's query
+  options exist. It is never presented as actual; the post-turn
+  `identityObservation` (`types.ts:83`) reports the effective values, and a
+  contradiction with the request surfaces in `work.status` as an
+  observed-identity fact instead of silently rewriting the record.
 
 `WorkStarted` (`types.ts:238`) and the persisted start facts
 (`work-operations.ts:752`, `recordStarted`) carry the triple plus this source
@@ -223,11 +223,11 @@ compares the recorded triple against the todo target.
   authoritative either way.
 - Remote daemon starts: the remote `work.adapters` catalog
   (`work-operations.ts:1645`, schema `:346`) gains the per-adapter identity
-  facts (`fixedProvider`, `configurable`, `declaredRead`). The forwarding
-  daemon admits an explicit model/effort only when the remote adapter
-  advertises `configurable`; a remote adapter advertising only `declaredRead`
-  accepts starts without explicit identity and receipts declared values; an
-  adapter advertising neither refuses. This replaces the blanket refusal in
+  facts (`fixedProvider`, `configurable`). The forwarding daemon admits the
+  required triple for any advertised adapter — a `configurable` remote adapter
+  confirms it, a non-configurable one receipts it `requested …, effective
+  unknown`; an adapter advertising neither fact refuses. This replaces the
+  blanket refusal in
   `admitRemoteStartModel` (`:614`) and the model/effort role of
   `verifiedCopilotStart` (`:615`, `:627`). Copilot client selection keeps its
   own validation unchanged (`admitRemoteCopilotStart`, `:699-727`) — the
@@ -298,13 +298,14 @@ compares the recorded triple against the todo target.
   HyperNeo session starts on the default model…” and the “Optional effort…”
   sentences with the required-triple rule, the `identity_required` refusal,
   the per-adapter fixed-provider note, the confirmed/declared receipt labels
-  (including that `claude-desktop` and `cursor` receipts are declared, from
-  their configuration reads) and the remote-start rule (explicit identity
-  admitted when the remote adapter advertises `configurable`).
+  (including that `claude-desktop` and `cursor` receipts read `requested …,
+  effective unknown` until the first turn's observation) and the remote-start
+  rule (the required triple is admitted for any advertised adapter).
 - `packages/prompts/src/neo/tools/neo.todo.add.md:8`: the start target shape
   becomes `{verb:start,adapter,model,effort,provider?,place?}` — provider
-  optional only where the adapter fixes or derives it, model and effort
-  omitted only for adapters that refuse overrides.
+  optional only where the adapter fixes or derives it; model and effort are
+  required for every adapter, enforced where the adapter can and receipted
+  `effective unknown` where it cannot.
 - A short difficulty table in `work.start.md` so Neo picks effort by task, no
   selection engine: trivial lookups → low, ordinary changes → medium, hard
   debugging or design → high, rare deepest work → max, with the adapter's
@@ -325,11 +326,9 @@ Delete rung, not by the Wire PRs.
    `start-configuration.ts` 8 importers, `types.ts` 128 importers but the
    change is additive — optional fields and one enum value — so no caller
    churn): the pure gate, the `identity_required` reason, the receipt source
-   label, per-adapter fact declarations including the `work.adapters` catalog
-   fields, and the two declared reads (`claude-desktop` via the existing
-   settings-chain reader, `cursor` via its control channel), so the refusal
-   path never opens for adapters that carry live capability. Exported and
-   tested, not yet called; nothing observable changes.
+   label and the per-adapter fact declarations including the `work.adapters`
+   catalog fields. Exported and tested, not yet called; nothing observable
+   changes.
 2. **Wire: work dispatch** (contract: every `work.start` path and every new
    todo send passes the gate; measured surface: `work-operations.ts` 36
    importers, `driver-work.ts` 15, `hyperneo-adapter.ts` 14, `drivers.ts` 3):
@@ -339,8 +338,10 @@ Delete rung, not by the Wire PRs.
    replacing the model/effort admission role of
    `admitRemoteStartModel`/`verifiedCopilotStart` while preserving Copilot
    client validation, and the prompt changes above. `claude-desktop` and
-   `cursor` starts keep working through their Build-slice declared reads,
-   receipted as declared. Recorded merge-contract exception: removing the two
+   `cursor` starts keep working: the gate takes their required requested
+   triple, their adapters record it without enforcing it, and the receipt
+   reads `requested …, effective unknown` until the first turn's observation.
+   Recorded merge-contract exception: removing the two
    desktop stripping carve-outs (`work-operations.ts:841`, `:901`) rides this
    Wire PR under the repo's few-line Build+Wire allowance, because the wire
    cannot function for desktop-template workers while they strip the resolved
@@ -365,8 +366,9 @@ Delete rung, not by the Wire PRs.
   guidance table.
 - Cross-adapter model equivalence or capability negotiation beyond the
   existing catalogs.
-- Binding a non-configurable adapter's declared identity to its runtime;
-  declared receipts plus observation corroboration are the honest contract,
-  and an adapter that cannot even read its configuration refuses.
+- Binding a non-configurable adapter's declared identity to its runtime, or
+  building pre-dispatch readers for effective desktop configuration; the
+  honest contract is `requested …, effective unknown` plus post-turn
+  observation, and reuse never trusts a declared identity.
 - Retrofitting identity onto sessions that already exist.
 - Human sign-in, payment and other delegation preferences; unrelated.
