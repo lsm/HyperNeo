@@ -102,6 +102,13 @@ describe('worker turn reports through the attention entry', () => {
     expect(notes.digests()).toEqual([]);
   });
 
+  test('a failure still wakes Neo when the worker uses the silent turn ending', async () => {
+    await report({ id: 'turn-1', at: T0 + 100, message: 'No response requested.' }, 'failed');
+    expect(notes.wakes()).toHaveLength(1);
+    expect(notes.wakes()[0]).toContain('status failed');
+    expect(notes.wakes()[0]).not.toContain('No response requested.');
+  });
+
   test('a turn on a blocked todo wakes Neo', async () => {
     store.updateTodo(
       store.getTodo(todo.id)!,

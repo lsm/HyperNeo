@@ -14,7 +14,7 @@ import { createRemoteSendForwarder } from '../../../packages/daemon/src/lib/remo
 
 const [mode, directory] = process.argv.slice(2);
 const run = resolve(directory);
-assert(['before', 'status-before', 'sender-before', 'verify'].includes(mode));
+assert(['before', 'status-before', 'sender-before', 'silent-turn', 'verify'].includes(mode));
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -55,12 +55,19 @@ const refresh = async () => {
   throw new Error('refresh timed out');
 };
 const messages = () => (db.prepare(`SELECT ${sdkMessageBodyAt('m.rowid')} AS body FROM sdk_messages m WHERE session_id=? AND message_type='user' ORDER BY seq`).all(root) as { body: string }[]).map((row) => hyperneoInputText(row.body));
+const reportInputs = () => [
+  ...messages(),
+  ...app.db.getJobQueueRepo().listActiveByPayload('neo_notes', { 'to.sessionId': root })
+    .map(({ payload }) => (payload.message as { message: { content: string } }).message.content),
+];
 try {
   await seedSession(root);
   new NeoRepository(db).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
-  for (const scenario of [false, true, 'status-drift']) {
+  for (const scenario of mode === 'silent-turn' ? ['quiet'] : [false, true, 'status-drift']) {
     const explicit = scenario === true;
     const drifting = scenario === 'status-drift';
+    const quiet = scenario === 'quiet';
+    const finalText = quiet ? 'No response requested.' : 'PR opened: synthetic milestone';
     const worker = `worker-${scenario}`;
     await seedSession(worker);
     const at = Date.now();
@@ -85,7 +92,7 @@ try {
     put(`${worker}-input`, 'user', 'Observe this worker');
     if (explicit) evidence.explicitReceipt = await rpc('message.send', { to: root, text: 'PR opened: synthetic milestone', kind: 'done', from: `session:${worker}` });
     await new Promise((done) => setTimeout(done, 5));
-    put(`${worker}-result`, 'result', 'PR opened: synthetic milestone');
+    put(`${worker}-result`, 'result', finalText);
     await refresh();
     if (drifting) {
       evidence.firstStatus = await rpc('work.status', { ref });
@@ -101,16 +108,17 @@ try {
     await refresh();
     if (mode === 'verify') {
       const beforeReplay = messages().length;
-      put(`${worker}-repeat-result`, 'result', 'PR opened: synthetic milestone');
+      put(`${worker}-repeat-result`, 'result', finalText);
       await refresh();
       await new Promise((done) => setTimeout(done, 500));
       assert.equal(messages().length, beforeReplay);
       evidence[`${worker}-replay`] = { before: beforeReplay, after: messages().length };
     }
-    const delivered = messages().filter((text) => text.startsWith('Worker turn report') && text.includes(`todo ${worker}-`));
+    const delivered = (quiet ? reportInputs() : messages()).filter((text) => text.startsWith('Worker turn report') && text.includes(`todo ${worker}-`));
     evidence[worker] = { reportInputs: delivered.length, delivered, stored: [0, 1].map((index) => todos.getTodo(`${worker}-${index}`)) };
-    assert.equal(delivered.length, mode === 'before' || (mode === 'status-before' && drifting) ? 2 : explicit ? 0 : 1);
-    for (let index = 0; index < 2; index++) assert.equal(todos.getTodo(`${worker}-${index}`)?.report, 'Agent: PR opened: synthetic milestone');
+    assert.equal(delivered.length, quiet ? 0 : mode === 'before' || (mode === 'status-before' && drifting) ? 2 : explicit ? 0 : 1, `recipient report count for ${worker}`);
+    if (quiet) console.log(`silent terminal turn PASS recipient_reports=${delivered.length}`);
+    else for (let index = 0; index < 2; index++) assert.equal(todos.getTodo(`${worker}-${index}`)?.report, 'Agent: PR opened: synthetic milestone');
   }
   const machine = 'synthetic-origin';
   let remoteWork: Record<string, unknown> = {};
@@ -125,7 +133,7 @@ try {
   await remoteDaemons.attach('attachment-alias', `ws://127.0.0.1:${peer.port}/ws`);
   await outbound.attach('recipient', `ws://127.0.0.1:${app.server.port}/ws`);
   const forward = createRemoteSendForwarder(outbound, machine);
-  for (const adapter of ['hyperneo', 'codex-desktop', 'claude-code']) {
+  for (const adapter of mode === 'silent-turn' ? [] : ['hyperneo', 'codex-desktop', 'claude-code']) {
     const worker = `remote-${adapter}`;
     const at = Date.now();
     const ref = { adapter, id: worker, daemon: 'attachment-alias' };

@@ -248,8 +248,16 @@ try {
     delay(30_000, undefined, { ref: false }).then(() => { throw new Error('No model request for the Calculator todo'); }),
   ]);
   assert.deepEqual([...outbound.tools].sort(), [...modelTools].sort());
+  assert.deepEqual({
+    desktopOnly: outbound.system.includes('Carry out only the desktop steps'),
+    neoPrepares: outbound.system.includes('Neo handles file reads, writes, and other preparation'),
+    reportsOnly: outbound.system.includes('only the report tool reaches them'),
+    noNarration: outbound.system.includes('Call tools without narrating or explaining them.'),
+    reportDetail: outbound.system.includes('Include as much detail as Neo needs.'),
+    turnEnd: outbound.system.includes(String.raw`End every turn with exactly \"No response requested.\" and nothing else.`),
+  }, { desktopOnly: true, neoPrepares: true, reportsOnly: true, noNarration: true, reportDetail: true, turnEnd: true });
   assert.match(outbound.system, /using the desktop tools in approved apps/);
-  assert.match(outbound.system, /Put any exact text you will need in your own reply/);
+  assert.match(outbound.system, /capture any exact text you will need/);
   assert(!outbound.brief.includes('desktop_permissions_required'));
   const results = await Promise.race([
     modelResults.promise,
@@ -306,7 +314,8 @@ try {
   const expectedDesktopTools = ['report', ...catalog.map(({ name }) => name)]
     .map(name => 'mcp__desktop__' + name).sort();
   assert.deepEqual([...outbound.tools].sort(), expectedDesktopTools);
-  assert.doesNotMatch((outbound.system + outbound.brief).replaceAll(run, '<fixture>'), /\bneo\b|hyperneo|operations\.describe|message\.send|Most non-coding tasks/i);
+  assert.doesNotMatch(outbound.brief.replaceAll(run, '<fixture>'), /\bneo\b/i);
+  assert.doesNotMatch((outbound.system + outbound.brief).replaceAll(run, '<fixture>'), /hyperneo|operations\.describe|message\.send|Most non-coding tasks/i);
   assert.deepEqual([...init.tools].sort(), [...modelTools].sort());
   assert.deepEqual(init.skills, []);
   assert.deepEqual(init.slash_commands, []);
@@ -411,7 +420,7 @@ try {
   assert(agent);
   const fixtureApps = JSON.stringify([{ bundleId: 'org.example.fixture', name: 'Fixture' }]);
   const disclosedApps = JSON.stringify([
-    { bundleId: 'org.example.fixture', name: 'Fixture', seen: 'all' },
+    { bundleId: 'org.example.Fixture', name: 'Fixture', seen: 'all' },
     { bundleId: 'org.example.other', name: 'Other', seen: 'all' },
   ]);
   sql.prepare("INSERT INTO neo_asks(id,session_id,title,request,status,desktop_apps,created_at,updated_at) VALUES('ask','neo:fixture','Synthetic action','','open',?,?,?)").run(disclosedApps, now, now);
@@ -433,7 +442,7 @@ try {
   sql.prepare("UPDATE neo_todos SET desktop_apps=? WHERE id='todo'").run(fixtureApps);
   const allowed = await call({ name: 'desktop.call', input });
   const reply = JSON.parse(allowed.content[0].text);
-  assert.equal(reply.dispatched, true, JSON.stringify(allowed));
+  assert.equal(reply.dispatched, true, `Case-variant desktop consent: ${JSON.stringify(allowed)}`);
   assert.equal(requests.length, 1);
   assert.equal(requests[0].action, 'dispatch');
   assert.equal(requests[0].worker, worker);

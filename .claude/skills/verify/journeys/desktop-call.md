@@ -16,7 +16,10 @@ The journey first proposes a Calculator todo through Neo's MCP operation and ans
 its disclosure card through the human WebSocket door. The real work start must
 create a Desktop template session. The actual SDK request to the loopback model
 must expose the desktop action catalog and `report`, with a desktop-only system
-prompt and brief. The saved SDK startup and HyperNeo composer must
+prompt and brief. The system prompt assigns only approved app steps to the
+desktop worker and leaves file reads, writes and preparation to Neo. It requires
+silent tool use, communication through `report`, and the exact turn-ending text
+`No response requested.` The saved SDK startup and HyperNeo composer must
 show only the desktop MCP tools and no skills, slash commands or agents. Pass
 prints `desktop worker inventory PASS`. The exact lists and Claude Code version
 and the provider's prompt and brief are saved to
@@ -55,7 +58,7 @@ finished todos return `todo_not_active` without dispatching.
 An active doing todo takes precedence over a blocked todo, and multiple opted-in
 unfinished todos with none doing return `todo_ambiguous` without dispatching.
 A queued todo without approved apps does not prevent dispatch for a blocked approved todo.
-A todo without approved apps is refused before dispatch. Each dispatch carries only its own todo's approved bundle ids. A sibling todo on the same ask without its own apps gets `desktop_not_enabled`; once it has its own app, its dispatch carries only that app.
+A todo without approved apps is refused before dispatch. Each dispatch carries only its own todo's approved bundle ids. The first allowed dispatch uses a todo bundle ID whose casing differs from the disclosure. A sibling todo on the same ask without its own apps gets `desktop_not_enabled`; once it has its own app, its dispatch carries only that app.
 The press_key description gives shifted-symbol guidance and names driver_error for unknown keys.
 A driver result with isError must come back as an MCP tool error (`isError: true`)
 with `ok: false, reason: driver_error`

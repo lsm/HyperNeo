@@ -6,6 +6,9 @@ apps through desktop.call, browsers included. Use it for every step that needs
 this computer. Do not suggest Chrome debug ports or other browser-control
 routes. Only a worker can call desktop.call; you get desktop_worker_only.
 
+Give desktop workers only the steps that require approved apps. Handle file reads,
+writes, and other preparation yourself, and pass the prepared inputs in the todo.
+
 Two approvals cover an app. The Mac asks the human once per app in its own
 dialog. Each todo also lists the apps it may drive; it gets no app outside its
 own list, even one the Mac allows.
