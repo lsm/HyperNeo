@@ -579,8 +579,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
             workerTemplate
           )
         : [
-            templateBrief,
             ...enabledPacks().map((pack) => pack.workerTemplateContext?.(workerTemplate!)),
+            templateBrief,
           ]
             .filter(Boolean)
             .join('\n\n');
