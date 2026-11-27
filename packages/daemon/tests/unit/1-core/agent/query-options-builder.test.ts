@@ -42,7 +42,10 @@ import { neoSecretReadRules } from '../../../../src/lib/neo/secret-read-rules';
 
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { KimiProvider } from '../../../../src/lib/providers/kimi-provider';
-import { customProviderIdFor } from '../../../../src/lib/providers/custom-endpoint-provider';
+import {
+  CustomEndpointProvider,
+  customProviderIdFor,
+} from '../../../../src/lib/providers/custom-endpoint-provider';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import type { SkillsManager } from '../../../../src/lib/skills-manager';
 import type { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
@@ -2091,6 +2094,43 @@ describe('QueryOptionsBuilder', () => {
         expect(off.effort).toBeUndefined();
       } finally {
         provider.getModelEffortLevels = original;
+      }
+    });
+
+    it('sends the chosen named effort to a custom Messages model that accepts one', async () => {
+      const endpoint = (namedEffort?: boolean) =>
+        new CustomEndpointProvider({
+          id: 'local-llama',
+          type: 'anthropic-messages',
+          name: 'Local llama',
+          baseUrl: 'http://127.0.0.1:8080',
+          models: [{ id: 'bonsai', capabilities: namedEffort ? { namedEffort } : {} }],
+        });
+      mockSession.config.provider = customProviderIdFor(
+        'local-llama'
+      ) as Session['config']['provider'];
+      mockSession.config.model = 'bonsai';
+      try {
+        getProviderRegistry().register(endpoint(true));
+        mockSession.config.thinkingLevel = 'think8k';
+        const low = builder.addSessionStateOptions({});
+        expect(low.thinking).toEqual({ type: 'adaptive' });
+        expect(low.effort).toBe('low');
+        mockSession.config.thinkingLevel = 'think32k';
+        expect(builder.addSessionStateOptions({}).effort).toBe('high');
+        mockSession.config.thinkingLevel = 'off';
+        const off = builder.addSessionStateOptions({});
+        expect(off.thinking).toEqual({ type: 'disabled' });
+        expect(off.effort).toBeUndefined();
+
+        getProviderRegistry().unregister(customProviderIdFor('local-llama'));
+        getProviderRegistry().register(endpoint());
+        mockSession.config.thinkingLevel = 'think8k';
+        const budget = builder.addSessionStateOptions({});
+        expect(budget.thinking).toEqual({ type: 'enabled', budgetTokens: 8000 });
+        expect(budget.effort).toBeUndefined();
+      } finally {
+        getProviderRegistry().unregister(customProviderIdFor('local-llama'));
       }
     });
 

@@ -161,6 +161,7 @@ export function editorToConfig(state: EditorState): CustomEndpointConfig {
       'autoCompactPercent',
       'chatTemplateKwargs',
       'thinkingOffEffort',
+      'namedEffort',
     ];
     for (const k of keys) {
       if (m.resolved[k] !== baseDefaults[k]) {

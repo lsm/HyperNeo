@@ -17,6 +17,7 @@ import {
   type CustomEndpointModel,
   type CustomEndpointModelCapabilities,
   type CustomEndpointType,
+  type ThinkingEffort,
 } from '@hyperneo/shared';
 import {
   createOpenAIChatBridgeServer,
@@ -291,7 +292,21 @@ export class CustomEndpointProvider implements Provider {
     const model = this.config.models.find((m) => m.id === modelId);
     if (!model) return undefined;
     const caps = resolveModelCapabilities(model, this.type);
-    return caps.thinking ? 'on' : 'off';
+    if (!caps.thinking) return 'off';
+    return this.namedEffortModel(modelId) ? 'granular' : 'on';
+  }
+
+  getModelEffortLevels(modelId: string): ThinkingEffort[] | undefined {
+    return this.namedEffortModel(modelId) ? ['low', 'medium', 'high'] : undefined;
+  }
+
+  private namedEffortModel(modelId: string): boolean {
+    const model = this.config.models.find((m) => m.id === modelId);
+    return (
+      this.type === 'anthropic-messages' &&
+      model !== undefined &&
+      resolveModelCapabilities(model, this.type).namedEffort === true
+    );
   }
 
   setSessionThinkingConfig(sessionId: string, thinkingLevel: string | undefined): void {
@@ -376,6 +391,7 @@ export class CustomEndpointProvider implements Provider {
       params.caps.streamUsage,
       JSON.stringify(params.caps.chatTemplateKwargs ?? {}),
       params.caps.thinkingOffEffort ?? '',
+      params.caps.namedEffort === true,
     ].join(' ');
   }
 
@@ -435,6 +451,7 @@ export class CustomEndpointProvider implements Provider {
           headers: this.config.headers,
           thinkingSupported: caps.thinking,
           disableThinkingWithChatTemplate: this.config.llamaCppThinkingOff,
+          namedEffort: caps.namedEffort === true,
           collapseDesktopObservations: () => this.collapseDesktopObservations,
           ...(fetchImpl ? { fetchImpl } : {}),
         });

@@ -63,6 +63,7 @@ import {
   initializeProviders,
   waitForOptionalProviderRegistration,
 } from '../providers/factory.js';
+import { isCustomEndpointProviderId } from '../providers/custom-endpoint-provider.js';
 import { KimiProvider } from '../providers/kimi-provider.js';
 import { providerSessionConfigForSession } from '../providers/session-config.js';
 import {
@@ -331,7 +332,9 @@ export function offEffort(
   providerId: string | undefined,
   effortLevels: readonly ThinkingEffort[]
 ): ThinkingEffort | undefined {
-  return providerId === 'anthropic' ? undefined : effortLevels[0];
+  return providerId === 'anthropic' || isCustomEndpointProviderId(providerId ?? '')
+    ? undefined
+    : effortLevels[0];
 }
 
 export function liveThinkingUpdate(

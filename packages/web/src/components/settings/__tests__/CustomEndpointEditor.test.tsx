@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/preact';
-import { EditorModal, existingToEditor, testCustomEndpoint } from '../CustomEndpointEditor.tsx';
+import {
+  EditorModal,
+  editorToConfig,
+  existingToEditor,
+  testCustomEndpoint,
+} from '../CustomEndpointEditor.tsx';
 
 const { probe, navigateToSettings } = vi.hoisted(() => ({
   probe: vi.fn(),
@@ -103,5 +108,18 @@ describe('endpoint default mapping', () => {
     fireEvent.click(screen.getByRole('button', { name: /Default Model/ }));
     expect(navigateToSettings).toHaveBeenCalledWith('harness');
     expect(onChange).not.toHaveBeenCalled();
+  });
+});
+
+describe('editing a custom endpoint', () => {
+  it('keeps a model named-effort capability when the endpoint is saved again', () => {
+    const config = {
+      id: 'local-llama',
+      type: 'anthropic-messages' as const,
+      name: 'Local llama',
+      baseUrl: 'http://127.0.0.1:8080',
+      models: [{ id: 'bonsai', capabilities: { namedEffort: true } }],
+    };
+    expect(editorToConfig(existingToEditor(config)).models).toEqual(config.models);
   });
 });

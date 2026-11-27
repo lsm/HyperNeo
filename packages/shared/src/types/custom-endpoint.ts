@@ -17,6 +17,7 @@ export interface CustomEndpointModelCapabilities {
   streamUsage: boolean;
   chatTemplateKwargs?: Record<string, unknown>;
   thinkingOffEffort?: ThinkingOffEffort;
+  namedEffort?: boolean;
 }
 
 export interface CustomEndpointModel {

@@ -253,6 +253,35 @@ describe.skipIf(!isBun)('anthropic-messages-bridge: session thinking enforcement
     expect(upstreamThinking).toEqual({ type: 'enabled', budget_tokens: 31999 });
   });
 
+  it('keeps adaptive thinking and the named effort for a model that takes named efforts', async () => {
+    let upstreamBody: unknown;
+    server = await createAnthropicMessagesBridgeServer({
+      baseUrl: 'http://127.0.0.1:1',
+      namedEffort: true,
+      fetchImpl: Object.assign(
+        async (...[, init]: Parameters<typeof fetch>) => {
+          upstreamBody = JSON.parse(new TextDecoder().decode(init?.body as ArrayBuffer));
+          return Response.json({ content: [{ type: 'text', text: 'hi' }] });
+        },
+        { preconnect: () => undefined }
+      ),
+    });
+    server.setSessionThinkingConfig?.('sess-named', { type: 'enabled', budget_tokens: 8000 });
+    const body = {
+      model: 'bonsai',
+      max_tokens: 32000,
+      messages: [{ role: 'user', content: 'hi' }],
+      thinking: { type: 'adaptive' },
+      output_config: { effort: 'low' },
+    };
+
+    const res = await postWithSession(server.port, 'sess-named', body);
+
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(upstreamBody).toEqual(body);
+  });
+
   it('strips enabled thinking when the model does not support it', async () => {
     let upstreamThinking: unknown = 'not-captured';
     server = await makeServer(async (_url, init) => {

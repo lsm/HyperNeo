@@ -35,6 +35,7 @@ export type AnthropicMessagesBridgeConfig = {
   models?: AnthropicMessagesBridgeModel[];
   thinkingSupported?: boolean;
   disableThinkingWithChatTemplate?: boolean;
+  namedEffort?: boolean;
   accessToken?: string;
   forwardHeaders?: string[];
   sessionHeader?: string;
@@ -324,7 +325,8 @@ export async function createAnthropicMessagesBridgeServer(
     port,
     stop: () => server.stop(true),
     setSessionThinkingConfig(sessionId: string, thinking: SessionThinkingConfig) {
-      sessionThinking.set(sessionId, thinking);
+      if (config.namedEffort && thinking?.type === 'enabled') sessionThinking.delete(sessionId);
+      else sessionThinking.set(sessionId, thinking);
     },
   };
 }
