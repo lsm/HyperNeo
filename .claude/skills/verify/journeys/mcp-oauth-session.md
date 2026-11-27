@@ -11,7 +11,9 @@ bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
 
 A real daemon opens a real Agent SDK session through RPC. Browser consent is
 simulated against the test provider. On the same running query, observe a tool
-appear on connect, call it, reconnect while a call is in flight, reject that
+appear on connect, call it, call a write tool under the read grant (the fake
+answers a write-scope challenge; expect zero fake mutations and no new consent
+request), reconnect while a call is in flight, reject that
 result, and call under the new grant. Disconnect and an invalid refresh grant
 both remove tools from observed inventory. The SDK config carries no OAuth
 headers. The proof disables SDK sandboxing for the synthetic SDK/MCP transport
