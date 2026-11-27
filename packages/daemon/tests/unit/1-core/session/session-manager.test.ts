@@ -1351,6 +1351,7 @@ describe('SessionManager', () => {
         setCallerScopeResolver: mock(() => {}),
         setSpaceScopeResolver: mock(() => {}),
         cleanup: mock(async () => {}),
+        updateMetadata: mock(async () => {}),
         oxap: { detach },
       } as unknown as AgentSession);
       (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(session);

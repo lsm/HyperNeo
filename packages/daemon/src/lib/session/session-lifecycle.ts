@@ -782,7 +782,11 @@ export class SessionLifecycle {
       }
     }
 
-    await (agentSession ?? grantSession)?.oxap?.detach?.();
+    try {
+      await (agentSession ?? grantSession)?.oxap?.detach?.();
+    } catch (error) {
+      this.logger.error('[SessionLifecycle] archiveResources: OXAP detach failed:', error);
+    }
     await releaseWorkerSandbox(sessionSdkPath(session));
 
     await this.update(sessionId, { status: 'archived', archivedAt });

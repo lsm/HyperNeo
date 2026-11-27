@@ -529,9 +529,16 @@ describe('OAP query hub transport', () => {
     const hub = createOxapQueryHub(host.client);
     const { runId } = await hub.submit('synthetic-session', prompt);
     const events = [];
-    for await (const event of hub.events('synthetic-session', runId, new AbortController().signal))
+    for await (const event of hub.events(
+      'synthetic-session',
+      runId,
+      new AbortController().signal
+    )) {
       events.push(event);
+      if (event.type === 'run.completed') break;
+    }
     expect(events.map(({ type }) => type)).toEqual(['content.delta', 'run.completed']);
+    expect(host.unsubscribe).toHaveBeenCalledTimes(1);
   });
 
   test('reports a stream failure without automatically resubmitting', async () => {
