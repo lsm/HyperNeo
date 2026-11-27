@@ -13,6 +13,7 @@ import { locale } from '../../../lib/i18n/index.ts';
 type Invocation = { name: string; input?: Record<string, unknown> };
 const consentUrl = 'http://127.0.0.1:18347/authorize?synthetic=1';
 let health: string;
+let preset: string | undefined;
 const server = (active: boolean): AppMcpServer => ({
   id: 'row-1',
   name: 'fixture',
@@ -28,8 +29,9 @@ const invocations = (name: string) =>
 beforeEach(() => {
   locale.value = 'en';
   health = 'healthy';
+  preset = undefined;
   request.mockImplementation(async (_method: string, { name }: Invocation) => {
-    if (name === 'mcp.registry.status') return { health, scopes: ['read'] };
+    if (name === 'mcp.registry.status') return { health, scopes: ['read'], preset };
     if (name === 'mcp.registry.reconnect' || name === 'mcp.registry.connect')
       return { authorizeUrl: consentUrl };
     if (name === 'mcp.registry.disconnect') return { ok: true };
@@ -76,9 +78,19 @@ describe('AppMcpOAuthRow', () => {
       ])
     );
     health = 'disconnected';
+    preset = 'test';
     rerender(<AppMcpOAuthRow server={server(false)} />);
     expect(await screen.findByText('Disconnected')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Disconnect' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Reconnect' })).toBeTruthy();
+  });
+
+  it('offers no Reconnect on an inactive row whose URL no longer matches its preset', async () => {
+    health = 'disconnected';
+    const { container } = render(<AppMcpOAuthRow server={server(false)} />);
+    await waitFor(() => expect(invocations('mcp.registry.status')).toHaveLength(1));
+    expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
+    expect(container.textContent).toBe('');
   });
 
   it('connects a row that has never connected with the preset status names', async () => {

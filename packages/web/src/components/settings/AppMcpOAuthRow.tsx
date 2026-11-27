@@ -28,7 +28,7 @@ export function AppMcpOAuthRow({ server }: { server: AppMcpServer }) {
       current = false;
     };
   }, [id, server.url, auth?.generation, auth?.active]);
-  if (!auth && !status?.preset) return null;
+  if (!auth?.active && !status?.preset) return null;
 
   const act = async (name: Action, input: Record<string, string>) => {
     setBusy(true);

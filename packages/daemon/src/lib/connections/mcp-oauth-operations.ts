@@ -353,14 +353,15 @@ export function createMcpOAuthOperations(
     id,
   }: z.infer<typeof statusInput>): Promise<z.infer<typeof statusResult>> {
     const row = registry.get(id);
-    if (!row?.auth) {
-      const preset = Object.keys(testPresets).find(
-        (name) => row?.sourceType === 'http' && presetFor(name)?.preset.url === row.url
-      );
-      return { health: 'disconnected', scopes: [], ...(preset ? { preset } : {}) };
-    }
-    const disconnected: z.infer<typeof statusResult> = { health: 'disconnected', scopes: [] };
-    if (!row.auth.active) return disconnected;
+    const preset = (row?.auth ? [row.auth.preset] : Object.keys(testPresets)).find(
+      (name) => row?.sourceType === 'http' && presetFor(name)?.preset.url === row.url
+    );
+    const disconnected: z.infer<typeof statusResult> = {
+      health: 'disconnected',
+      scopes: [],
+      ...(preset ? { preset } : {}),
+    };
+    if (!row?.auth?.active) return disconnected;
     try {
       const grant = await (await vault()).readMcp(id);
       const auth = registry.get(id)?.auth;
