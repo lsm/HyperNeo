@@ -144,7 +144,7 @@ Pure rules, each a small function piped in order:
    values.
 3. Refusals reuse the existing vocabulary — `unsupported_model`,
    `unsupported_effort` — plus one new reason, `identity_required`, added to
-   `WorkRejectionSchema` (`types.ts:128`), whose detail names every missing or
+   `WorkRejectionSchema` (`packages/daemon/src/lib/drivers/types.ts:128`), whose detail names every missing or
    conflicting field: `identity_required: name provider, model and effort for
    new work (missing: effort)` or `identity_required: adapter claude-desktop
    runs on provider anthropic, not openai`.
@@ -179,7 +179,22 @@ therefore labels its source instead of promising actuals it cannot bind:
   config read-back (`hyperneo-adapter.ts:719-729`) cannot prove what it sends
   — that gap is the trigger. With the gate making effort explicit, the
   builder's mapping is deterministic and the recorded query-layer value is
-  what receipts report and reuse compares. For Codex, Copilot and Antigravity
+  what receipts report and reuse compares.
+
+  Silent remaps are refused at admission, not recorded after the fact: the
+  builder downgrades a level to the nearest supported effort
+  (`packages/shared/src/types.ts:215`), forces the `think16k` budget for kimi
+  K2.7 whatever was asked (`query-options-builder.ts:865-872`) and turns an
+  `off` request on a non-anthropic granular model into the lowest effort
+  (`query-options-builder.ts:330-335`, `:840`). The HyperNeo start validation
+  therefore checks the requested effort against the selected model's
+  executable set — the provider registry already exposes per-model thinking
+  modes and effort levels, as `work.reconfigure` uses them
+  (`work-reconfigure.ts:90-100`) — and refuses a request the builder would
+  remap with `unsupported_effort` naming the executable values, so a
+  confirmed identity always equals the request on a satisfied start.
+
+  For Codex, Copilot and Antigravity
   the adapter's own configuration API is that boundary — the existing
   `workStartConfiguration.confirm` shape (`start-configuration.ts:102`) as
   used by the Codex path and Antigravity's post-open option read-back
@@ -190,11 +205,11 @@ therefore labels its source instead of promising actuals it cannot bind:
   effective unknown` — a non-configurable adapter's recorded request it cannot
   enforce, or a HyperNeo session's config values before its first turn's query
   options exist. It is never presented as actual; the post-turn
-  `identityObservation` (`types.ts:83`) reports the effective values, and a
+  `identityObservation` (`packages/daemon/src/lib/drivers/types.ts:83`) reports the effective values, and a
   contradiction with the request surfaces in `work.status` as an
   observed-identity fact instead of silently rewriting the record.
 
-`WorkStarted` (`types.ts:238`) and the persisted start facts
+`WorkStarted` (`packages/daemon/src/lib/drivers/types.ts:238`) and the persisted start facts
 (`work-operations.ts:752`, `recordStarted`) carry the triple plus this source
 label for every daemon-started session. The worker provenance brief
 (`worker-provenance.ts:12`) states the label, and `neo.todo.read` verification
@@ -247,7 +262,7 @@ compares the recorded triple against the todo target.
   (`session-lifecycle.ts:286`) refuses any new session whose config lacks the
   recorded triple. The recorded effort is always the value execution uses.
   Only providers whose thinking mode is `off` and that run no reasoning at all
-  (minimax, ollama, ollama-cloud — `types.ts:175-187`) record the explicit
+  (minimax, ollama, ollama-cloud — `packages/shared/src/types.ts:175-187`) record the explicit
   value `off`. Providers and harnesses that map levels to real reasoning
   values record the mapped value instead: `anthropic-copilot` turns every
   level, `off` included, into `low`–`xhigh` (`reasoning-effort.ts:7-15`), and
