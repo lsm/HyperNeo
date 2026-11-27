@@ -13,7 +13,7 @@ export type NeoStepFacts = {
   answerPending: boolean;
   cardClosedAt: number | null;
   failedAt: number | null;
-  worker: { status: 'running' | 'idle' | 'unknown'; since: number } | null;
+  worker: { status: 'running' | 'queued' | 'idle' | 'unknown'; since: number } | null;
   packWaiting: boolean;
   start: 'held' | 'ready' | null;
   now: number;
@@ -65,7 +65,7 @@ export function nextStepOwner(facts: NeoStepFacts): NeoStepOwner {
       ? { owner: 'daemon' }
       : neo('unanswered', facts.cardClosedAt ?? worker?.since ?? began);
   if (worker?.status === 'unknown') return { owner: 'daemon' };
-  if (worker?.status === 'running') return { owner: 'worker' };
+  if (worker?.status === 'running' || worker?.status === 'queued') return { owner: 'worker' };
   if (facts.packWaiting) return { owner: 'pack' };
   if (worker) return neo('idle_worker', worker.since);
   if (facts.start) return { owner: 'daemon' };

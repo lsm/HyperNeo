@@ -166,6 +166,8 @@ const SnapshotOk = z.object({
             owner: z
               .enum(['human', 'nobody', 'prerequisite', 'daemon', 'worker', 'pack', 'neo'])
               .nullable(),
+            step: z.enum(['working', 'waiting', 'paused', 'neo', 'you']).optional(),
+            waitingOn: z.enum(['review', 'earlier_step', 'queue', 'checking']).optional(),
           }),
         ])
       ),

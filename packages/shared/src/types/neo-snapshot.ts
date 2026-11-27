@@ -226,6 +226,8 @@ export type NeoHumanQueueItem =
       todoId: string;
       title: string;
       owner: 'human' | 'nobody' | 'prerequisite' | 'daemon' | 'worker' | 'pack' | 'neo' | null;
+      step?: 'working' | 'waiting' | 'paused' | 'neo' | 'you';
+      waitingOn?: 'review' | 'earlier_step' | 'queue' | 'checking';
     };
 
 export interface NeoHumanQueue {

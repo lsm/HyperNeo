@@ -1,3 +1,4 @@
+import { NeoAskTodoRepository } from '../../../../storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTrackerMirrorRepository } from '../../../../storage/repositories/neo-tracker-mirror.ts';
 import { NEO_TRACKER_FAILURE_LIMIT } from '../../tracker-mirror-plan.ts';
 import { listPackPreferences } from '../../preference-operations.ts';
@@ -224,6 +225,19 @@ export class CodingTodoPrRepository {
     );
   }
 
+  openPr(todoId: string): string | null {
+    const todo = new NeoAskTodoRepository(this.db).getTodo(todoId);
+    if (todo?.check?.pack !== 'coding' || todo.check.kind !== 'pr_merged') return null;
+    const { required, replacements } = codingCheckPrs(todo, this.prs(todoId));
+    const { live } = selectCheckedPrs(required, replacements);
+    const keys = new Set(live.map((pr) => codingPrKey(pr.url)));
+    return this.openLedger([todoId]).find((pr) => keys.has(codingPrKey(pr.url)))?.url ?? null;
+  }
+
+  readOpenPr(todoId: string): Promise<string | null> {
+    return gatewayFor(this.db).call(codingTodoPrReads, 'openPr', todoId);
+  }
+
   readOpenLedger(todoIds: readonly string[]) {
     return gatewayFor(this.db).call(codingTodoPrReads, 'openLedger', todoIds);
   }
@@ -245,13 +259,7 @@ const createdAt = (pr: NeoWorkPr) => pr.createdAt ?? 0;
 
 export const CODING_PR_REPLACEMENT_GRACE_MS = 15 * 60_000;
 
-export function codingTodoCheck(
-  kind: string,
-  prs: readonly NeoWorkPr[],
-  now = Date.now(),
-  replacements: readonly NeoWorkPr[] = []
-): NeoTodoCheckResult | null {
-  if (kind !== 'pr_merged') return null;
+function selectCheckedPrs(prs: readonly NeoWorkPr[], replacements: readonly NeoWorkPr[]) {
   const live = prs.filter((pr) => pr.state !== 'CLOSED');
   const spare = [...live, ...replacements.filter((pr) => pr.state !== 'CLOSED')].sort(
     (a, b) => createdAt(a) - createdAt(b)
@@ -266,6 +274,17 @@ export function codingTodoCheck(
       if (!live.includes(replacement)) live.push(replacement);
       return false;
     });
+  return { live, unreplaced };
+}
+
+export function codingTodoCheck(
+  kind: string,
+  prs: readonly NeoWorkPr[],
+  now = Date.now(),
+  replacements: readonly NeoWorkPr[] = []
+): NeoTodoCheckResult | null {
+  if (kind !== 'pr_merged') return null;
+  const { live, unreplaced } = selectCheckedPrs(prs, replacements);
   const expired = unreplaced.filter(
     (pr) => now - (pr.closedAt ?? 0) >= CODING_PR_REPLACEMENT_GRACE_MS
   );
@@ -597,6 +616,14 @@ function codingHoldUrls(condition: NeoTodoCheck): string[] | null {
     : null;
 }
 
+function codingCheckPrs(todo: NeoTodo, prs: readonly NeoWorkPr[]) {
+  const named = new Set(codingNamedPrKeys(todo));
+  const isNamed = (pr: NeoWorkPr) => named.has(codingPrKey(pr.url) ?? '');
+  return named.size
+    ? { required: prs.filter(isNamed), replacements: prs.filter((pr) => !isNamed(pr)) }
+    : { required: prs, replacements: [] };
+}
+
 export function createCodingTodoPack(
   repo: CodingTodoPrRepository,
   readPrs: NeoWorkPrReader,
@@ -631,13 +658,7 @@ export function createCodingTodoPack(
     return { prs: facts.prs, observedAt: facts.observedAt, issue };
   };
   const checked = (todo: NeoTodo, facts: CodingTodoFacts) => {
-    const named = new Set(codingNamedPrKeys(todo));
-    const required = named.size
-      ? facts.prs.filter((pr) => named.has(codingPrKey(pr.url) ?? ''))
-      : facts.prs;
-    const replacements = named.size
-      ? facts.prs.filter((pr) => !named.has(codingPrKey(pr.url) ?? ''))
-      : [];
+    const { required, replacements } = codingCheckPrs(todo, facts.prs);
     return todo.check?.kind === 'pr_approved' || todo.check?.kind === 'deployed'
       ? (facts.external ?? { done: false, evidence: null })
       : todo.check?.kind === 'issue_closed'
@@ -681,6 +702,7 @@ export function createCodingTodoPack(
       return checked(todo, facts);
     },
     statusLine: (todo) => codingTodoStatusLine(todo, repo.prs(todo.id), ledger),
+    openPr: (todoId) => repo.readOpenPr(todoId),
     waiting: (todos) => repo.readWaiting(todos.map((todo) => todo.id)),
     parked: (todos) => repo.readParked(todos.map((todo) => todo.id)),
     ...createCodingTodoPolicy(repo),
@@ -698,5 +720,5 @@ export const codingTodoPrReads = defineRepositoryOp(
   'coding.todoPrReads',
   'read',
   CodingTodoPrRepository,
-  ['waiting', 'parked', 'holder', 'linkedIssues', 'openLedger']
+  ['waiting', 'parked', 'holder', 'linkedIssues', 'openLedger', 'openPr']
 );

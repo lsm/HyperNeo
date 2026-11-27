@@ -438,7 +438,7 @@ export async function startCodexDesktopTurn(
   spawn: SpawnFn,
   threadId: string,
   request: Record<string, unknown>
-): Promise<void> {
+): Promise<string> {
   const deadline = Date.now() + TIMEOUT_MS;
   return withCodexDesktopIpc(
     socketPath,
@@ -453,7 +453,7 @@ async function handoff(
   threadId: string,
   request: Record<string, unknown>,
   deadline: number
-): Promise<void> {
+): Promise<string> {
   const owner = await openCodexDesktopOwner({ call }, spawn, threadId, deadline);
   const started = await call(
     'thread-follower-start-turn',
@@ -464,6 +464,8 @@ async function handoff(
     2,
     owner
   );
-  if (started.resultType !== 'success' || !started.result?.result?.turn?.id)
+  const turnId = started.result?.result?.turn?.id;
+  if (started.resultType !== 'success' || !turnId)
     throw new Error(started.error ?? 'Codex Desktop did not confirm the opening turn.');
+  return turnId;
 }

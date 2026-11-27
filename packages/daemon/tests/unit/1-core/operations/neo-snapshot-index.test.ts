@@ -317,7 +317,7 @@ test.each(['workers', 'packs', 'projects'] as const)(
   }
 );
 
-test('the RPC snapshot carries the human queue with each in-progress todo owner', async () => {
+test('the RPC snapshot carries the human queue with each todo owner and step', async () => {
   seed(2);
   db.getDatabase().exec("UPDATE neo_todos SET title = id, approved_at = 1 WHERE id = 'todo-0'");
   service.todos.askQuestion(
@@ -345,7 +345,14 @@ test('the RPC snapshot carries the human queue with each in-progress todo owner'
         text: 'Ship it?',
         todos: [{ id: 'todo-1', title: 'Title '.repeat(100) }],
       },
-      { state: 'waiting', askId: 'index-0', todoId: 'todo-0', title: 'todo-0', owner: 'neo' },
+      {
+        state: 'waiting',
+        askId: 'index-0',
+        todoId: 'todo-0',
+        title: 'todo-0',
+        owner: 'neo',
+        step: 'neo',
+      },
     ],
     counts: {
       'index-0': { waiting: 1, held: 0, progress: 0 },

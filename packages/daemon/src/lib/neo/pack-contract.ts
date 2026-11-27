@@ -64,6 +64,7 @@ export interface NeoTodoPack {
   check(todo: NeoTodo, context?: { readOnly: true }): Promise<NeoTodoCheckResult | null>;
   statusLine(todo: NeoTodo): NeoStatusLine | null;
   repository?(draft: NeoTodoRepositoryDraft, scope?: NeoTodoPolicyScope): string | null;
+  openPr?(todoId: string): Promise<string | null>;
   waiting?(todos: readonly NeoTodo[]): Promise<ReadonlySet<string>>;
   parked?(todos: readonly NeoTodo[]): Promise<ReadonlySet<string>>;
   doneWhen?(check: NeoTodoCheck): string | null;

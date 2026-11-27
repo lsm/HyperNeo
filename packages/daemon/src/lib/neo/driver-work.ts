@@ -189,17 +189,18 @@ export function readDriverOutcome(
   if (!reply.data.ok)
     return { failure: `${reply.data.reason}: ${reply.data.detail}`, reason: reply.data.reason };
   if ('ref' in reply.data.value) {
-    const { ref, link, model, effort, lastActivityAt, receipt, status, watchHint } = reply.data
-      .value as {
-      ref: WorkRef;
-      link?: unknown;
-      model?: unknown;
-      effort?: unknown;
-      lastActivityAt?: unknown;
-      receipt?: unknown;
-      status?: unknown;
-      watchHint?: unknown;
-    };
+    const { ref, link, model, effort, lastActivityAt, receipt, status, watchHint, startedTurnId } =
+      reply.data.value as {
+        ref: WorkRef;
+        link?: unknown;
+        model?: unknown;
+        effort?: unknown;
+        lastActivityAt?: unknown;
+        receipt?: unknown;
+        status?: unknown;
+        watchHint?: unknown;
+        startedTurnId?: unknown;
+      };
     if (status === 'needs_you' && receipt === undefined)
       return {
         failure: typeof watchHint === 'string' ? watchHint : 'The new session needs the human.',
@@ -213,6 +214,9 @@ export function readDriverOutcome(
       ...(typeof effort === 'string' ? { effort } : {}),
       ...(typeof lastActivityAt === 'number' ? { startedAt: lastActivityAt } : {}),
       ...(started.success ? { receipt: started.data } : {}),
+      ...(typeof startedTurnId === 'string' && startedTurnId
+        ? { delivery: { delivered: true, startedTurnId } }
+        : {}),
     };
   }
   if (target.verb !== 'send') return { failure: 'work.start returned no reference.' };

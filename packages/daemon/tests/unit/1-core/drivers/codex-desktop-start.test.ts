@@ -113,7 +113,9 @@ function adapter(
       expect(closed).toBe(true);
       expect(params.threadId).toBe(threadId);
       calls.push(['desktop/start-turn', params]);
-      if (!(server instanceof Error)) await server.call?.('desktop/start-turn', params);
+      const started =
+        server instanceof Error ? undefined : await server.call?.('desktop/start-turn', params);
+      return (started as { turn?: { id?: string } } | undefined)?.turn?.id ?? 'turn-opening';
     },
     bootstrapServer: async () => {
       if (server instanceof Error) throw server;
@@ -207,7 +209,10 @@ describe('codex-desktop start receipt', () => {
             : {},
     });
     const started = await instance.start?.(request, user);
-    expect(started).toMatchObject({ ok: true, value: { ref: { id: 'th1' } } });
+    expect(started).toMatchObject({
+      ok: true,
+      value: { ref: { id: 'th1' }, startedTurnId: 'turn-opening' },
+    });
     expect(started?.ok && 'receipt' in started.value).toBe(false);
   });
 });
@@ -955,6 +960,7 @@ describe('codex-desktop start', () => {
         status: 'running',
         lastActivityAt: NOW,
         link: 'codex://threads/th1',
+        startedTurnId: 'turn-opening',
       },
     });
     expect(calls).toEqual([
@@ -989,7 +995,7 @@ describe('codex-desktop start', () => {
           shared: {
             call: async (method, params) => {
               shared.push([method, params]);
-              return {};
+              return method === 'turn/start' ? { turn: { id: 'turn-shared' } } : {};
             },
             close: async () => {},
           },
@@ -1029,7 +1035,11 @@ describe('codex-desktop start', () => {
         shared: {
           call: async (method) => {
             shared.push(method);
-            return method === 'thread/start' ? { thread: { id: 'th1' } } : {};
+            return method === 'thread/start'
+              ? { thread: { id: 'th1' } }
+              : method === 'turn/start'
+                ? { turn: { id: 'turn-shared' } }
+                : {};
           },
           close: async () => {},
         },
@@ -1037,10 +1047,39 @@ describe('codex-desktop start', () => {
     );
     expect(await instance.start?.(request, user)).toMatchObject({
       ok: true,
-      value: { ref: { adapter: 'codex-desktop', id: 'th1' }, status: 'running' },
+      value: {
+        ref: { adapter: 'codex-desktop', id: 'th1' },
+        status: 'running',
+        startedTurnId: 'turn-shared',
+      },
     });
     expect(shared).toContain('thread/start');
     expect(calls.map(([method]) => method)).not.toContain('thread/start');
+  });
+
+  test('an app-server opening turn without an id is not confirmed', async () => {
+    const { instance } = adapter(
+      {
+        call: async (method) => {
+          if (method === 'desktop/start-turn')
+            throw Object.assign(new Error('connect ENOENT ipc.sock'), { code: 'ENOENT' });
+          return {};
+        },
+      },
+      ['/focus/dolmen'],
+      {
+        desktopSocketPath: join(namingDir, 'missing-ipc.sock'),
+        shared: {
+          call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}),
+          close: async () => {},
+        },
+      }
+    );
+    const started = await instance.start?.(request, user);
+    expect(started).toMatchObject({ ok: false, reason: 'not_delivered' });
+    expect(started?.ok ? '' : started?.detail).toContain(
+      'Thread th1 was created, but its opening turn was not confirmed.'
+    );
   });
 
   test('keeps creating through the bootstrap server while Desktop IPC listens', async () => {

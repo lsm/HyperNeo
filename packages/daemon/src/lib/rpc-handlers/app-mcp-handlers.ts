@@ -39,7 +39,7 @@ function requireUnreservedName(name: string): void {
   );
 }
 
-function emitChanged(internalEventBus: InternalEventBus<DaemonInternalEventMap>): void {
+export function emitChanged(internalEventBus: InternalEventBus<DaemonInternalEventMap>): void {
   internalEventBus.publish('mcp.registry.changed', { sessionId: 'global' }).catch((err) => {
     log.warn('Failed to emit mcp.registry.changed:', err);
   });

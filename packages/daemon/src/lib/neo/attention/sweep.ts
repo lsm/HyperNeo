@@ -3,6 +3,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoTodoSessionRepository } from '../../../storage/repositories/neo-todo-session-repository.ts';
 import { planWorkQueue } from '../../work-queue/capacity.ts';
 import type { NeoPack } from '../pack-contract.ts';
+import { isNeoTodoWorkerWait } from '../todo-worker-wait.ts';
 import type { NeoAttentionEvent } from './decide.ts';
 import { type NeoStepFacts, nextStepOwner } from './owner.ts';
 
@@ -30,10 +31,13 @@ export async function neoPackWaiting(
   return waiting;
 }
 
-export function planNeoQueueHolds(facts: Facts, limits: Limits): NeoStepRead[] {
-  const { queued } = planWorkQueue(facts.candidates, facts.running, limits);
+export function planNeoQueueHolds(facts: Facts, { running, perGroup }: Limits): NeoStepRead[] {
+  const { queued } = planWorkQueue(facts.candidates, facts.running, { running, perGroup });
   return facts.steps.map((row) =>
-    queued.includes(row.todo.id) ? { ...row, facts: { ...row.facts, start: 'held' } } : row
+    queued.includes(row.todo.id) ||
+    (row.facts.start === 'ready' && isNeoTodoWorkerWait(row.todo.reason))
+      ? { ...row, facts: { ...row.facts, start: 'held' } }
+      : row
   );
 }
 
@@ -61,7 +65,12 @@ export async function readNeoSteps(
 }
 
 export const neoStepOwners = (steps: readonly NeoStepRow[]) =>
-  new Map(steps.map((row) => [row.todo.id, owner(row)]));
+  new Map(
+    steps.map((row) => [
+      row.todo.id,
+      { ...owner(row), worker: row.facts.worker, start: row.facts.start },
+    ])
+  );
 
 export function planNeoSweepEvents(
   steps: readonly NeoStepRow[],
