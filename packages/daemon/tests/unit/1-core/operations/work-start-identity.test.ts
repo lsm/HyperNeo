@@ -42,7 +42,11 @@ describe('workStartConfiguration.requireIdentity', () => {
         { adapter: 'hyperneo', provider: 'a', model: 'm', effort: 'high' },
         { catalogProvider: 'b', configurable: true }
       )
-    ).toMatchObject({ ok: false, reason: 'identity_required' });
+    ).toEqual({
+      ok: false,
+      reason: 'identity_required',
+      detail: 'identity_required: the model catalog names provider b, not a',
+    });
   });
 
   test('accepts a matching request provider and catalog owner', () => {

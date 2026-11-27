@@ -96,15 +96,15 @@ export interface Identity {
 
 function agreeProvider(request: IdentityRequest, facts: IdentityFacts): Gate<string | null> {
   const named = [
-    ['request', request.provider],
-    ['adapter', facts.fixedProvider],
-    ['catalog', facts.catalogProvider],
+    [`adapter ${request.adapter} runs on provider`, facts.fixedProvider],
+    ['the model catalog names provider', facts.catalogProvider],
+    ['the request names provider', request.provider],
   ].filter((entry): entry is [string, string] => entry[1] !== undefined);
   const clash = named.find(([, provider]) => provider !== named[0][1]);
   return clash
     ? refuse(
         'identity_required',
-        `identity_required: adapter ${request.adapter} runs on provider ${clash[0] === 'request' ? named[0][1] : clash[1]}, not ${clash[0] === 'request' ? clash[1] : named[0][1]}`
+        `identity_required: ${named[0][0]} ${named[0][1]}, not ${clash[1]}`
       )
     : { value: named[0]?.[1] ?? null };
 }
