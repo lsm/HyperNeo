@@ -141,8 +141,9 @@ therefore labels its source instead of promising actuals it cannot bind:
 
 - `confirmed`: the value observed at the boundary that builds execution, not
   a configuration echo. For HyperNeo sessions that boundary is the query
-  layer, and the recorded identity is what the builder actually sends, in the
-  provider's own vocabulary — never empty:
+  layer, and the recorded identity is what the builder actually sends on every
+  turn — so a `work.reconfigure` switch is upgraded from declared to confirmed
+  when the next turn runs — in the provider's own vocabulary, never empty:
   - granular thinking modes with published effort levels: the effort string
     sent (`query-options-builder.ts:837-842`);
   - every path that sends a thinking config instead of an effort string —
@@ -306,8 +307,15 @@ target.
   `claude-desktop`/`cursor`. A missing triple refuses `identity_required`; a
   mismatch with the recorded values refuses the same way, and Neo starts a
   fresh worker instead. A configurable-adapter session without a confirmed
-  triple — every legacy session included — is likewise refused, with
-  `work.reconfigure` as the upgrade path that records one. Continuation keeps
+  triple — every legacy session included — is likewise refused. The upgrade
+  path for such a HyperNeo session is `work.reconfigure` plus its next turn:
+  `switchSettings` only switches config and reads it back
+  (`work-reconfigure.ts:105-126`), which is a declared-class read by this
+  design's own definition, so reconfigure alone does not unblock the session;
+  the query-layer recorder — which records the executed identity on every
+  turn, not only the first — upgrades the record to confirmed when the next
+  turn runs, which is also when the switched settings take effect
+  (`work-reconfigure.ts:124`, `appliesFrom: 'next-turn'`). Continuation keeps
   today's semantics and carries no triple: the same todo continuing on its
   worker, notice replies to a session that messaged Neo, and the human
   messaging their own sessions.
