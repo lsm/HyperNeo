@@ -233,8 +233,17 @@ target.
 
 ### Wiring
 
-- `work.start`: one pipeline step after `admitStartEffort`
-  (`work-operations.ts:1323`). The desktop carve-outs that strip model and
+- `work.start`: one pipeline step in place of `admitStartEffort`
+  (`work-operations.ts:1323`). That gate's local branch (`:626-627`) refuses
+  any explicit effort for adapters without `supportsStartEffort` — only
+  antigravity, codex-desktop, copilot and hyperneo set it — so with the gate
+  making effort mandatory it would reject every claude-desktop and cursor
+  start with `unsupported_effort` before the new gate ran, leaving the
+  declared receipt path unreachable; its remote branch keys on
+  `verifiedCopilotStart` (`:627`). Both refusal roles are subsumed by the new
+  gate's per-adapter facts: configurable adapters confirm the required effort,
+  non-configurable ones record it as the declared request. The desktop
+  carve-outs that strip model and
   provider (`work-operations.ts:841`, `:901`) are deleted — a desktop worker
   template's ordered model list is recorded configuration and enters the
   request like any other explicit value, resolved by the HyperNeo adapter like
@@ -373,9 +382,12 @@ rung.
    `neo.todo.add`/`neo.todo.edit` and coding-candidate admission, deletion of
    the assign start call's previous-reviewer-model override
    (`assign-operation.ts:233`, one line, required for the validated candidate
-   triple to be what dispatches), remote advertisement
+   triple to be what dispatches), the gate step replacing
+   `admitStartEffort`'s local `supportsStartEffort` refusal and remote
+   `verifiedCopilotStart` check (`work-operations.ts:626-627`) so
+   non-configurable adapters reach the declared path, remote advertisement
    replacing the model/effort admission role of
-   `admitRemoteStartModel`/`verifiedCopilotStart` while preserving Copilot
+   `admitRemoteStartModel` while preserving Copilot
    client validation, and the prompt changes above. Recorded merge-contract
    exception: removing the two desktop stripping carve-outs
    (`work-operations.ts:841`, `:901`) rides this Wire PR under the repo's
