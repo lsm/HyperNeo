@@ -78,6 +78,7 @@ import {
   type InternalCommandBus,
 } from './lib/internal-command-bus.ts';
 import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-query-bus.ts';
+import { clearCacheAndNotifyProvidersChanged } from './lib/rpc-handlers/auth-handlers.ts';
 import { CLAUDE_DESKTOP_SESSIONS } from './lib/rpc-handlers/family-operations/drivers.ts';
 import { setupRPCHandlers } from './lib/rpc-handlers/index.ts';
 import { DaemonExtensions } from './lib/extensions/contract.ts';
@@ -870,6 +871,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         await providerWriter(db.providers).call(providerRpcWrites, 'updateProvider', id, {
           configJson,
         });
+        await clearCacheAndNotifyProvidersChanged(internalEventBus);
       },
       key: async (providerId) => {
         const provider = providerRegistry.get(providerId);
@@ -901,7 +903,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         maxTokens: config.maxTokens,
         temperature: config.temperature,
         disableWorktrees: config.disableWorktrees,
-        readOxapProviderKey: oxapSettings.key,
+        oxapCredentials: oxapSettings,
       },
       jobQueue,
       jobProcessor,
