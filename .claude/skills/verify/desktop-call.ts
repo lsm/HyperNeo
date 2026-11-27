@@ -420,7 +420,7 @@ try {
   assert(agent);
   const fixtureApps = JSON.stringify([{ bundleId: 'org.example.fixture', name: 'Fixture' }]);
   const disclosedApps = JSON.stringify([
-    { bundleId: 'org.example.fixture', name: 'Fixture', seen: 'all' },
+    { bundleId: 'org.example.Fixture', name: 'Fixture', seen: 'all' },
     { bundleId: 'org.example.other', name: 'Other', seen: 'all' },
   ]);
   sql.prepare("INSERT INTO neo_asks(id,session_id,title,request,status,desktop_apps,created_at,updated_at) VALUES('ask','neo:fixture','Synthetic action','','open',?,?,?)").run(disclosedApps, now, now);
@@ -442,7 +442,7 @@ try {
   sql.prepare("UPDATE neo_todos SET desktop_apps=? WHERE id='todo'").run(fixtureApps);
   const allowed = await call({ name: 'desktop.call', input });
   const reply = JSON.parse(allowed.content[0].text);
-  assert.equal(reply.dispatched, true, JSON.stringify(allowed));
+  assert.equal(reply.dispatched, true, `Case-variant desktop consent: ${JSON.stringify(allowed)}`);
   assert.equal(requests.length, 1);
   assert.equal(requests[0].action, 'dispatch');
   assert.equal(requests[0].worker, worker);

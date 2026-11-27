@@ -76,6 +76,13 @@ test('desktop control is on for a todo with its own approved app', () => {
   expect([optedIn('worker-a'), optedIn('worker-b')]).toEqual(['dentist', 'taxes']);
 });
 
+test('desktop control accepts a case variant of the disclosed app', () => {
+  db.prepare("UPDATE neo_todos SET desktop_apps = ? WHERE id = 'dentist'").run(
+    JSON.stringify([{ bundleId: 'com.google.chrome', name: 'Chrome' }])
+  );
+  expect(optedIn('worker-a')).toBe('dentist');
+});
+
 test('an app approved for one todo does not reach its sibling', () => {
   db.prepare("UPDATE neo_todos SET desktop_apps = NULL WHERE id = 'taxes'").run();
   expect([optedIn('worker-a'), optedIn('worker-b')]).toEqual(['dentist', null]);
