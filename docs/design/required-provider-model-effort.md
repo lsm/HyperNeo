@@ -243,7 +243,18 @@ target.
   every path: the idle-reuse match (`work-operations.ts:796`, `:1016`) and the
   queued/busy-worker confirmation (`:1135-1139`) run against the complete
   requested triple, and a configurable worker whose recorded identity is
-  missing any field is not reused — a fresh start is. Non-configurable workers
+  missing any field is not reused — a fresh start is. Two `reuseIdleWorker`
+  guards keyed on the `resolveStartConfiguration` hook are rewired in the same
+  slice: the early return at `work-operations.ts:826`
+  (`(input.model || input.effort) && !requestedAdapter.resolveStartConfiguration`)
+  and the resolution/dereference at `:895-897`. With the gate forcing the
+  triple on every start, those lines would exclude every adapter without the
+  hook — antigravity (configurable, but it validates post-open rather than
+  through the hook), claude-desktop and cursor — from reuse entirely. Instead,
+  reuse consumes the gate-resolved triple and compares it against each
+  candidate's recorded identity through `matchesRequested`; the hook stays a
+  start-time validation concern for the adapters that define it (hyperneo,
+  codex-desktop, copilot). Non-configurable workers
   (`claude-desktop`, `cursor`) stay reusable by matching on their recorded
   requested triple instead: a new todo requesting the same provider, model and
   effort reuses the worker, with the match labeled `unverified` in the receipt
@@ -347,7 +358,9 @@ rung.
 2. **Wire: dispatch** (contract: every in-scope entry point passes the gate;
    measured surface: `work-operations.ts` 36 importers, `driver-work.ts` 15,
    `hyperneo-adapter.ts` 14, `drivers.ts` 3): the `work.start` pipeline step
-   with triple write-back, the reuse rules, the `work.send` new-todo identity
+   with triple write-back, the reuse rules including rewiring
+   `reuseIdleWorker`'s hook-keyed guards (`work-operations.ts:826`,
+   `:895-897`) to the recorded-triple match, the `work.send` new-todo identity
    fields and check, query-layer recording of the executed HyperNeo identity,
    `neo.todo.add`/`neo.todo.edit` and coding-candidate admission, deletion of
    the assign start call's previous-reviewer-model override
