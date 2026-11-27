@@ -31575,10 +31575,29 @@
                               ],
                               "type": "string"
                             },
+                            "step": {
+                              "enum": [
+                                "working",
+                                "waiting",
+                                "paused",
+                                "neo",
+                                "you"
+                              ],
+                              "type": "string"
+                            },
                             "title": {
                               "type": "string"
                             },
                             "todoId": {
+                              "type": "string"
+                            },
+                            "waitingOn": {
+                              "enum": [
+                                "review",
+                                "earlier_step",
+                                "queue",
+                                "checking"
+                              ],
                               "type": "string"
                             }
                           },
@@ -39963,10 +39982,29 @@
                               ],
                               "type": "string"
                             },
+                            "step": {
+                              "enum": [
+                                "working",
+                                "waiting",
+                                "paused",
+                                "neo",
+                                "you"
+                              ],
+                              "type": "string"
+                            },
                             "title": {
                               "type": "string"
                             },
                             "todoId": {
+                              "type": "string"
+                            },
+                            "waitingOn": {
+                              "enum": [
+                                "review",
+                                "earlier_step",
+                                "queue",
+                                "checking"
+                              ],
                               "type": "string"
                             }
                           },

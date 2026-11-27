@@ -1,10 +1,36 @@
 import type { NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoHumanQueue, NeoHumanQueueItem } from '@hyperneo/shared/types/neo-snapshot';
-import type { NeoStepOwner } from './attention/owner.ts';
+import type { NeoStepFacts, NeoStepOwner } from './attention/owner.ts';
 import { neoTodoCovered } from './todo-state.ts';
 
 const UNFINISHED: readonly NeoTodo['state'][] = ['todo', 'doing', 'blocked'];
 const DAY = 24 * 60 * 60 * 1000;
+
+type StepOwner = NeoStepOwner & Partial<Pick<NeoStepFacts, 'worker' | 'start'>>;
+type QueueTodo = Extract<NeoHumanQueueItem, { todoId: string }>;
+
+function queueStep(row: StepOwner | undefined): Pick<QueueTodo, 'step' | 'waitingOn'> {
+  switch (row?.owner) {
+    case 'worker':
+      if (row.worker?.status === 'running') return { step: 'working' };
+      if (row.worker?.status === 'queued') return { step: 'waiting', waitingOn: 'queue' };
+      return {};
+    case 'pack':
+      return { step: 'waiting', waitingOn: 'review' };
+    case 'prerequisite':
+      return { step: 'waiting', waitingOn: 'earlier_step' };
+    case 'daemon':
+      return { step: 'waiting', waitingOn: row.start === 'held' ? 'queue' : 'checking' };
+    case 'nobody':
+      return { step: 'paused' };
+    case 'neo':
+      return { step: 'neo' };
+    case 'human':
+      return { step: 'you' };
+    default:
+      return {};
+  }
+}
 
 const neoStalled = (owner: NeoStepOwner | undefined, now: number | undefined) =>
   owner?.owner === 'neo' && now !== undefined && now - owner.since >= DAY;
@@ -15,7 +41,7 @@ export function neoHumanQueue(input: {
     'id' | 'askId' | 'state' | 'text' | 'todos' | 'heldAt' | 'createdAt'
   >[];
   todos: readonly Pick<NeoTodo, 'id' | 'askId' | 'title' | 'state' | 'named'>[];
-  owners: ReadonlyMap<string, NeoStepOwner>;
+  owners: ReadonlyMap<string, StepOwner>;
   now?: number;
 }): NeoHumanQueue {
   const cards = input.questions.filter((card) => card.state === 'open');
@@ -43,15 +69,17 @@ export function neoHumanQueue(input: {
           typeof todo.named?.requestFrom !== 'string' &&
           !neoTodoCovered(todo, cards)
       )
-      .map((todo) => ({
-        state: neoStalled(input.owners.get(todo.id), input.now)
-          ? ('waiting' as const)
-          : ('progress' as const),
-        askId: todo.askId,
-        todoId: todo.id,
-        title: todo.title,
-        owner: input.owners.get(todo.id)?.owner ?? null,
-      })),
+      .map((todo): QueueTodo => {
+        const row = input.owners.get(todo.id);
+        return {
+          state: neoStalled(row, input.now) ? 'waiting' : 'progress',
+          askId: todo.askId,
+          todoId: todo.id,
+          title: todo.title,
+          owner: row?.owner ?? null,
+          ...queueStep(row),
+        };
+      }),
   ];
   const counts: NeoHumanQueue['counts'] = {};
   for (const item of items)

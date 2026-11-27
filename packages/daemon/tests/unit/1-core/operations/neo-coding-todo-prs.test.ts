@@ -410,6 +410,44 @@ describe('CodingTodoPrRepository.holder', () => {
   });
 });
 
+describe('coding todo pack open PR', () => {
+  const named = pr(1, 'OPEN', { createdAt: 100 });
+  const older = pr(2, 'OPEN', { createdAt: 90 });
+  const newer = pr(3, 'OPEN', { createdAt: 110 });
+  const closed = { ...named, state: 'CLOSED' as const };
+  test.each([
+    ['named', 'pr_merged', [older, named, newer], named.url],
+    ['unrelated', 'pr_merged', [newer], null],
+    ['older', 'pr_merged', [closed, older], null],
+    ['replacement', 'pr_merged', [closed, newer], newer.url],
+    ['closed', 'pr_merged', [closed], null],
+    ['other check', 'pr_approved', [named], null],
+  ] as const)('selects the open PR still counted by the check (%s)', async (_, kind, prs, url) => {
+    const { db, repo, pack, todo } = setup(async () => []);
+    try {
+      const row = todo({ pack: 'coding', kind, params: { urls: [named.url] } });
+      repo.record(row.id, prs, 200);
+      expect(await pack.openPr?.(row.id)).toBe(url);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('the ledger can close a historically open PR', async () => {
+    const { db, repo, pack, todo } = setup(async () => []);
+    try {
+      const row = todo({ pack: 'coding', kind: 'pr_merged', params: { urls: [named.url] } });
+      repo.record(row.id, [named], 200);
+      db.prepare(`INSERT INTO pack_coding_pr_ledger
+        (repo, number, title, branch, head, state, state_since, read_at, closed_at)
+        VALUES ('lsm/neo-ios', 1, 'Ship', 'ship', 'abc1234', 'merged', 201, 201, 201)`).run();
+      expect(await pack.openPr?.(row.id)).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+});
+
 describe('coding todo pack waiting', async () => {
   test('a todo with an open PR of its own is waiting on that PR, not idle', async () => {
     const { db, pack, repo, todo } = setup(async () => []);
