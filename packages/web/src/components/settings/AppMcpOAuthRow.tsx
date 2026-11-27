@@ -6,7 +6,11 @@ import { t } from '../../lib/i18n/index.ts';
 import { invokeOperation } from '../../lib/operations.ts';
 import { Button } from '../ui/Button.tsx';
 
-type Status = { health: 'healthy' | 'disconnected' | 'reconnect_needed'; preset?: string };
+type Status = {
+  health: 'healthy' | 'disconnected' | 'reconnect_needed';
+  preset?: string;
+  needsClient?: true;
+};
 type Receipt = { authorizeUrl?: string; reason?: string; ok?: boolean };
 type Action = 'mcp.registry.connect' | 'mcp.registry.reconnect' | 'mcp.registry.disconnect';
 
@@ -18,6 +22,8 @@ export function AppMcpOAuthRow({ server }: { server: AppMcpServer }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [consentUrl, setConsentUrl] = useState('');
+  const [clientId, setClientId] = useState('');
+  const [clientSecret, setClientSecret] = useState('');
   const { id, auth } = server;
   const key = `${id}|${server.url}|${auth?.generation}|${auth?.active}`;
   useEffect(() => {
@@ -34,6 +40,10 @@ export function AppMcpOAuthRow({ server }: { server: AppMcpServer }) {
   const fresh = status?.key === key ? status : null;
   if (!auth?.active && !(fresh ? fresh.preset : (auth ?? status?.preset))) return null;
 
+  const askClient = !!fresh?.needsClient && !auth?.active;
+  const clientMissing = askClient && (!clientId.trim() || !clientSecret.trim());
+  const field =
+    'rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-sm text-fg-soft focus:outline-none focus:ring-1 focus:ring-accent';
   const act = async (name: Action, input: Record<string, string>) => {
     setBusy(true);
     setError('');
@@ -43,8 +53,10 @@ export function AppMcpOAuthRow({ server }: { server: AppMcpServer }) {
       !desktop && name !== 'mcp.registry.disconnect' ? window.open('about:blank', '_blank') : null;
     if (popup) popup.opener = null;
     try {
-      const receipt = await call<Receipt>(name, { id, ...input });
+      const client = askClient && clientId && clientSecret ? { clientId, clientSecret } : {};
+      const receipt = await call<Receipt>(name, { id, ...input, ...client });
       if (receipt.authorizeUrl) {
+        setClientSecret('');
         if (desktop) openExternalLink(receipt.authorizeUrl);
         else if (popup) popup.location.href = receipt.authorizeUrl;
         else setConsentUrl(receipt.authorizeUrl);
@@ -62,11 +74,32 @@ export function AppMcpOAuthRow({ server }: { server: AppMcpServer }) {
   return (
     <div class="mt-2 flex flex-wrap items-center gap-2" data-testid={`mcp-oauth-${server.name}`}>
       {fresh && <span class="text-xs text-fg-soft">{t(`connections.${fresh.health}`)}</span>}
+      {askClient && (
+        <>
+          <input
+            type="text"
+            class={field}
+            aria-label={t('connections.mcpClientId')}
+            placeholder={t('connections.mcpClientId')}
+            value={clientId}
+            onInput={(event) => setClientId((event.target as HTMLInputElement).value)}
+          />
+          <input
+            type="password"
+            autocomplete="off"
+            class={field}
+            aria-label={t('connections.mcpClientSecret')}
+            placeholder={t('connections.mcpClientSecret')}
+            value={clientSecret}
+            onInput={(event) => setClientSecret((event.target as HTMLInputElement).value)}
+          />
+        </>
+      )}
       {!auth && status?.preset ? (
         <Button
           variant="secondary"
           size="sm"
-          disabled={busy}
+          disabled={busy || clientMissing}
           onClick={() => void act('mcp.registry.connect', { preset: status.preset ?? '' })}
         >
           {t('connections.connectMcp')}
@@ -75,7 +108,7 @@ export function AppMcpOAuthRow({ server }: { server: AppMcpServer }) {
         <Button
           variant="secondary"
           size="sm"
-          disabled={busy}
+          disabled={busy || clientMissing}
           onClick={() => void act('mcp.registry.reconnect', {})}
         >
           {t('connections.reconnect')}

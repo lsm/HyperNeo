@@ -68,6 +68,17 @@ try {
     result.vendorRows[vendor] = (await vendorRow.innerText()).split('\n');
     assert.equal(await vendorRow.getByRole('button', { name: 'Connect' }).count(), 1, vendor);
   }
+  const slack = page.getByTestId('mcp-oauth-slack');
+  const slackConnect = slack.getByRole('button', { name: 'Connect' });
+  await slack.getByLabel('Client ID').waitFor({ timeout: 15000 });
+  assert.equal(await slackConnect.isDisabled(), true, 'Slack Connect is enabled without a client');
+  assert.equal(await slack.getByLabel('Client secret').getAttribute('type'), 'password');
+  await slack.getByLabel('Client ID').fill('synthetic-client');
+  await slack.getByLabel('Client secret').fill('synthetic-secret');
+  assert.equal(await slackConnect.isDisabled(), false, 'Slack Connect stays disabled');
+  await slack.screenshot({ path: `${evidence}/slack-row.png`, animations: 'disabled' });
+  result.slackRow = 'client fields shown; Connect enabled only once both are filled';
+  await slack.getByLabel('Client secret').fill('');
 
   await consent('Connect');
   await shot('2-connected');

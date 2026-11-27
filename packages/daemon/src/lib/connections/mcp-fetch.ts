@@ -2,6 +2,8 @@ import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js';
 
 export type McpOAuthPreset = {
   url: string;
+  resource?: string;
+  clientSecret?: boolean;
   issuer: string;
   authorizationEndpoint: string;
   origins: string[];

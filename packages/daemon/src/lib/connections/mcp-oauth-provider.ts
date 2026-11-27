@@ -8,7 +8,7 @@ type Draft = Partial<Omit<McpGrant, 'generation'>> & { verifier?: string };
 const sameUrl = (a: string | undefined, b: string) =>
   !!a && new URL(a).href.replace(/\/$/, '') === new URL(b).href.replace(/\/$/, '');
 const boundTo = (preset: McpOAuthPreset, binding: McpGrant['binding']) =>
-  new URL(binding.resource).href === new URL(preset.url).href &&
+  new URL(binding.resource).href === new URL(preset.resource ?? preset.url).href &&
   sameUrl(binding.authorizationServerUrl, preset.issuer) &&
   sameUrl(binding.authorizationServerMetadata.issuer, preset.issuer) &&
   binding.authorizationServerMetadata.authorization_endpoint === preset.authorizationEndpoint;
@@ -34,14 +34,14 @@ export function createMcpOAuthProvider(options: {
   preset: McpOAuthPreset;
   generation: number;
   redirectUrl: string;
-  attempt?: { authorize: (url: URL) => void };
+  attempt?: { authorize: (url: URL) => void; client?: McpGrant['client'] };
   save?: (grant: McpGrant) => Promise<void>;
   onRefreshFailure?: (reason: McpRefreshFailure) => void;
   onCredentialSent?: (value: string) => void;
   timeoutMs?: number;
 }) {
   const { preset, attempt } = options;
-  let draft: Draft = {};
+  let draft: Draft = attempt?.client ? { client: attempt.client } : {};
   const ready = attempt
     ? Promise.resolve()
     : options.vault.readMcp(options.serverId).then((grant) => {
@@ -66,7 +66,7 @@ export function createMcpOAuthProvider(options: {
       redirect_uris: [options.redirectUrl],
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
-      token_endpoint_auth_method: 'none',
+      token_endpoint_auth_method: attempt?.client?.client_secret ? 'client_secret_post' : 'none',
       scope: preset.scopes.join(' '),
     },
     clientInformation: async () => {
@@ -110,7 +110,7 @@ export function createMcpOAuthProvider(options: {
     saveDiscoveryState: (state) => {
       const binding = mcpGrant.shape.binding.safeParse({
         ...state,
-        resource: state.resourceMetadata?.resource ?? preset.url,
+        resource: state.resourceMetadata?.resource ?? preset.resource ?? preset.url,
       });
       if (!binding.success || !boundTo(preset, binding.data)) throw new Error('request_failed');
       draft.binding = binding.data;

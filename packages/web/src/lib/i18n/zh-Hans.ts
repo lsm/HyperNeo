@@ -20,6 +20,8 @@ export const zhHans: Record<keyof typeof en, string> = {
   'connections.connect': '连接 Google',
   'connections.reconnect': '重新连接',
   'connections.connectMcp': '连接',
+  'connections.mcpClientId': '客户端 ID',
+  'connections.mcpClientSecret': '客户端密钥',
   'connections.continueMcp': '打开登录页面',
   'connections.disconnect': '断开连接',
   'connections.empty': '尚未连接账号。',

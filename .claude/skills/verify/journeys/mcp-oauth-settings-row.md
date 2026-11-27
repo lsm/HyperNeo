@@ -14,8 +14,10 @@ Settings → Capabilities → MCP Servers and drives the `oauth-fixture` row:
 
 1. Never connected: `Disconnected` and `Connect`. The other HTTP row shows no
    OAuth controls, because no preset matches its URL. Rows at the Jira and
-   Basecamp MCP URLs also show `Disconnected` and `Connect`; the proof does not
-   click them, so nothing reaches either vendor.
+   Basecamp MCP URLs also show `Disconnected` and `Connect`. The Slack row also
+   shows `Client ID` and a password `Client secret` field, and its `Connect`
+   stays disabled until both are filled (`slack-row.png`). The proof clicks none
+   of the vendor buttons, so nothing reaches a vendor.
 2. Connect opens the fake consent in a new tab; the row turns `Connected`.
 3. After a reload the row is still `Connected`.
 4. The proof deletes the stored grant from the disposable DB. After a reload,
@@ -28,5 +30,5 @@ Settings → Capabilities → MCP Servers and drives the `oauth-fixture` row:
 
 Require exit 0 and `pass: true` in `mcp-oauth-settings.json`. Inspect the
 numbered PNGs for each state. No vendor and no real account are used. The authorize URL and scopes of the
-Jira and Basecamp presets are checked against the fake server in
+Jira, Basecamp and Slack presets, and Slack's client secret token exchange, are checked against the fake server in
 `packages/daemon/tests/unit/1-core/credentials/mcp-oauth-presets.test.ts`.
