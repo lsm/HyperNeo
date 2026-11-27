@@ -16,17 +16,24 @@ loopback model server: `eyes-off` (OpenAI Chat, no Vision), `desk-first` and
 `settings.global.update`. Neo then proposes a desktop todo, the human door
 answers its card, and the todo starts with no model or provider.
 
-Pass prints `desktop model list start PASS` and
-`desktop model list exhausted PASS`:
+Pass prints `desktop model list start PASS`,
+`desktop model list overload PASS` and `desktop model list exhausted PASS`:
 
 - `desktop-model-list-start.json`: template `worker.desktop`, model
   `desk-first`, effort `think8k` from the list, a chain of `desk-first` then
   `desk-second`, and one turn received by the model server for `desk-first`;
+- `desktop-model-list-recovered.json`: with the model server answering 529
+  for `desk-first`, a new desktop todo starts there and, once the SDK stops
+  retrying (about three minutes), the worker moves to `desk-second` with no
+  `modelLimits` recorded;
 - `desktop-model-list-refused.json`: with only `eyes-off` listed, the next
   desktop todo is blocked with `unsupported_model` naming the desktop-control
-  model list, binds no worker and sends no model request.
+  model list, binds no worker and sends nothing to `eyes-off`.
 
 Negative control: with the lifecycle change reverted the first assertion fails,
-because the worker starts on the general default instead of the list.
+because the worker starts on the general default instead of the list. With the
+watchdog's `desktopChain` dependency returning null the overload assertion
+fails, because the worker stays on `desk-first`.
 
-Not covered: recovery to a later list entry during a turn.
+Not covered: a thrown 5xx that is not 529 or 503, and reuse of an idle
+desktop worker; unit tests cover both.

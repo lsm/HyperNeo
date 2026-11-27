@@ -238,7 +238,7 @@ export function classifyQueryRetryRoute(input: QueryRetryRouteInput): QueryRetry
     env.hasRateLimitHandoff &&
     !isQueryInterrupted(errorSignal, env.lifecycle)
   )
-    return { action: 'rate_limit_handoff', hint: { kind: 'rate_limit' } };
+    return { action: 'rate_limit_handoff', hint: { hold: 'overloaded' } };
   if (
     !isQueryInterrupted(errorSignal, env.lifecycle) &&
     env.attempt < env.maxProviderRetries &&

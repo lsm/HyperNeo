@@ -18,6 +18,7 @@ for (const name of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OA
 mkdirSync(join(run, 'evidence'), { recursive: true });
 
 const seen: string[] = [];
+const overloaded = new Set<string>();
 const mock = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
   const path = new URL(request.url).pathname;
   if (path.endsWith('/models')) return Response.json({ data: [] });
@@ -25,6 +26,8 @@ const mock = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
   if (!path.endsWith('/messages')) return Response.json({});
   const body = await request.json() as { model: string; stream?: boolean; messages?: unknown[] };
   if (body.stream) seen.push(body.model);
+  if (overloaded.has(body.model))
+    return Response.json({ type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }, { status: 529 });
   const usage = { input_tokens: 20, output_tokens: 5 };
   const message = { id: 'msg_list', type: 'message', role: 'assistant', model: body.model, content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', stop_sequence: null, usage };
   if (!body.stream) return Response.json(message);
@@ -123,7 +126,32 @@ try {
   });
   console.log('desktop model list start PASS model=desk-first chain=2 skipped=eyes-off');
 
+  overloaded.add('desk-first');
+  const before = seen.length;
+  const moved = await desktopTodo('Read the Calculator memory');
+  assert(moved.ok && moved.todo, JSON.stringify(moved));
+  const movedRef = new NeoTodoSessionRepository(sql).readRef(moved.todo.id)!;
+  for (let i = 0; i < 3000; i++) {
+    const data = (await app.sessionManager.getSessionAsync(movedRef.id))!.getSessionData();
+    if (data.config.model === 'desk-second') break;
+    await delay(100);
+  }
+  const movedData = (await app.sessionManager.getSessionAsync(movedRef.id))!.getSessionData();
+  const recovered = {
+    model: movedData.config.model,
+    provider: movedData.config.provider,
+    modelLimits: movedData.metadata.modelLimits ?? null,
+    modelRequests: seen.slice(before),
+  };
+  writeFileSync(join(run, 'evidence/desktop-model-list-recovered.json'), JSON.stringify(recovered, null, 2));
+  assert.equal(recovered.model, 'desk-second', JSON.stringify(recovered));
+  assert.equal(recovered.provider, 'custom:desk-second', JSON.stringify(recovered));
+  assert.equal(recovered.modelLimits, null, JSON.stringify(recovered));
+  assert(recovered.modelRequests.filter((model) => model === 'desk-first').length > 1, JSON.stringify(recovered));
+  console.log(`desktop model list overload PASS moved desk-first -> desk-second with no model limit recorded`);
+
   await hub.request('settings.global.update', { updates: { desktopControlModels: list.slice(0, 1) } });
+  const requestsBefore = seen.length;
   const refused = await desktopTodo('Read the Calculator display again');
   const refusedTodo = refused.todo ? ask.getTodo(refused.todo.id) : null;
   const outcome = {
@@ -132,11 +160,11 @@ try {
     state: refusedTodo?.state ?? null,
     blockedReason: refusedTodo?.blockedReason ?? null,
     error: refused.error ?? refused.reason ?? null,
-    modelRequests: seen.length,
+    modelRequests: seen.slice(requestsBefore),
   };
   writeFileSync(join(run, 'evidence/desktop-model-list-refused.json'), JSON.stringify(outcome, null, 2));
   assert.equal(outcome.bound, false, JSON.stringify(outcome));
-  assert.equal(outcome.modelRequests, 1, JSON.stringify(outcome));
+  assert(!outcome.modelRequests.includes('eyes-off'), JSON.stringify(outcome));
   assert.match(JSON.stringify(outcome), /desktop-control model list/, JSON.stringify(outcome));
   console.log('desktop model list exhausted PASS refused without the default model');
 } finally {

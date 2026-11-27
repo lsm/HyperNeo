@@ -42,6 +42,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import { Logger } from '../logger.ts';
 import { getProviderCatalogEpoch, resolveSessionContextModelInfo } from '../model-service.ts';
 import { getProviderContextManager } from '../providers/factory.ts';
+import { isRetryableProviderError } from './transient-error-patterns.ts';
 import { sessionSdkPath } from '../session/sdk-path.ts';
 import { isTurnEndAckEligible, selectPersistedAckRow } from './ack-selection.ts';
 import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker.ts';
@@ -130,6 +131,8 @@ export interface SDKMessageHandlerContext {
   onCommandsChanged: (commands: string[]) => Promise<void>;
 
   reevaluateContextBudgetAfterModelSwitch?(): Promise<void>;
+
+  movesOverloadsAlongDesktopList?(): boolean;
 
   onResultLimitError?(
     errorText: string,
@@ -1501,7 +1504,12 @@ export class SDKMessageHandler {
       rateLimitInfo: this.lastRateLimitInfo ?? undefined,
     });
     if (!assessment.isLimit)
-      return apiErrorStatus === 529 || apiErrorStatus === 503
+      return apiErrorStatus === 529 ||
+        apiErrorStatus === 503 ||
+        (this.ctx.movesOverloadsAlongDesktopList?.() &&
+          isRetryableProviderError(
+            typeof apiErrorStatus === 'number' ? `${apiErrorStatus} ${errorText}` : errorText
+          ))
         ? { errorText, hint: { hold: 'overloaded' }, userMessageUuid }
         : null;
     return {

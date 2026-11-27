@@ -80,14 +80,14 @@ function assertFinalizer(
 }
 
 describe('query-retry-routing', () => {
-  it('hands retryable provider errors to configured Neo fallbacks while preserving ordinary retry policy', () => {
+  it('hands retryable provider errors to the desktop model list as overloads while preserving ordinary retry policy', () => {
     const errorSignal = signal({ rawText: '503 overloaded', isRetryableProviderError: true });
     expect(
       classifyQueryRetryRoute({
         errorSignal,
         env: env({ hasRateLimitHandoff: true, useProviderFallback: true }),
       })
-    ).toEqual({ action: 'rate_limit_handoff', hint: { kind: 'rate_limit' } });
+    ).toEqual({ action: 'rate_limit_handoff', hint: { hold: 'overloaded' } });
     expect(
       classifyQueryRetryRoute({ errorSignal, env: env({ hasRateLimitHandoff: true }) })
     ).toEqual({ action: 'provider_backoff', nextAttempt: 1 });

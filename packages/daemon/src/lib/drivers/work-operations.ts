@@ -29,6 +29,7 @@ import type { RemoteDaemons } from './find-operation.ts';
 import { stampWork } from './places.ts';
 import { workStartConfiguration } from './start-configuration.ts';
 import { workStartPreparation } from './start-preparation.ts';
+import { DESKTOP_WORKER_TEMPLATE_KEY } from '../desktop/worker-profile.ts';
 import {
   reuseWorkerDecision,
   matchingPreparation,
@@ -836,6 +837,8 @@ export async function reuseIdleWorker(
   if (input.preparation && !context) return null;
   const assigned = context?.roles.find((row) => row.role === role);
   const workerTemplate = caller.source === 'internal' ? caller.workerTemplate : undefined;
+  const desktop = workerTemplate === DESKTOP_WORKER_TEMPLATE_KEY;
+  if (desktop && (input.model || input.provider)) return null;
   if (!workerTemplate && todoId && assigned && assigned.adapter !== adapter.id) {
     const priorAdapter = deps.adapters().find((candidate) => candidate.id === assigned.adapter);
     const priorContext = await deps.roleContext?.(
@@ -893,7 +896,11 @@ export async function reuseIdleWorker(
     input.model || input.effort ? await adapter.resolveStartConfiguration!(input) : null;
   if ((input.model || input.effort) && !configured) return null;
   if (configured && !configured.ok) return configured;
-  const requested = configured?.ok ? configured.value : null;
+  const requested = configured?.ok
+    ? desktop
+      ? { ...configured.value, model: undefined, provider: undefined }
+      : configured.value
+    : null;
   const groups = await adapter.find({ folder, includeClosed: false, limit: 50 });
   const discovered = groups.flatMap((group) => group.work);
   if (prior && !discovered.some((work) => work.ref.id === prior.id) && adapter.status) {
