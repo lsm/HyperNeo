@@ -186,9 +186,7 @@ export class AppMcpServerRepository {
     return rows.map(rowToServer);
   }
 
-  update(id: string, updates: Omit<UpdateAppMcpServerRequest, 'id'>): AppMcpServer | null {
-    const existing = this.get(id);
-    if (!existing) return null;
+  validateUpdate(id: string, updates: Omit<UpdateAppMcpServerRequest, 'id'>): void {
     if ('auth' in updates) throw new Error('OAuth is set by connecting a server, not by update');
 
     if (updates.name !== undefined && this.isNameTaken(updates.name, id)) {
@@ -202,6 +200,23 @@ export class AppMcpServerRepository {
     if (updates.source !== undefined) {
       validateSource(updates.source);
     }
+  }
+
+  update(id: string, updates: Omit<UpdateAppMcpServerRequest, 'id'>): AppMcpServer | null {
+    if (!this.get(id)) return null;
+    return this.writeUpdate(id, updates, false);
+  }
+
+  replaceOAuthUrl(id: string, updates: Omit<UpdateAppMcpServerRequest, 'id'>) {
+    return this.writeUpdate(id, updates, true);
+  }
+
+  private writeUpdate(
+    id: string,
+    updates: Omit<UpdateAppMcpServerRequest, 'id'>,
+    replaceOAuthUrl: boolean
+  ): AppMcpServer | null {
+    this.validateUpdate(id, updates);
 
     const now = Date.now();
     const fields: string[] = [];
@@ -258,14 +273,22 @@ export class AppMcpServerRepository {
       fields.push('updated_at = ?');
       values.push(now);
       const urlProvided = 'url' in updates;
-      const result = this.db
-        .prepare(
-          `UPDATE app_mcp_servers SET ${fields.join(', ')}
-           WHERE id = ? AND (
-             auth IS NULL OR ((? = 0 OR url IS ?) AND source_type = COALESCE(?, source_type))
-           )`
-        )
-        .run(...values, id, Number(urlProvided), updates.url ?? null, updates.sourceType ?? null);
+      const statement = `UPDATE app_mcp_servers SET ${fields.join(', ')} WHERE id = ? AND`;
+      const result = replaceOAuthUrl
+        ? this.db
+            .prepare(`${statement} source_type = 'http' AND json_extract(auth, '$.active') = 0`)
+            .run(...values, id)
+        : this.db
+            .prepare(
+              `${statement} (auth IS NULL OR ((? = 0 OR url IS ?) AND source_type = COALESCE(?, source_type)))`
+            )
+            .run(
+              ...values,
+              id,
+              Number(urlProvided),
+              updates.url ?? null,
+              updates.sourceType ?? null
+            );
       if (result.changes === 0) {
         const current = this.get(id);
         if (current?.auth) {
@@ -311,17 +334,6 @@ export class AppMcpServerRepository {
     }
     this.reactiveDb.notifyChange('app_mcp_servers');
     return this.get(id);
-  }
-
-  replaceOAuthUrl(id: string, url: string | null): boolean {
-    const result = this.db
-      .prepare(
-        `UPDATE app_mcp_servers SET url = ?, updated_at = ?, last_attach_error = NULL
-         WHERE id = ? AND source_type = 'http' AND json_extract(auth, '$.active') = 0`
-      )
-      .run(url, Date.now(), id);
-    if (result.changes > 0) this.reactiveDb.notifyChange('app_mcp_servers');
-    return result.changes > 0;
   }
 
   deleteOAuth(id: string): boolean {

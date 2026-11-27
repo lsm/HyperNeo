@@ -45,6 +45,11 @@ bash .claude/skills/verify/proof-run.sh /absolute/evidence/mcp-oauth-row-writes 
 On the base, expect exit 1 when the registry refuses a URL replacement.
 On the fixed head, require exit 0 and `pass: true` in `mcp-oauth-row-writes.json`.
 A conflicting rename in the same request leaves the URL and grant intact.
+The transactional-write regression fails on the pre-fix head because a refused
+URL write still saves the rename. On the fixed head, require
+`failedReplacementPreservedDefaults: true`. A disposable SQLite trigger
+refuses the URL write. The registry RPC and stored defaults must still show
+the original URL, name and enabled choice.
 The replacement operation refuses an agent caller. A human URL replacement
 aborts a held consent callback, erases the grant and stays disconnected after
 restart. The new endpoint receives no request.

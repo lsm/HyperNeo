@@ -275,17 +275,11 @@ export function createMcpOAuthOperations(
         if (!row?.auth) return { ok: false, reason: 'not_connected' };
         const { id, url, ...updates } = replacement;
         if (updates.name !== undefined) requireUnreservedName(updates.name.trim());
-        if (Object.keys(updates).length > 0) {
-          await writeToolDefaults(db, {
-            mutations: [{ repository: 'registry', method: 'update', args: [id, updates] }],
-            edits:
-              updates.enabled === undefined
-                ? []
-                : [{ key: `mcp:${id}`, selected: !!updates.enabled }],
-          });
-          changed();
+        registry.validateUpdate(id, updates);
+        if (row.url === (url ?? undefined)) {
+          if (Object.keys(updates).length > 0) await writeReplacement(replacement, 'update');
+          return { ok: true };
         }
-        if (row.url === (url ?? undefined)) return { ok: true };
       }
       const flow = pending.get(id) ?? active;
       flow?.controller.abort();
@@ -301,17 +295,26 @@ export function createMcpOAuthOperations(
       changed();
       try {
         await (await vault()).removeMcp(id);
-        if (replacement) {
-          if (!registry.replaceOAuthUrl(id, replacement.url)) {
-            return { ok: false, reason: 'request_failed' };
-          }
-          changed();
-        }
+        if (replacement) await writeReplacement(replacement, 'replaceOAuthUrl');
         return { ok: true };
       } catch {
         return { ok: false, reason: 'request_failed' };
       }
     });
+  }
+
+  async function writeReplacement(
+    { id, url, ...updates }: z.infer<typeof replaceInput>,
+    method: 'replaceOAuthUrl' | 'update'
+  ) {
+    await writeToolDefaults(db, {
+      mutations: [
+        { repository: 'registry', method, args: [id, { ...updates, url: url ?? undefined }] },
+      ],
+      edits:
+        updates.enabled === undefined ? [] : [{ key: `mcp:${id}`, selected: !!updates.enabled }],
+    });
+    changed();
   }
 
   async function status({

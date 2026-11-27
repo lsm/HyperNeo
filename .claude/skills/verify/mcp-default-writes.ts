@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { Session } from '../../../packages/shared/src/mod.ts';
 import type { SessionToolSelection } from '../../../packages/shared/src/types/session-tool-choice.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { captureToolPreferenceRow } from '../../../packages/daemon/src/storage/repositories/tool-preference-commit.ts';
 import { Client } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js';
 import { Server } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js';
@@ -19,6 +20,11 @@ for(const name of ['home','workspace','evidence']) mkdirSync(join(run,name),{rec
 const {createDaemonApp}=await import('../../../packages/daemon/src/app.ts');
 const {getConfig}=await import('../../../packages/daemon/src/config.ts');
 const {MessageHub,WebSocketClientTransport}=await import('../../../packages/shared/src/mod.ts');
+const connect = (port: number) => new WebSocketClientTransport({
+  url: `ws://127.0.0.1:${port}/ws`,
+  autoReconnect: false,
+  createSocket: (url) => createLocalSocket(url, join(run, 'data/local-rpc.credential')),
+});
 const mcp=new Server({name:'synthetic-browser',version:'1'},{capabilities:{tools:{}}});
 mcp.setRequestHandler(ListToolsRequestSchema,async()=>({tools:[{name:'navigate',inputSchema:{type:'object'}}]}));
 const client=new Client({name:'synthetic-projection',version:'1'});
@@ -33,7 +39,7 @@ try {
   app=await createDaemonApp({config:{...getConfig({host:'127.0.0.1',port:0,dbPath:join(run,'data/daemon.db'),workspaceRoot:join(run,'workspace')}),disableWorktrees:true,disableGoalProcessing:true},verbose:false});
   assert.notEqual(app.server.port,8399);
   const hub=new MessageHub({defaultSessionId:'global'});
-  transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();
+  transport=connect(app.server.port);hub.registerTransport(transport);await transport.initialize();
   for(const row of (await hub.request<{servers:{id:string}[]}>('mcp.registry.list',{})).servers)await hub.request('mcp.registry.setEnabled',{id:row.id,enabled:false});
   const {server}=await hub.request<{server:{id:string}}>('mcp.registry.create',{name:'rpc-default-fixture',sourceType:'stdio',command:'not-executed',enabled:false});
   await hub.request('skill.create',{params:{name:'rpc-default-wrapper',displayName:'Fixture wrapper',description:'Synthetic',sourceType:'mcp_server',config:{type:'mcp_server',appMcpServerId:server.id},enabled:false,validationStatus:'valid'}});
@@ -105,6 +111,6 @@ try {
   evidence.defaults=readDefault();evidence.original=original;evidence.sessionId=sessionId;
 } finally {stopEvents();await transport?.close();await app?.cleanup();await client.close();await mcp.close();writeFileSync(join(run,'evidence/mcp-default-writes.json'),JSON.stringify(evidence,null,2));}
 const restarted=await createDaemonApp({config:{...getConfig({host:'127.0.0.1',port:0,dbPath:join(run,'data/daemon.db'),workspaceRoot:join(run,'workspace')}),disableWorktrees:true,disableGoalProcessing:true},verbose:false});
-const hub2=new MessageHub({defaultSessionId:'global'});const connection=new WebSocketClientTransport({url:`ws://127.0.0.1:${restarted.server.port}/ws`,autoReconnect:false});hub2.registerTransport(connection);
+const hub2=new MessageHub({defaultSessionId:'global'});const connection=connect(restarted.server.port);hub2.registerTransport(connection);
 try {assert.notEqual(restarted.server.port,8399);await connection.initialize();assert.deepEqual((await hub2.request<{session:Session}>('session.get',{sessionId:evidence.sessionId})).session.config.toolSelection,evidence.original);const settings=captureToolPreferenceRow(restarted.db.getDatabase(),{table:'global_settings',id:1});assert.deepEqual(JSON.parse(String(settings.row!.settings)).toolSelectionDefaults,evidence.defaults);evidence.restartRetainedDefaults=true;evidence.pass=true;console.log('PASS MCP default RPC wiring: registry CRUD, both Space APIs, repeated clear, concurrent toggles, rollback/no notification, frozen session and restart; no SDK/UI flip');}
 finally {await connection.close();await restarted.cleanup();writeFileSync(join(run,'evidence/mcp-default-writes.json'),JSON.stringify(evidence,null,2));}
