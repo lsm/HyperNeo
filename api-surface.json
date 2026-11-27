@@ -60217,6 +60217,84 @@
                     ],
                     "type": "string"
                   },
+                  "delivery": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "clientMessageId": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "confirmedAt": {
+                        "type": "number"
+                      },
+                      "delivered": {
+                        "type": "boolean"
+                      },
+                      "desktopUI": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "detail": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "const": "ui-unconfirmed",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "state",
+                          "detail"
+                        ],
+                        "type": "object"
+                      },
+                      "inputId": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "queuedSubmissionId": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "receipt": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "executionId": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "inputId": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "executionId",
+                          "inputId"
+                        ],
+                        "type": "object"
+                      },
+                      "remoteControl": {
+                        "description": "Whether the session's Remote Control is on, so the human can follow and reply from claude.ai or the phone.",
+                        "type": "boolean"
+                      },
+                      "startedTurnId": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "steeredIntoTurnId": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "unconfirmed": {
+                        "const": true,
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "delivered"
+                    ],
+                    "type": "object"
+                  },
                   "desktopUI": {
                     "additionalProperties": false,
                     "properties": {

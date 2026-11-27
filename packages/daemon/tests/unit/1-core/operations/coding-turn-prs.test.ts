@@ -153,8 +153,7 @@ describe('coding turn PRs', () => {
     expect(turns.own('a').map(({ id }) => id)).toEqual(['t1']);
     expect(turns.own('b').map(({ id }) => id)).toEqual(['t2']);
     expect(turns.mentions([url]).todos[codingTurnSessionKey(ref)]).toMatchObject({
-      'desktop-pending:abc123': 'a',
-      t2: 'b',
+      keys: { 'desktop-pending:abc123': ['a'], t2: ['b'] },
     });
     db.close();
   });

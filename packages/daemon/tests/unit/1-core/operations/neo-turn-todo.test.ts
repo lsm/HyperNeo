@@ -8,7 +8,7 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { WorkDeliveryInputRepository } from '../../../../src/storage/repositories/work-delivery-input-repository.ts';
 import { recordWorkerStarted } from '../../../../src/storage/repositories/work-started-sessions-worker.ts';
-import { readTurnTodoFacts } from '../../../../src/storage/repositories/work-turn-todo-read.ts';
+import { readTurnTodoFacts } from '../../../../src/storage/repositories/work-turn-todo-worker.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 

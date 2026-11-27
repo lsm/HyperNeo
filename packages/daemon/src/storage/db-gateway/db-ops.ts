@@ -161,6 +161,7 @@ import {
   findWorkDeliveryInput,
   recordWorkDeliveryOutcome,
 } from '../repositories/work-delivery-input-repository.ts';
+import { retargetWorkDeliveryInput } from '../repositories/work-turn-todo-worker.ts';
 import { recordOperationRefusal } from '../repositories/operation-refusal-repository.ts';
 import { messageSearchIndexWrites } from '../repositories/sdk-message-repository.ts';
 import { sessionWrites } from '../repositories/session-repository.ts';
@@ -378,6 +379,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     neoPlanCheckReads,
     neoPlanCheckWrites,
     recordWorkDeliveryOutcome,
+    retargetWorkDeliveryInput,
     recordWorkTurns,
     jobEnqueueWrites,
     enqueueMailboxAdmission,

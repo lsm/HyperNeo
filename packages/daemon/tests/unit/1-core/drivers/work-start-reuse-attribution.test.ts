@@ -13,7 +13,10 @@ import {
   readSameAskWorkers,
   recordWorkerStarted,
 } from '../../../../src/storage/repositories/work-started-sessions-worker';
-import { readTurnTodoFacts } from '../../../../src/storage/repositories/work-turn-todo-read';
+import {
+  readTurnTodoFacts,
+  retargetDeliveryInput,
+} from '../../../../src/storage/repositories/work-turn-todo-worker';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
@@ -78,6 +81,7 @@ function setup(send: () => Promise<Result<WorkDelivery>>, markUnusable?: () => P
         lastActivityAt: 2,
       },
     }),
+    compact: async () => ({ ok: true, value: { compacted: true } }),
     send,
   };
   const registry = createOperationRegistry(
@@ -109,7 +113,7 @@ function setup(send: () => Promise<Result<WorkDelivery>>, markUnusable?: () => P
           ),
         recordFailure: (id, error) =>
           inputs.recordOutcome(id, { failure: String(error) }, Date.now()),
-        retarget: (id, ref) => inputs.retarget(id, ref),
+        retarget: (id, ref) => retargetDeliveryInput(db, id, ref),
       },
     })
   );

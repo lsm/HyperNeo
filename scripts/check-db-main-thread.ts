@@ -28,6 +28,7 @@ const workers = new Set([
   'storage/repositories/worker-ownership-write-worker.ts',
   'storage/repositories/work-cleanup-worker.ts',
   'storage/repositories/work-started-sessions-worker.ts',
+  'storage/repositories/work-turn-todo-worker.ts',
   'storage/repositories/neo-peer-repository.ts',
   'storage/repositories/neo-todo-move-worker.ts',
   'storage/repositories/neo-plan-check-worker.ts',

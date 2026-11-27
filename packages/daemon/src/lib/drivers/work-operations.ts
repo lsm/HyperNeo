@@ -160,6 +160,7 @@ export interface WorkVerbDeps {
     ): Promise<string>;
     recordOutcome(id: string, target: WorkTarget, outcome: StartResult | SendResult): Promise<void>;
     recordFailure(id: string, error: unknown): Promise<void>;
+    retarget?(id: string, ref: WorkRef | null): Promise<void>;
   };
   queueInput?: (input: WorkerInput, from: string, caller: OperationCaller) => Promise<string>;
   recordStarted?: (
@@ -811,7 +812,8 @@ export async function reuseIdleWorker(
   input: StartInput,
   from: string,
   caller: OperationCaller,
-  deps: WorkVerbDeps
+  deps: WorkVerbDeps,
+  inputId?: string
 ): Promise<StartResult | null> {
   const folder = input.place.folder;
   const requestedAdapter = deps.adapters().find((candidate) => candidate.id === input.adapter);
@@ -1086,12 +1088,13 @@ export async function reuseIdleWorker(
       await deps.unclaimWorker?.(todoId, work.ref, input.role);
       return reject('todo_required', 'This todo closed before its worker was messaged.', true);
     }
-    const sent = await adapter.send!(work.ref, message, { from, caller }).catch(
-      (error: unknown) => {
-        reuseHolds.delete(key);
-        throw error;
-      }
-    );
+    const sent = await (async () => {
+      if (inputId) await deps.workInputs?.retarget?.(inputId, work.ref);
+      return adapter.send!(work.ref, message, { from, caller });
+    })().catch((error: unknown) => {
+      reuseHolds.delete(key);
+      throw error;
+    });
     if (sent.ok) {
       setTimeout(() => reuseHolds.delete(key), REUSE_HOLD_MS).unref?.();
       return {
@@ -1102,14 +1105,17 @@ export async function reuseIdleWorker(
             ? { model: identity?.model, effort: identity?.effort }
             : {}),
           ...(sent.value.receipt ? { receipt: sent.value.receipt } : {}),
+          delivery: sent.value,
           reused: true,
         },
       };
     }
     reuseHolds.delete(key);
+    const passed = sent.notSent || sent.reason === 'not_open' || sent.reason === 'not_found';
+    if (passed && inputId) await deps.workInputs?.retarget?.(inputId, null);
     if (sent.notSent && todoId) await deps.unclaimWorker?.(todoId, work.ref, input.role);
     await deps.markUnusable?.(work.ref, sent.reason);
-    if (sent.notSent || sent.reason === 'not_open' || sent.reason === 'not_found') continue;
+    if (passed) continue;
     const reported = await reportUncertainWorkSend(sent, { ref: work.ref, message }, from, deps);
     return reported.ok ? sent : reported;
   }
@@ -1333,7 +1339,9 @@ const runStartWork = (superpipe({})('work.start') as PipelineAPI)
     ) =>
       recordThrownWork(
         async () =>
-          (input.checkPlan ? null : await reuseIdleWorker(route, input, from, caller, deps)) ??
+          (input.checkPlan
+            ? null
+            : await reuseIdleWorker(route, input, from, caller, deps, inputId)) ??
           startWork(route, input, from, caller, deps),
         inputId,
         deps
