@@ -5,6 +5,7 @@ import {
   type ServerOptions,
 } from '../runtime-server/index.ts';
 
+type FailedLogin = { ok: false; reason: string };
 export type LoginOutcome =
   | {
       ok: true;
@@ -12,21 +13,22 @@ export type LoginOutcome =
       email: string;
       tokens: { accessToken: string; refreshToken?: string; expiresAt: number; scopes: string[] };
     }
-  | { ok: false; reason: string };
+  | FailedLogin;
 type Proof = { state: string; nonce: string; challenge: string };
 
-export async function startLoopbackLogin(options: {
+export async function startLoopbackLogin<Success extends { ok: true }>(options: {
   redirect: (port: number) => string;
-  authorize: (redirectUri: string, proof: Proof) => URL;
+  authorize: (redirectUri: string, proof: Proof, signal: AbortSignal) => URL | Promise<URL>;
   exchange: (
     code: string,
     verifier: string,
     redirectUri: string,
     nonce: string,
     signal: AbortSignal
-  ) => Promise<LoginOutcome>;
+  ) => Promise<Success | FailedLogin>;
   timeoutMs?: number;
   serve?: typeof createHttpWsServer;
+  signal?: AbortSignal;
 }) {
   const verifier = randomBytes(32).toString('base64url');
   const state = randomBytes(32).toString('base64url');
@@ -34,22 +36,24 @@ export async function startLoopbackLogin(options: {
   const controller = new AbortController();
   let used = false;
   let settled = false;
-  let complete!: (outcome: LoginOutcome) => void;
-  const result = new Promise<LoginOutcome>((resolve) => {
+  let complete!: (outcome: Success | FailedLogin) => void;
+  const result = new Promise<Success | FailedLogin>((resolve) => {
     complete = resolve;
   });
   let timer: ReturnType<typeof setTimeout>;
   let redirectUri = '';
   let ipv6: ServerHandle | undefined;
-  const finish = (outcome: LoginOutcome) => {
+  const finish = (outcome: Success | FailedLogin) => {
     if (settled) return;
     settled = true;
     clearTimeout(timer);
+    options.signal?.removeEventListener('abort', cancel);
     controller.abort();
     server.stop(false);
     ipv6?.stop(false);
     complete(outcome);
   };
+  const cancel = () => finish({ ok: false, reason: 'cancelled' });
   const answer = (status: number) =>
     new Response(
       status === 200
@@ -122,9 +126,18 @@ export async function startLoopbackLogin(options: {
   }
   timer = setTimeout(() => finish({ ok: false, reason: 'expired' }), options.timeoutMs ?? 300000);
   const challenge = createHash('sha256').update(verifier).digest('base64url');
-  return {
-    authorizeUrl: options.authorize(redirectUri, { state, nonce, challenge }).toString(),
-    result,
-    cancel: () => finish({ ok: false, reason: 'cancelled' }),
-  };
+  try {
+    options.signal?.throwIfAborted();
+    options.signal?.addEventListener('abort', cancel, { once: true });
+    const url = await options.authorize(
+      redirectUri,
+      { state, nonce, challenge },
+      controller.signal
+    );
+    controller.signal.throwIfAborted();
+    return { authorizeUrl: url.toString(), result, cancel };
+  } catch (error) {
+    finish({ ok: false, reason: 'login_failed' });
+    throw error;
+  }
 }

@@ -60,6 +60,7 @@ try {
     const id = await create('oauth-proof', fake.url);
     const input = { id, preset: 'test' };
     const { authorizeUrl } = await invoke<{ authorizeUrl: string }>(hub, 'mcp.registry.connect', input);
+    assert.deepEqual(await invoke(hub, 'mcp.registry.connect', input), { reason: 'connect_pending' });
     const agent = createOperationMcpHandler(
       () => app.sessionManager.getOperationRegistry(),
       () => ({ sessionId: 'synthetic-worker', role: 'neo' })
@@ -86,6 +87,9 @@ try {
       await Promise.race([tokenStarted.promise, completion.then(() => { throw new Error('Callback ended before code exchange'); })]);
       const replay = (await fetch(callback)).status;
       assert.equal(replay, 400);
+      assert.deepEqual(await invoke(hub, 'mcp.registry.status', { id }), {
+        health: 'disconnected', scopes: [],
+      });
       evidence.callback = { wrongState, replay };
     } finally {
       tokenRelease.resolve();
