@@ -229,11 +229,12 @@ try {
         evidence.rejectedUpdatePreservedGrant = true;
         evidence.step = 'replace URL during consent';
         const { server } = await hub.request<{ server: AppMcpServer }>('mcp.registry.update', {
-          id, url: other.url, sourceType: 'http', name: 'oauth-retargeted',
+          id, url: other.url, sourceType: 'http', name: 'oauth-retargeted', enabled: true,
         });
         assert.equal(server.url, other.url);
         assert.equal(server.name, 'oauth-retargeted');
         assert.equal(server.auth?.active, false);
+        assert.equal(server.enabled, true);
       } finally {
         hold.release.resolve();
         holdCodeReply = { started: tokenStarted, release: tokenRelease };
@@ -257,19 +258,24 @@ try {
 
       evidence.step = 'roll back defaults when URL write fails';
       const raw = app.db.getDatabase();
-      const settings = () => raw.query('SELECT settings FROM global_settings WHERE id = 1').get();
-      const before = settings();
+      const defaultEnabled = () => {
+        const row = raw.query<{ settings: string }, []>(
+          'SELECT settings FROM global_settings WHERE id = 1'
+        ).get();
+        return JSON.parse(row?.settings ?? '{}').toolSelectionDefaults?.choices[`mcp:${id}`]?.selected;
+      };
+      assert.equal(defaultEnabled(), true);
       raw.exec(`CREATE TRIGGER reject_oauth_url BEFORE UPDATE OF url ON app_mcp_servers
         WHEN NEW.url IS NOT OLD.url BEGIN SELECT RAISE(ABORT, 'URL write refused'); END`);
       try {
         await assert.rejects(hub.request('mcp.registry.update', {
-          id, url: fake.url, name: 'oauth-replacement-failed', enabled: true,
+          id, url: fake.url, name: 'oauth-replacement-failed', enabled: false,
         }));
         const row = await readRow(hub);
         assert.equal(row?.url, other.url);
         assert.equal(row?.name, 'oauth-retargeted', 'failed URL write must roll back the rename');
-        assert.equal(row?.enabled, false);
-        assert.deepEqual(settings(), before);
+        assert.equal(row?.enabled, true);
+        assert.equal(defaultEnabled(), true);
       } finally {
         raw.exec('DROP TRIGGER reject_oauth_url');
       }
