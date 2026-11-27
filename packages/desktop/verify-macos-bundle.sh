@@ -43,8 +43,8 @@ done
 
 if [[ "${2:-}" == --driver-only ]]; then exit 0; fi
 
-if ! verify_signature "$app/Contents/MacOS/hyperneo-locked-use" ' and identifier "io.hyperneo.locked-use"'; then
-    echo "hyperneo-locked-use signature verification failed" >&2
+if ! verify_signature "$app/Contents/Helpers/HyperNeo Locked Use.app" ' and identifier "io.hyperneo.locked-use"'; then
+    echo "HyperNeo Locked Use signature verification failed" >&2
     exit 1
 fi
 locked="$app/Contents/Resources/locked-use"

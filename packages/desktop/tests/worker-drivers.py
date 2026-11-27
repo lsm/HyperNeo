@@ -1103,7 +1103,8 @@ open(sys.argv[2], 'w').write(reply.decode())
         return self.call('dispatch', worker, tool=tool, arguments=arguments, **params)
 
     def turn_guardian(self, wait_for_unlock=False):
-        guardian = self.binary.with_name('hyperneo-locked-use')
+        guardian = self.binary.parents[1] / 'Helpers/HyperNeo Locked Use.app/Contents/MacOS/hyperneo-locked-use'
+        guardian.parent.mkdir(parents=True, exist_ok=True)
         started, exited = (self.root / name for name in ('covered', 'exited'))
         start = 'sleep 1' if wait_for_unlock else ''
         guardian.write_text(f"#!/bin/sh\n"
