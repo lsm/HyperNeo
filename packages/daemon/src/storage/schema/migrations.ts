@@ -1,3 +1,4 @@
+import { runMigration538 } from './m538-neo-todo-hold.ts';
 import { runMigration537 } from './m537-neo-todo-plan.ts';
 import { runMigration528 } from './m528-retire-session-strategy.ts';
 import { runMigration529 } from './m529-work-start-record.ts';
@@ -1109,15 +1110,7 @@ export function runMigrations(
   run(migrationMarkerKey(535), () => runMigration535(db));
   run(migrationMarkerKey(536), () => runMigration536(db));
   run(migrationMarkerKey(537), () => runMigration537(db));
-  run(migrationMarkerKey(538), () => {
-    if (!db.prepare("SELECT 1 FROM pragma_table_info('neo_todos') WHERE name = 'hold_json'").get())
-      db.exec('ALTER TABLE neo_todos ADD COLUMN hold_json TEXT');
-    db.prepare(`UPDATE neo_todos
-      SET hold_json = json_object('heldAt', updated_at, 'reviewAt', ?)
-      WHERE state = 'blocked' AND blocked_by = 'held' AND hold_json IS NULL`).run(
-      Date.now() + 24 * 3_600_000
-    );
-  });
+  run(migrationMarkerKey(538), () => runMigration538(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

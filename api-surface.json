@@ -44471,7 +44471,7 @@
             "type": "string"
           },
           "until": {
-            "description": "Release condition: coding.pr_merged with params.urls."
+            "description": "Pack condition that releases the hold when met."
           }
         },
         "required": [

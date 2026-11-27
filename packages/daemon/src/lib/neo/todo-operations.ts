@@ -342,7 +342,7 @@ const Hold = z.object({
   todoId: Text,
   reason: Text.nullable().describe('Why this step waits; null releases it.'),
   decision: z.boolean().optional().describe('Ask the human to start, resume or remove this step.'),
-  until: z.unknown().optional().describe('Release condition: coding.pr_merged with params.urls.'),
+  until: z.unknown().optional().describe('Pack condition that releases the hold when met.'),
   reviewAt: z
     .number()
     .optional()
