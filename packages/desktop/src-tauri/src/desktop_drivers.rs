@@ -69,7 +69,7 @@ fn scoped_windows(mut body: Value, apps: &[String]) -> Value {
         *owners.entry(pid).or_insert_with(|| {
             target::resolve("list_windows", &json!({ "pid": pid }), None)["value"]["bundle_id"]
                 .as_str()
-                .is_some_and(|bundle| apps.iter().any(|app| app == bundle))
+                .is_some_and(|bundle| apps.iter().any(|app| app.eq_ignore_ascii_case(bundle)))
         })
     };
     let windows: Vec<Value> = body["structuredContent"]["windows"]

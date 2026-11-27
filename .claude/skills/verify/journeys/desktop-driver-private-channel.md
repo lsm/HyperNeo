@@ -68,14 +68,16 @@ cargo test --locked --manifest-path packages/desktop/tests/driver-host/Cargo.tom
 python3 packages/desktop/tests/worker-drivers.py \
   packages/desktop/tests/driver-host/target/debug/desktop-driver-fixture \
   WorkerDrivers.test_dispatch_launch_accepts_case_variants_of_the_approved_app \
-  WorkerDrivers.test_resolve_refuses_missing_or_inconsistent_app_identity
+  WorkerDrivers.test_resolve_refuses_missing_or_inconsistent_app_identity \
+  WorkerDrivers.test_unfiltered_window_listing_keeps_only_approved_apps
 ```
 
 Launch Services and macOS signature verification resolve the installed Calculator.
 The host reports the signed ID, `com.apple.calculator`, and sends it to the fake
 driver. The host refuses dispatch when the todo approves a different app.
-Inconsistent bundle and signing IDs still produce `target_mismatch`. The fixture
-opens no app window.
+Inconsistent bundle and signing IDs still produce `target_mismatch`. Window
+listing includes Finder for a differently cased approval and hides other apps.
+The fixture opens no app window.
 
 Compile the macOS release host with the inert-sidecar setup in the Desktop
 runtime paths CI job to check retained-child wiring and the release log filter.
