@@ -7,7 +7,7 @@ import { githubGraphqlArgs, parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 import { CodingPrFilePages, codingPrFilePagesMatch, readCodingPrFilePages } from './pr-files.ts';
 
-export type CodingWorkPr = NeoWorkPr & { designChanged?: boolean };
+export type CodingWorkPr = NeoWorkPr & { designChanged?: boolean | null };
 export type NeoWorkPrReader = (
   urls: readonly string[],
   requireDesign?: true
@@ -400,13 +400,14 @@ const DesignFileFacts = z.object({
   files: z.array(z.object({ path: z.string() })),
 });
 
-async function readDesignChanged(url: string, raw: unknown, spawn: SpawnFn) {
+async function readDesignChanged(url: string, raw: unknown, spawn: SpawnFn, requireDesign?: true) {
   const parsed = DesignFileFacts.safeParse(raw);
   if (!parsed.success) return;
   const revision = parsed.data;
   const isDesign = ({ path }: { path: string }) => path.startsWith('docs/design/');
   if (revision.files.some(isDesign)) return true;
   if (revision.files.length === revision.changedFiles) return false;
+  if (!requireDesign) return;
 
   const meta = parsePrUrl(url.toLowerCase());
   if (!meta) return;
@@ -419,7 +420,7 @@ async function readDesignChanged(url: string, raw: unknown, spawn: SpawnFn) {
 }
 
 const readGithubPr = (superpipe({})('neo-work-pr-read') as PipelineAPI)
-  .input(['url', 'spawnImpl'])
+  .input(['url', 'spawnImpl', 'requireDesign'])
   .pipe(
     async (url: string, spawnImpl: SpawnFn) => {
       const outcome = await gh(
@@ -445,11 +446,13 @@ const readGithubPr = (superpipe({})('neo-work-pr-read') as PipelineAPI)
     'read'
   )
   .pipe(
-    async (read: { raw: unknown }, url: string, spawn: SpawnFn) => {
+    async (read: { raw: unknown }, url: string, spawn: SpawnFn, requireDesign?: true) => {
       const pr = summarizeNeoWorkPr(read.raw);
       const meta = GhPrSchema.safeParse(read.raw);
       if (!pr || !meta.success) return { reason: null };
-      const designChanged = await readDesignChanged(url, read.raw, spawn);
+      const designChanged =
+        (await readDesignChanged(url, read.raw, spawn, requireDesign)) ??
+        (requireDesign ? null : undefined);
       return {
         value: {
           pr: designChanged === undefined ? pr : { ...pr, designChanged },
@@ -459,7 +462,7 @@ const readGithubPr = (superpipe({})('neo-work-pr-read') as PipelineAPI)
         },
       };
     },
-    ['read', 'url', 'spawnImpl'],
+    ['read', 'url', 'spawnImpl', 'requireDesign'],
     'result:pr'
   )
   .pipe(
@@ -492,15 +495,20 @@ const readGithubPr = (superpipe({})('neo-work-pr-read') as PipelineAPI)
     ['pr', 'extra'],
     'pr'
   )
-  .endAsync('pr') as (url: string, spawnImpl: SpawnFn) => Promise<CodingWorkPr | null>;
+  .endAsync('pr') as (
+  url: string,
+  spawnImpl: SpawnFn,
+  requireDesign?: true
+) => Promise<CodingWorkPr | null>;
 
 export async function readGithubPrs(
   urls: readonly string[],
-  spawnImpl: SpawnFn = spawnProcess
+  spawnImpl: SpawnFn = spawnProcess,
+  requireDesign?: true
 ): Promise<CodingWorkPr[] | null> {
   const prs: CodingWorkPr[] = [];
   for (const url of urls) {
-    const pr = await readGithubPr(url, spawnImpl);
+    const pr = await readGithubPr(url, spawnImpl, requireDesign);
     if (pr) prs.push(pr);
   }
   return prs.length || !urls.length ? prs : null;

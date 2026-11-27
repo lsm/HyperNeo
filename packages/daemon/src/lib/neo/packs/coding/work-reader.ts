@@ -21,11 +21,14 @@ export function createCodingWorkPrReader(
           (!requireDesign || current.view.value.designChanged !== undefined)
         ) {
           const maxAgeMs =
-            current.view.value.state === 'OPEN' ? NEO_WORK_PR_READ_MS : NEO_SETTLED_PR_READ_MS;
+            current.view.value.state === 'OPEN' ||
+            (requireDesign && current.view.value.designChanged === null)
+              ? NEO_WORK_PR_READ_MS
+              : NEO_SETTLED_PR_READ_MS;
           if (current.view.observedAt !== null && now() - current.view.observedAt < maxAgeMs)
             return current.view.value;
         }
-        const fresh = await ledger!.workFacts.refresh(url, spawn, now);
+        const fresh = await ledger!.workFacts.refresh(url, spawn, now, requireDesign);
         return fresh.view.status === 'known' ? fresh.view.value : null;
       })
     );

@@ -93,33 +93,60 @@ export class CodingWorkFactsRepository {
   refresh(
     url: string,
     spawn: SpawnFn = spawnProcess,
-    now = Date.now
+    now = Date.now,
+    requireDesign?: true
   ): Promise<ReturnType<CodingWorkFactsRepository['read']>> {
     const reads = workRequests(this.db),
-      key = `request:${url.toLowerCase()}`;
+      key = `request:${url.toLowerCase()}:${requireDesign ? 'design' : 'status'}`;
     const held = reads.get(key);
     if (held) return held;
-    const request = this.collectCurrent(url, spawn, now).finally(() => reads.delete(key));
+    const request = this.collectCurrent(url, spawn, now, requireDesign).finally(() =>
+      reads.delete(key)
+    );
     reads.set(key, request);
     return request;
   }
 
-  private async collectCurrent(url: string, spawn: SpawnFn, now: () => number) {
+  private async collectCurrent(
+    url: string,
+    spawn: SpawnFn,
+    now: () => number,
+    requireDesign?: true
+  ) {
     const valid = parsePrUrl(url.toLowerCase());
     const current = await this.readCurrent(url, now());
     if (!valid) return current;
-    const canonical = current.url,
-      reads = workRequests(this.db);
-    const held = reads.get(canonical);
-    if (held) return held;
-    const request = this.collect(canonical, current.observationRevision, spawn, now).finally(() =>
-      reads.delete(canonical)
-    );
-    reads.set(canonical, request);
+    const canonical = current.url;
+    const reads = workRequests(this.db);
+    const designKey = `${canonical}:design`;
+    const statusKey = `${canonical}:status`;
+    const heldDesign = reads.get(designKey);
+    if (heldDesign) return heldDesign;
+    const heldStatus = reads.get(statusKey);
+    if (heldStatus && !requireDesign) return heldStatus;
+    const key = requireDesign ? designKey : statusKey;
+    const collect = async () => {
+      const latest = heldStatus ? await heldStatus : current;
+      if (
+        heldStatus &&
+        latest.view.status === 'known' &&
+        latest.view.value.designChanged !== undefined
+      )
+        return latest;
+      return this.collect(canonical, latest.observationRevision, spawn, now, requireDesign);
+    };
+    const request = collect().finally(() => reads.delete(key));
+    reads.set(key, request);
     return request;
   }
 
-  private async collect(url: string, revision: number, spawn: SpawnFn, now: () => number) {
+  private async collect(
+    url: string,
+    revision: number,
+    spawn: SpawnFn,
+    now: () => number,
+    requireDesign?: true
+  ) {
     let value: CodingWorkPr | null = null,
       requests = 0;
     try {
@@ -127,7 +154,7 @@ export class CodingWorkFactsRepository {
         requests++;
         return spawn(args, options);
       };
-      value = (await readGithubPrs([url], measured))?.[0] ?? null;
+      value = (await readGithubPrs([url], measured, requireDesign))?.[0] ?? null;
     } catch {}
     log.info('PR ledger work GitHub read', { url, lookups: requests, ok: value !== null });
     return callCodingBranchDb(
@@ -140,9 +167,9 @@ export class CodingWorkFactsRepository {
     const before = this.row(url);
     if ((before?.observation_revision ?? 0) !== revision) return this.read(url, at);
     const priorJson = before?.value_json ?? null;
-    if (value?.head && value.designChanged === undefined && priorJson) {
+    if (value?.head && value.designChanged == null && priorJson) {
       const prior = JSON.parse(priorJson) as CodingWorkPr;
-      if (value.head === prior.head && prior.designChanged !== undefined)
+      if (value.head === prior.head && typeof prior.designChanged === 'boolean')
         value = { ...value, designChanged: prior.designChanged };
     }
     const json = value ? JSON.stringify(value) : priorJson;
