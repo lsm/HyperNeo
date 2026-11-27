@@ -1,4 +1,3 @@
-import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { callCodingBranchDb } from './branch-facts-db.ts';
@@ -6,7 +5,7 @@ import { codingWorkReads, codingWorkWrites } from './work-facts-db.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { Logger } from '../../../logger.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
-import { NEO_WORK_PR_READ_MS, readGithubPrs } from './work-prs.ts';
+import { type CodingWorkPr, NEO_WORK_PR_READ_MS, readGithubPrs } from './work-prs.ts';
 
 type Row = {
   fact_revision: number;
@@ -77,7 +76,7 @@ export class CodingWorkFactsRepository {
           }
         : {
             status: 'known' as const,
-            value: JSON.parse(row!.value_json!) as NeoWorkPr,
+            value: JSON.parse(row!.value_json!) as CodingWorkPr,
             observedAt: row!.observed_at!,
             source: 'github-work-view' as const,
           },
@@ -121,7 +120,7 @@ export class CodingWorkFactsRepository {
   }
 
   private async collect(url: string, revision: number, spawn: SpawnFn, now: () => number) {
-    let value: NeoWorkPr | null = null,
+    let value: CodingWorkPr | null = null,
       requests = 0;
     try {
       const measured: SpawnFn = (args, options) => {
@@ -137,7 +136,7 @@ export class CodingWorkFactsRepository {
     );
   }
 
-  observe(url: string, revision: number, value: NeoWorkPr | null, at: number) {
+  observe(url: string, revision: number, value: CodingWorkPr | null, at: number) {
     const before = this.row(url);
     if ((before?.observation_revision ?? 0) !== revision) return this.read(url, at);
     const json = value ? JSON.stringify(value) : (before?.value_json ?? null);

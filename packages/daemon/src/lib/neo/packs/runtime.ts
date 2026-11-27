@@ -116,7 +116,7 @@ export function createNeoService(...args: NeoServiceArgs) {
         models: () => getAvailableModels('global'),
       };
       const { coding, lifeAdmin, delegation } = createNeoBuiltinPacks(db.getDatabase(), {
-        readPrs: (urls) => configured.readPrs(urls),
+        readPrs: configured.readPrs,
         readRefStates: (refs) => configured.readRefStates(refs),
         todoPrs,
         lines,

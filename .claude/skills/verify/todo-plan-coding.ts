@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { CodingWorkFactsRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/work-facts.ts';
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
@@ -76,6 +77,15 @@ try {
     .run(owner, 'Synthetic Neo', 'general', folder, timestamp, timestamp, 'active', '{}', '{}');
   new NeoRepository(db).reserveBinding({ sessionId: owner, kind: 'neo', projectId: null });
 
+  new CodingWorkFactsRepository(db).observe(url(2), 0, {
+    url: url(2), head, state: 'MERGED', checks: 'none', review: 'none',
+  }, Date.now());
+
+  const finish = async (todoId: string) => {
+    const result = await invokeOperation(registry, 'neo.todo.done', { todoId, reason: 'Work finished' }, actor);
+    assert.equal(result.kind, 'completed', JSON.stringify(result));
+    return result.value as { ok: boolean; reason?: string };
+  };
   const planRefusal = async (number: number, legacy = false) => {
     const askId = `ask-${number}`;
     store.openAsk({
@@ -91,10 +101,9 @@ try {
       db.prepare('UPDATE neo_todos SET plan_check_json = ? WHERE id = ?')
         .run(JSON.stringify({ legacy: true }), todo.id);
     }
-    const result = await invokeOperation(registry, 'neo.todo.done', { todoId: todo.id, reason: 'Work finished' }, actor);
-    assert.equal(result.kind, 'completed', JSON.stringify(result));
-    observed[number] = result.value;
-    return result.value as { ok: boolean; reason?: string };
+    const reply = await finish(todo.id);
+    observed[number] = reply;
+    return reply;
   };
 
   for (const number of [2, 1]) {
@@ -106,6 +115,10 @@ try {
     const result = await planRefusal(number, number === 4);
     assert.equal(result.ok, true, JSON.stringify(result));
   }
+  const repeated = await finish('todo-2');
+  observed.cached = repeated;
+  assert.equal(repeated.ok, false, JSON.stringify(repeated));
+  assert.match(repeated.reason ?? '', /^plan_steps_missing:/);
   const calls = readFileSync(join(evidence, 'gh.log'), 'utf8').split('\n');
   assert.equal(calls.filter((call) => call.includes('CodingMergeFiles')).length, 1);
   console.log(`PASS: ${Object.keys(observed).length} todo completion replies and one paginated PR file read`);

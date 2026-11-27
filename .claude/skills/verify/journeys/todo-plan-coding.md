@@ -11,6 +11,7 @@ The helper invokes the daemon's registered `neo.todo.done` operation for four
 coding todos. The daemon refuses completion without steps for an open design PR
 and a merged PR whose only design file is on the second page. It accepts
 completion for a PR touching a neighboring directory and for a legacy design
-todo. The fixture GitHub CLI answers only synthetic PR reads and never uses a
+todo. It also retries completion of the merged design PR, proving the daemon
+refreshes an older cached PR observation and reuses the new classification. The fixture GitHub CLI answers only synthetic PR reads and never uses a
 provider or the network. Keep `observed.json`, `gh.log`, `proof.log` and the
 wrapper exit status.
