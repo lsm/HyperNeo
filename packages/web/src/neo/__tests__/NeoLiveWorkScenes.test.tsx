@@ -452,6 +452,44 @@ describe('Neo public work scenes', () => {
       hub.mockRestore();
     }
   });
+  it('shows older outcomes under All work while the queue is showing', async () => {
+    const old = testAskEntry('older', 'Older completed work', { state: 'done' });
+    old.ask.status = 'done';
+    const request = vi.fn((_method: string, input: { name: string }) =>
+      Promise.resolve(
+        input.name === 'neo.ask.history'
+          ? { ok: true, entries: [old], nextCursor: null }
+          : { ok: true, results: [], schedules: [] }
+      )
+    );
+    vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
+    const { model, container } = mount();
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          historyCursor: { updatedAt: 100, id: 'last-recent' },
+          humanQueue: {
+            items: [
+              {
+                state: 'waiting',
+                askId: 'waiting',
+                questionId: 'q-open',
+                text: 'Open card',
+                todos: [],
+              },
+            ],
+            counts: { waiting: { waiting: 1, held: 0, progress: 0 } },
+          },
+        } as never,
+      };
+    });
+    const queue = container.querySelector('[data-human-queue]') as HTMLElement;
+    fireEvent.click(within(queue).getByRole('button', { name: /^All work/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Show older outcomes' }));
+    await waitFor(() => expect(container.querySelector('[data-ask="older"]')).toBeTruthy());
+  });
   it.each([true, false])('keeps an empty Work surface accessible on desktop=%s', (desktop) => {
     vi.stubGlobal('matchMedia', () => ({ matches: desktop }));
     const { container } = mount(true, true);
@@ -691,13 +729,21 @@ describe('Neo public work scenes', () => {
               waits('b80', 'ask-b'),
               waits('a10', 'ask-a'),
               waits('a-held', 'ask-a', true),
-              { state: 'progress', askId: 'ask-a', todoId: 'a-step', title: 'A step', owner: null },
+              {
+                state: 'progress',
+                askId: 'ask-a',
+                todoId: 'a-step',
+                title: 'A step',
+                owner: 'worker',
+                step: 'working',
+              },
               {
                 state: 'progress',
                 askId: 'running',
                 todoId: 'run-step',
                 title: 'Run step',
-                owner: null,
+                owner: 'worker',
+                step: 'working',
               },
             ],
             counts: {
@@ -764,7 +810,9 @@ describe('Neo public work scenes', () => {
     fireEvent.click(within(scenes).getByRole('button', { name: /^Held/ }));
     expect(shown()).toEqual(['ask-a', 'a-held']);
     fireEvent.click(within(scenes).getByRole('button', { name: /^In progress/ }));
-    expect(shown()).toEqual(['ask-a', 'a-step', 'running', 'run-step', 'done']);
+    expect(shown()).toEqual([]);
+    fireEvent.click(within(scenes).getByRole('button', { name: /^All work/ }));
+    expect(shown()).toEqual(['ask-a', 'a-open', 'a-held', 'a-step', 'running', 'run-step', 'done']);
   });
 
   it('shows the full document of a queued card once its ask is read', async () => {
@@ -807,6 +855,47 @@ describe('Neo public work scenes', () => {
       expect(screen.getByRole('dialog').textContent).toContain('TAIL-OF-REPORT');
     });
     expect(document.querySelectorAll('[id="neo-ref-question-doc"]')).toHaveLength(1);
+  });
+
+  it('keeps a queued card answerable under All work once its ask is read', async () => {
+    const { model } = mount(true, true);
+    const full = testAskEntry('ask-q', 'Ask with a card', {
+      state: 'waiting',
+      questions: [card('q-all', 'ask-q', 50)],
+    });
+    const request = vi.fn(async () => ({ ok: true, entry: full }));
+    vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [
+            {
+              ...full,
+              summary: {
+                todoCount: 0,
+                questionCount: 1,
+                openQuestionCount: 1,
+                questionRefs: [{ id: 'q-all', replacedBy: null }],
+              },
+            },
+          ],
+          humanQueue: {
+            items: [waits('q-all', 'ask-q')],
+            counts: { 'ask-q': { waiting: 1, held: 0, progress: 0 } },
+          },
+        } as never,
+      };
+    });
+    const scenes = screen.getByRole('region', { name: 'Work scenes' });
+    fireEvent.click(within(scenes).getByRole('button', { name: /^All work/ }));
+    await waitFor(() => expect(request).toHaveBeenCalled());
+    await act(async () => {
+      await request.mock.results[0]?.value;
+    });
+    const question = scenes.querySelector('#neo-ref-question-q-all') as HTMLElement | null;
+    expect(question?.textContent).toContain('Awaiting your answer');
   });
 
   it('keeps the empty legacy scene list collapsed without a public Work placeholder', () => {
@@ -1074,6 +1163,7 @@ describe('card reply notice navigation', () => {
                 todoId: 'garage',
                 title: 'Fictional garage',
                 owner: 'worker',
+                step: 'working',
               },
             ],
             counts: {
@@ -1186,6 +1276,7 @@ describe('card reply notice navigation', () => {
       todoId: `${askId}-step`,
       title: `${askId} step`,
       owner: 'worker' as const,
+      step: 'working' as const,
     });
     act(() => {
       model.value = {
@@ -1494,6 +1585,7 @@ describe('card reply notice navigation', () => {
                 todoId: 'hotel',
                 title: 'Fictional hotel',
                 owner: 'worker',
+                step: 'working',
               },
             ],
             counts: { trip: { waiting: 0, held: 0, progress: 1 } },
@@ -1528,6 +1620,7 @@ describe('card reply notice navigation', () => {
                 todoId: 'tax-step',
                 title: 'tax step',
                 owner: 'worker',
+                step: 'working',
               },
             ],
             counts: { tax: { waiting: 0, held: 0, progress: 1 } },
@@ -1537,7 +1630,7 @@ describe('card reply notice navigation', () => {
     });
     expect(document.querySelector('[data-ask="empty"]')).toBeNull();
     expect(document.querySelector('article[data-ask="tax"]')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: /^In progress/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^All work/ }));
     expect(document.querySelector('[data-ask="empty"]')).toBeTruthy();
   });
 
@@ -1558,6 +1651,7 @@ describe('card reply notice navigation', () => {
       todoId: `${askId}-step`,
       title: `${askId} step`,
       owner: 'worker' as const,
+      step: 'working' as const,
     });
     act(() => {
       model.value = {

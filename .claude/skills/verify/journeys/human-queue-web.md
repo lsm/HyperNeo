@@ -56,3 +56,13 @@ missing from the browser's queue snapshot. A second hold refreshes the queue.
 Verify that the Inbox clears the conflicting topic filter, selects Held, and
 focuses the linked question when it arrives. The browser captures
 `late-reference.png` and records the selected state in `human-queue-web.json`.
+
+Use `phone-parity` for the phone's tab rules in the Chinese Inbox. The seed has
+one ask per case: two open cards, a held card beside a stalled step, future
+reminders, a 28-todo checklist with 26 done, a paused step, a hold past its
+review date, a step after an earlier step, a running and a queued session, a
+failed step and 12 filed outcomes. It requires `等你 1 · 已搁置 2 · 进行中 1 ·
+所有工作 15`; 等你 lists only the two cards, 已搁置 the held card and the paused
+step, 进行中 only the running step. The checklist card reads `2 个待办`, and
+显示更早的结果 under 所有工作 adds filed outcomes. Before the fix it exits 1 with
+等你 7.

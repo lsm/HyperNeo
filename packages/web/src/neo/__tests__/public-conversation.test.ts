@@ -1,3 +1,4 @@
+import type { NeoAskEntry, NeoQuestionEntry } from '@hyperneo/shared/types/neo-ask';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import { describe, expect, it } from 'vitest';
@@ -46,6 +47,65 @@ const publications = (items: readonly NeoPublication[] = [publication()]): NeoPu
   nextAfter: items.at(-1)?.sequence ?? 0,
   hasMore: false,
   hasEarlier: false,
+});
+
+const card = (questions: Partial<NeoQuestionEntry>[]): NeoAskEntry =>
+  ({
+    ask: { id: 'ask-card', title: 'Fictional card' },
+    state: 'waiting',
+    todos: [],
+    doneCount: 0,
+    questions: questions.map((question, index) => ({
+      id: `q-${index}`,
+      text: `Fictional question ${index}?`,
+      kind: 'yesno',
+      state: 'open',
+      createdAt: Date.parse(at) + 500,
+      ...question,
+    })),
+  }) as unknown as NeoAskEntry;
+
+describe('card questions in the conversation', () => {
+  const keys = (result: ReturnType<typeof projectNeoPublicConversation>) =>
+    result.entries.map((entry) =>
+      entry.kind === 'ask'
+        ? entry.ask.requestId
+        : entry.kind === 'publication'
+          ? entry.publication.publicationId
+          : entry.kind === 'question'
+            ? entry.question.id
+            : entry.key
+    );
+
+  it('places each open question where it was asked, leaving out answered and held ones', () => {
+    const later = { ...ask(2), createdAt: '2026-09-30T20:00:01.000Z' };
+    const result = projectNeoPublicConversation(
+      root,
+      asks([ask(), later]),
+      publications([]),
+      [],
+      [],
+      [card([{}, { state: 'answered' }, { heldAt: Date.parse(at) }])]
+    );
+    expect(keys(result)).toEqual(['ask-1', 'q-0', 'ask-2']);
+    expect(result.entries[1]).toMatchObject({
+      kind: 'question',
+      entry: { ask: { id: 'ask-card', title: 'Fictional card' } },
+      question: { id: 'q-0', text: 'Fictional question 0?' },
+    });
+  });
+
+  it('keeps a question asked before the loaded page above its first message', () => {
+    const result = projectNeoPublicConversation(
+      root,
+      { ...asks([ask()]), hasEarlier: true },
+      publications([]),
+      [],
+      [],
+      [card([{ createdAt: Date.parse(at) - 60_000 }])]
+    );
+    expect(keys(result)).toEqual(['q-0', 'ask-1']);
+  });
 });
 
 describe('durable public conversation projection', () => {
@@ -142,7 +202,9 @@ describe('durable public conversation projection', () => {
             ? entry.publication.publicationId
             : entry.kind === 'notices'
               ? entry.group.id
-              : entry.wake.scheduleId
+              : entry.kind === 'wake'
+                ? entry.wake.scheduleId
+                : entry.question.id
       )
     ).toEqual(['publication-2', 'ask-1', 'publication-1', 'ask-2']);
     expect(a[0]).toBe(laterAsk);

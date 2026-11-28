@@ -71,7 +71,7 @@ type RoutedVerb =
   | 'stop'
   | 'archive';
 type Route<Verb extends RoutedVerb> =
-  | { daemon: string; verifiedCopilotStart?: true }
+  | { daemon: string; confirmsStartConfiguration?: true }
   | {
       local: NonNullable<WorkAdapter[Verb]>;
       supportsStartPreparation?: boolean;
@@ -616,8 +616,22 @@ export function pickRoute<Verb extends RoutedVerb>(
   };
 }
 
-function admitRemoteStartModel(route: Route<'start'>, input: StartInput): Gate<Route<'start'>> {
-  return input.model !== undefined && 'daemon' in route && !route.verifiedCopilotStart
+async function admitRemoteStartModel(
+  route: Route<'start'>,
+  input: StartInput,
+  deps: WorkVerbDeps
+): Promise<Gate<Route<'start'>>> {
+  if (
+    !('daemon' in route) ||
+    route.confirmsStartConfiguration ||
+    (input.model === undefined && input.effort === undefined)
+  )
+    return { value: route };
+  const catalog = await listWorkAdapters(route.daemon, deps);
+  if (!catalog.ok) return { reason: { ...catalog, notSent: true } };
+  if (catalog.value.find(({ id }) => id === input.adapter)?.identity?.configurable)
+    return { value: { ...route, confirmsStartConfiguration: true } };
+  return input.model !== undefined
     ? {
         reason: reject(
           'unsupported_model',
@@ -641,7 +655,7 @@ export function requireStartIdentity(
 }
 
 export function admitStartEffort(route: Route<'start'>, input: StartInput): Gate<Route<'start'>> {
-  return input.effort === undefined || 'local' in route || route.verifiedCopilotStart
+  return input.effort === undefined || 'local' in route || route.confirmsStartConfiguration
     ? { value: route }
     : {
         reason: reject(
@@ -741,7 +755,7 @@ async function admitRemoteCopilotStart(
         true
       ),
     };
-  return { value: { ...route, verifiedCopilotStart: true } };
+  return { value: { ...route, confirmsStartConfiguration: true } };
 }
 
 export async function startWork(
@@ -1339,7 +1353,7 @@ const runStartWork = (superpipe({})('work.start') as PipelineAPI)
   .pipe(routeStart, ['input', 'deps'], 'result:outcome')
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
   .pipe(admitRemoteCopilotStart, ['outcome', 'input', 'deps'], 'result:outcome')
-  .pipe(admitRemoteStartModel, ['outcome', 'input'], 'result:outcome')
+  .pipe(admitRemoteStartModel, ['outcome', 'input', 'deps'], 'result:outcome')
   .pipe(admitStartEffort, ['outcome', 'input'], 'result:outcome')
   .pipe(requireStartIdentity, ['outcome', 'input', 'caller'], 'result:outcome')
   .pipe(

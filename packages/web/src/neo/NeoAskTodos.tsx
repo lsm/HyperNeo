@@ -65,7 +65,7 @@ const states = {
 const marks = {
   todo: ['○', 'text-fg-faint'],
   doing: ['●', 'text-accent'],
-  blocked: ['●', 'text-warning'],
+  blocked: ['!', 'text-warning'],
   done: ['✓', 'text-success'],
   removed: ['', 'text-fg-faint'],
 } as const;
@@ -241,7 +241,9 @@ function TodoRow({
     ['todo.held', 'todo.paused'].includes(code.code)
   )
     ? (['‖', 'text-warning'] as const)
-    : marks[todo.state];
+    : todo.state === 'blocked' && todo.blockedBy === 'failure'
+      ? (['✕', 'text-danger'] as const)
+      : marks[todo.state];
   const [controlError, setControlError] = useState<string | null>(null);
   const [confirmDesktopOff, setConfirmDesktopOff] = useState(false);
   const control = (choice: NeoTodoControl) => {
@@ -601,6 +603,7 @@ export function QuestionBox({
   onReply,
   onOpen,
   hold,
+  anchored = true,
 }: {
   question: NeoQuestionEntry;
   disabled?: boolean;
@@ -608,6 +611,7 @@ export function QuestionBox({
   onReply?: () => void;
   onOpen?: (link: string, title: string) => void;
   hold?: { held: boolean; toggle: () => void };
+  anchored?: boolean;
 }) {
   const [picked, setPicked] = useState<string[]>([]);
   const toggle = (value: string, on: boolean) =>
@@ -619,7 +623,7 @@ export function QuestionBox({
   );
   return (
     <div
-      id={`neo-ref-question-${question.id}`}
+      id={anchored ? `neo-ref-question-${question.id}` : undefined}
       data-ask-question={question.id}
       data-question-kind={question.kind}
       class="mt-3 border-t border-line pt-3"
@@ -999,10 +1003,9 @@ export function NeoAskTodos({
   );
   const [label, tone, weight] = states[entry.state];
   const created = neoRelativeTime(ask.createdAt, neoNow.value, locale.value);
-  const todoCount =
-    received.summary?.todoCount ??
-    todos.filter((todo) => todo.state !== 'removed' && todo.state !== 'done').length +
-      entry.doneCount;
+  const todoCount = todos.filter(
+    (todo) => todo.state !== 'removed' && todo.state !== 'done'
+  ).length;
   const openQuestions =
     received.summary?.openQuestionCount ??
     entry.questions.filter((question) => question.state === 'open').length;
