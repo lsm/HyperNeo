@@ -1,0 +1,26 @@
+# Antigravity Desktop control probe, mini6, 2026-11-28T03:03:58Z
+# Antigravity 2.35.2. Token and account fields never printed.
+
+## Read-only checks (rerunnable)
+advertisements 1 mode 600 keys pid,httpsPort,httpPort,lsVersion,csrfToken lsVersion 2.35.2
+no token [401,{"code":"unauthenticated","message":"unauthenticated: missing CSRF token"}]
+wrong token [401,{"code":"unauthenticated","message":"unauthenticated: invalid CSRF token"}]
+catalog (repo reader, app running) [{"id":"1f4ce1b6-229e-4226-a7d7-7dccfd5a5945","title":"HyperNeo control probe 2"},{"id":"352fd1d9-3cb3-4580-bc51-26313948f502","title":"HyperNeo control probe"}]
+steps 1f4ce1b6-229e-4226-a7d7-7dccfd5a5945 200 [["USER_INPUT","DONE","2026-11-28T03:02:05.040662Z","Reply with the single word READY."],["PLANNER_RESPONSE","DONE","2026-11-28T03:02:05.062067Z","READY"],["USER_INPUT","DONE","2026-11-28T03:02:09.054102Z","Count slowly from 1 to 200, one number per line."],["PLANNER_RESPONSE","CANCELED","2026-11-28T03:02:09.079840Z","1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n"]]
+steps 352fd1d9-3cb3-4580-bc51-26313948f502 200 [["USER_INPUT","DONE","2026-11-28T03:01:17.795261Z","Reply with the single word READY."],["ERROR_MESSAGE","DONE","2026-11-28T03:01:18.216144Z","API error (attempt 1): transport error (Unavailable, HTTP 50"],["PLANNER_RESPONSE","DONE","2026-11-28T03:01:59.785553Z","READY"],["USER_INPUT","DONE","2026-11-28T03:01:30.833364Z","Now reply with the single word SECOND."],["PLANNER_RESPONSE","DONE","2026-11-28T03:02:00.653166Z","SECOND"]]
+stepOffset 2 -> 2 steps
+
+## Send and stop run (2026-11-28T03:02Z, output copied from the probe console)
+# new-conversation via agentapi (ANTIGRAVITY_LS_ADDRESS=127.0.0.1:<httpPort>), --model=flash
+id 1f4ce1b6-229e-4226-a7d7-7dccfd5a5945
+turn1 [["USER_INPUT","DONE","Reply with the single word READY."],["PLANNER_RESPONSE","DONE","READY"]]
+send SendUserCascadeMessage {cascadeId, items:[{text:"Count slowly from 1 to 200, one number per line."}]} -> [200,{}]
+during (+3 s) [...,["USER_INPUT","DONE","Count slowly from 1 to 200, one number per line."],["PLANNER_RESPONSE","GENERATING","1\n2\n...\n30"]]
+cancel CancelCascadeInvocation {cascadeId} -> [200,{}]
+after cancel (+3 s) [...,["PLANNER_RESPONSE","CANCELED","1\n2\n...\n30"]]
+
+## First attempt (--model=flash_lite), conversation 352fd1d9-3cb3-4580-bc51-26313948f502
+# turn 1 failed: ERROR_MESSAGE "503 No capacity available for model gemini-3.5-flash-lite"
+# send "Now reply with the single word SECOND." -> [200,{}]; a read 12 s later still showed only the 2 original steps.
+# The read-only check above, a minute later, shows the server retried turn 1 (READY at 03:01:59) and then ran the
+# queued message (USER_INPUT createdAt 03:01:30, listed after READY; SECOND at 03:02:00).
