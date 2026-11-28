@@ -179,6 +179,8 @@ describe('Neo external worker reply instructions', () => {
               place: { ...place, daemon: 'remote' },
               title: 'Build',
               message,
+              model: 'm',
+              effort: 'high',
             }
           : {
               ref: { adapter: 'codex-desktop', daemon: 'remote', id: 'worker' },

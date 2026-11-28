@@ -906,6 +906,8 @@ describe('work.start remote actor exclusions', () => {
         todoId: 'remote-todo',
         title: 'loader',
         message: 'Fix the loader.',
+        model: 'claude-opus-5-5',
+        effort: 'high',
       },
       neo
     );
@@ -924,7 +926,18 @@ describe('work.start remote actor exclusions', () => {
         daemonName: 'local',
         remote: {
           list: () => [{ daemonId: 'peer' }],
-          invoke: async (_daemon, _name, input) => {
+          invoke: async (_daemon, name, input) => {
+            if (name === 'work.adapters')
+              return {
+                ok: true,
+                value: [
+                  {
+                    id: 'codex-desktop',
+                    capabilities: ['start'],
+                    identity: { fixedProvider: 'openai', configurable: true },
+                  },
+                ],
+              };
             forwarded.push(input);
             return {
               ok: true,
@@ -948,6 +961,8 @@ describe('work.start remote actor exclusions', () => {
         place: { ...place, daemon: 'peer' },
         title: 'review',
         message: 'review',
+        model: 'gpt-6',
+        effort: 'high',
         excludeRefs: [
           { adapter: 'codex-desktop', id: 'author', daemon: 'peer' },
           { adapter: 'codex-desktop', id: 'local-author' },
