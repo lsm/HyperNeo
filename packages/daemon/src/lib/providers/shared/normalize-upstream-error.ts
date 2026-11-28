@@ -45,6 +45,13 @@ function readStringField(
   return undefined;
 }
 
+export function readUnsupportedImageError(body: string): string | undefined {
+  const error = tryParseJsonObject(body)?.error;
+  if (!error || typeof error !== 'object') return undefined;
+  const message = readStringField(error as Record<string, unknown>, 'message');
+  return message && /^image input is not supported\b/i.test(message) ? message : undefined;
+}
+
 function containsAny(haystack: string, needles: readonly string[]): boolean {
   return needles.some((needle) => haystack.includes(needle));
 }

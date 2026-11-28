@@ -108,6 +108,41 @@ describe.skipIf(!isBun)(
       expect(json.error.type).toBe('rate_limit_error');
     });
 
+    it('preserves the unsupported-image message and declines retries', async () => {
+      const message =
+        'image input is not supported - hint: if this is unexpected, you may need to provide the mmproj';
+      const upstream = Object.assign(
+        async () =>
+          Response.json({ error: { code: 500, type: 'server_error', message } }, { status: 500 }),
+        { preconnect: () => {} }
+      );
+      server = await makeServer(upstream);
+
+      const res = await postMessages(server.port, {
+        model: 'text-only',
+        max_tokens: 16,
+        stream: true,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'image',
+                source: { type: 'base64', media_type: 'image/png', data: 'AA==' },
+              },
+            ],
+          },
+        ],
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.headers.get('x-should-retry')).toBe('false');
+      expect(await res.json()).toEqual({
+        type: 'error',
+        error: { type: 'invalid_request_error', message },
+      });
+    });
+
     it('falls back to status-based mapping for non-transient error bodies', async () => {
       server = await makeServer(
         async () =>
