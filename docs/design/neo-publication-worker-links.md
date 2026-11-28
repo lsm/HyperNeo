@@ -5,17 +5,22 @@ Status: proposal. Design only; no application code in this PR.
 ## Decision
 
 Keep the model-facing `session` field in `NeoPublicationDraft`, the publish prompt and
-`front-model.ts` `replyFields`. An explicit worker remains authoritative; the daemon's
-existing derivation only fills an omitted field. No daemon or web contract changes.
+`front-model.ts` `replyFields`. An explicit non-Neo worker remains authoritative; server
+derivation only fills an absent field. Web behavior and the stored contract stay unchanged.
+
+Only `session === undefined` triggers prior-session retention or derivation. Make the
+draft non-nullable: explicit `null` fails admission instead of counting as omitted.
 
 This preserves the common case where Neo answers a human about a known worker: the
 input has no worker sender, but the model can name that worker directly.
 
 ## Existing server behavior to keep
 
-For an explicit worker, `neo.publication.deliver` resolves the exact session and accepts
-only `found`. An unknown session rejects publication; a lookup failure asks for a retry
-with the same requestId and session. Front publications keep this same explicit path.
+Refuse an explicit `neo:` session as `unknown_session` before retention or derivation;
+this is the chosen rule, not silent stripping. For an explicit non-Neo worker,
+`neo.publication.deliver` resolves the exact session and accepts only `found`. An unknown
+session rejects publication; a lookup failure asks for a retry with the same requestId
+and session. Front publications keep this same explicit path.
 
 When the model omits `session`, keep `sourceSession` as the only fill-in. Every current
 processing-state input ID must select a `neo_session_messages` row delivered to the
@@ -30,8 +35,8 @@ attaches in these cases because it needs no inference.
 If a prior publication exists for the requestId and the model omits `session`, keep the
 prior session before attempting derivation. A new explicit worker is validated normally.
 
-`workerSession` continues to exclude Neo-prefixed session IDs. Presentation keeps the
-stored session and existing session-open-source resolution; no new provenance is stored.
+`workerSession` filters Neo-prefixed senders only on the derived path; explicit values
+follow the refusal above. Presentation and session-open-source resolution stay unchanged.
 
 ## Clients
 
@@ -49,6 +54,6 @@ when Neo answers a human about that worker. The two existing paths are complemen
 
 ## Acceptance
 
-Keep tests for explicit valid, unknown and unavailable workers; derived single, missing
-and mixed senders; prior-session retries and revisions; and front's explicit field.
-Web behavior remains unchanged. The iOS follow-up must verify its own user-visible flow.
+Test explicit valid/unknown/unavailable workers, `neo:` and `null` refusals without
+retention or derivation, derived single/missing/mixed senders, prior retries/revisions,
+and front's explicit field. Web stays unchanged. iOS verifies its own user-visible flow.
