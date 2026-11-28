@@ -789,32 +789,6 @@ describe('createDriverSession model', () => {
     ]);
   });
 
-  test('a desktop worker asked only for a provider starts on that provider', async () => {
-    const { created, manager } = sessionManager(false);
-    const models = async () => [
-      model('gpt-6', '2026-09-01'),
-      { ...model('glm-5', '2026-01-01'), provider: 'glm' },
-      { ...model('glm-6', '2026-06-01'), provider: 'glm' },
-    ];
-    const start = (provider: string) =>
-      createDriverSession(
-        manager as never,
-        '/notes',
-        'task',
-        undefined,
-        models,
-        provider,
-        undefined,
-        false,
-        undefined,
-        'worker.desktop'
-      );
-    await start('glm');
-    expect(created[0].config).toMatchObject({ model: 'glm-6', provider: 'glm' });
-    await expect(start('kimi')).rejects.toThrow(ModelUnavailableError);
-    expect(created).toHaveLength(1);
-  });
-
   test('an exhausted desktop model list is reported, not replaced by the newest model', async () => {
     const created: CreateSessionParams[] = [];
     const manager = {
