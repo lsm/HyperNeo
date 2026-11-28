@@ -36,7 +36,8 @@ export function buildMemoryFtsQuery(query: string): string | null {
     for (const run of word.match(CJK_RUN) ?? []) {
       for (let at = 0; at + 3 <= run.length; at++) terms.add(run.slice(at, at + 3));
     }
-    for (const part of word.replace(CJK_RUN, ' ').split(' ')) {
+    for (const raw of word.replace(CJK_RUN, ' ').split(' ')) {
+      const part = raw.replace(/^[_./:-]+|[_./:-]+$/g, '');
       if (part.length >= 3 && !STOPWORDS.has(part)) terms.add(part);
     }
   }
