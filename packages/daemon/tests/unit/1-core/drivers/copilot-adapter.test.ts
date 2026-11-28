@@ -76,6 +76,15 @@ async function start(fixture: ReturnType<typeof setup>, message = fixture.reques
   return result.value;
 }
 
+async function adapterStart(fixture: ReturnType<typeof setup>, message: string) {
+  const result = await fixture.adapter.start!(
+    { ...fixture.request, model: 'synthetic-effort-model', effort: 'high', message },
+    context
+  );
+  if (!result.ok) throw new Error(JSON.stringify(result));
+  return result.value;
+}
+
 describe('owned Copilot lifecycle', () => {
   test.each([true, false])(
     'falls back from Desktop only before dispatch (notSent=%p)',
@@ -514,7 +523,7 @@ describe('owned Copilot lifecycle', () => {
 
   test('reuses an idle owned Copilot worker with the same explicit model', async () => {
     const f = setup('--durable-inputs');
-    const first = await start(f, 'settled');
+    const first = await adapterStart(f, 'settled');
     let status = await f.adapter.status!(first.ref);
     for (let i = 0; i < 500 && (!status.ok || status.value.status !== 'done'); i++) {
       await new Promise((done) => setTimeout(done, 20));
@@ -532,7 +541,13 @@ describe('owned Copilot lifecycle', () => {
     const result = await invokeOperation(
       registry,
       'work.start',
-      { adapter: f.adapter.id, ...f.request, message: 'settled' },
+      {
+        adapter: f.adapter.id,
+        ...f.request,
+        model: 'synthetic-effort-model',
+        effort: 'high',
+        message: 'settled',
+      },
       { source: 'internal', role: 'neo', sessionId: 'neo' }
     );
     if (result.kind !== 'completed' || !(result.value as { ok?: boolean }).ok)

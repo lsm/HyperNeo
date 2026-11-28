@@ -124,7 +124,7 @@ const Project = z.object({
 const NEO_SESSION_MESSAGES_SHOWN = 30;
 const Failure = z.object({ ok: z.literal(false), reason: z.string() });
 const HistoryCursor = z.object({ updatedAt: z.number().finite(), id: z.string().min(1) });
-const NeoHumanQueueState = z.enum(['waiting', 'held', 'progress']);
+const NeoHumanQueueState = z.enum(['waiting', 'others', 'held', 'progress']);
 const SnapshotOk = z.object({
   ok: z.literal(true),
   sessionId: z.string().nullable(),
@@ -167,7 +167,8 @@ const SnapshotOk = z.object({
               .enum(['human', 'nobody', 'prerequisite', 'daemon', 'worker', 'pack', 'neo'])
               .nullable(),
             step: z.enum(['working', 'waiting', 'paused', 'neo', 'you']).optional(),
-            waitingOn: z.enum(['review', 'earlier_step', 'queue', 'checking']).optional(),
+            waitingOn: z.enum(['review', 'earlier_step', 'queue', 'checking', 'hold']).optional(),
+            reason: z.string().optional(),
           }),
         ])
       ),

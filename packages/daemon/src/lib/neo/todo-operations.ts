@@ -1,7 +1,13 @@
 import { neoToolDescription } from '@hyperneo/prompts';
 import { hasPendingTodoDecision } from './proposal.ts';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
-import type { NeoAsk, NeoQuestion, NeoTodo, NeoTodoCheck } from '@hyperneo/shared/types/neo-ask';
+import type {
+  NeoAsk,
+  NeoQuestion,
+  NeoTodo,
+  NeoTodoCheck,
+  NeoTodoHolder,
+} from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { NeoTopicPick } from './ask-topic.ts';
@@ -16,6 +22,7 @@ import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 import { type Place, type WorkRef } from '../drivers/types.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import { isLocalUser } from '../operations/caller.ts';
 import { getDataDir } from '../data-dir.ts';
 import { type DesktopAppName, DesktopAppsSchema } from '../desktop/app-scope.ts';
 import { neoEvidencePathRefusal } from './core-todo-checks.ts';
@@ -342,6 +349,7 @@ type EditPlan = Omit<z.infer<typeof Edit>, 'hold'> & {
   hold?: string | null;
   until?: NeoTodoCheck;
   reviewAt?: number;
+  heldBy?: NeoTodoHolder;
   holdResult?: { heldAt: number; failure?: { url: string; reason: string } };
 };
 
@@ -355,6 +363,12 @@ const Hold = z.object({
     .optional()
     .describe('Time in epoch milliseconds for Neo to review the hold.'),
 });
+
+export function neoTodoHolder(caller: OperationCaller): NeoTodoHolder {
+  return isLocalUser(caller) && (!caller.device || caller.device.kind === 'human')
+    ? 'human'
+    : 'agent';
+}
 
 export type WriteNeoTodoHold = (
   input: { todoId: string; reason: string | null; until?: NeoTodoCheck; reviewAt?: number },
@@ -502,6 +516,7 @@ export function planNeoTodoEdit(todo: NeoTodo, input: EditPlan, now = Date.now()
               blockedBy: 'held',
               hold: {
                 heldAt,
+                ...(input.heldBy ? { by: input.heldBy } : {}),
                 ...(input.until ? { until: input.until } : {}),
                 reviewAt: input.reviewAt ?? heldAt + (input.until ? 7 : 1) * 24 * 3_600_000,
               },
@@ -917,6 +932,7 @@ export function createNeoTodoOperations(
                     hold: plan.request.reason,
                     until: plan.request.until,
                     reviewAt: plan.request.reviewAt,
+                    heldBy: neoTodoHolder(caller),
                   },
                   caller
                 )

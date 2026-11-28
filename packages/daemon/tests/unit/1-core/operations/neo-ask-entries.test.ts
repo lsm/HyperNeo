@@ -130,6 +130,22 @@ describe('neoTodoStatusLine', () => {
     );
   });
 
+  test('a step held by the human is paused; a step Neo held says what it waits on', () => {
+    const held = (by?: 'human' | 'agent') =>
+      todo({
+        state: 'blocked',
+        blockedBy: 'held',
+        blockedReason: 'PR 12 merges',
+        startedAt: null,
+        hold: { heldAt: 1, reviewAt: 2, ...(by ? { by } : {}) },
+      });
+    expect(neoTodoStatusLine(held('human'), [], null)).toEqual(coded('On hold', 'todo.held'));
+    for (const step of [held('agent'), held()])
+      expect(neoTodoStatusLine(step, [], null)).toEqual(
+        coded('Waiting: PR 12 merges', 'todo.waitingOn', { reason: 'PR 12 merges' })
+      );
+  });
+
   test('a step with an open pause or hold card says so instead of In progress', () => {
     const card = (cause: string, state: 'open' | 'answered' = 'open') => ({
       state,

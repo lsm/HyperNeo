@@ -1712,12 +1712,21 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'reopened'
     )
     .pipe(
-      ({ ask, ref, place }: Rescue, reopened: NeoTodo) =>
-        dispatch({
+      async ({ ask, ref, place }: Rescue, reopened: NeoTodo) => {
+        const record = await sessions.read('startedIdentity', ref);
+        return dispatch({
           todo: { ...reopened, instruction: reopened.instruction ?? neoTodoHandoff(reopened) },
           ask,
-          target: { verb: 'start', adapter: ref.adapter, place },
-        }),
+          target: {
+            verb: 'start',
+            adapter: ref.adapter,
+            place,
+            ...(record?.provider ? { provider: record.provider } : {}),
+            ...(record?.model ? { model: record.model } : {}),
+            ...(record?.effort ? { effort: record.effort } : {}),
+          },
+        });
+      },
       ['rescue', 'reopened'],
       'dispatched'
     )

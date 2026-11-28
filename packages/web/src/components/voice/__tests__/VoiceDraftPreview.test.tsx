@@ -2,16 +2,24 @@ import { act, cleanup, render, screen } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { VoiceDraftPreview } from '../VoiceDraftPreview.tsx';
 
+const FRAME_MS = 1000 / 60;
+
 beforeEach(() => {
-  vi.useFakeTimers();
+  vi.useFakeTimers({
+    toFake: ['setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame'],
+  });
 });
 
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
-const heard = () => screen.queryByTestId('voice-interim-text')?.textContent ?? '';
+const laidOut = () => screen.queryByTestId('voice-interim-text')?.textContent ?? '';
+const pending = () => screen.queryByTestId('voice-interim-pending')?.textContent ?? '';
+const shown = () => laidOut().slice(0, laidOut().length - pending().length);
+const fresh = () => screen.queryAllByTestId('voice-interim-fresh');
 
 function live(interim: string, transcribing = false) {
   return (
@@ -19,10 +27,10 @@ function live(interim: string, transcribing = false) {
   );
 }
 
-function wait(ms: number) {
-  for (let passed = 0; passed < ms; passed += 5)
+function frames(count: number) {
+  for (let frame = 0; frame < count; frame++)
     act(() => {
-      vi.advanceTimersByTime(5);
+      vi.advanceTimersByTime(FRAME_MS);
     });
 }
 
@@ -39,9 +47,10 @@ describe('VoiceDraftPreview', () => {
         hint="Listening…"
       />
     );
-    wait(1000);
+    frames(120);
     const interim = screen.getByTestId('voice-interim-text');
-    expect(interim.textContent).toBe('hello ne');
+    expect(shown()).toBe('hello ne');
+    expect(pending()).toBe('');
     expect(interim.className).toContain('text-fg-muted');
     expect(screen.getByTestId('voice-recording-draft').textContent).toBe('typed\nhello ne');
   });
@@ -52,88 +61,149 @@ describe('VoiceDraftPreview', () => {
     expect(screen.getByText('Listening…')).toBeTruthy();
   });
 
-  it('types a burst of speech out at a steady pace', () => {
+  it('lays the whole text out clear before revealing it', () => {
     render(live('hello there'));
-    expect(heard()).toBe('');
-    wait(25);
-    expect(heard()).toBe('h');
-    wait(100);
-    expect(heard()).toBe('hello');
-    wait(1000);
-    expect(heard()).toBe('hello there');
+    expect(laidOut()).toBe('hello there');
+    expect(shown()).toBe('');
+    const rest = screen.getByTestId('voice-interim-pending');
+    expect(rest.style.opacity).toBe('0');
+    expect(rest.getAttribute('aria-hidden')).toBe('true');
   });
 
-  it('catches up on a long burst instead of lagging far behind', () => {
-    render(live('a'.repeat(400)));
-    wait(600);
-    expect(heard().length).toBeGreaterThan(200);
-    wait(2400);
-    expect(heard().length).toBe(400);
+  it('reveals uneven bursts about one character per frame without long stops', () => {
+    const words =
+      'so the plan for tomorrow is to meet at the station at nine then drive north'.split(' ');
+    const bursts = [3, 1, 4, 2, 5, 1];
+    const gaps = [55, 20, 70, 35, 60, 40];
+    const view = render(live(''));
+    const counts: number[] = [];
+    let used = 0;
+    for (const [i, size] of bursts.entries()) {
+      used += size;
+      view.rerender(live(words.slice(0, used).join(' ')));
+      for (let frame = 0; frame < (gaps[i] ?? 0); frame++) {
+        frames(1);
+        counts.push(shown().length);
+      }
+    }
+    const target = words.slice(0, used).join(' ').length;
+    const steps = counts.slice(1).map((count, i) => count - (counts[i] ?? 0));
+    expect(Math.max(...steps)).toBeLessThanOrEqual(2);
+    let still = 0;
+    let longest = 0;
+    for (const [i, step] of steps.entries()) {
+      still = step === 0 && (counts[i + 1] ?? 0) < target ? still + 1 : 0;
+      longest = Math.max(longest, still);
+    }
+    expect(longest * FRAME_MS).toBeLessThan(300);
+    expect(counts.at(-1)).toBe(target);
   });
 
-  it('shows slow speech as it arrives and nothing more without new text', () => {
-    const view = render(live('hi'));
-    wait(1000);
-    expect(heard()).toBe('hi');
-    view.rerender(live('hi y'));
-    wait(50);
-    expect(heard()).toBe('hi y');
-    wait(1000);
-    expect(heard()).toBe('hi y');
+  it('trails a long burst by well under a second', () => {
+    render(live('a'.repeat(60)));
+    frames(30);
+    expect(shown().length).toBeGreaterThan(10);
+    expect(shown().length).toBeLessThan(60);
+    frames(60);
+    expect(shown().length).toBe(60);
   });
 
   it('keeps the shared start when the recognizer revises earlier words', () => {
     const view = render(live('I scream'));
-    wait(1000);
+    frames(120);
     view.rerender(live('Ice cream'));
-    expect(heard()).toBe('I');
-    wait(1000);
-    expect(heard()).toBe('Ice cream');
+    expect(shown()).toBe('I');
+    expect(laidOut()).toBe('Ice cream');
+    frames(120);
+    expect(shown()).toBe('Ice cream');
   });
 
   it('shows the whole utterance at once when it ends', () => {
     const view = render(live('one two three four'));
-    wait(25);
+    frames(2);
     view.rerender(live('one two three four', true));
-    expect(heard()).toBe('one two three four');
+    expect(shown()).toBe('one two three four');
+    expect(fresh()).toHaveLength(0);
   });
 
-  it('fades in only the newest characters, behind reduced-motion', () => {
-    render(live('a'.repeat(30)));
-    wait(100);
-    const fresh = () => screen.queryAllByTestId('voice-interim-fresh');
-    expect(fresh().length).toBeGreaterThan(0);
-    expect(fresh().length).toBe(heard().length);
-    expect(fresh()[0]?.className).toBe('motion-safe:animate-[voiceTypeIn_320ms_ease-out]');
-    wait(1000);
-    expect(heard()).toBe('a'.repeat(30));
-    expect(fresh().length).toBeGreaterThan(0);
-    expect(fresh().length).toBeLessThan(15);
+  it('fades each new character in from clear to solid behind the cursor', () => {
+    render(live('a'.repeat(40)));
+    frames(20);
+    const levels = fresh().map((char) => Number(char.style.opacity));
+    expect(levels.length).toBeGreaterThan(1);
+    for (const level of levels) expect(level).toBeGreaterThan(0);
+    for (const level of levels) expect(level).toBeLessThan(1);
+    expect(levels[0]).toBeGreaterThan(levels.at(-1) ?? 1);
+    frames(120);
+    expect(shown()).toBe('a'.repeat(40));
+    expect(fresh()).toHaveLength(0);
   });
 
-  it('keeps typing while the recognizer sends updates faster than the pace', () => {
+  it('fades in the first characters of a burst that follows a pause', () => {
+    const first = 'a'.repeat(80);
+    const view = render(live(first));
+    frames(70);
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+    expect(shown()).toBe(first);
+    view.rerender(live(`${first} ${'b'.repeat(40)}`));
+    for (let frame = 0; frame < 6; frame++) {
+      frames(1);
+      expect(shown().length - first.length).toBe(fresh().length);
+      for (const char of fresh()) expect(Number(char.style.opacity)).toBeLessThan(1);
+    }
+    expect(fresh().length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    ['ends', true],
+    ['is cancelled', false],
+  ])('starts the next utterance at a gentle pace after one %s mid-reveal', (_, ended) => {
+    const view = render(live('a'.repeat(80)));
+    frames(10);
+    if (ended) view.rerender(live('a'.repeat(80), true));
+    view.rerender(live(''));
+    frames(30);
+    view.rerender(live('b'.repeat(60)));
+    const counts = [shown().length];
+    for (let frame = 0; frame < 10; frame++) {
+      frames(1);
+      counts.push(shown().length);
+    }
+    const steps = counts.slice(1).map((count, i) => count - (counts[i] ?? 0));
+    expect(Math.max(...steps)).toBeLessThanOrEqual(2);
+  });
+
+  it('shows words as they arrive under reduced motion', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('reduce') }));
+    const view = render(live('hello'));
+    expect(shown()).toBe('hello');
+    view.rerender(live('hello there'));
+    expect(shown()).toBe('hello there');
+    expect(fresh()).toHaveLength(0);
+  });
+
+  it('keeps revealing while the recognizer sends updates every frame', () => {
     const words = 'one two three four five six seven eight nine ten';
     const view = render(live(words.slice(0, 5)));
     for (let end = 6; end <= words.length; end++) {
       view.rerender(live(words.slice(0, end)));
-      wait(10);
+      frames(1);
     }
-    expect(heard().length).toBeGreaterThan(10);
+    expect(shown().length).toBeGreaterThan(10);
   });
 
   it('never splits an emoji or an accented letter', () => {
-    const speech = 'ok 👍🏽 cafe\u0301 🇯🇵 done';
+    const speech = 'ok 👍🏽 café 🇯🇵 done';
     render(live(speech));
     const seen = new Set<string>();
-    for (let tick = 0; tick < 200; tick++) {
-      wait(5);
-      seen.add(heard());
+    for (let frame = 0; frame < 120; frame++) {
+      frames(1);
+      seen.add(shown());
     }
-    wait(50);
     const whole = [...new Intl.Segmenter().segment(speech)].map((part) => part.index);
-    for (const shown of seen) expect(whole.includes(shown.length) || shown === speech).toBe(true);
-    expect(heard()).toBe(speech);
-    for (const fresh of screen.queryAllByTestId('voice-interim-fresh'))
-      expect([...new Intl.Segmenter().segment(fresh.textContent ?? '')]).toHaveLength(1);
+    for (const text of seen) expect(whole.includes(text.length) || text === speech).toBe(true);
+    expect(shown()).toBe(speech);
   });
 });

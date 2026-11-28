@@ -81,8 +81,8 @@ try {
       sessions.recordNudge(id, { since: now, nudges: 0, live: state, liveSince: now });
       store.updateTodo(store.getTodo(id)!, { state: 'doing', startedAt: now }, now);
     };
-    const hold = (id: string, reviewAt: number) =>
-      store.updateTodo(store.getTodo(id)!, { state: 'blocked', blockedBy: 'held', hold: { heldAt: old, reviewAt } }, old);
+    const hold = (id: string, reviewAt: number, by?: 'human' | 'agent', blockedReason?: string) =>
+      store.updateTodo(store.getTodo(id)!, { state: 'blocked', blockedBy: 'held', blockedReason, hold: { heldAt: old, reviewAt, ...(by ? { by } : {}) } }, old);
     ask('cards', 'Case: two open cards', 'Home');
     card('cards-a', 'cards', 'Case card A?');
     card('cards-b', 'cards', 'Case card B?');
@@ -102,7 +102,10 @@ try {
     }
     ask('paused', 'Case: paused step', 'Home');
     step('paused-step', 'paused', 'Paused step');
-    hold('paused-step', now + 7 * day);
+    hold('paused-step', now + 7 * day, 'human');
+    ask('deploy', 'Case: Neo holds a step until a deploy', 'Home');
+    step('deploy-step', 'deploy', 'Ship after the deploy');
+    hold('deploy-step', now + 7 * day, 'agent', 'Waits for the deploy to finish');
     ask('review', 'Case: hold past its review date', 'Home');
     step('review-step', 'review', 'Hold past review date');
     hold('review-step', now - day);

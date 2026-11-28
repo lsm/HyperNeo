@@ -59,10 +59,13 @@ focuses the linked question when it arrives. The browser captures
 
 Use `phone-parity` for the phone's tab rules in the Chinese Inbox. The seed has
 one ask per case: two open cards, a held card beside a stalled step, future
-reminders, a 28-todo checklist with 26 done, a paused step, a hold past its
-review date, a step after an earlier step, a running and a queued session, a
-failed step and 12 filed outcomes. It requires `等你 1 · 已搁置 2 · 进行中 1 ·
-所有工作 15`; 等你 lists only the two cards, 已搁置 the held card and the paused
-step, 进行中 only the running step. The checklist card reads `2 个待办`, and
+reminders, a 28-todo checklist with 26 done, a step the human paused, a step
+Neo held until a deploy, a hold past its review date, a step after an earlier
+step, a running and a queued session, a failed step and 12 filed outcomes. It
+requires `等你 1 · 等待中 3 · 已搁置 2 · 进行中 1 · 所有工作 16`; 等你 lists only the
+two cards, 等待中 the deploy hold, the later step and the queued session, 已搁置
+the held card and the human's paused step, 进行中 only the running step.
+Each 等待中 step reads its wait: Neo's reason, 等前一步完成 or 排队中, shown in
+`phone-parity-others-*.png`. The checklist card reads `2 个待办`, and
 显示更早的结果 under 所有工作 adds filed outcomes. Before the fix it exits 1 with
 等你 7.

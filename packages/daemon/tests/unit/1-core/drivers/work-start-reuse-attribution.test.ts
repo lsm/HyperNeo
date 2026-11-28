@@ -60,6 +60,7 @@ function setup(send: () => Promise<Result<WorkDelivery>>, markUnusable?: () => P
   sessions.create('second', { verb: 'start', adapter: 'claude-desktop', place });
   const adapter: WorkAdapter = {
     id: 'claude-desktop',
+    identity: { fixedProvider: 'anthropic', configurable: false },
     capabilities: ['find', 'start', 'send'],
     find: () => [
       {
@@ -87,6 +88,11 @@ function setup(send: () => Promise<Result<WorkDelivery>>, markUnusable?: () => P
   const registry = createOperationRegistry(
     createWorkVerbOperations({
       adapters: () => [adapter],
+      startedIdentity: async () => ({
+        provider: 'anthropic',
+        model: 'claude-opus-5-5',
+        effort: 'medium',
+      }),
       remote: { list: () => [], invoke: async () => ({}) },
       daemonName: 'imac',
       freeWorkers: (id, todoId, sessionId) => readReusableWorkers(db, id, todoId, sessionId),
@@ -121,7 +127,16 @@ function setup(send: () => Promise<Result<WorkDelivery>>, markUnusable?: () => P
     invokeOperation(
       registry,
       'work.start',
-      { adapter: 'claude-desktop', place, title: 'repo', message: 'Fix it.', todoId: 'second' },
+      {
+        adapter: 'claude-desktop',
+        place,
+        title: 'repo',
+        message: 'Fix it.',
+        todoId: 'second',
+        provider: 'anthropic',
+        model: 'claude-opus-5-5',
+        effort: 'medium',
+      },
       { source: 'mcp', sessionId: 'neo-a', role: 'neo' }
     );
   const todoOf = (id: string, inputsSeen: string[] = []) =>

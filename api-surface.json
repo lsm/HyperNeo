@@ -27851,10 +27851,17 @@
                     "name"
                   ],
                   "type": "object"
+                },
+                "provider": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
                 }
               },
               "required": [
-                "adapter"
+                "adapter",
+                "model",
+                "effort"
               ],
               "type": "object"
             },
@@ -31752,6 +31759,7 @@
                       "propertyNames": {
                         "enum": [
                           "waiting",
+                          "others",
                           "held",
                           "progress"
                         ],
@@ -31759,6 +31767,7 @@
                       },
                       "required": [
                         "waiting",
+                        "others",
                         "held",
                         "progress"
                       ],
@@ -31845,6 +31854,9 @@
                                 }
                               ]
                             },
+                            "reason": {
+                              "type": "string"
+                            },
                             "state": {
                               "enum": [
                                 "progress",
@@ -31873,7 +31885,8 @@
                                 "review",
                                 "earlier_step",
                                 "queue",
-                                "checking"
+                                "checking",
+                                "hold"
                               ],
                               "type": "string"
                             }
@@ -40169,6 +40182,7 @@
                       "propertyNames": {
                         "enum": [
                           "waiting",
+                          "others",
                           "held",
                           "progress"
                         ],
@@ -40176,6 +40190,7 @@
                       },
                       "required": [
                         "waiting",
+                        "others",
                         "held",
                         "progress"
                       ],
@@ -40262,6 +40277,9 @@
                                 }
                               ]
                             },
+                            "reason": {
+                              "type": "string"
+                            },
                             "state": {
                               "enum": [
                                 "progress",
@@ -40290,7 +40308,8 @@
                                 "review",
                                 "earlier_step",
                                 "queue",
-                                "checking"
+                                "checking",
+                                "hold"
                               ],
                               "type": "string"
                             }

@@ -9,7 +9,7 @@ import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
 import { validatePackPreference } from '../../../../src/lib/neo/preference-operations.ts';
 
 const place = { machine: 'fixture', name: 'Fixture' };
-const standard = { adapter: 'hyperneo', place, model: 'claude-opus-5-5' };
+const standard = { adapter: 'hyperneo', place, model: 'claude-opus-5-5', effort: 'medium' };
 const preferred = { adapter: 'codex-desktop', place, model: 'gpt-6', effort: 'high' };
 const repo = 'synthetic/preferences';
 const plan = (...args: Parameters<typeof planCodingStageTarget>) => {

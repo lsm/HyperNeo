@@ -54,7 +54,15 @@ describe('Neo work todo reference', () => {
     async (role) => {
       const { registry, delivered } = fixture();
       const caller: OperationCaller = { source: 'mcp', sessionId: 'worker', role };
-      const input = { adapter: 'fixture', place, title: 'Synthetic', message: 'New work' };
+      const input = {
+        adapter: 'fixture',
+        place,
+        title: 'Synthetic',
+        message: 'New work',
+        provider: 'fixture',
+        model: 'm',
+        effort: 'high',
+      };
       expect(await invokeOperation(registry, 'work.start', input, caller)).toMatchObject({
         kind: 'completed',
         value: { ok: false, reason: 'todo_required' },
@@ -71,7 +79,15 @@ describe('Neo work todo reference', () => {
   for (const name of ['work.start', 'work.send', 'work.queue'] as const) {
     const input =
       name === 'work.start'
-        ? { adapter: 'fixture', place, title: 'Synthetic', message: 'New work' }
+        ? {
+            adapter: 'fixture',
+            place,
+            title: 'Synthetic',
+            message: 'New work',
+            provider: 'fixture',
+            model: 'm',
+            effort: 'high',
+          }
         : { ref, message: 'New work' };
 
     test(`${name} accepts an open-ask reference and trusted internal dispatch`, async () => {
@@ -96,7 +112,15 @@ describe('Neo work todo reference', () => {
   }
   describe('work.start', () => {
     const name = 'work.start';
-    const input = { adapter: 'fixture', place, title: 'Synthetic', message: 'New work' };
+    const input = {
+      adapter: 'fixture',
+      place,
+      title: 'Synthetic',
+      message: 'New work',
+      provider: 'fixture',
+      model: 'm',
+      effort: 'high',
+    };
 
     test(`${name} refuses a missing Neo MCP todo reference`, async () => {
       const { registry, delivered } = fixture();

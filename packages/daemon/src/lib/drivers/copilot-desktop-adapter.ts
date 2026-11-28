@@ -153,9 +153,6 @@ export function createCopilotDesktopAdapter(
           ]
         : ['find', 'status', 'turns'];
     },
-    get supportsStartEffort() {
-      return controlAvailable?.() === true;
-    },
     get unsupportedCapabilities() {
       return controlAvailable?.()
         ? {}

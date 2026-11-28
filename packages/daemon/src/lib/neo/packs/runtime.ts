@@ -110,6 +110,7 @@ export function createNeoService(...args: NeoServiceArgs) {
               place: { machine: '', name: '' },
               title: '',
               message: '',
+              ...(target.provider ? { provider: target.provider } : {}),
               ...(target.model ? { model: target.model } : {}),
               ...(target.effort ? { effort: target.effort } : {}),
             })) ?? null,

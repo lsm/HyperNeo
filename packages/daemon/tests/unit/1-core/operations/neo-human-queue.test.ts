@@ -61,7 +61,6 @@ describe('neoHumanQueue', () => {
     ['prerequisite', undefined, null, 'waiting', 'earlier_step'],
     ['daemon', undefined, 'held', 'waiting', 'queue'],
     ['daemon', undefined, 'ready', 'waiting', 'checking'],
-    ['nobody', undefined, null, 'paused', undefined],
     ['neo', 'idle', null, 'neo', undefined],
     ['human', undefined, null, 'you', undefined],
   ] as const)(
@@ -83,6 +82,27 @@ describe('neoHumanQueue', () => {
       if (!waitingOn) expect(queue.items[0]).not.toHaveProperty('waitingOn');
     }
   );
+
+  test('only a hold the human made is paused; any other hold waits with its reason', () => {
+    const held = (by?: 'human' | 'agent') => ({
+      ...todo(`held-${by ?? 'old'}`, 'blocked'),
+      blockedReason: 'Wait for the deploy.',
+      hold: { heldAt: 1, reviewAt: 2, ...(by ? { by } : {}) },
+    });
+    const todos = [held('human'), held('agent'), held()];
+    const queue = neoHumanQueue({
+      questions: [],
+      todos,
+      owners: new Map(todos.map((row) => [row.id, { owner: 'nobody' as const }])),
+    });
+    expect(queue.items.map((item) => ('todoId' in item ? item : null))).toMatchObject([
+      { todoId: 'held-human', step: 'paused' },
+      { todoId: 'held-agent', step: 'waiting', waitingOn: 'hold', reason: 'Wait for the deploy.' },
+      { todoId: 'held-old', step: 'waiting', waitingOn: 'hold', reason: 'Wait for the deploy.' },
+    ]);
+    expect(queue.items[0]).not.toHaveProperty('reason');
+    expect(queue.counts).toEqual({ 'ask-a': { waiting: 0, others: 2, held: 1, progress: 0 } });
+  });
 
   test('a finished todo is not listed, with or without an answered card', () => {
     const queue = neoHumanQueue({
@@ -212,8 +232,8 @@ describe('neoHumanQueue', () => {
       owners: none,
     });
     expect(queue.counts).toEqual({
-      'ask-a': { waiting: 1, held: 1, progress: 1 },
-      'ask-b': { waiting: 1, held: 0, progress: 0 },
+      'ask-a': { waiting: 1, others: 0, held: 1, progress: 0 },
+      'ask-b': { waiting: 1, others: 0, held: 0, progress: 0 },
     });
   });
 });

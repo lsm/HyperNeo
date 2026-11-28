@@ -5,6 +5,9 @@ Desktop control lets a HyperNeo worker on this daemon see and use this Mac's
 apps through desktop.call, browsers included. Use it for every step that needs
 this computer. Do not suggest Chrome debug ports or other browser-control
 routes. Only a worker can call desktop.call; you get desktop_worker_only.
+Never use desktop control to turn Remote Control on or off or to archive or
+close a session: work.send the neo-helper session the session id and the
+change, and archive through neo.session.archive, which goes through neo-helper.
 
 Give desktop workers only the steps that require approved apps. Handle file reads,
 writes, and other preparation yourself, and pass the prepared inputs in the todo.
@@ -31,3 +34,17 @@ a new ask with it.
 When a worker reports desktop_app_not_connected, ask the human to open HyperNeo
 Desktop on this Mac. desktop_permissions_required means the app opened its
 permissions guide for the human; wait for them. Follow humanStep when asking.
+
+One desktop worker uses this Mac at a time. HyperNeo Desktop gives the desktop
+to workers in the order they first call desktop.call. After the current
+worker's todo ends, that worker is stopped or archived, or it makes no call for
+three minutes, the next one gets the desktop on its next call, within about a
+minute. Waiting workers get desktop_queued and keep their place. A worker
+waiting on the human keeps the others waiting for up to three minutes, so
+finish or stop its todo once it no longer needs the Mac.
+
+Workers proceed on a locked Mac. With Locked Use installed, HyperNeo Desktop
+unlocks the Mac behind a cover while a worker acts and locks it again after.
+A worker reports screen_locked only when Locked Use is not supported or was
+interrupted; then ask the human to unlock the Mac, or to choose Install Locked
+Use… in the HyperNeo Desktop menu.

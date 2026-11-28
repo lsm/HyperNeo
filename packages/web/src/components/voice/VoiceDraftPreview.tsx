@@ -14,40 +14,111 @@ export interface VoiceDraftPreviewProps {
   class?: string;
 }
 
-const TYPE_STEP_MS = 25;
-const CATCH_UP_MS = 600;
-const FADE_STEPS = 13;
+const LAG_S = 0.45;
+const EASE_S = 0.35;
+const FLOOR_CPS = 8;
+const FADE_S = 0.3;
 const graphemes = new Intl.Segmenter();
 
-function useTypewriter(target: string, flush: boolean): [string, number] {
-  const [shown, setShown] = useState('');
-  const steps = useRef<number[]>([]);
-  const latest = useRef(target);
-  latest.current = target;
-  let kept = shown;
-  if (flush) kept = target;
-  else if (!target.startsWith(shown)) {
-    let same = 0;
-    while (same < shown.length && shown[same] === target[same]) same++;
-    kept = target.slice(0, same);
+interface Pace {
+  chars: string[];
+  position: number;
+  speed: number;
+  now?: number;
+  revealedAt: number[];
+}
+
+function advance(pace: Pace, time: number) {
+  const count = pace.chars.length;
+  const last = pace.now ?? time;
+  pace.now = time;
+  const dt = Math.min(0.1, Math.max(0, time - last));
+  const backlog = count - pace.position;
+  pace.speed += (backlog / LAG_S - pace.speed) * (1 - Math.exp(-dt / EASE_S));
+  const step = Math.min(backlog, Math.max(pace.speed, backlog > 0 ? FLOOR_CPS : 0) * dt);
+  const from = pace.position;
+  pace.position += step;
+  while (pace.revealedAt.length < Math.floor(pace.position + 1e-9)) {
+    const i = pace.revealedAt.length + 1;
+    pace.revealedAt.push(time - dt + (dt * (i - from)) / Math.max(step, 1e-9));
   }
-  const behind = kept.length < target.length;
+}
+
+function settled(pace: Pace) {
+  const last = pace.revealedAt.at(-1);
+  return (
+    pace.revealedAt.length === pace.chars.length &&
+    (last === undefined || pace.now === undefined || pace.now - last >= FADE_S)
+  );
+}
+
+function opacity(pace: Pace, index: number) {
+  const at = pace.revealedAt[index];
+  if (at === undefined) return 0;
+  if (pace.now === undefined) return 1;
+  return Math.min(1, Math.max(0, (pace.now - at) / FADE_S));
+}
+
+function useTypingReveal(target: string, flush: boolean) {
+  const pace = useRef<Pace>({ chars: [], position: 0, speed: 0, revealedAt: [] }).current;
+  const [, setFrame] = useState(0);
+  const chars = [...graphemes.segment(target)].map((part) => part.segment);
+  if (chars.join('') !== pace.chars.join('')) {
+    let same = 0;
+    while (same < chars.length && chars[same] === pace.chars[same]) same++;
+    pace.chars = chars;
+    pace.revealedAt.length = Math.min(pace.revealedAt.length, same);
+    pace.position = Math.min(pace.position, same);
+  }
+  const still =
+    flush ||
+    (typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  if (still) {
+    pace.position = chars.length;
+    pace.revealedAt = chars.map(() => Number.NEGATIVE_INFINITY);
+  }
+  if (still || !chars.length) {
+    pace.speed = 0;
+    pace.now = undefined;
+  }
   useEffect(() => {
-    if (!kept) steps.current = [];
-    if (!behind) return;
-    const timer = setTimeout(() => {
-      const ahead = [...graphemes.segment(latest.current.slice(kept.length))];
-      const step = Math.max(1, Math.ceil((ahead.length * TYPE_STEP_MS) / CATCH_UP_MS));
-      const revealed = ahead
-        .slice(0, step)
-        .reduce((length, part) => length + part.segment.length, 0);
-      steps.current = [...steps.current, kept.length].slice(-FADE_STEPS);
-      setShown(latest.current.slice(0, kept.length + revealed));
-    }, TYPE_STEP_MS);
-    return () => clearTimeout(timer);
-  }, [kept, behind]);
-  const settled = steps.current.length < FADE_STEPS ? 0 : (steps.current[0] ?? 0);
-  return [kept, Math.min(settled, kept.length)];
+    if (settled(pace)) return;
+    let id = requestAnimationFrame(function tick(time) {
+      advance(pace, time / 1000);
+      setFrame(time);
+      if (settled(pace)) pace.now = undefined;
+      else id = requestAnimationFrame(tick);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [target, still]);
+  return pace;
+}
+
+function TypingText({ pace }: { pace: Pace }) {
+  let solid = 0;
+  while (solid < pace.chars.length && opacity(pace, solid) >= 1) solid++;
+  let fading = solid;
+  while (fading < pace.chars.length && opacity(pace, fading) > 0) fading++;
+  return (
+    <>
+      {pace.chars.slice(0, solid).join('')}
+      {pace.chars.slice(solid, fading).map((char, offset) => (
+        <span
+          key={solid + offset}
+          data-testid="voice-interim-fresh"
+          style={{ opacity: opacity(pace, solid + offset) }}
+        >
+          {char}
+        </span>
+      ))}
+      {fading < pace.chars.length && (
+        <span aria-hidden="true" data-testid="voice-interim-pending" style={{ opacity: 0 }}>
+          {pace.chars.slice(fading).join('')}
+        </span>
+      )}
+    </>
+  );
 }
 
 export function VoiceDraftPreview({
@@ -55,14 +126,14 @@ export function VoiceDraftPreview({
   start,
   end,
   transcribing,
-  interim: heard = '',
+  interim = '',
   newLine = false,
   hint,
   heightPx,
   minHeightPx,
   class: className,
 }: VoiceDraftPreviewProps) {
-  const [interim, settled] = useTypewriter(heard, transcribing);
+  const pace = useTypingReveal(interim, transcribing);
   const boxRef = useRef<HTMLDivElement>(null);
   const markerRef = useRef<HTMLSpanElement>(null);
   const from = Math.min(Math.max(start, 0), text.length);
@@ -106,16 +177,7 @@ export function VoiceDraftPreview({
           data-testid="voice-interim-text"
           class={newLine ? 'italic text-fg-muted' : 'text-fg-faint'}
         >
-          {interim.slice(0, settled)}
-          {[...graphemes.segment(interim.slice(settled))].map(({ segment: char, index }) => (
-            <span
-              key={settled + index}
-              class="motion-safe:animate-[voiceTypeIn_320ms_ease-out]"
-              data-testid="voice-interim-fresh"
-            >
-              {char}
-            </span>
-          ))}
+          <TypingText pace={pace} />
         </span>
       )}
       {!text && !interim && hint && !transcribing && <span class="text-fg-faint">{hint}</span>}

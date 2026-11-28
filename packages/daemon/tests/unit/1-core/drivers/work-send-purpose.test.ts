@@ -154,10 +154,24 @@ describe('Neo and daemon sends say what they are', () => {
     await invokeOperation(
       registry,
       'work.start',
-      { adapter: 'fixture', place, title: 'Start', message: 'Go', todoId: 't' },
+      {
+        adapter: 'fixture',
+        place,
+        title: 'Start',
+        message: 'Go',
+        todoId: 't',
+        provider: 'fixture',
+        model: 'm',
+        effort: 'high',
+      },
       daemon
     );
-    expect(recorded).toEqual(['t', { verb: 'start', adapter: 'fixture', place }, 'input-1', true]);
+    expect(recorded).toEqual([
+      't',
+      { verb: 'start', adapter: 'fixture', place, model: 'm', effort: 'high' },
+      'input-1',
+      true,
+    ]);
   });
 
   test('an idempotency key reaches the driver and the remote daemon', async () => {

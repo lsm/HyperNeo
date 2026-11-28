@@ -60,6 +60,7 @@ function setup(gate?: Promise<void>) {
   const firstSent = Promise.withResolvers<void>();
   const adapter: WorkAdapter = {
     id: 'claude-desktop',
+    identity: { fixedProvider: 'anthropic', configurable: false },
     capabilities: ['find', 'start', 'send'],
     find: () => [
       {
@@ -98,6 +99,11 @@ function setup(gate?: Promise<void>) {
   const registry = createOperationRegistry(
     createWorkVerbOperations({
       adapters: () => [adapter],
+      startedIdentity: async () => ({
+        provider: 'anthropic',
+        model: 'claude-opus-5-5',
+        effort: 'medium',
+      }),
       remote: { list: () => [], invoke: async () => ({}) },
       daemonName: 'imac',
       freeWorkers: (id, todoId, sessionId) => readReusableWorkers(db, id, todoId, sessionId),
@@ -127,7 +133,16 @@ function start(registry: ReturnType<typeof setup>['registry'], todoId: string) {
   return invokeOperation(
     registry,
     'work.start',
-    { adapter: 'claude-desktop', place, title: 'repo', message: 'Fix it.', todoId },
+    {
+      adapter: 'claude-desktop',
+      place,
+      title: 'repo',
+      message: 'Fix it.',
+      todoId,
+      provider: 'anthropic',
+      model: 'claude-opus-5-5',
+      effort: 'medium',
+    },
     { source: 'mcp', sessionId: 'neo-a', role: 'neo' }
   );
 }
@@ -145,6 +160,9 @@ describe('work.start reuse binds only a todo the caller owns', () => {
           title: 'repo',
           message: 'Fix it.',
           todoId: 'foreign',
+          provider: 'anthropic',
+          model: 'claude-opus-5-5',
+          effort: 'medium',
         },
         { source: 'mcp', sessionId: 'neo-a', role: 'neo' }
       );

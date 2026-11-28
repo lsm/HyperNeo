@@ -3,6 +3,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { ProcessJsonRpcTransport } from '../process-json-rpc.ts';
 import { buildSafeProcessEnv } from '../safe-process-env.ts';
+import { createAcpReplayHistory } from './antigravity-history.ts';
 import { createCursorStart } from './cursor-start.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import type { FindQuery, PlaceGroup, WorkAdapter, WorkSummary } from './types.ts';
@@ -158,8 +159,8 @@ export function createCursorDiscovery(
     (await readOwnedFolders(ADAPTER)).find(([sessionId]) => sessionId === id)?.[1];
   return {
     ...createCursorStart(command, machine, ADAPTER, readOwnedFolder),
+    readTurns: createAcpReplayHistory(command, ['acp'], 'cursor', readOwnedFolder),
     id: ADAPTER,
-    supportsStartEffort: true,
     identity: { fixedProvider: 'cursor', configurable: true },
     capabilities: ['find', 'start', 'status', 'send', 'stop'],
     find: (query) => find(query, command, home, machine),

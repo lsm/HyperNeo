@@ -96,13 +96,17 @@ async function checkPhoneParity(context, theme) {
     await chip.click();
     return true;
   };
-  const CASES = ['Case card A?', 'Case card B?', 'Case held card?', 'Stalled step beside a held card', 'Remind me on Dec 19', 'New step 1', 'Paused step', 'Hold past review date', 'Earlier step', 'Step after the earlier one', 'Running step', 'Queued step', 'Failed step'];
+  const CASES = ['Case card A?', 'Case card B?', 'Case held card?', 'Stalled step beside a held card', 'Remind me on Dec 19', 'New step 1', 'Paused step', 'Ship after the deploy', 'Hold past review date', 'Earlier step', 'Step after the earlier one', 'Running step', 'Queued step', 'Failed step'];
   const tabs = {};
-  for (const name of ['等你', '已搁置|先放着', '进行中|在做']) {
+  const WAITS = ['等待中：Waits for the deploy to finish', '等前一步完成', '排队中'];
+  let waits = [];
+  for (const name of ['等你', '等待中', '已搁置|先放着', '进行中|在做']) {
     if (!(await tab(name))) continue;
     await page.waitForTimeout(300);
     const text = await queue.innerText();
     tabs[name.split('|')[0]] = CASES.filter((title) => text.includes(title));
+    if (name === '等待中') waits = WAITS.filter((line) => text.includes(line));
+    if (name === '等待中') await page.screenshot({ path: join(evidence, `phone-parity-others-${theme}.png`), animations: 'disabled' });
   }
   await tab('进行中|在做');
   const progress = await queue.locator('[data-ask-todo]').count();
@@ -124,7 +128,7 @@ async function checkPhoneParity(context, theme) {
   const scenes = await page.locator('[data-scene-group]').evaluateAll((groups) => groups.map((group) => group.getAttribute('aria-label')));
   const asksShown = await page.locator('[data-ask]').evaluateAll((items) => items.map((item) => item.dataset.ask));
   await page.screenshot({ path: join(evidence, `phone-parity-older-${theme}.png`), animations: 'disabled' });
-  observations.push({ theme, chips, tabs, progress, allWork, card, older: { offered, before, after }, scenes, asksShown });
+  observations.push({ theme, chips, tabs, waits, progress, allWork, card, older: { offered, before, after }, scenes, asksShown });
 }
 async function checkShortTopics(context, theme) {
   await context.addInitScript(() => {
@@ -317,7 +321,7 @@ try {
     const observation = { theme, rows, hover };
     if (phase === 'layout-before' || phase === 'after') observation.filters = await measureFilters();
     observations.push(observation);
-    assert.deepEqual(rows.state, ['Waiting on you 4', 'Held 1', 'In progress 0', 'All work 7']);
+    assert.deepEqual(rows.state, ['Waiting on you 4', 'Waiting 0', 'Held 1', 'In progress 0', 'All work 7']);
     assert.equal(rows.ask[0], 'All 4');
     assert.equal(rows.more, 1);
     assert.deepEqual(hover.target, [44, 44]);
@@ -415,13 +419,14 @@ if (phase === 'waiting-only') {
 }
 if (phase === 'phone-parity') {
   const wrong = observations.filter((seen) =>
-    JSON.stringify(seen.chips) !== JSON.stringify(['等你 1', '已搁置 2', '进行中 1', '所有工作 15']) ||
+    JSON.stringify(seen.chips) !== JSON.stringify(['等你 1', '等待中 3', '已搁置 2', '进行中 1', '所有工作 16']) ||
     JSON.stringify(seen.tabs) !== JSON.stringify({
       等你: ['Case card A?', 'Case card B?'],
+      等待中: ['Ship after the deploy', 'Step after the earlier one', 'Queued step'],
       已搁置: ['Case held card?', 'Paused step'],
       进行中: ['Running step'],
     }) ||
-    !seen.allWork || !seen.card?.includes('· 2 个待办') ||
+    seen.waits.length !== 3 || !seen.allWork || !seen.card?.includes('· 2 个待办') ||
     !seen.older.offered || seen.older.after <= seen.older.before);
   assert.deepEqual(wrong, [], `The web Inbox differs from the phone: ${JSON.stringify(wrong)}`);
 }

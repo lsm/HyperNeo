@@ -1669,7 +1669,6 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
     id: 'codex-desktop',
     identity: { fixedProvider: 'openai', configurable: true },
     supportsStartPreparation: !!deps.prepareExecution,
-    supportsStartEffort: true,
     capabilities: [
       'find',
       'start',

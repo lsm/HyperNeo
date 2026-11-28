@@ -6,6 +6,14 @@ const transcript = process.argv[3];
 const finalizeDelayMs = Number(process.argv[4] ?? 0);
 const numbered = process.argv[5] === '--numbered';
 const bursts = process.argv[5] === '--bursts';
+const burstWords = [3, 1, 4, 2];
+const burstGapsMs = [900, 300, 1200, 600];
+const burstCount = (elapsedMs: number) => {
+  let count = 0;
+  for (let i = 0, at = 0; at <= elapsedMs; at += burstGapsMs[i % 4] ?? 0, i++)
+    count += burstWords[i % 4] ?? 0;
+  return count;
+};
 let utterances = 0;
 const cancelled: number[] = [];
 const words = (id: number, bytes: number) =>
@@ -55,7 +63,7 @@ server.on('connection', (socket, request) => {
     bursts
       ? (transcript ?? '')
           .split(' ')
-          .slice(0, 6 * (1 + Math.floor((Date.now() - opened) / 900)))
+          .slice(0, burstCount(Date.now() - opened))
           .join(' ')
       : words(id, bytes);
   let bytes = 0;

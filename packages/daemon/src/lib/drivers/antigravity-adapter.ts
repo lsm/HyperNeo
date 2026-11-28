@@ -177,7 +177,6 @@ export function createAntigravityAdapter(
   return {
     ...control,
     readTurns,
-    supportsStartEffort: true,
     id: ADAPTER,
     identity: { fixedProvider: 'antigravity', configurable: true },
     capabilities: ['find', 'start', 'status', 'send', 'steer', 'stop', 'compact'],
