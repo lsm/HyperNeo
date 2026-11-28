@@ -547,6 +547,12 @@ describe('coding actor assignments', () => {
     f.publish();
     expect((await f.assign({ candidates: [author] })).ok).toBe(true);
   });
+  test('forwards a candidate provider to work.start', async () => {
+    const f = fixture();
+    const candidate = { ...reviewer, adapter: 'hyperneo', provider: 'anthropic' };
+    expect((await f.assign({ candidates: [author, candidate] })).ok).toBe(true);
+    expect(f.starts[0]).toMatchObject({ provider: 'anthropic' });
+  });
   test('shared Review/Verify harness, model and effort preferences reach the started actor', async () => {
     const f = fixture();
     const preferred = { ...reviewer, adapter: 'hyperneo', effort: 'high' };

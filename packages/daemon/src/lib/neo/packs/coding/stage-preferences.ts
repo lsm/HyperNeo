@@ -9,6 +9,7 @@ import { codingReviewerPolicy } from './stage-facts.ts';
 export const CodingStageTarget = StartWorkInputSchema.pick({
   adapter: true,
   place: true,
+  provider: true,
   model: true,
   effort: true,
 }).required({ model: true, effort: true });
