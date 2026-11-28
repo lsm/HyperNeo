@@ -1469,6 +1469,43 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertTrue(reply['dispatched'], reply)
         print('cancelled_waiter=left_line unconfirmed_stop=left_line')
 
+    def test_a_worker_stopped_while_it_waits_does_not_rejoin_the_line(self):
+        todos = ['todo-worker-a', 'todo-worker-b', 'todo-worker-c']
+        places = {'worker-a': self.work}
+        for worker in ('worker-b', 'worker-c'):
+            places[worker] = self.work / worker
+            places[worker].mkdir()
+        turn = lambda worker, live, args=None: self.dispatch(
+            'list_windows', args or {}, worker=worker, workDir=str(places[worker]), todos=live)
+        self.assertTrue(turn('worker-a', todos)['result']['dispatched'])
+        self.pids.append(json.loads((self.lifecycle() / 'driver.json').read_text())['pid'])
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            waiting = pool.submit(turn, 'worker-b', todos)
+            time.sleep(0.5)
+            self.assertTrue(self.call('stop', 'worker-b')['ok'])
+            self.assertFalse(waiting.result(timeout=5)['ok'])
+        reply = turn('worker-c', todos[1:], {'fixture_deadline': True})['result']
+        self.assertTrue(reply['dispatched'], reply)
+        self.pids.append(json.loads((self.lifecycle('worker-c') / 'driver.json').read_text())['pid'])
+        print('stopped_waiter=left_line next_worker=dispatched')
+
+    def test_a_finished_workers_locked_use_passes_to_the_next_worker(self):
+        _, exited = self.turn_guardian()
+        other = self.work / 'other'
+        other.mkdir()
+        self.dispatch('list_windows', {'fixture_screen_locked': True}, workDir=str(self.work))
+        self.assertTrue(self.dispatch('list_windows', {}, workDir=str(self.work))['result']['dispatched'])
+        self.pids.append(json.loads((self.lifecycle() / 'driver.json').read_text())['pid'])
+        exited.unlink(missing_ok=True)
+        self.dispatch('list_windows', {'fixture_screen_locked': True}, worker='worker-b', workDir=str(other),
+                      todos=['todo-worker-b'])
+        self.assertTrue(exited.exists(), 'the finished worker kept Locked Use')
+        reply = self.dispatch('list_windows', {}, worker='worker-b', workDir=str(other),
+                              todos=['todo-worker-b'])['result']
+        self.assertTrue(reply['dispatched'], reply)
+        self.pids.append(json.loads((self.lifecycle('worker-b') / 'driver.json').read_text())['pid'])
+        print('finished_worker=released locked_mac=next_worker')
+
     def test_a_held_worker_stops_keeping_a_locked_mac_once_its_driver_exits(self):
         started, _ = self.turn_guardian()
         pid = finder()
