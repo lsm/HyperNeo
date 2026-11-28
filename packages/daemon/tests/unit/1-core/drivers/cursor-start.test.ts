@@ -225,6 +225,31 @@ describe('createCursorStart.start with model and effort', () => {
     expect(peer.close).toHaveBeenCalledOnce();
   });
 
+  it('restores applied options when configuration times out', async () => {
+    vi.useFakeTimers();
+    try {
+      peer.request
+        .mockResolvedValueOnce(handshake)
+        .mockResolvedValueOnce(created)
+        .mockResolvedValueOnce({
+          result: { configOptions: [models('claude-opus-5-5'), efforts('medium')] },
+        })
+        .mockReturnValueOnce(new Promise(() => {}))
+        .mockResolvedValue({ result: { configOptions: [models('default')] } });
+
+      const started = start('claude-opus-5-5', 'high');
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect(await started).toMatchObject({ ok: false, reason: 'unreachable', notSent: true });
+      expect(peer.request.mock.calls.slice(4).map(([, params]) => params)).toEqual([
+        { sessionId: ref.id, configId: 'effort', value: 'medium' },
+        { sessionId: ref.id, configId: 'model', value: 'default' },
+      ]);
+      expect(peer.close).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('refuses a model Cursor does not offer without prompting', async () => {
     peer.request.mockResolvedValueOnce(handshake).mockResolvedValueOnce(created);
 
