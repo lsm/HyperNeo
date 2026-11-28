@@ -110,4 +110,30 @@ describe('VoiceDraftPreview', () => {
     expect(fresh().length).toBeGreaterThan(0);
     expect(fresh().length).toBeLessThan(15);
   });
+
+  it('keeps typing while the recognizer sends updates faster than the pace', () => {
+    const words = 'one two three four five six seven eight nine ten';
+    const view = render(live(words.slice(0, 5)));
+    for (let end = 6; end <= words.length; end++) {
+      view.rerender(live(words.slice(0, end)));
+      wait(10);
+    }
+    expect(heard().length).toBeGreaterThan(10);
+  });
+
+  it('never splits an emoji or an accented letter', () => {
+    const speech = 'ok 👍🏽 cafe\u0301 🇯🇵 done';
+    render(live(speech));
+    const seen = new Set<string>();
+    for (let tick = 0; tick < 200; tick++) {
+      wait(5);
+      seen.add(heard());
+    }
+    wait(50);
+    const whole = [...new Intl.Segmenter().segment(speech)].map((part) => part.index);
+    for (const shown of seen) expect(whole.includes(shown.length) || shown === speech).toBe(true);
+    expect(heard()).toBe(speech);
+    for (const fresh of screen.queryAllByTestId('voice-interim-fresh'))
+      expect([...new Intl.Segmenter().segment(fresh.textContent ?? '')]).toHaveLength(1);
+  });
 });
