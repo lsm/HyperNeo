@@ -1033,6 +1033,13 @@ export function NeoLive() {
               onOpenSession={openSession}
               publicConversation={publicConversation}
               onOpenWork={openWork}
+              questions={{
+                disabled: !connected || !!neo.busyWork,
+                onAnswer: (questionId, answer) => void neo.answerQuestion(questionId, answer),
+                onHold: (questionId, held) => void neo.holdQuestion(questionId, held),
+                onReply: replyToQuestion,
+                onOpen: openSession,
+              }}
               onRetryPublic={retryPublicConversation}
               pendingAsks={neo.pendingAsks}
               onRetryAsk={(requestId) =>

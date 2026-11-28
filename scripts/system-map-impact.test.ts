@@ -106,10 +106,10 @@ function repository(root: string) {
   return { spawn, write, git, base, change, advance, check };
 }
 
-function block(head: string, base: string, read: string[], entries: unknown[] = [], version = 1) {
+function block(read: string[], entries: unknown[] = [], version = 1) {
   return [
     '```system-map-impact',
-    JSON.stringify({ version, head, base, read }),
+    JSON.stringify({ version, read }),
     ...entries.map((entry) => JSON.stringify(entry)),
     '```',
   ].join('\n');
@@ -131,15 +131,29 @@ test('the saved diff is NUL-delimited and covers only the branch since its fork 
 test('a dev push after the fork point does not change the required block', () => {
   fixture(({ spawn, base, change, advance, check }) => {
     const { head } = change({ [owner]: "publish('ci.kept');" });
-    const good = block(head, base, ['impact'], [reason(peer)]);
+    const good = block(['impact'], [reason(peer)]);
     const tip = advance(head, 'packages/example/src/other.ts', "subscribe('ci.removed');");
     const printed = spawn([process.execPath, cli, '--print', tip]);
     expect(printed.exitCode, printed.stderr.toString()).toBe(0);
-    expect(printed.stdout.toString().trim()).toBe(
-      block(head, base, ['impact'], [{ path: peer, reason: '' }])
-    );
+    expect(printed.stdout.toString().trim()).toBe(block(['impact'], [{ path: peer, reason: '' }]));
     const r = check(head, [owner], good, [], tip);
     expect(r.exitCode, r.stderr.toString()).toBe(0);
+  });
+});
+
+test('a new head reuses the body until its required path set changes', () => {
+  fixture(({ base, change, check }) => {
+    const { head } = change({ [owner]: "publish('ci.kept');" });
+    const body = block(['impact'], [reason(peer)]);
+    const first = check(head, [owner], body);
+    expect(first.exitCode, first.stderr.toString()).toBe(0);
+    const { head: fix } = change({ [owner]: "publish('ci.kept'); publish('ci.kept');" });
+    const reused = check(fix, [owner], body);
+    expect(reused.exitCode, reused.stderr.toString()).toBe(0);
+    const { head: widened } = change({ [removed]: null });
+    const r = check(widened, [owner, removed], body);
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr.toString()).toContain('System map check failed: 0 read, 1 path, 0 reason.');
   });
 });
 
@@ -152,7 +166,7 @@ test('the CLI accounts for deleted sources and removed peers and ignores importe
     expect(output.slice(2, -1).map((line) => JSON.parse(line).path)).toEqual([removed, peer]);
 
     const entries = [reason(removed), reason(peer)];
-    const r = check(head, [owner, removed], block(head, base, ['impact'], entries));
+    const r = check(head, [owner, removed], block(['impact'], entries));
     expect(r.exitCode, r.stderr.toString()).toBe(0);
     expect(r.stdout.toString()).toContain('imported by 1 files outside the plan');
     expect(r.stdout.toString()).toContain('ci.removed');
@@ -182,18 +196,10 @@ test('attestations cover each change category, including empty path sets', () =>
       Object.fromEntries(categories.flatMap(([paths]) => paths).map((path) => [path, '']))
     );
     for (const [paths, read] of categories) {
-      const success = check(head, paths, block(head, base, [...read, 'where', 'routes']));
+      const success = check(head, paths, block([...read, 'where', 'routes']));
       expect(success.exitCode, `${paths.join(', ')}: ${success.stderr}`).toBe(0);
       for (const missing of read) {
-        const r = check(
-          head,
-          paths,
-          block(
-            head,
-            base,
-            read.filter((name) => name !== missing)
-          )
-        );
+        const r = check(head, paths, block(read.filter((name) => name !== missing)));
         expect(r.stderr.toString()).toContain('System map check failed: 1 read');
         expect(r.exitCode).toBe(1);
       }
@@ -204,23 +210,20 @@ test('attestations cover each change category, including empty path sets', () =>
 test('invalid bodies fail, and only revert waives the path entries on label revalidation', () => {
   fixture(({ base, change, check }) => {
     const { head } = change({ [owner]: "publish('ci.kept');" });
-    const good = block(head, base, ['impact'], [reason(peer)]);
-    const claimOnly = block(head, base, ['impact']);
+    const good = block(['impact'], [reason(peer)]);
+    const claimOnly = block(['impact']);
     const bad = [
       '',
       `${good}\n\n${good}`,
-      block(base, base, ['impact'], [reason(peer)]),
-      block(head, base, ['impact'], [reason(peer)], 2),
-      block(head, base, ['impact', 'unknown'], [reason(peer)]),
-      block(head, base, ['impact'], [reason(peer), reason(peer)]),
-      block(head, base, ['impact'], [reason(peer), reason(owner)]),
-      block(head, base, ['impact'], [{ path: peer, reason: '  ' }]),
+      block(['impact'], [reason(peer)], 2),
+      block(['impact', 'unknown'], [reason(peer)]),
+      block(['impact'], [reason(peer), reason(peer)]),
+      block(['impact'], [reason(peer), reason(owner)]),
+      block(['impact'], [{ path: peer, reason: '  ' }]),
       claimOnly,
     ];
     const success = check(head, [owner], good);
     expect(success.exitCode, success.stderr.toString()).toBe(0);
-    const movedBase = check(head, [owner], block(head, head, ['impact'], [reason(peer)]));
-    expect(movedBase.exitCode, movedBase.stderr.toString()).toBe(0);
     for (const body of bad) {
       const r = check(head, [owner], body);
       expect(r.exitCode).toBe(1);
@@ -229,7 +232,7 @@ test('invalid bodies fail, and only revert waives the path entries on label reva
       expect(r.stdout.toString()).toContain('```system-map-impact');
     }
     expect(check(head, [owner], claimOnly, ['revert']).exitCode).toBe(0);
-    expect(check(head, [owner], block(head, base, []), ['revert']).exitCode).toBe(1);
+    expect(check(head, [owner], block([]), ['revert']).exitCode).toBe(1);
     expect(check(head, [owner], claimOnly, []).exitCode).toBe(1);
     const workflow = readFileSync(
       join(import.meta.dir, '../.github/workflows/system-map.yml'),
@@ -245,7 +248,7 @@ test('an analyzer failure reports the command and head instead of validating an 
   fixture(({ base, change, check }) => {
     const manifest = 'packages/example/package.json';
     const { head } = change({ [manifest]: '{' });
-    const r = check(head, [manifest], block(head, base, ['map', 'impact']));
+    const r = check(head, [manifest], block(['map', 'impact']));
     expect(r.exitCode).toBe(1);
     expect(r.stderr.toString()).toContain(head);
     expect(r.stderr.toString()).toContain('impact');
@@ -253,7 +256,7 @@ test('an analyzer failure reports the command and head instead of validating an 
   });
   fixture(({ base, change, check }) => {
     const { head } = change({ [operation]: null });
-    const r = check(head, [operation], block(head, base, ['impact'], [reason(operation)]));
+    const r = check(head, [operation], block(['impact'], [reason(operation)]));
     expect(r.exitCode).toBe(1);
     expect(r.stderr.toString()).toContain(`system-map map failed at head ${head}`);
     expect(r.stdout.toString()).not.toContain('```system-map-impact');

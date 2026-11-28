@@ -79,7 +79,7 @@ function jsonLine(line: string): ObjectFields {
   }
 }
 
-function validate(body: string, head: string, required: Read[], paths: string[]) {
+function validate(body: string, required: Read[], paths: string[]) {
   const lines = body.split(/\r?\n/).map((line) => line.trim());
   const start = lines.indexOf(fence);
   const end = lines.indexOf('```', start + 1);
@@ -103,14 +103,13 @@ function validate(body: string, head: string, required: Read[], paths: string[])
     if (typeof reason !== 'string' || !reason.trim()) reasonErrors++;
   }
   pathErrors += remaining.size;
-  const stale = header.head !== head;
-  return { readErrors, pathErrors, reasonErrors, stale };
+  return { readErrors, pathErrors, reasonErrors };
 }
 
-function printBlock(head: string, base: string, read: Read[], paths: string[]): string {
+function printBlock(read: Read[], paths: string[]): string {
   return [
     fence,
-    JSON.stringify({ version: 1, head, base, read }),
+    JSON.stringify({ version: 1, read }),
     ...paths.map((path) => JSON.stringify({ path, reason: '' })),
     '```',
   ].join('\n');
@@ -173,7 +172,7 @@ function main(args: string[]): number {
     const required = pr?.labels.some(({ name }) => name === 'revert')
       ? []
       : requiredPaths(after, before);
-    const block = printBlock(head, base, read, required);
+    const block = printBlock(read, required);
     if (print) {
       console.log(block);
       return 0;
@@ -184,16 +183,11 @@ function main(args: string[]): number {
       `Head impact\n${formatImpact(after)}`,
       block,
     ]);
-    const { readErrors, pathErrors, reasonErrors, stale } = validate(
-      pr?.body ?? '',
-      head,
-      read,
-      required
-    );
-    if (!readErrors && !pathErrors && !reasonErrors && !stale) return 0;
+    const { readErrors, pathErrors, reasonErrors } = validate(pr?.body ?? '', read, required);
+    if (!readErrors && !pathErrors && !reasonErrors) return 0;
     const error = process.env.GITHUB_ACTIONS === 'true' ? '::error::' : '';
     console.error(
-      `${error}System map check failed: ${readErrors} read, ${pathErrors} path, ${reasonErrors} reason; head ${stale ? 'stale' : 'current'}. Run system-map-impact.ts --print and use the collapsed CI report and replacement block; author read entries are claims.`
+      `${error}System map check failed: ${readErrors} read, ${pathErrors} path, ${reasonErrors} reason. Run system-map-impact.ts --print and use the collapsed CI report and replacement block; author read entries are claims.`
     );
     return 1;
   } catch (error) {

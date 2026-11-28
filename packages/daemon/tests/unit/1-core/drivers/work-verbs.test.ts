@@ -787,7 +787,9 @@ describe('work verb operations', () => {
 
   test('refuses unverified remote effort without forwarding even when the local adapter supports it', async () => {
     let forwarded = 0;
-    const remote: Invoke = async () => {
+    const remote: Invoke = async (_daemon, name) => {
+      if (name === 'work.adapters')
+        return { ok: true, value: [{ id: 'codex-desktop', capabilities: ['start'] }] };
       forwarded++;
       return { ok: true, value: summary('codex-desktop', 't1') };
     };
@@ -837,7 +839,9 @@ describe('work verb operations', () => {
             model: 'gpt-6.1-sol',
             ...(effort ? { effort } : {}),
           },
-          async () => {
+          async (_daemon, name) => {
+            if (name === 'work.adapters')
+              return { ok: true, value: [{ id: 'codex-desktop', capabilities: ['start'] }] };
             forwarded++;
             return { ok: true, value: summary('codex-desktop', 'remote') };
           },
@@ -847,6 +851,58 @@ describe('work verb operations', () => {
       ).toMatchObject({ ok: false, reason: 'unsupported_model' });
       expect(forwarded).toBe(0);
       expect(started).toBe(0);
+    }
+  );
+
+  test.each([
+    [{ configurable: true }, true],
+    [{ fixedProvider: 'anthropic', configurable: false }, false],
+    [undefined, false],
+  ])(
+    'forwards a remote model and effort only when the remote adapter confirms them (%o)',
+    async (identity, forwards) => {
+      const forwarded: { name: string; input: unknown }[] = [];
+      const remote: Invoke = async (_daemon, name, input) => {
+        forwarded.push({ name, input });
+        return name === 'work.adapters'
+          ? {
+              ok: true,
+              value: [
+                { id: 'hyperneo', capabilities: ['start'], ...(identity ? { identity } : {}) },
+              ],
+            }
+          : {
+              ok: true,
+              value: { ...summary('hyperneo', 'remote'), model: 'kimi-for-coding', effort: 'high' },
+            };
+      };
+      const result = await call(
+        'work.start',
+        {
+          adapter: 'hyperneo',
+          place: { ...place, daemon: 'laptop' },
+          title: 't',
+          message: 'm',
+          model: 'kimi-for-coding',
+          effort: 'high',
+        },
+        remote,
+        { source: 'rpc' },
+        []
+      );
+      if (forwards) {
+        expect(result).toMatchObject({
+          ok: true,
+          value: { model: 'kimi-for-coding', effort: 'high', ref: { daemon: 'laptop' } },
+        });
+        expect(forwarded[1]).toMatchObject({
+          name: 'work.start',
+          input: { model: 'kimi-for-coding', effort: 'high' },
+        });
+      } else {
+        expect(result).toMatchObject({ ok: false, reason: 'unsupported_model' });
+        expect(forwarded.map(({ name }) => name)).toEqual(['work.adapters']);
+      }
     }
   );
 
