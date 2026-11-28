@@ -8,13 +8,13 @@ import {
 } from '../../../src/storage/repositories/agent-memory-transformers.ts';
 import { withoutAuthorization } from '../../../src/storage/repositories/agent-memory-fetch-options.ts';
 
-const MODEL_ID = 'onnx-community/granite-embedding-small-english-r2-ONNX';
+const MODEL_ID = 'Xenova/paraphrase-multilingual-mpnet-base-v2';
+const REVISION = 'e5d116277351513fd260955ece953ecddde7046e';
 const MODEL_FILES = [
   'config.json',
   'tokenizer.json',
   'tokenizer_config.json',
-  'onnx/model_q4.onnx',
-  'onnx/model_q4.onnx_data',
+  'onnx/model_quantized.onnx',
 ];
 
 describe('agent memory transformers embedder', () => {
@@ -46,7 +46,7 @@ describe('prefetchAgentMemoryEmbeddingModel', () => {
 
   function writeModelCache(cacheDir: string): void {
     for (const file of MODEL_FILES) {
-      const filePath = join(cacheDir, 'huggingface.co', MODEL_ID, 'resolve/main', file);
+      const filePath = join(cacheDir, 'huggingface.co', MODEL_ID, 'resolve', REVISION, file);
       mkdirSync(dirname(filePath), { recursive: true });
       writeFileSync(filePath, 'cached');
     }
@@ -126,7 +126,7 @@ describe('prefetchAgentMemoryEmbeddingModel', () => {
       expect(fake.modelFromPretrained).toHaveBeenCalled();
       const modelCall = fake.modelFromPretrained.mock.calls[0];
       expect(modelCall?.[0]).toBe(MODEL_ID);
-      expect(modelCall?.[1]).toMatchObject({ dtype: 'q4' });
+      expect(modelCall?.[1]).toMatchObject({ dtype: 'q8', revision: REVISION });
       expect(result).not.toBeNull();
       expect(logs.some((msg) => msg.includes('starting background prefetch'))).toBe(true);
       expect(logs.some((msg) => msg.includes('prefetch completed'))).toBe(true);
@@ -181,7 +181,9 @@ describe('prefetchAgentMemoryEmbeddingModel', () => {
     try {
       await prefetchAgentMemoryEmbeddingModel({ cacheDir, loadTransformers: fake.load });
       await expect(
-        fake.env.fetch('https://huggingface.co/' + MODEL_ID + '/resolve/main/config.json')
+        fake.env.fetch(
+          'https://huggingface.co/' + MODEL_ID + '/resolve/' + REVISION + '/config.json'
+        )
       ).rejects.toThrow('Checksum mismatch');
     } finally {
       cleanup(cacheDir);
@@ -199,7 +201,7 @@ describe('prefetchAgentMemoryEmbeddingModel', () => {
     try {
       await prefetchAgentMemoryEmbeddingModel({ cacheDir, loadTransformers: fake.load });
       const response = await fake.env.fetch(
-        'https://huggingface.co/' + MODEL_ID + '/resolve/main/config.json',
+        'https://huggingface.co/' + MODEL_ID + '/resolve/' + REVISION + '/config.json',
         { headers: { range: 'bytes=0-0' } }
       );
       expect(response.status).toBe(206);

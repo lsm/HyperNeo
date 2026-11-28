@@ -20,7 +20,7 @@ runtime and its vector should agree with the recovered-runtime case.
 
 Run on darwin-x64 and darwin-arm64. The Intel baseline fails with the missing
 `../bin/napi-v6/darwin/x64/onnxruntime_binding.node` error. The required end state
-is a normalized 384-dimensional vector and a semantic-only `work.find` match
+is a normalized 768-dimensional vector and a semantic-only `work.find` match
 through the real daemon RPC door, without manually installing runtime/model
 files. Retain `evidence/embedding-assets.json` and the complete run log, including
 fetch/checksum diagnostics and any failed or inconclusive result.

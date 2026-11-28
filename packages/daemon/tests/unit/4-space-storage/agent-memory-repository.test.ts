@@ -120,6 +120,23 @@ class SyncThrowingEmbedder extends KeywordEmbedder {
   }
 }
 
+class AngleEmbedder implements AgentMemoryEmbedder {
+  model = 'test-angle';
+  dimensions = 2;
+
+  constructor(private readonly cosines: Record<string, number>) {}
+
+  embedQuery(): Float32Array {
+    return new Float32Array([1, 0]);
+  }
+
+  embedPassage(text: string): Float32Array {
+    const cosine =
+      Object.entries(this.cosines).find(([content]) => text.includes(content))?.[1] ?? 0;
+    return new Float32Array([cosine, Math.sqrt(1 - cosine * cosine)]);
+  }
+}
+
 function keywordVector(text: string): Float32Array {
   const lower = text.toLowerCase();
   return new Float32Array([
@@ -535,6 +552,38 @@ describe('AgentMemoryRepository', () => {
 
     const results = await repo.search('space-a', 'erase old conversation data', 5);
     expect(results.map((result) => result.memory.key)).toEqual(['legacy.memory']);
+  });
+
+  test('excludes vector hits below the top-relative floor', async () => {
+    repo = new AgentMemoryRepository(
+      db,
+      undefined,
+      new AngleEmbedder({ 'alpha note': 0.95, 'bravo note': 0.92, 'charlie note': 0.8 })
+    );
+    for (const [key, content] of [
+      ['best', 'alpha note'],
+      ['close', 'bravo note'],
+      ['far', 'charlie note'],
+    ])
+      repo.write({ spaceId: 'space-a', key, content });
+    await flushPromises();
+
+    const results = await repo.search('space-a', 'zzz', 5);
+
+    expect(results.map((result) => result.memory.key)).toEqual(['best', 'close']);
+  });
+
+  test('returns no vector hits when even the best is unrelated', async () => {
+    repo = new AgentMemoryRepository(
+      db,
+      undefined,
+      new AngleEmbedder({ 'alpha note': 0.1, 'bravo note': 0.05 })
+    );
+    repo.write({ spaceId: 'space-a', key: 'best', content: 'alpha note' });
+    repo.write({ spaceId: 'space-a', key: 'next', content: 'bravo note' });
+    await flushPromises();
+
+    expect(await repo.search('space-a', 'zzz', 5)).toEqual([]);
   });
 
   test('vector search preserves space isolation', async () => {

@@ -33,6 +33,6 @@ const evidence = { target, rosetta, status: result.status, stdout: result.stdout
 writeFileSync(join(run, 'evidence/compiled-embedding-load.json'), JSON.stringify(evidence, null, 2));
 assert.equal(result.status, 0, `Compiled embedding load failed:\n${result.stderr}`);
 const observed = JSON.parse(result.stdout.trim().split('\n').at(-1) ?? '{}');
-assert.equal(observed.dimensions, 384);
+assert.equal(observed.dimensions, 768);
 assert(Math.abs(observed.norm - 1) < 1e-3, `Embedding norm ${observed.norm}`);
-console.log(`PASS: ${target} compiled binary downloads and loads the embedding runtime and model in a fresh data dir and returns a normalized 384-dimensional vector`);
+console.log(`PASS: ${target} compiled binary downloads and loads the embedding runtime and model in a fresh data dir and returns a normalized 768-dimensional vector`);
