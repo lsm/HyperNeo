@@ -858,6 +858,7 @@ describe('withCodexDesktopIpc', () => {
                 daemonName: 'test',
                 isOpenTodo: (todoId: string) => todoId === 'open-todo',
                 acceptedTodo: () => true,
+                todoWorker: { on: () => true, wait: async () => 'none' },
                 noticeReply: () => true,
                 remote: { list: () => [], invoke: async () => ({}) },
               })
@@ -1047,6 +1048,7 @@ describe('withCodexDesktopIpc', () => {
             daemonName: 'test',
             isOpenTodo: () => true,
             acceptedTodo: () => true,
+            todoWorker: { on: () => true, wait: async () => 'none' },
             noticeReply: () => true,
             remote: { list: () => [], invoke: async () => ({}) },
           })
@@ -1161,6 +1163,7 @@ describe('withCodexDesktopIpc', () => {
             daemonName: 'test',
             isOpenTodo: () => true,
             acceptedTodo: () => true,
+            todoWorker: { on: () => true, wait: async () => 'none' },
             noticeReply: () => true,
             remote: { list: () => [], invoke: async () => ({}) },
           })
@@ -1417,6 +1420,7 @@ describe('withCodexDesktopIpc', () => {
           daemonName: 'test',
           isOpenTodo: (todoId) => todoId === 'open-todo',
           acceptedTodo: () => true,
+          todoWorker: { on: () => true, wait: async () => 'none' },
           noticeReply: () => true,
           remote: { list: () => [], invoke: async () => ({}) },
         })
