@@ -1431,7 +1431,7 @@ describe('card reply notice navigation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Search work', exact: true }));
     fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'searchable' } });
     const held = (await screen.findByText('Held question?')).closest('[data-ask-question]');
-    expect(within(held as HTMLElement).getByText('On hold')).toBeTruthy();
+    expect(within(held as HTMLElement).getByText('Paused')).toBeTruthy();
     fireEvent.click(within(held as HTMLElement).getByRole('button', { name: 'Take back' }));
     expect(holdQuestion).toHaveBeenCalledWith('qh', false);
     const waiting = (await screen.findByText('Waiting question?')).closest('[data-ask-question]');

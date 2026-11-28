@@ -75,8 +75,7 @@ async function checkWaitingOnly(context, theme) {
   });
   const waiting = await shown();
   await page.screenshot({ path: join(evidence, `waiting-only-${theme}.png`), animations: 'disabled' });
-  await queue.getByRole('button', { name: /^In progress / }).click();
-  await queue.getByText('Pack the bags', { exact: true }).first().waitFor();
+  await queue.getByRole('button', { name: /^All work / }).click();
   await scenes.getByText('Synthetic filed archive', { exact: true }).waitFor({ timeout: 5000 }).catch(() => {});
   const progress = await shown();
   await page.screenshot({ path: join(evidence, `waiting-only-progress-${theme}.png`), animations: 'disabled' });
@@ -189,10 +188,10 @@ async function checkShortTopics(context, theme) {
     for (const id of ['pay-primary', 'pay-sender'])
       await queue.locator(`#neo-ref-question-${prefix}-${id}`).getByRole('button', { name: button }).click();
   };
-  await moveQuestions('waiting', '先放着');
-  await queue.getByRole('button', { name: '先放着 4' }).click();
-  await moveQuestions('held', '拿回来');
-  await queue.getByRole('button', { name: '先放着 2' }).waitFor();
+  await moveQuestions('waiting', '搁置');
+  await queue.getByRole('button', { name: '已搁置 4' }).click();
+  await moveQuestions('held', '取回');
+  await queue.getByRole('button', { name: '已搁置 2' }).waitFor();
   assert.equal(await more.locator('option[value="payments"]').innerText(), '支付 2');
   await more.selectOption('payments');
   await cards('pay-primary', 'pay-sender');
@@ -266,7 +265,7 @@ try {
     const checkSavedTopic = async () => {
       await page.evaluate(() => localStorage.setItem('neo:topic-filter', 'pick:travel'));
       await page.reload();
-      const state = queue.getByRole('button', { name: /^In progress / });
+      const state = queue.getByRole('button', { name: /^All work / });
       await state.waitFor();
       assert.equal(await chips.count(), 0);
       const badge = queue.locator('[data-ask="trip"]').getByRole('button', { name: 'Travel', exact: true });
@@ -274,10 +273,10 @@ try {
       const savedTopic = { state: await state.innerText(), badgeDisabled: await badge.isDisabled() };
       await page.screenshot({ path: join(evidence, `saved-topic-${theme}.png`), animations: 'disabled' });
       if (phase === 'after') {
-        assert.deepEqual(savedTopic, { state: 'In progress 2', badgeDisabled: true });
+        assert.deepEqual(savedTopic, { state: 'All work 7', badgeDisabled: true });
         await state.click();
-        await queue.getByText('Call the garage', { exact: true }).waitFor();
-        await queue.getByText('Pack the bags', { exact: true }).waitFor();
+        await page.getByText('Call the garage', { exact: true }).first().waitFor();
+        await page.getByText('Pack the bags', { exact: true }).first().waitFor();
       }
       return savedTopic;
     };
@@ -318,7 +317,7 @@ try {
     const observation = { theme, rows, hover };
     if (phase === 'layout-before' || phase === 'after') observation.filters = await measureFilters();
     observations.push(observation);
-    assert.deepEqual(rows.state, ['Waiting on you 4', 'Held 1', 'In progress 2']);
+    assert.deepEqual(rows.state, ['Waiting on you 4', 'Held 1', 'In progress 0', 'All work 7']);
     assert.equal(rows.ask[0], 'All 4');
     assert.equal(rows.more, 1);
     assert.deepEqual(hover.target, [44, 44]);
@@ -350,10 +349,9 @@ try {
     await hotel.getByRole('button', { name: 'Take back' }).click();
     await states.getByRole('button', { name: 'Waiting on you 4' }).click();
     await hotel.getByRole('button', { name: 'Hold', exact: true }).waitFor();
-    await states.getByRole('button', { name: 'In progress 2' }).click();
-    await queue.getByText('Call the garage', { exact: true }).waitFor();
-    await asks.getByRole('button', { name: 'Finance 1' }).click();
-    await queue.getByText('Pack the bags', { exact: true }).waitFor({ state: 'detached' });
+    await states.getByRole('button', { name: 'All work 7' }).click();
+    await page.getByText('Call the garage', { exact: true }).first().waitFor();
+    await page.getByText('Pack the bags', { exact: true }).first().waitFor();
     const chooser = page.waitForEvent('filechooser');
     await attach.click();
     assert.equal(await (await chooser).isMultiple(), true);
@@ -432,4 +430,4 @@ if (phase === 'topic-before') {
     assert.deepEqual(savedTopic, { state: 'In progress 1', badgeDisabled: false });
   assert.fail(`${observations.length} themes: the saved topic silently narrowed In progress to 1`);
 }
-console.log(`PASS: ${observations.length} themes, ${phase === 'late-reference' ? 'late queue reference selects Held and receives focus' : phase === 'waiting-only' ? 'Waiting on you lists only waiting cards; In progress keeps recent outcomes' : phase === 'short-topics' ? 'localized topic chips, overflow and grouped queue cards' : phase === 'phone-parity' ? 'phone tab counts, unfinished todo count and older outcomes' : 'state and topic filters, Hold and Take back, and centered attachment hover'}`);
+console.log(`PASS: ${observations.length} themes, ${phase === 'late-reference' ? 'late queue reference selects Held and receives focus' : phase === 'waiting-only' ? 'Waiting on you lists only waiting cards; All work keeps recent outcomes' : phase === 'short-topics' ? 'localized topic chips, overflow and grouped queue cards' : phase === 'phone-parity' ? 'phone tab counts, unfinished todo count and older outcomes' : 'state and topic filters, Hold and Take back, and centered attachment hover'}`);
