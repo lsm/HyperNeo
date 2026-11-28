@@ -1,5 +1,7 @@
 import { basename, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { ANTIGRAVITY_DESKTOP_UNAVAILABLE } from './antigravity-desktop-channel.ts';
+import { createAntigravityDesktopControl } from './antigravity-desktop-control.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import type { FindQuery, PlaceGroup, WorkAdapter } from './types.ts';
 
@@ -59,6 +61,25 @@ const find = (superpipe({})('antigravity-desktop-find') as PipelineAPI)
   .pipe(groupSessions, ['sessions', 'machine'], 'groups')
   .endAsync('groups') as (query: FindQuery, read: Read, machine: string) => Promise<PlaceGroup[]>;
 
-export function createAntigravityDesktopDiscovery(read: Read, machine: string): WorkAdapter {
-  return { id: ADAPTER, capabilities: ['find'], find: (query) => find(query, read, machine) };
+export function createAntigravityDesktopDiscovery(
+  read: Read,
+  machine: string,
+  control?: { homeDir: string; available: () => boolean }
+): WorkAdapter {
+  const discovery = { id: ADAPTER, find: (query: FindQuery) => find(query, read, machine) };
+  if (!control) return { ...discovery, capabilities: ['find'] };
+  const { send } = createAntigravityDesktopControl({
+    homeDir: control.homeDir,
+    find: async (id) => (await read({ id, includeClosed: true, limit: 1 }))[0],
+  });
+  return {
+    ...discovery,
+    get capabilities(): WorkAdapter['capabilities'] {
+      return control.available() ? ['find', 'send'] : ['find'];
+    },
+    get unsupportedCapabilities() {
+      return control.available() ? {} : { send: ANTIGRAVITY_DESKTOP_UNAVAILABLE };
+    },
+    send,
+  };
 }
