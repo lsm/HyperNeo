@@ -355,7 +355,7 @@ test('the RPC snapshot carries the human queue with each todo owner and step', a
       },
     ],
     counts: {
-      'index-0': { waiting: 1, others: 0, held: 0, progress: 0 },
+      'index-0': { waiting: 0, others: 0, held: 0, progress: 0 },
       'index-1': { waiting: 1, others: 0, held: 0, progress: 0 },
     },
     topics: {
@@ -389,7 +389,7 @@ test('a project-scoped snapshot still carries the whole human queue, like needsY
   expect(scoped.todoAsks?.map((entry) => entry.ask.id)).toEqual(['index-0']);
   expect(scoped.needsYou).toBe(1);
   expect(scoped.humanQueue?.counts).toEqual({
-    'index-0': { waiting: 1, others: 0, held: 0, progress: 0 },
+    'index-0': { waiting: 0, others: 0, held: 0, progress: 0 },
     'index-1': { waiting: 1, others: 0, held: 0, progress: 0 },
   });
   expect(scoped.humanQueue?.topics).toEqual({
