@@ -771,6 +771,7 @@ describe('work.start reuse of a non-configurable adapter', () => {
     const result = await run.start(neo, false, { todoId: 'next' });
     expect(result.value?.ref.id).toBe(reuse ? id : 'fresh');
     expect(run.sent).toEqual(reuse ? [id] : []);
+    if (reuse) expect(result.value).toMatchObject({ model: 'claude-opus-5-5', effort: 'medium' });
   });
 });
 

@@ -1043,15 +1043,16 @@ export async function reuseIdleWorker(
       }
       continue;
     }
-    if (requested && !matchesRequested(requested, await observed(work.ref, identity))) {
+    const seen = await observed(work.ref, identity);
+    if (requested && !matchesRequested(requested, seen)) {
       reuseHolds.delete(key);
       continue;
     }
     const addressed = withReplySender(input.message, from, `${adapter.id}:${work.ref.id}`);
     const message = input.provenance
       ? withWorkerProvenance(addressed, {
-          model: identity?.model ?? null,
-          effort: identity?.effort ?? null,
+          model: seen?.model ?? null,
+          effort: seen?.effort ?? null,
           harness: adapter.id,
         })
       : addressed;
@@ -1061,8 +1062,8 @@ export async function reuseIdleWorker(
             work.ref,
             todoId,
             role,
-            identity?.model,
-            identity?.effort,
+            seen?.model,
+            seen?.effort,
             context?.shares[role]?.shareWith
           )
           .catch((error: unknown) => {
@@ -1130,9 +1131,7 @@ export async function reuseIdleWorker(
         ok: true,
         value: {
           ...work,
-          ...(input.provenance || requested
-            ? { model: identity?.model, effort: identity?.effort }
-            : {}),
+          ...(input.provenance || requested ? { model: seen?.model, effort: seen?.effort } : {}),
           ...(sent.value.receipt ? { receipt: sent.value.receipt } : {}),
           delivery: sent.value,
           reused: true,
