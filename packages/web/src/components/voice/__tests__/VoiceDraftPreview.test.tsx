@@ -156,6 +156,22 @@ describe('VoiceDraftPreview', () => {
     expect(fresh().length).toBeGreaterThan(0);
   });
 
+  it('starts the next utterance at a gentle pace after one ends mid-reveal', () => {
+    const view = render(live('a'.repeat(80)));
+    frames(10);
+    view.rerender(live('a'.repeat(80), true));
+    view.rerender(live(''));
+    frames(30);
+    view.rerender(live('b'.repeat(60)));
+    const counts = [shown().length];
+    for (let frame = 0; frame < 10; frame++) {
+      frames(1);
+      counts.push(shown().length);
+    }
+    const steps = counts.slice(1).map((count, i) => count - (counts[i] ?? 0));
+    expect(Math.max(...steps)).toBeLessThanOrEqual(2);
+  });
+
   it('shows words as they arrive under reduced motion', () => {
     vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('reduce') }));
     const view = render(live('hello'));
