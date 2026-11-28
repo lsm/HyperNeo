@@ -1,6 +1,7 @@
 import {
   NEO_PACK_CHECK,
   NEO_HUMAN_WORK,
+  NEO_MEMORY,
   NEO_DRIVER_HEALTH,
   NEO_ROOT_PROMPT,
   NEO_ROOT_TURN_END,
@@ -57,6 +58,7 @@ export function neoPrompt(
     neoPackBriefing(packs),
     NEO_FOCUSED_DISCUSSION,
     NEO_HUMAN_WORK,
+    NEO_MEMORY,
     NEO_DRIVER_HEALTH,
     NEO_ROOT_TURN_END,
   ]

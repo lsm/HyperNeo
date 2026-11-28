@@ -302,4 +302,16 @@ describe('coding worker rules', () => {
     - In a public repo: no local paths, machine names, session ids or private repo names.
     An issue states the problem and what done looks like, in a few sentences.`);
   });
+
+  test('tells Neo when to save, update and delete memories', () => {
+    const prompt = neoPrompt([]);
+    for (const text of [
+      'durable human preference, decision, environment constraint or reusable lesson',
+      'Save one with memory.save when you learn or confirm it',
+      'save it again under the same key',
+      'Delete it with memory.delete when it is wrong, obsolete or withdrawn',
+      'Do not save task status or worker output by default',
+    ])
+      expect(prompt).toContain(text);
+  });
 });

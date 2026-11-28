@@ -57,6 +57,7 @@ import { runMigration538 } from './m538-neo-todo-hold.ts';
 import { runMigration539 } from './m539-mcp-oauth-auth.ts';
 import { runMigration540 } from './m540-repair-todo-plan-mcp-oauth.ts';
 import { runMigration541 } from './m541-work-adoptions.ts';
+import { runMigration542 } from './m542-neo-memories.ts';
 import { runMigration483 } from './m483-neo-session-seen-question.ts';
 import { runMigration481 } from './m481-agent-devices.ts';
 import { runMigration476 } from './m476-neo-todo-approved-at.ts';
@@ -1117,6 +1118,7 @@ export function runMigrations(
   run(migrationMarkerKey(539), () => runMigration539(db));
   run(migrationMarkerKey(540), () => runMigration540(db));
   run(migrationMarkerKey(541), () => runMigration541(db));
+  run(migrationMarkerKey(542), () => runMigration542(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

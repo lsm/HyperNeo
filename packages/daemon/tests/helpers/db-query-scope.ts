@@ -3,6 +3,12 @@ import { type DbScopeType, getScopeConfig } from '../../src/lib/db-query/scope-c
 export const EXCLUDED_TABLE_NAMES: string[] = [
   'pack_coding_todos',
   'neo_peers',
+  'neo_memories',
+  'neo_memories_fts',
+  'neo_memories_fts_config',
+  'neo_memories_fts_data',
+  'neo_memories_fts_docsize',
+  'neo_memories_fts_idx',
   'google_connections',
   'artifact_file_identity',
   'artifact_files',
