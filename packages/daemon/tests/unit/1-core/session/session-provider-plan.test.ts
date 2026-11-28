@@ -21,8 +21,8 @@ const request = {
 };
 
 describe('decideSessionProvider', () => {
-  it('waits and says why once when no provider is on', () => {
-    expect(decideSessionProvider(request, on())).toEqual({
+  it.each([false, true])('waits and says why once when no provider is on (pinned: %p)', (pinned) => {
+    expect(decideSessionProvider({ ...request, pinned }, on())).toEqual({
       kind: 'wait',
       notice: NO_PROVIDER_NOTICE,
     });
@@ -37,15 +37,17 @@ describe('decideSessionProvider', () => {
     });
   });
 
-  it('tells the human when a pinned session moves', () => {
+  it('fails a pinned session whose provider is off instead of moving it', () => {
     const plan = decideSessionProvider(
-      { ...request, pinned: true },
-      on(model('gpt', 'anthropic-copilot'))
+      { ...request, wanted: 'custom:ai0', pinned: true, model: 'Qwen3.5-9B-MTP' },
+      on(model('glm-5.3', 'glm'))
     );
 
-    expect(plan).toMatchObject({ kind: 'move', provider: 'anthropic-copilot' });
-    expect(plan.notice).toContain('anthropic, which is off');
-    expect(plan.notice).toContain('gpt on anthropic-copilot');
+    expect(plan).toEqual({
+      kind: 'fail',
+      notice:
+        'This session uses Qwen3.5-9B-MTP on custom:ai0, which is off. Turn custom:ai0 on under Providers, or choose another model for this session.',
+    });
   });
 
   it('keeps the same model when a provider that is on offers it', () => {
