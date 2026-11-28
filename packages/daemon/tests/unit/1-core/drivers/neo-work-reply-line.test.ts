@@ -22,6 +22,7 @@ function harness(adapter: string) {
   const received: string[] = [];
   const backend: WorkAdapter = {
     id: adapter,
+    identity: { fixedProvider: 'p', configurable: false },
     capabilities: ['send', 'start', 'queue'],
     find: () => [],
     send: async (_ref, message) => {
@@ -56,7 +57,12 @@ function harness(adapter: string) {
     })
   );
   const call = async (name: string, input: object, caller = neo) => {
-    const request = name === 'work.start' || 'todoId' in input ? input : { notice: true, ...input };
+    const request =
+      name === 'work.start'
+        ? { provider: 'p', model: 'm', effort: 'high', ...input }
+        : 'todoId' in input
+          ? input
+          : { notice: true, ...input };
     const result = await invokeOperation(registry, name, request, caller);
     expect(result.kind).toBe('completed');
     if (result.kind === 'completed') expect(result.value).toMatchObject({ ok: true });
@@ -97,7 +103,7 @@ describe('Neo external worker reply instructions', () => {
       const work = { title: 'Build', instruction: 'Ship the fix.' };
       for (const target of [
         { verb: 'send' as const, ref: { adapter, id: 'worker' } },
-        { verb: 'start' as const, adapter, place },
+        { verb: 'start' as const, adapter, place, model: 'm', effort: 'high' },
       ]) {
         const delivery = driverWorkCall(target, work);
         await call(
