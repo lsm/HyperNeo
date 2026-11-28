@@ -857,6 +857,47 @@ describe('Neo public work scenes', () => {
     expect(document.querySelectorAll('[id="neo-ref-question-doc"]')).toHaveLength(1);
   });
 
+  it('keeps a queued card answerable under All work once its ask is read', async () => {
+    const { model } = mount(true, true);
+    const full = testAskEntry('ask-q', 'Ask with a card', {
+      state: 'waiting',
+      questions: [card('q-all', 'ask-q', 50)],
+    });
+    const request = vi.fn(async () => ({ ok: true, entry: full }));
+    vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [
+            {
+              ...full,
+              summary: {
+                todoCount: 0,
+                questionCount: 1,
+                openQuestionCount: 1,
+                questionRefs: [{ id: 'q-all', replacedBy: null }],
+              },
+            },
+          ],
+          humanQueue: {
+            items: [waits('q-all', 'ask-q')],
+            counts: { 'ask-q': { waiting: 1, held: 0, progress: 0 } },
+          },
+        } as never,
+      };
+    });
+    const scenes = screen.getByRole('region', { name: 'Work scenes' });
+    fireEvent.click(within(scenes).getByRole('button', { name: /^All work/ }));
+    await waitFor(() => expect(request).toHaveBeenCalled());
+    await act(async () => {
+      await request.mock.results[0]?.value;
+    });
+    const question = scenes.querySelector('#neo-ref-question-q-all') as HTMLElement | null;
+    expect(question?.textContent).toContain('Awaiting your answer');
+  });
+
   it('keeps the empty legacy scene list collapsed without a public Work placeholder', () => {
     const { container } = mount(false, true);
     expect(screen.queryByText('Your inbox is empty')).toBeNull();

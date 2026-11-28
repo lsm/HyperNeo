@@ -158,6 +158,12 @@ describe('NeoHumanQueue', () => {
     expect(view.queryByText('Call the garage')).toBeNull();
   });
 
+  it('counts all work whatever ask was chosen under another state', () => {
+    const { states, asks } = show();
+    fireEvent.click(asks.getByRole('button', { name: 'Plan the trip 1' }));
+    expect(states.getByRole('button', { name: 'All work 5' })).toBeTruthy();
+  });
+
   it('keeps the chosen ask visible after a state switch empties it', () => {
     const { states, asks } = show();
     fireEvent.click(states.getByRole('button', { name: 'In progress 2' }));

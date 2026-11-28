@@ -399,7 +399,9 @@ export function NeoLive() {
         )
       }
       onLoadDetails={
-        listed ? (input) => loadNeoAskDetails(input).then(withoutQueued) : loadNeoAskDetails
+        listed && queueState !== 'all'
+          ? (input) => loadNeoAskDetails(input).then(withoutQueued)
+          : loadNeoAskDetails
       }
       onOpen={openSession}
     />

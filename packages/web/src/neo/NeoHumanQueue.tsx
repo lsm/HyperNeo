@@ -179,7 +179,7 @@ export function NeoHumanQueue({
   }, [focus, focused && neoHumanQueueTab(focused), state, topic, focusReady, reveal]);
   const count = (s: NeoInboxTab, key: string | null) =>
     s === 'all'
-      ? queue.items.filter((item) => key === null || topicKey(item.askId) === key).length
+      ? queue.items.length
       : key === null
         ? [...topics.values()].reduce((total, { counts }) => total + counts[s], 0)
         : (topics.get(key)?.counts[s] ?? 0);
