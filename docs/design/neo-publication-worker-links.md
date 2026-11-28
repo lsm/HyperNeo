@@ -8,18 +8,18 @@ Keep the model-facing `session` field in `NeoPublicationDraft`, the publish prom
 `front-model.ts` `replyFields`. An explicit non-Neo worker remains authoritative; server
 derivation only fills an absent field. Web behavior and the stored contract stay unchanged.
 
-Only `session === undefined` triggers prior-session retention or derivation. Make the
-draft non-nullable: explicit `null` fails admission instead of counting as omitted.
+Only `session === undefined` triggers retention or derivation. Decision: reject explicit
+`null` as `invalid_publication` and `neo:` as `unknown_session`, before either fallback.
+Flip `session null is the same as no session` and `Open never points at Neo: its own
+session is dropped, a worker is kept` in `neo-publication-operation.test.ts`.
 
 This preserves the common case where Neo answers a human about a known worker: the
 input has no worker sender, but the model can name that worker directly.
 
 ## Existing server behavior to keep
 
-Refuse an explicit `neo:` session as `unknown_session` before retention or derivation;
-this is the chosen rule, not silent stripping. For an explicit non-Neo worker,
-`neo.publication.deliver` resolves the exact session and accepts only `found`. An unknown
-session rejects publication; a lookup failure asks for a retry with the same requestId
+For an explicit non-Neo worker, `neo.publication.deliver` resolves the exact session and
+accepts only `found`. Unknown sessions reject; lookup failures retry the same requestId
 and session. Front publications keep this same explicit path.
 
 When the model omits `session`, keep `sourceSession` as the only fill-in. Every current
