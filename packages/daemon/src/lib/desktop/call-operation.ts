@@ -137,7 +137,8 @@ export function createDesktopCallOperation(
           todos: readDesktopTodos(db)
             .filter(
               (row) =>
-                desktopAllowedRow(row) && options.getSession(row.worker)?.status !== 'archived'
+                desktopAllowedRow(row) &&
+                ['active', 'paused'].includes(options.getSession(row.worker)?.status ?? '')
             )
             .map((row) => row.id),
           tool: input.tool,
