@@ -792,7 +792,8 @@ describe('work.start provenance for a non-configurable adapter', () => {
         prov: { model: 'requested-model', effort: 'medium' },
       }
     );
-    await run.start(neo, true, { todoId: 'next', model: 'requested-model' });
+    const result = await run.start(neo, true, { todoId: 'next', model: 'requested-model' });
+    expect(result.value).toMatchObject({ model: 'claude-opus-5-5' });
     expect(run.messages.join('\n')).toContain('Agent: claude-opus-5-5');
     expect(run.messages.join('\n')).not.toContain('requested-model');
   });

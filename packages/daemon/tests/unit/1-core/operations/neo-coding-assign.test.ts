@@ -547,6 +547,37 @@ describe('coding actor assignments', () => {
     f.publish();
     expect((await f.assign({ candidates: [author] })).ok).toBe(true);
   });
+  test('passes a candidate provider to line resolution', async () => {
+    const seen: (string | undefined)[] = [];
+    const lines: CodingLines = {
+      models: () => [],
+      active: () => true,
+      resolve: async (target) => {
+        seen.push(target.provider);
+        return { ok: true, value: { model: target.model } };
+      },
+      rank: async (_kind, candidates) => ({
+        ranked: candidates.map((line) => ({ line })),
+        skipped: [],
+        exhausted: false,
+      }),
+    };
+    const f = fixture(undefined, lines);
+    f.db.exec(
+      "INSERT INTO neo_concerns (id,title,summary,context,revision,created_at,updated_at) VALUES ('p1','P1','','',1,0,0)"
+    );
+    f.db.prepare("UPDATE neo_asks SET project_id = 'p1' WHERE id = 'ask'").run();
+    const candidate = {
+      adapter: 'hyperneo',
+      place,
+      model: 'claude-opus-5-5',
+      effort: 'high',
+      provider: 'second',
+    };
+    const out = await f.assign({ candidates: [author, candidate] });
+    expect(out).toMatchObject({ ok: true });
+    expect(seen).toContain('second');
+  });
   test('forwards a candidate provider to work.start', async () => {
     const f = fixture();
     const candidate = { ...reviewer, adapter: 'hyperneo', provider: 'anthropic' };

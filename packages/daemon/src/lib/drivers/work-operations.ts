@@ -1149,7 +1149,9 @@ export async function reuseIdleWorker(
         ok: true,
         value: {
           ...work,
-          ...(input.provenance || requested ? { model: seen?.model, effort: seen?.effort } : {}),
+          ...(input.provenance || requested
+            ? { model: identity?.model, effort: identity?.effort }
+            : {}),
           ...(sent.value.receipt ? { receipt: sent.value.receipt } : {}),
           delivery: sent.value,
           reused: true,
