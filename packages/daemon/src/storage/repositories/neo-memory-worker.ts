@@ -22,7 +22,7 @@ interface NeoMemoryVectorRow extends NeoMemoryRow {
   embedding: Uint8Array;
 }
 
-const VECTOR_FILL_LIMIT = 25;
+const VECTOR_FILL_BATCH = 25;
 const STOPWORDS = new Set(
   (
     'about above after again all also and any are because been before being below between both ' +
@@ -105,13 +105,17 @@ class NeoMemoryRows {
     return this.db.prepare(`DELETE FROM neo_memories WHERE key = ?`).run(key.trim()).changes > 0;
   }
 
-  unembedded(model: string): Array<{ id: number; text: string; content: string }> {
+  unembedded(model: string, afterId: number): Array<{ id: number; text: string; content: string }> {
     return this.db
       .prepare(
         `SELECT id, key || char(10) || content AS text, content FROM neo_memories
-         WHERE embedding IS NULL OR embedding_model IS NOT ? ORDER BY id LIMIT ?`
+         WHERE id > ? AND (embedding IS NULL OR embedding_model IS NOT ?) ORDER BY id LIMIT ?`
       )
-      .all(model, VECTOR_FILL_LIMIT) as Array<{ id: number; text: string; content: string }>;
+      .all(afterId, model, VECTOR_FILL_BATCH) as Array<{
+      id: number;
+      text: string;
+      content: string;
+    }>;
   }
 
   storeVector(id: number, content: string, model: string, vector: Float32Array): void {

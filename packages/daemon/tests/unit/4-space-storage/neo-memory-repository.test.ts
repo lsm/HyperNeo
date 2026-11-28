@@ -55,18 +55,30 @@ describe('NeoMemoryRepository', () => {
     const db = new Database(':memory:');
     runMigration542(db);
     runMigration543(db);
-    const vectors = new NeoMemoryRepository(gatewayFor(db), {
+    const vectors = new NeoMemoryRepository(gatewayFor(db), () => ({
       model: 'concepts',
       dimensions: 4,
       embedQuery: embed,
       embedPassage: embed,
-    });
+    }));
     await vectors.save({ key: 'ci-runs-tests', content: 'Let CI run the daemon tests.' });
     await vectors.save({ key: 'pr-size', content: 'Keep each pull request small.' });
     expect((await vectors.search('测试应该在哪里跑', 3)).map((m) => m.key)).toEqual([
       'ci-runs-tests',
     ]);
     expect(await vectors.search('今天天气怎么样', 3)).toEqual([]);
+
+    const broken = new NeoMemoryRepository(gatewayFor(db), () => ({
+      model: 'broken-first',
+      dimensions: 4,
+      embedQuery: embed,
+      embedPassage: (text) => {
+        if (text.startsWith('ci-runs-tests')) throw new Error('embedder crashed');
+        return embed(text);
+      },
+    }));
+    await broken.save({ key: 'pr-size', content: 'Keep each pull request small.' });
+    expect((await broken.search('合并之前', 3)).map((m) => m.key)).toEqual(['pr-size']);
   });
 
   test('finds a memory from a sentence that ends with a period', async () => {

@@ -8,7 +8,8 @@ The script starts an isolated daemon behind `mock-api-capture.ts`, which logs ea
 request body to `mock-api.log` and forwards it to the ordinary mock. It checks that a
 local-user `memory.save` is refused with `memory_not_authorized` and that a local-user
 `memory.search` finds a seeded memory. Memories are seeded with SQL into the run's own DB,
-because only Neo may write. A Chinese `memory.search` must find the English memory through the
+because only Neo may write. SQL-seeded rows have no vector until the English search starts
+the background fill; the embedder queue runs those passages before the next query. A Chinese `memory.search` must find the English memory through the
 vector arm and an unrelated Chinese query must return nothing. The daemon loads the real
 multilingual model; set `VERIFY_MODEL_CACHE` to an existing `cache/transformers` directory to
 copy it instead of downloading about 280 MB. It then sends a Chinese human Neo message and
