@@ -156,10 +156,13 @@ describe('VoiceDraftPreview', () => {
     expect(fresh().length).toBeGreaterThan(0);
   });
 
-  it('starts the next utterance at a gentle pace after one ends mid-reveal', () => {
+  it.each([
+    ['ends', true],
+    ['is cancelled', false],
+  ])('starts the next utterance at a gentle pace after one %s mid-reveal', (_, ended) => {
     const view = render(live('a'.repeat(80)));
     frames(10);
-    view.rerender(live('a'.repeat(80), true));
+    if (ended) view.rerender(live('a'.repeat(80), true));
     view.rerender(live(''));
     frames(30);
     view.rerender(live('b'.repeat(60)));

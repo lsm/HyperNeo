@@ -78,6 +78,10 @@ function useTypingReveal(target: string, flush: boolean) {
     pace.position = chars.length;
     pace.revealedAt = chars.map(() => Number.NEGATIVE_INFINITY);
   }
+  if (still || !chars.length) {
+    pace.speed = 0;
+    pace.now = undefined;
+  }
   useEffect(() => {
     if (settled(pace)) return;
     let id = requestAnimationFrame(function tick(time) {
