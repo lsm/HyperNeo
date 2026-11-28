@@ -2,7 +2,11 @@ import { PhotoThumbnail } from '../components/PhotoLightbox.tsx';
 import { neoSentWords, neoSplitSentMessage, type NeoSentFile } from './neo-attachments.ts';
 import { NeoSentFiles } from './NeoAttachments.tsx';
 import { previewLinkedReferenceCandidates } from '@hyperneo/shared/types/artifact-reference';
-import type { NeoReplyTo } from '@hyperneo/shared/types/neo-ask';
+import type {
+  NeoQuestionAnswer,
+  NeoQuestionEntry,
+  NeoReplyTo,
+} from '@hyperneo/shared/types/neo-ask';
 import type {
   NeoConversationAskPageItem,
   NeoConversationImageRef,
@@ -25,6 +29,7 @@ import {
   NEO_MESSAGE_STATUS_TITLES,
   type NeoMessageStatus,
 } from './message-status.ts';
+import { QuestionBox } from './NeoAskTodos.tsx';
 import { NeoSessionMark } from './NeoCardParts.tsx';
 import { NeoClampedText } from './NeoClampedText.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
@@ -379,6 +384,48 @@ function NoticeRow({
 
 const FLASH_MS = 1500;
 const SEEK_PAGES = 9;
+
+export type NeoChatQuestionActions = {
+  disabled: boolean;
+  onAnswer: (questionId: string, answer: NeoQuestionAnswer) => void;
+  onHold: (questionId: string, held: boolean) => void;
+  onReply?: (question: NeoQuestionEntry) => void;
+  onOpen?: (link: string, title: string) => void;
+};
+
+function ChatQuestionRow({
+  title,
+  question,
+  actions,
+  onOpenCard,
+}: {
+  title: string;
+  question: NeoQuestionEntry;
+  actions: NeoChatQuestionActions;
+  onOpenCard?: () => void;
+}) {
+  return (
+    <div class="rounded-2xl border border-line p-4" data-chat-question={question.id}>
+      <button
+        type="button"
+        class="block w-full break-words text-left text-sm font-medium text-fg hover:underline focus-visible:outline-accent"
+        disabled={!onOpenCard}
+        onClick={onOpenCard}
+      >
+        {title}
+      </button>
+      <QuestionBox
+        question={question}
+        anchored={false}
+        disabled={actions.disabled}
+        onOpen={actions.onOpen}
+        onAnswer={(answer) => actions.onAnswer(question.id, answer)}
+        onReply={actions.onReply && (() => actions.onReply!(question))}
+        hold={{ held: false, toggle: () => actions.onHold(question.id, true) }}
+      />
+    </div>
+  );
+}
 
 function flashMessage(target: Element) {
   const disclosure = target.closest('details');
@@ -961,8 +1008,10 @@ export function NeoPublicConversation({
   replyLabels,
   mute,
   onQuote,
+  questions,
 }: {
   conversation: Conversation;
+  questions?: NeoChatQuestionActions;
   skipArrival?: ReadonlySet<string>;
   replyLabels?: ReadonlyMap<string, { label: string; askId: string }>;
   statuses?: ReadonlyMap<string, NeoMessageStatus>;
@@ -1026,7 +1075,17 @@ export function NeoPublicConversation({
         </button>
       )}
       {conversation.entries.map((entry) =>
-        entry.kind === 'wake' ? null : entry.kind === 'notices' ? (
+        entry.kind === 'wake' ? null : entry.kind === 'question' ? (
+          questions ? (
+            <ChatQuestionRow
+              key={entry.key}
+              title={entry.entry.ask.title}
+              question={entry.question}
+              actions={questions}
+              onOpenCard={onOpenWork && (() => onOpenWork(`neo-ref-question-${entry.question.id}`))}
+            />
+          ) : null
+        ) : entry.kind === 'notices' ? (
           <NoticeRow key={entry.key} entryKey={entry.key} group={entry.group} mute={mute} />
         ) : (
           <PublicEntry

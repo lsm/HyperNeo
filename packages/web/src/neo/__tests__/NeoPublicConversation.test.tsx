@@ -1110,3 +1110,66 @@ describe('session notice rows', () => {
     }
   });
 });
+
+it('shows an open card question in the chat, answered and held from there', async () => {
+  const onAnswer = vi.fn();
+  const onHold = vi.fn();
+  const onReply = vi.fn();
+  const onOpenWork = vi.fn();
+  const question = {
+    id: 'q-chat',
+    text: 'Send the fictional draft?',
+    kind: 'yesno',
+    state: 'open',
+    createdAt: Date.parse('2026-09-30T12:00:00.500Z'),
+  };
+  const projected = projectNeoPublicConversation(
+    root,
+    {
+      conversationId,
+      status: 'ready',
+      items: [ask()],
+      nextAfter: 1,
+      hasMore: false,
+      hasEarlier: false,
+    },
+    {
+      conversationId,
+      status: 'ready',
+      items: [publication()],
+      nextAfter: 1,
+      hasMore: false,
+      hasEarlier: false,
+    },
+    [],
+    [],
+    [
+      {
+        ask: { id: 'ask-card', title: 'Fictional draft card' },
+        state: 'waiting',
+        todos: [],
+        doneCount: 0,
+        questions: [question],
+      } as never,
+    ]
+  );
+  const { container } = render(
+    <NeoPublicConversation
+      conversation={projected}
+      onOpenWork={onOpenWork}
+      questions={{ disabled: false, onAnswer, onHold, onReply }}
+    />
+  );
+  const row = container.querySelector('[data-chat-question="q-chat"]') as HTMLElement;
+  await waitFor(() => expect(row.textContent).toContain('Send the fictional draft?'));
+  expect(container.querySelector('#neo-ref-question-q-chat')).toBeNull();
+  const order = [...container.querySelectorAll('[data-chat-question], article')];
+  expect(order.indexOf(row)).toBe(1);
+
+  fireEvent.click(within(row).getByRole('button', { name: 'Confirm' }));
+  expect(onAnswer).toHaveBeenCalledWith('q-chat', 'yes');
+  fireEvent.click(within(row).getByRole('button', { name: 'Hold' }));
+  expect(onHold).toHaveBeenCalledWith('q-chat', true);
+  fireEvent.click(within(row).getByRole('button', { name: 'Fictional draft card' }));
+  expect(onOpenWork).toHaveBeenCalledWith('neo-ref-question-q-chat');
+});

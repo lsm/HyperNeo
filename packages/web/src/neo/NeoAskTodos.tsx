@@ -603,6 +603,7 @@ export function QuestionBox({
   onReply,
   onOpen,
   hold,
+  anchored = true,
 }: {
   question: NeoQuestionEntry;
   disabled?: boolean;
@@ -610,6 +611,7 @@ export function QuestionBox({
   onReply?: () => void;
   onOpen?: (link: string, title: string) => void;
   hold?: { held: boolean; toggle: () => void };
+  anchored?: boolean;
 }) {
   const [picked, setPicked] = useState<string[]>([]);
   const toggle = (value: string, on: boolean) =>
@@ -621,7 +623,7 @@ export function QuestionBox({
   );
   return (
     <div
-      id={`neo-ref-question-${question.id}`}
+      id={anchored ? `neo-ref-question-${question.id}` : undefined}
       data-ask-question={question.id}
       data-question-kind={question.kind}
       class="mt-3 border-t border-line pt-3"

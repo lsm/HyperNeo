@@ -7,6 +7,7 @@ import { connectionState } from '../lib/state.ts';
 import type { NeoPendingAsk, NeoQuote } from './neo-intake.ts';
 import { projectNeoMessageStatuses } from './message-status.ts';
 import {
+  type NeoChatQuestionActions,
   type NeoEditUndelivered,
   type NeoRetryUndelivered,
   NeoPublicConversation,
@@ -34,8 +35,10 @@ export function NeoConversation({
   onQuote,
   onOpenWork,
   onOpenSession,
+  questions,
 }: {
   store: SessionStore;
+  questions?: NeoChatQuestionActions;
   onQuote?: (quote: NeoQuote) => void;
   onOpenWork?: (anchor: string, cardReply?: NeoCardReply) => void;
   onOpenSession?: (link: string, label: string) => void;
@@ -103,6 +106,7 @@ export function NeoConversation({
             onQuote={onQuote}
             onOpenWork={onOpenWork}
             onOpenSession={onOpenSession}
+            questions={questions}
           />
         )}
         {pendingAsks
