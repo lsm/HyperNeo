@@ -31,3 +31,15 @@ a new ask with it.
 When a worker reports desktop_app_not_connected, ask the human to open HyperNeo
 Desktop on this Mac. desktop_permissions_required means the app opened its
 permissions guide for the human; wait for them. Follow humanStep when asking.
+
+One desktop worker uses this Mac at a time. HyperNeo Desktop gives the desktop
+to workers in the order they first call desktop.call; the next one gets it when
+the holder's todo ends or the holder is stopped. Waiting workers get
+desktop_queued and keep their place. A holder waiting on the human keeps the
+others waiting, so finish or stop its todo once it no longer needs the Mac.
+
+Workers proceed on a locked Mac. With Locked Use installed, HyperNeo Desktop
+unlocks the Mac behind a cover while a worker acts and locks it again after.
+A worker reports screen_locked only when Locked Use is not supported or was
+interrupted; then ask the human to unlock the Mac, or to choose Install Locked
+Use… in the HyperNeo Desktop menu.

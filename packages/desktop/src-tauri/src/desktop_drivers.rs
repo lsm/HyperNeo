@@ -3,6 +3,8 @@ mod peer;
 pub(crate) use peer::wait_unreaped;
 #[path = "desktop_driver_channel.rs"]
 mod channel;
+#[path = "desktop_desk.rs"]
+mod desk;
 #[path = "desktop_grants.rs"]
 mod grants;
 #[path = "desktop_leases.rs"]
@@ -99,6 +101,8 @@ fn scoped_windows(mut body: Value, apps: &[String]) -> Value {
     body
 }
 const LEASE_POLL: Duration = Duration::from_millis(200);
+/// A queued call waits this many call budgets for the desktop before it returns.
+const QUEUE_WAITS: u32 = 3;
 struct Worker {
     channel: channel::Channel,
     _directory: TempDir,
@@ -113,6 +117,7 @@ struct Drivers {
     sidecar: peer::ChildSlot,
     desktop_ready: Arc<dyn Fn() -> bool + Send + Sync>,
     leases: StdMutex<leases::Leases>,
+    desk: StdMutex<desk::Desk>,
     foreground: Arc<Mutex<()>>,
     /// The foreground lock, owned by the worker using it rather than by its request, so a
     /// cancelled request cannot drop it; a held worker keeps it until retired.
@@ -284,6 +289,7 @@ impl Control {
             sidecar,
             desktop_ready,
             leases: StdMutex::default(),
+            desk: StdMutex::default(),
             foreground: Arc::default(),
             foreground_owner: StdMutex::default(),
             closing: Default::default(),
@@ -477,6 +483,7 @@ impl Drivers {
         };
         #[cfg(not(test))]
         let deadline = Instant::now() + Duration::from_secs(20);
+        let call_budget = deadline - Instant::now();
         if matches!(request.action.as_str(), "start" | "dispatch")
             && self.closing.load(std::sync::atomic::Ordering::SeqCst)
         {
@@ -675,6 +682,39 @@ impl Drivers {
                 .as_ref()
                 .is_some_and(|args| args["fixture_screen_locked"] == true)
         };
+        if request.action == "dispatch" {
+            let todo = request.todo.as_deref().unwrap_or_default();
+            let todos = request.todos.as_deref().unwrap_or_default();
+            if self.unconfirmed.lock().unwrap().contains(&request.worker) {
+                return Ok(finish(
+                    bundle,
+                    class,
+                    "refused",
+                    json!("stop_unconfirmed"),
+                    false,
+                ));
+            }
+            let line_by = deadline + call_budget * QUEUE_WAITS;
+            while !self.desk.lock().unwrap().take(&request.worker, todo, todos) {
+                if Instant::now() + LEASE_POLL >= line_by {
+                    return Ok(finish(
+                        bundle,
+                        class,
+                        "refused",
+                        json!("desktop_queued"),
+                        false,
+                    ));
+                }
+                tokio::select! {
+                    _ = tokio::time::sleep(LEASE_POLL) => {}
+                    _ = Call::cancelled(&mut call) => return Ok(stopped()),
+                }
+            }
+            if screen_locked() {
+                self.retry_held().await;
+            }
+        }
+        let deadline = deadline.max(Instant::now() + call_budget);
         if request.action == "dispatch"
             && !self
                 .locked
@@ -1133,6 +1173,22 @@ impl Drivers {
         self.locked.gate(worker, locked, None).await
     }
 
+    /// A held worker gets no input; finishing its stop keeps it from holding a locked Mac
+    /// from the next worker once its driver has exited.
+    async fn retry_held(&self) {
+        let held: Vec<String> = self.unconfirmed.lock().unwrap().iter().cloned().collect();
+        for worker_id in held {
+            let slot = self.workers.lock().await.get(&worker_id).cloned();
+            let Some(slot) = slot else {
+                let _ = self.retire(&worker_id, &mut None).await;
+                continue;
+            };
+            if let Ok(mut worker) = slot.try_lock_owned() {
+                let _ = self.retire(&worker_id, &mut worker).await;
+            }
+        }
+    }
+
     async fn may_act(&self, worker: &str) -> Option<locked_use::Acting> {
         self.locked.act(worker).await
     }
@@ -1144,6 +1200,7 @@ impl Drivers {
             .unwrap()
             .insert(worker_id.to_owned());
         self.leases.lock().unwrap().pin(worker_id);
+        self.desk.lock().unwrap().leave(worker_id);
         self.locked.hold(worker_id);
     }
 
@@ -1170,6 +1227,7 @@ impl Drivers {
                     return Err("stop_unconfirmed: Locked Use guardian did not exit".into());
                 }
                 self.leases.lock().unwrap().release(worker_id);
+                self.desk.lock().unwrap().leave(worker_id);
                 self.foreground_owner.lock().unwrap().remove(worker_id);
                 self.unconfirmed.lock().unwrap().remove(worker_id);
                 Ok(())
@@ -1279,6 +1337,7 @@ mod peer_tests {
             sidecar: Arc::new(StdMutex::new(Some(child))),
             desktop_ready: Arc::new(|| true),
             leases: StdMutex::default(),
+            desk: StdMutex::default(),
             foreground: Arc::default(),
             foreground_owner: StdMutex::default(),
             closing: Default::default(),
@@ -1323,6 +1382,7 @@ mod peer_tests {
             sidecar: Arc::new(StdMutex::new(None)),
             desktop_ready: Arc::new(|| true),
             leases: StdMutex::default(),
+            desk: StdMutex::default(),
             foreground: Arc::default(),
             foreground_owner: StdMutex::default(),
             closing: Default::default(),
@@ -1632,6 +1692,7 @@ mod peer_tests {
             sidecar: Arc::new(StdMutex::new(None)),
             desktop_ready: Arc::new(|| true),
             leases: StdMutex::default(),
+            desk: StdMutex::default(),
             foreground: Arc::default(),
             foreground_owner: StdMutex::default(),
             closing: Default::default(),

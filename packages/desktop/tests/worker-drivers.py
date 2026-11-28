@@ -1318,13 +1318,13 @@ open(sys.argv[2], 'w').write(reply.decode())
         reply = self.dispatch('click', {'pid': pid, 'fixture_deadline': True}, worker='worker-b',
                               workDir=str(other))['result']
         self.assertEqual((reply['decision'], reply['reason'], reply['dispatched']),
-                         ('refused', 'window_busy', False))
+                         ('refused', 'desktop_queued', False))
         self.assertFalse(list(other.glob('d-*')))
         self.assertTrue(self.call('stop')['ok'])
         reply = self.dispatch('click', {'pid': pid}, worker='worker-b', workDir=str(other))['result']
         self.assertTrue(reply['dispatched'], reply)
         self.pids.append(json.loads((self.lifecycle('worker-b') / 'driver.json').read_text())['pid'])
-        print('held_window=window_busy after_stop=dispatched')
+        print('held_desktop=desktop_queued after_stop=dispatched')
 
     def overlapping(self, first, second):
         timeline = self.root / 'timeline'
@@ -1346,10 +1346,10 @@ open(sys.argv[2], 'w').write(reply.decode())
         other.mkdir()
         busy = self.dispatch('get_window_state', {'pid': pid, 'fixture_deadline': True},
                              worker='worker-b', workDir=str(other))['result']
-        self.assertEqual(busy['reason'], 'window_busy')
+        self.assertEqual(busy['reason'], 'desktop_queued')
         act = self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']
         self.assertTrue(act['dispatched'], act)
-        print('read_then_act=same_todo other_todo=window_busy')
+        print('read_then_act=same_todo other_worker=desktop_queued')
 
     def test_stop_keeps_the_window_until_the_running_input_ends(self):
         pid = finder()
@@ -1384,7 +1384,7 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.addCleanup(lambda: hold.unlink(missing_ok=True))
         front = {'delivery_mode': 'foreground'}
         failed = self.dispatch('click', {'pid': pid, 'fixture_delay': True, 'fixture_close_fails': True,
-                                         **front}, workDir=str(self.work))['result']
+                                         **front}, workDir=str(self.work), todos=['todo-worker-a'])['result']
         self.assertTrue(failed['reason'].startswith('stop_unconfirmed'), failed)
         old = json.loads((self.lifecycle() / 'driver.json').read_text())['pid']
         self.pids.append(old)
@@ -1532,9 +1532,10 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.call('fixture-admit', tool='click', arguments={'pid': dock})
         other = self.work / 'other'
         other.mkdir()
-        self.assertTrue(self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']['dispatched'])
         self.assertTrue(self.dispatch('click', {'pid': dock}, worker='worker-b',
-                                      workDir=str(other))['result']['dispatched'])
+                                      workDir=str(other), todos=['todo-worker-b'])['result']['dispatched'])
+        self.assertTrue(self.dispatch('click', {'pid': pid}, workDir=str(self.work),
+                                      todos=['todo-worker-a'])['result']['dispatched'])
         for worker in ('worker-a', 'worker-b'):
             self.pids.append(json.loads((self.lifecycle(worker) / 'driver.json').read_text())['pid'])
         front = {'delivery_mode': 'foreground'}
@@ -1542,7 +1543,7 @@ open(sys.argv[2], 'w').write(reply.decode())
             lambda timeline: self.dispatch('click', {'pid': pid, 'fixture_timeline': timeline, **front},
                                            workDir=str(self.work)),
             [lambda timeline: self.dispatch('click', {'pid': dock, 'fixture_timeline': timeline, **front},
-                                            worker='worker-b', workDir=str(other))])
+                                            worker='worker-b', workDir=str(other), todos=['todo-worker-b'])])
         self.assertTrue(all(reply['result']['dispatched'] for reply in replies), replies)
         self.assertEqual(lines, ['begin', 'end', 'begin', 'end'])
         print('foreground=serialized')

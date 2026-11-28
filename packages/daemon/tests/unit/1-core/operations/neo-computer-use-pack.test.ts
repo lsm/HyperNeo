@@ -16,3 +16,12 @@ test('gives workers the desktop permission wait rule', () => {
   expect(createComputerUsePack().workerContext?.()).toBe(NEO_PACK_COMPUTER_USE_WORKER_GUIDANCE);
   expect(NEO_PACK_COMPUTER_USE_WORKER_GUIDANCE).toContain('desktop_permissions_required');
 });
+
+test('tells workers to keep going on a locked Mac and to wait their turn', () => {
+  const guidance = createComputerUsePack().workerContext?.() ?? '';
+  expect(guidance).toContain('A locked Mac is not a blocker.');
+  expect(guidance).toContain('desktop_queued');
+  expect(createComputerUsePack().instructions()).toContain(
+    'One desktop worker uses this Mac at a time.'
+  );
+});
