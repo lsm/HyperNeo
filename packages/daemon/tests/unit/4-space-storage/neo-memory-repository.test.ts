@@ -32,12 +32,16 @@ describe('NeoMemoryRepository', () => {
     expect(await repo.search('what is the weather', 3)).toEqual([]);
   });
 
-  test('searches only the start of a huge pasted blob', async () => {
+  test('reads both ends of a huge pasted message', async () => {
     const blob = 'a1'.repeat(50_000);
-    expect((await repo.search(`daemon tests ${blob}`, 3)).map((m) => m.key)).toEqual([
-      'ci-runs-tests',
-    ]);
-    expect(await repo.search(`${blob} daemon tests`, 3)).toEqual([]);
+    const words = Array.from({ length: 200 }, (_, i) => `line${i}`).join(' ');
+    for (const message of [
+      `daemon tests ${blob}`,
+      `${blob} daemon tests`,
+      `${words} where do daemon tests go`,
+    ])
+      expect((await repo.search(message, 3)).map((m) => m.key)).toEqual(['ci-runs-tests']);
+    expect(await repo.search(`${blob} daemon tests ${blob}`, 3)).toEqual([]);
   });
 
   test('finds a memory from a sentence that ends with a period', async () => {

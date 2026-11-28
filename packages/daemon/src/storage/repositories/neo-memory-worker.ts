@@ -33,10 +33,10 @@ const CJK_RUN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=
 
 export function buildMemoryFtsQuery(query: string): string | null {
   const terms = new Set<string>();
-  for (const word of query
-    .slice(0, MAX_QUERY_CHARS)
-    .toLowerCase()
-    .split(/[^\p{L}\p{N}_./:-]+/u)) {
+  const half = MAX_QUERY_CHARS / 2;
+  const text =
+    query.length > MAX_QUERY_CHARS ? `${query.slice(0, half)} ${query.slice(-half)}` : query;
+  for (const word of text.toLowerCase().split(/[^\p{L}\p{N}_./:-]+/u)) {
     for (const run of word.match(CJK_RUN) ?? []) {
       for (let at = 0; at + 3 <= run.length; at++) terms.add(run.slice(at, at + 3));
     }
@@ -46,10 +46,12 @@ export function buildMemoryFtsQuery(query: string): string | null {
     }
   }
   if (terms.size === 0) return null;
-  return [...terms]
-    .slice(0, MAX_QUERY_TERMS)
-    .map((term) => `"${term.replace(/"/g, '""')}"`)
-    .join(' OR ');
+  const all = [...terms];
+  const kept =
+    all.length > MAX_QUERY_TERMS
+      ? [...all.slice(0, MAX_QUERY_TERMS / 2), ...all.slice(-MAX_QUERY_TERMS / 2)]
+      : all;
+  return kept.map((term) => `"${term.replace(/"/g, '""')}"`).join(' OR ');
 }
 
 function toMemory(row: NeoMemoryRow): NeoMemory {
