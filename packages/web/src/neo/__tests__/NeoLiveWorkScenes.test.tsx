@@ -729,13 +729,21 @@ describe('Neo public work scenes', () => {
               waits('b80', 'ask-b'),
               waits('a10', 'ask-a'),
               waits('a-held', 'ask-a', true),
-              { state: 'progress', askId: 'ask-a', todoId: 'a-step', title: 'A step', owner: null },
+              {
+                state: 'progress',
+                askId: 'ask-a',
+                todoId: 'a-step',
+                title: 'A step',
+                owner: 'worker',
+                step: 'working',
+              },
               {
                 state: 'progress',
                 askId: 'running',
                 todoId: 'run-step',
                 title: 'Run step',
-                owner: null,
+                owner: 'worker',
+                step: 'working',
               },
             ],
             counts: {
@@ -802,7 +810,9 @@ describe('Neo public work scenes', () => {
     fireEvent.click(within(scenes).getByRole('button', { name: /^Held/ }));
     expect(shown()).toEqual(['ask-a', 'a-held']);
     fireEvent.click(within(scenes).getByRole('button', { name: /^In progress/ }));
-    expect(shown()).toEqual(['ask-a', 'a-step', 'running', 'run-step', 'done']);
+    expect(shown()).toEqual([]);
+    fireEvent.click(within(scenes).getByRole('button', { name: /^All work/ }));
+    expect(shown()).toEqual(['ask-a', 'a-open', 'a-held', 'a-step', 'running', 'run-step', 'done']);
   });
 
   it('shows the full document of a queued card once its ask is read', async () => {
@@ -1112,6 +1122,7 @@ describe('card reply notice navigation', () => {
                 todoId: 'garage',
                 title: 'Fictional garage',
                 owner: 'worker',
+                step: 'working',
               },
             ],
             counts: {
@@ -1224,6 +1235,7 @@ describe('card reply notice navigation', () => {
       todoId: `${askId}-step`,
       title: `${askId} step`,
       owner: 'worker' as const,
+      step: 'working' as const,
     });
     act(() => {
       model.value = {
@@ -1431,7 +1443,7 @@ describe('card reply notice navigation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Search work', exact: true }));
     fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'searchable' } });
     const held = (await screen.findByText('Held question?')).closest('[data-ask-question]');
-    expect(within(held as HTMLElement).getByText('Paused')).toBeTruthy();
+    expect(within(held as HTMLElement).getByText('On hold')).toBeTruthy();
     fireEvent.click(within(held as HTMLElement).getByRole('button', { name: 'Take back' }));
     expect(holdQuestion).toHaveBeenCalledWith('qh', false);
     const waiting = (await screen.findByText('Waiting question?')).closest('[data-ask-question]');
@@ -1532,6 +1544,7 @@ describe('card reply notice navigation', () => {
                 todoId: 'hotel',
                 title: 'Fictional hotel',
                 owner: 'worker',
+                step: 'working',
               },
             ],
             counts: { trip: { waiting: 0, held: 0, progress: 1 } },
@@ -1566,6 +1579,7 @@ describe('card reply notice navigation', () => {
                 todoId: 'tax-step',
                 title: 'tax step',
                 owner: 'worker',
+                step: 'working',
               },
             ],
             counts: { tax: { waiting: 0, held: 0, progress: 1 } },
@@ -1575,7 +1589,7 @@ describe('card reply notice navigation', () => {
     });
     expect(document.querySelector('[data-ask="empty"]')).toBeNull();
     expect(document.querySelector('article[data-ask="tax"]')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: /^In progress/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^All work/ }));
     expect(document.querySelector('[data-ask="empty"]')).toBeTruthy();
   });
 
@@ -1596,6 +1610,7 @@ describe('card reply notice navigation', () => {
       todoId: `${askId}-step`,
       title: `${askId} step`,
       owner: 'worker' as const,
+      step: 'working' as const,
     });
     act(() => {
       model.value = {

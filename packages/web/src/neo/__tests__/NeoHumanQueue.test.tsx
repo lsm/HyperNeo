@@ -64,8 +64,22 @@ const queue: Queue = {
       text: 'Question q3',
       todos: [{ id: 't3', title: 'Find receipts' }],
     },
-    { state: 'progress', askId: 'car', todoId: 't4', title: 'Call the garage', owner: 'worker' },
-    { state: 'progress', askId: 'trip', todoId: 't5', title: 'Pack bags', owner: 'human' },
+    {
+      state: 'progress',
+      askId: 'car',
+      todoId: 't4',
+      title: 'Call the garage',
+      owner: 'worker',
+      step: 'working',
+    },
+    {
+      state: 'progress',
+      askId: 'trip',
+      todoId: 't5',
+      title: 'Pack bags',
+      owner: 'pack',
+      step: 'working',
+    },
   ],
   counts: {
     trip: { waiting: 1, held: 1, progress: 1 },
@@ -114,7 +128,7 @@ describe('NeoHumanQueue', () => {
     const trip = within(view.getByRole('region', { name: 'Plan the trip' }));
     expect(await trip.findByText('Question q2')).toBeTruthy();
     expect(trip.getByText('The whole ask')).toBeTruthy();
-    expect(trip.getByText('Paused')).toBeTruthy();
+    expect(trip.getByText('On hold')).toBeTruthy();
     expect(trip.queryByText('Awaiting your answer')).toBeNull();
     fireEvent.click(trip.getByRole('button', { name: 'Take back' }));
     expect(onHold).toHaveBeenCalledWith('q2', false);
@@ -125,9 +139,9 @@ describe('NeoHumanQueue', () => {
     fireEvent.click(states.getByRole('button', { name: 'In progress 2' }));
     const car = within(view.getByRole('region', { name: 'Service the car' }));
     expect(car.getByText('Call the garage')).toBeTruthy();
-    expect(car.getByText("A worker's step")).toBeTruthy();
+    expect(car.getByText('Running')).toBeTruthy();
     expect(
-      within(view.getByRole('region', { name: 'Plan the trip' })).getByText('Your step')
+      within(view.getByRole('region', { name: 'Plan the trip' })).getByText('Running')
     ).toBeTruthy();
   });
 
@@ -548,6 +562,7 @@ describe('NeoHumanQueue', () => {
               todoId: 't6',
               title: 'Remote step',
               owner: 'worker',
+              step: 'working',
             },
           ],
           counts: { car: { waiting: 0, held: 0, progress: 2 } },
