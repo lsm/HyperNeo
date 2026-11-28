@@ -8,8 +8,8 @@ A publication's worker is a fact derived by the daemon, not a model assertion.
 Remove `session` from the publish draft/prompt and `front-model.ts` `replyFields`.
 Keep stored `session` and presented `sessionSource`; old publications need no migration.
 
-Derive the value once in the existing `neo.publication.deliver` pipeline before append.
-An idempotent retry keeps the stored value. A new revision derives from its own turn.
+Derive in `neo.publication.deliver` before append. Retries and revisions without one
+unambiguous worker keep the prior session; only an unambiguous revision turn replaces it.
 
 ## One reliable signal
 
@@ -37,9 +37,9 @@ path. A null or unsafe `sessionSource.link` renders no button; never substitute 
 
 All clients consume only presented `sessionSource`; none derives a worker itself.
 
-- Web keeps the action beside Neo and the timestamp. Replace `NeoPublicationSession`'s
-  separate `neo.session.link` lookup with the embedded source, and omit the action when
-  no link resolves instead of showing the current disabled action.
+- Web keeps the action beside Neo/timestamp. `publication-client.ts` parses and validates
+  embedded sources for publications and revisions; `NeoPublicationSession` uses them,
+  removing its separate lookup and disabled no-link action.
 - Desktop uses that same web surface and its existing native-link handoff for
   Claude/Codex; local worker links open the worker session.
 - Proposed iOS placement is the Neo conversation publication bubble header. The phone
@@ -55,6 +55,6 @@ buttons, but a plausible wrong conversation is worse than no button.
 
 ## Acceptance
 
-Cover one worker, missing input, mixed workers, batch/Neo senders, front and revisions.
-Web proves embedded-source opening and no disabled action. iOS opening remains a client
-verification, not a verified fact of this design.
+Cover one worker, missing/mixed inputs, batch/Neo senders, front, and unresolved revisions
+preserving the prior worker. Web proves publication/revision source parsing and opening;
+iOS opening remains a client verification, not a verified fact of this design.
