@@ -41,7 +41,7 @@ export function VoiceWaveform({
   useLayoutEffect(() => {
     const row = rowRef.current;
     if (!row) return;
-    const pitch = isNarrow ? BAR_PITCH_NARROW : BAR_PITCH_WIDE;
+    const pitch = isNarrow && !neo ? BAR_PITCH_NARROW : BAR_PITCH_WIDE;
     const update = () => {
       const next = Math.max(1, Math.floor(row.clientWidth / pitch));
       if (histRef.current.length > next) histRef.current = histRef.current.slice(-next);
@@ -51,7 +51,7 @@ export function VoiceWaveform({
     const ro = new ResizeObserver(update);
     ro.observe(row);
     return () => ro.disconnect();
-  }, [isNarrow]);
+  }, [isNarrow, neo]);
   const barsRef = useRef<(HTMLDivElement | null)[]>([]);
   const histRef = useRef<number[]>([]);
   const valsRef = useRef<Float32Array>(new Float32Array(0));
@@ -162,7 +162,7 @@ export function VoiceWaveform({
       </button>
       <div
         ref={rowRef}
-        class={`flex h-8 min-w-0 flex-1 items-center overflow-hidden ${isNarrow ? 'gap-px' : 'gap-0.5'}`}
+        class={`flex h-8 min-w-0 flex-1 items-center overflow-hidden ${neo ? 'justify-end gap-0.5' : isNarrow ? 'gap-px' : 'gap-0.5'}`}
         data-testid={isTranscribing && neo ? 'voice-transcribing' : 'voice-bars'}
         role={isTranscribing && neo ? 'status' : undefined}
       >
@@ -172,7 +172,7 @@ export function VoiceWaveform({
           Array.from({ length: barCount }, (_, i) => (
             <div
               key={i}
-              class="h-8 min-w-0 flex-1 origin-center rounded-full bg-recording-waveform"
+              class={`origin-center rounded-full bg-recording-waveform ${neo ? 'h-6 w-0.75 flex-none' : 'h-8 min-w-0 flex-1'}`}
               ref={(el) => {
                 barsRef.current[i] = el;
               }}
@@ -193,7 +193,7 @@ export function VoiceWaveform({
         )
       ) : (
         <span
-          class={`flex-none tabular-nums text-fg ${isNarrow ? 'text-2xs' : 'text-xs'}`}
+          class={`flex-none tabular-nums ${neo ? 'text-xs text-fg-muted' : `text-fg ${isNarrow ? 'text-2xs' : 'text-xs'}`}`}
           data-testid="voice-timer"
         >
           {formatElapsed(neo ? elapsed : MAX_SECONDS - elapsed)}

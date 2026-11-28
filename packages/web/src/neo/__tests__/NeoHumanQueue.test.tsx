@@ -64,13 +64,27 @@ const queue: Queue = {
       text: 'Question q3',
       todos: [{ id: 't3', title: 'Find receipts' }],
     },
-    { state: 'progress', askId: 'car', todoId: 't4', title: 'Call the garage', owner: 'worker' },
-    { state: 'progress', askId: 'trip', todoId: 't5', title: 'Pack bags', owner: 'human' },
+    {
+      state: 'progress',
+      askId: 'car',
+      todoId: 't4',
+      title: 'Call the garage',
+      owner: 'worker',
+      step: 'working',
+    },
+    {
+      state: 'progress',
+      askId: 'trip',
+      todoId: 't5',
+      title: 'Pack bags',
+      owner: 'pack',
+      step: 'working',
+    },
   ],
   counts: {
-    trip: { waiting: 1, held: 1, progress: 1 },
-    tax: { waiting: 1, held: 0, progress: 0 },
-    car: { waiting: 0, held: 0, progress: 1 },
+    trip: { waiting: 1, others: 0, held: 1, progress: 1 },
+    tax: { waiting: 1, others: 0, held: 0, progress: 0 },
+    car: { waiting: 0, others: 0, held: 0, progress: 1 },
   },
 };
 
@@ -125,9 +139,9 @@ describe('NeoHumanQueue', () => {
     fireEvent.click(states.getByRole('button', { name: 'In progress 2' }));
     const car = within(view.getByRole('region', { name: 'Service the car' }));
     expect(car.getByText('Call the garage')).toBeTruthy();
-    expect(car.getByText("A worker's step")).toBeTruthy();
+    expect(car.getByText('Running')).toBeTruthy();
     expect(
-      within(view.getByRole('region', { name: 'Plan the trip' })).getByText('Your step')
+      within(view.getByRole('region', { name: 'Plan the trip' })).getByText('Running')
     ).toBeTruthy();
   });
 
@@ -142,6 +156,12 @@ describe('NeoHumanQueue', () => {
     fireEvent.click(states.getByRole('button', { name: 'In progress 1' }));
     expect(view.getByText('Pack bags')).toBeTruthy();
     expect(view.queryByText('Call the garage')).toBeNull();
+  });
+
+  it('counts all work whatever ask was chosen under another state', () => {
+    const { states, asks } = show();
+    fireEvent.click(asks.getByRole('button', { name: 'Plan the trip 1' }));
+    expect(states.getByRole('button', { name: 'All work 5' })).toBeTruthy();
   });
 
   it('keeps the chosen ask visible after a state switch empties it', () => {
@@ -166,7 +186,10 @@ describe('NeoHumanQueue', () => {
     const onLoadDetails = vi.fn(async () => detailed);
     const view = render(
       <NeoHumanQueue
-        queue={{ items: [queue.items[0]], counts: { trip: { waiting: 1, held: 0, progress: 0 } } }}
+        queue={{
+          items: [queue.items[0]],
+          counts: { trip: { waiting: 1, others: 0, held: 0, progress: 0 } },
+        }}
         entries={[summarised]}
         onHold={vi.fn()}
         onAnswer={vi.fn()}
@@ -224,7 +247,10 @@ describe('NeoHumanQueue', () => {
       .mockRejectedValueOnce(new Error('offline'))
       .mockResolvedValue(detailed);
     const props = {
-      queue: { items: [queue.items[0]], counts: { trip: { waiting: 1, held: 0, progress: 0 } } },
+      queue: {
+        items: [queue.items[0]],
+        counts: { trip: { waiting: 1, others: 0, held: 0, progress: 0 } },
+      },
       onHold: vi.fn(),
       onAnswer: vi.fn(),
       onLoadDetails,
@@ -274,7 +300,7 @@ describe('NeoHumanQueue', () => {
           items: [
             { state: 'waiting', askId: 'far', questionId: 'qf', text: 'Question qf', todos: [] },
           ],
-          counts: { far: { waiting: 1, held: 0, progress: 0 } },
+          counts: { far: { waiting: 1, others: 0, held: 0, progress: 0 } },
         }}
         entries={[]}
         onHold={vi.fn()}
@@ -294,7 +320,7 @@ describe('NeoHumanQueue', () => {
       .mockResolvedValue(entry('far', 'Far ask', [question('q2', 'far', { text: 'Second' })]));
     const queued = (questionId: string) => ({
       items: [{ state: 'waiting' as const, askId: 'far', questionId, text: questionId, todos: [] }],
-      counts: { far: { waiting: 1, held: 0, progress: 0 } },
+      counts: { far: { waiting: 1, others: 0, held: 0, progress: 0 } },
     });
     const props = { entries: [], onHold: vi.fn(), onAnswer: vi.fn(), onLoadDetails };
     const view = render(<NeoHumanQueue {...props} queue={queued('q1')} />);
@@ -322,7 +348,7 @@ describe('NeoHumanQueue', () => {
         <NeoHumanQueue
           queue={{
             items: [queue.items[0]],
-            counts: { trip: { waiting: 1, held: 0, progress: 0 } },
+            counts: { trip: { waiting: 1, others: 0, held: 0, progress: 0 } },
           }}
           entries={[summarised]}
           onHold={vi.fn()}
@@ -371,7 +397,7 @@ describe('NeoHumanQueue', () => {
       .mockResolvedValue(entry('far', 'Far ask', [question('q2', 'far', { text: 'Second' })]));
     const queued = (questionId: string) => ({
       items: [{ state: 'waiting' as const, askId: 'far', questionId, text: questionId, todos: [] }],
-      counts: { far: { waiting: 1, held: 0, progress: 0 } },
+      counts: { far: { waiting: 1, others: 0, held: 0, progress: 0 } },
     });
     const props = { onHold: vi.fn(), onAnswer: vi.fn(), onLoadDetails };
     const view = render(<NeoHumanQueue {...props} entries={[]} queue={queued('q1')} />);
@@ -391,7 +417,7 @@ describe('NeoHumanQueue', () => {
         text: `Question ${questionId}`,
         todos: [{ id: 't1', title: 'Book hotel' }],
       })),
-      counts: { trip: { waiting: 2, held: 0, progress: 0 } },
+      counts: { trip: { waiting: 2, others: 0, held: 0, progress: 0 } },
     };
     render(<NeoHumanQueue queue={shared} entries={entries} onHold={vi.fn()} onAnswer={vi.fn()} />);
     expect(document.querySelectorAll('[id="neo-ref-todo-t1"]')).toHaveLength(1);
@@ -417,7 +443,7 @@ describe('NeoHumanQueue', () => {
       items: queue.items.map((item) =>
         'questionId' in item && item.questionId === 'q1' ? { ...item, state: 'held' } : item
       ),
-      counts: { ...queue.counts, trip: { waiting: 0, held: 2, progress: 1 } },
+      counts: { ...queue.counts, trip: { waiting: 0, others: 0, held: 2, progress: 1 } },
     };
     view.rerender(
       <NeoHumanQueue
@@ -455,7 +481,10 @@ describe('NeoHumanQueue', () => {
   it('offers no answer buttons for a card answered since the snapshot', () => {
     const view = render(
       <NeoHumanQueue
-        queue={{ items: [queue.items[0]], counts: { trip: { waiting: 1, held: 0, progress: 0 } } }}
+        queue={{
+          items: [queue.items[0]],
+          counts: { trip: { waiting: 1, others: 0, held: 0, progress: 0 } },
+        }}
         entries={[entry('trip', 'Plan the trip', [question('q1', 'trip', { state: 'answered' })])]}
         onHold={vi.fn()}
         onAnswer={vi.fn()}
@@ -476,7 +505,10 @@ describe('NeoHumanQueue', () => {
     const onStale = vi.fn();
     const view = render(
       <NeoHumanQueue
-        queue={{ items: [queue.items[0]], counts: { trip: { waiting: 1, held: 0, progress: 0 } } }}
+        queue={{
+          items: [queue.items[0]],
+          counts: { trip: { waiting: 1, others: 0, held: 0, progress: 0 } },
+        }}
         entries={[summarised]}
         onHold={vi.fn()}
         onAnswer={vi.fn()}
@@ -507,7 +539,10 @@ describe('NeoHumanQueue', () => {
       .mockResolvedValueOnce(choice(1))
       .mockImplementationOnce(() => new Promise((resolve) => (second = resolve)));
     const props = {
-      queue: { items: [queue.items[0]], counts: { trip: { waiting: 1, held: 0, progress: 0 } } },
+      queue: {
+        items: [queue.items[0]],
+        counts: { trip: { waiting: 1, others: 0, held: 0, progress: 0 } },
+      },
       onHold: vi.fn(),
       onAnswer: vi.fn(),
       onLoadDetails,
@@ -548,9 +583,10 @@ describe('NeoHumanQueue', () => {
               todoId: 't6',
               title: 'Remote step',
               owner: 'worker',
+              step: 'working',
             },
           ],
-          counts: { car: { waiting: 0, held: 0, progress: 2 } },
+          counts: { car: { waiting: 0, others: 0, held: 0, progress: 2 } },
         }}
         entries={[car]}
         onHold={vi.fn()}
@@ -581,7 +617,10 @@ describe('NeoHumanQueue', () => {
     let load = (_: NeoAskEntry) => {};
     const view = render(
       <NeoHumanQueue
-        queue={{ items: [queue.items[3]], counts: { car: { waiting: 0, held: 0, progress: 1 } } }}
+        queue={{
+          items: [queue.items[3]],
+          counts: { car: { waiting: 0, others: 0, held: 0, progress: 1 } },
+        }}
         entries={[summarised]}
         onHold={vi.fn()}
         onAnswer={vi.fn()}
@@ -616,7 +655,10 @@ describe('NeoHumanQueue', () => {
       .mockResolvedValue({ ...entry('car', 'Service the car'), todos: [garage] } as NeoAskEntry);
     const view = render(
       <NeoHumanQueue
-        queue={{ items: [queue.items[3]], counts: { car: { waiting: 0, held: 0, progress: 1 } } }}
+        queue={{
+          items: [queue.items[3]],
+          counts: { car: { waiting: 0, others: 0, held: 0, progress: 1 } },
+        }}
         entries={[summarised]}
         onHold={vi.fn()}
         onAnswer={vi.fn()}
@@ -683,7 +725,10 @@ describe('NeoHumanQueue', () => {
     );
     const view = render(
       <NeoHumanQueue
-        queue={{ items: [queue.items[0]], counts: { trip: { waiting: 1, held: 0, progress: 0 } } }}
+        queue={{
+          items: [queue.items[0]],
+          counts: { trip: { waiting: 1, others: 0, held: 0, progress: 0 } },
+        }}
         entries={[summarised]}
         onHold={vi.fn()}
         onAnswer={vi.fn()}
@@ -724,7 +769,10 @@ describe('NeoHumanQueue', () => {
       };
       const reads: { resolve: (value: NeoAskEntry) => void; reject: (cause: Error) => void }[] = [];
       const props = {
-        queue: { items: [queue.items[0]], counts: { trip: { waiting: 1, held: 0, progress: 0 } } },
+        queue: {
+          items: [queue.items[0]],
+          counts: { trip: { waiting: 1, others: 0, held: 0, progress: 0 } },
+        },
         onHold: vi.fn(),
         onAnswer: vi.fn(),
         onLoadDetails: () =>
@@ -797,7 +845,10 @@ describe('NeoHumanQueue', () => {
       .mockResolvedValue({ ...entry('car', 'Service the car'), todos: [garage] } as NeoAskEntry);
     const view = render(
       <NeoHumanQueue
-        queue={{ items: [queue.items[3]], counts: { car: { waiting: 0, held: 0, progress: 1 } } }}
+        queue={{
+          items: [queue.items[3]],
+          counts: { car: { waiting: 0, others: 0, held: 0, progress: 1 } },
+        }}
         entries={[summarised]}
         onHold={vi.fn()}
         onAnswer={vi.fn()}
@@ -821,8 +872,8 @@ describe('NeoHumanQueue', () => {
           { state: 'waiting', askId: 'trip', questionId: 'q2', text: 'A old', todos: [] },
         ],
         counts: {
-          trip: { waiting: 2, held: 0, progress: 0 },
-          tax: { waiting: 1, held: 0, progress: 0 },
+          trip: { waiting: 2, others: 0, held: 0, progress: 0 },
+          tax: { waiting: 1, others: 0, held: 0, progress: 0 },
         },
       } as Queue,
       entries,
@@ -876,7 +927,7 @@ describe('NeoHumanQueue', () => {
       text: `Question ${id}`,
       todos: [],
     });
-    const counts = (waiting: number) => ({ trip: { waiting, held: 0, progress: 0 } });
+    const counts = (waiting: number) => ({ trip: { waiting, others: 0, held: 0, progress: 0 } });
     const reads: ((value: NeoAskEntry) => void)[] = [];
     const props = {
       onHold: vi.fn(),
@@ -941,7 +992,7 @@ describe('NeoHumanQueue', () => {
               todos: [],
             },
           ],
-          counts: { far: { waiting: 1, held: 0, progress: 0 } },
+          counts: { far: { waiting: 1, others: 0, held: 0, progress: 0 } },
         }}
         entries={[]}
         onHold={vi.fn()}
@@ -974,7 +1025,10 @@ describe('NeoHumanQueue', () => {
         todos: [],
       })),
       counts: Object.fromEntries(
-        Array.from({ length: 6 }, (_, i) => [`a${i}`, { waiting: 1, held: 0, progress: 0 }])
+        Array.from({ length: 6 }, (_, i) => [
+          `a${i}`,
+          { waiting: 1, others: 0, held: 0, progress: 0 },
+        ])
       ),
     };
     const view = render(
@@ -991,5 +1045,107 @@ describe('NeoHumanQueue', () => {
     fireEvent.change(more, { target: { value: 'a5' } });
     expect(view.getAllByRole('region')).toHaveLength(1);
     expect(view.getByRole('region', { name: 'Ask 5' })).toBeTruthy();
+  });
+});
+
+describe('NeoHumanQueue states match the phone', () => {
+  const parity: Queue = {
+    items: [
+      {
+        state: 'waiting',
+        askId: 'idle',
+        todoId: 'stalled',
+        title: 'Not started for days',
+        owner: 'neo',
+        step: 'neo',
+      },
+      {
+        state: 'progress',
+        askId: 'idle',
+        todoId: 'paused',
+        title: 'Paused step',
+        owner: 'nobody',
+        step: 'paused',
+      },
+      {
+        state: 'progress',
+        askId: 'idle',
+        todoId: 'after',
+        title: 'After an earlier step',
+        owner: 'prerequisite',
+        step: 'waiting',
+        waitingOn: 'earlier_step',
+      },
+      {
+        state: 'progress',
+        askId: 'idle',
+        todoId: 'deploy',
+        title: 'Ship the fix',
+        owner: 'nobody',
+        step: 'waiting',
+        waitingOn: 'hold',
+        reason: 'Waits for the deploy to finish',
+      },
+      {
+        state: 'progress',
+        askId: 'busy',
+        todoId: 'running',
+        title: 'Session running',
+        owner: 'worker',
+        step: 'working',
+      },
+    ],
+    counts: {
+      idle: { waiting: 1, others: 0, held: 0, progress: 2 },
+      busy: { waiting: 0, others: 0, held: 0, progress: 1 },
+    },
+  };
+  const asks = [entry('idle', 'Idle ask'), entry('busy', 'Busy ask')];
+
+  it('waits on you only for your cards and steps, and is in progress only while a session runs', () => {
+    locale.value = 'zh-Hans';
+    const view = render(
+      <NeoHumanQueue queue={parity} entries={asks} onHold={vi.fn()} onAnswer={vi.fn()} />
+    );
+    const states = within(view.getByRole('group', { name: '状态' }));
+    expect(states.getByRole('button', { name: '等你 0' })).toBeTruthy();
+    expect(states.getByRole('button', { name: '已搁置 1' })).toBeTruthy();
+    expect(states.getByRole('button', { name: '进行中 1' })).toBeTruthy();
+    expect(states.getByRole('button', { name: '等待中 2' })).toBeTruthy();
+    expect(states.getByRole('button', { name: '所有工作 5' })).toBeTruthy();
+    expect(view.queryByText('Not started for days')).toBeNull();
+    fireEvent.click(states.getByRole('button', { name: '进行中 1' }));
+    expect(view.getByText('Session running')).toBeTruthy();
+    expect(view.queryByText('After an earlier step')).toBeNull();
+    expect(view.queryByText('Paused step')).toBeNull();
+    fireEvent.click(states.getByRole('button', { name: '已搁置 1' }));
+    expect(view.getByText('Paused step')).toBeTruthy();
+    expect(view.queryByText('Ship the fix')).toBeNull();
+    fireEvent.click(states.getByRole('button', { name: '等待中 2' }));
+    expect(view.getByText('After an earlier step')).toBeTruthy();
+    expect(view.getByText('等前一步完成')).toBeTruthy();
+    expect(view.getByText('Ship the fix')).toBeTruthy();
+    expect(view.getByText('等别的事')).toBeTruthy();
+    expect(view.getByText('Waits for the deploy to finish')).toBeTruthy();
+    expect(view.queryByText('Paused step')).toBeNull();
+  });
+
+  it('counts each ask once under waiting on you, like the phone', () => {
+    const cards: Queue = {
+      items: ['q1', 'q2'].map((questionId) => ({
+        state: 'waiting' as const,
+        askId: 'idle',
+        questionId,
+        text: `Question ${questionId}`,
+        todos: [],
+      })),
+      counts: { idle: { waiting: 2, others: 0, held: 0, progress: 0 } },
+    };
+    const view = render(
+      <NeoHumanQueue queue={cards} entries={asks} onHold={vi.fn()} onAnswer={vi.fn()} />
+    );
+    const states = within(view.getByRole('group', { name: 'State' }));
+    expect(states.getByRole('button', { name: 'Waiting on you 1' })).toBeTruthy();
+    expect(view.getByText('Question q2')).toBeTruthy();
   });
 });

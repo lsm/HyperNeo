@@ -10,10 +10,10 @@ import {
 } from './neo-work-reference.ts';
 import type { NeoCardReply } from '@hyperneo/shared/types/neo-publication';
 import type { NeoAskEntry, NeoQuestionEntry } from '@hyperneo/shared/types/neo-ask';
-import type {
-  NeoAskHistoryPage,
-  NeoHumanQueueState,
-  NeoResult,
+import {
+  type NeoAskHistoryPage,
+  type NeoResult,
+  neoHumanQueueCounts,
 } from '@hyperneo/shared/types/neo-snapshot';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { NeoWakeRow } from './NeoWakeRow.tsx';
@@ -36,7 +36,7 @@ import { toast } from '../lib/toast.ts';
 import { readNeoAskImages } from './conversation-ask-client.ts';
 import { NeoTopicChips } from './NeoTopicChips.tsx';
 import { NeoAskTodos, QuestionBox } from './NeoAskTodos.tsx';
-import { NeoHumanQueue, neoHumanQueueHolds } from './NeoHumanQueue.tsx';
+import { NeoHumanQueue, type NeoInboxTab, neoHumanQueueHolds } from './NeoHumanQueue.tsx';
 import { NeoWorkSearch, NeoWorkSearchButton, WORK_SEARCH_TRIGGER } from './NeoWorkSearch.tsx';
 import { useNeoWorkSearch } from './useNeoWorkSearch.ts';
 import { NeoComposer } from './NeoComposer.tsx';
@@ -399,7 +399,9 @@ export function NeoLive() {
         )
       }
       onLoadDetails={
-        listed ? (input) => loadNeoAskDetails(input).then(withoutQueued) : loadNeoAskDetails
+        listed && queueState !== 'all'
+          ? (input) => loadNeoAskDetails(input).then(withoutQueued)
+          : loadNeoAskDetails
       }
       onOpen={openSession}
     />
@@ -554,7 +556,7 @@ export function NeoLive() {
   });
   const attentionCount = view?.needsYou ?? 0;
   const fullQueue = workQuery.trim() ? undefined : inboxQueue;
-  const [queueState, setQueueState] = useState<NeoHumanQueueState>('waiting');
+  const [queueState, setQueueState] = useState<NeoInboxTab>('waiting');
   const outsideQueue =
     fullQueue && cardTarget && !neoHumanQueueHolds(fullQueue, cardTarget) ? cardTarget.askId : null;
   const withoutQueued = (entry: NeoAskEntry): NeoAskEntry =>
@@ -826,15 +828,16 @@ export function NeoLive() {
   const settingsDialog = useRef<HTMLDivElement>(null);
   const desktopSettings = hasNativeFolderPicker();
   const desktopSettingsOpen = desktopSettings && drawerOpen;
-  const workStatusCounts = Object.values(inboxQueue?.counts ?? {}).reduce(
+  const workStatusCounts = Object.values(inboxQueue ? neoHumanQueueCounts(inboxQueue) : {}).reduce(
     (totals, counts) => ({
       waiting: totals.waiting + counts.waiting,
+      others: totals.others + counts.others,
       held: totals.held + counts.held,
       progress: totals.progress + counts.progress,
     }),
-    { waiting: inboxQueue ? 0 : attentionCount, held: 0, progress: 0 }
+    { waiting: inboxQueue ? 0 : attentionCount, others: 0, held: 0, progress: 0 }
   );
-  const workStatuses = (['waiting', 'held', 'progress'] as const).map((state) => ({
+  const workStatuses = (['waiting', 'others', 'held', 'progress'] as const).map((state) => ({
     state,
     count: workStatusCounts[state],
     label: `${t(`queue.state.${state}`)} ${workStatusCounts[state]}`,
@@ -967,7 +970,15 @@ export function NeoLive() {
                   {workStatuses.map(({ state, count, label }) => (
                     <span key={state} data-state={state} title={label}>
                       <NeoIcon
-                        name={state === 'waiting' ? 'dot' : state === 'held' ? 'pause' : 'progress'}
+                        name={
+                          state === 'waiting'
+                            ? 'dot'
+                            : state === 'others'
+                              ? 'clock'
+                              : state === 'held'
+                                ? 'pause'
+                                : 'progress'
+                        }
                         class={state === 'progress' && count > 0 ? 'motion-safe:animate-spin' : ''}
                       />
                       {count}
@@ -1031,6 +1042,13 @@ export function NeoLive() {
               onOpenSession={openSession}
               publicConversation={publicConversation}
               onOpenWork={openWork}
+              questions={{
+                disabled: !connected || !!neo.busyWork,
+                onAnswer: (questionId, answer) => void neo.answerQuestion(questionId, answer),
+                onHold: (questionId, held) => void neo.holdQuestion(questionId, held),
+                onReply: replyToQuestion,
+                onOpen: openSession,
+              }}
               onRetryPublic={retryPublicConversation}
               pendingAsks={neo.pendingAsks}
               onRetryAsk={(requestId) =>
@@ -1416,12 +1434,10 @@ export function NeoLive() {
                         .filter(
                           (entry) =>
                             !fullQueue?.items.length ||
-                            entry.ask.id === outsideQueue ||
-                            (queueState === 'progress' &&
-                              (group.key === 'outcomes' ||
-                                (group.key === 'running' && !fullQueue.counts[entry.ask.id])))
+                            queueState === 'all' ||
+                            entry.ask.id === outsideQueue
                         )
-                        .map(withoutQueued),
+                        .map((entry) => (queueState === 'all' ? entry : withoutQueued(entry))),
                     }))
                 ).map((group) =>
                   group.entries.length === 0 ? null : (
@@ -1452,7 +1468,7 @@ export function NeoLive() {
                     {t('live.moreSearchResults')}
                   </Button>
                 )}
-                {historyCursor && (
+                {historyCursor && (!fullQueue?.items.length || queueState === 'all') && (
                   <Button
                     variant="ghost"
                     disabled={!connected || loadingHistory}

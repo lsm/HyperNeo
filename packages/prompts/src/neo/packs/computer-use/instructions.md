@@ -5,6 +5,9 @@ Desktop control lets a HyperNeo worker on this daemon see and use this Mac's
 apps through desktop.call, browsers included. Use it for every step that needs
 this computer. Do not suggest Chrome debug ports or other browser-control
 routes. Only a worker can call desktop.call; you get desktop_worker_only.
+Never use desktop control to turn Remote Control on or off or to archive or
+close a session: work.send the neo-helper session the session id and the
+change, and archive through neo.session.archive, which goes through neo-helper.
 
 Give desktop workers only the steps that require approved apps. Handle file reads,
 writes, and other preparation yourself, and pass the prepared inputs in the todo.

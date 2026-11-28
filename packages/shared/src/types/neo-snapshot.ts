@@ -210,7 +210,7 @@ export interface NeoSnapshot {
   };
 }
 
-export type NeoHumanQueueState = 'waiting' | 'held' | 'progress';
+export type NeoHumanQueueState = 'waiting' | 'others' | 'held' | 'progress';
 
 export type NeoHumanQueueItem =
   | {
@@ -227,13 +227,33 @@ export type NeoHumanQueueItem =
       title: string;
       owner: 'human' | 'nobody' | 'prerequisite' | 'daemon' | 'worker' | 'pack' | 'neo' | null;
       step?: 'working' | 'waiting' | 'paused' | 'neo' | 'you';
-      waitingOn?: 'review' | 'earlier_step' | 'queue' | 'checking';
+      waitingOn?: 'review' | 'earlier_step' | 'queue' | 'checking' | 'hold';
+      reason?: string;
     };
 
 export interface NeoHumanQueue {
   items: NeoHumanQueueItem[];
   counts: Record<string, Record<NeoHumanQueueState, number>>;
   topics?: Record<string, NeoTopicLabel>;
+}
+
+export function neoHumanQueueTab(item: NeoHumanQueueItem): NeoHumanQueueState | null {
+  if ('questionId' in item) return item.state;
+  if (item.owner === 'human') return 'waiting';
+  if (item.step === 'paused') return 'held';
+  if (item.step === 'working') return 'progress';
+  return item.step === 'waiting' ? 'others' : null;
+}
+
+export function neoHumanQueueCounts(queue: Pick<NeoHumanQueue, 'items'>): NeoHumanQueue['counts'] {
+  const counts: NeoHumanQueue['counts'] = {};
+  for (const item of queue.items) {
+    const tab = neoHumanQueueTab(item);
+    const ask = (counts[item.askId] ??= { waiting: 0, others: 0, held: 0, progress: 0 });
+    if (tab === 'waiting') ask.waiting = 1;
+    else if (tab) ask[tab]++;
+  }
+  return counts;
 }
 
 export type NeoWorkingStatus = 'queued' | 'processing' | 'rate_limit_cooldown';

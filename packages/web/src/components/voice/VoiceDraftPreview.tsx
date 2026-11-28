@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
 
 export interface VoiceDraftPreviewProps {
@@ -14,18 +14,55 @@ export interface VoiceDraftPreviewProps {
   class?: string;
 }
 
+const TYPE_STEP_MS = 25;
+const CATCH_UP_MS = 600;
+const FADE_STEPS = 13;
+const graphemes = new Intl.Segmenter();
+
+function useTypewriter(target: string, flush: boolean): [string, number] {
+  const [shown, setShown] = useState('');
+  const steps = useRef<number[]>([]);
+  const latest = useRef(target);
+  latest.current = target;
+  let kept = shown;
+  if (flush) kept = target;
+  else if (!target.startsWith(shown)) {
+    let same = 0;
+    while (same < shown.length && shown[same] === target[same]) same++;
+    kept = target.slice(0, same);
+  }
+  const behind = kept.length < target.length;
+  useEffect(() => {
+    if (!kept) steps.current = [];
+    if (!behind) return;
+    const timer = setTimeout(() => {
+      const ahead = [...graphemes.segment(latest.current.slice(kept.length))];
+      const step = Math.max(1, Math.ceil((ahead.length * TYPE_STEP_MS) / CATCH_UP_MS));
+      const revealed = ahead
+        .slice(0, step)
+        .reduce((length, part) => length + part.segment.length, 0);
+      steps.current = [...steps.current, kept.length].slice(-FADE_STEPS);
+      setShown(latest.current.slice(0, kept.length + revealed));
+    }, TYPE_STEP_MS);
+    return () => clearTimeout(timer);
+  }, [kept, behind]);
+  const settled = steps.current.length < FADE_STEPS ? 0 : (steps.current[0] ?? 0);
+  return [kept, Math.min(settled, kept.length)];
+}
+
 export function VoiceDraftPreview({
   text,
   start,
   end,
   transcribing,
-  interim = '',
+  interim: heard = '',
   newLine = false,
   hint,
   heightPx,
   minHeightPx,
   class: className,
 }: VoiceDraftPreviewProps) {
+  const [interim, settled] = useTypewriter(heard, transcribing);
   const boxRef = useRef<HTMLDivElement>(null);
   const markerRef = useRef<HTMLSpanElement>(null);
   const from = Math.min(Math.max(start, 0), text.length);
@@ -69,7 +106,16 @@ export function VoiceDraftPreview({
           data-testid="voice-interim-text"
           class={newLine ? 'italic text-fg-muted' : 'text-fg-faint'}
         >
-          {interim}
+          {interim.slice(0, settled)}
+          {[...graphemes.segment(interim.slice(settled))].map(({ segment: char, index }) => (
+            <span
+              key={settled + index}
+              class="motion-safe:animate-[voiceTypeIn_320ms_ease-out]"
+              data-testid="voice-interim-fresh"
+            >
+              {char}
+            </span>
+          ))}
         </span>
       )}
       {!text && !interim && hint && !transcribing && <span class="text-fg-faint">{hint}</span>}

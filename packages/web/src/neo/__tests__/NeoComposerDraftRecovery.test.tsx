@@ -1,6 +1,6 @@
 import { testAskEntry, testTodo } from './neo-test-views.ts';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { closeArtifactPreview, openArtifactPreview } from '../../lib/artifact-preview-store.ts';
@@ -634,7 +634,11 @@ describe('Neo real composer draft recovery', () => {
     expect(screen.getByRole('region', { name: 'Conversation with Neo' })).toBeTruthy();
     expect(container.querySelector('.neo-progress-slot, .neo-progress, .neo-activity')).toBeNull();
     expect(screen.queryByRole('note', { name: 'Neo activity' })).toBeNull();
-    expect(screen.queryByText(/Neo is working|Syncing…|Working on it/)).toBeNull();
+    expect(
+      within(screen.getByRole('region', { name: 'Conversation with Neo' })).queryByText(
+        /Neo is working|Syncing…|Working on it/
+      )
+    ).toBeNull();
     type('Another human message mid-turn');
     expect(value()).toBe('Another human message mid-turn');
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));

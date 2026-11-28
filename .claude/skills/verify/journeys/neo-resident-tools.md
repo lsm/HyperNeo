@@ -11,7 +11,9 @@ checks malformed inputs and invalid actions (including supplied actions on singl
 readable through the canonical operation. A non-Neo SDK client still lists one
 tool. Each resident tool's description carries the full registered description
 of every action, under a heading per action for multi-action tools, so
-neo_publish shows the reply format rules. The evidence records actual tool
+neo_publish shows the reply format rules and that a session field adds an
+open button. neo.pack.read for computer-use must route Remote Control and
+archiving to neo-helper. The evidence records actual tool
 definitions, door and list UTF-8 sizes.
 Retain observed.json, proof.log and run-status.json. Browser layout and model
 turns are outside this transport journey.

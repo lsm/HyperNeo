@@ -12,15 +12,15 @@ VERIFY_MOCK_PORT=19347 VERIFY_KEEP_RUN=1 \
 The wrapper launches an isolated daemon and mock, pairs a synthetic browser,
 and enables fake streaming dictation. No real microphone, speech service or model
 turn is used. Both themes run at 390px touch and 1280px desktop. Verify the idle
-capsule keeps its border and 48px height; an expanded blurred draft has a transparent
+capsule keeps its line-colored rim and 50px height; an expanded blurred draft has a transparent
 border and the 6px/32px/12% shadow; focus and recording use the accent border.
 Token receipts cover send, send foreground, control fill and danger in both themes.
 Review all screenshots for clipping and contrast. Recording is cancelled without
 sending; both owned processes must stop. Keep composer-frame.json and screenshots.
-The matrix also checks one control row, centered status above it, horizontally scrolling attachments, hidden recording tools, flat 40×32 recording Stop, the inert realtime voice icon and growing/scrolling live words. For the four-minute cap, count-up timer, cancellable transcription, shared action slot and question layout, run the behavioral journeys in neo-composer-focus-layout.md.
+The matrix also checks one control row, centered status above it, horizontally scrolling attachments, hidden recording tools, flat 40×32 recording Stop, no realtime voice button and growing/scrolling live words. For the four-minute cap, count-up timer, cancellable transcription, shared action slot and question layout, run the behavioral journeys in neo-composer-focus-layout.md.
 
-The same matrix also checks a 44x32 send face inside its 44x44 target, full
-opacity while empty Send is disabled, and a 32px model pill with 14px text and
+The same matrix also checks a 44x32 send face inside its 44x44 target, half
+opacity while empty Send is disabled (as on the phone), and a 32px model pill with 14px text and
 control-fill background. Before/after screenshots live in separate run dirs.
 For a baseline capture, run `python3 .claude/skills/verify/composer-frame-before.py`
 with the same browser/mock environment. It preserves current bytes of the composer

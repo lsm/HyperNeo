@@ -6,6 +6,7 @@ import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts'
 import { createTables, runMigrations } from '../../../packages/daemon/src/storage/schema/index.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
+import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 
 const run = resolve(process.argv[2]);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -66,6 +67,63 @@ try {
       const questionId = `held-${id}`;
       store.askQuestion(questionId, id, { text: `Held ${id}?`, kind: 'yesno', options: null, multiple: false, noLabel: 'Not now', yesLabel: 'Agree' }, now + i);
       assert(store.holdQuestion(questionId, true, crypto.randomUUID(), now));
+    }
+  } else if (phase === 'phone-parity') {
+    const day = 24 * 60 * 60 * 1000;
+    const old = now - 3 * day;
+    const step = (id: string, askId: string, title: string, at = old, dependsOn: string[] = []) =>
+      store.addTodo(id, askId, { title, doneWhen: 'Observed', check: null, instruction: 'Synthetic', named: null, approvedAt: at, dependsOn }, at);
+    const sessions = new NeoTodoSessionRepository(db);
+    const live = (id: string, state: 'running' | 'queued') => {
+      const ref = { adapter: 'hyperneo', id: `synthetic-${id}` };
+      sessions.create(id, { verb: 'send', ref });
+      sessions.recordRef(id, ref, now);
+      sessions.recordNudge(id, { since: now, nudges: 0, live: state, liveSince: now });
+      store.updateTodo(store.getTodo(id)!, { state: 'doing', startedAt: now }, now);
+    };
+    const hold = (id: string, reviewAt: number, by?: 'human' | 'agent', blockedReason?: string) =>
+      store.updateTodo(store.getTodo(id)!, { state: 'blocked', blockedBy: 'held', blockedReason, hold: { heldAt: old, reviewAt, ...(by ? { by } : {}) } }, old);
+    ask('cards', 'Case: two open cards', 'Home');
+    card('cards-a', 'cards', 'Case card A?');
+    card('cards-b', 'cards', 'Case card B?');
+    ask('research', 'Case: held card and a stalled step', 'Research');
+    step('research-step', 'research', 'Stalled step beside a held card');
+    step('research-choice', 'research', 'Step under the held card');
+    card('research-card', 'research', 'Case held card?', 'research-choice');
+    assert(store.holdQuestion('research-card', true, crypto.randomUUID(), now));
+    ask('reminders', 'Case: future reminders', 'Home');
+    step('reminder-19', 'reminders', 'Remind me on Dec 19');
+    step('reminder-22', 'reminders', 'Remind me on Dec 22');
+    ask('big', 'Case: long checklist', 'Home');
+    const finish = db.prepare("UPDATE neo_todos SET state = 'done', started_at = ?, finished_at = ? WHERE id = ?");
+    for (let i = 0; i < 28; i++) {
+      step(`big-${i}`, 'big', `New step ${i + 1}`, now);
+      if (i >= 2) finish.run(now, now, `big-${i}`);
+    }
+    ask('paused', 'Case: paused step', 'Home');
+    step('paused-step', 'paused', 'Paused step');
+    hold('paused-step', now + 7 * day, 'human');
+    ask('deploy', 'Case: Neo holds a step until a deploy', 'Home');
+    step('deploy-step', 'deploy', 'Ship after the deploy');
+    hold('deploy-step', now + 7 * day, 'agent', 'Waits for the deploy to finish');
+    ask('review', 'Case: hold past its review date', 'Home');
+    step('review-step', 'review', 'Hold past review date');
+    hold('review-step', now - day);
+    ask('after', 'Case: step after an earlier step', 'Home');
+    step('first-step', 'after', 'Earlier step', now);
+    step('later-step', 'after', 'Step after the earlier one', now, ['first-step']);
+    ask('running', 'Case: session running', 'Home');
+    step('running-step', 'running', 'Running step', now);
+    live('running-step', 'running');
+    ask('queued', 'Case: session queued', 'Home');
+    step('queued-step', 'queued', 'Queued step', now);
+    live('queued-step', 'queued');
+    ask('failed', 'Case: failed step', 'Home');
+    step('failed-step', 'failed', 'Failed step', old);
+    store.updateTodo(store.getTodo('failed-step')!, { state: 'blocked', blockedBy: 'failure', blockedReason: 'Synthetic failure.' }, old);
+    for (let i = 0; i < 12; i++) {
+      ask(`filed-${i}`, `Synthetic filed outcome ${i + 1}`, 'Archive');
+      store.settleAsk(store.getAsk(`filed-${i}`)!, 'done', 'Filed', now - (i + 1) * 1000);
     }
   } else {
     ask('trip', 'Synthetic trip plan', 'Travel');

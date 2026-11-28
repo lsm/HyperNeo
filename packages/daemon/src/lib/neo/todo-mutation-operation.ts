@@ -23,6 +23,7 @@ import { neoPackPlanIds } from './todo-follow-up.ts';
 import { readNeoTodoCompletion } from './todo-completion.ts';
 import {
   NeoTodoDoneInput,
+  neoTodoHolder,
   TodoResult,
   type NeoTodoControls,
   type WriteNeoTodoHold,
@@ -62,7 +63,12 @@ async function presentMutation(deps: Dependencies, result: Result): Promise<Resu
 function buildTodoMutation(deps: Dependencies, pipeline: ReturnType<SuperPipeFactory>) {
   return (pipeline as PipelineAPI)
     .input(['raw', 'caller'])
-    .pipe((raw: Input) => raw, 'raw', 'request')
+    .pipe(
+      (raw: Input, caller: OperationCaller): Input =>
+        raw.kind === 'edit' && raw.hold ? { ...raw, heldBy: neoTodoHolder(caller) } : raw,
+      ['raw', 'caller'],
+      'request'
+    )
     .pipe(
       async (request: Input) => {
         if (request.kind !== 'edit' || request.target?.verb !== 'send') return { value: request };

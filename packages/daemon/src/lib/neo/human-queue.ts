@@ -1,5 +1,9 @@
 import type { NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import type { NeoHumanQueue, NeoHumanQueueItem } from '@hyperneo/shared/types/neo-snapshot';
+import {
+  neoHumanQueueCounts,
+  type NeoHumanQueue,
+  type NeoHumanQueueItem,
+} from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoStepFacts, NeoStepOwner } from './attention/owner.ts';
 import { neoTodoCovered } from './todo-state.ts';
 
@@ -9,7 +13,12 @@ const DAY = 24 * 60 * 60 * 1000;
 type StepOwner = NeoStepOwner & Partial<Pick<NeoStepFacts, 'worker' | 'start'>>;
 type QueueTodo = Extract<NeoHumanQueueItem, { todoId: string }>;
 
-function queueStep(row: StepOwner | undefined): Pick<QueueTodo, 'step' | 'waitingOn'> {
+type HeldTodo = Pick<NeoTodo, 'hold' | 'blockedReason'>;
+
+function queueStep(
+  row: StepOwner | undefined,
+  todo: Partial<HeldTodo>
+): Pick<QueueTodo, 'step' | 'waitingOn' | 'reason'> {
   switch (row?.owner) {
     case 'worker':
       if (row.worker?.status === 'running') return { step: 'working' };
@@ -22,7 +31,13 @@ function queueStep(row: StepOwner | undefined): Pick<QueueTodo, 'step' | 'waitin
     case 'daemon':
       return { step: 'waiting', waitingOn: row.start === 'held' ? 'queue' : 'checking' };
     case 'nobody':
-      return { step: 'paused' };
+      return todo.hold?.by === 'human'
+        ? { step: 'paused' }
+        : {
+            step: 'waiting',
+            waitingOn: 'hold',
+            ...(todo.blockedReason ? { reason: todo.blockedReason } : {}),
+          };
     case 'neo':
       return { step: 'neo' };
     case 'human':
@@ -40,7 +55,8 @@ export function neoHumanQueue(input: {
     NeoQuestion,
     'id' | 'askId' | 'state' | 'text' | 'todos' | 'heldAt' | 'createdAt'
   >[];
-  todos: readonly Pick<NeoTodo, 'id' | 'askId' | 'title' | 'state' | 'named'>[];
+  todos: readonly (Pick<NeoTodo, 'id' | 'askId' | 'title' | 'state' | 'named'> &
+    Partial<HeldTodo>)[];
   owners: ReadonlyMap<string, StepOwner>;
   now?: number;
 }): NeoHumanQueue {
@@ -77,12 +93,9 @@ export function neoHumanQueue(input: {
           todoId: todo.id,
           title: todo.title,
           owner: row?.owner ?? null,
-          ...queueStep(row),
+          ...queueStep(row, todo),
         };
       }),
   ];
-  const counts: NeoHumanQueue['counts'] = {};
-  for (const item of items)
-    (counts[item.askId] ??= { waiting: 0, held: 0, progress: 0 })[item.state]++;
-  return { items, counts };
+  return { items, counts: neoHumanQueueCounts({ items }) };
 }

@@ -236,7 +236,8 @@ export function useNeo() {
     asks,
     publications,
     snapshot?.sessionNoticeGroups,
-    snapshot?.wakes
+    snapshot?.wakes,
+    snapshot?.todoAsks
   );
   return {
     publicConversation,

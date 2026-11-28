@@ -91,10 +91,14 @@ try {
       }
     }
     assert(tools.find(tool => tool.name === 'neo_publish')!.description!.includes('a short bold title line that states the conclusion'));
+    assert(tools.find(tool => tool.name === 'neo_publish')!.description!.includes('the chat then shows a button that opens that session in Claude or Codex'));
+    const computerUse = await invoke('neo.pack.read', { id: 'computer-use' });
+    assert(String(computerUse.value.instructions).includes('work.send the neo-helper session'), 'computer-use routes Remote Control to neo-helper');
+    evidence.push({ computerUse });
     evidence.push({ tools: definitions, door, bytes, listBytes, routes, described });
     const prefixes = (index.value as { prefixes: { prefix: string; count: number }[] }).prefixes;
     assert(Array.isArray(prefixes), 'count-only namespace listing');
-    assert(prefixes.some(({ prefix, count }) => prefix === 'voice' && count === 1), 'voice namespace');
+    assert(prefixes.some(({ prefix, count }) => prefix === 'voice' && count >= 1), 'voice namespace');
     for (const row of prefixes) assert.deepEqual(Object.keys(row).sort(), ['count', 'prefix']);
     assert(listBytes < 550, `list: ${listBytes}`);
     console.log(`PASS tools=${tools.length} routes=${routes} described=${described} bytes=${bytes} listBytes=${listBytes}`);

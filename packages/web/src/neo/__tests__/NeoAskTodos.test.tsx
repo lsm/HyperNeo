@@ -2022,3 +2022,18 @@ it.each([
   expect(app.getByText('pick B').textContent).toBe(words);
   expect(app.getByText(/Beta/)).toBeTruthy();
 });
+
+it('counts only the unfinished todos on the card', () => {
+  const app = render(
+    <NeoAskTodos
+      entry={entry({
+        summary: { todoCount: 28, questionCount: 0, openQuestionCount: 0 },
+        doneCount: 26,
+        todos: [todo('one'), todo('two'), todo('done', { state: 'done' })],
+      })}
+      onAnswer={vi.fn()}
+    />
+  );
+  expect(app.container.querySelector('[data-ask-status]')?.textContent).toContain('· 2 个待办');
+  expect(app.container.textContent).not.toContain('28 个待办');
+});
