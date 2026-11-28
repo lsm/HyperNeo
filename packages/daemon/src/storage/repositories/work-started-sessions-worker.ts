@@ -373,6 +373,23 @@ class WorkStartedSessionReads {
     return readStartedWork(this.db);
   }
 
+  startedIdentity(ref: StartedWork): { provider?: string; model?: string; effort?: string } | null {
+    const row = this.db
+      .prepare(
+        'SELECT provider, model, effort FROM work_started_sessions WHERE adapter = ? AND id = ?'
+      )
+      .get(ref.adapter, ref.id) as
+      | { provider: string | null; model: string | null; effort: string | null }
+      | undefined;
+    return row
+      ? {
+          ...(row.provider ? { provider: row.provider } : {}),
+          ...(row.model ? { model: row.model } : {}),
+          ...(row.effort ? { effort: row.effort } : {}),
+        }
+      : null;
+  }
+
   startedByUs(ref: StartedWork): boolean {
     return readStartedWork(this.db, null, undefined, ref).length > 0;
   }
@@ -423,6 +440,7 @@ export const workStartedSessionReads = defineRepositoryOp(
   [
     'startedWork',
     'startedByUs',
+    'startedIdentity',
     'startedFolders',
     'reusableWorkers',
     'todoRoles',

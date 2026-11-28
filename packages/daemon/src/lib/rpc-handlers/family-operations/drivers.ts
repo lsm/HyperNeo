@@ -939,6 +939,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
           sessionId
         )
       ),
+    startedIdentity: (ref: WorkRef) =>
+      gatewayFor(db()).call(workStartedSessionReads, 'startedIdentity', ref),
     workerTemplate: (ref: WorkRef) =>
       ref.adapter === 'hyperneo' && !ref.daemon
         ? context.deps.sessionManager.getSessionFromDB(ref.id)?.metadata.workerTemplate

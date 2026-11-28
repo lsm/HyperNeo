@@ -109,6 +109,9 @@ export interface WorkVerbDeps {
     | ReadonlySet<string>
     | ReadonlyMap<string, WorkerReuseFacts>
     | Promise<ReadonlySet<string> | ReadonlyMap<string, WorkerReuseFacts>>;
+  startedIdentity?: (
+    ref: WorkRef
+  ) => Promise<{ provider?: string; model?: string; effort?: string } | null>;
   workerTemplate?: (ref: WorkRef) => string | undefined;
   reusePolicy?: (
     adapter: string,
@@ -769,9 +772,10 @@ export async function startWork(
         machine: result.value.execution?.machine ?? result.value.place.machine,
         folder: result.value.execution?.directory ?? result.value.place.folder,
         harness: result.value.ref.adapter,
-        provider: result.value.provider,
-        model: result.value.model,
-        effort: result.value.effort,
+        provider:
+          result.value.provider ?? (route.identity?.configurable ? undefined : input.provider),
+        model: result.value.model ?? (route.identity?.configurable ? undefined : input.model),
+        effort: result.value.effort ?? (route.identity?.configurable ? undefined : input.effort),
         preparation: input.preparation,
         ...(ownedTodoId(input, caller, deps)
           ? { role: input.checkPlan ? 'check' : (input.role ?? 'do') }
@@ -915,6 +919,11 @@ export async function reuseIdleWorker(
     : wanted
       ? { model: input.model, effort: input.effort, provider: input.provider }
       : null;
+  const observed = async (
+    ref: WorkRef,
+    status: { provider?: string; model?: string; effort?: string } | null
+  ) =>
+    adapter.identity?.configurable === false ? { ...(await deps.startedIdentity?.(ref)) } : status;
   const groups = await adapter.find({ folder, includeClosed: false, limit: 50 });
   const discovered = groups.flatMap((group) => group.work);
   if (prior && !discovered.some((work) => work.ref.id === prior.id) && adapter.status) {
@@ -1027,7 +1036,7 @@ export async function reuseIdleWorker(
       }
       continue;
     }
-    if (requested && !matchesRequested(requested, identity)) {
+    if (requested && !matchesRequested(requested, await observed(work.ref, identity))) {
       reuseHolds.delete(key);
       continue;
     }
@@ -1137,12 +1146,7 @@ export async function reuseIdleWorker(
     if (
       status?.ok &&
       (isBusyWork(status.value.status) || (!busy.free && status.value.status === 'done')) &&
-      (!requested ||
-        ((requested.provider === undefined || requested.provider === status.value.provider) &&
-          workStartConfiguration.confirm(requested, {
-            ...(status.value.model ? { model: status.value.model } : {}),
-            ...(status.value.effort ? { effort: status.value.effort } : {}),
-          }).ok))
+      (!requested || matchesRequested(requested, await observed(busy.work.ref, status.value)))
     ) {
       const queued = await deps.todoWorker.wait(input.todoId, busy.work.ref, input.message);
       if (queued === 'none') return null;

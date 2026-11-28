@@ -49,7 +49,8 @@ function harness(
     copilotClients?: WorkAdapter['copilotClients'];
   },
   history?: ReadonlyMap<string, { sameAskAt: number | null; settledAt: number | null }>,
-  claim?: Pick<WorkVerbDeps, 'claimWorker' | 'unclaimWorker' | 'isOpenTodo'>
+  claim?: Pick<WorkVerbDeps, 'claimWorker' | 'unclaimWorker' | 'isOpenTodo'>,
+  recorded?: Record<string, { model?: string; effort?: string }>
 ) {
   const sent: string[] = [];
   const events: string[] = [];
@@ -62,7 +63,7 @@ function harness(
     id: config?.adapter ?? 'claude-desktop',
     copilotClients: config?.copilotClients,
     supportsStartEffort: true,
-    identity: { fixedProvider: 'anthropic', configurable: true },
+    identity: { fixedProvider: 'anthropic', configurable: !recorded },
     resolveStartConfiguration: config
       ? async (request) => {
           if (config.unresolvedDefault) return null;
@@ -173,6 +174,7 @@ function harness(
   const registry = createOperationRegistry(
     createWorkVerbOperations({
       adapters: () => [adapter],
+      startedIdentity: async (ref) => recorded?.[ref.id] ?? null,
       remote: { list: () => [], invoke: async () => ({}) },
       daemonName: 'imac',
       freeWorkers: () =>
@@ -753,6 +755,22 @@ describe('work.start required identity', () => {
     });
     expect(result.ok).toBe(true);
     expect(run.started).toEqual(['loader']);
+  });
+});
+
+describe('work.start reuse of a non-configurable adapter', () => {
+  test.each([
+    { recorded: { model: 'claude-opus-5-5', effort: 'medium' }, reuse: true },
+    { recorded: { model: 'claude-opus-5-5', effort: 'low' }, reuse: false },
+    { recorded: {}, reuse: false },
+  ])('matches the recorded request: %j', async ({ recorded, reuse }) => {
+    const id = `recorded-${JSON.stringify(recorded)}`;
+    const run = harness([{ id, status: 'done' }], [id], undefined, undefined, undefined, {
+      [id]: recorded,
+    });
+    const result = await run.start(neo, false, { todoId: 'next' });
+    expect(result.value?.ref.id).toBe(reuse ? id : 'fresh');
+    expect(run.sent).toEqual(reuse ? [id] : []);
   });
 });
 
