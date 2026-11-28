@@ -1,9 +1,10 @@
 # One desktop worker at a time
 
 HyperNeo Desktop gives this Mac's desktop to one worker at a time. Workers wait
-in the order they first called; the next one gets the desktop when the holder's
-todo leaves the live todos the daemon sends with each dispatch, or when the
-holder is stopped. A stopped or held (stop not confirmed) worker leaves the
+in the order they first called. The holder keeps the desktop until its todo
+leaves the live todos the daemon sends with each dispatch, or it is stopped.
+A waiting call keeps the list it arrived with, so the next worker gets the
+desktop on its next call after the holder's todo ends. A stopped or held (stop not confirmed) worker leaves the
 line and cannot rejoin, and so does a waiter whose turn is stopped. A worker
 whose todo ended gives up its Locked Use session to the next holder. On a
 locked Mac, Desktop retries the stop of held workers so one whose driver has

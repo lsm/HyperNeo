@@ -33,9 +33,10 @@ Desktop on this Mac. desktop_permissions_required means the app opened its
 permissions guide for the human; wait for them. Follow humanStep when asking.
 
 One desktop worker uses this Mac at a time. HyperNeo Desktop gives the desktop
-to workers in the order they first call desktop.call; the next one gets it when
-the current worker's todo ends, or when that worker is stopped or archived.
-Waiting workers get desktop_queued and keep their place. A worker waiting on the
+to workers in the order they first call desktop.call. After the current
+worker's todo ends, or that worker is stopped or archived, the next one gets the
+desktop on its next call, within about a minute. Waiting workers get
+desktop_queued and keep their place. A worker waiting on the
 human keeps the others waiting, so finish or stop its todo once it no longer
 needs the Mac.
 
