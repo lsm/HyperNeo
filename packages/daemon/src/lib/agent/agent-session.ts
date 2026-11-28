@@ -3361,6 +3361,10 @@ export class AgentSession
       },
       sdkFallbackProviders(registry.getAll(), (id) => this.db.providers.getProviderByProviderId(id))
     );
+    if (plan.kind === 'fail') {
+      await this.queryRunner.displayErrorAsAssistantMessage(plan.notice, { markAsError: true });
+      throw new MessageDeliveryTerminalTurnError(plan.notice, 'provider_off');
+    }
     if (plan.kind === 'wait') {
       if (!this.providerWaitAnnounced) {
         this.providerWaitAnnounced = true;
@@ -3382,8 +3386,6 @@ export class AgentSession
     );
     if (!moved.success) throw new MessageDeliveryTerminalTurnError(moved.error ?? plan.provider);
     this.providerWaitAnnounced = false;
-    if (plan.notice)
-      await this.queryRunner.displayErrorAsAssistantMessage(plan.notice, { markAsError: false });
     return null;
   }
 

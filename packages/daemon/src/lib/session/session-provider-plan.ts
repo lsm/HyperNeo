@@ -19,8 +19,9 @@ export interface SessionProviderRequest {
 }
 
 export type SessionProviderPlan =
-  | { kind: 'move'; provider: string; model: string; notice: string | null }
-  | { kind: 'wait'; notice: string };
+  | { kind: 'move'; provider: string; model: string }
+  | { kind: 'wait'; notice: string }
+  | { kind: 'fail'; notice: string };
 
 interface OnProviderModels {
   models: ModelInfo[];
@@ -39,14 +40,12 @@ export function decideSessionProvider(
     usable[0];
   if (!choice)
     return { kind: 'wait', notice: unreachable ? PROVIDER_UNREACHABLE_NOTICE : NO_PROVIDER_NOTICE };
-  return {
-    kind: 'move',
-    provider: choice.provider,
-    model: choice.id,
-    notice: request.pinned
-      ? `This session was set to ${request.wanted}, which is off. It now uses ${choice.id} on ${choice.provider}.`
-      : null,
-  };
+  if (request.pinned)
+    return {
+      kind: 'fail',
+      notice: `This session uses ${request.model} on ${request.wanted}, which is off. Turn ${request.wanted} on under Providers, or choose another model for this session.`,
+    };
+  return { kind: 'move', provider: choice.provider, model: choice.id };
 }
 
 export async function isProviderOn(provider: Provider): Promise<boolean> {

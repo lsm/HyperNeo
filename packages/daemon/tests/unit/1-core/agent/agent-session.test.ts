@@ -8,6 +8,7 @@ import type {
   ContextInfo,
   McpServerConfig,
   MessageHub,
+  ModelInfo,
   Provider,
   RewindMode,
   SelectiveRewindResult,
@@ -6592,6 +6593,65 @@ describe('AgentSession', () => {
           agentSession.driveDeliveryTurn(steerUuid, steerContent, null, false, () => true)
         ).rejects.toThrow('Session is archived');
       } finally {
+        db.close();
+      }
+    });
+
+    it('fails a pinned session whose provider is off instead of moving it', async () => {
+      const db = await createTestDb();
+      const registry = initializeProviders();
+      await waitForOptionalProviderRegistration(registry);
+      const glm = registry.get('glm')!;
+      const spies = [
+        ...registry
+          .getAll()
+          .map((provider) =>
+            spyOn(provider, 'isAvailable').mockImplementation(async () => provider === glm)
+          ),
+        spyOn(glm, 'getModels').mockImplementation(async () => [
+          { id: 'glm-5.3', alias: 'glm-5.3', name: 'glm-5.3' } as ModelInfo,
+        ]),
+      ];
+      try {
+        const session = createTestSession(sessionId);
+        session.config = {
+          ...session.config,
+          provider: 'custom:ai0' as Session['config']['provider'],
+          model: 'Qwen3.5-9B-MTP',
+        };
+        await db.createSession(session);
+        db.getSDKMessageRepo().saveUserMessage(
+          sessionId,
+          {
+            type: 'user',
+            uuid: steerUuid,
+            message: { role: 'user', content: steerContent },
+          } as unknown as SDKMessage,
+          'enqueued'
+        );
+        const agentSession = new AgentSession(
+          db.getSession(sessionId) ?? session,
+          db,
+          { event: mock(async () => {}) } as unknown as MessageHub,
+          await createTestInternalEventBus(),
+          mock(async () => 'test-api-key'),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          { autoReplayPendingMessages: false }
+        );
+        agentSession.queryPromise = new Promise<void>(() => {});
+
+        await expect(
+          agentSession.driveDeliveryTurn(steerUuid, steerContent, null, false, () => true)
+        ).rejects.toThrow('This session uses Qwen3.5-9B-MTP on custom:ai0, which is off.');
+        expect(db.getSession(sessionId)?.config).toMatchObject({
+          provider: 'custom:ai0',
+          model: 'Qwen3.5-9B-MTP',
+        });
+      } finally {
+        for (const spy of spies) spy.mockRestore();
         db.close();
       }
     });
