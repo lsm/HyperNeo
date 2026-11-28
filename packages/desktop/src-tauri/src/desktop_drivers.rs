@@ -101,8 +101,9 @@ fn scoped_windows(mut body: Value, apps: &[String]) -> Value {
     body
 }
 const LEASE_POLL: Duration = Duration::from_millis(200);
-/// A queued call waits this many call budgets for the desktop before it returns.
-const QUEUE_WAITS: u32 = 3;
+/// Call budgets a queued call may wait past its own deadline, so with the call itself it
+/// stays inside the daemon's 105 s timeout.
+const QUEUE_WAITS: u32 = 2;
 struct Worker {
     channel: channel::Channel,
     _directory: TempDir,
