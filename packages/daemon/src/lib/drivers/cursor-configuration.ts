@@ -45,12 +45,15 @@ function availableValue(option: z.infer<typeof Select>, requested: string): stri
   return matches.size === 1 ? matches.values().next().value : undefined;
 }
 
-async function restore(
+export type CursorChanges = { applied: { configId: string; value: string }[]; stopped: boolean };
+
+export async function restoreCursor(
   transport: ProcessJsonRpcTransport,
   sessionId: string,
-  applied: { configId: string; value: string }[]
+  changes: CursorChanges
 ) {
-  for (const { configId, value } of applied.reverse()) {
+  changes.stopped = true;
+  for (const { configId, value } of changes.applied.splice(0).reverse()) {
     try {
       await transport.sendRequest('session/set_config_option', { sessionId, configId, value });
     } catch {}
@@ -61,13 +64,13 @@ export async function configureCursor(
   transport: ProcessJsonRpcTransport,
   sessionId: string,
   initial: Options,
-  request: Settings
+  request: Settings,
+  changes: CursorChanges = { applied: [], stopped: false }
 ): Promise<Result<Options>> {
   let options = initial;
   const requested: Settings = {};
-  const applied: { configId: string; value: string }[] = [];
   const refuse = async (failure: Rejected) => {
-    await restore(transport, sessionId, applied);
+    await restoreCursor(transport, sessionId, changes);
     return failure;
   };
   for (const field of ['model', 'effort'] as const) {
@@ -86,7 +89,9 @@ export async function configureCursor(
     }
     requested[field] = value;
     if (option.currentValue === value) continue;
-    applied.push({ configId: option.id, value: option.currentValue });
+    if (changes.stopped)
+      return reject('unreachable', 'Cursor CLI session configuration was stopped.', true);
+    changes.applied.push({ configId: option.id, value: option.currentValue });
     const response = await transport.sendRequest('session/set_config_option', {
       sessionId,
       configId: option.id,

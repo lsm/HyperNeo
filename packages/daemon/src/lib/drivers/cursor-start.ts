@@ -4,10 +4,12 @@ import { basename, isAbsolute } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import {
+  type CursorChanges,
   configureCursor,
   CURSOR_CLIENT_CAPABILITIES,
   CursorConfig,
   cursorIdentity,
+  restoreCursor,
 } from './cursor-configuration.ts';
 import { withOwnReplySender } from '../messaging/session-reply.ts';
 import { JsonRpcRequestTimeoutError, ProcessJsonRpcTransport } from '../process-json-rpc.ts';
@@ -26,6 +28,7 @@ import type {
 import { reject } from './work-operations.ts';
 
 const START_TIMEOUT_MS = 30_000;
+const RESTORE_TIMEOUT_MS = 5_000;
 const STOP_TIMEOUT_MS = 10_000;
 const TURN_TIMEOUT_MINUTES = 60;
 const RETAINED_TURNS = 100;
@@ -335,16 +338,26 @@ export function createCursorStart(
       await opened.close();
       return reject('not_delivered', 'Cursor CLI could not establish a new owned session.', true);
     }
+    const changes: CursorChanges = { applied: [], stopped: false };
     const configured =
       request.model === undefined && request.effort === undefined
         ? { ok: true as const, value: opened.options }
         : await within(
-            configureCursor(opened.transport, opened.id, opened.options, request),
+            configureCursor(opened.transport, opened.id, opened.options, request, changes),
             START_TIMEOUT_MS,
             'Cursor CLI session configuration timed out.'
-          ).catch(() =>
-            reject('unreachable', 'Cursor CLI could not confirm session configuration.', true)
-          );
+          ).catch(async () => {
+            await within(
+              restoreCursor(opened.transport, opened.id, changes),
+              RESTORE_TIMEOUT_MS,
+              'Cursor CLI session restore timed out.'
+            ).catch(() => undefined);
+            return reject(
+              'unreachable',
+              'Cursor CLI could not confirm session configuration.',
+              true
+            );
+          });
     if (!configured.ok || closing) {
       await opened.close();
       return configured.ok
