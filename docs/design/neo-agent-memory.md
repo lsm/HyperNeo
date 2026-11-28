@@ -15,8 +15,8 @@ Design, 2026-11-27. Based on [research](../research/agent-memory-findings.md); n
 
 ## Search that works for real queries
 
-- Retain hybrid retrieval: trigram FTS with bm25, embeddings, then reciprocal rank fusion.
-  Search is read-only; a hit no longer increments `access_count`.
+- Retain hybrid retrieval: trigram FTS/bm25, embeddings and RRF. Search stays read-only.
+  Drop daily consolidation, `access_count`, 90-day pruning and core memories; Neo deletes stale entries.
 - FTS uses any-word matching: join terms with `OR`, not `AND`. Split whitespace-delimited
   languages normally and Chinese runs into overlapping three-character terms; bm25 ranks
   the combined matches, so an extra natural-language word cannot suppress a good memory.
