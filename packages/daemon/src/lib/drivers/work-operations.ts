@@ -154,6 +154,7 @@ export interface WorkVerbDeps {
   noticeReply?: (ref: WorkRef, sessionId: string) => boolean;
   todoWorker?: {
     on(todoId: string, ref: WorkRef): boolean;
+    runs?(todoId: string, ref: WorkRef): boolean;
     wait(todoId: string, ref: WorkRef, message: string): Promise<keyof typeof WORKER_BUSY_DETAIL>;
   };
   workInputs?: {
@@ -876,7 +877,7 @@ async function requireSendIdentity<Value>(
     !input.todoId ||
     input.ref.daemon ||
     !adapter?.identity ||
-    deps.todoWorker?.on(input.todoId, input.ref)
+    deps.todoWorker?.runs?.(input.todoId, input.ref)
   )
     return { value: route };
   const gated = workStartConfiguration.requireIdentity(

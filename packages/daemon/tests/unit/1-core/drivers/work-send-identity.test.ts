@@ -52,7 +52,8 @@ function fixture(options: { configurable?: boolean; runningTodo?: boolean } = {}
       noticeReply: () => true,
       startedIdentity: async () => (configurable ? null : triple),
       todoWorker: {
-        on: () => options.runningTodo ?? false,
+        on: () => true,
+        runs: () => options.runningTodo ?? false,
         wait: async () => 'none',
       },
     } as never)

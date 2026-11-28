@@ -5,7 +5,10 @@ import { deriveWorkerDisallowedTools } from '../../agents/tool-policy.ts';
 import { qualifyRemoteOrigin, renderRemoteAddress } from '../../mailbox/address.ts';
 import { proposalQuestionId, requireAcceptedAsk } from '../../neo/proposal.ts';
 import { NeoSessionMessageRepository } from '../../../storage/repositories/neo-session-message-repository.ts';
-import { NeoTodoSessionRepository } from '../../../storage/repositories/neo-todo-session-repository.ts';
+import {
+  NeoTodoSessionRepository,
+  neoWorkerKey,
+} from '../../../storage/repositories/neo-todo-session-repository.ts';
 import {
   createWorkerInputDelivery,
   registerWorkerInputDelivery,
@@ -888,6 +891,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     },
     todoWorker: {
       on: (todoId, ref) => new NeoTodoSessionRepository(db()).sendsNow(todoId, ref),
+      runs: (todoId, ref) =>
+        neoWorkerKey(new NeoTodoSessionRepository(db()).readRef(todoId)) === neoWorkerKey(ref),
       wait: (todoId, ref, message) =>
         new NeoTodoSessionRepository(db()).write('queueOn', todoId, ref, message, {
           requeueDoing: true,
