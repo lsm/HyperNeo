@@ -5,6 +5,10 @@ RUN=${2:?usage: neo-memory-hook.sh <port> <run-dir>}
 DIR=$(cd "$(dirname "$0")" && pwd)
 export VERIFY_PORT=$PORT HYPERNEO_DATA_DIR="$RUN/data"
 trap 'bash "$DIR/stop.sh" "$RUN" >/dev/null 2>&1 || true' EXIT
+if [ -n "${VERIFY_MODEL_CACHE:-}" ]; then
+  mkdir -p "$RUN/data/cache"
+  cp -R "$VERIFY_MODEL_CACHE" "$RUN/data/cache/transformers"
+fi
 VERIFY_MOCK=mock-api-capture.ts bash "$DIR/launch.sh" "$PORT" "$RUN"
 rpc() { bun "$DIR/rpc.ts" "$@"; }
 rpc rpc:providers.create '{"params":{"providerId":"anthropic","displayName":"Anthropic (dev proxy)","kind":"built_in","authType":"api_key","isEnabled":true,"isDefault":true,"sortOrder":0},"credentials":{"apiKey":"sk-devproxy-test-key"}}' >/dev/null
@@ -27,7 +31,14 @@ search=$(rpc memory.search '{"query":"where do the daemon tests run"}')
 echo "human memory.search: $search"
 grep -qE '"key": ?"ci-runs-tests"' <<<"$search" || { echo "FAIL: search missed ci-runs-tests"; exit 1; }
 
-rpc neo.message.send "{\"sessionId\":\"$root\",\"requestId\":\"$(uuidgen | tr A-Z a-z)\",\"content\":\"Where should the daemon tests run?\"}" >/dev/null
+chinese=$(rpc memory.search '{"query":"守护进程的测试应该在哪里跑"}')
+echo "Chinese memory.search: $chinese"
+grep -qE '"key": ?"ci-runs-tests"' <<<"$chinese" || { echo "FAIL: Chinese search missed ci-runs-tests"; exit 1; }
+unrelated=$(rpc memory.search '{"query":"明天去机场怎么走"}')
+echo "unrelated memory.search: $unrelated"
+if grep -q '"key"' <<<"$unrelated"; then echo "FAIL: unrelated search returned memories"; exit 1; fi
+
+rpc neo.message.send "{\"sessionId\":\"$root\",\"requestId\":\"$(uuidgen | tr A-Z a-z)\",\"content\":\"守护进程的测试应该在哪里跑？\"}" >/dev/null
 for _ in $(seq 1 60); do
   results=$(sqlite3 "file:$DB?mode=ro" "SELECT count(*) FROM sdk_messages WHERE session_id='$root' AND message_type='result'")
   [ "$results" -gt 0 ] && break

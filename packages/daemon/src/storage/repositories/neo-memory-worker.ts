@@ -1,5 +1,6 @@
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
+import { admitVectorHits, cosineSimilarity } from '../vector-similarity.ts';
 
 export interface NeoMemory {
   key: string;
@@ -17,6 +18,11 @@ interface NeoMemoryRow {
   updated_at: number;
 }
 
+interface NeoMemoryVectorRow extends NeoMemoryRow {
+  embedding: Uint8Array;
+}
+
+const VECTOR_FILL_BATCH = 25;
 const STOPWORDS = new Set(
   (
     'about above after again all also and any are because been before being below between both ' +
@@ -74,8 +80,9 @@ class NeoMemoryRows {
         .prepare(
           `INSERT INTO neo_memories (key, content, created_by_session, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(key) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at
-           RETURNING *`
+           ON CONFLICT(key) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at,
+             embedding = CASE WHEN content = excluded.content THEN embedding END
+           RETURNING key, content, created_by_session, created_at, updated_at`
         )
         .get(
           input.key.trim(),
@@ -98,6 +105,44 @@ class NeoMemoryRows {
     return this.db.prepare(`DELETE FROM neo_memories WHERE key = ?`).run(key.trim()).changes > 0;
   }
 
+  unembedded(model: string, afterId: number): Array<{ id: number; text: string; content: string }> {
+    return this.db
+      .prepare(
+        `SELECT id, key || char(10) || content AS text, content FROM neo_memories
+         WHERE id > ? AND (embedding IS NULL OR embedding_model IS NOT ?) ORDER BY id LIMIT ?`
+      )
+      .all(afterId, model, VECTOR_FILL_BATCH) as Array<{
+      id: number;
+      text: string;
+      content: string;
+    }>;
+  }
+
+  storeVector(id: number, content: string, model: string, vector: Float32Array): void {
+    this.db
+      .prepare(
+        `UPDATE neo_memories SET embedding = ?, embedding_model = ? WHERE id = ? AND content = ?`
+      )
+      .run(new Uint8Array(vector.buffer, vector.byteOffset, vector.byteLength), model, id, content);
+  }
+
+  searchVector(query: Float32Array, model: string, limit: number): NeoMemory[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM neo_memories WHERE embedding IS NOT NULL AND embedding_model = ?`)
+      .all(model) as NeoMemoryVectorRow[];
+    const ranked = rows
+      .map((row) => ({
+        row,
+        rank:
+          cosineSimilarity(query, new Float32Array(Uint8Array.from(row.embedding).buffer)) ??
+          Number.NEGATIVE_INFINITY,
+      }))
+      .sort((a, b) => b.rank - a.rank || b.row.updated_at - a.row.updated_at);
+    return admitVectorHits(ranked)
+      .slice(0, limit)
+      .map((item) => toMemory(item.row));
+  }
+
   search(query: string, limit: number): NeoMemory[] {
     const match = buildMemoryFtsQuery(query);
     if (!match) return [];
@@ -118,8 +163,11 @@ class NeoMemoryRows {
 export const neoMemoryReads = defineRepositoryOp('neo_memories.read', 'read', NeoMemoryRows, [
   'read',
   'search',
+  'searchVector',
+  'unembedded',
 ]);
 export const neoMemoryWrites = defineRepositoryOp('neo_memories.write', 'write', NeoMemoryRows, [
   'save',
   'delete',
+  'storeVector',
 ]);

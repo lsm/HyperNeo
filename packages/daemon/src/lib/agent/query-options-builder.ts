@@ -1297,7 +1297,9 @@ export class QueryOptionsBuilder {
     postFailureHooks.push({ hooks: [loopDetectorHooks.postToolUseFailure] });
     if (rootNeo) {
       const todos = new NeoAskTodoRepository(this.ctx.db!.getDatabase());
-      const memories = new NeoMemoryRepository(this.ctx.db!.gateway);
+      const memories = new NeoMemoryRepository(this.ctx.db!.gateway, () =>
+        this.ctx.db!.getEmbedder()
+      );
       Object.assign(
         hooks,
         neoPlanContextHooks(

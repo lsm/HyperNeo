@@ -807,7 +807,7 @@ export function createNeoOperations(
       service.presentPublications(items)
     ),
     ...createMemoryOperations(
-      new NeoMemoryRepository(service.db.gateway),
+      new NeoMemoryRepository(service.db.gateway, () => service.db.getEmbedder()),
       (sessionId) => service.repo.getBindingBySession(sessionId)?.kind === 'neo'
     ),
     createNeoConversationReadOperation(
