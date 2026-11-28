@@ -41,13 +41,13 @@ try {
     await page.waitForFunction(() => document.querySelector('.neo-composer-input.is-collapsed'));
     const collapsed = await sample();
     assert.equal(await input.evaluate(el => getComputedStyle(el).paddingLeft), '0px');
-    assert.equal(collapsed.border, theme === 'light' ? 'rgb(200, 203, 209)' : 'rgb(81, 84, 94)');
-    assert(collapsed.height >= 46 && collapsed.height <= 50);
+    assert.equal(collapsed.border, theme === 'light' ? 'rgb(229, 231, 235)' : 'rgb(55, 59, 67)');
+    assert.equal(collapsed.height, 50);
     await form.screenshot({ path: `${run}/evidence/${theme}-${width}-collapsed.png` });
     await input.focus();
     const send = form.getByRole('button', { name: 'Send message', exact: true });
     assert.equal(await send.isDisabled(), !before);
-    assert.equal(await send.evaluate(el => getComputedStyle(el).opacity), '1');
+    assert.equal(await send.locator('span').first().evaluate(el => getComputedStyle(el).opacity), '0.5');
     await form.screenshot({ path: `${run}/evidence/${theme}-${width}-empty-focused.png` });
     await input.fill('Synthetic draft');
     await page.waitForTimeout(200);
@@ -77,7 +77,7 @@ try {
     assert.equal(blurred.border, before ? collapsed.border : 'rgba(0, 0, 0, 0)');
     assert.equal(await input.inputValue(), 'Synthetic draft');
     if (!before) {
-    assert.equal(blurred.send, theme === 'light' ? 'rgb(184, 124, 92)' : 'rgb(239, 194, 166)');
+    assert.equal(blurred.send, theme === 'light' ? 'rgb(159, 102, 73)' : 'rgb(225, 171, 137)');
     assert.equal(blurred.sendFg, theme === 'light' ? 'rgb(255, 255, 255)' : 'rgb(37, 39, 44)');
     assert.equal(blurred.control, theme === 'light' ? 'rgb(235, 236, 239)' : 'rgb(46, 49, 57)');
     assert.equal(blurred.danger, theme === 'light' ? 'rgb(197, 48, 48)' : 'rgb(242, 139, 130)');
@@ -95,8 +95,7 @@ try {
     const stopRecording=form.getByRole('button',{name:'Stop recording and keep the text as a draft',exact:true});
     const stopFace=await stopRecording.evaluate(el=>{const face=el.firstElementChild;return{height:face.getBoundingClientRect().height,width:face.getBoundingClientRect().width,color:getComputedStyle(face).color}});
     assert.equal(stopFace.height,32);assert.equal(stopFace.width,40);assert.equal(stopFace.color,'rgb(255, 255, 255)');
-    const rt=form.getByRole('button',{name:'Realtime voice',exact:true});await rt.waitFor();
-    assert.equal(await rt.locator('svg').evaluate(el=>el.getBoundingClientRect().width),28);
+    assert.equal(await form.getByRole('button',{name:'Realtime voice',exact:true}).count(),0);
     assert.notEqual(recording.border, 'rgba(0, 0, 0, 0)');
     if (!before) assert.equal(recording.border, focused.border);
     if (!before) assert(recording.shadow.includes('0.12') && recording.shadow.includes('32px'));
@@ -110,9 +109,9 @@ try {
     const words=form.getByTestId('voice-interim-text'); await words.waitFor();
     await page.waitForTimeout(200);
     const liveReceipt=await live.evaluate(el=>({height:el.getBoundingClientRect().height,maxHeight:getComputedStyle(el).maxHeight,minimum:getComputedStyle(el).minHeight,scroll:el.scrollTop,scrollHeight:el.scrollHeight}));
-    assert(liveReceipt.height>=draftHeight && liveReceipt.height<=208);
-    assert.equal(liveReceipt.maxHeight,'208px');
-    assert.equal(await words.evaluate(el=>getComputedStyle(el).fontStyle),'italic');
+    assert(liveReceipt.height>=draftHeight && liveReceipt.height<=176);
+    assert.equal(liveReceipt.maxHeight,'176px');
+    assert.equal(await words.evaluate(el=>getComputedStyle(el).fontStyle),'normal');
     await page.screenshot({path:`${run}/evidence/${theme}-${width}-live-words.png`});
     await form.getByRole('button',{name:'Cancel recording',exact:true}).click();
     await input.fill(''); await input.evaluate(el=>el.blur());

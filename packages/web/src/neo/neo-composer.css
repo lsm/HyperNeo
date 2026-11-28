@@ -1,7 +1,7 @@
 .neo-composer-input.is-collapsed:not(.is-recording) {
-  width: 83%;
+  width: calc(100% - 52px);
   margin-inline: auto;
-  padding: 1px 2px;
+  padding: 2px;
   border-radius: 9999px;
 }
 
@@ -81,4 +81,17 @@
 
 .neo-composer-input .neo-composer-turn-control:focus-visible {
   outline: none;
+}
+
+.neo-composer-draft [data-testid="voice-interim-text"] {
+  font-style: normal;
+  color: var(--fg-faint);
+}
+
+.neo-composer-input {
+  background-color: color-mix(
+    in srgb,
+    var(--neo-composer-glass, var(--surface-raised)) 95%,
+    transparent
+  );
 }

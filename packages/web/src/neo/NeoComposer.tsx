@@ -369,7 +369,7 @@ export function NeoComposer({
   const showQuote = quote && (!sending || quote !== sendingQuote.current);
   const frame =
     collapsed && !showVoiceRecording
-      ? 'border-line-strong shadow-xl'
+      ? 'border-line shadow-composer'
       : `${showVoiceRecording ? 'border-accent/60' : 'border-transparent'} shadow-composer`;
   return (
     <form
@@ -384,7 +384,7 @@ export function NeoComposer({
       onFocusOut={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) blur();
       }}
-      class={`neo-composer-input ${collapsed ? 'is-collapsed' : 'is-focused'} ${showVoiceRecording ? 'is-recording' : ''} ${frame} pointer-events-auto relative rounded-3xl border bg-surface-raised/95 px-2 ${collapsed ? 'py-1.5' : 'pt-4 pb-1.5'} backdrop-blur-xl transition-colors focus-within:border-accent/60`}
+      class={`neo-composer-input ${collapsed ? 'is-collapsed' : 'is-focused'} ${showVoiceRecording ? 'is-recording' : ''} ${frame} pointer-events-auto relative rounded-3xl border px-2 ${collapsed ? 'py-1.5' : 'pt-4 pb-1'} backdrop-blur-xl transition-colors focus-within:border-accent/60`}
     >
       {boundPreview && (
         <div class="mb-2 flex min-w-0 items-center gap-2 px-2 text-xs text-fg-muted">
@@ -480,7 +480,7 @@ export function NeoComposer({
           newLine
           hint={listening ? t('composer.listening') : undefined}
           minHeightPx={idleHeight.current || undefined}
-          class="neo-composer-draft max-h-composer-draft px-2 text-base leading-relaxed text-fg"
+          class="neo-composer-draft max-h-composer-draft px-2 text-[17px] leading-[22px] text-fg"
         />
       ) : (
         <textarea
@@ -528,7 +528,7 @@ export function NeoComposer({
                 ? 'composer.placeholderTouch'
                 : 'composer.placeholderKeys'
           )}
-          class={`w-full ${collapsed ? '' : 'px-2'} resize-none bg-transparent text-base leading-relaxed text-fg placeholder:text-fg-faint focus:outline-none`}
+          class={`w-full ${collapsed ? '' : 'px-2'} resize-none bg-transparent text-[17px] leading-[22px] text-fg placeholder:text-fg-faint focus:outline-none`}
         />
       )}
       <span
@@ -545,7 +545,7 @@ export function NeoComposer({
               ? t('chat.notice.needs_you')
               : waitingLine}
       </span>
-      <div class="neo-composer-toolbar mt-2 flex flex-nowrap items-center justify-between gap-2">
+      <div class="neo-composer-toolbar mt-1 flex flex-nowrap items-center justify-between gap-2">
         <div class="neo-composer-tools flex flex-1 min-w-0 items-center gap-1">
           <button
             type="button"
@@ -572,9 +572,9 @@ export function NeoComposer({
           </div>
         </div>
         <div
-          class={`neo-composer-actions flex min-w-0 items-center ml-auto ${showVoiceRecording ? 'flex-1 gap-2.5' : 'shrink-0 gap-4'}`}
+          class={`neo-composer-actions flex min-w-0 items-center ml-auto ${showVoiceRecording ? 'flex-1 gap-4' : 'shrink-0 gap-4'}`}
         >
-          <div class={`flex min-w-0 items-center ${showVoiceRecording ? 'flex-1 gap-2.5' : ''}`}>
+          <div class={`flex min-w-0 items-center ${showVoiceRecording ? 'flex-1 gap-4' : ''}`}>
             <NeoVoice
               door={forSession ? 'session' : undefined}
               previewContext={boundPreview}
@@ -603,7 +603,7 @@ export function NeoComposer({
               onClick={onStop}
               class="neo-composer-turn-control group grid h-11 w-11 shrink-0 place-items-center focus-visible:outline-none"
             >
-              <span class="grid h-8 w-11 place-items-center rounded-control bg-send text-send-fg group-hover:opacity-90 shadow-sm transition group-active:scale-[0.98] group-focus-visible:ring-2 group-focus-visible:ring-accent group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-bg">
+              <span class="grid h-8 w-11 place-items-center rounded-control bg-send text-send-fg group-hover:opacity-90 group-disabled:opacity-50 transition group-active:scale-[0.98] group-focus-visible:ring-2 group-focus-visible:ring-accent group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-bg">
                 <NeoIcon name="stop" class="!h-3.5 !w-3.5" />
               </span>
             </button>
@@ -621,7 +621,7 @@ export function NeoComposer({
               aria-busy={voicePhase === 'sending'}
               title={recordingVoice ? t('composer.stopSendTitle') : undefined}
             >
-              <span class="grid h-8 w-11 place-items-center rounded-control bg-send text-send-fg group-hover:opacity-90 shadow-sm transition group-active:scale-[0.98] group-focus-visible:ring-2 group-focus-visible:ring-accent group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-bg">
+              <span class="grid h-8 w-11 place-items-center rounded-control bg-send text-send-fg group-hover:opacity-90 group-disabled:opacity-50 transition group-active:scale-[0.98] group-focus-visible:ring-2 group-focus-visible:ring-accent group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-bg">
                 {voicePhase === 'sending' ? (
                   <Spinner size="sm" color="border-current" />
                 ) : (
