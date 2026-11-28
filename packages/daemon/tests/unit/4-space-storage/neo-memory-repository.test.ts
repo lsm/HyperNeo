@@ -32,6 +32,13 @@ describe('NeoMemoryRepository', () => {
     expect(await repo.search('what is the weather', 3)).toEqual([]);
   });
 
+  test('still finds a memory from a long pasted message', async () => {
+    const paste = Array.from({ length: 5000 }, (_, i) => `line${i}`).join(' ');
+    expect((await repo.search(`daemon tests ${paste}`, 3)).map((m) => m.key)).toEqual([
+      'ci-runs-tests',
+    ]);
+  });
+
   test('saves, updates, reads and deletes by key', async () => {
     await repo.save({
       key: 'pr-size',

@@ -27,6 +27,7 @@ const STOPWORDS = new Set(
     'will with would you your yours'
   ).split(' ')
 );
+const MAX_QUERY_TERMS = 64;
 const CJK_RUN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+/gu;
 
 export function buildMemoryFtsQuery(query: string): string | null {
@@ -40,7 +41,10 @@ export function buildMemoryFtsQuery(query: string): string | null {
     }
   }
   if (terms.size === 0) return null;
-  return [...terms].map((term) => `"${term.replace(/"/g, '""')}"`).join(' OR ');
+  return [...terms]
+    .slice(0, MAX_QUERY_TERMS)
+    .map((term) => `"${term.replace(/"/g, '""')}"`)
+    .join(' OR ');
 }
 
 function toMemory(row: NeoMemoryRow): NeoMemory {

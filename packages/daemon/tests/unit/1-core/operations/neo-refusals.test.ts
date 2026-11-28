@@ -103,12 +103,17 @@ describe('createOperationMcpHandler', () => {
         execute: async () => ({ ok: false as const, reason: 'work_not_found' }),
       });
     const handle = createOperationMcpHandler(
-      createOperationRegistry([refusing('neo.work.close'), refusing('task.close')]),
+      createOperationRegistry([
+        refusing('neo.work.close'),
+        refusing('memory.save'),
+        refusing('task.close'),
+      ]),
       () => ({ sessionId: 's1' })
     );
     const reason = async (name: string) =>
       JSON.parse((await handle({ name, input: {} })).content[0].text).reason;
     expect(await reason('neo.work.close')).toBe(`work_not_found: ${NEO_REFUSALS.work_not_found}`);
+    expect(await reason('memory.save')).toBe(`work_not_found: ${NEO_REFUSALS.work_not_found}`);
     expect(await reason('task.close')).toBe('work_not_found');
   });
 });
