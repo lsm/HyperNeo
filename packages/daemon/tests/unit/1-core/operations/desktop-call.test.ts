@@ -35,7 +35,7 @@ let workspace: string | null;
 let worktree: string | undefined;
 let mismatchedReply: boolean;
 let hostBusy: boolean;
-let workerB: 'active' | 'archived';
+let workerB: 'active' | 'archived' | 'ended' | 'deleted';
 let body: { content?: Record<string, unknown>[]; structuredContent?: unknown };
 const caller: OperationCaller = {
   source: 'mcp',
@@ -104,7 +104,9 @@ function registry() {
       dataDir: root,
       getSession: (id) =>
         id === 'worker-b'
-          ? { workspacePath: root, status: workerB }
+          ? workerB === 'deleted'
+            ? null
+            : { workspacePath: root, status: workerB }
           : id === 'worker-a'
             ? {
                 workspacePath: workspace,
@@ -363,13 +365,20 @@ test.each([
   expect(requests).toHaveLength(0);
 });
 
-test('an archived worker’s todo is no longer live for the desktop line', async () => {
+test('an archived, ended or deleted worker’s todo is no longer live for the desktop line', async () => {
   db.exec(`INSERT INTO neo_todos(id, ask_id, title, state, approved_at, named) VALUES('other','ask','Other','blocked',1,'{"desktopControl":true}');
     INSERT INTO neo_todo_sessions VALUES('other','{"adapter":"hyperneo","id":"worker-b"}')`);
   await call();
-  workerB = 'archived';
-  await call();
-  expect(requests.map((request) => request.todos)).toEqual([['todo', 'other'], ['todo']]);
+  for (const status of ['archived', 'ended', 'deleted'] as const) {
+    workerB = status;
+    await call();
+  }
+  expect(requests.map((request) => request.todos)).toEqual([
+    ['todo', 'other'],
+    ['todo'],
+    ['todo'],
+    ['todo'],
+  ]);
 });
 
 test('dispatches only the apps approved for the todo', async () => {
