@@ -117,6 +117,10 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     todoId: string
   ): Promise<ReturnType<NeoTodoSessionRepository['reuseFacts']>>;
   read(
+    method: 'startedIdentity',
+    ref: WorkRef
+  ): Promise<ReturnType<NeoTodoSessionRepository['startedIdentity']>>;
+  read(
     method: 'cleanWorkerFacts',
     todoId: string
   ): Promise<ReturnType<NeoTodoSessionRepository['cleanWorkerFacts']>>;
@@ -891,6 +895,16 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     return releaseReuseFacts(this.db, todoId);
   }
 
+  startedIdentity(ref: WorkRef) {
+    return this.db
+      .prepare(
+        'SELECT provider, model, effort FROM work_started_sessions WHERE adapter = ? AND id = ?'
+      )
+      .get(ref.adapter, ref.id) as
+      | { provider: string | null; model: string | null; effort: string | null }
+      | undefined;
+  }
+
   cleanWorkerFacts(todoId: string) {
     const todo = new NeoAskTodoRepository(this.db).getTodo(todoId);
     const target = this.get(todoId);
@@ -968,6 +982,7 @@ export const neoTodoSessionReads = defineRepositoryOp(
     'reuseFacts',
     'reusesAskWorker',
     'cleanWorkerFacts',
+    'startedIdentity',
   ]
 );
 export const neoTodoSessionWrites = defineRepositoryOp(

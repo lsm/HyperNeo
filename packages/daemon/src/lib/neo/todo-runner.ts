@@ -1713,7 +1713,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     )
     .pipe(
       async ({ ask, ref, place }: Rescue, reopened: NeoTodo) => {
-        const record = (await sessions.read('cleanWorkerFacts', reopened.id))?.record;
+        const record = await sessions.read('startedIdentity', ref);
         return dispatch({
           todo: { ...reopened, instruction: reopened.instruction ?? neoTodoHandoff(reopened) },
           ask,

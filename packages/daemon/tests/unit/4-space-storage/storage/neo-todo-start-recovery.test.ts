@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import { recordWorkerStarted } from '../../../../src/storage/repositories/work-started-sessions-worker.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops.ts';
@@ -54,6 +55,20 @@ describe('Atomic interrupted-start recovery build', () => {
   afterEach(async () => {
     await gateway.close();
     db.close();
+  });
+  test('reads a started worker identity by ref even when the todo target is a start', () => {
+    const ref = { adapter: 'hyperneo', id: 'worker' };
+    recordWorkerStarted(db, ref, {
+      startedBy: 'neo',
+      todoId: 'todo',
+      machine: 'synthetic',
+      harness: 'hyperneo',
+      provider: 'p',
+      model: 'm',
+      effort: 'high',
+    });
+    expect(sessions.cleanWorkerFacts('todo')).toBeNull();
+    expect(sessions.startedIdentity(ref)).toEqual({ provider: 'p', model: 'm', effort: 'high' });
   });
   const recover = (id = 'todo', now = 10) =>
     gateway.run(DB_OPS.get('neo.todoRunnerWrites') as DbOp<unknown, Receipt>, {
