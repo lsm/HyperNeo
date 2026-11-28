@@ -62,7 +62,6 @@ function harness(
   const adapter: WorkAdapter = {
     id: config?.adapter ?? 'claude-desktop',
     copilotClients: config?.copilotClients,
-    supportsStartEffort: true,
     identity: { fixedProvider: 'anthropic', configurable: !recorded },
     resolveStartConfiguration: config
       ? async (request) => {
@@ -778,6 +777,24 @@ describe('work.start reuse of a non-configurable adapter', () => {
     expect(result.value?.ref.id).toBe(reuse ? id : 'fresh');
     expect(run.sent).toEqual(reuse ? [id] : []);
     if (reuse) expect(result.value).toMatchObject({ model: 'claude-opus-5-5', effort: 'medium' });
+  });
+});
+
+describe('work.start provenance for a non-configurable adapter', () => {
+  test('does not present the recorded request as the observed runtime', async () => {
+    const run = harness(
+      [{ id: 'prov', status: 'done' }],
+      ['prov'],
+      undefined,
+      undefined,
+      undefined,
+      {
+        prov: { model: 'requested-model', effort: 'medium' },
+      }
+    );
+    await run.start(neo, true, { todoId: 'next', model: 'requested-model' });
+    expect(run.messages.join('\n')).toContain('Agent: claude-opus-5-5');
+    expect(run.messages.join('\n')).not.toContain('requested-model');
   });
 });
 

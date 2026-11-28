@@ -1069,8 +1069,8 @@ export async function reuseIdleWorker(
     const addressed = withReplySender(input.message, from, `${adapter.id}:${work.ref.id}`);
     const message = input.provenance
       ? withWorkerProvenance(addressed, {
-          model: seen?.model ?? null,
-          effort: seen?.effort ?? null,
+          model: identity?.model ?? null,
+          effort: identity?.effort ?? null,
           harness: adapter.id,
         })
       : addressed;

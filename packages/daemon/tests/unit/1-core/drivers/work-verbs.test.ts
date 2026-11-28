@@ -651,7 +651,6 @@ describe('work verb operations', () => {
     const capable: WorkAdapter = {
       ...hyperneo,
       supportsStartPreparation: true,
-      supportsStartEffort: true,
       start: async (request) => {
         received.push(request);
         return { ok: true, value: summary('hyperneo', 's1') };
@@ -723,7 +722,6 @@ describe('work verb operations', () => {
     const capable: WorkAdapter = {
       ...hyperneo,
       id: 'codex-desktop',
-      supportsStartEffort: true,
       start: async (request) => {
         received.push(request);
         return {
@@ -758,7 +756,6 @@ describe('work verb operations', () => {
     let starts = 0;
     const plain: WorkAdapter = {
       ...hyperneo,
-      supportsStartEffort: undefined,
       start: async () => {
         starts++;
         return { ok: true, value: summary('hyperneo', 's1') };
@@ -796,7 +793,7 @@ describe('work verb operations', () => {
         },
         remote,
         undefined,
-        [{ ...hyperneo, id: 'codex-desktop', supportsStartEffort: true }]
+        [{ ...hyperneo, id: 'codex-desktop' }]
       )
     ).toMatchObject({
       ok: false,
@@ -813,7 +810,6 @@ describe('work verb operations', () => {
       const capable: WorkAdapter = {
         ...hyperneo,
         id: 'codex-desktop',
-        supportsStartEffort: true,
         start: async () => {
           started++;
           return { ok: true, value: summary('codex-desktop', 'local') };
@@ -901,7 +897,6 @@ describe('work verb operations', () => {
     let starts = 0;
     const capable: WorkAdapter = {
       ...hyperneo,
-      supportsStartEffort: true,
       start: async () => {
         starts++;
         return { ok: true, value: summary('hyperneo', 's1') };
@@ -930,7 +925,6 @@ describe('work verb operations', () => {
   test('normalizes numeric effort before invoking the driver', async () => {
     const capable: WorkAdapter = {
       ...hyperneo,
-      supportsStartEffort: true,
       start: async (request) => ({
         ok: true,
         value: { ...summary('hyperneo', 's1'), effort: request.effort },

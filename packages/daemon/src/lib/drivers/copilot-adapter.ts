@@ -634,7 +634,6 @@ export function createCopilotAdapter(
     get copilotClients(): NonNullable<W.WorkAdapter['copilotClients']> {
       return deps.desktop?.capabilities.includes('start') ? ['desktop', 'cli'] : ['cli'];
     },
-    supportsStartEffort: true,
     identity: { fixedProvider: 'github-copilot', configurable: true },
     resolveStartConfiguration: async (request) => {
       if (deps.desktop?.capabilities.includes('start'))
