@@ -5,7 +5,7 @@ Status: proposal. Design only; no application code in this PR.
 ## Decision
 
 A publication's worker is a fact derived by the daemon, not a model assertion.
-Remove `session` from the model-facing `neo.publication.publish` draft and prompt.
+Remove `session` from the publish draft/prompt and `front-model.ts` `replyFields`.
 Keep stored `session` and presented `sessionSource`; old publications need no migration.
 
 Derive the value once in the existing `neo.publication.deliver` pipeline before append.
