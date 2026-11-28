@@ -11,6 +11,7 @@ import {
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import {
   markWorkUnusable,
+  readStartedIdentity,
   readStartedWork,
   readCleanWorkerRecord,
   readTrustedWorkers,
@@ -896,13 +897,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
   }
 
   startedIdentity(ref: WorkRef) {
-    return this.db
-      .prepare(
-        'SELECT provider, model, effort FROM work_started_sessions WHERE adapter = ? AND id = ?'
-      )
-      .get(ref.adapter, ref.id) as
-      | { provider: string | null; model: string | null; effort: string | null }
-      | undefined;
+    return readStartedIdentity(this.db, ref);
   }
 
   cleanWorkerFacts(todoId: string) {
