@@ -685,17 +685,31 @@ impl Drivers {
         if request.action == "dispatch" {
             let todo = request.todo.as_deref().unwrap_or_default();
             let todos = request.todos.as_deref().unwrap_or_default();
-            if self.unconfirmed.lock().unwrap().contains(&request.worker) {
-                return Ok(finish(
-                    bundle,
-                    class,
-                    "refused",
-                    json!("stop_unconfirmed"),
-                    false,
-                ));
-            }
             let line_by = deadline + call_budget * QUEUE_WAITS;
-            while !self.desk.lock().unwrap().take(&request.worker, todo, todos) {
+            loop {
+                let stopped_worker =
+                    record::ensure_enabled(&self.records.join("workers").join(&request.worker))
+                        .is_err();
+                if stopped_worker || self.unconfirmed.lock().unwrap().contains(&request.worker) {
+                    self.desk.lock().unwrap().leave(&request.worker);
+                    if stopped_worker {
+                        return Err("Desktop worker is stopped".into());
+                    }
+                    return Ok(finish(
+                        bundle,
+                        class,
+                        "refused",
+                        json!("stop_unconfirmed"),
+                        false,
+                    ));
+                }
+                let ended = self.desk.lock().unwrap().end(todos);
+                for worker in ended {
+                    self.locked.cancel_turn(&worker).await;
+                }
+                if self.desk.lock().unwrap().take(&request.worker, todo) {
+                    break;
+                }
                 if Instant::now() + LEASE_POLL >= line_by {
                     return Ok(finish(
                         bundle,
@@ -820,7 +834,10 @@ impl Drivers {
             record::latch(&directory)?;
         }
         if matches!(request.action.as_str(), "start" | "dispatch") {
-            record::ensure_enabled(&directory)?;
+            if let Err(error) = record::ensure_enabled(&directory) {
+                self.desk.lock().unwrap().leave(&request.worker);
+                return Err(error);
+            }
         }
         let worker_id = request.worker.clone();
         let slot = {

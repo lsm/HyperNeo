@@ -3,7 +3,9 @@
 HyperNeo Desktop gives this Mac's desktop to one worker at a time. Workers wait
 in the order they first called; the next one gets the desktop when the holder's
 todo leaves the live todos the daemon sends with each dispatch, or when the
-holder is stopped. A held worker (stop not confirmed) leaves the line. On a
+holder is stopped. A stopped or held (stop not confirmed) worker leaves the
+line and cannot rejoin, and so does a waiter whose turn is stopped. A worker
+whose todo ended gives up its Locked Use session to the next holder. On a
 locked Mac, Desktop retries the stop of held workers so one whose driver has
 exited no longer keeps Locked Use from the next worker.
 
@@ -16,12 +18,18 @@ python3 packages/desktop/tests/worker-drivers.py \
   packages/desktop/tests/driver-host/target/debug/desktop-driver-fixture \
   WorkerDrivers.test_workers_take_the_desktop_in_turn_until_the_holders_todo_ends \
   WorkerDrivers.test_a_held_worker_stops_keeping_a_locked_mac_once_its_driver_exits \
+  WorkerDrivers.test_a_cancelled_or_unconfirmed_worker_gives_up_its_place_in_line \
+  WorkerDrivers.test_a_worker_stopped_while_it_waits_does_not_rejoin_the_line \
+  WorkerDrivers.test_a_finished_workers_locked_use_passes_to_the_next_worker \
   WorkerDrivers.test_second_worker_waits_for_a_held_window_until_the_holder_stops \
   WorkerDrivers.test_foreground_calls_on_different_apps_take_turns
 ```
 
 Pass prints `queue=fifo holder_todo_done=next_worker`,
 `held_worker=retired locked_mac=next_worker`,
+`cancelled_waiter=left_line unconfirmed_stop=left_line`,
+`stopped_waiter=left_line next_worker=dispatched`,
+`finished_worker=released locked_mac=next_worker`,
 `held_desktop=desktop_queued after_stop=dispatched` and `foreground=serialized`,
 then `OK`. Queued calls return `desktop_queued` without input; the third worker
 cannot overtake the second; a Locked Use guardian starts for the next worker

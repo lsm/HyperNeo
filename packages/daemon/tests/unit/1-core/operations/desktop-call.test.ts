@@ -106,20 +106,21 @@ function registry() {
         id === 'worker-b'
           ? { workspacePath: root, status: workerB }
           : id === 'worker-a'
-          ? {
-              workspacePath: workspace,
-              ...(worktree
-                ? {
-                    worktree: {
-                      isWorktree: true,
-                      worktreePath: worktree,
-                      mainRepoPath: root,
-                      branch: 'fixture',
-                    },
-                  }
-                : {}),
-            }
-          : null,
+            ? {
+                workspacePath: workspace,
+                status: 'active' as const,
+                ...(worktree
+                  ? {
+                      worktree: {
+                        isWorktree: true,
+                        worktreePath: worktree,
+                        mainRepoPath: root,
+                        branch: 'fixture',
+                      },
+                    }
+                  : {}),
+              }
+            : null,
     }),
   ]);
 }

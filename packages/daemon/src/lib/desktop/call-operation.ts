@@ -83,7 +83,7 @@ function redactDesktopResult(reply: z.infer<typeof DesktopDispatchReply>) {
 export function createDesktopCallOperation(
   db: Database,
   options: {
-    getSession: (id: string) => Pick<Session, 'workspacePath' | 'worktree'> | null;
+    getSession: (id: string) => Pick<Session, 'workspacePath' | 'worktree' | 'status'> | null;
     dataDir?: string;
   }
 ) {
@@ -135,7 +135,10 @@ export function createDesktopCallOperation(
           apps: binding.apps,
           todo: binding.todo,
           todos: readDesktopTodos(db)
-            .filter(desktopAllowedRow)
+            .filter(
+              (row) =>
+                desktopAllowedRow(row) && options.getSession(row.worker)?.status !== 'archived'
+            )
             .map((row) => row.id),
           tool: input.tool,
           arguments: input.args,
