@@ -1773,7 +1773,7 @@ export async function startClaudeSession(
 
 const runClaudeDesktopStart = (superpipe({})('claude-desktop-start-work') as PipelineAPI)
   .input(['request', 'deps', 'cache', 'context'])
-  .pipe(selectClaudeStartFolder, ['outcome', 'deps'], 'result:outcome')
+  .pipe(selectClaudeStartFolder, ['request', 'deps'], 'result:outcome')
   .pipe(startClaudeSession, ['outcome', 'request', 'deps', 'cache'], 'outcome')
   .endAsync('outcome') as (
   request: StartRequest,
