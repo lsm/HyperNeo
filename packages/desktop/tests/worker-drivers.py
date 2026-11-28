@@ -1438,6 +1438,37 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.pids.append(json.loads((self.lifecycle('worker-c') / 'driver.json').read_text())['pid'])
         print('queue=fifo holder_todo_done=next_worker')
 
+    def test_a_cancelled_or_unconfirmed_worker_gives_up_its_place_in_line(self):
+        dock = int(subprocess.check_output(['/usr/bin/pgrep', '-x', 'Dock']).split()[0])
+        self.call('fixture-admit', tool='click', arguments={'pid': dock})
+        todos = ['todo-worker-a', 'todo-worker-b', 'todo-worker-c']
+        places = {}
+        for worker in ('worker-b', 'worker-c'):
+            places[worker] = self.work / worker
+            places[worker].mkdir()
+        turn = lambda worker, live, args=None, **params: self.dispatch(
+            'list_windows', args or {}, worker=worker, workDir=str(places.get(worker, self.work)), todos=live,
+            **params)['result']
+        self.assertTrue(turn('worker-a', todos)['dispatched'])
+        self.pids.append(json.loads((self.lifecycle() / 'driver.json').read_text())['pid'])
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            waiting = pool.submit(turn, 'worker-b', todos, callId='waiting')
+            time.sleep(0.5)
+            self.assertEqual(self.call('cancelTurn', 'worker-b', callIds=['waiting']),
+                             {'ok': True, 'result': {'state': 'stopped'}})
+            self.assertEqual(waiting.result(timeout=5)['reason'], 'turn_stopped')
+        reply = turn('worker-c', todos[1:], {'fixture_deadline': True})
+        self.assertTrue(reply['dispatched'], reply)
+        self.pids.append(json.loads((self.lifecycle('worker-c') / 'driver.json').read_text())['pid'])
+        record = self.lifecycle('worker-c') / 'driver.json'
+        saved = json.loads(record.read_text())
+        saved['startedAt']['microseconds'] += 1
+        record.write_text(json.dumps(saved))
+        self.assertFalse(self.call('stop', 'worker-c')['ok'])
+        reply = turn('worker-a', todos, {'fixture_deadline': True})
+        self.assertTrue(reply['dispatched'], reply)
+        print('cancelled_waiter=left_line unconfirmed_stop=left_line')
+
     def test_a_held_worker_stops_keeping_a_locked_mac_once_its_driver_exits(self):
         started, _ = self.turn_guardian()
         pid = finder()
