@@ -49,6 +49,7 @@ import {
   copilotDesktopStatePath,
   createCopilotDesktopAdapter,
 } from '../../drivers/copilot-desktop-adapter.ts';
+import { antigravityDesktopControlAvailable } from '../../drivers/antigravity-desktop-channel.ts';
 import { copilotDesktopControlAvailable } from '../../drivers/copilot-desktop-channel.ts';
 import {
   codexAppServerSocketPath,
@@ -699,7 +700,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
           query,
         })
       ).sessions,
-    machine
+    machine,
+    { homeDir: homedir(), available: () => antigravityDesktopControlAvailable(homedir()) }
   );
   const antigravity = antigravityPath
     ? createAntigravityAdapter(
