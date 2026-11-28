@@ -5,6 +5,7 @@ const port = Number(process.argv[2] ?? 0);
 const transcript = process.argv[3];
 const finalizeDelayMs = Number(process.argv[4] ?? 0);
 const numbered = process.argv[5] === '--numbered';
+const bursts = process.argv[5] === '--bursts';
 let utterances = 0;
 const cancelled: number[] = [];
 const words = (id: number, bytes: number) =>
@@ -49,6 +50,14 @@ server.on('listening', () => {
 server.on('connection', (socket, request) => {
   const disconnect = new URL(request.url ?? '/', 'http://127.0.0.1').searchParams.has('disconnect');
   const id = ++utterances;
+  const opened = Date.now();
+  const heard = (bytes: number) =>
+    bursts
+      ? (transcript ?? '')
+          .split(' ')
+          .slice(0, 6 * (1 + Math.floor((Date.now() - opened) / 900)))
+          .join(' ')
+      : words(id, bytes);
   let bytes = 0;
   let finalTimer: ReturnType<typeof setTimeout> | undefined;
   socket.on('close', () => clearTimeout(finalTimer));
@@ -63,7 +72,7 @@ server.on('connection', (socket, request) => {
       return;
     }
     bytes += data.length;
-    socket.send(result(words(id, bytes), false));
+    socket.send(result(heard(bytes), false));
     if (disconnect) socket.close(1011, 'synthetic streaming fallback');
   });
 });

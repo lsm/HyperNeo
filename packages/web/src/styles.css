@@ -1016,6 +1016,12 @@ html {
 }
 
 /* Animations */
+@keyframes voiceTypeIn {
+  from {
+    opacity: 0.25;
+  }
+}
+
 @keyframes fadeIn {
   from {
     opacity: 0;
