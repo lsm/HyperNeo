@@ -19,6 +19,9 @@ Retrying the auto-filled send after the turn ends must retain its first stored
 session and return created:false. Adapter not_found rejects an explicit id; an
 unreachable/failed lookup returns session_lookup_failed and instructs a retry
 with the unchanged requestId/session, never an invented replacement id.
+Only an omitted session keeps a prior row's session or derives one. An explicit
+`null` rejects as invalid_publication and an explicit `neo:` id as unknown_session,
+even on a requestId with a stored session, and neither saves a row.
 
 Keep observed.json and proof.log. On the test-first commit the helper fails:
 the publish input does not yet accept session. Resources close in finally and

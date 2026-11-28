@@ -257,7 +257,8 @@ const createNeoPublisher = (runtime: NeoPublicationRuntime) =>
     )
     .pipe(
       async (draft: Draft, proof: Proof, caller: OperationCaller) => {
-        const worker = workerSession(draft.session);
+        const worker = draft.session;
+        if (worker === null) return { reason: { accepted: false, reason: 'invalid_publication' } };
         const prior =
           worker === undefined
             ? runtime.publication(
@@ -267,7 +268,8 @@ const createNeoPublisher = (runtime: NeoPublicationRuntime) =>
             : null;
         if (prior) return { value: { ...proof, session: prior.session } };
         const session = worker ?? workerSession(runtime.sourceSession(caller.sessionId!));
-        const status = session ? await runtime.lookupSession(session) : 'not_found';
+        const target = workerSession(session);
+        const status = target ? await runtime.lookupSession(target) : 'not_found';
         return worker && status !== 'found'
           ? {
               reason: {

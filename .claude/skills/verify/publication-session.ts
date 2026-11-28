@@ -48,7 +48,7 @@ try {
   })]);
   app.sessionManager.getOperationRegistry = () => registry;
   const invoke = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: root, role: 'neo' }));
-  const publish = async (requestId: string, session?: string) => JSON.parse((await invoke({ name: 'neo.publication.publish', input: { requestId, text: 'Session update', details: 'This is the requested session.', session } })).content[0].text);
+  const publish = async (requestId: string, session?: string | null) => JSON.parse((await invoke({ name: 'neo.publication.publish', input: { requestId, text: 'Session update', details: 'This is the requested session.', session } })).content[0].text);
   ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`, { headers: { authorization: `Bearer ${await readLocalCredential()}` } } as never);
   await new Promise((resolve, reject) => { ws!.onopen = resolve; ws!.onerror = reject; });
   const read = (name = 'neo.publication.read') => new Promise<{ ok: boolean; items: { session?: string; role?: string; publication?: { session?: string } }[] }>((resolve, reject) => {
@@ -103,6 +103,12 @@ try {
   assert.equal((evidence.autoRetry as { accepted: boolean; created: boolean; publication: { session?: string } }).accepted, true);
   assert.equal((evidence.autoRetry as { created: boolean }).created, false);
   assert.equal((evidence.autoRetry as { publication: { session?: string } }).publication.session, worker);
+  const rows = (await read()).items.length;
+  evidence.nullRetry = await publish('source-proof', null);
+  assert.match((evidence.nullRetry as { reason: string }).reason, /^invalid_publication/);
+  evidence.neoRetry = await publish('source-proof', root);
+  assert.deepEqual(evidence.neoRetry, { accepted: false, reason: 'unknown_session', detail: `Unknown session: ${root}` });
+  assert.equal((await read()).items.length, rows);
   evidence.final = await read();
   const conversation = await read('neo.conversation.read');
   evidence.conversation = conversation;

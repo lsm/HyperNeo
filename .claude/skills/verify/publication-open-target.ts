@@ -50,7 +50,7 @@ try{
  assert.equal(first.publication.sessionSource.link,'codex://threads/native-thread');
  assert.equal(first.publication.session,draft.session);
  const retry=await invoke('neo.publication.publish',draft);assert.equal(retry.created,false);assert.equal(retry.publication.publicationId,first.publication.publicationId);assert.deepEqual(retry.publication.sessionSource,first.publication.sessionSource);
- const own=await invoke('neo.publication.publish',{...draft,requestId:crypto.randomUUID(),session:root});assert(own.accepted,JSON.stringify(own));assert.equal(own.publication.session,undefined);assert.equal(own.publication.sessionSource,undefined);
+ const own=await invoke('neo.publication.publish',{...draft,requestId:crypto.randomUUID(),session:root});assert.deepEqual(own,{accepted:false,reason:'unknown_session',detail:`Unknown session: ${root}`});
  const bare=await invoke('neo.session.link',{session:'native-thread'});assert.equal(bare.adapter,'codex-desktop');assert.equal(bare.link,'codex://threads/native-thread');
  for(const [session,adapter,link] of [['native-thread','codex-desktop','codex://threads/native-thread'],['codex-desktop:unsafe','codex-desktop',null],['codex-desktop:linkless','codex-desktop',null],['claude-desktop:native-session','claude-desktop','claude://claude.ai/epitaxy/native-session'],['local','hyperneo','/session/local'],['space-session','hyperneo','/session/space-session']] as const){
   const result=await invoke('neo.publication.publish',{...draft,requestId:crypto.randomUUID(),session});assert(result.accepted,JSON.stringify(result));assert.equal(result.publication.sessionSource.adapter,adapter);assert.equal(result.publication.sessionSource.link,link);assert.equal(result.publication.session,session);
@@ -74,7 +74,7 @@ try{
   reads.length=0;const page=await rpc(name,{conversationId,limit:100});assert.equal(page.ok,true);
   const items=page.items as {role?:string;publication?:typeof first.publication;sessionSource?:{adapter:string}}[];
   const publications=name==='neo.publication.read'?items:items.filter(item=>item.role==='neo').map(item=>item.publication!);
-  assert.equal(publications.length,9);
+  assert.equal(publications.length,8);
   const current=publications.find(item=>item.publicationId===first.publication.publicationId)!;assert.equal(current.sessionSource.adapter,'codex-desktop');
   assert(reads.filter(id=>id==='native-thread').length<=2,'repeated sessions share one resolution per page');
  }

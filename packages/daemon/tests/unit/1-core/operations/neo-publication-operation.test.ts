@@ -377,27 +377,32 @@ describe('Neo publication without runtime input attribution', () => {
     expect(ledger.list(conversationId)).toEqual([expect.objectContaining({ links })]);
   });
 
-  test('session null is the same as no session', async () => {
+  test('session null is rejected as an invalid publication', async () => {
     const handler = createOperationMcpHandler(createOperationRegistry([operation]), () => caller);
     const reply = JSON.parse(
       (await handler({ name: 'neo.publication.publish', input: { ...draft, session: null } }))
         .content[0].text
     );
-    expect(reply).toMatchObject({ accepted: true, created: true });
-    expect(ledger.list(conversationId)[0].session).toBeUndefined();
+    expect(reply.accepted).toBe(false);
+    expect(reply.reason).toStartWith('invalid_publication');
+    expect(ledger.list(conversationId)).toHaveLength(0);
   });
 
-  test('Open never points at Neo: its own session is dropped, a worker is kept', async () => {
+  test('Open never points at Neo: its own session is rejected, a worker is kept', async () => {
     const own = await publish({ ...draft, session: root.sessionId }, caller);
-    expect(own).toMatchObject({ accepted: true, created: true });
-    expect(ledger.list(conversationId)[0].session).toBeUndefined();
+    expect(own).toEqual({
+      accepted: false,
+      reason: 'unknown_session',
+      detail: `Unknown session: ${root.sessionId}`,
+    });
+    expect(ledger.list(conversationId)).toHaveLength(0);
 
     sourceSession = root.sessionId;
     await publish({ ...draft, requestId: 'send-two' }, caller);
-    expect(ledger.list(conversationId)[1].session).toBeUndefined();
+    expect(ledger.list(conversationId)[0].session).toBeUndefined();
 
     await publish({ ...draft, requestId: 'send-three', session: 'worker' }, caller);
-    expect(ledger.list(conversationId)[2].session).toBe('worker');
+    expect(ledger.list(conversationId)[1].session).toBe('worker');
   });
 
   test('a stored Neo session is hidden from readers and left in the row', async () => {
