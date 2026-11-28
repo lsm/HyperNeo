@@ -40,7 +40,7 @@ function advance(pace: Pace, time: number) {
   pace.position += step;
   while (pace.revealedAt.length < Math.floor(pace.position + 1e-9)) {
     const i = pace.revealedAt.length + 1;
-    pace.revealedAt.push(last + ((time - last) * (i - from)) / Math.max(step, 1e-9));
+    pace.revealedAt.push(time - dt + (dt * (i - from)) / Math.max(step, 1e-9));
   }
 }
 
@@ -48,7 +48,7 @@ function settled(pace: Pace) {
   const last = pace.revealedAt.at(-1);
   return (
     pace.revealedAt.length === pace.chars.length &&
-    (last === undefined || (pace.now ?? 0) - last >= FADE_S)
+    (last === undefined || pace.now === undefined || pace.now - last >= FADE_S)
   );
 }
 
@@ -83,7 +83,8 @@ function useTypingReveal(target: string, flush: boolean) {
     let id = requestAnimationFrame(function tick(time) {
       advance(pace, time / 1000);
       setFrame(time);
-      if (!settled(pace)) id = requestAnimationFrame(tick);
+      if (settled(pace)) pace.now = undefined;
+      else id = requestAnimationFrame(tick);
     });
     return () => cancelAnimationFrame(id);
   }, [target, still]);
