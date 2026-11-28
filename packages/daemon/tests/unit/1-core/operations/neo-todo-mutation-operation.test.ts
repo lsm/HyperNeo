@@ -14,6 +14,7 @@ import { createTodoCheckPacks } from '../../helpers/todo-check-packs.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import type { NeoRequestReply } from '../../../../src/lib/neo/request-todo.ts';
 import { vi } from 'vitest';
+import type { AdapterIdentity } from '../../../../src/lib/drivers/types.ts';
 
 type Receipt = { ok: false; reason: string } | { ok: true; todo: NeoTodo; records?: string[] };
 describe('Writer-backed todo operation activation', () => {
@@ -27,6 +28,7 @@ describe('Writer-backed todo operation activation', () => {
   let beforeWrite: (() => void) | null;
   let checkDone: boolean;
   let workerRemotes: string[] | undefined;
+  let identity: AdapterIdentity | undefined;
   let advance: () => Promise<unknown>;
   let call: (name: string, input: object, role?: 'neo' | 'direct_task_worker') => Promise<Receipt>;
   let registry: ReturnType<typeof createOperationRegistry>;
@@ -43,6 +45,7 @@ describe('Writer-backed todo operation activation', () => {
     beforeWrite = null;
     checkDone = true;
     workerRemotes = undefined;
+    identity = undefined;
     gateway.onChanges = () => {
       order.push('commit');
     };
@@ -117,6 +120,7 @@ describe('Writer-backed todo operation activation', () => {
         artifact: () => null,
         stop,
         resolveTarget: async (ref) => ({ value: ref, workerRemotes }),
+        identity: () => identity,
         advance: () => advance(),
         changed: () => {
           order.push('announce');
@@ -167,6 +171,39 @@ describe('Writer-backed todo operation activation', () => {
     expect(store.getTodo(current.id)).toEqual(current);
     expect(new NeoTodoSessionRepository(db).get(current.id)).toBeNull();
     expect(order).toEqual([]);
+  });
+
+  test.each([
+    { verb: 'start', adapter: 'codex-desktop', model: 'gpt-x' },
+    { verb: 'send', ref: { adapter: 'codex-desktop', id: 'worker' }, effort: 'high' },
+  ])('an edit giving a local $verb target without the triple is refused', async (target) => {
+    identity = { fixedProvider: 'openai', configurable: true };
+    const before = store.getTodo('first');
+    expect(
+      await call('neo.todo.edit', { todoId: 'first', instruction: 'Implement it', target })
+    ).toMatchObject({
+      ok: false,
+      reason: expect.stringMatching(/^identity_required: .*missing: /),
+    });
+    expect(store.getTodo('first')).toEqual(before);
+    expect(new NeoTodoSessionRepository(db).get('first')).toBeNull();
+  });
+
+  test('an edit giving a complete local send target is admitted', async () => {
+    identity = { fixedProvider: 'openai', configurable: true };
+    advance = async () => undefined;
+    expect(
+      await call('neo.todo.edit', {
+        todoId: 'first',
+        instruction: 'Implement it',
+        target: {
+          verb: 'send',
+          ref: { adapter: 'codex-desktop', id: 'worker' },
+          model: 'gpt-x',
+          effort: 'high',
+        },
+      })
+    ).toMatchObject({ ok: true });
   });
 
   test('a repo-less edit inherits its sibling repository and requires a start place', async () => {

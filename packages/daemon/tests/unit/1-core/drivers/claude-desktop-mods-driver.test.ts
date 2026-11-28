@@ -227,6 +227,7 @@ describe('Claude Desktop mods driver wiring', () => {
   const commands = () =>
     jobs.listJobs({}).filter((job) => job.queue.startsWith('claude_desktop_mods:'));
   const mailbox = () => jobs.listJobs({ queue: 'mailbox' });
+  const identity = { provider: 'anthropic', model: 'claude-test', effort: 'high' };
   async function invoke<T>(adapter: WorkAdapter, name: string, input: unknown): Promise<T> {
     const registry = createOperationRegistry(
       createWorkVerbOperations({
@@ -234,6 +235,7 @@ describe('Claude Desktop mods driver wiring', () => {
         isOpenTodo: (id) => id === 'open-todo',
         acceptedTodo: () => true,
         noticeReply: () => true,
+        startedIdentity: async () => identity,
         daemonName: 'test',
         remote: {
           list: () => [],
@@ -247,7 +249,7 @@ describe('Claude Desktop mods driver wiring', () => {
     const outcome = await handler({
       name,
       input: ['work.start', 'work.send', 'work.queue'].includes(name)
-        ? { ...(input as Data), todoId: 'open-todo' }
+        ? { ...identity, ...(input as Data), todoId: 'open-todo' }
         : input,
     });
     if (outcome.isError) throw new Error(outcome.content[0].text);

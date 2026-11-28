@@ -24633,6 +24633,16 @@
                     },
                     {
                       "properties": {
+                        "effort": {
+                          "maxLength": 100,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "model": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        },
                         "preparationParameters": {
                           "additionalProperties": {
                             "$ref": "#/$defs/__schema0"
@@ -24642,6 +24652,11 @@
                             "type": "string"
                           },
                           "type": "object"
+                        },
+                        "provider": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
                         },
                         "ref": {
                           "properties": {
@@ -42911,6 +42926,16 @@
               },
               {
                 "properties": {
+                  "effort": {
+                    "maxLength": 100,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "model": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  },
                   "preparationParameters": {
                     "additionalProperties": {
                       "$ref": "#/$defs/__schema0"
@@ -42920,6 +42945,11 @@
                       "type": "string"
                     },
                     "type": "object"
+                  },
+                  "provider": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
                   },
                   "ref": {
                     "properties": {
@@ -44464,6 +44494,16 @@
               },
               {
                 "properties": {
+                  "effort": {
+                    "maxLength": 100,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "model": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  },
                   "preparationParameters": {
                     "additionalProperties": {
                       "$ref": "#/$defs/__schema0"
@@ -44473,6 +44513,11 @@
                       "type": "string"
                     },
                     "type": "object"
+                  },
+                  "provider": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
                   },
                   "ref": {
                     "properties": {
@@ -58966,6 +59011,11 @@
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
+          "effort": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
           "from": {
             "maxLength": 500,
             "minLength": 1,
@@ -58989,10 +59039,20 @@
             ],
             "type": "string"
           },
+          "model": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
           "notice": {
             "const": true,
             "description": "A Neo reply to a session that sent it a message; omit todoId.",
             "type": "boolean"
+          },
+          "provider": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
           },
           "ref": {
             "properties": {
@@ -59938,6 +59998,11 @@
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
+          "effort": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
           "from": {
             "maxLength": 500,
             "minLength": 1,
@@ -59961,10 +60026,20 @@
             ],
             "type": "string"
           },
+          "model": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
           "notice": {
             "const": true,
             "description": "A Neo reply to a session that sent it a message; omit todoId.",
             "type": "boolean"
+          },
+          "provider": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
           },
           "ref": {
             "properties": {

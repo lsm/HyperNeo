@@ -1,7 +1,7 @@
 ---
 id: work.send
 ---
-Message existing work by the ref from work.find, work.start or work.status. Agents need a todo on an accepted human request. Neo may use notice:true only to reply to a session that messaged it. Only Neo or the human can send across daemons.
+Message existing work by the ref from work.find, work.start or work.status. Agents need a todo on an accepted human request. Neo may use notice:true only to reply to a session that messaged it. Only Neo or the human can send across daemons. A local Neo send or queue that gives an open worker a todo it is not already running must name provider (unless the adapter fixes it), model and effort matching the worker's recorded values; otherwise it is refused identity_required with notSent:true, so start a fresh worker instead.
 
 - Ordinary local Neo input is stored durably with inputId and waits while the worker runs or is queued. A question ending the turn permits delivery. Explicit steer is immediate.
 - Use auto for adapter defaults. HyperNeo sessions and Space agents do not support explicit steer; use auto for them. Explicit modes require the capabilities in work.adapters and refuse without sending if unsupported. Copilot auto and queue enqueue; steer sends one best-effort immediate input that may start a later turn.

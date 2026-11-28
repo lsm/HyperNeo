@@ -154,6 +154,7 @@ export interface WorkVerbDeps {
   noticeReply?: (ref: WorkRef, sessionId: string) => boolean;
   todoWorker?: {
     on(todoId: string, ref: WorkRef): boolean;
+    runs?(todoId: string, ref: WorkRef): boolean;
     wait(todoId: string, ref: WorkRef, message: string): Promise<keyof typeof WORKER_BUSY_DETAIL>;
   };
   workInputs?: {
@@ -266,6 +267,9 @@ export const SendWorkInputSchema = z.object({
     .max(200)
     .optional()
     .describe('A repeat with the same key does not reach a HyperNeo session twice.'),
+  model: z.string().trim().min(1).max(200).optional(),
+  provider: z.string().trim().min(1).max(200).optional(),
+  effort: workStartConfiguration.schema.shape.effort,
   from: ForwardedOriginSchema,
 });
 export const WorkRefInputSchema = z.object({ ref: WorkRefSchema });
@@ -847,6 +851,60 @@ function matchesRequested(
   );
 }
 
+async function recordedIdentity(
+  adapter: WorkAdapter,
+  ref: WorkRef,
+  status: { provider?: string; model?: string; effort?: string } | null,
+  deps: WorkVerbDeps
+) {
+  return adapter.identity?.configurable === false
+    ? { ...(await deps.startedIdentity?.(ref)) }
+    : status && adapter.identity?.fixedProvider
+      ? { ...status, provider: status.provider ?? adapter.identity.fixedProvider }
+      : status;
+}
+
+async function requireSendIdentity<Value>(
+  input: QueuedInput,
+  caller: OperationCaller,
+  route: Value,
+  deps: WorkVerbDeps
+): Promise<{ value: Value } | { reason: SendResult }> {
+  const adapter = deps.adapters().find((candidate) => candidate.id === input.ref.adapter);
+  if (
+    !('message' in input) ||
+    caller.role !== 'neo' ||
+    !input.todoId ||
+    input.ref.daemon ||
+    !adapter?.identity ||
+    deps.todoWorker?.runs?.(input.todoId, input.ref)
+  )
+    return { value: route };
+  const gated = workStartConfiguration.requireIdentity(
+    { ...input, adapter: adapter.id },
+    adapter.identity
+  );
+  if ('ok' in gated) return { reason: reject(gated.reason, gated.detail, true) };
+  const configured = await adapter.resolveStartConfiguration?.({
+    place: { machine: deps.daemonName, name: input.ref.id },
+    title: input.ref.id,
+    message: input.message,
+    ...gated,
+  });
+  if (configured && !configured.ok) return { reason: { ...configured, notSent: true } };
+  const status = await adapter.status?.(input.ref).catch(() => null);
+  const seen = await recordedIdentity(adapter, input.ref, status?.ok ? status.value : null, deps);
+  return matchesRequested({ ...gated, ...configured?.value }, seen)
+    ? { value: route }
+    : {
+        reason: reject(
+          'identity_required',
+          `identity_required: ${adapter.id}:${input.ref.id} does not run provider ${gated.provider}, model ${gated.model}, effort ${gated.effort}; start a fresh worker for new todo work.`,
+          true
+        ),
+      };
+}
+
 /** @public */
 export async function reuseIdleWorker(
   route: Route<'start'>,
@@ -941,15 +999,6 @@ export async function reuseIdleWorker(
     : wanted
       ? { model: input.model, effort: input.effort, provider: input.provider }
       : null;
-  const observed = async (
-    ref: WorkRef,
-    status: { provider?: string; model?: string; effort?: string } | null
-  ) =>
-    adapter.identity?.configurable === false
-      ? { ...(await deps.startedIdentity?.(ref)) }
-      : status && adapter.identity?.fixedProvider
-        ? { ...status, provider: status.provider ?? adapter.identity.fixedProvider }
-        : status;
   const groups = await adapter.find({ folder, includeClosed: false, limit: 50 });
   const discovered = groups.flatMap((group) => group.work);
   if (prior && !discovered.some((work) => work.ref.id === prior.id) && adapter.status) {
@@ -1062,7 +1111,7 @@ export async function reuseIdleWorker(
       }
       continue;
     }
-    const seen = await observed(work.ref, identity);
+    const seen = await recordedIdentity(adapter, work.ref, identity, deps);
     if (requested && !matchesRequested(requested, seen)) {
       reuseHolds.delete(key);
       continue;
@@ -1173,7 +1222,11 @@ export async function reuseIdleWorker(
     if (
       status?.ok &&
       (isBusyWork(status.value.status) || (!busy.free && status.value.status === 'done')) &&
-      (!requested || matchesRequested(requested, await observed(busy.work.ref, status.value)))
+      (!requested ||
+        matchesRequested(
+          requested,
+          await recordedIdentity(adapter, busy.work.ref, status.value, deps)
+        ))
     ) {
       const queued = await deps.todoWorker.wait(input.todoId, busy.work.ref, input.message);
       if (queued === 'none') return null;
@@ -1436,6 +1489,7 @@ const runSendWork = (superpipe({})('work.send') as PipelineAPI)
   .pipe(requireSendPurpose, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
   .pipe(workSourceFacts, ['input', 'caller', 'deps'], 'sourceFacts')
   .pipe(requireWorkSource, ['sourceFacts', 'outcome'], 'result:outcome')
+  .pipe(requireSendIdentity, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
   .pipe(queueOrdinaryInput, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
   .pipe(requireFreeWorker, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
   .pipe(selectSendOrigin, ['input', 'caller'], 'from')
@@ -1551,6 +1605,7 @@ const runQueueWork = (superpipe({})('work.queue') as PipelineAPI)
   .pipe(requireSendPurpose, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
   .pipe(workSourceFacts, ['input', 'caller', 'deps'], 'sourceFacts')
   .pipe(requireWorkSource, ['sourceFacts', 'outcome'], 'result:outcome')
+  .pipe(requireSendIdentity, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
   .pipe(
     (
       input: QueuedInput,

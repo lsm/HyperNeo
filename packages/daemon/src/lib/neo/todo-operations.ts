@@ -19,7 +19,7 @@ import type {
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { ArtifactRefSchema, unregisteredArtifact } from '../artifacts/file-contracts.ts';
 import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
-import { type Place, type WorkRef } from '../drivers/types.ts';
+import { type AdapterIdentity, type Place, type WorkRef } from '../drivers/types.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { isLocalUser } from '../operations/caller.ts';
@@ -28,7 +28,11 @@ import { type DesktopAppName, DesktopAppsSchema } from '../desktop/app-scope.ts'
 import { neoEvidencePathRefusal } from './core-todo-checks.ts';
 import { planNeoHoldCard } from './daemon-cards.ts';
 import { openHumanCard } from './human-card.ts';
-import { NeoTodoAddTargetSchema, NeoTodoTargetSchema } from './driver-work.ts';
+import {
+  NeoTodoAddTargetSchema,
+  NeoTodoTargetSchema,
+  neoTargetIdentityRefusal,
+} from './driver-work.ts';
 import { type NeoInputReads, noNeoInputReads, resolveNeoInputAsk } from './input-ask.ts';
 import {
   neoTodoRepository,
@@ -77,6 +81,7 @@ export interface NeoTodoControls {
     Gate<WorkRef> & { place?: Pick<Place, 'folder' | 'remotes'>; workerRemotes?: readonly string[] }
   >;
   refreshIdentity?(todoId: string): Promise<void>;
+  identity?(adapter: string): AdapterIdentity | undefined;
   desktopAppName?: DesktopAppName;
   advance(): Promise<unknown>;
   recompute(todo: NeoTodo, patch: NeoTodoPatch): Promise<NeoTodo>;
@@ -210,19 +215,22 @@ export type ResolvedNeoTodoDraft = z.infer<typeof NeoTodoDraftSchema> & {
 
 export async function resolveNeoTodoDraft(
   input: z.infer<typeof NeoTodoDraftSchema>,
-  resolveTarget: NeoTodoControls['resolveTarget']
+  resolveTarget: NeoTodoControls['resolveTarget'],
+  identity?: NeoTodoControls['identity']
 ): Promise<Gate<ResolvedNeoTodoDraft>> {
-  if (!input.target || input.target.verb === 'start') return { value: input };
-  const resolved = await resolveTarget(input.target.ref);
-  return 'reason' in resolved
-    ? resolved
-    : {
-        value: {
+  const resolved =
+    input.target && input.target.verb !== 'start' ? await resolveTarget(input.target.ref) : null;
+  if (resolved && 'reason' in resolved) return resolved;
+  const draft: ResolvedNeoTodoDraft =
+    resolved && input.target && input.target.verb !== 'start'
+      ? {
           ...input,
           target: { ...input.target, ref: resolved.value },
           workerRemotes: resolved.workerRemotes,
-        },
-      };
+        }
+      : input;
+  const refused = identity && neoTargetIdentityRefusal(draft.target, identity);
+  return refused ? fail(refused) : { value: draft };
 }
 
 export function neoTodoPlaceRefusal(
@@ -266,12 +274,12 @@ export function recordNeoTodoTarget(
 export async function addNeoTodo(
   todos: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
-  controls: Pick<NeoTodoControls, 'advance' | 'resolveTarget' | 'userFolder'>,
+  controls: Pick<NeoTodoControls, 'advance' | 'resolveTarget' | 'identity' | 'userFolder'>,
   ask: NeoAsk,
   input: ResolvedNeoTodoDraft,
   packs: readonly NeoPack[]
 ): Promise<{ ok: true; todo?: NeoTodo; records?: string[] } | Rejection> {
-  const resolved = await resolveNeoTodoDraft(input, controls.resolveTarget);
+  const resolved = await resolveNeoTodoDraft(input, controls.resolveTarget, controls.identity);
   if ('reason' in resolved) return resolved.reason;
   const current = todos.getAsk(ask.id);
   if (!current) return { ok: false, reason: 'not_found: no such ask.' };

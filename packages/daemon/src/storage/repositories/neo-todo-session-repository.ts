@@ -618,10 +618,14 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
         : previous?.verb === 'send'
           ? { preparationParameters: previous.preparationParameters, sandbox: previous.sandbox }
           : {};
+    const identity =
+      previous?.verb === 'start' || previous?.verb === 'send'
+        ? { provider: previous.provider, model: previous.model, effort: previous.effort }
+        : {};
     this.db
       .prepare(`INSERT INTO neo_todo_sessions (todo_id, target) VALUES (?, ?)
         ON CONFLICT(todo_id) DO UPDATE SET target = excluded.target`)
-      .run(todoId, JSON.stringify({ verb: 'send', ref, ...checkout }));
+      .run(todoId, JSON.stringify({ verb: 'send', ref, ...checkout, ...identity }));
     if (todo.state === 'doing')
       store.updateTodo(todo, { state: 'todo', startedAt: null }, Date.now());
     if (todo.instruction) return 'instruction';

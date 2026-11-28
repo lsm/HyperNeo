@@ -168,7 +168,7 @@ export function wireNeoTodoAdd(
     .pipe(
       async (_ask: NeoAsk, input: AddInput) => {
         const { resolveNeoTodoDraft } = await import('./todo-operations.ts');
-        return resolveNeoTodoDraft(input, controls.resolveTarget);
+        return resolveNeoTodoDraft(input, controls.resolveTarget, controls.identity);
       },
       ['outcome', 'input'],
       'result:outcome'

@@ -1093,6 +1093,7 @@ describe('codex-desktop adapter status and send', () => {
         isOpenTodo: (todoId) => todoId === 'open-todo',
         acceptedTodo: () => true,
         noticeReply: () => true,
+        todoWorker: { on: () => true, runs: () => true, wait: async () => 'none' },
         remote: { list: () => [], invoke: async () => ({}) },
       })
     );

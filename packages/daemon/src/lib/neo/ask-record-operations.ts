@@ -324,7 +324,11 @@ export function createNeoAskRecordOperations(
             drafts.push(todo);
             continue;
           }
-          const resolved = await resolveNeoTodoDraft(todo, controls.resolveTarget);
+          const resolved = await resolveNeoTodoDraft(
+            todo,
+            controls.resolveTarget,
+            controls.identity
+          );
           if ('reason' in resolved) return resolved.reason;
           const placeRefusal = neoTodoPlaceRefusal(resolved.value, policies, {
             ...readScope,
