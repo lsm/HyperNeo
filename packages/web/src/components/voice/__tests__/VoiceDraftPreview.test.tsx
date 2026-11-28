@@ -139,6 +139,23 @@ describe('VoiceDraftPreview', () => {
     expect(fresh()).toHaveLength(0);
   });
 
+  it('fades in the first characters of a burst that follows a pause', () => {
+    const first = 'a'.repeat(80);
+    const view = render(live(first));
+    frames(70);
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+    expect(shown()).toBe(first);
+    view.rerender(live(`${first} ${'b'.repeat(40)}`));
+    for (let frame = 0; frame < 6; frame++) {
+      frames(1);
+      expect(shown().length - first.length).toBe(fresh().length);
+      for (const char of fresh()) expect(Number(char.style.opacity)).toBeLessThan(1);
+    }
+    expect(fresh().length).toBeGreaterThan(0);
+  });
+
   it('shows words as they arrive under reduced motion', () => {
     vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('reduce') }));
     const view = render(live('hello'));
