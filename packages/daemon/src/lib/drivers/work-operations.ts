@@ -772,10 +772,17 @@ export async function startWork(
         machine: result.value.execution?.machine ?? result.value.place.machine,
         folder: result.value.execution?.directory ?? result.value.place.folder,
         harness: result.value.ref.adapter,
-        provider:
-          result.value.provider ?? (route.identity?.configurable ? undefined : input.provider),
-        model: result.value.model ?? (route.identity?.configurable ? undefined : input.model),
-        effort: result.value.effort ?? (route.identity?.configurable ? undefined : input.effort),
+        ...(route.identity?.configurable === false
+          ? {
+              provider: input.provider ?? route.identity.fixedProvider ?? result.value.provider,
+              model: input.model ?? result.value.model,
+              effort: input.effort ?? result.value.effort,
+            }
+          : {
+              provider: result.value.provider,
+              model: result.value.model,
+              effort: result.value.effort,
+            }),
         preparation: input.preparation,
         ...(ownedTodoId(input, caller, deps)
           ? { role: input.checkPlan ? 'check' : (input.role ?? 'do') }
