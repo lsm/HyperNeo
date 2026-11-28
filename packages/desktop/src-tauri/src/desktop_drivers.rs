@@ -704,11 +704,16 @@ impl Drivers {
                         false,
                     ));
                 }
-                let ended = self.desk.lock().unwrap().end(todos);
+                let ended = self.desk.lock().unwrap().end(todos, Instant::now());
                 for worker in ended {
                     self.locked.cancel_turn(&worker).await;
                 }
-                if self.desk.lock().unwrap().take(&request.worker, todo) {
+                if self
+                    .desk
+                    .lock()
+                    .unwrap()
+                    .take(&request.worker, todo, Instant::now())
+                {
                     break;
                 }
                 if Instant::now() + LEASE_POLL >= line_by {

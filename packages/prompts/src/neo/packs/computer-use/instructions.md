@@ -34,11 +34,11 @@ permissions guide for the human; wait for them. Follow humanStep when asking.
 
 One desktop worker uses this Mac at a time. HyperNeo Desktop gives the desktop
 to workers in the order they first call desktop.call. After the current
-worker's todo ends, or that worker is stopped or archived, the next one gets the
-desktop on its next call, within about a minute. Waiting workers get
-desktop_queued and keep their place. A worker waiting on the
-human keeps the others waiting, so finish or stop its todo once it no longer
-needs the Mac.
+worker's todo ends, that worker is stopped or archived, or it makes no call for
+three minutes, the next one gets the desktop on its next call, within about a
+minute. Waiting workers get desktop_queued and keep their place. A worker
+waiting on the human keeps the others waiting for up to three minutes, so
+finish or stop its todo once it no longer needs the Mac.
 
 Workers proceed on a locked Mac. With Locked Use installed, HyperNeo Desktop
 unlocks the Mac behind a cover while a worker acts and locks it again after.
