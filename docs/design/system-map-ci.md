@@ -74,16 +74,16 @@ Every PR has one attestation block. Code needs `impact`, plus `map` when it has 
 
 ````markdown
 ```system-map-impact
-{"version":1,"head":"<full PR head SHA>","base":"<full base SHA>","read":["map","impact"]}
+{"version":1,"read":["map","impact"]}
 {"path":"packages/daemon/src/lib/neo/service.ts","reason":"Checked the event listener; its contract is unchanged."}
 ```
 ````
 
-`where` and `routes` may also appear in `read`. CI validates required claims, the current head, and one non-empty reason per required path. The block's `base` is the fork point and is informational: a base mismatch alone never fails the check. It rejects missing, extra, or duplicate paths, empty reasons, and unknown versions. `--print` generates the local block; CI prints its exact required block in a collapsed log with the full reports. No PR comment is created.
+`where` and `routes` may also appear in `read`. CI computes the current head and fork-point base itself and validates required claims plus one non-empty reason per required path. Neither SHA appears in the body: a new head passes with the existing block when its required claims and path set are unchanged, and fails when either changes. The check rejects missing, extra, or duplicate paths, empty reasons, and unknown versions. `--print` performs the same analysis and generates the local block without SHAs. CI prints its exact required block and the head/base SHAs in a collapsed log with the full reports. No PR comment is created.
 
-A validation failure produces one error: `System map check failed: <read/path/reason counts>; head <current|stale>. Run system-map-impact.ts --print and use the collapsed CI report and replacement block; author read entries are claims.` Analyzer failures instead report the command and head that failed.
+A validation failure produces one error: `System map check failed: <read/path/reason counts>. Run system-map-impact.ts --print and use the collapsed CI report and replacement block; author read entries are claims.` Analyzer failures instead report the command and head that failed.
 
-Tests-only, native-only, scripts-only, and dependency-only PRs still attest to the required reads; their empty required-path sets need no entries. Native files in a mixed PR remain ignored, deleted mapped sources require entries, and a dependency bump with mapped source is not exempt. The achievable gate is current attestation plus exact analysis, not proof of reading, so there is no broader silent waiver.
+The workflow needs no trigger or checkout change: `synchronize` already checks out the exact new head and supplies the current PR body. Tests-only, native-only, scripts-only, and dependency-only PRs still attest to the required reads; their empty required-path sets need no entries. Native files in a mixed PR remain ignored, deleted mapped sources require entries, and a dependency bump with mapped source is not exempt. The achievable gate is current attestation plus exact analysis, not proof of reading, so there is no broader silent waiver.
 
 The workflow triggers on `opened`, `synchronize`, `reopened`, `edited`, `labeled`, and `unlabeled` PR events, so body edits and the revert waiver revalidate without running main CI. PR runs read event data and make no GitHub API calls, including for forks. Per-PR analysis is about 3 s plus a second impact pass; Bun and dependency setup time were not measured.
 
@@ -97,6 +97,6 @@ The CI log proves that `map` and base/head `impact` completed at the recorded SH
 
 A false positive gets a reason explaining the wrong link. Missing links still need human feedback. Replace routine #10836 comments with the CI log and body block; keep that issue for missed/wrong links and runtime problems.
 
-Implementation tests cover the fork-point diff, a `dev` push that leaves the block unchanged, peer de-duplication, removed-definition peers, deleted sources, ignored importers, every category's attestation, body-validation failures, the revert path-only waiver, label revalidation, and fail-closed analyzer errors in the existing `test:system-map` leg.
+Implementation tests cover the fork-point diff, a `dev` push that leaves the block unchanged, a review-fix push that reuses the unchanged body successfully, a push that changes the required paths and fails against the old body, peer de-duplication, removed-definition peers, deleted sources, ignored importers, every category's attestation, body-validation failures without head/base fields, the revert path-only waiver, label revalidation, and fail-closed analyzer errors in the existing `test:system-map` leg.
 
 **Question for the human:** is a general function call graph wanted later? This design deliberately does not add one.
