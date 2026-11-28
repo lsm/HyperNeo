@@ -90,3 +90,55 @@ describe('Cursor CLI discovery', () => {
     }
   });
 });
+
+describe('Cursor CLI history', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('replays an owned session over ACP into ordered turns and skips unowned ones', async () => {
+    const owned = createCursorDiscovery('cursor-agent', '/fixture', 'test', async () => [
+      ['owned', '/work'],
+    ]);
+    expect(await owned.readTurns!('other', undefined, 5, 0)).toBeNull();
+    expect(peer.created).not.toHaveBeenCalled();
+
+    const chunk = (sessionUpdate: string, text: string) => ({
+      method: 'session/update',
+      params: { sessionId: 'owned', update: { sessionUpdate, content: { type: 'text', text } } },
+    });
+    peer.request.mockImplementation(async (method: string, _params: unknown, options) => {
+      if (method === 'initialize')
+        return { result: { protocolVersion: 1, agentCapabilities: { loadSession: true } } };
+      const { onNotification } = peer.created.mock.calls[0][0] as {
+        onNotification: (message: unknown) => void;
+      };
+      for (const message of [
+        chunk('user_message_chunk', 'Fix the fictional bug'),
+        chunk('agent_message_chunk', 'Looking. '),
+        chunk('agent_message_chunk', 'Fixed.'),
+        chunk('user_message_chunk', 'Thanks'),
+      ])
+        onNotification(message);
+      options?.onResponseFrame?.();
+      return { result: {} };
+    });
+
+    const page = await owned.readTurns!('owned', undefined, 5, 0);
+    expect(peer.created).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'cursor-agent', args: ['acp'], cwd: '/work' })
+    );
+    expect(peer.request).toHaveBeenCalledWith(
+      'session/load',
+      { sessionId: 'owned', cwd: '/work', mcpServers: [] },
+      expect.anything()
+    );
+    expect(page?.availability).toBe('complete');
+    expect(page?.turns.map(({ messageId, role, text }) => [messageId, role, text])).toEqual([
+      ['cursor:1', 'user', 'Fix the fictional bug'],
+      ['cursor:2', 'assistant', 'Looking. Fixed.'],
+      ['cursor:3', 'user', 'Thanks'],
+    ]);
+    expect(peer.close).toHaveBeenCalledOnce();
+  });
+});
