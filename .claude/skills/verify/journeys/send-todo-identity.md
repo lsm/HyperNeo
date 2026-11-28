@@ -13,7 +13,8 @@ production MCP handler as Neo:
 - `neo.todo.add` with a local HyperNeo start target missing provider, or a send
   target missing the whole triple, is refused `identity_required` naming the
   missing fields, and no todo is added.
-- A remote start target keeps today's admission (no `identity_required`).
+- A remote start target on a daemon that is not attached defers to dispatch (no
+  `identity_required`); `remote-start-identity.md` covers an attached remote.
 - A send target naming the triple is stored with it.
 - `work.send` and `work.queue` giving the seeded worker a todo it is not running,
   without the triple, are refused `identity_required` with `notSent: true`.

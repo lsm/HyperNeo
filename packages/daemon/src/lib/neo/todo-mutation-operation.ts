@@ -43,7 +43,7 @@ interface Dependencies {
   userFolder: string;
   stop(todo: NeoTodo): Promise<string | null>;
   resolveTarget: NeoTodoControls['resolveTarget'];
-  identity?(adapter: string): AdapterIdentity | undefined;
+  identity?(adapter: string, daemon?: string): Promise<AdapterIdentity | undefined>;
   advance(): Promise<unknown>;
   changed(): void;
   project<T extends NeoTodo>(todos: readonly T[]): Promise<T[]>;
@@ -86,7 +86,8 @@ function buildTodoMutation(deps: Dependencies, pipeline: ReturnType<SuperPipeFac
                 workerRemotes: resolved.workerRemotes,
               }
             : request;
-        const refused = deps.identity && neoTargetIdentityRefusal(edited.target, deps.identity);
+        const refused =
+          deps.identity && (await neoTargetIdentityRefusal(edited.target, deps.identity));
         return refused ? { reason: { ok: false as const, reason: refused } } : { value: edited };
       },
       'request',

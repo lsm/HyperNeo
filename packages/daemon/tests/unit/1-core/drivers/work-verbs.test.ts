@@ -119,7 +119,17 @@ describe('work verb operations', () => {
       const remote: Invoke = async (_daemon, name, input) => {
         forwarded.push({ name, input });
         return name === 'work.adapters'
-          ? { ok: true, value: [{ id: 'copilot-cli', capabilities: ['start'], copilotClients }] }
+          ? {
+              ok: true,
+              value: [
+                {
+                  id: 'copilot-cli',
+                  capabilities: ['start'],
+                  copilotClients,
+                  identity: { fixedProvider: 'github-copilot', configurable: true },
+                },
+              ],
+            }
           : {
               ok: true,
               value: { ...summary('copilot-cli', 'desktop-session'), copilotClient: 'desktop' },
@@ -773,7 +783,7 @@ describe('work verb operations', () => {
     expect(starts).toBe(1);
   });
 
-  test('refuses unverified remote effort without forwarding even when the local adapter supports it', async () => {
+  test('refuses remote effort without forwarding when that daemon advertises no identity facts', async () => {
     let forwarded = 0;
     const remote: Invoke = async (_daemon, name) => {
       if (name === 'work.adapters')
@@ -797,7 +807,7 @@ describe('work verb operations', () => {
       )
     ).toMatchObject({
       ok: false,
-      reason: 'unsupported_effort',
+      reason: 'unsupported_model',
     });
     expect(forwarded).toBe(0);
   });
@@ -843,10 +853,10 @@ describe('work verb operations', () => {
 
   test.each([
     [{ configurable: true }, true],
-    [{ fixedProvider: 'anthropic', configurable: false }, false],
+    [{ fixedProvider: 'anthropic', configurable: false }, true],
     [undefined, false],
   ])(
-    'forwards a remote model and effort only when the remote adapter confirms them (%o)',
+    'forwards a remote model and effort only when that daemon advertises the adapter identity (%o)',
     async (identity, forwards) => {
       const forwarded: { name: string; input: unknown }[] = [];
       const remote: Invoke = async (_daemon, name, input) => {
@@ -892,6 +902,43 @@ describe('work verb operations', () => {
       }
     }
   );
+
+  test.each([
+    [{}, false],
+    [{ model: 'kimi-for-coding', effort: 'high' }, false],
+    [{ provider: 'kimi', model: 'kimi-for-coding', effort: 'high' }, true],
+  ])('requires the full identity on a Neo remote start (%o)', async (identity, forwards) => {
+    const names: string[] = [];
+    const remote: Invoke = async (_daemon, name) => {
+      names.push(name);
+      return name === 'work.adapters'
+        ? {
+            ok: true,
+            value: [{ id: 'hyperneo', capabilities: ['start'], identity: { configurable: true } }],
+          }
+        : { ok: true, value: summary('hyperneo', 'remote') };
+    };
+    const result = await call(
+      'work.start',
+      {
+        adapter: 'hyperneo',
+        place: { ...place, daemon: 'laptop' },
+        title: 't',
+        message: 'm',
+        ...identity,
+      },
+      remote,
+      { source: 'internal', role: 'neo' },
+      []
+    );
+    if (forwards) {
+      expect(result).toMatchObject({ ok: true, value: { ref: { daemon: 'laptop' } } });
+      expect(names).toEqual(['work.adapters', 'work.start']);
+    } else {
+      expect(result).toMatchObject({ ok: false, reason: 'identity_required' });
+      expect(names).toEqual(['work.adapters']);
+    }
+  });
 
   test('validates effort input before invoking the driver', async () => {
     let starts = 0;

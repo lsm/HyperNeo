@@ -55,6 +55,7 @@ import {
 } from './conversation-ask-read-operation.ts';
 import { createNeoDraftRecoveryOperation } from './draft-recovery-operation.ts';
 import { invokeOperation } from '../operations/invoke.ts';
+import { WorkAdaptersResultSchema } from '../drivers/work-operations.ts';
 import {
   NEO_SESSION_MUTES_MAX,
   NeoSessionNoticeGroupSchema,
@@ -749,8 +750,21 @@ export function createNeoOperations(
     recompute: (todo, patch) => service.todoRunner.recompute(todo, patch),
     advance: () => service.todoRunner.advance(),
     refreshIdentity: (todoId) => service.todoRunner.refreshIdentity(todoId),
-    identity: (adapter) =>
-      service.workAdapters?.().find((candidate) => candidate.id === adapter)?.identity,
+    identity: async (adapter, daemon) => {
+      if (!daemon)
+        return service.workAdapters?.().find((candidate) => candidate.id === adapter)?.identity;
+      const outcome = await invokeOperation(
+        service.sessions.getOperationRegistry(),
+        'work.adapters',
+        { daemon },
+        { source: 'internal', role: 'neo' }
+      );
+      const catalog =
+        outcome.kind === 'completed' && WorkAdaptersResultSchema.safeParse(outcome.value);
+      return catalog && catalog.success && catalog.data.ok
+        ? catalog.data.value.find((candidate) => candidate.id === adapter)?.identity
+        : undefined;
+    },
     proceed: (todoId, message) => service.todoRunner.proceed(todoId, message),
     retry: (todoId, message) => service.todoRunner.retry(todoId, message),
     stop: (todo) => service.todoRunner.stop(todo),

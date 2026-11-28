@@ -1,0 +1,80 @@
+import assert from 'node:assert/strict';
+import { hostname } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
+import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
+import { NeoConversationAskRepository } from '../../../packages/daemon/src/storage/repositories/neo-conversation-ask-repository.ts';
+import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
+import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
+import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
+
+const run = resolve(process.argv[2]);
+const { VERIFY_B_URL: url, VERIFY_B_CODE: code, VERIFY_B_FOLDER: folder, VERIFY_EVIDENCE: out } = process.env;
+assert.equal(process.env.NODE_ENV, 'test');
+assert.equal(process.env.HOME, join(run, 'home'));
+assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
+assert.ok(url && code && folder && out, 'Run through remote-start-identity.sh');
+mkdirSync(join(run, 'data'), { recursive: true });
+const evidence: unknown[] = [];
+const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
+try {
+  await app.jobProcessor.stop();
+  const registry = () => app.sessionManager.getOperationRegistry();
+  const attached = await invokeOperation(registry(), 'daemon.attach', { daemonId: 'b', url, code }, { source: 'rpc' });
+  assert.equal(attached.kind === 'completed' && (attached.value as { kind: string }).kind, 'attached', JSON.stringify(attached));
+  const db = app.db.getDatabase();
+  const sender = 'neo:20000000-0000-4000-8000-000000000003';
+  db.prepare("INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,type,config,metadata) VALUES (?, 'Synthetic Neo', ?, '2026-11-28T00:00:00Z', '2026-11-28T00:00:00Z', 'active', 'worker', '{}', '{}')").run(sender, run);
+  new NeoRepository(db).reserveBinding({ sessionId: sender, kind: 'neo', projectId: null });
+  const requestId = '30000000-0000-4000-8000-000000000003';
+  const asked = new NeoConversationAskRepository(db).append({ conversationId: sender.slice(4), requestId, askOrigin: { sessionId: sender, messageId: requestId }, content: `Start the synthetic work in ${folder} on b` });
+  assert.ok(asked.accepted, 'The synthetic human request names the remote folder');
+  const todos = new NeoAskTodoRepository(db), sessions = new NeoTodoSessionRepository(db);
+  todos.openAsk({ id: 'synthetic-ask', sessionId: sender, projectId: null, originMessageId: null, title: 'Synthetic ask', request: 'Track work', createdAt: 1 });
+  const handler = createOperationMcpHandler(registry, () => ({ sessionId: sender, role: 'neo' }));
+  const call = async (name: string, input: object) => {
+    const reply = await handler({ name, input });
+    const value = JSON.parse(reply.content[0].text);
+    evidence.push({ name, input, value });
+    assert.notEqual(reply.isError, true, JSON.stringify(reply));
+    return value;
+  };
+  const adapters = await call('work.adapters', { daemon: 'b' });
+  const facts = Object.fromEntries(adapters.value.map((entry: { id: string; identity?: unknown }) => [entry.id, entry.identity]));
+  assert.deepEqual(facts.hyperneo, { configurable: true });
+  const check = { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } };
+  const gate = (await call('neo.todo.add', { askId: 'synthetic-ask', title: 'Unfinished gate', after: [], check })).todo.id as string;
+  const place = { machine: hostname(), name: 'project', folder, daemon: 'b' };
+  const start = (identity: object) => call('work.start', { adapter: 'hyperneo', place, title: 'Remote identity', message: 'Synthetic', todoId: gate, ...identity });
+
+  const bare = await start({});
+  assert.deepEqual([bare.ok, bare.reason], [false, 'identity_required']);
+  assert.match(bare.detail, /missing: provider, model, effort/);
+  const noProvider = await start({ model: 'synthetic-model', effort: 'high' });
+  assert.deepEqual([noProvider.ok, noProvider.reason], [false, 'identity_required']);
+  assert.match(noProvider.detail, /missing: provider\)/);
+  const full = await start({ provider: 'anthropic', model: 'synthetic-model', effort: 'high' });
+  assert.notEqual(full.reason, 'identity_required', 'A full triple must pass A and reach B');
+  evidence.push({ forwardedReplyFromB: { ok: full.ok, reason: full.reason } });
+
+  const add = (target: object) => call('neo.todo.add', { askId: 'synthetic-ask', title: 'Remote todo', after: [gate], check, instruction: 'Synthetic instruction', target });
+  const before = todos.listTodos('synthetic-ask').length;
+  const incomplete = await add({ verb: 'start', adapter: 'hyperneo', place, model: 'synthetic-model' });
+  assert.equal(incomplete.ok, false);
+  assert.match(incomplete.reason, /^identity_required: .*\(missing: provider, effort\)$/);
+  assert.equal(todos.listTodos('synthetic-ask').length, before, 'A refused remote target added a todo');
+  const named = await add({ verb: 'start', adapter: 'hyperneo', place, provider: 'anthropic', model: 'synthetic-model', effort: 'high' });
+  assert.equal(named.ok, true, JSON.stringify(named));
+  const stored = sessions.get(named.todo.id) as Record<string, unknown> | null;
+  assert.deepEqual([stored?.verb, stored?.provider, stored?.model, stored?.effort], ['start', 'anthropic', 'synthetic-model', 'high']);
+  const unreachable = await add({ verb: 'start', adapter: 'hyperneo', place: { ...place, daemon: 'nowhere' } });
+  assert.doesNotMatch(String(unreachable.reason ?? ''), /^identity_required/, 'An unreachable remote defers to dispatch');
+  console.log('PASS: Neo remote starts and remote todo targets on B are admitted from B\'s work.adapters facts; a full triple reaches B.');
+} finally {
+  writeFileSync(join(out!, 'observed.json'), JSON.stringify(evidence, null, 2));
+  await Promise.race([app.cleanup(), new Promise((done) => setTimeout(done, 10_000))]);
+}
+process.exit(process.exitCode ?? 0);

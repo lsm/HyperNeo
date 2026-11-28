@@ -18,6 +18,9 @@ End state:
   is `configurable: false`.
 - The `hyperneo` start answers `ok: true` with B's confirmed model, effort `high` and
   `daemon: b`; B's database holds one session on that model.
-- The `claude-desktop` start answers `unsupported_model` and starts nothing.
+- The script no longer starts `claude-desktop` on B: B now advertises its identity
+  facts, so A forwards the request and B would drive its Claude Desktop app. That
+  admission is covered by the work-verbs unit test; the Neo-caller rule is in
+  `remote-start-identity.md`.
 - Before the fix the `hyperneo` start also answered `unsupported_model` ("This remote
   route cannot confirm the requested model") and B held no session.
