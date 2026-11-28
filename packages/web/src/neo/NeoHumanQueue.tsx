@@ -208,11 +208,21 @@ export function NeoHumanQueue({
       questions: entry.questions.filter((question) =>
         own.some((item) => 'questionId' in item && item.questionId === question.id)
       ),
-      todos: entry.todos.filter((todo) =>
-        own.some((item) =>
-          'todoId' in item ? item.todoId === todo.id : item.todos.some(({ id }) => id === todo.id)
+      todos: entry.todos
+        .filter((todo) =>
+          own.some((item) =>
+            'todoId' in item ? item.todoId === todo.id : item.todos.some(({ id }) => id === todo.id)
+          )
         )
-      ),
+        .map((todo) => {
+          const item = own.find(
+            (candidate) => 'todoId' in candidate && candidate.todoId === todo.id
+          );
+          const waitingOn = item && 'todoId' in item ? item.waitingOn : undefined;
+          return waitingOn && waitingOn !== 'hold'
+            ? { ...todo, statusCodes: [{ code: `queue.waitingOn.${waitingOn}`, params: {} }] }
+            : todo;
+        }),
     };
   };
   const stale = groups.filter((id) => !card(id));
