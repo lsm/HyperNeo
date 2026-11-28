@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
 
 export interface VoiceDraftPreviewProps {
@@ -14,18 +14,43 @@ export interface VoiceDraftPreviewProps {
   class?: string;
 }
 
+const TYPE_STEP_MS = 25;
+const CATCH_UP_MS = 600;
+
+function useTypewriter(target: string, flush: boolean): string {
+  const [shown, setShown] = useState('');
+  let kept = shown;
+  if (flush) kept = target;
+  else if (!target.startsWith(shown)) {
+    let same = 0;
+    while (same < shown.length && shown[same] === target[same]) same++;
+    kept = target.slice(0, same);
+  }
+  useEffect(() => {
+    if (kept.length >= target.length) return;
+    const timer = setTimeout(() => {
+      const backlog = target.length - kept.length;
+      const step = Math.max(1, Math.ceil((backlog * TYPE_STEP_MS) / CATCH_UP_MS));
+      setShown(target.slice(0, kept.length + step));
+    }, TYPE_STEP_MS);
+    return () => clearTimeout(timer);
+  }, [kept, target]);
+  return kept;
+}
+
 export function VoiceDraftPreview({
   text,
   start,
   end,
   transcribing,
-  interim = '',
+  interim: heard = '',
   newLine = false,
   hint,
   heightPx,
   minHeightPx,
   class: className,
 }: VoiceDraftPreviewProps) {
+  const interim = useTypewriter(heard, transcribing);
   const boxRef = useRef<HTMLDivElement>(null);
   const markerRef = useRef<HTMLSpanElement>(null);
   const from = Math.min(Math.max(start, 0), text.length);
