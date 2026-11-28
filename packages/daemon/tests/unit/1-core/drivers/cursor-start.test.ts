@@ -206,17 +206,22 @@ describe('createCursorStart.start with model and effort', () => {
     });
   });
 
-  it('refuses an effort the chosen model does not offer without prompting', async () => {
+  it('refuses an effort the chosen model does not offer and restores the model', async () => {
     peer.request
       .mockResolvedValueOnce(handshake)
       .mockResolvedValueOnce(created)
       .mockResolvedValueOnce({
         result: { configOptions: [models('claude-opus-5-5'), efforts('medium')] },
-      });
+      })
+      .mockResolvedValueOnce({ result: { configOptions: [models('default')] } });
 
     const started = await start('claude-opus-5-5', 'max');
     expect(started).toMatchObject({ ok: false, reason: 'unsupported_effort', notSent: true });
-    expect(peer.request).toHaveBeenCalledTimes(3);
+    expect(peer.request).toHaveBeenCalledTimes(4);
+    expect(peer.request.mock.calls[3]).toEqual([
+      'session/set_config_option',
+      { sessionId: ref.id, configId: 'model', value: 'default' },
+    ]);
     expect(peer.close).toHaveBeenCalledOnce();
   });
 
@@ -235,6 +240,7 @@ describe('createCursorStart.start with model and effort', () => {
     peer.request
       .mockResolvedValueOnce(handshake)
       .mockResolvedValueOnce(created)
+      .mockResolvedValueOnce({ result: { configOptions: [models('default')] } })
       .mockResolvedValueOnce({ result: { configOptions: [models('default')] } });
 
     expect(await start('gpt-5.5')).toMatchObject({
@@ -242,7 +248,12 @@ describe('createCursorStart.start with model and effort', () => {
       reason: 'not_delivered',
       notSent: true,
     });
-    expect(peer.request).toHaveBeenCalledTimes(3);
+    expect(peer.request).toHaveBeenCalledTimes(4);
+    expect(peer.request.mock.calls[3]?.[1]).toEqual({
+      sessionId: ref.id,
+      configId: 'model',
+      value: 'default',
+    });
     expect(peer.close).toHaveBeenCalledOnce();
   });
 });
