@@ -7,12 +7,14 @@ import {
 } from '../../../../src/lib/operations/registry.ts';
 import { NeoMemoryRepository } from '../../../../src/storage/repositories/neo-memory-repository.ts';
 import { runMigration542 } from '../../../../src/storage/schema/m542-neo-memories.ts';
+import { runMigration543 } from '../../../../src/storage/schema/m543-neo-memory-vectors.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 
 test('allows Neo and denies MCP/RPC workers via invokeOperation', async () => {
   const db = new Database(':memory:');
   runMigration542(db);
+  runMigration543(db);
   const registry = createOperationRegistry(
     createMemoryOperations(
       new NeoMemoryRepository(gatewayFor(db)),

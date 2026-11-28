@@ -2,6 +2,15 @@ export interface QueryEmbedder {
   embedQuery(text: string): Float32Array | number[] | Promise<Float32Array | number[]>;
 }
 
+const VECTOR_ADMISSION_COSINE = 0.25;
+const VECTOR_TOP_DELTA = 0.05;
+
+export function admitVectorHits<T extends { rank: number }>(ranked: T[]): T[] {
+  const top = ranked[0]?.rank ?? Number.NEGATIVE_INFINITY;
+  if (top < VECTOR_ADMISSION_COSINE) return [];
+  return ranked.filter((item) => item.rank >= top - VECTOR_TOP_DELTA);
+}
+
 export function cosineSimilarity(left: Float32Array, right: Float32Array): number | null {
   if (left.length !== right.length || left.length === 0) return null;
   let dot = 0;

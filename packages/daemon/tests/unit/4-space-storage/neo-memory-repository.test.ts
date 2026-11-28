@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from 'bun:test';
 import { Database } from '../../../src/storage/sqlite-compat.ts';
 import { gatewayFor } from '../../../src/storage/db-gateway/db-gateway.ts';
 import { runMigration542 } from '../../../src/storage/schema/m542-neo-memories.ts';
+import { runMigration543 } from '../../../src/storage/schema/m543-neo-memory-vectors.ts';
 import { NeoMemoryRepository } from '../../../src/storage/repositories/neo-memory-repository.ts';
 
 describe('NeoMemoryRepository', () => {
@@ -9,6 +10,7 @@ describe('NeoMemoryRepository', () => {
   beforeEach(async () => {
     const db = new Database(':memory:');
     runMigration542(db);
+    runMigration543(db);
     repo = new NeoMemoryRepository(gatewayFor(db));
     await repo.save({
       key: 'ci-runs-tests',
@@ -42,6 +44,29 @@ describe('NeoMemoryRepository', () => {
     ])
       expect((await repo.search(message, 3)).map((m) => m.key)).toEqual(['ci-runs-tests']);
     expect(await repo.search(`${blob} daemon tests ${blob}`, 3)).toEqual([]);
+  });
+
+  test('finds an English memory from a Chinese query and nothing for an unrelated one', async () => {
+    const concepts = [/daemon tests|测试/, /pull request|合并/, /时间|Eastern/];
+    const embed = (text: string) => {
+      const hit = concepts.findIndex((concept) => concept.test(text));
+      return Float32Array.from([0, 1, 2, 3], (dim) => (dim === (hit < 0 ? 3 : hit) ? 1 : 0.1));
+    };
+    const db = new Database(':memory:');
+    runMigration542(db);
+    runMigration543(db);
+    const vectors = new NeoMemoryRepository(gatewayFor(db), {
+      model: 'concepts',
+      dimensions: 4,
+      embedQuery: embed,
+      embedPassage: embed,
+    });
+    await vectors.save({ key: 'ci-runs-tests', content: 'Let CI run the daemon tests.' });
+    await vectors.save({ key: 'pr-size', content: 'Keep each pull request small.' });
+    expect((await vectors.search('测试应该在哪里跑', 3)).map((m) => m.key)).toEqual([
+      'ci-runs-tests',
+    ]);
+    expect(await vectors.search('今天天气怎么样', 3)).toEqual([]);
   });
 
   test('finds a memory from a sentence that ends with a period', async () => {

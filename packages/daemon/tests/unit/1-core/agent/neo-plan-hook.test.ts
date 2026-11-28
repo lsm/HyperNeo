@@ -4,6 +4,7 @@ import type { NeoAsk } from '@hyperneo/shared/types/neo-ask';
 import { neoPlanContextHooks } from '../../../../src/lib/agent/neo-plan-hook.ts';
 import { NeoMemoryRepository } from '../../../../src/storage/repositories/neo-memory-repository.ts';
 import { runMigration542 } from '../../../../src/storage/schema/m542-neo-memories.ts';
+import { runMigration543 } from '../../../../src/storage/schema/m543-neo-memory-vectors.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 
@@ -47,6 +48,7 @@ test('SDK start hooks rehydrate all plans and prompt hooks send only changes', a
 async function memoryHooks(searches: string[]) {
   const db = new Database(':memory:');
   runMigration542(db);
+  runMigration543(db);
   const store = new NeoMemoryRepository(gatewayFor(db));
   await store.save({ key: 'ci-tests', content: 'Let CI run the daemon tests.' });
   await store.save({ key: 'test-hosts', content: 'Heavy tests run on the build host.' });

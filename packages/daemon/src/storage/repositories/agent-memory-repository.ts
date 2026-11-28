@@ -3,7 +3,7 @@ import type { AgentMemoryEntry, AgentMemorySearchResult } from '@hyperneo/shared
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import { Logger } from '../../lib/logger.ts';
 import { schemaTableExists } from '../schema/extensions.ts';
-import { cosineSimilarity } from '../vector-similarity.ts';
+import { admitVectorHits, cosineSimilarity } from '../vector-similarity.ts';
 
 export type { AgentMemoryEntry, AgentMemorySearchResult };
 
@@ -71,8 +71,6 @@ const MEMORY_TAG_MAX_LENGTH = 50;
 const MEMORY_TAG_MAX_COUNT = 50;
 const RRF_K = 60;
 const VECTOR_CANDIDATE_LIMIT = 100;
-const VECTOR_ADMISSION_COSINE = 0.25;
-const VECTOR_TOP_DELTA = 0.05;
 const EMBEDDING_ERROR_MAX_LENGTH = 500;
 const EMBEDDING_BACKFILL_BATCH_SIZE = 25;
 
@@ -533,9 +531,7 @@ export class AgentMemoryRepository {
           b.row.updated_at - a.row.updated_at ||
           a.row.key.localeCompare(b.row.key)
       );
-    const top = ranked[0]?.rank ?? Number.NEGATIVE_INFINITY;
-    if (top < VECTOR_ADMISSION_COSINE) return [];
-    return ranked.filter((item) => item.rank >= top - VECTOR_TOP_DELTA).slice(0, limit);
+    return admitVectorHits(ranked).slice(0, limit);
   }
 
   backfillPendingEmbeddings(): void {
