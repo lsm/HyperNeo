@@ -27,6 +27,9 @@ Verify the following:
   Cursor does not offer returns `unsupported_model`. Neither sends a prompt.
 - When the CLI acknowledges the change but keeps the old model, the start
   returns `not_delivered` and no prompt is sent.
+- After a refusal that follows a change, the driver sets the changed option
+  back to its old value (`model` back to `default`), so the refused start
+  leaves Cursor's saved default as it was.
 
 The evidence is `cursor-acp.jsonl`, the ACP frames the fake CLI received, and
 `cursor-start-config.json`.

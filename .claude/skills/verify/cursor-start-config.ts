@@ -98,11 +98,14 @@ try {
     });
   }
   const adapter = 'cursor-cli';
+  let frames: { method: string; params?: { configId?: string; value?: string } }[] = [];
   const methods = () => {
     const lines = readFileSync(journal, 'utf8').trim().split('\n').filter(Boolean);
     writeFileSync(journal, '');
-    return lines.map((line) => JSON.parse(line).method);
+    frames = lines.map((line) => JSON.parse(line));
+    return frames.map(({ method }) => method);
   };
+  const restored = () => frames.at(-1)?.params;
   const results: Record<string, unknown> = {};
   const listed = await rpc<Result<{ id: string; capabilities: string[]; identity?: object }[]>>('work.adapters', {});
   assert(listed.ok);
@@ -139,7 +142,8 @@ try {
 
   const effort = await start('claude-opus-5-5', 'max');
   assert(!effort.ok && effort.notSent && effort.reason === 'unsupported_effort', JSON.stringify(effort));
-  assert.deepEqual(methods(), ['initialize', 'session/new', 'session/set_config_option']);
+  assert.deepEqual(methods(), ['initialize', 'session/new', 'session/set_config_option', 'session/set_config_option']);
+  assert.deepEqual([restored()?.configId, restored()?.value], ['model', 'default']);
   results.unsupportedEffort = effort;
 
   const model = await start('claude-opus-9');
@@ -149,7 +153,8 @@ try {
 
   const unconfirmed = await start('gpt-5.5', 'high');
   assert(!unconfirmed.ok && unconfirmed.notSent && unconfirmed.reason === 'not_delivered', JSON.stringify(unconfirmed));
-  assert.deepEqual(methods(), ['initialize', 'session/new', 'session/set_config_option']);
+  assert.deepEqual(methods(), ['initialize', 'session/new', 'session/set_config_option', 'session/set_config_option']);
+  assert.deepEqual([restored()?.configId, restored()?.value], ['model', 'default']);
   results.unconfirmed = unconfirmed;
 
   writeFileSync(join(run, 'evidence/cursor-start-config.json'), JSON.stringify({ calls, ...results }, null, 2));
