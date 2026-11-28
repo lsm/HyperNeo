@@ -120,7 +120,7 @@ describe('Writer-backed todo operation activation', () => {
         artifact: () => null,
         stop,
         resolveTarget: async (ref) => ({ value: ref, workerRemotes }),
-        identity: () => identity,
+        identity: async () => identity,
         advance: () => advance(),
         changed: () => {
           order.push('announce');
