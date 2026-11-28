@@ -1318,13 +1318,13 @@ open(sys.argv[2], 'w').write(reply.decode())
         reply = self.dispatch('click', {'pid': pid, 'fixture_deadline': True}, worker='worker-b',
                               workDir=str(other))['result']
         self.assertEqual((reply['decision'], reply['reason'], reply['dispatched']),
-                         ('refused', 'window_busy', False))
+                         ('refused', 'desktop_queued', False))
         self.assertFalse(list(other.glob('d-*')))
         self.assertTrue(self.call('stop')['ok'])
         reply = self.dispatch('click', {'pid': pid}, worker='worker-b', workDir=str(other))['result']
         self.assertTrue(reply['dispatched'], reply)
         self.pids.append(json.loads((self.lifecycle('worker-b') / 'driver.json').read_text())['pid'])
-        print('held_window=window_busy after_stop=dispatched')
+        print('held_desktop=desktop_queued after_stop=dispatched')
 
     def overlapping(self, first, second):
         timeline = self.root / 'timeline'
@@ -1346,10 +1346,10 @@ open(sys.argv[2], 'w').write(reply.decode())
         other.mkdir()
         busy = self.dispatch('get_window_state', {'pid': pid, 'fixture_deadline': True},
                              worker='worker-b', workDir=str(other))['result']
-        self.assertEqual(busy['reason'], 'window_busy')
+        self.assertEqual(busy['reason'], 'desktop_queued')
         act = self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']
         self.assertTrue(act['dispatched'], act)
-        print('read_then_act=same_todo other_todo=window_busy')
+        print('read_then_act=same_todo other_worker=desktop_queued')
 
     def test_stop_keeps_the_window_until_the_running_input_ends(self):
         pid = finder()
@@ -1384,7 +1384,7 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.addCleanup(lambda: hold.unlink(missing_ok=True))
         front = {'delivery_mode': 'foreground'}
         failed = self.dispatch('click', {'pid': pid, 'fixture_delay': True, 'fixture_close_fails': True,
-                                         **front}, workDir=str(self.work))['result']
+                                         **front}, workDir=str(self.work), todos=['todo-worker-a'])['result']
         self.assertTrue(failed['reason'].startswith('stop_unconfirmed'), failed)
         old = json.loads((self.lifecycle() / 'driver.json').read_text())['pid']
         self.pids.append(old)
@@ -1414,6 +1414,120 @@ open(sys.argv[2], 'w').write(reply.decode())
             reply = self.dispatch('click', args, worker='worker-b', workDir=str(other))['result']
             self.assertTrue(reply['dispatched'], reply)
         print('unconfirmed_stop=live_child_kept window_and_foreground=blocked_until_exit')
+
+    def test_workers_take_the_desktop_in_turn_until_the_holders_todo_ends(self):
+        dock = int(subprocess.check_output(['/usr/bin/pgrep', '-x', 'Dock']).split()[0])
+        self.call('fixture-admit', tool='click', arguments={'pid': finder()})
+        self.call('fixture-admit', tool='click', arguments={'pid': dock})
+        self.assertTrue(self.dispatch('click', {'pid': finder()}, workDir=str(self.work))['result']['dispatched'])
+        self.pids.append(json.loads((self.lifecycle() / 'driver.json').read_text())['pid'])
+        todos = ['todo-worker-a', 'todo-worker-b', 'todo-worker-c']
+        places = {}
+        for worker in ('worker-b', 'worker-c'):
+            places[worker] = self.work / worker
+            places[worker].mkdir()
+        turn = lambda worker, live, **extra: self.dispatch(
+            'click', {'pid': dock, **extra}, worker=worker, workDir=str(places[worker]), todos=live)['result']
+        for worker in ('worker-b', 'worker-c'):
+            reply = turn(worker, todos, fixture_deadline=True)
+            self.assertEqual((reply['reason'], reply['dispatched']), ('desktop_queued', False), reply)
+        self.assertEqual(turn('worker-c', todos[1:], fixture_deadline=True)['reason'], 'desktop_queued')
+        self.assertTrue(turn('worker-b', todos[1:])['dispatched'])
+        self.pids.append(json.loads((self.lifecycle('worker-b') / 'driver.json').read_text())['pid'])
+        self.assertTrue(turn('worker-c', todos[2:])['dispatched'])
+        self.pids.append(json.loads((self.lifecycle('worker-c') / 'driver.json').read_text())['pid'])
+        print('queue=fifo holder_todo_done=next_worker')
+
+    def test_a_cancelled_or_unconfirmed_worker_gives_up_its_place_in_line(self):
+        dock = int(subprocess.check_output(['/usr/bin/pgrep', '-x', 'Dock']).split()[0])
+        self.call('fixture-admit', tool='click', arguments={'pid': dock})
+        todos = ['todo-worker-a', 'todo-worker-b', 'todo-worker-c']
+        places = {}
+        for worker in ('worker-b', 'worker-c'):
+            places[worker] = self.work / worker
+            places[worker].mkdir()
+        turn = lambda worker, live, args=None, **params: self.dispatch(
+            'list_windows', args or {}, worker=worker, workDir=str(places.get(worker, self.work)), todos=live,
+            **params)['result']
+        self.assertTrue(turn('worker-a', todos)['dispatched'])
+        self.pids.append(json.loads((self.lifecycle() / 'driver.json').read_text())['pid'])
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            waiting = pool.submit(turn, 'worker-b', todos, callId='waiting')
+            time.sleep(0.5)
+            self.assertEqual(self.call('cancelTurn', 'worker-b', callIds=['waiting']),
+                             {'ok': True, 'result': {'state': 'stopped'}})
+            self.assertEqual(waiting.result(timeout=5)['reason'], 'turn_stopped')
+        reply = turn('worker-c', todos[1:], {'fixture_deadline': True})
+        self.assertTrue(reply['dispatched'], reply)
+        self.pids.append(json.loads((self.lifecycle('worker-c') / 'driver.json').read_text())['pid'])
+        record = self.lifecycle('worker-c') / 'driver.json'
+        saved = json.loads(record.read_text())
+        saved['startedAt']['microseconds'] += 1
+        record.write_text(json.dumps(saved))
+        self.assertFalse(self.call('stop', 'worker-c')['ok'])
+        reply = turn('worker-a', todos, {'fixture_deadline': True})
+        self.assertTrue(reply['dispatched'], reply)
+        print('cancelled_waiter=left_line unconfirmed_stop=left_line')
+
+    def test_a_worker_stopped_while_it_waits_does_not_rejoin_the_line(self):
+        todos = ['todo-worker-a', 'todo-worker-b', 'todo-worker-c']
+        places = {'worker-a': self.work}
+        for worker in ('worker-b', 'worker-c'):
+            places[worker] = self.work / worker
+            places[worker].mkdir()
+        turn = lambda worker, live, args=None: self.dispatch(
+            'list_windows', args or {}, worker=worker, workDir=str(places[worker]), todos=live)
+        self.assertTrue(turn('worker-a', todos)['result']['dispatched'])
+        self.pids.append(json.loads((self.lifecycle() / 'driver.json').read_text())['pid'])
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            waiting = pool.submit(turn, 'worker-b', todos)
+            time.sleep(0.5)
+            self.assertTrue(self.call('stop', 'worker-b')['ok'])
+            self.assertFalse(waiting.result(timeout=5)['ok'])
+        reply = turn('worker-c', todos[1:], {'fixture_deadline': True})['result']
+        self.assertTrue(reply['dispatched'], reply)
+        self.pids.append(json.loads((self.lifecycle('worker-c') / 'driver.json').read_text())['pid'])
+        print('stopped_waiter=left_line next_worker=dispatched')
+
+    def test_a_finished_workers_locked_use_passes_to_the_next_worker(self):
+        _, exited = self.turn_guardian()
+        other = self.work / 'other'
+        other.mkdir()
+        self.dispatch('list_windows', {'fixture_screen_locked': True}, workDir=str(self.work))
+        self.assertTrue(self.dispatch('list_windows', {}, workDir=str(self.work))['result']['dispatched'])
+        self.pids.append(json.loads((self.lifecycle() / 'driver.json').read_text())['pid'])
+        exited.unlink(missing_ok=True)
+        self.dispatch('list_windows', {'fixture_screen_locked': True}, worker='worker-b', workDir=str(other),
+                      todos=['todo-worker-b'])
+        self.assertTrue(exited.exists(), 'the finished worker kept Locked Use')
+        reply = self.dispatch('list_windows', {}, worker='worker-b', workDir=str(other),
+                              todos=['todo-worker-b'])['result']
+        self.assertTrue(reply['dispatched'], reply)
+        self.pids.append(json.loads((self.lifecycle('worker-b') / 'driver.json').read_text())['pid'])
+        print('finished_worker=released locked_mac=next_worker')
+
+    def test_a_held_worker_stops_keeping_a_locked_mac_once_its_driver_exits(self):
+        started, _ = self.turn_guardian()
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        hold = self.work / 'hold-stop'
+        hold.touch()
+        self.addCleanup(lambda: hold.unlink(missing_ok=True))
+        failed = self.dispatch('click', {'pid': pid, 'fixture_delay': True, 'fixture_close_fails': True},
+                               workDir=str(self.work))['result']
+        self.assertTrue(failed['reason'].startswith('stop_unconfirmed'), failed)
+        old = json.loads((self.lifecycle() / 'driver.json').read_text())['pid']
+        self.pids.append(old)
+        wait_until(lambda: bool(list(self.work.glob('d-*/d.stopping'))))
+        hold.unlink()
+        other = self.work / 'other'
+        other.mkdir()
+        self.dispatch('list_windows', {'fixture_screen_locked': True}, worker='worker-b', workDir=str(other))
+        self.assertTrue(started.exists(), 'Locked Use did not start for the next worker')
+        reply = self.dispatch('list_windows', {}, worker='worker-b', workDir=str(other))['result']
+        self.assertTrue(reply['dispatched'], reply)
+        self.pids.append(json.loads((self.lifecycle('worker-b') / 'driver.json').read_text())['pid'])
+        print('held_worker=retired locked_mac=next_worker')
 
     def test_failed_start_cleanup_in_dispatch_keeps_the_window(self):
         pid = finder()
@@ -1486,9 +1600,10 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.call('fixture-admit', tool='click', arguments={'pid': dock})
         other = self.work / 'other'
         other.mkdir()
-        self.assertTrue(self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']['dispatched'])
         self.assertTrue(self.dispatch('click', {'pid': dock}, worker='worker-b',
-                                      workDir=str(other))['result']['dispatched'])
+                                      workDir=str(other), todos=['todo-worker-b'])['result']['dispatched'])
+        self.assertTrue(self.dispatch('click', {'pid': pid}, workDir=str(self.work),
+                                      todos=['todo-worker-a'])['result']['dispatched'])
         for worker in ('worker-a', 'worker-b'):
             self.pids.append(json.loads((self.lifecycle(worker) / 'driver.json').read_text())['pid'])
         front = {'delivery_mode': 'foreground'}
@@ -1496,7 +1611,7 @@ open(sys.argv[2], 'w').write(reply.decode())
             lambda timeline: self.dispatch('click', {'pid': pid, 'fixture_timeline': timeline, **front},
                                            workDir=str(self.work)),
             [lambda timeline: self.dispatch('click', {'pid': dock, 'fixture_timeline': timeline, **front},
-                                            worker='worker-b', workDir=str(other))])
+                                            worker='worker-b', workDir=str(other), todos=['todo-worker-b'])])
         self.assertTrue(all(reply['result']['dispatched'] for reply in replies), replies)
         self.assertEqual(lines, ['begin', 'end', 'begin', 'end'])
         print('foreground=serialized')
