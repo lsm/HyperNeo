@@ -65,7 +65,7 @@ const states = {
 const marks = {
   todo: ['○', 'text-fg-faint'],
   doing: ['●', 'text-accent'],
-  blocked: ['●', 'text-warning'],
+  blocked: ['!', 'text-warning'],
   done: ['✓', 'text-success'],
   removed: ['', 'text-fg-faint'],
 } as const;
@@ -241,7 +241,9 @@ function TodoRow({
     ['todo.held', 'todo.paused'].includes(code.code)
   )
     ? (['‖', 'text-warning'] as const)
-    : marks[todo.state];
+    : todo.state === 'blocked' && todo.blockedBy === 'failure'
+      ? (['✕', 'text-danger'] as const)
+      : marks[todo.state];
   const [controlError, setControlError] = useState<string | null>(null);
   const [confirmDesktopOff, setConfirmDesktopOff] = useState(false);
   const control = (choice: NeoTodoControl) => {
@@ -999,10 +1001,9 @@ export function NeoAskTodos({
   );
   const [label, tone, weight] = states[entry.state];
   const created = neoRelativeTime(ask.createdAt, neoNow.value, locale.value);
-  const todoCount =
-    received.summary?.todoCount ??
-    todos.filter((todo) => todo.state !== 'removed' && todo.state !== 'done').length +
-      entry.doneCount;
+  const todoCount = todos.filter(
+    (todo) => todo.state !== 'removed' && todo.state !== 'done'
+  ).length;
   const openQuestions =
     received.summary?.openQuestionCount ??
     entry.questions.filter((question) => question.state === 'open').length;

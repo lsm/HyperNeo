@@ -6,7 +6,7 @@ import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 
 const [port, directory, phase] = process.argv.slice(2);
-assert(port && port !== '8399' && directory && ['before', 'topic-before', 'layout-before', 'after', 'short-topics', 'late-reference', 'waiting-only'].includes(phase));
+assert(port && port !== '8399' && directory && ['before', 'topic-before', 'layout-before', 'after', 'short-topics', 'late-reference', 'waiting-only', 'phone-parity'].includes(phase));
 const run = resolve(directory);
 const evidence = join(run, 'evidence');
 const base = `http://127.0.0.1:${port}`;
@@ -75,12 +75,56 @@ async function checkWaitingOnly(context, theme) {
   });
   const waiting = await shown();
   await page.screenshot({ path: join(evidence, `waiting-only-${theme}.png`), animations: 'disabled' });
-  await queue.getByRole('button', { name: /^In progress / }).click();
-  await queue.getByText('Pack the bags', { exact: true }).first().waitFor();
+  await queue.getByRole('button', { name: /^All work / }).click();
   await scenes.getByText('Synthetic filed archive', { exact: true }).waitFor({ timeout: 5000 }).catch(() => {});
   const progress = await shown();
   await page.screenshot({ path: join(evidence, `waiting-only-progress-${theme}.png`), animations: 'disabled' });
   observations.push({ theme, waiting, progress });
+}
+async function checkPhoneParity(context, theme) {
+  const page = await context.newPage();
+  page.setDefaultTimeout(15000);
+  await page.goto(`${base}/neo`);
+  const queue = page.locator('[data-human-queue]');
+  const states = queue.getByRole('group', { name: '状态' });
+  await states.waitFor();
+  const chips = await states.getByRole('button').allInnerTexts();
+  await page.screenshot({ path: join(evidence, `phone-parity-waiting-${theme}.png`), animations: 'disabled' });
+  const tab = async (name) => {
+    const chip = states.getByRole('button', { name: new RegExp(`^${name}`) });
+    if (!(await chip.count())) return false;
+    await chip.click();
+    return true;
+  };
+  const CASES = ['Case card A?', 'Case card B?', 'Case held card?', 'Stalled step beside a held card', 'Remind me on Dec 19', 'New step 1', 'Paused step', 'Hold past review date', 'Earlier step', 'Step after the earlier one', 'Running step', 'Queued step', 'Failed step'];
+  const tabs = {};
+  for (const name of ['等你', '已搁置|先放着', '进行中|在做']) {
+    if (!(await tab(name))) continue;
+    await page.waitForTimeout(300);
+    const text = await queue.innerText();
+    tabs[name.split('|')[0]] = CASES.filter((title) => text.includes(title));
+  }
+  await tab('进行中|在做');
+  const progress = await queue.locator('[data-ask-todo]').count();
+  const allWork = await tab('所有工作');
+  if (!allWork) await tab('进行中|在做');
+  await page.locator('[data-ask]').first().waitFor({ timeout: 5000 }).catch(() => {});
+  await page.screenshot({ path: join(evidence, `phone-parity-list-${theme}.png`), animations: 'disabled' });
+  const big = page.locator('[data-ask="big"] [data-ask-status]').first();
+  const card = (await big.count()) ? await big.innerText() : null;
+  const filed = () => page.locator('[data-ask^="filed-"]').count();
+  const before = await filed();
+  const older = page.getByRole('button', { name: '显示更早的结果' });
+  const offered = await older.count();
+  if (offered) {
+    await older.click();
+    await page.waitForFunction((n) => document.querySelectorAll('[data-ask^="filed-"]').length > n, before, { timeout: 5000 }).catch(() => {});
+  }
+  const after = await filed();
+  const scenes = await page.locator('[data-scene-group]').evaluateAll((groups) => groups.map((group) => group.getAttribute('aria-label')));
+  const asksShown = await page.locator('[data-ask]').evaluateAll((items) => items.map((item) => item.dataset.ask));
+  await page.screenshot({ path: join(evidence, `phone-parity-older-${theme}.png`), animations: 'disabled' });
+  observations.push({ theme, chips, tabs, progress, allWork, card, older: { offered, before, after }, scenes, asksShown });
 }
 async function checkShortTopics(context, theme) {
   await context.addInitScript(() => {
@@ -144,10 +188,10 @@ async function checkShortTopics(context, theme) {
     for (const id of ['pay-primary', 'pay-sender'])
       await queue.locator(`#neo-ref-question-${prefix}-${id}`).getByRole('button', { name: button }).click();
   };
-  await moveQuestions('waiting', '先放着');
-  await queue.getByRole('button', { name: '先放着 4' }).click();
-  await moveQuestions('held', '拿回来');
-  await queue.getByRole('button', { name: '先放着 2' }).waitFor();
+  await moveQuestions('waiting', '搁置');
+  await queue.getByRole('button', { name: '已搁置 4' }).click();
+  await moveQuestions('held', '取回');
+  await queue.getByRole('button', { name: '已搁置 2' }).waitFor();
   assert.equal(await more.locator('option[value="payments"]').innerText(), '支付 2');
   await more.selectOption('payments');
   await cards('pay-primary', 'pay-sender');
@@ -167,11 +211,16 @@ try {
     phase === 'late-reference' ? ['light'] : ['light', 'dark'];
   for (const theme of themes) {
     assert(['light', 'dark'].includes(theme));
-    const context = await browser.newContext({ storageState, viewport: { width: 1440, height: 900 }, colorScheme: theme, locale: phase === 'short-topics' ? 'zh-CN' : 'en-US' });
+    const context = await browser.newContext({ storageState, viewport: { width: 1440, height: 900 }, colorScheme: theme, locale: ['short-topics', 'phone-parity'].includes(phase) ? 'zh-CN' : 'en-US' });
     await context.route('**/*', (route) => route.request().url().startsWith(base) ? route.continue() : route.abort());
     await context.addInitScript((value) => localStorage.setItem('theme', value), theme);
     if (phase === 'late-reference') {
       await checkLateReference(context);
+      await context.close();
+      continue;
+    }
+    if (phase === 'phone-parity') {
+      await checkPhoneParity(context, theme);
       await context.close();
       continue;
     }
@@ -216,7 +265,7 @@ try {
     const checkSavedTopic = async () => {
       await page.evaluate(() => localStorage.setItem('neo:topic-filter', 'pick:travel'));
       await page.reload();
-      const state = queue.getByRole('button', { name: /^In progress / });
+      const state = queue.getByRole('button', { name: /^All work / });
       await state.waitFor();
       assert.equal(await chips.count(), 0);
       const badge = queue.locator('[data-ask="trip"]').getByRole('button', { name: 'Travel', exact: true });
@@ -224,10 +273,10 @@ try {
       const savedTopic = { state: await state.innerText(), badgeDisabled: await badge.isDisabled() };
       await page.screenshot({ path: join(evidence, `saved-topic-${theme}.png`), animations: 'disabled' });
       if (phase === 'after') {
-        assert.deepEqual(savedTopic, { state: 'In progress 2', badgeDisabled: true });
+        assert.deepEqual(savedTopic, { state: 'All work 7', badgeDisabled: true });
         await state.click();
-        await queue.getByText('Call the garage', { exact: true }).waitFor();
-        await queue.getByText('Pack the bags', { exact: true }).waitFor();
+        await page.getByText('Call the garage', { exact: true }).first().waitFor();
+        await page.getByText('Pack the bags', { exact: true }).first().waitFor();
       }
       return savedTopic;
     };
@@ -268,7 +317,7 @@ try {
     const observation = { theme, rows, hover };
     if (phase === 'layout-before' || phase === 'after') observation.filters = await measureFilters();
     observations.push(observation);
-    assert.deepEqual(rows.state, ['Waiting on you 4', 'Held 1', 'In progress 2']);
+    assert.deepEqual(rows.state, ['Waiting on you 4', 'Held 1', 'In progress 0', 'All work 7']);
     assert.equal(rows.ask[0], 'All 4');
     assert.equal(rows.more, 1);
     assert.deepEqual(hover.target, [44, 44]);
@@ -300,10 +349,9 @@ try {
     await hotel.getByRole('button', { name: 'Take back' }).click();
     await states.getByRole('button', { name: 'Waiting on you 4' }).click();
     await hotel.getByRole('button', { name: 'Hold', exact: true }).waitFor();
-    await states.getByRole('button', { name: 'In progress 2' }).click();
-    await queue.getByText('Call the garage', { exact: true }).waitFor();
-    await asks.getByRole('button', { name: 'Finance 1' }).click();
-    await queue.getByText('Pack the bags', { exact: true }).waitFor({ state: 'detached' });
+    await states.getByRole('button', { name: 'All work 7' }).click();
+    await page.getByText('Call the garage', { exact: true }).first().waitFor();
+    await page.getByText('Pack the bags', { exact: true }).first().waitFor();
     const chooser = page.waitForEvent('filechooser');
     await attach.click();
     assert.equal(await (await chooser).isMultiple(), true);
@@ -365,9 +413,21 @@ if (phase === 'waiting-only') {
     assert.equal(progress.finished, 1);
   }
 }
+if (phase === 'phone-parity') {
+  const wrong = observations.filter((seen) =>
+    JSON.stringify(seen.chips) !== JSON.stringify(['等你 1', '已搁置 2', '进行中 1', '所有工作 15']) ||
+    JSON.stringify(seen.tabs) !== JSON.stringify({
+      等你: ['Case card A?', 'Case card B?'],
+      已搁置: ['Case held card?', 'Paused step'],
+      进行中: ['Running step'],
+    }) ||
+    !seen.allWork || !seen.card?.includes('· 2 个待办') ||
+    !seen.older.offered || seen.older.after <= seen.older.before);
+  assert.deepEqual(wrong, [], `The web Inbox differs from the phone: ${JSON.stringify(wrong)}`);
+}
 if (phase === 'topic-before') {
   for (const { savedTopic } of observations)
     assert.deepEqual(savedTopic, { state: 'In progress 1', badgeDisabled: false });
   assert.fail(`${observations.length} themes: the saved topic silently narrowed In progress to 1`);
 }
-console.log(`PASS: ${observations.length} themes, ${phase === 'late-reference' ? 'late queue reference selects Held and receives focus' : phase === 'waiting-only' ? 'Waiting on you lists only waiting cards; In progress keeps recent outcomes' : phase === 'short-topics' ? 'localized topic chips, overflow and grouped queue cards' : 'state and topic filters, Hold and Take back, and centered attachment hover'}`);
+console.log(`PASS: ${observations.length} themes, ${phase === 'late-reference' ? 'late queue reference selects Held and receives focus' : phase === 'waiting-only' ? 'Waiting on you lists only waiting cards; All work keeps recent outcomes' : phase === 'short-topics' ? 'localized topic chips, overflow and grouped queue cards' : phase === 'phone-parity' ? 'phone tab counts, unfinished todo count and older outcomes' : 'state and topic filters, Hold and Take back, and centered attachment hover'}`);
