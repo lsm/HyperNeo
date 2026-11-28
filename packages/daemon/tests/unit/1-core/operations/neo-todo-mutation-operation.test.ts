@@ -29,6 +29,7 @@ describe('Writer-backed todo operation activation', () => {
   let workerRemotes: string[] | undefined;
   let advance: () => Promise<unknown>;
   let call: (name: string, input: object, role?: 'neo' | 'direct_task_worker') => Promise<Receipt>;
+  let registry: ReturnType<typeof createOperationRegistry>;
   beforeEach(() => {
     db = new Database(':memory:');
     runMigrations(db, () => {});
@@ -105,7 +106,7 @@ describe('Writer-backed todo operation activation', () => {
         undefined,
         writeHold
       );
-    const registry = createOperationRegistry(
+    registry = createOperationRegistry(
       wireNeoTodoMutations(legacy, {
         gateway,
         write: (...args) => {
@@ -211,6 +212,20 @@ describe('Writer-backed todo operation activation', () => {
       await call('neo.todo.edit', { todoId: 'first', done: 'reported', evidence: text })
     ).toMatchObject({ ok: true, todo: { state: 'done', report: text } });
     expect(order.slice(0, 2)).toEqual(['commit', 'announce']);
+  });
+
+  test('a hold records whether the human or an agent held it', async () => {
+    await call('neo.todo.hold', { todoId: 'first', reason: 'Wait for the deploy.' });
+    expect(store.getTodo('first')?.hold?.by).toBe('agent');
+    await call('neo.todo.hold', { todoId: 'first', reason: null });
+    const human = await invokeOperation(
+      registry,
+      'neo.todo.hold',
+      { todoId: 'first', reason: 'Not now.' },
+      { source: 'rpc', principal: 'local', device: { deviceId: 'phone', kind: 'human' } }
+    );
+    expect(human.kind).toBe('completed');
+    expect(store.getTodo('first')?.hold?.by).toBe('human');
   });
 
   test('a todo change returns only the changed todo', async () => {
