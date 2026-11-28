@@ -44,7 +44,6 @@ function harness(
     unresolvedDefault?: boolean;
     reuse?: 'long_lived' | 'per_ask' | 'per_todo';
     sameAsk?: string[];
-    reconfigure?: 'applies' | 'refused' | 'unchanged';
     compact?: boolean | 'throws' | 'unconfirmed';
     copilotClients?: WorkAdapter['copilotClients'];
   },
@@ -78,17 +77,6 @@ function harness(
                   ...(config.requestedProvider ? { provider: config.requestedProvider } : {}),
                 },
               };
-        }
-      : undefined,
-    reconfigure: config?.reconfigure
-      ? async (_ref, settings) => {
-          if (config.reconfigure === 'refused') return false;
-          if (config.reconfigure === 'applies') {
-            config.model = settings.model ?? config.model;
-            config.effort = settings.effort ?? config.effort;
-            config.provider = settings.provider ?? config.provider;
-          }
-          return true;
         }
       : undefined,
     capabilities: ['find', 'start', 'send'],
@@ -813,7 +801,6 @@ describe('work.start with a mismatched idle worker', () => {
       adapter: 'hyperneo',
       model: 'other-model',
       effort: 'low',
-      reconfigure: 'applies' as const,
     };
     const run = harness([{ id: 'idle', status: 'done' }], ['idle'], config);
     const result = await run.start(neo, false, { model: 'Sol 6.1', effort: 'high' });

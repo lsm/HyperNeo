@@ -172,10 +172,6 @@ export interface HyperneoSessionControl {
   ): Promise<string>;
   resolveModel(model: string, provider?: string): Promise<{ id: string; provider: string } | null>;
   resolveDefaultModel?(): Promise<{ id: string; provider: string } | null>;
-  reconfigure?(
-    sessionId: string,
-    settings: { model?: string; provider?: string; effort?: string }
-  ): Promise<boolean>;
   effort?(sessionId: string): string | null;
   model(sessionId: string): string | null;
   provider?(sessionId: string): string | null;
@@ -937,9 +933,6 @@ export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
       }
       return { ok: true, value: result.value };
     },
-    reconfigure: deps.sessions.reconfigure
-      ? (ref, settings) => deps.sessions.reconfigure!(ref.id, settings)
-      : undefined,
     start: (request, context) => runHyperneoStart(request, context, deps),
     turns: async (ref, cursor, limit) => ({
       ok: true,
