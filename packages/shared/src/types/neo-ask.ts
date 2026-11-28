@@ -78,8 +78,11 @@ export interface NeoTodoCheck {
   params: Record<string, unknown>;
 }
 
+export type NeoTodoHolder = 'human' | 'agent';
+
 export interface NeoTodoHold {
   heldAt: number;
+  by?: NeoTodoHolder;
   until?: NeoTodoCheck;
   reviewAt: number;
   failed?: { at: number; url: string; reason: string };
