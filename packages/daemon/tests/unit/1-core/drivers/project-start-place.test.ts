@@ -85,7 +85,7 @@ async function start(
           id: 'synthetic',
           capabilities: ['start'],
           find: () => [],
-          supportsStartEffort: true,
+          identity: { fixedProvider: 'synthetic', configurable: false },
           start: async (input) => {
             if (input.model === 'unavailable' || input.effort === 'invalid')
               return {
@@ -145,6 +145,8 @@ async function start(
       adapter: 'synthetic',
       title: 'Task',
       message: 'Synthetic work',
+      model: 'm',
+      effort: 'medium',
       ...(folder
         ? { place: { machine: 'local', folder, name: 'Folder' }, createFolder: true }
         : {}),

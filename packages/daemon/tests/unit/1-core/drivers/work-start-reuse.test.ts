@@ -62,6 +62,7 @@ function harness(
     id: config?.adapter ?? 'claude-desktop',
     copilotClients: config?.copilotClients,
     supportsStartEffort: true,
+    identity: { fixedProvider: 'anthropic', configurable: true },
     resolveStartConfiguration: config
       ? async (request) => {
           if (config.unresolvedDefault) return null;
@@ -139,8 +140,8 @@ function harness(
                 'done',
               turnQuestion: workers.find((worker) => worker.id === ref.id)?.turnQuestion,
               lastActivityAt: 1,
-              model: config?.model ?? 'claude-opus-5-5',
-              effort: config?.effort ?? 'medium',
+              model: config?.model ?? (config ? 'gpt-6.1-sol' : 'claude-opus-5-5'),
+              effort: config?.effort ?? (config ? 'high' : 'medium'),
               ...(config?.provider ? { provider: config.provider } : {}),
             },
           };
@@ -214,6 +215,8 @@ function harness(
         title: 'loader',
         message: 'Fix the loader.',
         provenance,
+        model: config ? 'gpt-6.1-sol' : 'claude-opus-5-5',
+        effort: config ? 'high' : 'medium',
         ...request,
       },
       caller
@@ -720,38 +723,52 @@ describe('work.start provider-aware reuse', () => {
 });
 
 describe('work.start reuse for a shared model id whose default is not the first provider', () => {
-  test('a bare start may reuse any idle worker; the pinned selector starts fresh on another provider', async () => {
+  test('a pinned selector starts fresh on another provider', async () => {
     const config = {
       adapter: 'hyperneo',
       model: 'gpt-6.1-sol',
       provider: 'first',
       requestedProvider: 'second',
     };
-    const bare = harness([{ id: 'idle-first', status: 'done' }], ['idle-first'], config);
-    expect((await bare.start(neo, false, {})).value?.ref.id).toBe('idle-first');
     const pinned = harness([{ id: 'idle-first', status: 'done' }], ['idle-first'], config);
     expect((await pinned.start(neo, false, { model: 'Sol 6.1' })).value?.ref.id).toBe('fresh');
     expect(pinned.sent).toEqual([]);
   });
 });
 
-describe('work.start switches an idle worker in place', () => {
-  test.each([
-    { reconfigure: 'applies' as const, reuse: true },
-    { reconfigure: 'refused' as const, reuse: false },
-    { reconfigure: 'unchanged' as const, reuse: false },
-  ])('reuses only after the switch is confirmed: %j', async ({ reconfigure, reuse }) => {
-    const id = `switch-${reconfigure}`;
-    const run = harness([{ id, status: 'done' }], [id], {
+describe('work.start required identity', () => {
+  test('refuses a Neo start that omits effort before reusing or starting anything', async () => {
+    const run = harness([{ id: 'idle', status: 'done' }], ['idle']);
+    const result = await run.start(neo, false, { effort: undefined, todoId: 'next' });
+    expect(result).toMatchObject({ ok: false, reason: 'identity_required' });
+    expect(run.sent).toEqual([]);
+    expect(run.started).toEqual([]);
+  });
+
+  test('lets a non-Neo caller start without the triple', async () => {
+    const run = harness([], []);
+    const result = await run.start({ source: 'rpc' }, false, {
+      model: undefined,
+      effort: undefined,
+    });
+    expect(result.ok).toBe(true);
+    expect(run.started).toEqual(['loader']);
+  });
+});
+
+describe('work.start with a mismatched idle worker', () => {
+  test('starts fresh and never switches the worker', async () => {
+    const config = {
       adapter: 'hyperneo',
       model: 'other-model',
       effort: 'low',
-      reconfigure,
-    });
+      reconfigure: 'applies' as const,
+    };
+    const run = harness([{ id: 'idle', status: 'done' }], ['idle'], config);
     const result = await run.start(neo, false, { model: 'Sol 6.1', effort: 'high' });
-    expect(result.value?.ref.id).toBe(reuse ? id : 'fresh');
-    expect(run.sent).toEqual(reuse ? [id] : []);
-    if (reuse) expect(result.value).toMatchObject({ model: 'gpt-6.1-sol', effort: 'high' });
+    expect(result.value?.ref.id).toBe('fresh');
+    expect(run.sent).toEqual([]);
+    expect(config).toMatchObject({ model: 'other-model', effort: 'low' });
   });
 });
 
@@ -779,34 +796,14 @@ describe('work.start effort-only reuse', () => {
 });
 
 describe('work.start desktop worker reuse', () => {
-  const desktop = { ...neo, workerTemplate: 'worker.desktop' };
-
-  test('effort-only reuse keeps the model the desktop list chose', async () => {
-    const config = {
-      adapter: 'hyperneo',
-      model: 'desk-b1',
-      provider: 'custom:desk-b',
-      effort: 'high',
-      reconfigure: 'applies' as const,
-    };
+  test('a desktop worker is reused when the requested triple matches it', async () => {
     const run = harness(
       [{ id: 'desk', status: 'done', workerTemplate: 'worker.desktop' }],
       ['desk'],
-      config
+      { adapter: 'hyperneo', model: 'gpt-6.1-sol', effort: 'high' }
     );
-    expect((await run.start(desktop, false, { effort: 'low' })).value?.ref.id).toBe('desk');
-    expect(config).toMatchObject({ model: 'desk-b1', provider: 'custom:desk-b', effort: 'low' });
-  });
-
-  test('a named model starts a fresh desktop worker instead of reusing one', async () => {
-    const run = harness(
-      [{ id: 'desk', status: 'done', workerTemplate: 'worker.desktop' }],
-      ['desk'],
-      { adapter: 'hyperneo', model: 'gpt-6.1-sol', effort: 'high', reconfigure: 'applies' }
-    );
-    const r = await run.start(desktop, false, { model: 'gpt-6.1-sol' });
-    expect(r.value?.ref.id).toBe('fresh');
-    expect(run.sent).toEqual([]);
+    const r = await run.start({ ...neo, workerTemplate: 'worker.desktop' }, false, {});
+    expect(r.value?.ref.id).toBe('desk');
   });
 });
 

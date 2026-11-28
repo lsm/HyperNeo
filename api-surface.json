@@ -27854,7 +27854,9 @@
                 }
               },
               "required": [
-                "adapter"
+                "adapter",
+                "model",
+                "effort"
               ],
               "type": "object"
             },

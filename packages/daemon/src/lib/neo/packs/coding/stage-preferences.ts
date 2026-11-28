@@ -11,7 +11,7 @@ export const CodingStageTarget = StartWorkInputSchema.pick({
   place: true,
   model: true,
   effort: true,
-});
+}).required({ model: true, effort: true });
 const Plan = z.object({
   repo: z
     .string()

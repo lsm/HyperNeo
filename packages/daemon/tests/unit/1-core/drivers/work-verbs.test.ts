@@ -754,36 +754,27 @@ describe('work verb operations', () => {
     expect(received).toEqual([expect.objectContaining({ model: 'sol 6.1', effort: 'medium' })]);
   });
 
-  test.each([false, undefined])(
-    'refuses effort before executing an adapter with support %s',
-    async (supportsStartEffort) => {
-      let starts = 0;
-      const unsupported: WorkAdapter = {
-        ...hyperneo,
-        supportsStartEffort,
-        start: async () => {
-          starts++;
-          return { ok: true, value: summary('hyperneo', 's1') };
-        },
-      };
-      expect(
-        await call(
-          'work.start',
-          {
-            adapter: unsupported.id,
-            place,
-            title: 't',
-            message: 'm',
-            effort: 'medium',
-          },
-          undefined,
-          undefined,
-          [unsupported]
-        )
-      ).toMatchObject({ ok: false, reason: 'unsupported_effort' });
-      expect(starts).toBe(0);
-    }
-  );
+  test('lets a non-Neo caller pass effort to an adapter that never advertised it', async () => {
+    let starts = 0;
+    const plain: WorkAdapter = {
+      ...hyperneo,
+      supportsStartEffort: undefined,
+      start: async () => {
+        starts++;
+        return { ok: true, value: summary('hyperneo', 's1') };
+      },
+    };
+    expect(
+      await call(
+        'work.start',
+        { adapter: plain.id, place, title: 't', message: 'm', effort: 'medium' },
+        undefined,
+        undefined,
+        [plain]
+      )
+    ).toMatchObject({ ok: true });
+    expect(starts).toBe(1);
+  });
 
   test('refuses unverified remote effort without forwarding even when the local adapter supports it', async () => {
     let forwarded = 0;
