@@ -787,7 +787,9 @@ describe('work verb operations', () => {
 
   test('refuses unverified remote effort without forwarding even when the local adapter supports it', async () => {
     let forwarded = 0;
-    const remote: Invoke = async () => {
+    const remote: Invoke = async (_daemon, name) => {
+      if (name === 'work.adapters')
+        return { ok: true, value: [{ id: 'codex-desktop', capabilities: ['start'] }] };
       forwarded++;
       return { ok: true, value: summary('codex-desktop', 't1') };
     };
@@ -837,7 +839,9 @@ describe('work verb operations', () => {
             model: 'gpt-6.1-sol',
             ...(effort ? { effort } : {}),
           },
-          async () => {
+          async (_daemon, name) => {
+            if (name === 'work.adapters')
+              return { ok: true, value: [{ id: 'codex-desktop', capabilities: ['start'] }] };
             forwarded++;
             return { ok: true, value: summary('codex-desktop', 'remote') };
           },
@@ -863,7 +867,9 @@ describe('work verb operations', () => {
         return name === 'work.adapters'
           ? {
               ok: true,
-              value: [{ id: 'hyperneo', capabilities: ['start'], ...(identity ? { identity } : {}) }],
+              value: [
+                { id: 'hyperneo', capabilities: ['start'], ...(identity ? { identity } : {}) },
+              ],
             }
           : {
               ok: true,
