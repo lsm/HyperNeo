@@ -707,7 +707,10 @@ impl Drivers {
                 }
                 tokio::select! {
                     _ = tokio::time::sleep(LEASE_POLL) => {}
-                    _ = Call::cancelled(&mut call) => return Ok(stopped()),
+                    _ = Call::cancelled(&mut call) => {
+                        self.desk.lock().unwrap().leave(&request.worker);
+                        return Ok(stopped());
+                    }
                 }
             }
             if screen_locked() {
@@ -1107,6 +1110,7 @@ impl Drivers {
                     if let Some(pid) = running {
                         if let Err(error) = record::verify(&directory, pid) {
                             self.unconfirmed.lock().unwrap().insert(worker_id.clone());
+                            self.desk.lock().unwrap().leave(&worker_id);
                             return Err(format!("stop_unconfirmed: {error}").into());
                         }
                     }

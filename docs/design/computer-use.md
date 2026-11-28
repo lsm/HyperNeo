@@ -47,8 +47,9 @@ A HyperNeo session already calls daemon operations in process: every session get
 
 The host keeps an in-memory lease table, because it resolves each target and sends each action.
 
+- One worker uses the desktop at a time. Workers line up in the order they first dispatch; the first holds the desktop until its todo is no longer among the live todos or it leaves the line. A worker leaves when Stop confirms it, when Stop or shutdown cannot confirm it, or when its turn is stopped while it waits. A waiting call returns `desktop_queued` after about three call deadlines and keeps its place. On a locked Mac the holder first retries the stop of unconfirmed workers, so one whose driver has exited no longer keeps Locked Use from it.
 - A call that names a window leases that window (verified process instance plus window id) to its worker. A call with only a pid leases the whole app instance and conflicts with every window lease on it.
-- Another worker waits for the lease until its call deadline, then gets `window_busy`. The target is resolved again before dispatch.
+- A call waits for the lease until its call deadline, then gets `window_busy`; this is reached when the previous holder's input or unconfirmed stop still holds the window. The target is resolved again before dispatch.
 - A lease belongs to a todo. Each dispatch carries its todo and the todos that may still use the desktop, so a finished todo's lease lapses at the next conflict, and a reused worker drops its previous todo's leases.
 - While input may be running, a lease never lapses: it settles after the call, and Stop or a failed shutdown keeps it until the driver is confirmed gone. A settled lease ends after 30 seconds without a call, or when the process or window is gone.
 - A `foreground` call also takes one machine-wide lock, before the target is checked again. A second foreground call waits, then gets `foreground_busy`. If the driver cannot be confirmed stopped, the lock stays held until Stop confirms it. Background calls need only the window lease.
