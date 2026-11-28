@@ -44,8 +44,7 @@ follow the refusal above. Presentation and session-open-source resolution stay u
   session through `neo.session.link`; no publication parser or disabled-action changes.
 - Desktop keeps that same web surface and existing native-link handoff. Local worker
   links continue to open the worker session, never Neo's own conversation.
-- iOS is a separate client follow-up PR. That PR owns button placement, opening behavior
-  and device verification; this design claims no current iOS `sessionSource` support.
+- iOS already renders it; unchanged.
 
 ## Rejected alternative
 
@@ -56,4 +55,4 @@ when Neo answers a human about that worker. The two existing paths are complemen
 
 Test explicit valid/unknown/unavailable workers, `neo:` and `null` refusals without
 retention or derivation, derived single/missing/mixed senders, prior retries/revisions,
-and front's explicit field. Web stays unchanged. iOS verifies its own user-visible flow.
+and front's explicit field. Web and iOS stay unchanged.
