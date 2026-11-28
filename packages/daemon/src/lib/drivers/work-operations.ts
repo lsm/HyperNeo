@@ -29,7 +29,6 @@ import type { RemoteDaemons } from './find-operation.ts';
 import { stampWork } from './places.ts';
 import { workStartConfiguration } from './start-configuration.ts';
 import { workStartPreparation } from './start-preparation.ts';
-import { DESKTOP_WORKER_TEMPLATE_KEY } from '../desktop/worker-profile.ts';
 import {
   reuseWorkerDecision,
   matchingPreparation,
@@ -57,6 +56,7 @@ import {
   type WorkRef,
   type WorkRejection,
   AdapterIdentitySchema,
+  type AdapterIdentity,
 } from './types.ts';
 
 type RoutedVerb =
@@ -74,8 +74,8 @@ type Route<Verb extends RoutedVerb> =
   | { daemon: string; confirmsStartConfiguration?: true }
   | {
       local: NonNullable<WorkAdapter[Verb]>;
-      supportsStartEffort?: boolean;
       supportsStartPreparation?: boolean;
+      identity?: AdapterIdentity;
     };
 type Gate<Value> = { value: Value } | { reason: Rejected };
 
@@ -109,6 +109,9 @@ export interface WorkVerbDeps {
     | ReadonlySet<string>
     | ReadonlyMap<string, WorkerReuseFacts>
     | Promise<ReadonlySet<string> | ReadonlyMap<string, WorkerReuseFacts>>;
+  startedIdentity?: (
+    ref: WorkRef
+  ) => Promise<{ provider?: string; model?: string; effort?: string } | null>;
   workerTemplate?: (ref: WorkRef) => string | undefined;
   reusePolicy?: (
     adapter: string,
@@ -607,7 +610,7 @@ export function pickRoute<Verb extends RoutedVerb>(
   return {
     value: {
       local,
-      supportsStartEffort: adapter.supportsStartEffort,
+      identity: adapter.identity,
       supportsStartPreparation: adapter.supportsStartPreparation,
     },
   };
@@ -638,9 +641,22 @@ async function admitRemoteStartModel(
     : { value: route };
 }
 
+export function requireStartIdentity(
+  route: Route<'start'>,
+  input: StartInput,
+  caller: OperationCaller
+): Gate<Route<'start'>> {
+  if (!('local' in route) || !route.identity || caller.role !== 'neo' || input.checkPlan)
+    return { value: route };
+  const gated = workStartConfiguration.requireIdentity(input, {
+    fixedProvider: route.identity.fixedProvider,
+    configurable: route.identity.configurable,
+  });
+  return 'ok' in gated ? { reason: reject(gated.reason, gated.detail) } : { value: route };
+}
+
 export function admitStartEffort(route: Route<'start'>, input: StartInput): Gate<Route<'start'>> {
-  return input.effort === undefined ||
-    ('local' in route ? route.supportsStartEffort === true : route.confirmsStartConfiguration)
+  return input.effort === undefined || 'local' in route || route.confirmsStartConfiguration
     ? { value: route }
     : {
         reason: reject(
@@ -771,9 +787,17 @@ export async function startWork(
         machine: result.value.execution?.machine ?? result.value.place.machine,
         folder: result.value.execution?.directory ?? result.value.place.folder,
         harness: result.value.ref.adapter,
-        provider: result.value.provider,
-        model: result.value.model,
-        effort: result.value.effort,
+        ...(route.identity?.configurable === false
+          ? {
+              provider: input.provider ?? route.identity.fixedProvider ?? result.value.provider,
+              model: input.model ?? result.value.model,
+              effort: input.effort ?? result.value.effort,
+            }
+          : {
+              provider: result.value.provider,
+              model: result.value.model,
+              effort: result.value.effort,
+            }),
         preparation: input.preparation,
         ...(ownedTodoId(input, caller, deps)
           ? { role: input.checkPlan ? 'check' : (input.role ?? 'do') }
@@ -839,7 +863,6 @@ export async function reuseIdleWorker(
     caller.role !== 'neo' ||
     !folder ||
     !requestedAdapter?.send ||
-    ((input.model || input.effort) && !requestedAdapter.resolveStartConfiguration) ||
     input.createFolder ||
     (input.copilotClient !== undefined && input.copilotClient !== 'auto')
   )
@@ -853,8 +876,6 @@ export async function reuseIdleWorker(
   if (input.preparation && !context) return null;
   const assigned = context?.roles.find((row) => row.role === role);
   const workerTemplate = caller.source === 'internal' ? caller.workerTemplate : undefined;
-  const desktop = workerTemplate === DESKTOP_WORKER_TEMPLATE_KEY;
-  if (desktop && (input.model || input.provider)) return null;
   if (!workerTemplate && todoId && assigned && assigned.adapter !== adapter.id) {
     const priorAdapter = deps.adapters().find((candidate) => candidate.id === assigned.adapter);
     const priorContext = await deps.roleContext?.(
@@ -908,15 +929,27 @@ export async function reuseIdleWorker(
   )
     return null;
   const sameAsk = (id: string) => !!policy?.sameAsk.includes(id);
+  const wanted = !!(input.model || input.effort);
   const configured =
-    input.model || input.effort ? await adapter.resolveStartConfiguration!(input) : null;
-  if ((input.model || input.effort) && !configured) return null;
+    wanted && adapter.resolveStartConfiguration
+      ? await adapter.resolveStartConfiguration(input)
+      : null;
+  if (wanted && adapter.resolveStartConfiguration && !configured) return null;
   if (configured && !configured.ok) return configured;
   const requested = configured?.ok
-    ? desktop
-      ? { ...configured.value, model: undefined, provider: undefined }
-      : configured.value
-    : null;
+    ? configured.value
+    : wanted
+      ? { model: input.model, effort: input.effort, provider: input.provider }
+      : null;
+  const observed = async (
+    ref: WorkRef,
+    status: { provider?: string; model?: string; effort?: string } | null
+  ) =>
+    adapter.identity?.configurable === false
+      ? { ...(await deps.startedIdentity?.(ref)) }
+      : status && adapter.identity?.fixedProvider
+        ? { ...status, provider: status.provider ?? adapter.identity.fixedProvider }
+        : status;
   const groups = await adapter.find({ folder, includeClosed: false, limit: 50 });
   const discovered = groups.flatMap((group) => group.work);
   if (prior && !discovered.some((work) => work.ref.id === prior.id) && adapter.status) {
@@ -1020,7 +1053,7 @@ export async function reuseIdleWorker(
       reuseHolds.delete(key);
       throw error;
     }
-    let identity = status?.ok ? status.value : null;
+    const identity = status?.ok ? status.value : null;
     if (adapter.status && identity?.status !== 'done') {
       reuseHolds.delete(key);
       if (prior?.id === work.ref.id && identity && todoId) {
@@ -1029,17 +1062,10 @@ export async function reuseIdleWorker(
       }
       continue;
     }
-    if (requested && !matchesRequested(requested, identity)) {
-      const switched =
-        identity && adapter.reconfigure
-          ? await adapter.reconfigure(work.ref, requested).catch(() => false)
-          : false;
-      const after = switched ? await adapter.status?.(work.ref).catch(() => null) : null;
-      identity = after?.ok ? after.value : null;
-      if (identity?.status !== 'done' || !matchesRequested(requested, identity)) {
-        reuseHolds.delete(key);
-        continue;
-      }
+    const seen = await observed(work.ref, identity);
+    if (requested && !matchesRequested(requested, seen)) {
+      reuseHolds.delete(key);
+      continue;
     }
     const addressed = withReplySender(input.message, from, `${adapter.id}:${work.ref.id}`);
     const message = input.provenance
@@ -1055,8 +1081,8 @@ export async function reuseIdleWorker(
             work.ref,
             todoId,
             role,
-            identity?.model,
-            identity?.effort,
+            seen?.model,
+            seen?.effort,
             context?.shares[role]?.shareWith
           )
           .catch((error: unknown) => {
@@ -1147,12 +1173,7 @@ export async function reuseIdleWorker(
     if (
       status?.ok &&
       (isBusyWork(status.value.status) || (!busy.free && status.value.status === 'done')) &&
-      (!requested ||
-        ((requested.provider === undefined || requested.provider === status.value.provider) &&
-          workStartConfiguration.confirm(requested, {
-            ...(status.value.model ? { model: status.value.model } : {}),
-            ...(status.value.effort ? { effort: status.value.effort } : {}),
-          }).ok))
+      (!requested || matchesRequested(requested, await observed(busy.work.ref, status.value)))
     ) {
       const queued = await deps.todoWorker.wait(input.todoId, busy.work.ref, input.message);
       if (queued === 'none') return null;
@@ -1337,6 +1358,7 @@ const runStartWork = (superpipe({})('work.start') as PipelineAPI)
   .pipe(admitRemoteCopilotStart, ['outcome', 'input', 'deps'], 'result:outcome')
   .pipe(admitRemoteStartModel, ['outcome', 'input', 'deps'], 'result:outcome')
   .pipe(admitStartEffort, ['outcome', 'input'], 'result:outcome')
+  .pipe(requireStartIdentity, ['outcome', 'input', 'caller'], 'result:outcome')
   .pipe(
     (route: Route<'start'>, input: StartInput): Gate<Route<'start'>> => {
       const admitted = workStartPreparation.admit(

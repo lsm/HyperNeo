@@ -395,11 +395,6 @@ export interface WorkAdapter {
   ) => Promise<Result<
     z.infer<typeof workStartConfiguration.schema> & { provider?: string }
   > | null>;
-  readonly reconfigure?: (
-    ref: WorkRef,
-    settings: z.infer<typeof workStartConfiguration.schema> & { provider?: string }
-  ) => Promise<boolean>;
-  readonly supportsStartEffort?: boolean;
   readonly identity?: AdapterIdentity;
   readonly supportsStartPreparation?: boolean;
   find(query: FindQuery): PlaceGroup[] | Promise<PlaceGroup[]>;

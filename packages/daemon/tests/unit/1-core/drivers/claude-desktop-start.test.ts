@@ -206,20 +206,13 @@ describe('claude-desktop start', () => {
     });
   }
 
-  test.each([
-    [{ model: 'sonnet' }, 'unsupported_model'],
-    [{ effort: 'medium' }, 'unsupported_effort'],
-    [{ model: 'sonnet', effort: 'medium' }, 'unsupported_model'],
-  ] as const)(
-    'refuses explicit configuration %j before start effects',
-    async (configuration, reason) => {
-      expect(
-        await adapter().start?.({ ...request, createFolder: true, ...configuration }, user)
-      ).toMatchObject({ ok: false, reason });
-      expect(effects).toEqual([]);
-      expect(spawned).toEqual([]);
-    }
-  );
+  test('accepts an explicit model and effort without passing either to the CLI', async () => {
+    expect(
+      await adapter().start!({ ...request, model: 'sonnet', effort: 'medium' }, user)
+    ).toMatchObject({ ok: true });
+    expect(spawned.flat()).not.toContain('--model');
+    expect(spawned.flat()).not.toContain('sonnet');
+  });
 
   test('B1 prepares, exits and imports before any actual task is dispatched', async () => {
     expect(await adapter().start!(request, user)).toMatchObject({

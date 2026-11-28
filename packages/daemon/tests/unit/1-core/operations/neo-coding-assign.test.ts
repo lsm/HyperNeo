@@ -42,8 +42,8 @@ const head = 'a'.repeat(40),
   next = 'b'.repeat(40);
 const write = { adapter: 'codex-desktop', id: 'author' };
 const place = { machine: 'fixture', name: 'Fixture' };
-const author = { adapter: write.adapter, place, model: 'gpt-6' };
-const reviewer = { adapter: 'claude-code', place, model: 'claude-opus-5-5' };
+const author = { adapter: write.adapter, place, model: 'gpt-6', effort: 'high' };
+const reviewer = { adapter: 'claude-code', place, model: 'claude-opus-5-5', effort: 'high' };
 type Start = z.infer<typeof StartWorkInputSchema>;
 function fixture(
   simulate?: (input: Start, count: number) => Promise<OperationOutcome> | OperationOutcome,
@@ -203,8 +203,8 @@ function fixture(
 
 describe('coding actor assignments', () => {
   test('review ranks only its eligible hyperneo candidates as coding.review and starts the first ranked one', async () => {
-    const sonnet = { adapter: 'hyperneo', place, model: 'claude-sonnet-5-5' };
-    const opus = { adapter: 'hyperneo', place, model: 'claude-opus-5-5' };
+    const sonnet = { adapter: 'hyperneo', place, model: 'claude-sonnet-5-5', effort: 'high' };
+    const opus = { adapter: 'hyperneo', place, model: 'claude-opus-5-5', effort: 'high' };
     const calls: { kind: string; candidates: readonly NeoLine[]; scope: NeoLineScope }[] = [];
     const rank: CodingLines['rank'] = async (kind, candidates, scope) => {
       calls.push({ kind, candidates, scope });
@@ -240,7 +240,7 @@ describe('coding actor assignments', () => {
   });
   test('when a route reorders the candidates, the fallback notes are the started candidate own', async () => {
     const sonnet = { adapter: 'hyperneo', place, model: 'claude-sonnet-5-5', effort: 'high' };
-    const opus = { adapter: 'hyperneo', place, model: 'claude-opus-5-5' };
+    const opus = { adapter: 'hyperneo', place, model: 'claude-opus-5-5', effort: 'low' };
     const lines: CodingLines = {
       models: () => [],
       active: () => true,
@@ -257,7 +257,7 @@ describe('coding actor assignments', () => {
       ok: true,
       assignment: {
         actor: { model: 'claude-opus-5-5' },
-        fallback: ['Preferred effort "high" is unavailable for this selection; using "default".'],
+        fallback: ['Preferred effort "high" is unavailable for this selection; using "low".'],
       },
     });
   });
@@ -274,7 +274,9 @@ describe('coding actor assignments', () => {
       }),
     });
     expect(
-      await f.assign({ candidates: [{ adapter: 'hyperneo', place, model: 'claude-sonnet-5-5' }] })
+      await f.assign({
+        candidates: [{ adapter: 'hyperneo', place, model: 'claude-sonnet-5-5', effort: 'high' }],
+      })
     ).toEqual({
       ok: false,
       reason:
@@ -544,6 +546,43 @@ describe('coding actor assignments', () => {
     f.pr.body = '';
     f.publish();
     expect((await f.assign({ candidates: [author] })).ok).toBe(true);
+  });
+  test('passes a candidate provider to line resolution', async () => {
+    const seen: (string | undefined)[] = [];
+    const lines: CodingLines = {
+      models: () => [],
+      active: () => true,
+      resolve: async (target) => {
+        seen.push(target.provider);
+        return { ok: true, value: { model: target.model } };
+      },
+      rank: async (_kind, candidates) => ({
+        ranked: candidates.map((line) => ({ line })),
+        skipped: [],
+        exhausted: false,
+      }),
+    };
+    const f = fixture(undefined, lines);
+    f.db.exec(
+      "INSERT INTO neo_concerns (id,title,summary,context,revision,created_at,updated_at) VALUES ('p1','P1','','',1,0,0)"
+    );
+    f.db.prepare("UPDATE neo_asks SET project_id = 'p1' WHERE id = 'ask'").run();
+    const candidate = {
+      adapter: 'hyperneo',
+      place,
+      model: 'claude-opus-5-5',
+      effort: 'high',
+      provider: 'second',
+    };
+    const out = await f.assign({ candidates: [author, candidate] });
+    expect(out).toMatchObject({ ok: true });
+    expect(seen).toContain('second');
+  });
+  test('forwards a candidate provider to work.start', async () => {
+    const f = fixture();
+    const candidate = { ...reviewer, adapter: 'hyperneo', provider: 'anthropic' };
+    expect((await f.assign({ candidates: [author, candidate] })).ok).toBe(true);
+    expect(f.starts[0]).toMatchObject({ provider: 'anthropic' });
   });
   test('shared Review/Verify harness, model and effort preferences reach the started actor', async () => {
     const f = fixture();

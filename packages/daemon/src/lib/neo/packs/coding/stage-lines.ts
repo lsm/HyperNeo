@@ -7,6 +7,7 @@ import type { NeoLine, NeoLineRanking, NeoLineScope, NeoWorkKind } from '../../p
 
 type Candidate = {
   adapter: string;
+  provider?: string;
   model?: string;
   effort?: string;
   place?: { machine: string; daemon?: string };

@@ -14,6 +14,7 @@ import {
   readReusableWorkers,
   readTodoRoles,
   readWorkerPreparations,
+  readStartedIdentity,
   recordWorkerStarted,
 } from '../../../../src/storage/repositories/work-started-sessions-worker';
 
@@ -53,6 +54,7 @@ function setup(
   const adapter: WorkAdapter = {
     id: 'claude-desktop',
     supportsStartPreparation: true,
+    identity: { fixedProvider: 'anthropic', configurable: false },
     capabilities: ['find', 'start', 'send'],
     find: () => [
       {
@@ -101,6 +103,7 @@ function setup(
   const registry = createOperationRegistry(
     createWorkVerbOperations({
       adapters: () => [adapter],
+      startedIdentity: async (ref) => readStartedIdentity(db, ref),
       remote: { list: () => [], invoke: async () => ({}) },
       daemonName: 'imac',
       recordStarted: (ref, _directory, facts) => recordWorkerStarted(db, ref, facts),
@@ -139,6 +142,9 @@ function setup(
         title: 'repo',
         message: 'Build it.',
         todoId,
+        provider: 'anthropic',
+        model: 'claude-opus-5-5',
+        effort: 'medium',
         ...(role ? { role } : {}),
         ...(preparation ? { preparation } : {}),
       },

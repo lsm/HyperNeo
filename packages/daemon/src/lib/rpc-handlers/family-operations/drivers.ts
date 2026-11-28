@@ -373,20 +373,6 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
           ? newestAvailableModel(await readAvailableModels())
           : null;
     },
-    reconfigure: async (sessionId, settings) => {
-      const outcome = await invokeOperation(
-        context.deps.sessionManager.getOperationRegistry(),
-        'session.runtimeSettings.update',
-        {
-          sessionId,
-          ...(settings.model ? { model: settings.model } : {}),
-          ...(settings.provider ? { provider: settings.provider } : {}),
-          ...(settings.effort ? { thinkingLevel: settings.effort } : {}),
-        },
-        { source: 'internal' }
-      );
-      return outcome.kind === 'completed' && (outcome.value as { ok?: boolean }).ok === true;
-    },
     effort: (sessionId) =>
       resolveHyperneoThinking(
         sessionManager.getSessionFromDB(sessionId)?.config?.thinkingLevel
@@ -939,6 +925,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
           sessionId
         )
       ),
+    startedIdentity: (ref: WorkRef) =>
+      gatewayFor(db()).call(workStartedSessionReads, 'startedIdentity', ref),
     workerTemplate: (ref: WorkRef) =>
       ref.adapter === 'hyperneo' && !ref.daemon
         ? context.deps.sessionManager.getSessionFromDB(ref.id)?.metadata.workerTemplate

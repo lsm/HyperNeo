@@ -27851,10 +27851,17 @@
                     "name"
                   ],
                   "type": "object"
+                },
+                "provider": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
                 }
               },
               "required": [
-                "adapter"
+                "adapter",
+                "model",
+                "effort"
               ],
               "type": "object"
             },

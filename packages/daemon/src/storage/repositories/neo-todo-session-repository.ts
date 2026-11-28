@@ -11,6 +11,7 @@ import {
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import {
   markWorkUnusable,
+  readStartedIdentity,
   readStartedWork,
   readCleanWorkerRecord,
   readTrustedWorkers,
@@ -116,6 +117,10 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     method: 'reuseFacts',
     todoId: string
   ): Promise<ReturnType<NeoTodoSessionRepository['reuseFacts']>>;
+  read(
+    method: 'startedIdentity',
+    ref: WorkRef
+  ): Promise<ReturnType<NeoTodoSessionRepository['startedIdentity']>>;
   read(
     method: 'cleanWorkerFacts',
     todoId: string
@@ -891,6 +896,10 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     return releaseReuseFacts(this.db, todoId);
   }
 
+  startedIdentity(ref: WorkRef) {
+    return readStartedIdentity(this.db, ref);
+  }
+
   cleanWorkerFacts(todoId: string) {
     const todo = new NeoAskTodoRepository(this.db).getTodo(todoId);
     const target = this.get(todoId);
@@ -968,6 +977,7 @@ export const neoTodoSessionReads = defineRepositoryOp(
     'reuseFacts',
     'reusesAskWorker',
     'cleanWorkerFacts',
+    'startedIdentity',
   ]
 );
 export const neoTodoSessionWrites = defineRepositoryOp(
