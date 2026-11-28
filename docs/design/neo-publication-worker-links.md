@@ -1,60 +1,54 @@
-# Server-derived worker links on Neo publications
+# Model worker plus server fill-in on Neo publications
 
 Status: proposal. Design only; no application code in this PR.
 
 ## Decision
 
-A publication's worker is a fact derived by the daemon, not a model assertion.
-Remove `session` from the publish draft/prompt and `front-model.ts` `replyFields`.
-Keep stored `session` and presented `sessionSource`; old publications need no migration.
+Keep the model-facing `session` field in `NeoPublicationDraft`, the publish prompt and
+`front-model.ts` `replyFields`. An explicit worker remains authoritative; the daemon's
+existing derivation only fills an omitted field. No daemon or web contract changes.
 
-Derive in `neo.publication.deliver` before append. Retries and revisions without one
-unambiguous worker keep the prior session; only an unambiguous revision turn replaces it.
+This preserves the common case where Neo answers a human about a known worker: the
+input has no worker sender, but the model can name that worker directly.
 
-## One reliable signal
+## Existing server behavior to keep
 
-Use only main Neo's current processing-state input IDs, already read by `sourceSession`.
-Every ID must select a persisted `neo_session_messages` row in this conversation with
-`toSession` equal to the publisher and kind `session`. Every row must have the same
-`fromSession`, identifying one non-Neo worker; only then store that session reference.
+For an explicit worker, `neo.publication.deliver` resolves the exact session and accepts
+only `found`. An unknown session rejects publication; a lookup failure asks for a retry
+with the same requestId and session. Front publications keep this same explicit path.
 
-No IDs, a missing row, a human or worker-batch input, different senders, or a Neo-bound
-sender means unknown and stores no session. Never discard an unresolved input and use
-the remaining workers: incomplete provenance is ambiguous, not a smaller candidate set.
+When the model omits `session`, keep `sourceSession` as the only fill-in. Every current
+processing-state input ID must select a `neo_session_messages` row delivered to the
+publisher, and every row must have the same non-batch `fromSession`. Only then does
+`workerSession` fill the field; a derived session that cannot be resolved is omitted.
 
-Front publications have no button: `planNeoSessionMessage` records only root traffic
-and excludes front delivery, so front input IDs cannot establish a worker sender.
+No inputs, a missing row, human input, worker batch or different senders means no
+derived session. Never discard unresolved inputs or infer from text, recency, questions,
+todo assignments, repositories or `NeoAsk.sessionId`. An explicit valid worker still
+attaches in these cases because it needs no inference.
 
-Do not use `cardReply`, `replyTo`, question answer routes, todo assignments or
-`NeoAsk.sessionId`. Routes and todo assignments are mutable and do not snapshot the
-worker when the human replied; ask/session caller IDs identify coordinating Neo.
-There is no recency, repository, text-matching, active-todo or fallback inference.
+If a prior publication exists for the requestId and the model omits `session`, keep the
+prior session before attempting derivation. A new explicit worker is validated normally.
 
-`presentNeoPublications` resolves a stored ref through the existing session-open-source
-path. A null or unsafe `sessionSource.link` renders no button; never substitute Neo.
+`workerSession` continues to exclude Neo-prefixed session IDs. Presentation keeps the
+stored session and existing session-open-source resolution; no new provenance is stored.
 
 ## Clients
 
-All clients consume only presented `sessionSource`; none derives a worker itself.
-
-- Web keeps the action beside Neo/timestamp. `publication-client.ts` parses and validates
-  embedded sources for publications and revisions; `NeoPublicationSession` uses them,
-  removing its separate lookup and disabled no-link action.
-- Desktop uses that same web surface and its existing native-link handoff for
-  Claude/Codex; local worker links open the worker session.
-- Proposed iOS placement is the Neo conversation publication bubble header. The phone
-  inventory proves `neo.publication.read`, which presents `sessionSource`, and does not
-  list `neo.session.link`; consume the embedded source. Its opener must use the exact
-  resolved worker link, never Neo. Current iOS native/local opening behavior is not
-  established by this repository and must be verified in that client, not claimed here.
+- Web keeps `NeoPublicationSession` beside Neo and the timestamp. It resolves the stored
+  session through `neo.session.link`; no publication parser or disabled-action changes.
+- Desktop keeps that same web surface and existing native-link handoff. Local worker
+  links continue to open the worker session, never Neo's own conversation.
+- iOS is a separate client follow-up PR. That PR owns button placement, opening behavior
+  and device verification; this design claims no current iOS `sessionSource` support.
 
 ## Rejected alternative
 
-Choosing the most recently active worker under absent or ambiguous provenance adds
-buttons, but a plausible wrong conversation is worse than no button.
+Server-only inference would remove the explicit field and lose the worker precisely
+when Neo answers a human about that worker. The two existing paths are complementary.
 
 ## Acceptance
 
-Cover one worker, missing/mixed inputs, batch/Neo senders, front, and unresolved revisions
-preserving the prior worker. Web proves publication/revision source parsing and opening;
-iOS opening remains a client verification, not a verified fact of this design.
+Keep tests for explicit valid, unknown and unavailable workers; derived single, missing
+and mixed senders; prior-session retries and revisions; and front's explicit field.
+Web behavior remains unchanged. The iOS follow-up must verify its own user-visible flow.
