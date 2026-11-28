@@ -1,4 +1,4 @@
-import type { NeoAskEntry } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAskEntry, NeoQuestionEntry } from '@hyperneo/shared/types/neo-ask';
 import type { NeoCardReply, NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import type { NeoSessionNoticeGroup } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoConversationWake } from '@hyperneo/shared/types/neo-wake';
@@ -16,7 +16,8 @@ export type NeoPublicEntry =
       replyTo: NeoAskItem | null;
     }
   | { kind: 'notices'; key: string; group: NeoSessionNoticeGroup }
-  | { kind: 'wake'; key: string; wake: NeoConversationWake };
+  | { kind: 'wake'; key: string; wake: NeoConversationWake }
+  | { kind: 'question'; key: string; at: number; entry: NeoAskEntry; question: NeoQuestionEntry };
 export type NeoPublicConversation = {
   conversationId: string | null;
   status: 'loading' | 'ready' | 'unavailable';
@@ -29,6 +30,7 @@ type Sources = {
   publications: NeoPublicationState;
   noticeGroups?: readonly NeoSessionNoticeGroup[];
   wakes?: readonly NeoConversationWake[];
+  cards?: readonly NeoAskEntry[];
 };
 type Gate = { value: Sources } | { reason: NeoPublicConversation };
 
@@ -47,11 +49,12 @@ export function admitNeoPublicSources(
   asks: NeoAskState,
   publications: NeoPublicationState,
   noticeGroups?: readonly NeoSessionNoticeGroup[],
-  wakes?: readonly NeoConversationWake[]
+  wakes?: readonly NeoConversationWake[],
+  cards?: readonly NeoAskEntry[]
 ): Gate {
   const id = publicationConversationId(rootSessionId);
   return id && asks.conversationId === id && publications.conversationId === id
-    ? { value: { asks, publications, noticeGroups, wakes } }
+    ? { value: { asks, publications, noticeGroups, wakes, cards } }
     : { reason: empty(id) };
 }
 
@@ -95,6 +98,7 @@ export function presentNeoPublicConversation({
   publications,
   noticeGroups = [],
   wakes = [],
+  cards = [],
 }: Sources): NeoPublicConversation {
   const originKey = (origin: NeoAskItem['askOrigin']) =>
     JSON.stringify([origin.sessionId, origin.messageId]);
@@ -119,11 +123,13 @@ export function presentNeoPublicConversation({
     ),
   ];
   const at = (entry: NeoPublicEntry) =>
-    entry.kind === 'wake' || entry.kind === 'notices'
-      ? entry.kind === 'wake'
-        ? entry.wake.firedAt
-        : entry.group.at
-      : Date.parse((entry.kind === 'ask' ? entry.ask : entry.publication).createdAt);
+    entry.kind === 'question'
+      ? entry.at
+      : entry.kind === 'wake' || entry.kind === 'notices'
+        ? entry.kind === 'wake'
+          ? entry.wake.firedAt
+          : entry.group.at
+        : Date.parse((entry.kind === 'ask' ? entry.ask : entry.publication).createdAt);
   const sequence = (entry: NeoPublicEntry) =>
     entry.kind === 'ask'
       ? entry.ask.sequence
@@ -150,9 +156,22 @@ export function presentNeoPublicConversation({
           key: JSON.stringify([asks.conversationId, 'notices', group.id]),
           group,
         })
-      )
+      ),
+    ...cards.flatMap((entry) =>
+      entry.questions
+        .filter((question) => question.state === 'open' && !question.heldAt)
+        .map(
+          (question): NeoPublicEntry => ({
+            kind: 'question',
+            key: JSON.stringify([asks.conversationId, 'question', question.id]),
+            at: Math.max(question.createdAt, from - 0.001),
+            entry,
+            question,
+          })
+        )
+    )
   );
-  const rank = { ask: 0, publication: 1, notices: 2, wake: 3 };
+  const rank = { ask: 0, publication: 1, notices: 2, wake: 3, question: 4 };
   entries.sort(
     (a, b) =>
       at(a) - at(b) ||
@@ -176,10 +195,10 @@ export function presentNeoPublicConversation({
 export const projectNeoPublicConversation = (
   superpipe({})('neo-public-conversation') as PipelineAPI
 )
-  .input(['rootSessionId', 'asks', 'publications', 'noticeGroups', 'wakes'])
+  .input(['rootSessionId', 'asks', 'publications', 'noticeGroups', 'wakes', 'cards'])
   .pipe(
     admitNeoPublicSources,
-    ['rootSessionId', 'asks', 'publications', 'noticeGroups', 'wakes'],
+    ['rootSessionId', 'asks', 'publications', 'noticeGroups', 'wakes', 'cards'],
     'result:conversation'
   )
   .pipe(requireNeoPublicIdentities, 'conversation', 'result:conversation')
@@ -189,7 +208,8 @@ export const projectNeoPublicConversation = (
   asks: NeoAskState,
   publications: NeoPublicationState,
   noticeGroups?: readonly NeoSessionNoticeGroup[],
-  wakes?: readonly NeoConversationWake[]
+  wakes?: readonly NeoConversationWake[],
+  cards?: readonly NeoAskEntry[]
 ) => NeoPublicConversation;
 
 export function neoCardReplyTitle(publication: NeoPublication, title?: string): string {
