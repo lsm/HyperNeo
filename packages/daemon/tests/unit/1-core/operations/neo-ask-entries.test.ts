@@ -136,6 +136,7 @@ describe('neoTodoStatusLine', () => {
         state: 'blocked',
         blockedBy: 'held',
         blockedReason: 'PR 12 merges',
+        startedAt: null,
         hold: { heldAt: 1, reviewAt: 2, ...(by ? { by } : {}) },
       });
     expect(neoTodoStatusLine(held('human'), [], null)).toEqual(coded('On hold', 'todo.held'));
