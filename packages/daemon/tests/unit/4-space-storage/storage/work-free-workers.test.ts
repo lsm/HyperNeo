@@ -121,6 +121,31 @@ describe('readFreeWorkers', () => {
       expect(store.getTodo('next')?.state).toBe('todo');
     });
 
+    test('a todo waiting for a busy worker keeps its requested provider, model and effort', () => {
+      store.addTodo(
+        'triple',
+        'ask',
+        { title: 'triple', doneWhen: 'Observed', check: null, instruction: 'Go', named: null },
+        3
+      );
+      sessions.create('triple', {
+        verb: 'start',
+        adapter: 'claude-desktop',
+        provider: 'anthropic',
+        model: 'claude-test',
+        effort: 'high',
+      });
+      expect(sessions.queueOn('triple', ref, 'Next step.')).toBe('instruction');
+      expect(sessions.get('triple')).toEqual({
+        verb: 'send',
+        ref,
+        preparationParameters: {},
+        provider: 'anthropic',
+        model: 'claude-test',
+        effort: 'high',
+      });
+    });
+
     test('a bound doing todo cannot be requeued onto a different worker', () => {
       bind('bound', 'w-other', 'doing');
       expect(sessions.queueOn('bound', ref, 'Next step.', { requeueDoing: true })).toBe('none');
