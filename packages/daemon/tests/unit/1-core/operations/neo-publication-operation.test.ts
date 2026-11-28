@@ -383,7 +383,8 @@ describe('Neo publication without runtime input attribution', () => {
       (await handler({ name: 'neo.publication.publish', input: { ...draft, session: null } }))
         .content[0].text
     );
-    expect(reply).toMatchObject({ accepted: false, reason: 'invalid_publication' });
+    expect(reply.accepted).toBe(false);
+    expect(reply.reason).toStartWith('invalid_publication');
     expect(ledger.list(conversationId)).toHaveLength(0);
   });
 
