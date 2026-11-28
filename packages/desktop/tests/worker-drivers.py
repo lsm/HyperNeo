@@ -1415,6 +1415,52 @@ open(sys.argv[2], 'w').write(reply.decode())
             self.assertTrue(reply['dispatched'], reply)
         print('unconfirmed_stop=live_child_kept window_and_foreground=blocked_until_exit')
 
+    def test_workers_take_the_desktop_in_turn_until_the_holders_todo_ends(self):
+        dock = int(subprocess.check_output(['/usr/bin/pgrep', '-x', 'Dock']).split()[0])
+        self.call('fixture-admit', tool='click', arguments={'pid': finder()})
+        self.call('fixture-admit', tool='click', arguments={'pid': dock})
+        self.assertTrue(self.dispatch('click', {'pid': finder()}, workDir=str(self.work))['result']['dispatched'])
+        self.pids.append(json.loads((self.lifecycle() / 'driver.json').read_text())['pid'])
+        todos = ['todo-worker-a', 'todo-worker-b', 'todo-worker-c']
+        places = {}
+        for worker in ('worker-b', 'worker-c'):
+            places[worker] = self.work / worker
+            places[worker].mkdir()
+        turn = lambda worker, live, **extra: self.dispatch(
+            'click', {'pid': dock, **extra}, worker=worker, workDir=str(places[worker]), todos=live)['result']
+        for worker in ('worker-b', 'worker-c'):
+            reply = turn(worker, todos, fixture_deadline=True)
+            self.assertEqual((reply['reason'], reply['dispatched']), ('desktop_queued', False), reply)
+        self.assertEqual(turn('worker-c', todos[1:], fixture_deadline=True)['reason'], 'desktop_queued')
+        self.assertTrue(turn('worker-b', todos[1:])['dispatched'])
+        self.pids.append(json.loads((self.lifecycle('worker-b') / 'driver.json').read_text())['pid'])
+        self.assertTrue(turn('worker-c', todos[2:])['dispatched'])
+        self.pids.append(json.loads((self.lifecycle('worker-c') / 'driver.json').read_text())['pid'])
+        print('queue=fifo holder_todo_done=next_worker')
+
+    def test_a_held_worker_stops_keeping_a_locked_mac_once_its_driver_exits(self):
+        started, _ = self.turn_guardian()
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        hold = self.work / 'hold-stop'
+        hold.touch()
+        self.addCleanup(lambda: hold.unlink(missing_ok=True))
+        failed = self.dispatch('click', {'pid': pid, 'fixture_delay': True, 'fixture_close_fails': True},
+                               workDir=str(self.work))['result']
+        self.assertTrue(failed['reason'].startswith('stop_unconfirmed'), failed)
+        old = json.loads((self.lifecycle() / 'driver.json').read_text())['pid']
+        self.pids.append(old)
+        wait_until(lambda: bool(list(self.work.glob('d-*/d.stopping'))))
+        hold.unlink()
+        other = self.work / 'other'
+        other.mkdir()
+        self.dispatch('list_windows', {'fixture_screen_locked': True}, worker='worker-b', workDir=str(other))
+        self.assertTrue(started.exists(), 'Locked Use did not start for the next worker')
+        reply = self.dispatch('list_windows', {}, worker='worker-b', workDir=str(other))['result']
+        self.assertTrue(reply['dispatched'], reply)
+        self.pids.append(json.loads((self.lifecycle('worker-b') / 'driver.json').read_text())['pid'])
+        print('held_worker=retired locked_mac=next_worker')
+
     def test_failed_start_cleanup_in_dispatch_keeps_the_window(self):
         pid = finder()
         self.call('fixture-admit', tool='click', arguments={'pid': pid})
