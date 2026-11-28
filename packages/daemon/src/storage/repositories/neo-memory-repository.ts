@@ -17,7 +17,7 @@ export class NeoMemoryRepository {
 
   async save(input: { key: string; content: string; sessionId?: string }) {
     const memory = await this.gateway.call(neoMemoryWrites, 'save', input);
-    await this.fillVectors();
+    this.startFill();
     return memory;
   }
 
@@ -50,8 +50,12 @@ export class NeoMemoryRepository {
     if (!embedder) return [];
     const queryVector = await embedQueryOrNull(embedder, query);
     if (!queryVector) return [];
-    this.fillVectors().catch((error) => log.error('Neo memory vector fill failed:', error));
+    this.startFill();
     return this.gateway.call(neoMemoryReads, 'searchVector', queryVector, embedder.model, limit);
+  }
+
+  private startFill(): void {
+    this.fillVectors().catch((error) => log.error('Neo memory vector fill failed:', error));
   }
 
   private async fillVectors(): Promise<void> {

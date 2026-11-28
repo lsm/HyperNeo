@@ -63,6 +63,7 @@ describe('NeoMemoryRepository', () => {
     }));
     await vectors.save({ key: 'ci-runs-tests', content: 'Let CI run the daemon tests.' });
     await vectors.save({ key: 'pr-size', content: 'Keep each pull request small.' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect((await vectors.search('测试应该在哪里跑', 3)).map((m) => m.key)).toEqual([
       'ci-runs-tests',
     ]);
@@ -78,7 +79,16 @@ describe('NeoMemoryRepository', () => {
       },
     }));
     await broken.save({ key: 'pr-size', content: 'Keep each pull request small.' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect((await broken.search('合并之前', 3)).map((m) => m.key)).toEqual(['pr-size']);
+
+    const hanging = new NeoMemoryRepository(gatewayFor(db), () => ({
+      model: 'hanging',
+      dimensions: 4,
+      embedQuery: embed,
+      embedPassage: () => new Promise<Float32Array>(() => {}),
+    }));
+    expect((await hanging.save({ key: 'tz', content: 'Use US Eastern.' })).key).toBe('tz');
   });
 
   test('finds a memory from a sentence that ends with a period', async () => {
