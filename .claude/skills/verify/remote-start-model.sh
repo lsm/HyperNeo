@@ -64,4 +64,3 @@ print({"ok": r.get("ok"), "reason": r.get("reason"), "detail": r.get("detail"), 
 echo "requested on B: model=$MODEL effort=high"
 echo "hyperneo start on B: $(start_on_b hyperneo)"
 echo "B's sessions on that model: $(sqlite3 -readonly "$RUN/b/data/daemon.db" "SELECT COUNT(*) FROM sessions WHERE json_extract(config, '$.model') = '$MODEL'")"
-echo "claude-desktop start on B: $(start_on_b claude-desktop)"

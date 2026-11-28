@@ -503,17 +503,38 @@ describe('coding actor assignments', () => {
     ]);
     expect(Object.keys(f.assignments.read('todo', url, head))).toEqual(['qa', 'review']);
   });
-  test('a later review uses the recorded reviewer model', async () => {
+  test('a later review prefers the candidate matching the previous reviewer', async () => {
+    const f = fixture();
+    const sonnet = { ...reviewer, model: 'claude-sonnet-5-5', effort: 'low' };
+    recordTodoRole(
+      f.db,
+      'todo',
+      'review',
+      { adapter: reviewer.adapter, id: 'previous' },
+      'claude-sonnet-5-5',
+      'low'
+    );
+    expect((await f.assign({ candidates: [author, reviewer, sonnet] })).ok).toBe(true);
+    expect(f.starts).toHaveLength(1);
+    expect(f.starts[0]).toMatchObject({
+      role: 'review',
+      adapter: sonnet.adapter,
+      model: sonnet.model,
+      effort: sonnet.effort,
+    });
+  });
+  test('a later review keeps the selected candidate when none matches the previous reviewer', async () => {
     const f = fixture();
     recordTodoRole(
       f.db,
       'todo',
       'review',
       { adapter: reviewer.adapter, id: 'previous' },
-      'claude-sonnet-5-5'
+      'claude-sonnet-5-5',
+      'high'
     );
     expect((await f.assign()).ok).toBe(true);
-    expect(f.starts[0]).toMatchObject({ role: 'review', model: 'claude-sonnet-5-5' });
+    expect(f.starts[0]).toMatchObject({ role: 'review', model: reviewer.model });
   });
   test('an explicit human is an alternative with no reviewer session', async () => {
     const f = fixture();

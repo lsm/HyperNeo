@@ -6,19 +6,33 @@ const check = { pack: 'core', kind: 'evidence', params: {} };
 const facts: Record<string, AdapterIdentity> = {
   hyperneo: { configurable: true },
   'claude-desktop': { fixedProvider: 'anthropic', configurable: false },
+  'laptop:hyperneo': { configurable: true },
 };
 const draft = (target: object) =>
   resolveNeoTodoDraft(
     { title: 'Step', check, instruction: 'Do it', target } as never,
     async (ref: WorkRef) => ({ value: ref }),
-    (adapter) => facts[adapter]
+    async (adapter, daemon) => facts[daemon ? `${daemon}:${adapter}` : adapter]
   );
 
 describe('resolveNeoTodoDraft identity admission', () => {
   test.each([
     [{ verb: 'start', adapter: 'hyperneo', model: 'm', effort: 'high' }, 'missing: provider'],
     [{ verb: 'send', ref: { adapter: 'claude-desktop', id: 's' }, model: 'm' }, 'missing: effort'],
-  ])('refuses a local target without the triple: %j', async (target, missing) => {
+    [
+      {
+        verb: 'start',
+        adapter: 'hyperneo',
+        place: { machine: 'x', daemon: 'laptop', name: 'r' },
+        model: 'm',
+      },
+      'missing: provider, effort',
+    ],
+    [
+      { verb: 'send', ref: { adapter: 'hyperneo', id: 's', daemon: 'laptop' } },
+      'missing: provider, model, effort',
+    ],
+  ])('refuses a local or remote target without the triple: %j', async (target, missing) => {
     expect(await draft(target)).toEqual({
       reason: {
         ok: false,
@@ -48,7 +62,7 @@ describe('resolveNeoTodoDraft identity admission', () => {
     },
     { verb: 'send', ref: { adapter: 'hyperneo', id: 's', daemon: 'x' } },
     { verb: 'bind', ref: { adapter: 'hyperneo', id: 's' } },
-  ])('admits a complete, remote or bind target: %j', async (target) => {
+  ])('admits a complete, unverifiable remote or bind target: %j', async (target) => {
     expect(await draft(target)).toMatchObject({ value: { target } });
   });
 });

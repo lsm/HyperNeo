@@ -91,14 +91,16 @@ export const NeoTodoAddTargetSchema = z.discriminatedUnion('verb', [
 
 export type NeoTodoAddTarget = z.infer<typeof NeoTodoAddTargetSchema>;
 
-export function neoTargetIdentityRefusal(
+export async function neoTargetIdentityRefusal(
   target: NeoTodoAddTarget | undefined,
-  identity: (adapter: string) => AdapterIdentity | undefined
-): string | null {
+  identity: (adapter: string, daemon?: string) => Promise<AdapterIdentity | undefined>
+): Promise<string | null> {
   if (!target || target.verb === 'bind') return null;
   const adapter = target.verb === 'start' ? target.adapter : target.ref.adapter;
-  const remote = target.verb === 'start' ? target.place?.daemon : target.ref.daemon;
-  const facts = remote ? undefined : identity(adapter);
+  const facts = await identity(
+    adapter,
+    target.verb === 'start' ? target.place?.daemon : target.ref.daemon
+  );
   const gated = facts && workStartConfiguration.requireIdentity({ ...target, adapter }, facts);
   return gated && 'ok' in gated ? gated.detail : null;
 }

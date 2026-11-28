@@ -81,7 +81,7 @@ export interface NeoTodoControls {
     Gate<WorkRef> & { place?: Pick<Place, 'folder' | 'remotes'>; workerRemotes?: readonly string[] }
   >;
   refreshIdentity?(todoId: string): Promise<void>;
-  identity?(adapter: string): AdapterIdentity | undefined;
+  identity?(adapter: string, daemon?: string): Promise<AdapterIdentity | undefined>;
   desktopAppName?: DesktopAppName;
   advance(): Promise<unknown>;
   recompute(todo: NeoTodo, patch: NeoTodoPatch): Promise<NeoTodo>;
@@ -229,7 +229,7 @@ export async function resolveNeoTodoDraft(
           workerRemotes: resolved.workerRemotes,
         }
       : input;
-  const refused = identity && neoTargetIdentityRefusal(draft.target, identity);
+  const refused = identity && (await neoTargetIdentityRefusal(draft.target, identity));
   return refused ? fail(refused) : { value: draft };
 }
 

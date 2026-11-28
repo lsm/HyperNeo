@@ -71,7 +71,11 @@ type RoutedVerb =
   | 'stop'
   | 'archive';
 type Route<Verb extends RoutedVerb> =
-  | { daemon: string; confirmsStartConfiguration?: true }
+  | {
+      daemon: string;
+      identity?: AdapterIdentity;
+      copilotClients?: z.infer<typeof CopilotClientSchema>[];
+    }
   | {
       local: NonNullable<WorkAdapter[Verb]>;
       supportsStartPreparation?: boolean;
@@ -620,29 +624,49 @@ export function pickRoute<Verb extends RoutedVerb>(
   };
 }
 
-async function admitRemoteStartModel(
+const needsRemoteAdapter = (input: StartInput, caller: OperationCaller) =>
+  (!!input.copilotClient && input.copilotClient !== 'auto') ||
+  input.model !== undefined ||
+  input.effort !== undefined ||
+  (caller.role === 'neo' && !input.checkPlan);
+
+async function readRemoteAdapter(
   route: Route<'start'>,
   input: StartInput,
+  caller: OperationCaller,
   deps: WorkVerbDeps
 ): Promise<Gate<Route<'start'>>> {
-  if (
-    !('daemon' in route) ||
-    route.confirmsStartConfiguration ||
-    (input.model === undefined && input.effort === undefined)
-  )
-    return { value: route };
+  if (!('daemon' in route) || !needsRemoteAdapter(input, caller)) return { value: route };
   const catalog = await listWorkAdapters(route.daemon, deps);
   if (!catalog.ok) return { reason: { ...catalog, notSent: true } };
-  if (catalog.value.find(({ id }) => id === input.adapter)?.identity?.configurable)
-    return { value: { ...route, confirmsStartConfiguration: true } };
-  return input.model !== undefined
-    ? {
+  const entry = catalog.value.find(({ id }) => id === input.adapter);
+  return {
+    value: {
+      daemon: route.daemon,
+      identity: entry?.identity,
+      copilotClients: entry?.copilotClients,
+    },
+  };
+}
+
+function admitRemoteStartIdentity(
+  route: Route<'start'>,
+  input: StartInput,
+  caller: OperationCaller
+): Gate<Route<'start'>> {
+  return !('daemon' in route) ||
+    route.identity ||
+    (input.model === undefined &&
+      input.effort === undefined &&
+      (caller.role !== 'neo' || input.checkPlan))
+    ? { value: route }
+    : {
         reason: reject(
           'unsupported_model',
-          'This remote route cannot confirm the requested model. Choose a supported local adapter.'
+          `${route.daemon} does not advertise provider, model and effort facts for ${input.adapter}; update that HyperNeo server or choose another adapter.`,
+          true
         ),
-      }
-    : { value: route };
+      };
 }
 
 export function requireStartIdentity(
@@ -650,24 +674,12 @@ export function requireStartIdentity(
   input: StartInput,
   caller: OperationCaller
 ): Gate<Route<'start'>> {
-  if (!('local' in route) || !route.identity || caller.role !== 'neo' || input.checkPlan)
-    return { value: route };
+  if (!route.identity || caller.role !== 'neo' || input.checkPlan) return { value: route };
   const gated = workStartConfiguration.requireIdentity(input, {
     fixedProvider: route.identity.fixedProvider,
     configurable: route.identity.configurable,
   });
   return 'ok' in gated ? { reason: reject(gated.reason, gated.detail) } : { value: route };
-}
-
-export function admitStartEffort(route: Route<'start'>, input: StartInput): Gate<Route<'start'>> {
-  return input.effort === undefined || 'local' in route || route.confirmsStartConfiguration
-    ? { value: route }
-    : {
-        reason: reject(
-          'unsupported_effort',
-          'This route cannot confirm the requested effort. Choose a supported local adapter.'
-        ),
-      };
 }
 
 export function admitRemoteCaller<Verb extends RoutedVerb>(
@@ -732,17 +744,10 @@ export function routeStart(input: StartInput, deps: WorkVerbDeps): Gate<Route<'s
   return route;
 }
 
-async function admitRemoteCopilotStart(
-  route: Route<'start'>,
-  input: StartInput,
-  deps: WorkVerbDeps
-): Promise<Gate<Route<'start'>>> {
+function admitRemoteCopilotStart(route: Route<'start'>, input: StartInput): Gate<Route<'start'>> {
   if (!('daemon' in route) || !input.copilotClient || input.copilotClient === 'auto')
     return { value: route };
-  const catalog = await listWorkAdapters(route.daemon, deps);
-  if (!catalog.ok) return { reason: { ...catalog, notSent: true } };
-  const choices = catalog.value.find(({ id }) => id === COPILOT_ADAPTER_ID)?.copilotClients;
-  if (!choices)
+  if (!route.copilotClients)
     return {
       reason: reject(
         'unsupported',
@@ -750,7 +755,7 @@ async function admitRemoteCopilotStart(
         true
       ),
     };
-  if (!choices.includes(input.copilotClient))
+  if (!route.copilotClients.includes(input.copilotClient))
     return {
       reason: reject(
         'unreachable',
@@ -760,7 +765,7 @@ async function admitRemoteCopilotStart(
         true
       ),
     };
-  return { value: { ...route, confirmsStartConfiguration: true } };
+  return { value: route };
 }
 
 export async function startWork(
@@ -1408,9 +1413,9 @@ const runStartWork = (superpipe({})('work.start') as PipelineAPI)
   .pipe((resolved: StartInput) => resolved, 'outcome', 'input')
   .pipe(routeStart, ['input', 'deps'], 'result:outcome')
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
-  .pipe(admitRemoteCopilotStart, ['outcome', 'input', 'deps'], 'result:outcome')
-  .pipe(admitRemoteStartModel, ['outcome', 'input', 'deps'], 'result:outcome')
-  .pipe(admitStartEffort, ['outcome', 'input'], 'result:outcome')
+  .pipe(readRemoteAdapter, ['outcome', 'input', 'caller', 'deps'], 'result:outcome')
+  .pipe(admitRemoteCopilotStart, ['outcome', 'input'], 'result:outcome')
+  .pipe(admitRemoteStartIdentity, ['outcome', 'input', 'caller'], 'result:outcome')
   .pipe(requireStartIdentity, ['outcome', 'input', 'caller'], 'result:outcome')
   .pipe(
     (route: Route<'start'>, input: StartInput): Gate<Route<'start'>> => {
