@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { ProcessJsonRpcTransport } from '../process-json-rpc.ts';
 import { workStartConfiguration } from './start-configuration.ts';
-import type { Result, StartRequest } from './types.ts';
+import type { Rejected, Result, StartRequest } from './types.ts';
 import { reject } from './work-operations.ts';
 
 const Select = z.object({
@@ -45,6 +45,18 @@ function availableValue(option: z.infer<typeof Select>, requested: string): stri
   return matches.size === 1 ? matches.values().next().value : undefined;
 }
 
+async function restore(
+  transport: ProcessJsonRpcTransport,
+  sessionId: string,
+  applied: { configId: string; value: string }[]
+) {
+  for (const { configId, value } of applied.reverse()) {
+    try {
+      await transport.sendRequest('session/set_config_option', { sessionId, configId, value });
+    } catch {}
+  }
+}
+
 export async function configureCursor(
   transport: ProcessJsonRpcTransport,
   sessionId: string,
@@ -53,20 +65,28 @@ export async function configureCursor(
 ): Promise<Result<Options>> {
   let options = initial;
   const requested: Settings = {};
+  const applied: { configId: string; value: string }[] = [];
+  const refuse = async (failure: Rejected) => {
+    await restore(transport, sessionId, applied);
+    return failure;
+  };
   for (const field of ['model', 'effort'] as const) {
     const choice = request[field];
     if (choice === undefined) continue;
     const option = readOption(options, field);
     const value = option && availableValue(option, choice);
     if (!option || !value) {
-      return reject(
-        field === 'model' ? 'unsupported_model' : 'unsupported_effort',
-        `Cursor CLI does not offer the requested ${field} for this session.`,
-        true
+      return refuse(
+        reject(
+          field === 'model' ? 'unsupported_model' : 'unsupported_effort',
+          `Cursor CLI does not offer the requested ${field} for this session.`,
+          true
+        )
       );
     }
     requested[field] = value;
     if (option.currentValue === value) continue;
+    applied.push({ configId: option.id, value: option.currentValue });
     const response = await transport.sendRequest('session/set_config_option', {
       sessionId,
       configId: option.id,
@@ -74,9 +94,11 @@ export async function configureCursor(
     });
     const settings = CursorConfig.safeParse('result' in response ? response.result : undefined);
     if (!settings.success || readOption(settings.data.configOptions, field)?.currentValue !== value)
-      return reject('not_delivered', `Cursor CLI did not confirm the requested ${field}.`, true);
+      return refuse(
+        reject('not_delivered', `Cursor CLI did not confirm the requested ${field}.`, true)
+      );
     options = settings.data.configOptions;
   }
   const confirmed = workStartConfiguration.confirm(requested, cursorIdentity(options));
-  return confirmed.ok ? { ok: true, value: options } : { ...confirmed, notSent: true };
+  return confirmed.ok ? { ok: true, value: options } : refuse({ ...confirmed, notSent: true });
 }
