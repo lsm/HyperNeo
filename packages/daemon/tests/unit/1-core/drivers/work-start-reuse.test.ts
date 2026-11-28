@@ -206,7 +206,13 @@ function harness(
   const start = async (
     caller: OperationCaller = neo,
     provenance = false,
-    request: { model?: string; effort?: string; excludeRefs?: WorkRef[]; todoId?: string } = {}
+    request: {
+      model?: string;
+      effort?: string;
+      provider?: string;
+      excludeRefs?: WorkRef[];
+      todoId?: string;
+    } = {}
   ) => {
     const outcome = await invokeOperation(
       registry,
@@ -772,6 +778,14 @@ describe('work.start reuse of a non-configurable adapter', () => {
     expect(result.value?.ref.id).toBe(reuse ? id : 'fresh');
     expect(run.sent).toEqual(reuse ? [id] : []);
     if (reuse) expect(result.value).toMatchObject({ model: 'claude-opus-5-5', effort: 'medium' });
+  });
+});
+
+describe('work.start reuse when status omits the fixed provider', () => {
+  test('a named fixed provider still matches the idle worker', async () => {
+    const run = harness([{ id: 'fixed-provider', status: 'done' }], ['fixed-provider']);
+    const result = await run.start(neo, false, { provider: 'anthropic', todoId: 'next' });
+    expect(result.value?.ref.id).toBe('fixed-provider');
   });
 });
 

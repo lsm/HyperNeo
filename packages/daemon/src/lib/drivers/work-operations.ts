@@ -930,7 +930,11 @@ export async function reuseIdleWorker(
     ref: WorkRef,
     status: { provider?: string; model?: string; effort?: string } | null
   ) =>
-    adapter.identity?.configurable === false ? { ...(await deps.startedIdentity?.(ref)) } : status;
+    adapter.identity?.configurable === false
+      ? { ...(await deps.startedIdentity?.(ref)) }
+      : status && adapter.identity?.fixedProvider
+        ? { ...status, provider: status.provider ?? adapter.identity.fixedProvider }
+        : status;
   const groups = await adapter.find({ folder, includeClosed: false, limit: 50 });
   const discovered = groups.flatMap((group) => group.work);
   if (prior && !discovered.some((work) => work.ref.id === prior.id) && adapter.status) {
