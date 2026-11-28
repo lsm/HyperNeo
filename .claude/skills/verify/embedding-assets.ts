@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 
 const run = resolve(process.argv[2]);
 const mode = process.argv[3] ?? 'recover';
@@ -58,7 +59,7 @@ try {
   await app.jobProcessor.stop();
   assert.notEqual(app.server.port, 8399);
   evidence.port = app.server.port;
-  socket = new WebSocket('ws://127.0.0.1:' + app.server.port + '/ws');
+  socket = createLocalSocket('ws://127.0.0.1:' + app.server.port + '/ws', join(run, 'data/local-rpc.credential'));
   await new Promise((resolve, reject) => { socket!.onopen = resolve; socket!.onerror = reject; });
   const call = (method: string, data: unknown) => new Promise<unknown>((resolve, reject) => {
     const id = crypto.randomUUID();
