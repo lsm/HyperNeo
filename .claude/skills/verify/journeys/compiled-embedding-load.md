@@ -9,7 +9,7 @@ through `compileArgs` in `scripts/compiled-worker-entrypoints.ts` (the workflow
 commands spell it out).
 
 Run from the repo root with a fresh run directory; it needs network access to
-npm and the `embedding-models-v1` GitHub release. No daemon, provider or GUI is
+npm and Hugging Face. No daemon, provider or GUI is
 used:
 
 ```bash
@@ -21,7 +21,7 @@ The helper compiles `packages/daemon/tests/unit/lib/compiled-embedding-fixture.t
 with the release compile arguments for the target (default: this machine;
 `bun-darwin-x64` runs under Rosetta on Apple silicon), runs it with a fresh
 HOME and `HYPERNEO_DATA_DIR`, `NODE_ENV=test` and a minimal environment, and
-requires a normalized 384-dimensional vector. Without the flag it fails with
+requires a normalized 768-dimensional vector. Without the flag it fails with
 `Cannot find package 'onnxruntime-common'`, the v0.48.0 symptom. Evidence:
 `$RUN/evidence/compiled-embedding-load.json`. CI runs it on Windows for pull
 requests and on linux-x64 for pushes to dev.

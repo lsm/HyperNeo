@@ -9,21 +9,23 @@ import { withoutAuthorization } from './agent-memory-fetch-options.ts';
 import type { AgentMemoryEmbedder } from './agent-memory-repository.ts';
 import {
   loadRecoveredEmbedding,
+  meanPoolEmbedding,
   MODEL_CHECKSUMS,
+  MODEL_DIMENSIONS,
+  MODEL_REVISION,
   verifyEmbeddingAsset,
 } from './embedding-assets.ts';
 
 const log = new Logger('AgentMemory');
-export const MODEL_ID = 'onnx-community/granite-embedding-small-english-r2-ONNX';
-const GITHUB_RELEASE_BASE = 'https://github.com/lsm/neokai/releases/download/embedding-models-v1';
-export const DIMENSIONS = 384;
+export const MODEL_ID = 'Xenova/paraphrase-multilingual-mpnet-base-v2';
+export const DIMENSIONS = MODEL_DIMENSIONS;
 const MODEL_FILES = [
   'config.json',
   'tokenizer.json',
   'tokenizer_config.json',
-  'onnx/model_q4.onnx',
-  'onnx/model_q4.onnx_data',
+  'onnx/model_quantized.onnx',
 ];
+const MODEL_OPTIONS = { dtype: 'q8', device: 'cpu', revision: MODEL_REVISION } as const;
 
 const REMOTE_HOST = 'https://huggingface.co/';
 const REMOTE_PATH_TEMPLATE = '{model}/resolve/{revision}/';
@@ -50,18 +52,18 @@ export class TransformersAgentMemoryEmbedder implements AgentMemoryEmbedder {
   dimensions = DIMENSIONS;
   private initPromise: Promise<InitializedEmbedder> | null = null;
 
+  embedPassage(text: string): Promise<Float32Array> {
+    return this.embedQuery(text);
+  }
+
   embedQuery(text: string): Promise<Float32Array> {
     return this.getInit().then(async (initialized) => {
       if ('embed' in initialized) return initialized.embed(text);
       const { model, tokenizer } = initialized;
       const inputs = await tokenizer(text, { padding: true, truncation: true });
-      const { sentence_embedding: sentenceEmbedding } = await model(inputs);
-      return Float32Array.from(sentenceEmbedding.normalize().data);
+      const { last_hidden_state: hidden } = await model(inputs);
+      return meanPoolEmbedding(hidden.data, inputs.attention_mask.data);
     });
-  }
-
-  embedPassage(text: string): Promise<Float32Array> {
-    return this.embedQuery(text);
   }
 
   load(): Promise<void> {
@@ -86,8 +88,8 @@ export class TransformersAgentMemoryEmbedder implements AgentMemoryEmbedder {
           return { embed: await loadRecoveredEmbedding(DEFAULT_TRANSFORMERS_CACHE_DIR, MODEL_ID) };
         const { AutoModel, AutoTokenizer } = transformers;
         const [model, tokenizer] = await Promise.all([
-          AutoModel.from_pretrained(MODEL_ID, { dtype: 'q4', device: 'cpu' }),
-          AutoTokenizer.from_pretrained(MODEL_ID),
+          AutoModel.from_pretrained(MODEL_ID, MODEL_OPTIONS),
+          AutoTokenizer.from_pretrained(MODEL_ID, MODEL_OPTIONS),
         ]);
         return { model, tokenizer };
       })().catch((err) => {
@@ -149,8 +151,8 @@ export async function prefetchAgentMemoryEmbeddingModel(
       logInfo('[AgentMemory] Embedding model not cached, starting background prefetch');
       try {
         const [model, tokenizer] = await Promise.all([
-          transformers.AutoModel.from_pretrained(MODEL_ID, { dtype: 'q4', device: 'cpu' }),
-          transformers.AutoTokenizer.from_pretrained(MODEL_ID),
+          transformers.AutoModel.from_pretrained(MODEL_ID, MODEL_OPTIONS),
+          transformers.AutoTokenizer.from_pretrained(MODEL_ID, MODEL_OPTIONS),
         ]);
         logInfo('[AgentMemory] Embedding model prefetch completed');
         return { model, tokenizer };
@@ -213,10 +215,9 @@ function configureTransformersEnv(env: TransformersModule['env'], cacheDir: stri
   const defaultFetch = env.fetch;
   env.fetch = async (url, options) => {
     const urlString = url.toString();
-    if (urlString.includes('huggingface.co') && urlString.includes('granite-embedding-small')) {
-      const filename = urlString.split('/').pop();
-      log.info('Fetching embedding model asset', filename);
-      const response = await defaultFetch(`${GITHUB_RELEASE_BASE}/${filename}`, {
+    if (urlString.includes('huggingface.co') && urlString.includes(MODEL_ID)) {
+      log.info('Fetching embedding model asset', urlString.split('/').pop());
+      const response = await defaultFetch(urlString, {
         ...withoutAuthorization(options),
         signal: prefetchAbortController?.signal,
       });
@@ -241,7 +242,10 @@ async function isModelCached(cacheDir: string): Promise<boolean> {
 }
 
 function buildRemoteUrl(modelId: string, filename: string): string {
-  const path = REMOTE_PATH_TEMPLATE.replaceAll('{model}', modelId).replaceAll('{revision}', 'main');
+  const path = REMOTE_PATH_TEMPLATE.replaceAll('{model}', modelId).replaceAll(
+    '{revision}',
+    MODEL_REVISION
+  );
   return pathJoin(REMOTE_HOST, path, filename);
 }
 

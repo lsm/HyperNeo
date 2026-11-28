@@ -97,7 +97,7 @@ try {
   } else {
   const text = 'Scientists study the moon and collect rocks in space.';
   const vector = Float32Array.from(await app.db.getEmbedder().embedPassage(text));
-  assert.equal(vector.length, 384);
+  assert.equal(vector.length, 768);
   assert(vector.every(Number.isFinite));
   const norm = Math.hypot(...vector);
   assert(Math.abs(norm - 1) < 0.0001);
@@ -106,7 +106,7 @@ try {
   const now = new Date().toISOString();
   db.prepare('INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?,?,?,?,?,?,?,?)').run('embedding-proof', 'Synthetic sample', run, now, now, 'active', JSON.stringify({ model: 'default', provider: 'anthropic' }), '{}');
   const id = Number(db.prepare('INSERT INTO message_search_content(kind,source_id,message_id,session_id,message_type,title,body,timestamp) VALUES (?,?,?,?,?,?,?,?)').run('message', 'proof-source', 'proof-message', 'embedding-proof', 'user', 'Synthetic sample', text, Date.now()).lastInsertRowid);
-  db.prepare('INSERT INTO message_search_vectors(content_id,model,dimensions,embedding,embedded_at) VALUES (?,?,?,?,?)').run(id, app.db.getEmbedder().model, 384, new Uint8Array(vector.buffer), Date.now());
+  db.prepare('INSERT INTO message_search_vectors(content_id,model,dimensions,embedding,embedded_at) VALUES (?,?,?,?,?)').run(id, app.db.getEmbedder().model, 768, new Uint8Array(vector.buffer), Date.now());
   evidence.search = await call('operation.invoke', { name: 'work.find', input: { text: 'lunar geology', adapters: ['hyperneo'], localOnly: true } });
   assert(JSON.stringify(evidence.search).includes('embedding-proof'));
   assert(JSON.stringify(evidence.search).includes('semantic'));

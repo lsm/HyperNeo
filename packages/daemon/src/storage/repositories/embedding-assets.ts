@@ -12,16 +12,16 @@ import type * as Ort from 'onnxruntime-node';
 import { Logger } from '../../lib/logger.ts';
 
 const log = new Logger('EmbeddingAssets');
-const RELEASE = 'https://github.com/lsm/HyperNeo/releases/download/embedding-models-v1/';
+export const MODEL_REVISION = 'e5d116277351513fd260955ece953ecddde7046e';
+export const MODEL_DIMENSIONS = 768;
 export const MODEL_CHECKSUMS: Record<string, string> = {
-  'config.json': 'sha256:1a1710c20911da8c96179716bf44058e54cca6fa7952cce77be83ef05edae3ee',
-  'model_q4.onnx': 'sha256:3a27c53213858379e4938858d8c72711f3792dd2c00cf1bd08cd65d23b8b36ae',
-  'model_q4.onnx_data': 'sha256:ac9b1830d3204072803f706581573752f3b80bf4e08e7ff323a7091636cbeaaa',
+  'config.json': 'sha256:14533f158fb2476510b3a83256386b983daa8cfa799ea35217c89947be63835e',
+  'model_quantized.onnx': 'sha256:280b5fe103cc79d891d672f47826067835b7feed8b0b1865e34ed38f21719b49',
   'special_tokens_map.json':
-    'sha256:ea97ecdbcc73713039d8d64dbb05e3689495c96657fbd9a18f5bed381be81049',
-  'tokenizer.json': 'sha256:feeb83348dcb033bc6b9d2e1f7906ca9eb2d122845000c9416d894d7c2927149',
+    'sha256:06e405a36dfe4b9604f484f6a1e619af1a7f7d09e34a8555eb0b77b66318067f',
+  'tokenizer.json': 'sha256:b60b6b43406a48bf3638526314f3d232d97058bc93472ff2de930d43686fa441',
   'tokenizer_config.json':
-    'sha256:ce06781b38bb393db68c9e0709bddd31ef5d88f2c6fbb3fd9f369778fb85e451',
+    'sha256:efb5c0d09722e5fe59a462cd2a9976ee216d55b037597d997cd3fe833216da15',
 };
 const RUNTIMES: Record<string, Record<string, string>> = {
   '1.22.0': {
@@ -158,16 +158,33 @@ export async function embeddingRuntime(
   }
 }
 
+export function meanPoolEmbedding(
+  hidden: Float32Array,
+  mask: ArrayLike<bigint | number>
+): Float32Array {
+  const pooled = new Float32Array(MODEL_DIMENSIONS);
+  for (let token = 0; token < mask.length; token++) {
+    if (!Number(mask[token])) continue;
+    for (let dim = 0; dim < MODEL_DIMENSIONS; dim++)
+      pooled[dim] += hidden[token * MODEL_DIMENSIONS + dim];
+  }
+  const norm = Math.hypot(...pooled);
+  if (hidden.length !== mask.length * MODEL_DIMENSIONS || !Number.isFinite(norm) || norm === 0)
+    throw new Error('Embedding model returned an invalid embedding vector');
+  return pooled.map((value) => value / norm);
+}
+
 async function embeddingModel(cacheDir: string, modelId: string): Promise<string> {
-  const root = join(cacheDir, 'huggingface.co', modelId, 'resolve/main');
+  const root = join(cacheDir, 'huggingface.co', modelId, 'resolve', MODEL_REVISION);
   await Promise.all(
-    Object.entries(MODEL_CHECKSUMS).map(([name, checksum]) =>
-      fetchEmbeddingAsset(
-        join(root, name.startsWith('model_') ? 'onnx' : '', name),
-        RELEASE + name,
+    Object.entries(MODEL_CHECKSUMS).map(([name, checksum]) => {
+      const path = (name.startsWith('model_') ? 'onnx/' : '') + name;
+      return fetchEmbeddingAsset(
+        join(root, path),
+        'https://huggingface.co/' + modelId + '/resolve/' + MODEL_REVISION + '/' + path,
         checksum
-      )
-    )
+      );
+    })
   );
   return root;
 }
@@ -178,28 +195,26 @@ async function openEmbedding(runtime: typeof Ort, modelDir: string) {
     JSON.parse(await readFile(join(modelDir, 'tokenizer.json'), 'utf8')),
     config
   );
-  const session = await runtime.InferenceSession.create(join(modelDir, 'onnx/model_q4.onnx'), {
-    executionProviders: ['cpu'],
-  });
+  const session = await runtime.InferenceSession.create(
+    join(modelDir, 'onnx/model_quantized.onnx'),
+    { executionProviders: ['cpu'] }
+  );
   return async (text: string): Promise<Float32Array> => {
     const encoded = tokenizer.encode(text);
     const ids = encoded.ids.slice(0, config.model_max_length);
-    const feeds = {
-      input_ids: new runtime.Tensor('int64', BigInt64Array.from(ids, BigInt), [1, ids.length]),
-      attention_mask: new runtime.Tensor(
-        'int64',
-        BigInt64Array.from(encoded.attention_mask.slice(0, ids.length), BigInt),
-        [1, ids.length]
-      ),
+    const mask = encoded.attention_mask.slice(0, ids.length);
+    const tensor = (values: number[]) =>
+      new runtime.Tensor('int64', BigInt64Array.from(values, BigInt), [1, ids.length]);
+    const feeds: Record<string, Ort.Tensor> = {
+      input_ids: tensor(ids),
+      attention_mask: tensor(mask),
     };
-    const result = await session.run(feeds);
-    const data = result.sentence_embedding.data;
-    if (!(data instanceof Float32Array) || data.length !== 384)
-      throw new Error('Embedding model returned an invalid 384-dimensional vector');
-    const norm = Math.hypot(...data);
-    if (!Number.isFinite(norm) || norm === 0)
-      throw new Error('Embedding model returned an invalid norm');
-    return Float32Array.from(data, (value) => value / norm);
+    if (session.inputNames.includes('token_type_ids'))
+      feeds.token_type_ids = tensor(ids.map(() => 0));
+    const data = (await session.run(feeds)).last_hidden_state.data;
+    if (!(data instanceof Float32Array))
+      throw new Error('Embedding model returned an invalid embedding vector');
+    return meanPoolEmbedding(data, mask);
   };
 }
 
