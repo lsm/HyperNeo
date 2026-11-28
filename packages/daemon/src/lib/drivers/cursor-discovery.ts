@@ -161,7 +161,7 @@ export function createCursorDiscovery(
     ...createCursorStart(command, machine, ADAPTER, readOwnedFolder),
     readTurns: createAcpReplayHistory(command, ['acp'], 'cursor', readOwnedFolder),
     id: ADAPTER,
-    identity: { fixedProvider: 'cursor', configurable: false },
+    identity: { fixedProvider: 'cursor', configurable: true },
     capabilities: ['find', 'start', 'status', 'send', 'stop'],
     find: (query) => find(query, command, home, machine),
   };

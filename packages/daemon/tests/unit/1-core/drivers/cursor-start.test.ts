@@ -144,6 +144,145 @@ describe('createCursorStart.start', () => {
   });
 });
 
+const select = (id: string, category: string, currentValue: string, values: string[]) => ({
+  id,
+  category,
+  type: 'select',
+  currentValue,
+  options: values.map((value) => ({ value, name: value.toUpperCase() })),
+});
+const models = (current: string) =>
+  select('model', 'model', current, ['default', 'claude-opus-5-5', 'gpt-5.5']);
+const efforts = (current: string) =>
+  select('effort', 'thought_level', current, ['low', 'medium', 'high']);
+const created = { result: { sessionId: ref.id, configOptions: [models('default')] } };
+
+describe('createCursorStart.start with model and effort', () => {
+  const fixture = useDriver();
+  const start = (model?: string, effort?: string) =>
+    fixture.driver.start({
+      place: { machine: 'fixture', folder: fixture.folder, name: 'Workspace' },
+      title: 'Run',
+      message: 'Hello',
+      ...(model ? { model } : {}),
+      ...(effort ? { effort } : {}),
+    });
+
+  it('sets the model, then its effort, before the first prompt and reports both', async () => {
+    peer.request
+      .mockResolvedValueOnce(handshake)
+      .mockResolvedValueOnce(created)
+      .mockResolvedValueOnce({
+        result: { configOptions: [models('claude-opus-5-5'), efforts('medium')] },
+      })
+      .mockResolvedValueOnce({
+        result: { configOptions: [models('claude-opus-5-5'), efforts('high')] },
+      })
+      .mockReturnValueOnce(new Promise(() => {}));
+
+    const started = await start('Claude-Opus-5-5', 'HIGH');
+    expect(started).toMatchObject({
+      ok: true,
+      value: { ref, model: 'claude-opus-5-5', effort: 'high' },
+    });
+    expect(peer.request).toHaveBeenNthCalledWith(1, 'initialize', {
+      protocolVersion: 1,
+      clientCapabilities: { _meta: { parameterizedModelPicker: true } },
+    });
+    expect(peer.request).toHaveBeenNthCalledWith(3, 'session/set_config_option', {
+      sessionId: ref.id,
+      configId: 'model',
+      value: 'claude-opus-5-5',
+    });
+    expect(peer.request).toHaveBeenNthCalledWith(4, 'session/set_config_option', {
+      sessionId: ref.id,
+      configId: 'effort',
+      value: 'high',
+    });
+    expect(peer.request.mock.calls[4]?.[0]).toBe('session/prompt');
+    expect(await fixture.driver.status(ref)).toMatchObject({
+      ok: true,
+      value: { model: 'claude-opus-5-5', effort: 'high' },
+    });
+  });
+
+  it('refuses an effort the chosen model does not offer and restores the model', async () => {
+    peer.request
+      .mockResolvedValueOnce(handshake)
+      .mockResolvedValueOnce(created)
+      .mockResolvedValueOnce({
+        result: { configOptions: [models('claude-opus-5-5'), efforts('medium')] },
+      })
+      .mockResolvedValueOnce({ result: { configOptions: [models('default')] } });
+
+    const started = await start('claude-opus-5-5', 'max');
+    expect(started).toMatchObject({ ok: false, reason: 'unsupported_effort', notSent: true });
+    expect(peer.request).toHaveBeenCalledTimes(4);
+    expect(peer.request.mock.calls[3]).toEqual([
+      'session/set_config_option',
+      { sessionId: ref.id, configId: 'model', value: 'default' },
+    ]);
+    expect(peer.close).toHaveBeenCalledOnce();
+  });
+
+  it('restores applied options when configuration times out', async () => {
+    vi.useFakeTimers();
+    try {
+      peer.request
+        .mockResolvedValueOnce(handshake)
+        .mockResolvedValueOnce(created)
+        .mockResolvedValueOnce({
+          result: { configOptions: [models('claude-opus-5-5'), efforts('medium')] },
+        })
+        .mockReturnValueOnce(new Promise(() => {}))
+        .mockResolvedValue({ result: { configOptions: [models('default')] } });
+
+      const started = start('claude-opus-5-5', 'high');
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect(await started).toMatchObject({ ok: false, reason: 'unreachable', notSent: true });
+      expect(peer.request.mock.calls.slice(4).map(([, params]) => params)).toEqual([
+        { sessionId: ref.id, configId: 'effort', value: 'medium' },
+        { sessionId: ref.id, configId: 'model', value: 'default' },
+      ]);
+      expect(peer.close).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('refuses a model Cursor does not offer without prompting', async () => {
+    peer.request.mockResolvedValueOnce(handshake).mockResolvedValueOnce(created);
+
+    expect(await start('claude-opus-9')).toMatchObject({
+      ok: false,
+      reason: 'unsupported_model',
+      notSent: true,
+    });
+    expect(peer.request).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops before prompting when Cursor does not confirm the model', async () => {
+    peer.request
+      .mockResolvedValueOnce(handshake)
+      .mockResolvedValueOnce(created)
+      .mockResolvedValueOnce({ result: { configOptions: [models('default')] } })
+      .mockResolvedValueOnce({ result: { configOptions: [models('default')] } });
+
+    expect(await start('gpt-5.5')).toMatchObject({
+      ok: false,
+      reason: 'not_delivered',
+      notSent: true,
+    });
+    expect(peer.request).toHaveBeenCalledTimes(4);
+    expect(peer.request.mock.calls[3]?.[1]).toEqual({
+      sessionId: ref.id,
+      configId: 'model',
+      value: 'default',
+    });
+    expect(peer.close).toHaveBeenCalledOnce();
+  });
+});
+
 describe('createCursorStart.send', () => {
   const fixture = useDriver();
 

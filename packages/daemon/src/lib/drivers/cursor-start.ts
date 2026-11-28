@@ -3,6 +3,14 @@ import { homedir } from 'node:os';
 import { basename, isAbsolute } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
+import {
+  type CursorChanges,
+  configureCursor,
+  CURSOR_CLIENT_CAPABILITIES,
+  CursorConfig,
+  cursorIdentity,
+  restoreCursor,
+} from './cursor-configuration.ts';
 import { withOwnReplySender } from '../messaging/session-reply.ts';
 import { JsonRpcRequestTimeoutError, ProcessJsonRpcTransport } from '../process-json-rpc.ts';
 import { buildSafeProcessEnv } from '../safe-process-env.ts';
@@ -20,6 +28,7 @@ import type {
 import { reject } from './work-operations.ts';
 
 const START_TIMEOUT_MS = 30_000;
+const RESTORE_TIMEOUT_MS = 5_000;
 const STOP_TIMEOUT_MS = 10_000;
 const TURN_TIMEOUT_MINUTES = 60;
 const RETAINED_TURNS = 100;
@@ -77,10 +86,10 @@ async function openSession(
   transport: ProcessJsonRpcTransport,
   cwd: string,
   resumeId?: string
-): Promise<Result<string>> {
+): Promise<Result<{ id: string; options: z.infer<typeof CursorConfig>['configOptions'] }>> {
   const initialized = await transport.sendRequest('initialize', {
     protocolVersion: 1,
-    clientCapabilities: {},
+    clientCapabilities: CURSOR_CLIENT_CAPABILITIES,
   });
   if ('error' in initialized && initialized.error.code === AUTH_REQUIRED)
     return reject('unreachable', SIGN_IN_DETAIL, true);
@@ -103,8 +112,9 @@ async function openSession(
     );
   }
   const id = resumeId ?? Session.safeParse(opened.result).data?.sessionId;
+  const options = CursorConfig.safeParse(opened.result).data?.configOptions;
   return id
-    ? { ok: true, value: id }
+    ? { ok: true, value: { id, options } }
     : reject('not_delivered', 'Cursor CLI did not confirm the session.', true);
 }
 
@@ -193,10 +203,11 @@ export function createCursorStart(
       await close();
       return { reason: opened };
     }
-    const id = opened.value;
+    const { id, options } = opened.value;
     return {
       value: {
         id,
+        options,
         cwd,
         transport,
         close,
@@ -215,9 +226,10 @@ export function createCursorStart(
     message: string,
     receipt?: Receipt
   ): WorkDetail => {
-    const { id, cwd, transport, close, collect, readReply } = opened;
+    const { id, options, cwd, transport, close, collect, readReply } = opened;
     const work: WorkDetail = {
       ref: { adapter, id },
+      ...cursorIdentity(options),
       title: target.title,
       place: { ...target.place, folder: cwd },
       execution: { machine, directory: cwd },
@@ -326,8 +338,34 @@ export function createCursorStart(
       await opened.close();
       return reject('not_delivered', 'Cursor CLI could not establish a new owned session.', true);
     }
+    const changes: CursorChanges = { applied: [], stopped: false };
+    const configured =
+      request.model === undefined && request.effort === undefined
+        ? { ok: true as const, value: opened.options }
+        : await within(
+            configureCursor(opened.transport, opened.id, opened.options, request, changes),
+            START_TIMEOUT_MS,
+            'Cursor CLI session configuration timed out.'
+          ).catch(async () => {
+            await within(
+              restoreCursor(opened.transport, opened.id, changes),
+              RESTORE_TIMEOUT_MS,
+              'Cursor CLI session restore timed out.'
+            ).catch(() => undefined);
+            return reject(
+              'unreachable',
+              'Cursor CLI could not confirm session configuration.',
+              true
+            );
+          });
+    if (!configured.ok || closing) {
+      await opened.close();
+      return configured.ok
+        ? reject('unreachable', 'The Cursor CLI driver is shutting down.', true)
+        : configured;
+    }
     const work = launchTurn(
-      opened,
+      { ...opened, options: configured.value },
       { title: request.sessionTitle ?? request.title, place: request.place },
       withOwnReplySender(request.message, `${adapter}:${opened.id}`)
     );
