@@ -46,6 +46,7 @@ const NEO_TODO_STATUS_EN = {
   'todo.doing': 'In progress',
   'todo.held': 'On hold',
   'todo.paused': 'Paused',
+  'todo.waitingOn': 'Waiting: {reason}',
   'todo.blocked': 'Blocked: {reason}',
   'todo.waitingResult': 'Waiting for its result',
   'todo.checking': 'Session reported; checking',
@@ -72,6 +73,8 @@ export function neoTodoStatusLine(
     return todo.reason ? neoTextStatus(todo.reason) : coded('todo.removed');
   }
   const held = neoTodoHeldBy(todo, cards);
+  if (!held && todo.state === 'blocked' && todo.blockedBy === 'held' && todo.hold?.by !== 'human')
+    return coded('todo.waitingOn', { reason: todo.blockedReason ?? '' });
   if (held || (todo.state === 'blocked' && todo.blockedBy === 'held'))
     return coded((held ? held === 'hold' : todo.startedAt === null) ? 'todo.held' : 'todo.paused');
   if (todo.state === 'blocked' && todo.blockedBy === 'check') return coded('todo.waitingResult');

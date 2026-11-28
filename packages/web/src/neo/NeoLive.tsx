@@ -831,12 +831,13 @@ export function NeoLive() {
   const workStatusCounts = Object.values(inboxQueue ? neoHumanQueueCounts(inboxQueue) : {}).reduce(
     (totals, counts) => ({
       waiting: totals.waiting + counts.waiting,
+      others: totals.others + counts.others,
       held: totals.held + counts.held,
       progress: totals.progress + counts.progress,
     }),
-    { waiting: inboxQueue ? 0 : attentionCount, held: 0, progress: 0 }
+    { waiting: inboxQueue ? 0 : attentionCount, others: 0, held: 0, progress: 0 }
   );
-  const workStatuses = (['waiting', 'held', 'progress'] as const).map((state) => ({
+  const workStatuses = (['waiting', 'others', 'held', 'progress'] as const).map((state) => ({
     state,
     count: workStatusCounts[state],
     label: `${t(`queue.state.${state}`)} ${workStatusCounts[state]}`,
@@ -969,7 +970,15 @@ export function NeoLive() {
                   {workStatuses.map(({ state, count, label }) => (
                     <span key={state} data-state={state} title={label}>
                       <NeoIcon
-                        name={state === 'waiting' ? 'dot' : state === 'held' ? 'pause' : 'progress'}
+                        name={
+                          state === 'waiting'
+                            ? 'dot'
+                            : state === 'others'
+                              ? 'clock'
+                              : state === 'held'
+                                ? 'pause'
+                                : 'progress'
+                        }
                         class={state === 'progress' && count > 0 ? 'motion-safe:animate-spin' : ''}
                       />
                       {count}

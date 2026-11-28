@@ -22,7 +22,7 @@ import { neoTopicLabel } from './topic-label.ts';
 
 export type NeoInboxTab = NeoHumanQueueState | 'all';
 
-const STATES: NeoHumanQueueState[] = ['waiting', 'held', 'progress'];
+const STATES: NeoHumanQueueState[] = ['waiting', 'others', 'held', 'progress'];
 const TABS: NeoInboxTab[] = [...STATES, 'all'];
 const SHOWN_TOPICS = 3;
 const chip = 'rounded-full border px-3 py-1 text-sm';
@@ -453,8 +453,13 @@ function QueueItem({
           ) : (
             <span>{item.title}</span>
           )}
-          {item.owner && <span class="text-fg-muted">{t(`queue.owner.${item.owner}`)}</span>}
+          {item.waitingOn ? (
+            <span class="text-fg-muted">{t(`queue.waitingOn.${item.waitingOn}`)}</span>
+          ) : (
+            item.owner && <span class="text-fg-muted">{t(`queue.owner.${item.owner}`)}</span>
+          )}
         </p>
+        {item.reason && <p class="mt-0.5 text-xs text-fg-muted">{item.reason}</p>}
         {desktop && open && (
           <label class="mt-1 flex w-fit items-center gap-2 text-xs text-fg-muted">
             <input

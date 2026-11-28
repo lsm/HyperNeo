@@ -243,7 +243,9 @@ function TodoRow({
     ? (['‖', 'text-warning'] as const)
     : todo.state === 'blocked' && todo.blockedBy === 'failure'
       ? (['✕', 'text-danger'] as const)
-      : marks[todo.state];
+      : todo.statusCodes?.some((code) => code.code === 'todo.waitingOn')
+        ? (['◷', 'text-fg-muted'] as const)
+        : marks[todo.state];
   const [controlError, setControlError] = useState<string | null>(null);
   const [confirmDesktopOff, setConfirmDesktopOff] = useState(false);
   const control = (choice: NeoTodoControl) => {
