@@ -370,7 +370,7 @@ export function NeoVoice({
         </div>
       )}
       {active && !recorder.isStarting ? (
-        <div class="flex min-w-0 flex-1 items-center gap-2">
+        <div class="flex min-w-0 flex-1 items-center gap-4">
           <div class="min-w-0 flex-1">
             <VoiceWaveform
               appearance="neo"
@@ -419,7 +419,7 @@ export function NeoVoice({
         (enabled || recorder.isStarting) && (
           <Button
             size="sm"
-            class="h-11 w-11 min-w-11 shrink-0 px-0 !rounded-full"
+            class="h-11 w-11 min-w-11 shrink-0 px-0 !rounded-full !text-fg-muted"
             variant="ghost"
             disabled={!recorder.isStarting && (!connected || !isVoiceRecordingSupported())}
             title={
