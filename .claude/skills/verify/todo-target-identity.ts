@@ -16,6 +16,7 @@ assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 mkdirSync(join(run, 'evidence'), { recursive: true });
 mkdirSync(join(run, 'work'), { recursive: true });
 const evidence: unknown[] = [];
+const triple = { provider: 'anthropic', model: 'synthetic-model', effort: 'high' };
 const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
 try {
   await app.jobProcessor.stop();
@@ -31,7 +32,7 @@ try {
   const gateReply = await handler({ name: 'neo.todo.add', input: { askId: 'synthetic-ask', title: 'Unfinished gate', after: [], check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } } } });
   const gate = JSON.parse(gateReply.content[0].text).todo.id as string;
   const add = async (verb: string, id: string) => {
-    const reply = await handler({ name: 'neo.todo.add', input: { askId: 'synthetic-ask', title: 'Synthetic todo', after: [gate], check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, instruction: 'Synthetic instruction', target: { verb, ref: { adapter: 'hyperneo', id } } } });
+    const reply = await handler({ name: 'neo.todo.add', input: { askId: 'synthetic-ask', title: 'Synthetic todo', after: [gate], check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, instruction: 'Synthetic instruction', target: { verb, ref: { adapter: 'hyperneo', id }, ...triple } } });
     evidence.push({ verb, id, reply });
     assert.notEqual(reply.isError, true);
     return JSON.parse(reply.content[0].text);
@@ -66,7 +67,7 @@ try {
   const beforeBatch = todos.listAsks(null, 100);
   const batch = await handler({ name: 'neo.ask.propose', input: {
     title: 'Refused target batch', request: 'Resolve every target before recording',
-    todos: [worker.slice(0, 8), 'deadbeef'].map((id, n) => ({ after: [], title: `Batch item ${n}`, check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, instruction: 'Synthetic instruction', target: { verb: 'send', ref: { adapter: 'hyperneo', id } } })),
+    todos: [worker.slice(0, 8), 'deadbeef'].map((id, n) => ({ after: [], title: `Batch item ${n}`, check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, instruction: 'Synthetic instruction', target: { verb: 'send', ref: { adapter: 'hyperneo', id }, ...triple } })),
   } });
   evidence.push({ operation: 'neo.ask.propose', batch });
   assert.notEqual(batch.isError, true);
@@ -93,7 +94,7 @@ try {
   assert.equal(addedSpace.ok, true, JSON.stringify(addedSpace));
   assert.deepEqual(sessions.get(addedSpace.todo.id)?.ref, { adapter: 'space', id: taskId });
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM work_delivery_inputs').get().n, 0);
-  const reopenInput = { title: 'Idempotent worker ask', request: 'Keep tracking it', todos: [{ after: [], title: 'Unfinished gate', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } } }, { after: [0], title: 'Recorded worker', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, instruction: 'Work', target: { verb: 'send', ref: { adapter: 'hyperneo', id: worker } } }] };
+  const reopenInput = { title: 'Idempotent worker ask', request: 'Keep tracking it', todos: [{ after: [], title: 'Unfinished gate', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } } }, { after: [0], title: 'Recorded worker', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, instruction: 'Work', target: { verb: 'send', ref: { adapter: 'hyperneo', id: worker }, ...triple } }] };
   seedHistoricalAsk(todos, sender, reopenInput);
   const opened = JSON.parse((await handler({ name: 'neo.ask.propose', input: reopenInput })).content[0].text);
   assert.equal(opened.ok, true);

@@ -12,6 +12,7 @@ import { type NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
 import { z } from 'zod';
 import { workStartConfiguration } from '../drivers/start-configuration.ts';
 import {
+  type AdapterIdentity,
   CopilotStartClientSchema,
   PlaceSchema,
   type Place,
@@ -71,6 +72,8 @@ const NeoSendWorkTarget = z.object({
   ref: WorkRefSchema,
   preparationParameters: NeoStartWorkTarget.shape.preparationParameters,
   sandbox: NeoStartWorkTarget.shape.sandbox,
+  provider: NeoStartWorkTarget.shape.provider,
+  ...workStartConfiguration.schema.shape,
 });
 
 export const NeoTodoTargetSchema = z.discriminatedUnion('verb', [
@@ -87,6 +90,18 @@ export const NeoTodoAddTargetSchema = z.discriminatedUnion('verb', [
 ]);
 
 export type NeoTodoAddTarget = z.infer<typeof NeoTodoAddTargetSchema>;
+
+export function neoTargetIdentityRefusal(
+  target: NeoTodoAddTarget | undefined,
+  identity: (adapter: string) => AdapterIdentity | undefined
+): string | null {
+  if (!target || target.verb === 'bind') return null;
+  const adapter = target.verb === 'start' ? target.adapter : target.ref.adapter;
+  const remote = target.verb === 'start' ? target.place?.daemon : target.ref.daemon;
+  const facts = remote ? undefined : identity(adapter);
+  const gated = facts && workStartConfiguration.requireIdentity({ ...target, adapter }, facts);
+  return gated && 'ok' in gated ? gated.detail : null;
+}
 
 export const NeoDriverTargetSchema = z.discriminatedUnion('verb', [
   NeoReadWorkTarget,
@@ -167,7 +182,16 @@ export function driverWorkCall(
           ...(target.effort ? { effort: target.effort } : {}),
         },
       }
-    : { name: 'work.send', input: { ref: target.ref, message } };
+    : {
+        name: 'work.send',
+        input: {
+          ref: target.ref,
+          message,
+          ...(target.verb === 'send' && target.model ? { model: target.model } : {}),
+          ...(target.verb === 'send' && target.provider ? { provider: target.provider } : {}),
+          ...(target.verb === 'send' && target.effort ? { effort: target.effort } : {}),
+        },
+      };
 }
 
 export function driverWorkCaller(work: Pick<NeoWork, 'originSessionId'>): OperationCaller {

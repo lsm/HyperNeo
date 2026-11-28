@@ -749,6 +749,8 @@ export function createNeoOperations(
     recompute: (todo, patch) => service.todoRunner.recompute(todo, patch),
     advance: () => service.todoRunner.advance(),
     refreshIdentity: (todoId) => service.todoRunner.refreshIdentity(todoId),
+    identity: (adapter) =>
+      service.workAdapters?.().find((candidate) => candidate.id === adapter)?.identity,
     proceed: (todoId, message) => service.todoRunner.proceed(todoId, message),
     retry: (todoId, message) => service.todoRunner.retry(todoId, message),
     stop: (todo) => service.todoRunner.stop(todo),
@@ -839,6 +841,7 @@ export function createNeoOperations(
         artifact: createArtifactRefReader(() => service.db.getDatabase()),
         stop: (todo) => service.todoRunner.stop(todo),
         resolveTarget: todoControls.resolveTarget,
+        identity: todoControls.identity,
         advance: () => service.todoRunner.advance(),
         changed: () => service.notifyChanged(),
         project: (todos) => service.todoWorkers(todos),

@@ -16,6 +16,8 @@ import {
   type OperationDefinition,
 } from '../operations/registry.ts';
 import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
+import type { AdapterIdentity } from '../drivers/types.ts';
+import { neoTargetIdentityRefusal } from './driver-work.ts';
 import type { NeoPack, NeoTodoCheckResult } from './pack-contract.ts';
 import { getDataDir } from '../data-dir.ts';
 import { neoEvidencePathRefusal } from './core-todo-checks.ts';
@@ -41,6 +43,7 @@ interface Dependencies {
   userFolder: string;
   stop(todo: NeoTodo): Promise<string | null>;
   resolveTarget: NeoTodoControls['resolveTarget'];
+  identity?(adapter: string): AdapterIdentity | undefined;
   advance(): Promise<unknown>;
   changed(): void;
   project<T extends NeoTodo>(todos: readonly T[]): Promise<T[]>;
@@ -71,17 +74,20 @@ function buildTodoMutation(deps: Dependencies, pipeline: ReturnType<SuperPipeFac
     )
     .pipe(
       async (request: Input) => {
-        if (request.kind !== 'edit' || request.target?.verb !== 'send') return { value: request };
-        const resolved = await deps.resolveTarget(request.target.ref);
-        return 'reason' in resolved
-          ? { reason: resolved.reason }
-          : {
-              value: {
+        if (request.kind !== 'edit' || !request.target) return { value: request };
+        const resolved =
+          request.target.verb === 'send' ? await deps.resolveTarget(request.target.ref) : null;
+        if (resolved && 'reason' in resolved) return { reason: resolved.reason };
+        const edited =
+          resolved && request.target.verb === 'send'
+            ? {
                 ...request,
                 target: { ...request.target, ref: resolved.value },
                 workerRemotes: resolved.workerRemotes,
-              },
-            };
+              }
+            : request;
+        const refused = deps.identity && neoTargetIdentityRefusal(edited.target, deps.identity);
+        return refused ? { reason: { ok: false as const, reason: refused } } : { value: edited };
       },
       'request',
       'result:outcome'

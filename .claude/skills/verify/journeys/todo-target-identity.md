@@ -10,7 +10,9 @@ The helper owns a real daemon on an ephemeral port, a fresh HOME and synthetic
 database. It registers no provider and starts no worker or model turn. Through
 the production MCP handler, adding send and bind targets using a uniquely
 resolvable HyperNeo session prefix must store the full ID. An unknown prefix
-must be refused before creating a todo or delivery input.
+must be refused before creating a todo or delivery input. HyperNeo send targets
+name provider, model and effort, which new todo work requires
+(see send-todo-identity.md).
 Instructed todos wait behind an unfinished check-only step so none starts by itself.
 A bind target with no instruction and no prerequisite must resolve a prefix to the
 full ID and record the todo as doing; an unknown bind target must be refused without
