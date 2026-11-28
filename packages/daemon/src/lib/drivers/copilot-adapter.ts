@@ -635,6 +635,7 @@ export function createCopilotAdapter(
       return deps.desktop?.capabilities.includes('start') ? ['desktop', 'cli'] : ['cli'];
     },
     supportsStartEffort: true,
+    identity: { fixedProvider: 'github-copilot', configurable: true },
     resolveStartConfiguration: async (request) => {
       if (deps.desktop?.capabilities.includes('start'))
         return { ok: true, value: { model: request.model, effort: request.effort } };

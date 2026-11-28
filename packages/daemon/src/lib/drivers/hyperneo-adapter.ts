@@ -902,6 +902,7 @@ const runHyperneoRename = (superpipe({})('hyperneo-rename-work') as PipelineAPI)
 export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
   return {
     id: 'hyperneo',
+    identity: { configurable: true },
     supportsStartEffort: true,
     supportsStartPreparation: !!deps.prepareExecution,
     capabilities: [

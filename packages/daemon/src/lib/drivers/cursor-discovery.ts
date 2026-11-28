@@ -159,6 +159,7 @@ export function createCursorDiscovery(
   return {
     ...createCursorStart(command, machine, ADAPTER, readOwnedFolder),
     id: ADAPTER,
+    identity: { fixedProvider: 'cursor', configurable: false },
     capabilities: ['find', 'start', 'status', 'send', 'stop'],
     find: (query) => find(query, command, home, machine),
   };

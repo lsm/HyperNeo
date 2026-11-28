@@ -80,6 +80,8 @@ export const WorkSummarySchema = z.object({
   model: z.string().optional(),
   provider: z.string().optional(),
   effort: z.string().optional(),
+  identitySource: z.enum(['confirmed', 'declared']).optional(),
+  thinkingLevel: z.string().optional(),
   identityObservation: z
     .object({
       source: z.literal('assistant-transcript'),
@@ -124,6 +126,12 @@ export const WorkTurnFactSchema = z.object({
   complete: z.boolean(),
   cursor: z.string().min(1),
 });
+
+export const AdapterIdentitySchema = z.object({
+  fixedProvider: z.string().optional(),
+  configurable: z.boolean(),
+});
+export type AdapterIdentity = z.infer<typeof AdapterIdentitySchema>;
 
 export const WorkRejectionSchema = z.enum([
   ...workStartConfiguration.refusalSchema.options,
@@ -392,6 +400,7 @@ export interface WorkAdapter {
     settings: z.infer<typeof workStartConfiguration.schema> & { provider?: string }
   ) => Promise<boolean>;
   readonly supportsStartEffort?: boolean;
+  readonly identity?: AdapterIdentity;
   readonly supportsStartPreparation?: boolean;
   find(query: FindQuery): PlaceGroup[] | Promise<PlaceGroup[]>;
   readonly sessions?: () => Promise<readonly WorkSessionFact[]>;

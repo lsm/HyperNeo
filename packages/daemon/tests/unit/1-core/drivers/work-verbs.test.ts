@@ -424,6 +424,7 @@ describe('work verb operations', () => {
           displayName: 'Copilot',
           copilotClients: [],
           capabilities: ['find', 'status', 'turns'],
+          identity: { fixedProvider: 'github-copilot', configurable: true },
           unsupportedCapabilities: expect.objectContaining({ steer: expect.any(String) }),
         },
       ],

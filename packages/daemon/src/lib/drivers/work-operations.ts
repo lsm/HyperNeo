@@ -56,6 +56,7 @@ import {
   type StartRequest,
   type WorkRef,
   type WorkRejection,
+  AdapterIdentitySchema,
 } from './types.ts';
 
 type RoutedVerb =
@@ -351,6 +352,7 @@ export const WorkAdaptersResultSchema = workResultSchema(
       copilotClients: z.array(CopilotClientSchema).optional(),
       capabilities: z.array(RoutedCapabilitySchema),
       steerBehavior: z.literal('best_effort').optional(),
+      identity: AdapterIdentitySchema.optional(),
       health: WorkDriverHealthSchema.optional(),
       unsupportedCapabilities: z.partialRecord(RoutedCapabilitySchema, z.string()).optional(),
     })
@@ -1671,6 +1673,7 @@ async function listWorkAdapters(
         ...(adapter?.steerBehavior && capabilities.includes('steer')
           ? { steerBehavior: adapter.steerBehavior }
           : {}),
+        ...(adapter?.identity ? { identity: adapter.identity } : {}),
         ...(health?.[id] ? { health: health[id] } : {}),
         ...(adapter?.unsupportedCapabilities
           ? { unsupportedCapabilities: adapter.unsupportedCapabilities }

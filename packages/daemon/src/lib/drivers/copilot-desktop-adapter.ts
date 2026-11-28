@@ -130,6 +130,7 @@ export function createCopilotDesktopAdapter(
   });
   return {
     id: COPILOT_CLIENT.id,
+    identity: { fixedProvider: 'github-copilot', configurable: true },
     get copilotClients(): NonNullable<WorkAdapter['copilotClients']> {
       return controlAvailable?.() ? ['desktop'] : [];
     },

@@ -6,7 +6,7 @@ const Schema = z.object({
   model: z.string().trim().min(1).max(200).optional(),
   effort: z.string().trim().min(1).max(100).optional(),
 });
-const RefusalSchema = z.enum(['unsupported_model', 'unsupported_effort']);
+const RefusalSchema = z.enum(['unsupported_model', 'unsupported_effort', 'identity_required']);
 type Request = z.infer<typeof Schema>;
 interface Model {
   id: string;
@@ -79,6 +79,59 @@ const select = (superpipe({})('work-start-configuration') as PipelineAPI)
       detail: string;
     };
 
+export interface IdentityFacts {
+  fixedProvider?: string;
+  catalogProvider?: string;
+  configurable: boolean;
+}
+interface IdentityRequest extends Request {
+  adapter: string;
+  provider?: string;
+}
+export interface Identity {
+  provider: string;
+  model: string;
+  effort: string;
+}
+
+function agreeProvider(request: IdentityRequest, facts: IdentityFacts): Gate<string | null> {
+  const named = [
+    [`adapter ${request.adapter} runs on provider`, facts.fixedProvider],
+    ['the model catalog names provider', facts.catalogProvider],
+    ['the request names provider', request.provider],
+  ].filter((entry): entry is [string, string] => entry[1] !== undefined);
+  const clash = named.find(([, provider]) => provider !== named[0][1]);
+  return clash
+    ? refuse(
+        'identity_required',
+        `identity_required: ${named[0][0]} ${named[0][1]}, not ${clash[1]}`
+      )
+    : { value: named[0]?.[1] ?? null };
+}
+
+function requireTriple(request: IdentityRequest, provider: string | null): Gate<Identity> {
+  const missing = [
+    ...(provider === null ? ['provider'] : []),
+    ...(request.model === undefined ? ['model'] : []),
+    ...(request.effort === undefined ? ['effort'] : []),
+  ];
+  return provider === null || request.model === undefined || request.effort === undefined
+    ? refuse(
+        'identity_required',
+        `identity_required: name provider, model and effort for new work (missing: ${missing.join(', ')})`
+      )
+    : { value: { provider, model: request.model, effort: request.effort } };
+}
+
+const requireIdentity = (superpipe({})('work-start-identity') as PipelineAPI)
+  .input(['request', 'facts'])
+  .pipe(agreeProvider, ['request', 'facts'], 'result:identity')
+  .pipe(requireTriple, ['request', 'identity'], 'result:identity')
+  .end('identity') as (
+  request: IdentityRequest,
+  facts: IdentityFacts
+) => Identity | { ok: false; reason: z.infer<typeof RefusalSchema>; detail: string };
+
 type Receipt =
   | { ok: true; value: Request }
   | { ok: false; reason: 'not_delivered'; detail: string };
@@ -124,4 +177,5 @@ export const workStartConfiguration = {
   refusalSchema: RefusalSchema,
   select,
   confirm,
+  requireIdentity,
 };
