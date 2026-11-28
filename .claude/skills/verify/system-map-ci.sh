@@ -24,7 +24,7 @@ missing=0
 check > "$evidence/missing.log" 2>&1 || missing=$?
 [[ "$missing" = 1 ]]
 grep -F '::error::System map check failed:' "$evidence/missing.log"
-grep -F 'head/base stale.' "$evidence/missing.log" > /dev/null
+! grep -E 'reason; head|"(head|base)":' "$evidence/missing.log" "$evidence/attestation.md"
 
 write_event "$(cat "${3:-$evidence/attestation.md}")"
 check > "$evidence/current.log" 2>&1
