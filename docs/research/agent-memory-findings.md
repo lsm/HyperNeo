@@ -1,114 +1,147 @@
-# Agent memory: what it does and why searches miss
+# Agent memory: what it does, why searches miss, and how Neo could use it
 
-Research note, 2026-11-27. No product code changed.
+Research note, 2026-11-27. Findings and options only. No product code changed.
 
-## What it is
+## The existing store
 
-Agent memory is a per-Space key/value store for facts, conventions and decisions. It
-belongs to the Space feature, so it only exists when the daemon runs with
-`HYPERNEO_SPACE=on` (the schema extension and the runtimes are both gated on it).
-Neo sessions and Neo workers never get it.
+Today agent memory lives inside the Space feature. Spaces are parked, so this note reads
+the store as a reusable part, not as a Space feature.
 
 | Surface | Operations |
 | --- | --- |
 | `agent-memory` MCP server (`packages/space/src/tools/agent-memory-tools.ts`) | `memory.write` (upsert by key), `memory.search`, `memory.read`, `memory.delete` |
-| RPC (`packages/daemon/src/lib/rpc-handlers/agent-memory-handlers.ts`) | `agentMemory.write`, `.create` (insert only), `.read`, `.delete`, `.list` (optional query) |
-| Web UI (`SpaceMemories`, `SpaceMemoryEditor`) | list, search, create, edit, delete |
-| Daily job (`memory-consolidation.handler.ts`) | prune, merge near-duplicates, rebuild "core memories" |
+| RPC (`packages/daemon/src/lib/rpc-handlers/agent-memory-handlers.ts`) and web UI | `agentMemory.write`, `.create`, `.read`, `.delete`, `.list` (optional query) |
+| Daily job (`memory-consolidation.handler.ts`) | prune entries untouched for 90 days, merge near-duplicates (token Jaccard ≥ 0.82), rebuild a top-10 "core memories" list |
 
-There is no "related memories" operation. The closest things are the duplicate merge
-(token Jaccard ≥ 0.82) and core memories.
+There is no "related memories" operation.
 
-Storage lives in `space_agent_memory`, plus an FTS5 trigram index over key, content and
-tags, plus `memory_vectors` (384-d `granite-embedding-small-english-r2`, run in a worker
-and downloaded on first use).
+### Exact search mechanism (`AgentMemoryRepository.searchWithOptions`)
 
-### How search works (`AgentMemoryRepository.searchWithOptions`)
+- **Keyword arm.** An FTS5 table with the `trigram` tokenizer indexes key, content and
+  tags. The query is split on whitespace only, and words shorter than 3 characters are
+  dropped. Each remaining word is quoted, and the words are joined with spaces, which
+  FTS5 reads as AND. Results are ordered by `bm25()`, but only that **order** is used;
+  the bm25 score itself is thrown away.
+- **Vector arm.** The embedding model is `onnx-community/granite-embedding-small-english-r2-ONNX`.
+  It produces 384-d vectors, runs in a worker, and is downloaded on first use. Each
+  memory is embedded as `key + content + tags`. A search computes cosine similarity
+  against every ready vector and keeps the top 100, with no similarity floor. If the
+  model is not ready, this arm quietly returns nothing.
+- **Fusion.** The two arms are merged with reciprocal rank fusion: each arm contributes
+  `1 / (60 + rank)`, both weighted equally. Every returned row gets `access_count + 1`.
+- **Not multilingual.** The model is English-only. The trigram index does match Chinese
+  substrings, but because the query is split on spaces, a whole Chinese sentence is one
+  term that must appear verbatim.
 
-1. **FTS arm.** The query is split on whitespace. Words shorter than 3 characters are
-   dropped. Each remaining word is quoted, and the words are joined with spaces, which
-   FTS5 treats as **AND**. So every word must appear as a substring of the key, content
-   or tags.
-2. **Vector arm.** The query is embedded, and every ready vector in the Space gets a
-   cosine score. The top 100 come back, with **no similarity floor**. If the embedder is
-   missing, still downloading, timed out or failed, this arm quietly returns nothing.
-3. **Merge.** The two arms are merged with reciprocal rank fusion (k = 60). Every
-   returned row gets `access_count + 1`.
+The Neo-side message search (`work-chat-search.ts`) shares this design: trigram FTS
+with ANDed prefix terms, the same embedder, and RRF that also counts a recency rank. It
+does have a floor, `MIN_SIMILARITY = 0.3`, but with this model that floor filters
+almost nothing (see below).
 
-### How memory reaches an agent without a search
+### Who can use it today, and why
 
-- **Workflow task agents.** The kickoff message gets up to 10 **core memories** plus
-  `search(title + "\n" + description, 5)` as "Relevant Memories"
-  (`task-agent-manager.ts` `buildKickoffMessage`).
-- **Long-term Space agents.** They get only the briefing in
-  `prompts/src/space/agent-memory.md` ("search it before concluding…"). No memory
-  content is injected, so the agent has to come up with a query.
-- **Core memories.** These are the top 10 by `access_count / (1 + age_days)`, and only
-  memories with `access_count > 0` qualify.
+Only Space agents get the store. Those are the long-term Space agents
+(`space-runtime-service.ts` `attachLongTermAgentMcpServers`) and Space workflow task
+sessions (`task-agent-manager.ts` `buildAgentMemoryMcpServers`). Both paths, and the
+tables, exist only when `HYPERNEO_SPACE=on`.
 
-## Real usage
+It is an in-process SDK MCP server bound to one `spaceId`. That means:
+- **Neo** never receives it.
+- **Workers** never receive it either. These are the Claude Code, Codex and HyperNeo
+  sessions that Neo dispatches, which run outside the Space runtime.
 
-I checked read-only, without copying any database, and report counts only.
+Nothing in the Neo core or packs references it.
 
-- The live daemon on the research machine runs without Spaces, so none of the
-  agent-memory tables exist there.
-- Across about 1,700 local Claude Code transcripts, there are **0 calls** to any
-  `mcp__agent-memory__memory.*` tool. No real queries or results were available to
-  inspect.
-- The memory agents actually use here is Claude Code's file memory: an index file loaded
-  into every session plus one file per fact. It has 6 fact files. They were written in 5
-  transcripts and read in 1, and no transcript searched them. That memory reaches agents
-  because its index is always in context, not because anything searches it.
+### Does it work end to end today?
 
-I could not observe the reported "search mostly finds nothing" in production data here.
-The probe below reproduces it from the code.
+Not where the human works. Spaces are parked, and the live daemon has no memory tables.
+Local transcripts (about 1,700) contain **0** `memory.*` tool calls, so there are no real
+queries to inspect. With Spaces on, the code paths are wired: write, then embed, then
+search, plus kickoff injection. I did not run a Space daemon end to end, because the
+human asked to set Spaces aside. The probes below call the real repository and
+embedder code directly.
 
-## Why searches miss
+## Why searches miss (probes)
 
-I ran a probe against the real repository code: an in-memory DB with two saved memories,
-one of them "Run daemon tests with ./scripts/test-daemon.sh…" tagged `testing`.
+Both probes use synthetic memories in an in-memory DB.
 
-| Query | FTS only (no embedder) |
+Same-language probe, FTS only. One memory reads "Run daemon tests with
+./scripts/test-daemon.sh…" and is tagged `testing`.
+
+| Query | Hits |
 | --- | --- |
-| `test-daemon` | 1 hit |
-| `daemon tests` | 1 hit |
-| `how do I run the daemon tests` | **0** (`how` and `run` are not substrings of the memory) |
-| `testing conventions` | **0** (`conventions` is missing) |
-| a task title and description | **0** (dozens of words ANDed together) |
-| with an embedder: `what is the weather today` | **2 hits**: every memory, unrelated |
+| `daemon tests` | 1 |
+| `how do I run the daemon tests` | **0**: `how` does not appear in the memory, and every word must match |
+| `testing conventions` | **0**: `conventions` is missing |
+| a task title and description (what kickoff sends) | **0** |
 
-1. **AND over natural language.** The tool tells agents to send a "natural language
-   query". The FTS arm then requires every word, so any phrase longer than a keyword or
-   two misses. The kickoff search sends the whole task title and description, so its FTS
-   arm practically never matches.
-2. **The vector arm is either off or indiscriminate.** When the model is not ready (first
-   run, offline download, timeout), search is FTS-only and gives the misses above. When
-   it is ready, it returns the top-k whatever the relevance, so "found something" doesn't
-   mean "found the right thing".
-3. **The agent has to guess.** Long-term agents get no memory content, only an
-   instruction to search. They don't know which keys or words a past session used.
-4. **Unread memories decay.** Core memories need `access_count > 0`, so a memory nobody
-   has found yet can never become core. Consolidation also deletes any memory that has
-   gone untouched for 90 days, so memories that are never found are eventually removed.
-   Meanwhile, irrelevant vector hits raise access counts and push noise into the core set.
+Cross-language probe, using the shipped embedder. There are 3 English and 3 Chinese
+memories, with neutral keys. The table shows the rank of the right memory out of 6.
 
-## Smallest options
+| Query | Wanted memory | Vector rank | FTS |
+| --- | --- | --- | --- |
+| `怎么运行守护进程的测试？` | English: run daemon tests | **6/6** | 0 |
+| `如何发布新版本` | English: releases are tags | 2/6 | 0 |
+| `database lock per worktree` | Chinese: per-workspace DB, process lock | 2/6 | 0 |
+| `pin exact dependency versions` | Chinese: pin exact versions | 3/6 | 0 |
+| `run daemon tests` | English (same language) | 1/6 (cos 0.93) | 1 |
+| `数据库进程锁` | Chinese (same language) | 1/6 (cos 0.91) | **0** (one whole-sentence term) |
 
-1. **Inject a key index, not a search.** At session start, put a compact list of `key —
-   first line` for the Space's memories into the briefing, capped by characters, newest
-   or most-used first, and have the agent `memory.read` by key. This is the pattern that
-   works for Claude Code's file memory, and it needs no query. The change goes in
-   `attachLongTermAgentMcpServers` and the kickoff builder, which already lists core
-   memories.
-2. **Make FTS terms OR and add a floor.** Join the FTS terms with `OR` so that bm25 ranks
-   partial matches, and drop vector hits below a cosine threshold. Then a natural-language
-   or task-text query returns the memories that share words with it, and stops returning
-   unrelated rows. This is about a one-line change in `buildFtsQuery` plus a filter in
-   `searchVector`, with a repository unit test.
-3. **Count only real reads.** `memory.read` already bumps `access_count`. Stop bumping it
-   on every search hit, and bump it when a memory appears in a kickoff instead. Seed core memories from the
-   most recent writes when no memory has been accessed yet. Then new memories reach the
-   core list and get read before the 90-day prune removes them.
+Cross-language retrieval found the right memory first in 0 of 4 queries. Unrelated pairs
+still scored cosine 0.70–0.82. That is why a fixed 0.3 floor does nothing, and why the
+memory vector arm, which has no floor at all, returns every memory for an unrelated
+query.
 
-Option 1 alone removes the guessing. Option 2 makes the existing kickoff "Relevant
-Memories" block actually fill.
+The root causes:
+1. ANDed keywords over natural language.
+2. Chinese is not split into words.
+3. An English-only embedder, with no usable relevance floor.
+4. Agents must invent a query, because nothing is retrieved for them.
+5. Memories nobody finds never become core memories and are deleted after 90 days.
+
+## Options for Neo
+
+### Where it lives and who gets it
+
+- **A. Neo-owned store, reached through operations.** Lift the repository out of the
+  Space schema into a Neo-core table, scoped to the human rather than to a Space.
+  Expose `memory.save/search/read/delete` as `defineOperation`s, so Neo uses them through
+  `hyperneo-operations` MCP and the web UI uses `operation.invoke`.
+- **B. Workers read but don't write.** The daemon puts retrieved memories into the
+  worker brief (pack `workerBrief`/`workerStartBrief`), so workers of any harness get
+  them without a tool. Workers report learnings to Neo, and Neo decides what to save.
+  This keeps one writer and avoids a second store of stale worker notes. Giving workers
+  the search operation directly is a cheap add later if briefs prove too thin.
+
+### What search should be
+
+Use **hybrid**, fixing each half:
+- **Keyword half.** Keep trigram FTS, which already matches Chinese and English
+  substrings. Join terms with `OR` and let bm25 rank them. Split Chinese runs into
+  overlapping 3-character pieces, so a sentence is no longer one term.
+- **Vector half.** Swap in a **multilingual** embedder, so that a Chinese query finds an
+  English memory and the reverse. `intfloat/multilingual-e5-small` (384-d, the same
+  dimensions as today) is a candidate; it is unmeasured here, and the cross-language
+  probe above is the acceptance test. Replace the absolute floor with one relative to
+  the best hit, for example keeping hits within 0.05 of the top score, tuned on the probe.
+- **Fusion.** Keep RRF. Do not bump access counts on search hits.
+
+Vector-only search loses exact identifiers like `test-daemon.sh` and PR numbers.
+bm25-only search cannot cross languages. That is why both halves stay.
+
+### How the right memories surface without Neo guessing
+
+1. **Retrieve with the human's own words.** Neo already has a `UserPromptSubmit` hook
+   (`neo-plan-hook.ts`) that injects plan context every turn. Run memory search with the
+   submitted prompt as the query, and add the top 3 hits above the floor to
+   `additionalContext`. The query is the message itself, so no keyword is guessed.
+2. **Retrieve with the todo text for workers.** Do the same once at dispatch, with the
+   todo instruction, inside the worker brief (option B).
+3. **A small always-on index.** While the store is small, put `key — first line` for
+   every memory into SessionStart context, capped, and let Neo read entries by key.
+   This is how Claude Code's file memory works here: its index sits in every session,
+   and agents never need to search it.
+
+Smallest first step: option 1, together with OR-joined FTS. That uses one existing hook
+and changes one query builder, and it fixes the "finds nothing" complaint for
+same-language memories. The multilingual embedder is the larger second step.
