@@ -646,10 +646,11 @@ export function requireStartIdentity(
   input: StartInput,
   caller: OperationCaller
 ): Gate<Route<'start'>> {
-  if (!('local' in route) || caller.role !== 'neo' || input.checkPlan) return { value: route };
+  if (!('local' in route) || !route.identity || caller.role !== 'neo' || input.checkPlan)
+    return { value: route };
   const gated = workStartConfiguration.requireIdentity(input, {
-    fixedProvider: route.identity?.fixedProvider,
-    configurable: !!route.identity?.configurable,
+    fixedProvider: route.identity.fixedProvider,
+    configurable: route.identity.configurable,
   });
   return 'ok' in gated ? { reason: reject(gated.reason, gated.detail) } : { value: route };
 }

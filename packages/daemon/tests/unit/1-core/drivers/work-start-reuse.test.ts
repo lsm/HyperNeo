@@ -49,7 +49,8 @@ function harness(
   },
   history?: ReadonlyMap<string, { sameAskAt: number | null; settledAt: number | null }>,
   claim?: Pick<WorkVerbDeps, 'claimWorker' | 'unclaimWorker' | 'isOpenTodo'>,
-  recorded?: Record<string, { model?: string; effort?: string }>
+  recorded?: Record<string, { model?: string; effort?: string }>,
+  noIdentity?: boolean
 ) {
   const sent: string[] = [];
   const events: string[] = [];
@@ -61,7 +62,7 @@ function harness(
   const adapter: WorkAdapter = {
     id: config?.adapter ?? 'claude-desktop',
     copilotClients: config?.copilotClients,
-    identity: { fixedProvider: 'anthropic', configurable: !recorded },
+    ...(noIdentity ? {} : { identity: { fixedProvider: 'anthropic', configurable: !recorded } }),
     resolveStartConfiguration: config
       ? async (request) => {
           if (config.unresolvedDefault) return null;
@@ -738,6 +739,13 @@ describe('work.start required identity', () => {
     expect(result).toMatchObject({ ok: false, reason: 'identity_required' });
     expect(run.sent).toEqual([]);
     expect(run.started).toEqual([]);
+  });
+
+  test('lets a Neo start on an adapter that declares no identity omit the triple', async () => {
+    const run = harness([], [], undefined, undefined, undefined, undefined, true);
+    const result = await run.start(neo, false, { model: undefined, effort: undefined });
+    expect(result.ok).toBe(true);
+    expect(run.started).toEqual(['loader']);
   });
 
   test('lets a non-Neo caller start without the triple', async () => {
