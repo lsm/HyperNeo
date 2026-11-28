@@ -33,13 +33,15 @@ type Message = {
 };
 
 function replayWindow(
+  prefix: string,
   sessionId: string,
   around: string | undefined,
   before: number,
   after: number,
   cursor: Cursor
 ) {
-  const anchor = !cursor && around ? Number(/^agy:(\d+)$/.exec(around)?.[1]) : undefined;
+  const anchor =
+    !cursor && around ? Number(new RegExp(`^${prefix}:(\\d+)$`).exec(around)?.[1]) : undefined;
   if (anchor !== undefined && (!Number.isSafeInteger(anchor) || anchor < 1)) return null;
   const resume = cursor?.resume;
   if (
@@ -110,7 +112,7 @@ function replayWindow(
       const textComplete = offset === message.size;
       if (text) {
         turns.push({
-          messageId: `agy:${message.seq}`,
+          messageId: `${prefix}:${message.seq}`,
           role: message.role,
           at: 0,
           text,
@@ -138,19 +140,21 @@ function replayWindow(
   return { accept, page };
 }
 
-export function createAntigravityHistory(
+export function createAcpReplayHistory(
   executable: string,
+  args: readonly string[],
+  prefix: string,
   readOwnedFolder: (id: string) => Promise<string | undefined>
 ): ReadTurns {
   return async (sessionId, around, before, after, cursor) => {
     const cwd = await readOwnedFolder(sessionId);
     if (!cwd || !isAbsolute(cwd)) return null;
-    const window = replayWindow(sessionId, around, before, after, cursor);
+    const window = replayWindow(prefix, sessionId, around, before, after, cursor);
     if (!window) return unavailable;
     let loading = false;
     const transport = new ProcessJsonRpcTransport({
       command: executable,
-      args: ['acp', '--sandbox', '--disable-telemetry'],
+      args: [...args],
       cwd,
       env: buildSafeProcessEnv(),
       replaceEnv: true,
@@ -184,3 +188,14 @@ export function createAntigravityHistory(
     }
   };
 }
+
+export const createAntigravityHistory = (
+  executable: string,
+  readOwnedFolder: (id: string) => Promise<string | undefined>
+): ReadTurns =>
+  createAcpReplayHistory(
+    executable,
+    ['acp', '--sandbox', '--disable-telemetry'],
+    'agy',
+    readOwnedFolder
+  );
