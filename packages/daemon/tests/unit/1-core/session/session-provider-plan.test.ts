@@ -21,19 +21,21 @@ const request = {
 };
 
 describe('decideSessionProvider', () => {
-  it.each([false, true])('waits and says why once when no provider is on (pinned: %p)', (pinned) => {
-    expect(decideSessionProvider({ ...request, pinned }, on())).toEqual({
-      kind: 'wait',
-      notice: NO_PROVIDER_NOTICE,
-    });
-  });
+  it.each([false, true])(
+    'waits and says why once when no provider is on (pinned: %p)',
+    (pinned) => {
+      expect(decideSessionProvider({ ...request, pinned }, on())).toEqual({
+        kind: 'wait',
+        notice: NO_PROVIDER_NOTICE,
+      });
+    }
+  );
 
   it('moves an unpinned session silently', () => {
     expect(decideSessionProvider(request, on(model('gpt', 'anthropic-copilot')))).toEqual({
       kind: 'move',
       provider: 'anthropic-copilot',
       model: 'gpt',
-      notice: null,
     });
   });
 
