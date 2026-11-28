@@ -19,6 +19,10 @@ with the typewriter, `largestJump` stays in single digits and `changes` is
 dozens. Before it, `changes` is about six and `largestJump` about 35. For a
 baseline, build the web from the base commit and rerun with label `before`.
 
+The summary's `fade` is the animation on the newest character: `voiceTypeIn`
+normally, and `none` when rerun with `VERIFY_REDUCED_MOTION=1`. The strip should
+show the trailing characters faint, not missing, ahead of the cursor.
+
 `VERIFY_SYNTHETIC_MIC=1` replaces `getUserMedia` with a tone and drops
 `AudioEncoder` so the stream uses PCM16. Use it on hosts where headless Chromium's
 fake device never resolves. The helper refocuses the composer after starting

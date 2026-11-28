@@ -97,4 +97,17 @@ describe('VoiceDraftPreview', () => {
     view.rerender(live('one two three four', true));
     expect(heard()).toBe('one two three four');
   });
+
+  it('fades in only the newest characters, behind reduced-motion', () => {
+    render(live('a'.repeat(30)));
+    wait(100);
+    const fresh = () => screen.queryAllByTestId('voice-interim-fresh');
+    expect(fresh().length).toBeGreaterThan(0);
+    expect(fresh().length).toBe(heard().length);
+    expect(fresh()[0]?.className).toBe('motion-safe:animate-[voiceTypeIn_320ms_ease-out]');
+    wait(1000);
+    expect(heard()).toBe('a'.repeat(30));
+    expect(fresh().length).toBeGreaterThan(0);
+    expect(fresh().length).toBeLessThan(15);
+  });
 });

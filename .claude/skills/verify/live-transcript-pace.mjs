@@ -14,7 +14,8 @@ try {
   assert.equal((await pairing.request.post(`${base}/pair`, { headers: { origin: base }, data: { code: made.code, name: 'Synthetic pace browser' } })).status(), 200);
   const storageState = await pairing.storageState();
   await pairing.close();
-  const context = await browser.newContext({ storageState, viewport: { width: 1280, height: 800 }, permissions: ['microphone'],
+  const context = await browser.newContext({ storageState, viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2, permissions: ['microphone'],
+    reducedMotion: process.env.VERIFY_REDUCED_MOTION === '1' ? 'reduce' : 'no-preference',
     recordVideo: { dir: `${run}/evidence/video-${label}`, size: { width: 1280, height: 800 } } });
   if (process.env.VERIFY_SYNTHETIC_MIC === '1')
     await context.addInitScript(() => {
@@ -49,6 +50,10 @@ try {
     };
     tick();
   }));
+  const fade = await page.evaluate(() => {
+    const fresh = document.querySelector('[data-testid=voice-interim-fresh]');
+    return fresh ? getComputedStyle(fresh).animationName : null;
+  });
   const strip = [];
   for (let shot = 0; shot < 8; shot++) {
     strip.push((await form.screenshot()).toString('base64'));
@@ -65,7 +70,7 @@ try {
   renameSync(await video.path(), `${run}/evidence/${label}.webm`);
   const jumps = samples.slice(1).map(([, n], i) => n - samples[i][1]).filter(d => d > 0);
   const sorted = [...jumps].sort((a, b) => a - b);
-  const summary = { label, frames: samples.length, changes: jumps.length, largestJump: sorted.at(-1), medianJump: sorted[sorted.length >> 1], finalLength: samples.at(-1)[1] };
+  const summary = { label, frames: samples.length, changes: jumps.length, largestJump: sorted.at(-1), medianJump: sorted[sorted.length >> 1], finalLength: samples.at(-1)[1], fade };
   writeFileSync(`${run}/evidence/${label}.json`, JSON.stringify({ summary, samples }));
   console.log(JSON.stringify(summary));
 } finally {

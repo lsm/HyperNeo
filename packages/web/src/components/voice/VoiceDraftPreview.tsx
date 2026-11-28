@@ -16,9 +16,11 @@ export interface VoiceDraftPreviewProps {
 
 const TYPE_STEP_MS = 25;
 const CATCH_UP_MS = 600;
+const FADE_STEPS = 13;
 
-function useTypewriter(target: string, flush: boolean): string {
+function useTypewriter(target: string, flush: boolean): [string, number] {
   const [shown, setShown] = useState('');
+  const steps = useRef<number[]>([]);
   let kept = shown;
   if (flush) kept = target;
   else if (!target.startsWith(shown)) {
@@ -27,15 +29,18 @@ function useTypewriter(target: string, flush: boolean): string {
     kept = target.slice(0, same);
   }
   useEffect(() => {
+    if (!kept) steps.current = [];
     if (kept.length >= target.length) return;
     const timer = setTimeout(() => {
       const backlog = target.length - kept.length;
       const step = Math.max(1, Math.ceil((backlog * TYPE_STEP_MS) / CATCH_UP_MS));
+      steps.current = [...steps.current, kept.length].slice(-FADE_STEPS);
       setShown(target.slice(0, kept.length + step));
     }, TYPE_STEP_MS);
     return () => clearTimeout(timer);
   }, [kept, target]);
-  return kept;
+  const settled = steps.current.length < FADE_STEPS ? 0 : (steps.current[0] ?? 0);
+  return [kept, Math.min(settled, kept.length)];
 }
 
 export function VoiceDraftPreview({
@@ -50,7 +55,7 @@ export function VoiceDraftPreview({
   minHeightPx,
   class: className,
 }: VoiceDraftPreviewProps) {
-  const interim = useTypewriter(heard, transcribing);
+  const [interim, settled] = useTypewriter(heard, transcribing);
   const boxRef = useRef<HTMLDivElement>(null);
   const markerRef = useRef<HTMLSpanElement>(null);
   const from = Math.min(Math.max(start, 0), text.length);
@@ -94,7 +99,16 @@ export function VoiceDraftPreview({
           data-testid="voice-interim-text"
           class={newLine ? 'italic text-fg-muted' : 'text-fg-faint'}
         >
-          {interim}
+          {interim.slice(0, settled)}
+          {[...interim.slice(settled)].map((char, index) => (
+            <span
+              key={settled + index}
+              class="motion-safe:animate-[voiceTypeIn_320ms_ease-out]"
+              data-testid="voice-interim-fresh"
+            >
+              {char}
+            </span>
+          ))}
         </span>
       )}
       {!text && !interim && hint && !transcribing && <span class="text-fg-faint">{hint}</span>}
