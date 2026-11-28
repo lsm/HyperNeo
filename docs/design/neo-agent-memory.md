@@ -31,7 +31,8 @@ Design, 2026-11-27. Based on [research](../research/agent-memory-findings.md); n
 
 - Extend the existing `neo-plan-hook` `UserPromptSubmit` path. Search with the human's
   submitted message verbatim and inject the top three hits surviving the gates into
-  `additionalContext`; Neo never invents keywords.
+  `additionalContext`; Neo never invents keywords. The hook also fires for worker reports:
+  skip memory search for those worker-sent inputs rather than querying with the report text.
 - At worker dispatch, run exactly one search with the full todo text and put its top three
   hits in the worker start brief. Workers get no separate lookup operation or search tool.
 
@@ -39,10 +40,19 @@ Design, 2026-11-27. Based on [research](../research/agent-memory-findings.md); n
 
 1. **Hook plus any-word FTS, the smallest first slice.** Re-home the store behind operations;
    inject FTS-only results and leave the vector arm disabled until slice 2. Start with failing
-   `neo-plan-hook.test.ts` cases `"injects top three FTS memories for the human message"` and
+   `neo-plan-hook.test.ts` cases `"injects top three FTS memories for the human message"`,
+   `"skips memory search for worker-sent reports"` and
    `"ignores stopword-only overlap in an unrelated query"`;
    `agent-memory-repository.test.ts: "matches any term and segments Chinese trigrams"`; and
    `agent-memory-operations.test.ts: "allows Neo and denies MCP/RPC workers via invokeOperation"`.
+   The live store has 0 rows, so this slice also adds Neo prompt guidance: a learning is a
+   durable human preference, decision, environment constraint or reusable lesson that matters
+   beyond the current task and is not already recorded in the repo. Save one when Neo learns or
+   confirms it; update the existing entry when new information refines or supersedes it; delete
+   it when it is wrong, obsolete or withdrawn. Do not save transient task status or worker
+   output by default. Keep this slice first because it establishes Neo-owned writes and the
+   retrieval path, but do not claim it fixes Chinese "finds nothing": trigram FTS needs three
+   characters and most Chinese words have two. Slice 2's multilingual vectors carry that fix.
 2. **Multilingual vectors and relevance gates.** Add verified multilingual file/checksum
    manifests replacing Granite's in `agent-memory-transformers.ts` and `embedding-assets.ts`.
    Move the ad hoc probe to `scripts/probe-agent-memory-cross-language.ts` with real-model

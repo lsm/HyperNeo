@@ -44,8 +44,8 @@ Only Space agents get the store. Those are the long-term Space agents
 (`space-runtime-service.ts` `attachLongTermAgentMcpServers`) and Space workflow task
 sessions (`task-agent-manager.ts` `buildAgentMemoryMcpServers`). Both paths exist only
 when `HYPERNEO_SPACE=on`. The tables can still exist with Spaces off: migration 132
-creates them without checking the flag, so an older, upgraded database may have them.
-The live daemon checked here does not have them.
+creates them without checking the flag. The live daemon has `space_agent_memory` and
+`memory_vectors`, and both are empty.
 
 It is an in-process SDK MCP server bound to one `spaceId`. That means:
 - **Neo** never receives it.
@@ -56,8 +56,8 @@ Nothing in the Neo core or packs references it.
 
 ### Does it work end to end today?
 
-Not where the human works. Spaces are parked. The live daemon records migration 132 as
-applied, yet a read-only check finds none of the memory tables.
+Not where the human works. Spaces are parked. A read-only check of the live daemon finds
+`space_agent_memory` and `memory_vectors`, both empty.
 Local transcripts (about 1,700) contain **0** `memory.*` tool calls, so there are no real
 queries to inspect. With Spaces on, the code paths are wired: write, then embed, then
 search, plus kickoff injection. I did not run a Space daemon end to end, because the
