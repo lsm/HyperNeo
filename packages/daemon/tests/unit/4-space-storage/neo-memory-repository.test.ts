@@ -32,6 +32,14 @@ describe('NeoMemoryRepository', () => {
     expect(await repo.search('what is the weather', 3)).toEqual([]);
   });
 
+  test('searches only the start of a huge pasted blob', async () => {
+    const blob = 'a1'.repeat(50_000);
+    expect((await repo.search(`daemon tests ${blob}`, 3)).map((m) => m.key)).toEqual([
+      'ci-runs-tests',
+    ]);
+    expect(await repo.search(`${blob} daemon tests`, 3)).toEqual([]);
+  });
+
   test('finds a memory from a sentence that ends with a period', async () => {
     await repo.save({ key: 'tz', content: 'Timezone: US Eastern for every time told.' });
     expect((await repo.search('Please use my timezone.', 3)).map((m) => m.key)).toEqual(['tz']);

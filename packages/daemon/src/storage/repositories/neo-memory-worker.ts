@@ -27,12 +27,16 @@ const STOPWORDS = new Set(
     'will with would you your yours'
   ).split(' ')
 );
+const MAX_QUERY_CHARS = 2_000;
 const MAX_QUERY_TERMS = 64;
 const CJK_RUN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+/gu;
 
 export function buildMemoryFtsQuery(query: string): string | null {
   const terms = new Set<string>();
-  for (const word of query.toLowerCase().split(/[^\p{L}\p{N}_./:-]+/u)) {
+  for (const word of query
+    .slice(0, MAX_QUERY_CHARS)
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}_./:-]+/u)) {
     for (const run of word.match(CJK_RUN) ?? []) {
       for (let at = 0; at + 3 <= run.length; at++) terms.add(run.slice(at, at + 3));
     }
