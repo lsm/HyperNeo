@@ -119,7 +119,9 @@ export function createOperationMcpHandler(
         return desktopCallResult(outcome.value, timing());
       return outcome.kind === 'completed'
         ? mcpResult(
-            parsed.data.name.startsWith('neo.') ? explainNeoRefusal(outcome.value) : outcome.value
+            /^(neo|memory)\./.test(parsed.data.name)
+              ? explainNeoRefusal(outcome.value)
+              : outcome.value
           )
         : mcpResult(
             { code: outcome.code, message: outcome.message, ...(desktop ? timing() : {}) },

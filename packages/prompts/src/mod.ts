@@ -35,6 +35,7 @@ import mdgithubRouterSystemPrompt from './github/router-system-prompt.md' with {
 import mdgithubSecuritySystemPrompt from './github/security-system-prompt.md' with { type: 'text' };
 import mdNeoSystemPackCheck from './neo/system/pack-check.md' with { type: 'text' };
 import mdNeoSystemHumanWork from './neo/system/human-work.md' with { type: 'text' };
+import mdNeoSystemMemory from './neo/system/memory.md' with { type: 'text' };
 import mdNeoSystemDriverHealth from './neo/system/driver-health.md' with { type: 'text' };
 import mdDriversWorkerProvenanceExactId from './drivers/worker-provenance-exact-id.md' with {
   type: 'text',
@@ -396,6 +397,7 @@ const registry: Record<string, string> = {
   'neo/session-track.md': mdneoSessionTrack,
   'neo/system/pack-check.md': mdNeoSystemPackCheck,
   'neo/system/human-work.md': mdNeoSystemHumanWork,
+  'neo/system/memory.md': mdNeoSystemMemory,
   'neo/system/driver-health.md': mdNeoSystemDriverHealth,
   'drivers/worker-provenance-exact-id.md': mdDriversWorkerProvenanceExactId,
   'drivers/worker-provenance-team-field.md': mdDriversWorkerProvenanceTeamField,
@@ -555,6 +557,7 @@ export const {
   NEO_FOCUSED_DISCUSSION,
   NEO_PACK_CHECK,
   NEO_HUMAN_WORK,
+  NEO_MEMORY,
   NEO_DRIVER_HEALTH,
   WORKER_PROVENANCE_EXACT_ID,
   WORKER_PROVENANCE_TEAM_FIELD,

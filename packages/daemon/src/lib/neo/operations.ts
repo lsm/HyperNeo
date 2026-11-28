@@ -47,6 +47,8 @@ import { readNeoProjectIdentities } from './project-merge.ts';
 import { createNeoProjectSavePipeline } from './project-save.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import { createNeoConversationReadOperation } from './conversation-read-operation.ts';
+import { createMemoryOperations } from './memory-operations.ts';
+import { NeoMemoryRepository } from '../../storage/repositories/neo-memory-repository.ts';
 import { NeoConversationReader } from '../../storage/repositories/neo-conversation-reader.ts';
 import { createNeoPublicationReadOperation } from './publication-read-operation.ts';
 import {
@@ -803,6 +805,10 @@ export function createNeoOperations(
     service.publicationOperation,
     createNeoPublicationReadOperation(service.publications, (items) =>
       service.presentPublications(items)
+    ),
+    ...createMemoryOperations(
+      new NeoMemoryRepository(service.db.gateway),
+      (sessionId) => service.repo.getBindingBySession(sessionId)?.kind === 'neo'
     ),
     createNeoConversationReadOperation(
       service.repo,

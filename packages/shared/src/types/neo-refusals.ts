@@ -116,6 +116,8 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'An earlier start of this card was interrupted, so it is unknown whether a working session exists. Check with neo.snapshot before starting it again.',
   human_ask_required:
     'This needs the human’s own message behind it, and none was found for this turn. Use it while answering the human’s chat message.',
+  memory_not_authorized:
+    'Only Neo saves and deletes memories, and only Neo or the local user reads them; workers report learnings to Neo instead.',
   reader_not_authorized:
     'Conversation history is available to the human or a bound Neo coordinator during its live turn.',
   human_only: 'Only the human can do this, from the app. Ask the human instead.',

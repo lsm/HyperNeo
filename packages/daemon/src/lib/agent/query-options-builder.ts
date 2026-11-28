@@ -1,6 +1,7 @@
 import { workerWorkEnvironment, workerWorkLocationsBrief } from '../work-locations.ts';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { neoPlanContextHooks } from './neo-plan-hook.ts';
+import { NeoMemoryRepository } from '../../storage/repositories/neo-memory-repository.ts';
 import type {
   CanUseTool,
   HookCallback,
@@ -891,7 +892,7 @@ export class QueryOptionsBuilder {
     }
 
     const { thinking: thinkingConfig, effort } = this.resolveThinkingOptions();
-    const env = { ...(result.env ?? {}) };
+    const env = { ...result.env };
     delete env[DISABLE_THINKING_ENV];
     if (thinkingConfig?.type === 'disabled') env[DISABLE_THINKING_ENV] = '1';
     result.env = env;
@@ -1296,9 +1297,13 @@ export class QueryOptionsBuilder {
     postFailureHooks.push({ hooks: [loopDetectorHooks.postToolUseFailure] });
     if (rootNeo) {
       const todos = new NeoAskTodoRepository(this.ctx.db!.getDatabase());
+      const memories = new NeoMemoryRepository(this.ctx.db!.gateway);
       Object.assign(
         hooks,
-        neoPlanContextHooks((withUnanswered) => todos.read('planContext', withUnanswered))
+        neoPlanContextHooks(
+          (withUnanswered) => todos.read('planContext', withUnanswered),
+          (query) => memories.search(query, 3)
+        )
       );
       const timeoutHook = createNeoBashTimeoutHook();
       postHooks.push({ matcher: 'Bash', hooks: [timeoutHook] });
